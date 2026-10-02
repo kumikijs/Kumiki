@@ -272,8 +272,10 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | コア | [§1.7.2](./language.md#_1-7-2-不変条件) inv. 1 |
+| `143-fn-positional-arguments.kumiki` | slot, reducer, fn, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `144-builtin-effect-input.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.6](./stdlib.md#_2-6-標準-effect) |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | ルーティング | [§3.1.2](./routing.md#_3-1-2-マッチ順序) |
 | `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
+| `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
 <!-- examples:end -->
 :::
