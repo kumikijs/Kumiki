@@ -5,6 +5,11 @@
       "do": { "click": "h1[data-kumiki-tile='heading']" },
       "expect": { "noErrors": true, "domIncludes": ["Guide", "Install", "Requirements"] }
     },
+    {
+      "label": "the static level=2 heading right after the h1 is an h2",
+      "do": { "click": "h1 + h2[data-kumiki-tile='heading']" },
+      "expect": { "noErrors": true, "domIncludes": ["Install"] }
+    },
     { "do": { "click": "h3[data-kumiki-tile='heading']" }, "expect": { "noErrors": true } },
     {
       "label": "the slot-driven heading starts as an h2",

@@ -7,11 +7,12 @@ import { applyTextProps, PatchRequiresRebuild } from "../../core.ts";
 /**
  * The element `heading` renders for its `level` prop (stdlib.md §2.3): `h1`
  * through `h6`. A fractional level drops its fraction and one outside 1-6 is
- * pulled to the nearer end; a heading with no numeric level is an `h1`. The SSR
+ * pulled to the nearer end, `Infinity` included (`h6`, and `h1` for
+ * `-Infinity`); a heading with no numeric level, or `NaN`, is an `h1`. The SSR
  * renderer calls this too, so both paths draw the same tag.
  */
 export function headingTag(level: unknown): string {
-  const n = typeof level === "number" && Number.isFinite(level) ? Math.trunc(level) : 1;
+  const n = typeof level === "number" && !Number.isNaN(level) ? Math.trunc(level) : 1;
   return `h${Math.min(6, Math.max(1, n))}`;
 }
 

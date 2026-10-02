@@ -329,7 +329,7 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `code` | code | `lang` |
 | `markdown` | Markdown rendering | (content is the argument) |
 
-`heading` renders `<h1>` … `<h6>` for its `level`, on the client and in server rendering alike, and `<h1>` when no `level` is given. A fractional `level` drops its fraction, and one outside 1-6 is drawn at the nearer end (`0` is an `<h1>`, `9` an `<h6>`); `check` does not report either. A `level` that changes between renders re-creates the element, since a tag cannot change in place.
+`heading` renders `<h1>` … `<h6>` for its `level`, on the client and in server rendering alike, and `<h1>` when no `level` is given. A fractional `level` drops its fraction, and one outside 1-6 is drawn at the nearer end (`0` is an `<h1>`, `9` an `<h6>`). A `level` that changes between renders re-creates the element, since a tag cannot change in place.
 
 `link` `external` opens the link in a new browsing context (`target="_blank"`, with the `rel="noopener noreferrer"` that has to accompany it) and leaves it to the browser rather than the router.
 
