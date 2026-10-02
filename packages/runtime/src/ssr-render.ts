@@ -15,6 +15,7 @@
 
 import type { BindSegment, StyleDecl, TileNode, TileProps } from "./core.ts";
 import { attrValue, bindLabel, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
+import { headingTag } from "./tiles/text/heading.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
 
@@ -403,7 +404,12 @@ export function renderTileToString(node: TileNode): string {
       return el(node, "div", { "data-kumiki-tile": "overlay" }, inner);
     }
     case "heading":
-      return el(node, "h1", { "data-kumiki-tile": "heading" }, escapeText(node.text));
+      return el(
+        node,
+        headingTag(node.props?.level),
+        { "data-kumiki-tile": "heading" },
+        escapeText(node.text),
+      );
     case "text":
       return el(node, "span", { "data-kumiki-tile": "text" }, escapeText(node.text));
     case "label":
