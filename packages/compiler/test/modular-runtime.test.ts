@@ -153,7 +153,7 @@ app A caps=[${cap}] routes={"/" -> App, "/404" -> App} init=[]
       for (const decl of ["in=Unit", "in=Nothing"]) {
         const r = modular(clearing(cap, decl));
         expect(r.js).toContain(`import { ${clear} } from "./runtime/effects-storage.js"`);
-        expect(r.js).toContain(`return ${clear}();`);
+        expect(r.js).toContain(`return await ${clear}();`);
         expect(r.js).not.toContain(write);
       }
     });

@@ -1,5 +1,6 @@
 import { type TypeEnv, unaliasType } from "../assignable.ts";
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
+import { failsWithText } from "../capabilities.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
 
@@ -48,7 +49,7 @@ export function builtinEffectCall(eff: EffectDef, reqVar: string, env: TypeEnv):
   // same names top-level for the monolith/inlining path (#71).
   const storage = storageHandlerOf(eff, env);
   if (storage?.endsWith("Read")) {
-    return `${storage}(${eff.mapRequest ? `{ key: ${reqVar}.key }` : reqVar})`;
+    return `${storage}(${eff.mapRequest ? `{ key: ${reqVar}.key, decode: ${reqVar}.decode }` : reqVar})`;
   }
   if (storage?.endsWith("Clear")) return `${storage}()`;
   // A write's request goes through whole, on both storage.write and
@@ -85,16 +86,26 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   const fallback =
     builtin ??
     `{ kind: "err", value: { message: ${JSON.stringify(`Capability ${eff.cap} has no provider`)} } }`;
-  const tail = `const _provider = _caps.provider(${capJs}); if (_provider) return _provider(${reqVar}, _caps, _signal); return ${fallback};`;
-
-  let invokeBody: string;
-  if (eff.mapRequest) {
-    const inputCtx = makeEvalCtx(gen, ["$1"]);
-    const mapJs = jsOfExpr(eff.mapRequest, inputCtx);
-    invokeBody = `async (${bindRef(inputCtx, "$1")}, _caps, _signal) => { const _req = ${mapJs}; ${tail} }`;
-  } else {
-    invokeBody = `async (_input, _caps, _signal) => { ${tail} }`;
-  }
+  // An effect that fails with `Text` (capabilities.ts) delivers a throw as
+  // that `Text` too — from its `map-request`, a host provider or the built-in
+  // handler. Left to the dispatcher, which cannot know `E`, it would arrive as
+  // `{message: …}`. Both calls are awaited so a rejected promise stays inside
+  // the `try`; the built-in handlers catch their own failures today, and the
+  // `await` keeps that true of any that does not. A provider that *returns* a
+  // non-`Text` err value (a `{message}` record, written against the old
+  // contract) has its `message` read out, so `$e : Text` never holds a record;
+  // `String(record)` would be "[object Object]".
+  const textFailure = failsWithText(eff.cap);
+  const providerCall = textFailure
+    ? `{ const _r = await _provider(${reqVar}, _caps, _signal); return _r && _r.kind === "err" && typeof _r.value !== "string" ? { kind: "err", value: typeof _r.value?.message === "string" ? _r.value.message : (JSON.stringify(_r.value) ?? String(_r.value)) } : _r; }`
+    : `return _provider(${reqVar}, _caps, _signal);`;
+  const tail = `const _provider = _caps.provider(${capJs}); if (_provider) ${providerCall} return ${textFailure ? "await " : ""}${fallback};`;
+  const mapped = eff.mapRequest ? makeEvalCtx(gen, ["$1"]) : null;
+  const head = mapped && eff.mapRequest ? `const _req = ${jsOfExpr(eff.mapRequest, mapped)}; ` : "";
+  const body = textFailure
+    ? `try { ${head}${tail} } catch (_thrown) { return { kind: "err", value: String(_thrown) }; }`
+    : `${head}${tail}`;
+  const invokeBody = `async (${mapped ? bindRef(mapped, "$1") : "_input"}, _caps, _signal) => { ${body} }`;
 
   return `{
     name: ${JSON.stringify(eff.name)},

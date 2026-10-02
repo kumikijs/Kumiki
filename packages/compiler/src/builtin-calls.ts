@@ -15,8 +15,9 @@
 //
 // Each name also carries the number of arguments a call to it must supply —
 // which is not the same as the number its lowering reads, and `Decoder.Json` is
-// the case that separates them: the lowering reads nothing and returns a
-// sentinel, while a call has to name the payload type. Without a count at all,
+// the case that separates them: a call has to name the payload type, while the
+// lowering reads it only for the predicates it carries and is the `"json"`
+// sentinel when it carries none. Without a count at all,
 // a builtin's argument list was whatever its lowering happened to find:
 // `Duration.s()` lowered to `((0) * 1000)`, a timer written with an empty
 // duration fired immediately and forever, and nothing said the argument was
@@ -67,11 +68,11 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Ma
   ["Bytes.from-text", exactly(1)],
   ["Bytes.from-base64", exactly(1)],
   ["Bytes.from-bytes", exactly(1)],
-  // The decoder's payload type. It is not read by the lowering — every
-  // `Decoder.*` becomes a sentinel string — but it is what makes the decode
-  // type-safe in `docs/spec/http.md` §6.1.4, and a decoder written without it
-  // was indistinguishable from one that had it, in the source and in the
-  // output alike.
+  // The decoder's payload type, which is what makes the decode type-safe in
+  // `docs/spec/http.md` §6.1.4: the lowering is the check of the predicates it
+  // carries, or the `"json"` sentinel when it carries none. A decoder written
+  // without it was indistinguishable from one that had it, in the source and
+  // in the output alike.
   ["Decoder.Json", exactly(1)],
   ["Decoder.Text", exactly(0)],
   ["Decoder.Bytes", exactly(0)],

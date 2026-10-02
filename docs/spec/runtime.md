@@ -166,6 +166,8 @@ reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
 
+A value from outside the program is checked before it reaches a reducer. A response or a stored value that `Decoder.Json(T)` decodes to a value `T`'s predicates refuse is the effect's `.err` ([§6.1.4](./http.md#_6-1-4-the-decoder-type), [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage)), so the program's `.err` reducer handles it. Otherwise it would be an `.ok` whose writes this rule discards, together with everything else the reducer did, such as ending a loading state.
+
 Two things a refinement does **not** gate:
 
 - **The declared default.** `slot email : Text where email = ""` starts out holding a value its own refinement rejects — that is what makes `error(field=email)` show a message on a pristine form ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
