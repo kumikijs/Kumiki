@@ -291,7 +291,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,733 measured, from 61,162): `Time.parse` reads ISO 8601
+    // Still 63,000 (62,098 measured, from 61,527): `Time.parse` reads ISO 8601
     // `YYYY-MM-DD` with an optional time and zone itself, and refuses a date
     // that is not on the calendar (stdlib.md §2.2.8). The bytes are
     // `ISO_TIME`, `isCalendarDate` and the field-by-field reading in
