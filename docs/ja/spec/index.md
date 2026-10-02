@@ -278,6 +278,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
 | `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | ルーティング | [§3.4](./routing.md#_3-4-ルートライフサイクル) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
+| `160-tile-test-content-fields.kumiki` | slot, tile | テスト | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `162-fragment-binds-by-type.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 <!-- examples:end -->
 :::
