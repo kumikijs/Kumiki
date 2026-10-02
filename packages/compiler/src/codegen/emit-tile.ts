@@ -140,7 +140,13 @@ export function tileExprJs(
       const bind = declareBind(inner, t.bind);
       const impl = `_s.show(${bind})`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      return `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
+      const list = `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
+      // A `for` reached by an enclosing `for`'s implicit key — its body, or an
+      // arm of a branch there — renders a list per outer iteration, each node
+      // keyed by this loop's variable alone, so siblings from different outer
+      // iterations would collide once flattened. `_wk` pairs each node's key
+      // with the outer iteration's.
+      return implicitKeyExpr ? `_wk(${list}, ${implicitKeyExpr})` : list;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.

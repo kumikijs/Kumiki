@@ -364,10 +364,24 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    `_s.show(<loopVar>)`. Explicit keys always win. Nested `for` loops
    overwrite the enclosing implicit key with the inner loop's binding, so a
    tile call under `for i in inner` gets `_s.show(i)` regardless of any
-   outer `for o in outer`.
+   outer `for o in outer`. The inner `for` — the outer one's body, or an arm
+   of a branch there — renders a list per outer iteration, so each of its
+   nodes is then keyed as a list under the outer key, the way item 3 keys a
+   list-bodied call: siblings from different outer iterations that share an
+   inner key stay distinct.
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.
+   When the body renders a **list** (its body is a `for`), the call site's key
+   — explicit or implicit — names the list, not one node, and one key on every
+   node would collapse them onto a single identity. Each node takes the pair
+   of the call site's key and its own key — the one its own `for` gave it,
+   however deeply that `for` nests — or, when it has none, its position in
+   the flattened list, encoded as the JSON array `[callKey, nodeKey]`, so the
+   nodes stay distinct and two pairs never spell the same string. A reorder of
+   the outer list moves each node's element; a reorder inside the list moves
+   them by their own keys. The list's nodes are children of the container the
+   call sits in, however deeply the `for`s that produced them nest.
 4. **`TileWhen` / `TileIf` / `TileMatch`** are transparent: the implicit key
    flows through the branch that emits the tile.
 

@@ -290,6 +290,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `heading` renders the element its level names. The 266 bytes are
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
+    //
+    // Still 63,000 (61,582 measured, from 61,527 on dev at bf86b16): a decoded
+    // value its type refuses is the effect's err (http.md §6.1.4), named by the
+    // formatter a refused slot write uses. That formatter, `showRefinementFailure`,
+    // now sits in core as an export the decode handlers share instead of inline
+    // in the slot-write report; a counter decodes nothing and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

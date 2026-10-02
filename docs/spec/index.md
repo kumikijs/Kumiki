@@ -283,6 +283,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `160-tile-test-content-fields.kumiki` | slot, tile | testing | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | core | [§1.6.4](./language.md#_1-6-4-invariants) |
 | `162-fragment-binds-by-type.kumiki` | slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `164-decode-refused-value.kumiki` | type, slot, effect, reducer, tile | http | [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage) |
 | `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 <!-- examples:end -->
