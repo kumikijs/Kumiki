@@ -286,12 +286,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // form submit gate above, and the owner chose to raise the budget once
     // rather than hold every open change at the old line.
     //
-    // Still 63,000 (61,525 measured, from 61,184):
+    // Still 63,000 (61,507 measured, from 61,162):
     // an index step reaches the setter apart from a field step
     // (language.md §1.6.3), so a write through a Map key that is absent writes
-    // nothing and a read there panics. The 341 bytes are `isIndexSegment` and
-    // the no-write branch in `_setPathHelper`, `isEntryOf` which both sides of
-    // `:=` ask, and the panic in `_stdlibCore.index`. A counter indexes nothing
+    // nothing, an index key is never taken for a `.get` unwrap, and a read
+    // there panics. The 345 bytes are `isIndexSegment` and the two branches in
+    // `_setPathHelper` that ask it, `isEntryOf` which both sides of `:=` ask,
+    // and the panic in `_stdlibCore.index`. A counter indexes nothing
     // and still ships them, because the setter and the stdlib sit on paths
     // every app loads.
     const total = expected

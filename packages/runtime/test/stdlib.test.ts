@@ -291,6 +291,18 @@ describe("an index read (docs/spec/language.md §1.6.3)", () => {
     expect(() => _stdlibCore.index({ 5: "x" }, 6)).toThrow("Key 6 is not in the Map");
   });
 
+  // A structured key is shown in its `entryKey` encoding (fields sorted, a
+  // variant as its `_tag` object): the one spelling the Map stores it under,
+  // pinned here so the `app.error` message does not drift on its own.
+  it("shows a record key and a union key in their entry encoding", () => {
+    expect(() => _stdlibCore.index({}, { y: 2, x: 1 })).toThrow(
+      'Key {"x":1,"y":2} is not in the Map',
+    );
+    expect(() => _stdlibCore.index({}, { _tag: "Red" })).toThrow(
+      'Key {"_tag":"Red"} is not in the Map',
+    );
+  });
+
   it("does not read an Object.prototype member as an entry", () => {
     expect(() => _stdlibCore.index({}, "toString")).toThrow(KumikiPanic);
   });

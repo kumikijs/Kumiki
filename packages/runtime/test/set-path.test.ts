@@ -219,6 +219,48 @@ describe("an index step", () => {
     );
   });
 
+  // `Map({get: Bool}, Int)`: the key is a record that happens to have a `get`
+  // field set to `true`, the shape of the unwrap segment. Inside `{at}` it is a
+  // key, so the write inserts an entry under its `entryKey` encoding rather
+  // than replacing the whole slot with `1`.
+  it("takes a record key with `get: true` for a key, not an unwrap", () => {
+    expect(_setPathHelper({}, [{ at: { get: true } }], 1)).toEqual({ '{"get":true}': 1 });
+  });
+
+  // `m[a][b].f := v` and `m[a][b] := v` are `m.update(a, …)`, so an absent
+  // outer key writes nothing at either depth.
+  it("writes nothing through an absent outer key of a nested Map", () => {
+    const grid = { x: { y: { n: 0 } } };
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }, "n"], 1)).toBe(grid);
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }], { n: 2 })).toBe(grid);
+  });
+
+  // A present outer key reaches the inner Map, where the rule for the last
+  // step applies: a field through an absent inner key writes nothing, the
+  // entry itself is inserted.
+  it("writes through a present outer key into the inner Map", () => {
+    const grid = { a: {} };
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }, "n"], 1)).toEqual({ a: {} });
+    expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }], { n: 2 })).toEqual({
+      a: { b: { n: 2 } },
+    });
+  });
+
+  // `m[k].get.f := v` on `Map(K, Option(R))`: the key decides whether there is
+  // an entry, then `.get` decides whether there is a payload to write through.
+  it("writes through `.get` of the entry at a key the Map holds", () => {
+    const opts = {
+      a: { _tag: "Some", _0: { done: false } },
+      b: { _tag: "None" },
+    };
+    expect(_setPathHelper(opts, [{ at: "a" }, { get: true }, "done"], true)).toEqual({
+      ...opts,
+      a: { _tag: "Some", _0: { done: true } },
+    });
+    expect(_setPathHelper(opts, [{ at: "b" }, { get: true }, "done"], true)).toEqual(opts);
+    expect(_setPathHelper(opts, [{ at: "z" }, { get: true }, "done"], true)).toBe(opts);
+  });
+
   it("leaves a field step building the level it finds missing", () => {
     expect(_setPathHelper({}, ["t9", "done"], true)).toEqual({ t9: { done: true } });
   });

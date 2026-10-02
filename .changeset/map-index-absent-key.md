@@ -21,3 +21,14 @@ The read had the matching gap. `todos["zz"].title` threw a JavaScript
 panic (lifecycle.md §7.2.2), as an index past the end of a List already is:
 the reducer's writes roll back and `app.error` runs. `m.get(k)` is still the
 read that answers `None`.
+
+**Migration.** A tile that reads `m[k]` at a key that may be absent used to
+render `undefined` there; it now panics during render (the first render
+included), and the nearest `error-boundary` or the built-in panic display
+takes the page. Read such a key in a tile through `m.get-or(k, d)`, or through
+`m.get(k)` and a `match` on the Option.
+
+A write path whose index key is a record with a `get: true` field
+(`Map({get: Bool}, V)`) now writes the entry under that key. It used to be
+taken for a `.get` unwrap, so `m[{get: true}] := v` replaced the whole slot
+with `v`.

@@ -3606,8 +3606,9 @@ export type PathSegment = string | number | { get: true } | { at: unknown };
 /** The segments a `bind=` path can hold — what `TileNode.bindPath` carries. */
 export type BindSegment = Extract<PathSegment, string | { get: true }>;
 
-/** `{get: true}` and nothing else. An index that happens to evaluate to an
- * object is a key, not an unwrap. */
+/** `{get: true}` and nothing else. Asked only of a step that is not an index:
+ * an index key that happens to have that shape (`Map({get: Bool}, V)`) is a
+ * key, not an unwrap. */
 function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
   return typeof seg === "object" && seg !== null && (seg as { get?: unknown }).get === true;
 }
@@ -3694,7 +3695,7 @@ export function _setPathHelper(
   const rest = path.slice(1);
   const indexed = isIndexSegment(step);
   const head = (indexed ? step.at : step) as PathSegment;
-  if (isUnwrapSegment(head)) {
+  if (!indexed && isUnwrapSegment(head)) {
     if (obj && typeof obj === "object" && "_tag" in obj) {
       const o = obj as { _tag: string; _0?: unknown };
       if (o._tag === "None" || o._tag === "Err") return obj;
