@@ -287,5 +287,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `162-fragment-binds-by-type.kumiki` | slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 | `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `166-map-map.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 <!-- examples:end -->
 :::

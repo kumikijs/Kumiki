@@ -89,7 +89,7 @@ describe("a fragment handed one value binds no second positional", () => {
     ["a List element lambda", "slot xs : List(Int) = [1]", "List(Int)", "xs.map($2)", "map"],
   ])("reports the second positional in %s", (_what, defs, resType, rhs, method) => {
     expect(codes(program(defs, resType, rhs))).toEqual([
-      `E0103 "$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+      `E0103 "$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
     ]);
   });
 });
@@ -146,7 +146,7 @@ describe("a $2 inside another method's argument is the enclosing fragment's", ()
     ['words.map(m.update("a", $2).size)', "List(Int)", "map"],
   ])("reports %s", (rhs, resType, method) => {
     expect(codes(program(NUMS, resType, rhs))).toEqual([
-      `E0103 "$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+      `E0103 "$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
     ]);
   });
   it("reads an enclosing pair's value from inside a one-positional fragment", async () => {
@@ -213,6 +213,25 @@ describe("the shapes §2.2.3 binds", () => {
     ],
   ])("%s", async (_what, defs, resType, rhs, want) => {
     expect(await run(program(defs, resType, rhs))).toEqual(want);
+  });
+});
+
+describe("a Map's map is handed each entry, the key and the value", () => {
+  // Like a Map's filter, `Map.map`'s fragment takes the `[key, value]` pair it
+  // is handed apart: `$1` is the key, restored to its type, `$2` the value.
+  const M = "slot m : Map(Int, Int) = {1: 10, 2: 20}";
+  const shown = (mapped: string) => `${mapped}.entries.map($1.show + "=" + $2.show).join(",")`;
+  it.each([
+    ["a fragment over $1 and $2", "", "m.map($1 * 100 + $2)", "1=110,2=220"],
+    ["a fn of two", "fn add2(k: Int, v: Int) -> Int = k + v", "m.map(add2)", "1=11,2=22"],
+    [
+      "a fn of one, given the key",
+      "fn keyOnly(k: Int) -> Int = k * 3",
+      "m.map(keyOnly)",
+      "1=3,2=6",
+    ],
+  ])("%s", async (_what, fns, mapped, want) => {
+    expect(await run(program(`${fns}\n${M}`, "Text", shown(mapped)))).toBe(want);
   });
 });
 

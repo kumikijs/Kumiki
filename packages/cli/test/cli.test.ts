@@ -290,6 +290,10 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `heading` renders the element its level names. The 266 bytes are
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
+    //
+    // Still 63,000 (61,620 measured, from 61,527): `Map.map` maps each entry.
+    // `mapOver` tells a Map apart from a tagged Option / Result and restores
+    // each key as `keys` does; it sits in stdlib, which every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

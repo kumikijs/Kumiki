@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "the maps are built up through insert",
+      "do": { "click": "#fill" },
+      "expect": { "noErrors": true }
+    },
+    {
+      "label": "map keeps the keys and replaces each value; $1 is the numeric key, and $2 is the value even under a Tuple key",
+      "do": { "click": "#apply" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "loud": { "3": "c!", "4": "d!" },
+          "scaled": { "3": 31, "4": 42 },
+          "shout": { "[1,2]": "a!" }
+        },
+        "domIncludes": ["loud: c!,d!", "scaled: 31,42", "shout: a!"]
+      }
+    }
+  ]
+}
