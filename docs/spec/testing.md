@@ -235,6 +235,33 @@ test counter-display =
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
 
+What is compared is the expected node's `kind`, its `children` in order, and **every content field it carries**: the fields its builtin puts on the node — its `text`, an `image`'s `src`, a `link`'s `to`, an `input`'s `value`, a `check`'s checked state, a `select`'s `options` — and every other named argument it is written with, such as an `image`'s `alt`, a `button`'s `disabled` or `variant`, an `aria-*` label or an `id`. A field the expected node does not carry (an `input(value="x")` states no `placeholder`) is not compared, so a snapshot can assert one field of a tile that renders several.
+
+Some things are never compared, whatever the expected node says:
+
+- the `{…}` block: styles, classes and any other prop written there. `column(…) {pad: "sm"}` asserts no padding; to compare a prop, write it as a named argument;
+- handlers (`onClick=…`, and the reducers a `ui.*` subscription wires);
+- the identity and wiring a node carries: its `key` (written as `{key: …}`, or implicit in a `for`), a control's `bind`, and a link's `prefetch`.
+
+A builtin fills in some fields when their argument is left out, and the expected node carries those like any other field. So `check()` is an unchecked check, and `details(text("x"))` asserts an empty summary. To assert another value, write the argument:
+
+| Builtin | Carried when the argument is left out |
+|---|---|
+| `text`, `heading`, `button`, `label`, `link`, `markdown`, `code`, `editable` | `text: ""` |
+| `link` | `to: ""` |
+| `image` | `src: ""` |
+| `icon` | `name: ""` |
+| `check`, `switch` | unchecked |
+| `select` | `options: []` |
+| `list` | `ordered: false` |
+| `details` | `summary: ""` |
+| `error` | `field: ""` |
+| `modal`, `drawer`, `popover` | `open: true` |
+
+Each `aria-*` attribute is a field of its own, however it was written (as `aria-label="…"`, in the `aria` map, or in the actual tile's `{…}` block): `button(text="x", aria-label="Close")` asserts the label and says nothing about an `aria-describedby` the tile also renders. Its path is `button.aria-label`, and a `check`'s or `switch`'s checked state is reported as `value`, the argument that sets it.
+
+A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
+
 ```
 tile-test ::= 'tile-test' identifier
               'given'  '=' '{' (tile-given (',' tile-given)*)? '}'

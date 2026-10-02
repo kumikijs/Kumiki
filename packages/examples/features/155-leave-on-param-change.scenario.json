@@ -1,0 +1,60 @@
+{
+  "steps": [
+    {
+      "label": "arriving enters the edit route once and leaves nothing",
+      "do": { "navigate": "/todos/1/edit" },
+      "expect": { "noErrors": true, "state": { "enters": 1, "leaves": 0 } }
+    },
+    {
+      "label": "a params-only move leaves todo 1 before it enters todo 2",
+      "do": { "clickText": "todo two" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Edit 2"],
+        "state": { "enters": 2, "leaves": 1, "left": "1" }
+      }
+    },
+    {
+      "do": { "fill": "textarea", "value": "draft" },
+      "expect": { "state": { "dirty": true } }
+    },
+    {
+      "label": "with unsaved edits the guard holds the move to todo 1 behind confirm",
+      "do": { "clickText": "todo one" },
+      "expect": { "domIncludes": ["Edit 2"], "state": { "enters": 2, "leaves": 2, "left": "2" } }
+    },
+    {
+      "label": "No keeps todo 2 and its edits",
+      "do": { "click": "[data-kumiki-confirm] button[data-kumiki-confirm-action='no']" },
+      "expect": { "domIncludes": ["Edit 2"], "state": { "enters": 2, "dirty": true } }
+    },
+    {
+      "do": { "clickText": "todo one" },
+      "expect": { "state": { "leaves": 3 } }
+    },
+    {
+      "label": "Yes commits the move and enters todo 1",
+      "do": { "click": "[data-kumiki-confirm] button[data-kumiki-confirm-action='yes']" },
+      "expect": { "domIncludes": ["Edit 1"], "state": { "enters": 3, "dirty": false } }
+    },
+    {
+      "label": "leaving for another route runs the leave chain once more",
+      "do": { "navigate": "/settings/account" },
+      "expect": { "noErrors": true, "state": { "leaves": 4, "sEnters": 1, "sLeaves": 0 } }
+    },
+    {
+      "label": "switching child leaves the parent before it re-enters it",
+      "do": { "navigate": "/settings/billing" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Billing settings"],
+        "state": { "sEnters": 2, "sLeaves": 1 }
+      }
+    },
+    {
+      "label": "navigating to the path already shown leaves nothing; route.enter runs again",
+      "do": { "navigate": "/settings/billing" },
+      "expect": { "noErrors": true, "state": { "sEnters": 3, "sLeaves": 1 } }
+    }
+  ]
+}

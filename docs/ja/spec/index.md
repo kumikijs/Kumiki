@@ -84,6 +84,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | コア |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | コア |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | コア |
+| [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -276,6 +277,8 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `143-fn-positional-arguments.kumiki` | slot, reducer, fn, tile | コア | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | ルーティング | [§3.1.2](./routing.md#_3-1-2-マッチ順序) |
 | `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
+| `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | ルーティング | [§3.4](./routing.md#_3-4-ルートライフサイクル) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
+| `160-tile-test-content-fields.kumiki` | slot, tile | テスト | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 <!-- examples:end -->
 :::

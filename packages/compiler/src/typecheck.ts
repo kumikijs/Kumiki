@@ -43,7 +43,7 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES } from "./builtins.ts";
+import { BUILTIN_TILES, positionalIsTile } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, failsWithText, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
@@ -1596,6 +1596,30 @@ function checkTileCall(
     }
     if (isTileExpr(v)) {
       checkTileExpr(v, sym, errors, ctx);
+      continue;
+    }
+    // A positional argument of a builtin that is not a value builtin renders
+    // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
+    // program defines, and drops anything else — so a value there rendered
+    // nothing, and a slot named there lowered to a `null` child. It is
+    // reported at the value, and nothing inside it is checked: a `let` is the
+    // one value that can hold a tile call, which reads as a `fn` call there
+    // and would be reported wrongly, so a correct diagnostic under it (an
+    // undefined name, say) waits until the value is moved too.
+    if (
+      arg.name === undefined &&
+      positionalIsTile(t.name) &&
+      !(v.kind === "Ref" && sym.tiles.has(v.name))
+    ) {
+      errors.push({
+        code: "E0128",
+        kind: "value-as-child",
+        message:
+          `A value is not a tile: ${t.name} renders a positional argument only when it is a ` +
+          "tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, " +
+          "for a `let`, write the value where it is used or compute it in a `fn`",
+        pos: v.pos,
+      });
       continue;
     }
     checkExpr(v, sym, errors, ctx);

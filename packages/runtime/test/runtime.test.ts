@@ -614,7 +614,7 @@ describe("in-language test runner helpers", () => {
     ).toBe(true);
   });
 
-  it("runTileTest compares structure, ignoring props and handlers", () => {
+  it("runTileTest compares structure, ignoring handlers", () => {
     const actual = {
       kind: "column",
       children: [{ kind: "button", text: "+1", props: { onClick: () => undefined } }],
