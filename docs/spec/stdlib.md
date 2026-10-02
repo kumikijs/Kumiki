@@ -265,9 +265,22 @@ Every occurrence of a token is replaced, including one inside a word: `format("s
 
 The fields are **local** ones. The result carries no timezone in it, so it is read as the reader's wall clock; UTC fields would show the wrong day to every reader whose local date differs from the UTC one at that moment — after midnight east of Greenwich, and during the evening west of it.
 
-`Time.parse` yields the instant as a millisecond number, the same representation [§2.2.9](#_2-2-9-duration) gives every `Time`; text that names no instant — including the empty string — is `None`. A **date-only** string is read as **local** midnight, not the UTC midnight the platform's own parser gives it: `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string.
+`Time.parse` yields the instant as a millisecond number, the same representation [§2.2.9](#_2-2-9-duration) gives every `Time`; text that names no instant — including the empty string — is `None`. It reads one form, ISO 8601's calendar date with an optional time and zone, and refuses everything else:
 
-A date that is not on the calendar names no instant, so `Time.parse("2026-02-30")`, `Time.parse("2026-13-01")` and `Time.parse("2026-00-10")` are `None`, and so is `"2026-02-30T10:00"`. The platform's parser would roll such a date over into the next month (`2026-02-30` as March 2nd), so the result would be a different day. The reading is exact, as it is for every base in [§2.4.3](#_2-4-3-type-conversion): text with blanks around it, such as `" 2026-02-28"`, is `None`. Trim the text first when blanks are expected.
+```
+YYYY-MM-DD ( [Tt ] HH:MM ( :SS ( .fraction )? )? )? ( Z | z | ±HH:MM )?
+```
+
+| part | accepted |
+|---|---|
+| date | exactly four digits of year, then `-MM-DD` with two digits each, on the calendar |
+| separator | `T`, `t` or one space |
+| time | `HH` `00`–`23`, `MM` `00`–`59`, optional `:SS` `00`–`59`, optional `.` and one or more digits (read to the millisecond; further digits are dropped) |
+| zone | `Z`, `z`, or `+HH:MM` / `-HH:MM` with `HH` `00`–`23` and `MM` `00`–`59` |
+
+Without a zone the text is on the **local** clock, a date-only string included: `"2026-08-14"` is local midnight, not the UTC midnight the platform's own parser gives it. `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string (a `type="datetime-local"` one produces `"2026-08-14T21:05"`, also local). With a zone the text is that instant: `"2026-08-14Z"` is UTC midnight and `"2026-08-14T21:05+09:00"` is `12:05` UTC. The year is the one written, so `"0050-01-01 10:00"` is the year 50, not 1950.
+
+A date that is not on the calendar names no instant, so `Time.parse("2026-02-30")`, `Time.parse("2026-13-01")` and `Time.parse("2026-00-10")` are `None`, and so are `"2026-02-30T10:00"` and `"2026-02-30Z"`. The platform's parser would roll such a date over into the next month (`2026-02-30` as March 2nd), so the result would be a different day. Everything outside the form above is `None` too, whatever the platform's parser makes of it: `"2026-2-30"`, `"2026/02/30"`, `"Aug 14 2026"`, `"2026-08-14T24:00"`, an offset without its colon (`"+0900"`), and the extended-year form (`"+002026-08-14"`, any year that is not four digits). The reading is exact, as it is for every base in [§2.4.3](#_2-4-3-type-conversion): text with blanks around it, such as `" 2026-02-28"`, is `None`. Trim the text first when blanks are expected.
 
 ### 2.2.9 Duration
 
@@ -472,7 +485,7 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 |---|---|---|
 | `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty |
 | `Float` | the number it spells: an optional `+` / `-`, decimal digits, an optional `.` and digits, an optional `e` / `E` exponent | is anything else — `.5`, `1.`, `0x10`, `Infinity`, surrounding blanks, empty — or spells a number too large to be finite |
-| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | names no instant — a date off the calendar (`2026-02-30`), surrounding blanks, empty |
+| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | is not `YYYY-MM-DD` with an optional ISO 8601 time and zone, or names a date off the calendar (`2026-02-30`) — `2026/02/30`, `+002026-08-14`, surrounding blanks, empty |
 | `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
 | `Text` | the text itself | is empty |
 | `Bytes` | its UTF-8 bytes, as `Bytes.from-text` builds them | is empty |

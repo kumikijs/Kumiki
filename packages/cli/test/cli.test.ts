@@ -286,10 +286,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // form submit gate above, and the owner chose to raise the budget once
     // rather than hold every open change at the old line.
     //
-    // Still 63,000 (61,466 measured, from 61,184):
-    // `Time.parse` refuses a date that is not on the calendar
-    // (stdlib.md §2.2.8). The 282 bytes are `isCalendarDate` and the branch in
-    // `parseTime` that consults it before the platform's parser can roll
+    // Still 63,000 (61,733 measured, from 61,162): `Time.parse` reads ISO 8601
+    // `YYYY-MM-DD` with an optional time and zone itself, and refuses a date
+    // that is not on the calendar (stdlib.md §2.2.8). The bytes are
+    // `ISO_TIME`, `isCalendarDate` and the field-by-field reading in
+    // `parseTime` that replaces the platform's parser, which rolls
     // `2026-02-30` over into March. A counter parses no time and still ships
     // it, because `parseTime` sits in the stdlib module every app loads.
     const total = expected
