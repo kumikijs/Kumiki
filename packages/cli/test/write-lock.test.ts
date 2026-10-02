@@ -50,7 +50,7 @@ const liveHolder = JSON.stringify({ pid: process.ppid, host: hostname() });
 describe("claiming a lock", () => {
   it("removes the lock it saw", () => {
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
-    expect(claimLock(lock, sight())).toBe(true);
+    expect(claimLock(lock, sight())).toEqual({ kind: "removed" });
     expect(fs.existsSync(lock)).toBe(false);
   });
 
@@ -61,7 +61,7 @@ describe("claiming a lock", () => {
     const seen = sight();
     rmSync(lock);
     writeFileSync(lock, liveHolder);
-    expect(claimLock(lock, seen)).toBe(false);
+    expect(claimLock(lock, seen)).toEqual({ kind: "changed" });
     expect(readFileSync(lock, "utf8")).toBe(liveHolder);
   });
 
@@ -105,7 +105,7 @@ describe("claiming a lock", () => {
         return original(...args);
       }) as never);
     }
-    expect(claimLock(lock, seen)).toBe(false);
+    expect(claimLock(lock, seen)).toEqual({ kind: "changed" });
     vi.restoreAllMocks();
     expect(cCreated).toBe(false);
     expect(readFileSync(lock, "utf8")).toBe(liveHolder);
@@ -119,11 +119,65 @@ describe("claiming a lock", () => {
     const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
       throw errno("EBUSY");
     });
-    expect(claimLock(lock, seen)).toBe(false);
+    expect(claimLock(lock, seen)).toMatchObject({ kind: "failed", code: "EBUSY" });
     expect(fs.readdirSync(dir).length).toBeGreaterThan(2);
     stuck.mockRestore();
-    expect(claimLock(lock, seen)).toBe(true);
+    expect(claimLock(lock, seen)).toEqual({ kind: "removed" });
     expect(fs.readdirSync(dir)).toEqual(["c.kumiki"]);
+  });
+
+  it("a claim held by a live caller makes the claimer back off and leaves the lock", () => {
+    const dead = JSON.stringify({ pid: 999_999, host: hostname() });
+    writeFileSync(lock, dead);
+    const seen = sight();
+    const claim = leaveClaim(seen);
+    writeFileSync(claim, liveHolder);
+    expect(claimLock(lock, seen)).toMatchObject({
+      kind: "claimed",
+      claim,
+      by: { holder: { pid: process.ppid, host: hostname() } },
+    });
+    expect(readFileSync(lock, "utf8")).toBe(dead);
+    expect(readFileSync(claim, "utf8")).toBe(liveHolder);
+  });
+
+  it("a claim that names no writer yet, younger than the grace period, makes the claimer back off", () => {
+    const dead = JSON.stringify({ pid: 999_999, host: hostname() });
+    writeFileSync(lock, dead);
+    const seen = sight();
+    const claim = leaveClaim(seen);
+    writeFileSync(claim, "");
+    expect(claimLock(lock, seen)).toMatchObject({ kind: "claimed", claim, by: { holder: null } });
+    expect(readFileSync(lock, "utf8")).toBe(dead);
+  });
+});
+
+/**
+ * Leave behind the claim a caller makes on `seen`, by failing every unlink
+ * while it claims, and return its path.
+ */
+function leaveClaim(seen: LockSighting): string {
+  const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
+    throw errno("EBUSY");
+  });
+  claimLock(lock, seen);
+  stuck.mockRestore();
+  const claims = fs.readdirSync(dir).filter((name) => name.includes(".takeover-"));
+  expect(claims).toHaveLength(1);
+  return join(dir, claims[0] as string);
+}
+
+describe("waiting on a lock that is being taken over", () => {
+  it("names the claim that holds the takeover, and its holder, when the wait runs out", () => {
+    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
+    const claim = leaveClaim(sight());
+    writeFileSync(claim, liveHolder);
+    const ran = vi.fn();
+    expect(() => withWriteLock(file, ran)).toThrow(
+      `${claim}, a claim to take it over, is held by kumiki process ${process.ppid} on ${hostname()}`,
+    );
+    expect(ran).not.toHaveBeenCalled();
   });
 });
 
@@ -151,6 +205,7 @@ describe("releasing the lock", () => {
     // The lock left behind names this process, which holds nothing: taken over.
     expect(withWriteLock(file, () => 43)).toBe(43);
     expect(fs.existsSync(lock)).toBe(false);
+    expect(fs.readdirSync(dir)).toEqual(["c.kumiki"]);
   });
 });
 

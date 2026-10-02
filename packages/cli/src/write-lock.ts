@@ -136,7 +136,7 @@ export function withWriteLock<T>(path: string, fn: () => T): T {
     return fn();
   } finally {
     heldWriteLocks.delete(key);
-    if (!claimLock(lock, mine)) {
+    if (claimLock(lock, mine).kind !== "removed") {
       process.emitWarning(
         `kumiki left the write lock ${lock} in place: it could not be removed, or it is no longer the one this call created`,
       );
@@ -159,8 +159,14 @@ function acquireWriteLock(path: string, lock: string): LockSighting {
       if (look.kind === "unopenable") {
         blocker = `${path} cannot be locked: ${lock} cannot be read (${look.code})`;
       } else {
-        if (isAbandoned(look.lock) && claimLock(lock, look.lock)) continue;
-        blocker = describeHolder(path, look.lock, lock);
+        const claim = isAbandoned(look.lock) ? claimLock(lock, look.lock) : null;
+        if (claim?.kind === "removed") continue;
+        blocker =
+          claim?.kind === "claimed"
+            ? describeClaim(path, lock, claim.claim, claim.by)
+            : claim?.kind === "failed"
+              ? `${path} cannot be locked: ${lock} was left by a writer that is gone, and taking it over failed on ${claim.file} (${claim.code})`
+              : describeHolder(path, look.lock, lock);
       }
     }
     if (Date.now() >= deadline) {
@@ -301,8 +307,38 @@ function describeHolder(path: string, seen: LockSighting, lock: string): string 
 }
 
 /**
+ * Why a lock that is gone is still in the way: another caller holds the claim
+ * to take it over. The claim, not the lock, is the file to act on.
+ */
+function describeClaim(path: string, lock: string, claim: string, by: LockSighting): string {
+  const why = `${path} cannot be locked: ${lock} was left by a writer that is gone, and ${claim}, a claim to take it over,`;
+  const { holder } = by;
+  if (holder === null) {
+    return `${why} names no writer; it is passed over once it is ${UNREADABLE_LOCK_GRACE_MS / 1000} s old`;
+  }
+  return (
+    `${why} is held by kumiki process ${holder.pid} on ${holder.host}` +
+    (holder.host === hostname()
+      ? "; it is passed over once that process exits, so if that process is not writing this file, stop it or delete the claim file"
+      : `; whether it is still running cannot be checked from ${hostname()}, so if it is not, delete the claim file`)
+  );
+}
+
+/**
+ * What `claimLock` did: removed the lock; found it no longer the one seen (or
+ * gone); backed off because another caller holds the claim on that sighting
+ * (`claim` is that file, `by` what it said); or failed on a filesystem call,
+ * leaving the lock as it was.
+ */
+export type ClaimResult =
+  | { kind: "removed" }
+  | { kind: "changed" }
+  | { kind: "claimed"; claim: string; by: LockSighting }
+  | { kind: "failed"; file: string; code: string };
+
+/**
  * Remove the lock at `lock` if it is still the one `seen` describes, and say
- * whether it was.
+ * what happened.
  *
  * Deleting by path would remove whatever lock is there by then: two waiters
  * that both saw a dead holder would each delete, and the second would delete
@@ -315,7 +351,7 @@ function describeHolder(path: string, seen: LockSighting, lock: string): string 
  * the way the lock is, so only one caller at a time can hold it. Holding it,
  * the caller looks at the lock again and deletes it only if it is still the
  * one seen. Nothing else can remove that lock meanwhile — its holder is gone,
- * or is this caller releasing its own, and every other remover would need the
+ * or it is this caller releasing its own, and every other remover would need the
  * same claim — and nothing can be created while it exists, so the lock looked
  * at is the lock deleted.
  *
@@ -324,40 +360,44 @@ function describeHolder(path: string, seen: LockSighting, lock: string): string 
  * caller that finds an abandoned claim moves on to the next claim name for
  * the same sighting rather than deleting it, so two callers never both
  * remove one and both proceed. A claim held by a live caller makes this call
- * report `false`, and a waiter looks again later.
+ * back off (`claimed`, naming that claim), and a waiter looks again later.
  *
- * It never throws: a filesystem failure is reported as `false`, the lock left
+ * It never throws: a filesystem failure is reported as `failed`, the lock left
  * as it was.
  */
-export function claimLock(lock: string, seen: LockSighting): boolean {
+export function claimLock(lock: string, seen: LockSighting): ClaimResult {
   const base = `${lock}.takeover-${sightingKey(seen)}`;
+  let file = base;
   try {
     for (let gen = 0; ; ) {
       const claim = `${base}.${gen}`;
+      file = claim;
       const created = tryCreateLock(claim);
-      if (created.kind === "transient") return false;
+      if (created.kind === "transient") return { kind: "failed", file, code: created.code };
       if (created.kind === "exists") {
         const look = lookAtLock(claim);
         if (look.kind === "gone") continue;
-        if (look.kind === "seen" && isAbandoned(look.lock)) {
+        if (look.kind === "unopenable") return { kind: "failed", file, code: look.code };
+        if (isAbandoned(look.lock)) {
           gen++;
           continue;
         }
-        return false;
+        return { kind: "claimed", claim, by: look.lock };
       }
       try {
+        file = lock;
         const now = lookAtLock(lock);
-        if (now.kind !== "seen" || !sameLock(now.lock, seen)) return false;
+        if (now.kind !== "seen" || !sameLock(now.lock, seen)) return { kind: "changed" };
         fs.unlinkSync(lock);
         // The claims abandoned before this one can no longer apply to anything.
         for (let g = 0; g < gen; g++) unlinkQuietly(`${base}.${g}`);
-        return true;
+        return { kind: "removed" };
       } finally {
         unlinkQuietly(claim);
       }
     }
-  } catch {
-    return false;
+  } catch (e) {
+    return { kind: "failed", file, code: (e as NodeJS.ErrnoException).code ?? String(e) };
   }
 }
 
@@ -373,8 +413,11 @@ function unlinkQuietly(path: string): void {
   try {
     fs.unlinkSync(path);
   } catch {
-    // Already gone, or not removable now; a claim left over is abandoned and
-    // its name is passed over.
+    // Already gone, or not removable now. A claim left over is judged like a
+    // lock: only once the process that left it has exited is it abandoned and
+    // its name passed over. Until then — a long-running process such as the
+    // MCP server — it holds off every other process's takeover of that lock,
+    // until its own process claims again and passes over it.
   }
 }
 
