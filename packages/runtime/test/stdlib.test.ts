@@ -325,6 +325,53 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
   });
 });
 
+// `Map(K, V).map` lowers to the polymorphic `_s.mapOver`, which used to call
+// the fragment once with the whole Map, so a `Map(Int, Text)` slot ended up
+// holding the string `"[object Object]!"`.
+describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
+  // The fragment is called the way `filter` calls its predicate: with one
+  // argument, the `[key, value]` pair, which the generated lambda takes apart
+  // into `$1` / `$2`.
+  it("hands the fragment one [key, value] argument, the key restored to its kind", () => {
+    const calls: unknown[][] = [];
+    const out = _stdlibCore.mapOver(
+      { 3: "c", 4: "d" },
+      (...args: unknown[]) => {
+        calls.push(args);
+        const [, v] = args[0] as [unknown, unknown];
+        return `${String(v)}!`;
+      },
+      "number",
+    );
+    expect(calls).toEqual([[[3, "c"]], [[4, "d"]]]);
+    expect(out).toEqual({ 3: "c!", 4: "d!" });
+  });
+
+  it("hands a two-element structured key whole, inside the pair", () => {
+    const calls: unknown[][] = [];
+    const out = _stdlibCore.mapOver(
+      { "[1,2]": "a" },
+      (...args: unknown[]) => {
+        calls.push(args);
+        return `${String((args[0] as [unknown, unknown])[1])}!`;
+      },
+      "value",
+    );
+    expect(calls).toEqual([[[[1, 2], "a"]]]);
+    expect(out).toEqual({ "[1,2]": "a!" });
+  });
+
+  // A `Map(Text, _)` may have a `"_tag"` key; only a real variant tag makes it
+  // an Option / Result, as `filter` decides with `variantIs`.
+  it('maps a Map that has a "_tag" key instead of returning it unchanged', () => {
+    const out = _stdlibCore.mapOver(
+      { _tag: "label", a: "x" },
+      (pair) => `${String((pair as [unknown, unknown])[1])}!`,
+    );
+    expect(out).toEqual({ _tag: "label!", a: "x!" });
+  });
+});
+
 // `Option(T).filter` lowers to the polymorphic `_s.filter`, which used to read
 // an Option's own representation (`{_tag, _0}`) as a Map and filter its fields.
 // The result was neither a `Some` nor a `None`.

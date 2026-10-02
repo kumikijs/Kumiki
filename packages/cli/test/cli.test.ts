@@ -291,10 +291,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,644 measured, from 61,527 on dev at bf86b16; the entry
-    // above records 61,430, and the 97 bytes between landed without an entry):
-    // a `for` keys each tile it renders apart from its siblings, a repeated
-    // value included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which
+    // Still 63,000 (61,620 measured, from 61,527): `Map.map` maps each entry.
+    // `mapOver` tells a Map apart from a tagged Option / Result and restores
+    // each key as `keys` does; it sits in stdlib, which every app loads.
+    //
+    // Still 63,000 (62,050 measured, from 61,933 on dev at 46d9dca): a `for`
+    // keys each tile it renders apart from its siblings, a repeated value
+    // included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which
     // writes the loop and the occurrence before the value's `show`. A counter
     // has no `for` and still ships it, because it sits in the stdlib module
     // every app loads.

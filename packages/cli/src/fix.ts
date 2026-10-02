@@ -161,6 +161,63 @@ function replaceAt(text: string, pos: Pos, missing: string, replacement: string)
   return text.slice(0, at) + replacement + text.slice(at + missing.length);
 }
 
+const OPENING = new Set(["(", "[", "{"]);
+const CLOSING = new Set([")", "]", "}"]);
+
+/**
+ * Remove the named argument `name=…` whose name is at `pos`, with the comma
+ * that separates it from its neighbour: `label(text="A", "B")` and
+ * `label("B", text="A")` both become `label("B")`.
+ *
+ * The position says where the argument starts and not where it ends, so the
+ * end is read off the tokens: the first `,` or closing bracket outside every
+ * bracket the value opens. Returns the text unchanged when `pos` does not hold
+ * `name =`, the source no longer lexes, or the argument is the only one.
+ */
+function removeNamedArg(text: string, pos: Pos, name: string): string {
+  const offset = (p: Pos): number | null => {
+    const span = lineSpan(text, p.line);
+    return span ? span.start + p.col - 1 : null;
+  };
+  let tokens: Token[];
+  try {
+    tokens = lex(text);
+  } catch {
+    return text;
+  }
+  const at = tokens.findIndex((t) => t.pos.line === pos.line && t.pos.col === pos.col);
+  const nameTok = tokens[at];
+  const eq = tokens[at + 1];
+  if (nameTok?.kind !== "ident" && nameTok?.kind !== "kw") return text;
+  if (nameTok.value !== name || eq?.kind !== "op" || eq.value !== "=") return text;
+  let depth = 0;
+  let stop: Token | undefined;
+  for (const t of tokens.slice(at + 2)) {
+    if (t.kind !== "op") continue;
+    if (OPENING.has(t.value)) depth += 1;
+    else if (CLOSING.has(t.value) && depth > 0) depth -= 1;
+    else if (CLOSING.has(t.value) || (t.value === "," && depth === 0)) {
+      stop = t;
+      break;
+    }
+  }
+  const start = offset(pos);
+  const stopAt = stop && offset(stop.pos);
+  if (start === null || !stop || stopAt == null) return text;
+  if (stop.kind === "op" && stop.value === ",") {
+    // `name=…, next` → `next`, keeping whatever precedes the argument.
+    const gap = /^[ \t]*/.exec(text.slice(stopAt + 1))?.[0].length ?? 0;
+    return text.slice(0, start) + text.slice(stopAt + 1 + gap);
+  }
+  // The last argument: `prev, name=…)` → `prev)`, from the comma before it to
+  // the end of its value, keeping the whitespace before the closing bracket.
+  const comma = tokens[at - 1];
+  const commaAt = comma && offset(comma.pos);
+  if (comma?.kind !== "op" || comma.value !== "," || commaAt == null) return text;
+  const valueEnd = start + text.slice(start, stopAt).trimEnd().length;
+  return text.slice(0, commaAt) + text.slice(valueEnd);
+}
+
 /**
  * Replace the first `\b`-delimited `missing` anywhere on line `pos.line`.
  *
@@ -638,6 +695,37 @@ export function planFixesExplained(
         description: `read the "route" slot instead of "$route" at ${err.pos.line}:${err.pos.col}`,
         apply: (text: string) => replaceAt(text, err.pos, "$route", "route"),
       });
+    }
+    if (err.code === "E0129") {
+      // Which argument is dropped decides the repair, and the diagnostic says
+      // which in `unrendered`. Two shapes have one answer that changes nothing
+      // rendered: `text=` on a builtin that reads only a positional argument,
+      // with none written, becomes that argument; and `text=` beside the
+      // positional argument `label` / `link` / `editable` render is removed.
+      // A dropped positional argument has no such answer — join it, give it
+      // its own builtin, or delete it.
+      if (err.unrendered === "text-prop") {
+        // The diagnostic points at `text`, and `replaceAt` writes only if
+        // `text=` is what is there.
+        add({
+          code: err.code,
+          message: err.message,
+          description: `make the text= value the positional content at ${err.pos.line}:${err.pos.col}`,
+          apply: (text: string) => replaceAt(text, err.pos, "text=", ""),
+        });
+        continue;
+      }
+      if (err.unrendered === "text-shadowed") {
+        add({
+          code: err.code,
+          message: err.message,
+          description: `remove the text= argument the positional one shadows at ${err.pos.line}:${err.pos.col}`,
+          apply: (text: string) => removeNamedArg(text, err.pos, "text"),
+        });
+        continue;
+      }
+      skip(err.code, "e0129-dropped-argument-has-no-single-repair", err.message);
+      continue;
     }
     if (err.code === "E0124") {
       // The repair is a type that applies the constructor — `type IntList =
