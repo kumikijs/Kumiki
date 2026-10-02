@@ -506,6 +506,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
+> `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
@@ -515,7 +516,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、ペイロードを伴う variant タグ（`onClick=Some(1)`）、引数を伴う tile call（`onClick=box(text("z"))`）、props を伴う tile call（`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
-照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `headers` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`app.http` の `base-url` / `headers` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、`List(T).sort-by` のキー（`<` が順序を与える数値・`Text`・`Time` のいずれかでなければならない。fragment で書いても、名前で渡した `fn` でもよく、後者は宣言された戻り値型がキーの型になる。[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
 このコードのメッセージのうち 1 つは型についてのものではない。Fetch のモードを名指さない `credentials` のリテラルは、位置の要求する型 — `Text` — をまさに持っており、誤っているのは値だけである：3 つのモードはそのフィールドの値域の制約であり、同じ位置での同じ誤り — その位置が取れない値 — なのでこのコードで報告する。
 

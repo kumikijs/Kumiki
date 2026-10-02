@@ -3072,8 +3072,14 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         const fragment = FRAGMENT_ARGUMENTS.get(e.method);
         for (const [i, a] of e.args.entries()) {
           if (fragment?.index === i && isFragmentFnName(a, sym, ctx)) {
-            checkFragmentFnArity(a, e.method, fragment, recvType, sym, errors);
+            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, sym, errors);
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
+            // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
+            // value), so the key it computes is what the fn declares it
+            // returns. A fn already refused for its arity is not checked again.
+            if (fits && e.method === "sort-by" && i === 0) {
+              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+            }
             continue;
           }
           // Inside a method-call argument `$1` / `$2` are the implicit lambda's
@@ -3088,7 +3094,9 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           bindLocal(inner, "$1", p1);
           bindLocal(inner, "$2", p2);
           checkExpr(a, sym, errors, inner);
-          if (e.method === "sort-by" && i === 0) checkSortKey(a, recvType, sym, errors, inner);
+          if (e.method === "sort-by" && i === 0) {
+            checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
+          }
           // An argument whose type the receiver's fixes is checked against it
           // like any declared position — which is also what builds a list
           // literal there as the Set it is declared to be (stdlib.md §2.2.2).
@@ -3215,6 +3223,9 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
  *   takes it only over a `Map` or a `List` of pairs. Over any other receiver
  *   the second argument would be the JS index or the element again. A
  *   receiver whose type cannot be decided is given the benefit of the doubt.
+ *
+ * Answers whether the count fits, so a caller checks nothing further about a
+ * `fn` already reported here.
  */
 function checkFragmentFnArity(
   a: Expr & { kind: "Ref" },
@@ -3223,28 +3234,29 @@ function checkFragmentFnArity(
   receiver: TypeExpr | null,
   sym: SymbolTable,
   errors: KumikiError[],
-): void {
+): boolean {
   const n = sym.fns.get(a.name)?.params.length ?? 0;
-  const report = (why: string): void => {
+  const report = (why: string): false => {
     errors.push({
       code: "E0213",
       kind: "call-arity-mismatch",
       message: `Function "${a.name}" expects ${n} argument(s) but ${why}`,
       pos: a.pos,
     });
+    return false;
   };
   if (fragment.second === "element") {
-    if (n !== 2) report(`.${method} supplies exactly 2 — the accumulator and the element`);
-    return;
+    return n === 2 || report(`.${method} supplies exactly 2 — the accumulator and the element`);
   }
-  if (n === 0) report(`.${method} needs at least 1`);
-  else if (n > fragment.binds) report(`.${method} supplies at most ${fragment.binds}`);
-  else if (n === 2 && fragment.second === "pair-value" && bindsPairs(receiver, sym) === false) {
+  if (n === 0) return report(`.${method} needs at least 1`);
+  if (n > fragment.binds) return report(`.${method} supplies at most ${fragment.binds}`);
+  if (n === 2 && fragment.second === "pair-value" && bindsPairs(receiver, sym) === false) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
-    report(
+    return report(
       `.${method}${on} supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)`,
     );
   }
+  return true;
 }
 
 /**
@@ -3280,29 +3292,31 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
 }
 
 /**
- * `List(T).sort-by(expr)` orders the list by `expr` the way `<` orders two
+ * `List(T).sort-by(key)` orders the list by its key the way `<` orders two
  * values (stdlib.md §2.2.3), so the key has to be one `<` accepts: numeric,
- * `Text` or `Time` (language.md §1.9.4). A record, a variant, a `Bool` or a
- * container has no such order, and the runtime would leave the list as it
- * found it; that is reported here as the comparison it stands for would be.
- * A key the checker cannot type is left alone.
+ * `Text` or `Time` (language.md §1.9.4). A record, a variant, a `Bool`, an
+ * `Option` or a container has no such order, and the runtime would leave the
+ * list as it found it; that is reported here as the comparison it stands for
+ * would be. `t` is the key's type: the fragment's inferred type, or the
+ * declared return type of a `fn` passed by name. A key whose type is unknown —
+ * one the checker cannot infer, or a `fn` with no declared return type — is
+ * left alone, as is any receiver not known to be a `List`.
  */
 function checkSortKey(
-  key: Expr,
+  t: TypeExpr | null,
+  pos: Pos,
   recv: TypeExpr | null,
   sym: SymbolTable,
   errors: KumikiError[],
-  ctx: Ctx,
 ): void {
   const r = unaliasType(recv, sym);
   if (r?.kind !== "TypeApp" || r.name !== "List") return;
-  const t = inferType(key, sym, ctx);
   if (!isKnown(t, sym) || orderingFamily(t, sym) !== null) return;
   errors.push({
     code: "E0201",
     kind: "type-mismatch",
     message: `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${typeToString(t as TypeExpr)}`,
-    pos: key.pos,
+    pos,
   });
 }
 

@@ -80,6 +80,44 @@ describe("listSortBy (docs/spec/stdlib.md §2.2.3 List.sort-by)", () => {
     ]);
     expect(_stdlibCore.listSortBy([10, 9, 100], (x) => x)).toEqual([9, 10, 100]);
   });
+
+  // A key the checker could not type arrives as whatever it is at runtime.
+  const keyed = (ks: unknown[]) => ks.map((k, i) => ({ id: i, k }));
+  const ids = (xs: { id: number }[]) => xs.map((x) => x.id);
+
+  it("sorts an absent (undefined) key after every other, keeping its order", () => {
+    // Compared as "equal" to everything, one missing key used to leave the
+    // whole list as it found it.
+    expect(ids(_stdlibCore.listSortBy(keyed([3, undefined, 1, null, 2]), (x) => x.k))).toEqual([
+      2, 4, 0, 1, 3,
+    ]);
+    expect(
+      ids(_stdlibCore.listSortBy(keyed([undefined, undefined, undefined]), (x) => x.k)),
+    ).toEqual([0, 1, 2]);
+  });
+
+  it("sorts a NaN key after every other, keeping its order", () => {
+    expect(
+      ids(_stdlibCore.listSortBy(keyed(["b", Number.NaN, "a", Number.NaN]), (x) => x.k)),
+    ).toEqual([2, 0, 1, 3]);
+  });
+
+  it("orders a numeric key that arrives as Text the way `<` does", () => {
+    // Text against Text compares as text ("10" < "9"); Text against a number
+    // is coerced to a number. Not converted to the declared type
+    // (stdlib.md §2.2.3).
+    expect(_stdlibCore.listSortBy(["9", "10"], (x) => x)).toEqual(["10", "9"]);
+    expect(_stdlibCore.listSortBy([10, "9", 2], (x) => x)).toEqual([2, "9", 10]);
+  });
+
+  it("keeps every element of a key list `<` cannot order, and leaves the input alone", () => {
+    // A number against a non-numeric Text answers false both ways, so there
+    // is no single order to assert — only that nothing is lost or mutated.
+    const xs = keyed([3, "b", 1, { r: 1 }, "a"]);
+    const out = _stdlibCore.listSortBy(xs, (x) => x.k);
+    expect(ids(out).sort()).toEqual([0, 1, 2, 3, 4]);
+    expect(ids(xs)).toEqual([0, 1, 2, 3, 4]);
+  });
 });
 
 describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
