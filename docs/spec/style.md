@@ -65,6 +65,8 @@ theme DefaultTheme = {
 }
 ```
 
+A `breakpoints` width is a minimum viewport width in `px`, `rem` or `em` (`"640px"`, `"48rem"`), or a bare number, which is px (`md: 500`). Anything else — another unit, a nested entry — is not a breakpoint and is ignored ([§4.5](#_4-5-responsive)).
+
 ### 4.2.1 Syntax
 
 ```
@@ -260,6 +262,8 @@ grid(A, B, C, D) {
 ```
 
 The keys are `base` plus the keys of theme.breakpoints (`sm`, `md`, `lg`, `xl`).
+
+The breakpoints are the **active theme's**: its `breakpoints` over the [§4.2](#_4-2-design-tokens) defaults (`sm` 640px, `md` 768px, `lg` 1024px, `xl` 1280px) for any key it leaves out, so a theme can move `md` or add a key of its own (`wide: "1800px"`). A map resolves to the value of the widest breakpoint whose minimum width the viewport reaches, and to `base` below all of them. A grid's `cols` and `rows` take a map the same way as `gap` / `pad`. Server rendering has no viewport and serves `base` ([runtime §10.6.1](./runtime.md#_10-6-1-ssr)). Breakpoints are tried widest first by their size in px, with `rem` and `em` counted at 16px each — the initial font size a media query resolves them against — so a theme can mix units (`md: "48rem"` sits above `sm: "640px"`); a width [§4.2](#_4-2-design-tokens) does not recognise is left out of the order. The value is picked when the tile renders: resizing the window does not re-pick it until the tile next renders.
 
 ---
 

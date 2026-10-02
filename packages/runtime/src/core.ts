@@ -549,6 +549,27 @@ export function showRefinementPath(path: readonly RefinementStep[]): string {
     .join("");
 }
 
+/**
+ * A failed predicate as every report spells it: `between(0, 3)`, `uuid at
+ * .keys["k1"]`, or `its refinement` when the predicate is unnamed. The one
+ * formatter for a refused slot write (runtime.md §10.3.3) and a refused
+ * `Decoder.Json(T)` (effects-decode.ts), since both are the same check.
+ */
+export function showRefinementFailure(f: {
+  kind?: string;
+  args?: readonly (number | string)[];
+  path?: readonly RefinementStep[];
+}): string {
+  const pred =
+    f.kind === undefined
+      ? "its refinement"
+      : f.args && f.args.length > 0
+        ? `${f.kind}(${f.args.join(", ")})`
+        : f.kind;
+  const at = f.path && f.path.length > 0 ? ` at ${showRefinementPath(f.path)}` : "";
+  return `${pred}${at}`;
+}
+
 /** The slot fields that decide whether a value is let in. */
 export type SlotGate = {
   refine?: RefinementCheck;
@@ -1402,14 +1423,7 @@ export function batchRejections(
  * `slot "form" cannot hold {"email":"nope"} (email at .email)`.
  */
 function describeRejection(r: RefinementRejection): string {
-  const pred =
-    r.kind === undefined
-      ? "its refinement"
-      : r.args && r.args.length > 0
-        ? `${r.kind}(${r.args.join(", ")})`
-        : r.kind;
-  const at = r.path && r.path.length > 0 ? ` at ${showRefinementPath(r.path)}` : "";
-  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${pred}${at})`;
+  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${showRefinementFailure(r)})`;
 }
 
 /**
@@ -5377,21 +5391,75 @@ export const pickBaseValue: ResponsivePick = (raw) => {
   return asScalar((raw as Record<string, unknown>).base);
 };
 
-/** The largest matching breakpoint, falling back to the base. */
-const pickForViewport: ResponsivePick = (raw) => {
+/** style.md §4.2's breakpoints, for a theme that declares none of its own. */
+const DEFAULT_BREAKPOINTS: Record<string, ThemeValue> = {
+  sm: "640px",
+  md: "768px",
+  lg: "1024px",
+  xl: "1280px",
+};
+
+/**
+ * A breakpoint's width as `[min-width query value, px]`, or undefined for a
+ * value that is not one (a nested theme value, `"wide"`, `"40ch"`). A number
+ * and a bare numeric string are px; rem and em count 16px each, the initial
+ * font size a media query resolves them against (style.md §4.5). The px is
+ * only for ordering — the query keeps the unit the theme wrote.
+ */
+function breakpointWidth(w: ThemeValue): [string, number] | undefined {
+  if (typeof w === "object") return undefined;
+  const m = /^(\d+(?:\.\d+)?|\.\d+)(px|rem|em)?$/.exec(String(w).trim());
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return m[2] ? [`${m[1]}${m[2]}`, m[2] === "px" ? n : n * 16] : [`${n}px`, n];
+}
+
+/**
+ * The largest matching breakpoint, falling back to the base. The breakpoints
+ * are the active theme's (style.md §4.5), over the §4.2 defaults for any key
+ * it leaves out, so a theme can move `md` or add a key of its own. They are
+ * tried widest first by their px size, so a theme may mix px, rem and em.
+ */
+export const pickForViewport: ResponsivePick = (raw) => {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
   const m = raw as Record<string, unknown>;
-  const order: Array<["xl" | "lg" | "md" | "sm", string]> = [
-    ["xl", "(min-width: 1280px)"],
-    ["lg", "(min-width: 1024px)"],
-    ["md", "(min-width: 768px)"],
-    ["sm", "(min-width: 640px)"],
-  ];
-  for (const [bp, q] of order) {
-    if (m[bp] !== undefined && window.matchMedia(q).matches) return asScalar(m[bp]);
+  const declared = currentTheme()?.breakpoints;
+  const bps = {
+    ...DEFAULT_BREAKPOINTS,
+    ...(declared && typeof declared === "object" ? declared : {}),
+  };
+  const widest: [string, string, number][] = [];
+  for (const [k, w] of Object.entries(bps)) {
+    const width = breakpointWidth(w);
+    if (width) widest.push([k, ...width]);
+  }
+  widest.sort((a, b) => b[2] - a[2]);
+  for (const [bp, w] of widest) {
+    if (m[bp] !== undefined && window.matchMedia(`(min-width: ${w})`).matches) {
+      return asScalar(m[bp]);
+    }
   }
   return asScalar(m.base);
 };
+
+/**
+ * A grid's tracks (style.md §4.4.2). `cols` and `rows` take the same shapes: a
+ * count, which divides the axis equally, a CSS track list, or a responsive map
+ * of either (§4.5), which `pick` collapses — to the viewport's breakpoint on
+ * the client (`tiles-layout.ts`), to `base` in SSR (`ssr-render.ts`). Only
+ * `cols` has a default — a grid with no `rows` grows one row per line of
+ * content, which is what a grid does.
+ */
+export function gridTracks(
+  props: TileProps | undefined,
+  pick: ResponsivePick,
+): { cols: string; rows: string | undefined } {
+  return { cols: track(pick(props?.cols)) ?? "repeat(3, 1fr)", rows: track(pick(props?.rows)) };
+}
+
+function track(v: string | number | undefined): string | undefined {
+  return typeof v === "number" ? `repeat(${v}, 1fr)` : v;
+}
 
 /**
  * The declarations a `style: { ... }` block contributes (spec/style.md §4.3) —

@@ -80,7 +80,9 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-Response decoding is type-safe at compile time; at runtime only the JSON syntax is checked. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A body that parses but does not match the declared type is not detected at runtime. A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
+Response decoding is type-safe at compile time; at runtime the JSON syntax is checked, and so is every predicate the declared type carries. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
+
+The decoded value is also checked against `T`: every predicate `T` carries, at every position it is written at — the check a write to a slot of type `T` gets ([§10.3.3](./runtime.md#_10-3-3-batching)). A value it refuses is the same `HttpError`, with a `message` that names the predicate and where the value failed it (`decode failed: uuid at .id`). Only the predicates are checked: a position where `T` carries none is taken as it arrives, so a body that parses but does not match the declared shape is not detected at runtime. A host provider registered for a read capability (`http.*`, `storage.read`, `session.read`, `indexed.read`; [Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)) receives this check as the request's `decode`, a function: given the parsed value it returns `undefined` when `T` accepts it and the failed predicate (`{kind, args, path}`) when `T` refuses it. For a `T` that carries no predicate, `decode` is the string `"json"`.
 
 ### 6.1.5 Common props (auto-applied)
 
@@ -292,7 +294,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | Up to N times, retried at ms intervals |
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
-Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON: the server already accepted the request, so a retry would duplicate its effect.
+Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON or whose value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
 
 ---
 
@@ -355,6 +357,10 @@ A clear is decided by the declaration: an effect declared `in=Unit` (directly or
 
 A request that is none of these is `err` and changes nothing: one that is not a record (an empty request included, which is also what an index into a `Map` that finds nothing produces), a `key` that is not a non-empty `Text`, or a `value` that JSON cannot encode. A failed Web Storage call (quota, `SecurityError`) is also `err`, and its message names the call and the key. A host provider for `storage.write` ([§2.5](./stdlib.md#_2-5-standard-capabilities)) receives the request as the effect's input or `map-request` built it, and receives no request for a clear.
 
+A stored value is always parsed as JSON. When the read's `Decoder.Json(T)` refuses what it parsed, checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response, the read is `.err` with a `Text` starting `decode failed:`, as it is for a value that does not parse. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
+
+**The err value is the declared `Text`.** A storage / session / indexed effect that fails delivers the failure's message as a plain `Text` — `"SecurityError: …"` when a read finds the backend blocked, the message naming the call and the key when a write does, `"app.indexed-db is not declared"` when an `indexed-*` effect runs without one — not a record wrapping it. A throw from the effect's `map-request`, or from a host provider registered for the capability, is delivered as the same `Text`. So `.err($e, _)` binds `$e : Text` ([Positional Binding](./language.md#_1-6-5-positional-binding)): `problem := $e` stores the message, and `$e.message` is E0108.
+
 ### 6.7.3 Example
 
 ```kumiki snippet
@@ -388,7 +394,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` has the same shape. `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`.
+`session-*` has the same shape. `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`. A refused `Decoder.Json(T)` is `.err` on `session-read` and `indexed-read` as on `storage-read`; IndexedDB holds structured values, so nothing is parsed there, but the check still runs.
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read

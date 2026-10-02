@@ -89,6 +89,19 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
     expect(miss.value).toMatchObject({ _tag: "None" });
   });
 
+  it("a point read whose Decoder.Json check refuses the record is an err", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-decode" };
+    await indexedWrite({ store: "notes", key: "a", value: { body: "" } }, localCfg);
+    const check = (v: unknown) =>
+      (v as { body: string }).body.length > 0
+        ? undefined
+        : { kind: "nonempty", args: [], path: ["body"] };
+    expect(await indexedRead({ store: "notes", key: "a", decode: check }, localCfg)).toEqual({
+      kind: "err",
+      value: "decode failed: nonempty at .body",
+    });
+  });
+
   it("delete removes a previously written value", async () => {
     const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-2" };
     await indexedWrite({ store: "notes", key: "a", value: { body: "x" } }, localCfg);

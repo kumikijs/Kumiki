@@ -1,0 +1,25 @@
+# Feature (style.md §4.5): a style prop can branch by breakpoint with a
+# `{base, …}` map, and the breakpoints are the active theme's. `Narrow` moves
+# `md` down to 500px and adds a `wide` key of its own; a key a theme leaves
+# out keeps its §4.2 default.
+#
+# `cols` and `rows` take a map like any other responsive prop: the grid below
+# is one column on a phone, two from `md`, four from `lg` and six from `wide`.
+# A viewport of 600px is `md` under this theme, not the 768px default, so it
+# gets two columns and the larger gap. Server rendering has no viewport and
+# serves `base`.
+
+theme Narrow = {
+    breakpoints: { sm: "300px", md: "500px", lg: "900px", xl: "1400px", wide: "1800px" }
+}
+
+tile App = column(
+    grid(text("a"), text("b"), text("c"), text("d"), text("e"), text("f"))
+        {cols: {base: 1, md: 2, lg: 4, wide: 6}, rows: {base: "auto", lg: "80px"}, id: "tracks"},
+    column(text("spaced")) {gap: {base: "sm", md: "lg"}, pad: {base: "md", lg: "xl"}, id: "spaced"})
+
+app ResponsiveBreakpoints
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    theme  = Narrow

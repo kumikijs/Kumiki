@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   BUILTIN_TILES,
   compile,
+  EFFECT_HANDLERS_SHARED,
   isPerTileFamily,
   PER_TILE_FAMILIES,
   PER_TILE_FAMILY_SHARED,
@@ -123,6 +124,7 @@ describe("compiler TILE_FAMILY ⇆ runtime tiles-* modules (#71)", () => {
       "stdlib",
       "testkit",
       "router",
+      EFFECT_HANDLERS_SHARED,
       "effects-storage",
       "effects-indexed",
       "effects-http",
@@ -188,15 +190,16 @@ describe("every example compiles in modular mode with resolvable imports (#71)",
         expect(AVAILABLE_MODULES.has(mod), `unknown runtime module "${mod}"`).toBe(true);
       }
       // …and matches the imports the generated code actually contains, except
-      // for a per-tile family's shared module: the tile modules reach it
-      // relatively, so it is copied without appearing in the header. Anything
+      // for a module other modules share — a per-tile family's, or the effect
+      // handlers' — which they reach relatively, so it is copied without
+      // appearing in the header. Anything
       // else declared-but-unimported is a module shipped for no reason, and
       // anything imported-but-undeclared is a dangling import at runtime.
       const imported = new Set(
         [...result.js.matchAll(/from "\.\/runtime\/([\w-]+)\.js"/g)].map((m) => m[1] as string),
       );
       const declared = new Set(result.runtimeModules);
-      const shared = new Set(Object.values(PER_TILE_FAMILY_SHARED));
+      const shared = new Set([...Object.values(PER_TILE_FAMILY_SHARED), EFFECT_HANDLERS_SHARED]);
       for (const mod of imported) {
         expect(declared.has(mod), `imported "${mod}" but did not declare it`).toBe(true);
       }

@@ -294,6 +294,35 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // Still 63,000 (61,620 measured, from 61,527): `Map.map` maps each entry.
     // `mapOver` tells a Map apart from a tagged Option / Result and restores
     // each key as `keys` does; it sits in stdlib, which every app loads.
+    //
+    // Still 63,000 (62,504 measured, from 61,933 on dev at 46d9dca):
+    // `Time.parse` reads ISO 8601 `YYYY-MM-DD` with an optional time and zone
+    // itself, and refuses a date that is not on the calendar (stdlib.md
+    // §2.2.8). The bytes are `ISO_TIME`, `isCalendarDate` and the
+    // field-by-field reading in `parseTime` that replaces the platform's
+    // parser, which rolls `2026-02-30` over into March. A counter parses no
+    // time and still ships it, because `parseTime` sits in the stdlib module
+    // every app loads.
+    //
+    // Still 63,000 (62,940 measured, from 62,504 on dev at f9a999c): the
+    // viewport pick reads the active theme's breakpoints over the style.md
+    // §4.2 defaults (`DEFAULT_BREAKPOINTS` in core.js) and orders them by their px size,
+    // counting rem and em at 16px (§4.5); a grid's track mapping moved from
+    // tiles-layout.js into core.js so SSR shares it without importing a
+    // renderer. A counter picks no viewport and lays out no grid and still
+    // ships them, because they sit in modules every app loads.
+    //
+    // Still 63,000 (62,985 measured, from 62,940 on dev at d8ff739): a decoded
+    // value its type refuses is the effect's err (http.md §6.1.4), named by the
+    // formatter a refused slot write uses. That formatter, `showRefinementFailure`,
+    // now sits in core as an export the decode handlers share instead of inline
+    // in the slot-write report; a counter decodes nothing and still ships it.
+    //
+    // Still 63,000 (62,994 measured, from 62,985 on dev at fbbec02): an err a
+    // storage-family invoke caught from a throw is `final` (http.md §6.7), and
+    // `runWithRetry` returns it without another attempt. The 9 bytes are that
+    // check in the retry loop, which sits in core every app loads; a counter
+    // retries nothing and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

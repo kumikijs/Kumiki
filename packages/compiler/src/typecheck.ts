@@ -4353,7 +4353,8 @@ const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
 
 /**
  * Result types of the built-in calls that have one. `panic` never returns and
- * `Decoder.*` produce an opaque sentinel, so both stay undecidable.
+ * `Decoder.*` produce an opaque decoder (a sentinel, or `Decoder.Json(T)`'s
+ * check), so both stay undecidable.
  */
 const CALL_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["now", "Time"],

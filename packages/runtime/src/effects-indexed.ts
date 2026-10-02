@@ -8,6 +8,7 @@
 // than a rejection.
 
 import type { EffectResult } from "./core.ts";
+import { type Decode, decodeRefusal } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 export type IndexedDbStore = { name: string; key: string; indexes?: string[] };
@@ -74,12 +75,18 @@ export async function indexedRead(input: unknown, cfg?: IndexedDbCfg): Promise<E
   // `?.`: an `in=Unit` effect with no `map-request` has no request at all,
   // which falls through to the query and fails there as its `Text` err.
   const x = input as { store: string; key?: unknown } | undefined;
-  if (x?.key !== undefined) return pointRead(x as { store: string; key: string }, cfg);
+  if (x?.key !== undefined)
+    return pointRead(x as { store: string; key: string; decode?: Decode }, cfg);
   return indexedQuery(input, cfg);
 }
 
+/**
+ * A stored record is a structured clone, not JSON, so nothing is parsed; a
+ * `Decoder.Json(T)` whose `T` refuses the record makes the read an `err`, as a
+ * refused `storage.read` is (http.md §6.7.4).
+ */
 async function pointRead(
-  input: { store: string; key: string },
+  input: { store: string; key: string; decode?: Decode },
   cfg?: IndexedDbCfg,
 ): Promise<EffectResult> {
   if (!ensureCfg(cfg)) {
@@ -90,6 +97,8 @@ async function pointRead(
     const tx = db.transaction(input.store, "readonly");
     const value = await reqToPromise(tx.objectStore(input.store).get(input.key));
     if (value === undefined) return { kind: "ok", value: _stdlibCore.None };
+    const refused = decodeRefusal(input.decode, value);
+    if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
     return { kind: "err", value: String(e) };

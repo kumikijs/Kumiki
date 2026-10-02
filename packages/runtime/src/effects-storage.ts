@@ -8,6 +8,7 @@
 // declare as `E` in `out=Result(T, Text)` (http.md §6.7).
 
 import type { EffectResult } from "./core.ts";
+import { type Decode, decodeRefusal } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
@@ -16,14 +17,19 @@ type Backend = "localStorage" | "sessionStorage";
  * The read of http.md §6.7.2. Everything that can throw is inside the `try`:
  * the backend's getter (it throws `SecurityError` in an opaque-origin
  * sandbox) and the request itself (an `in=Unit` read with no `map-request` has
- * none), so a failure is always the `Text` err and never a rejection.
+ * none), so a failure is always the `Text` err and never a rejection. A stored
+ * value is JSON, so it is always parsed; a `Decoder.Json(T)` whose `T` refuses
+ * what it parsed to makes the read an `err`, the same way a value that does not
+ * parse does.
  */
 async function readFrom(backend: Backend, input: unknown): Promise<EffectResult> {
   try {
-    const { key } = input as { key: string };
+    const { key, decode } = input as { key: string; decode?: Decode };
     const raw = globalThis[backend].getItem(key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
     const value = JSON.parse(raw);
+    const refused = decodeRefusal(decode, value);
+    if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
     return { kind: "err", value: String(e) };
