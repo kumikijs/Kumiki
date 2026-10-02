@@ -286,6 +286,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // form submit gate above, and the owner chose to raise the budget once
     // rather than hold every open change at the old line.
     //
+    // Still 63,000 (61,430 measured, from 61,164):
+    // `heading` renders the element its level names. The 266 bytes are
+    // `headingTag` and the patcher's rebuild on a level change; a counter
+    // renders a heading, so it ships them.
+    //
     // Still 63,000 (61,507 measured, from 61,162):
     // an index step reaches the setter apart from a field step
     // (language.md §1.6.3), so a write through a Map key that is absent writes
