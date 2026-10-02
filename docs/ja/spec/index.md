@@ -275,5 +275,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | ルーティング | [§3.1.2](./routing.md#_3-1-2-マッチ順序) |
 | `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
 | `156-heading-level.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.3.2](./stdlib.md#_2-3-2-テキスト要素) |
+| `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
 <!-- examples:end -->
 :::

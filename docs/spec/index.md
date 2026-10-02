@@ -275,5 +275,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
 | `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
 | `156-heading-level.kumiki` | slot, reducer, tile | stdlib | [§2.3.2](./stdlib.md#_2-3-2-text-elements) |
+| `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | core | [§10.5.3](./runtime.md#_10-5-3-replay) |
 <!-- examples:end -->
 :::
