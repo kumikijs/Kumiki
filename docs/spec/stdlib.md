@@ -337,6 +337,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `code` | code | `lang` |
 | `markdown` | Markdown rendering | (content is the argument) |
 
+Each value builtin reads its content from one place ([Language §1.7.1](./language.md#_1-7-1-syntax)): `text`, `heading`, `code` and `markdown` from their first positional argument; `link`, `label` and `editable` from their first positional argument, or `text=` when none is written; `image` and `icon` from `src=` and `name=`. An argument written as content that the builtin does not read — a second positional, a positional on `image` / `icon`, `text=` on a text builtin with no positional, `text=` beside a positional on `link` / `label` / `editable` — is never rendered and is [E0129](./errors.md#e0129-unrendered-arg).
+
 `heading` renders `<h1>` … `<h6>` for its `level`, on the client and in server rendering alike, and `<h1>` when no `level` is given. A fractional `level` drops its fraction, and one outside 1-6 is drawn at the nearer end (`0` is an `<h1>`, `9` an `<h6>`). A `level` that changes between renders re-creates the element, since a tag cannot change in place.
 
 `link` `external` opens the link in a new browsing context (`target="_blank"`, with the `rel="noopener noreferrer"` that has to accompany it) and leaves it to the browser rather than the router.

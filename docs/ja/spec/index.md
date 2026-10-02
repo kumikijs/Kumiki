@@ -85,6 +85,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | コア |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | コア |
 | [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | コア |
+| [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -284,6 +285,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `160-tile-test-content-fields.kumiki` | slot, tile | テスト | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | コア | [§1.6.4](./language.md#_1-6-4-不変条件) |
 | `162-fragment-binds-by-type.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 <!-- examples:end -->
 :::

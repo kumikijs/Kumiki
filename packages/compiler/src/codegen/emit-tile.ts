@@ -1,7 +1,7 @@
 import { unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
-import { BUILTIN_TILES } from "../builtins.ts";
+import { BUILTIN_TILES, contentArg } from "../builtins.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import {
@@ -140,7 +140,13 @@ export function tileExprJs(
       const bind = declareBind(inner, t.bind);
       const impl = `_s.show(${bind})`;
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      return `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
+      const list = `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
+      // A `for` reached by an enclosing `for`'s implicit key — its body, or an
+      // arm of a branch there — renders a list per outer iteration, each node
+      // keyed by this loop's variable alone, so siblings from different outer
+      // iterations would collide once flattened. `_wk` pairs each node's key
+      // with the outer iteration's.
+      return implicitKeyExpr ? `_wk(${list}, ${implicitKeyExpr})` : list;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.
@@ -566,16 +572,16 @@ function tileCallJs(
         return `({ kind: "form", children: [${children}], props: ${propsObj} })`;
       }
       case "label": {
-        const text = t.args.find((a) => a.name === "text");
-        const textJs = text ? jsOfExpr(asExpr(text.value), ctx) : '""';
-        return `({ kind: "label", text: _s.show(${textJs}), props: ${propsObj} })`;
+        const text = contentJs(t, ctx);
+        return `({ kind: "label", text: _s.show(${text}), props: ${propsObj} })`;
       }
       case "link": {
         const toArg = t.args.find((a) => a.name === "to");
         const to = toArg ? jsOfExpr(asExpr(toArg.value), ctx) : '""';
-        // Label is the `text=` argument (canonical, consistent with `button`); the
-        // `{text: …}` prop form is also accepted for back-compat (§1.7.1).
-        const textArg = t.args.find((a) => a.name === "text");
+        // The label is the content argument (the first positional one, else
+        // `text=`); the `{text: …}` prop form is also accepted for back-compat
+        // (§1.7.1).
+        const textArg = contentArg(t);
         const textProp = t.props.find((p) => p.name === "text");
         const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
         const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
@@ -608,12 +614,12 @@ function tileCallJs(
       case "skeleton":
         return `({ kind: "skeleton", props: ${propsObj} })`;
       case "image": {
-        const src = t.args.find((a) => a.name === "src");
+        const src = contentArg(t);
         const srcJs = src ? jsOfExpr(asExpr(src.value), ctx) : '""';
         return `({ kind: "image", src: _s.show(${srcJs}), props: ${propsObj} })`;
       }
       case "icon": {
-        const name = t.args.find((a) => a.name === "name");
+        const name = contentArg(t);
         const nameExpr = name ? asExpr(name.value) : null;
         // String-literal names get captured so the toolchain can bake matching
         // entries from the project's icon registry into `App.icons` (#101). Other
@@ -743,13 +749,12 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "editable": {
-        // contenteditable: first positional (or `text=`) supplies initial
-        // content; `bind=` optionally writes back user edits. Mirrors the
-        // input / textarea shape so codegen for text-in-bind is uniform.
+        // contenteditable: the content argument supplies initial content;
+        // `bind=` optionally writes back user edits. Mirrors the input /
+        // textarea shape so codegen for text-in-bind is uniform.
         const fields: string[] = [`kind: "editable"`];
         const bindInfo = extractBindPath(t.args);
-        const textArg = firstPositional(t) ?? t.args.find((a) => a.name === "text");
-        const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
+        const textJs = contentJs(t, ctx);
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `text: _s.show(${bindInfo.read})`);
         } else {
@@ -767,18 +772,20 @@ function tileCallJs(
 }
 
 /**
- * The first positional argument of a tile call: a builtin's content, or a
- * user tile's input. A named argument is a prop wherever it is written, so
- * `heading(level=2, title)` says `title`; reading `args[0]` instead rendered
- * the level and dropped the title.
+ * The first positional argument of a user tile call: its input. A named
+ * argument is a prop wherever it is written. A builtin's content is read by
+ * the same rule, through `contentArg`.
  */
 function firstPositional(t: TileExpr & { kind: "TileCall" }): TileArg | undefined {
   return t.args.find((a) => a.name === undefined);
 }
 
-/** A value builtin's content as JS; `""` when the call has no positional argument. */
+/**
+ * A value builtin's content as JS — the argument `contentArg` names from the
+ * shared table — and `""` when the call writes none.
+ */
 function contentJs(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string {
-  const arg = firstPositional(t);
+  const arg = contentArg(t);
   return arg ? jsOfExpr(asExpr(arg.value), ctx) : '""';
 }
 

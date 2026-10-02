@@ -509,6 +509,23 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 
 **修正**：値を tile で表示する —— `column(text(n.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。
 
+### E0129 `unrendered-arg`
+
+値 builtin に、決して描画されない引数が内容として書かれている。それぞれ内容を 1 か所から読む（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）：`text`・`heading`・`code`・`markdown` は最初の位置引数から、`link`・`label`・`editable` は最初の位置引数から、それが無ければ `text=` から、`image`・`icon` は `src=`・`name=` から。内容としてそれ以外に書いたものはどこにも行かない：
+
+- builtin が読む分を超える位置引数。`text("A", "B")` は `A` を描画し、`B` は捨てられる。位置引数を読まない `image` と `icon` では、すべて捨てられる。
+- 位置引数の無い `text` / `heading` / `code` / `markdown` の `text=`。`text=` は `button`・`link`・`label`・`editable` のラベル引数であり、テキスト系 builtin では prop なので、`heading(text=title)` は空の見出しを描画する。
+- `link` / `label` / `editable` で位置引数と並べた `text=`。これらは位置引数が無いときだけ `text=` を読むので、`label(text="A", "B")` は `B` を描画し、`A` は捨てられる。
+
+> `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
+> `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
+> `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
+> `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
+
+どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを上の順に `positional`・`text-prop`・`text-shadowed` で示す。これらは `check`・`build`・`smoke` のすべてを通っていた：引数はパースされ、型検査され、ページには届かなかった。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
+
+**修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
