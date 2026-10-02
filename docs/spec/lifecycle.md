@@ -124,6 +124,7 @@ Expressed via the `Result(T, E)` type. When an effect's return value is `Result.
 
 - `Option.get` returned None inside a reducer
 - An index `xs[i]`, read or written, named no element of a `List` (past the end, or negative)
+- A read `m[k]` named a key the `Map` does not hold
 - `Result.get` was an Err
 - An explicit call to `panic(msg)`
 

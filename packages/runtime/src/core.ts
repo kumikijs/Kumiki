@@ -3644,15 +3644,27 @@ function elementAtPath(path: number[], root: Element): Element | null {
  * (and, at runtime, any) case is reachable there. `bind=` resolves only static
  * field chains, which is why its own alphabet is narrower.
  */
-export type PathSegment = string | number | { get: true };
+export type PathSegment = string | number | { get: true } | { at: unknown };
 
 /** The segments a `bind=` path can hold — what `TileNode.bindPath` carries. */
 export type BindSegment = Extract<PathSegment, string | { get: true }>;
 
-/** `{get: true}` and nothing else. An index that happens to evaluate to an
- * object is a key, not an unwrap. */
+/** `{get: true}` and nothing else. Asked only of a step that is not an index:
+ * an index key that happens to have that shape (`Map({get: Bool}, V)`) is a
+ * key, not an unwrap. */
 function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
-  return typeof seg === "object" && seg !== null && seg.get === true;
+  return typeof seg === "object" && seg !== null && (seg as { get?: unknown }).get === true;
+}
+
+/**
+ * `{at: key}`: an index step (`xs[i]`, `m[k]`), which a reducer's assignment
+ * emits for every `[…]` in its path. A field step and a key are both a string
+ * once evaluated, and they part company where the place is absent: a missing
+ * record field is a level to build, and a missing Map entry is one there is
+ * nothing to write through (language.md §1.6.3).
+ */
+function isIndexSegment(seg: PathSegment): seg is { at: unknown } {
+  return typeof seg === "object" && seg !== null && Object.hasOwn(seg, "at");
 }
 
 /**
@@ -3722,9 +3734,11 @@ export function _setPathHelper(
   // expression evaluated to, and an `undefined` one read as "path exhausted"
   // would put `value` where the whole slot was.
   if (path.length === 0) return value;
-  const head = path[0] as PathSegment;
+  const step = path[0] as PathSegment;
   const rest = path.slice(1);
-  if (isUnwrapSegment(head)) {
+  const indexed = isIndexSegment(step);
+  const head = (indexed ? step.at : step) as PathSegment;
+  if (!indexed && isUnwrapSegment(head)) {
     if (obj && typeof obj === "object" && "_tag" in obj) {
       const o = obj as { _tag: string; _0?: unknown };
       if (o._tag === "None" || o._tag === "Err") return obj;
@@ -3756,9 +3770,24 @@ export function _setPathHelper(
   if (typeof head === "number" && (obj === null || typeof obj !== "object")) {
     throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
   }
+  // `m[k].f := v` is `m.update(k, …)` (language.md §1.6.3), which writes
+  // nothing when `k` is absent — building the entry would leave a value
+  // holding only `f`, one its declared type does not describe.
+  if (indexed && rest.length > 0 && !isEntryOf(obj, head)) return obj;
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
   const key = entryKey(head);
   return { ...cur, [key]: _setPathHelper(cur[key], rest, value) };
+}
+
+/**
+ * Whether `key` names an entry of the Map `m` — its own key under `entryKey`,
+ * so a key that happens to name an `Object.prototype` member (`"toString"`) is
+ * not one. One answer for the index read (`_stdlibCore.index`) and the index
+ * write (`_setPathHelper`), so the two sides of `:=` agree about which keys are
+ * there.
+ */
+export function isEntryOf(m: unknown, key: unknown): boolean {
+  return m !== null && typeof m === "object" && Object.hasOwn(m, entryKey(key));
 }
 
 /**

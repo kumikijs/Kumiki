@@ -12,7 +12,7 @@ import {
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
 import { jsOfExpr, reducerEmitJs, reducerNameArg, slotReadJs, tupleArm } from "./expr.ts";
-import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
+import { indexSegmentJs, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 /**
  * Wrap a write to `slot` so the refinement is checked *as it happens*
@@ -386,7 +386,7 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   for (const seg of path) {
     if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
     else if (seg.kind === "unwrap") pathExpr += `, ${JSON.stringify(UNWRAP_SEGMENT)}`;
-    else pathExpr += `, ${jsOfExpr(seg.expr, ctx)}`;
+    else pathExpr += `, ${indexSegmentJs(jsOfExpr(seg.expr, ctx))}`;
   }
   // The runtime's setter, which `bind=` write-back also calls.
   const updated = `_s.setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;

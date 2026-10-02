@@ -196,13 +196,13 @@ describe("a storage.write request that is none of the three shapes is an err, no
     localStorage.clear();
   });
 
-  it("a Map index that finds nothing leaves the storage alone and fires .err", async () => {
+  it("a Map lookup that finds nothing leaves the storage alone and fires .err", async () => {
     const app = await loadSource(
       oneEffect(
         `type Ref = {key: Text}
 slot refs : Map(Text, Ref) = {}
-effect e cap=storage.write in=Ref out=Result(Unit, Text)`,
-        `e(refs["nope"])`,
+effect e cap=storage.write in=Option(Ref) out=Result(Unit, Text)`,
+        `e(refs.get("nope"))`,
       ),
     );
     const [after] = await run(app, localStorage, [["Go", "shown: err"]]);

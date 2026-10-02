@@ -318,7 +318,19 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // now sits in core as an export the decode handlers share instead of inline
     // in the slot-write report; a counter decodes nothing and still ships it.
     //
-    // Still 63,000 (62,994 measured, from 62,985 on dev at fbbec02): an err a
+    // 64,000 from 63,000 (63,331 measured, from 62,985 on dev at fbbec02): an index
+    // step reaches the setter apart from a field step (language.md §1.6.3), so
+    // a write through a Map key that is absent writes nothing, an index key is
+    // never taken for a `.get` unwrap, and a read there panics. The 346 bytes
+    // are `isIndexSegment` and the two branches in `_setPathHelper` that ask
+    // it, `isEntryOf` which both sides of `:=` ask, and the panic in
+    // `_stdlibCore.index`. A counter indexes nothing and still ships them,
+    // because the setter and the stdlib sit on paths every app loads.
+    // Dev was 15 bytes under the line at fbbec02, so this change crosses it;
+    // the budget moves up one step, as it did to 63,000, rather than holding
+    // the change at the old line.
+    //
+    // Still 64,000 (63,340 measured, from 63,331 on dev at 29aa08e): an err a
     // storage-family invoke caught from a throw is `final` (http.md §6.7), and
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
@@ -326,7 +338,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(63_000);
+    expect(total).toBeLessThan(64_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
