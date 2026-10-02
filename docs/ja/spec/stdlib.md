@@ -81,7 +81,7 @@ map(expr)                   : Map(K, V')       ; expr の中で $1=key, $2=value
 
 返されるキー — `keys`・`entries`、および `filter` の `$1` — は、保存されている文字列ではなくキーの型 `K` を持つ。それがどう決まるかは [§2.2.2](#_2-2-2-set-t) を参照。
 
-`.entries` は `List(Tuple(K, V))` として **2 要素配列の列**を返す。後続の `map` / `sort-by` / `filter` lambda はランタイム destructure により `$1=key, $2=value` で扱える：
+`.entries` は `List(Tuple(K, V))` として **2 要素配列の列**を返す。後続の `map` / `sort-by` / `filter` lambda は各ペアを分解して `$1=key, $2=value` で扱う（[§2.2.3](#_2-2-3-list-t)）：
 
 ```kumiki fragment
 fn sortedByCreatedAt(m: Map(Id, Item)) -> List(Id)
@@ -98,7 +98,7 @@ opt.get-or(default)          # Option: None なら default、Some(v) なら v
 `.filter` は **List・Map・Option のいずれに対しても使え**、ランタイムが受信側の型を見て自動振り分けする (polymorphic dispatch)：
 - 受信側が List → 各要素について `pred($1)` を評価、`true` の要素だけ残す
 - 受信側が Map  → 各エントリについて `pred($1, $2)` (key, value) を評価、`true` のエントリだけ残す
-- 受信側が Option → `Some(v)` なら `pred($1=v)` を評価し、`true` ならその `Some(v)`、`false` なら `None`。`None` は `pred` を評価せず `None` のまま ([§2.2.4](#_2-2-4-option-t))
+- 受信側が Option → `Some(v)` なら `$1=v`（`v` が `Tuple(A, B)` なら分解して `$1` / `$2`、[§2.2.3](#_2-2-3-list-t)）で `pred` を評価し、`true` ならその `Some(v)`、`false` なら `None`。`None` は `pred` を評価せず `None` のまま ([§2.2.4](#_2-2-4-option-t))
 
 例えば `m.keys.filter(...)` のようにチェーンしたとき、`m.keys` は `List(K)` を返すため `filter` は List のシグネチャで動く。混在チェーンを書いても型に応じた挙動になる。
 
@@ -118,13 +118,13 @@ to-list                     : List(T)
 
 **Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置ならどこでもリストリテラルで書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。「宣言された位置」とはチェッカーが型に照らして読む位置すべてを指す——たとえば slot、レコードのフィールド、`fn` の引数や戻り値、reducer の書き込み、`let … in` の本体、`List(Set(T))` の要素や `Map(K, Set(T))` の値、そうしたコンテナに対する `List.contains` / `push` / `prepend` の引数や `Map.insert` / `update` の値、テストの slot の値・期待する effect の引数・モックの結果。`union` / `intersect` / `diff` の引数はレシーバと同じ型の `Set(T)` なので、そこに `List`、要素型の違う `Set`、`Option(Set(T))` を渡すと [E0201](./errors.md#e0201-type-mismatch)。
 
-チェッカーがレシーバの型を決められない位置では、どちらの規則も適用されない：`List(Set(T))` に対するフラグメントの中——`groups.map($1.union(["x"]))`——では `$1` に型がないので、引数は検査されず Set としても組み立てられず、配列のままである。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。要素は `add` と同じ方法でキー化されるので、レコードやバリアントのリテラルは同じ要素の `add` 連鎖とちょうど同じものを保持する。それらのキー化は以下の段落のとおりである。
+チェッカーがレシーバの型を決められない位置では、どちらの規則も適用されない：`fold` のアキュムレータ `$1`——`nums.fold({}, $1.union([2]))`——には型がないので、引数は検査されず Set としても組み立てられず、配列のままである。`List(Set(T))` に対するフラグメントはそうした位置ではない：そこでの `$1` は `Set(T)` 型の要素であり（[§2.2.3](#_2-2-3-list-t)）、`groups.map($1.union([2]).to-list)` は引数を Set として組み立て、キーを `T` として読み戻す。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。要素は `add` と同じ方法でキー化されるので、レコードやバリアントのリテラルは同じ要素の `add` 連鎖とちょうど同じものを保持する。それらのキー化は以下の段落のとおりである。
 
 **キーは宣言された型で読み戻される**。実装では Set の要素と Map のキーは JavaScript のオブジェクトキー — 文字列 — として保存されるが、キーを返すメンバー（`Set(T).to-list` / `Map(K, V).keys` / `Map(K, V).entries`、および `Map(K, V).filter` の述語が各エントリについて受け取る `$1`）は型が示す値を返す：キーの型が `Int` / `Float` / `Time`（およびそれらの上の `nominal` / `where`）なら数値、`Bool` なら真偽値、`Text` なら文字列そのもの。したがって `tags.add(7).to-list` は `[7]` であり、その後の `contains(7)` / `sort` / 算術はリストの型と一致し、`Map(Int, V)` に対する `m.filter($1 == 3)` は `3` のエントリを残す。レコード・バリアント・タプル・`Option` のキーは JSON（レコードのフィールドは名前順）として保存され、書き込んだ値として読み戻される。Map リテラルに書いたキー（`{Some(1): "o"}`）も同じ形で保存される。`Map` の `filter` は各エントリを 1 つの `(key, value)` の組として述語に渡すので、キーの形によらず `$1` はキー全体、`$2` は値である：`{(1, 2): 10, (3, 4): 0}` に対する `filter($2 > 0)` は `(1, 2)` を残す。構造化キーの型が読み戻す JSON ではない保存済みキー — キーがエンコードされる前に永続化されたレコードキーや、キーが裸のバリアント名であるデコードされた `Map(Color, Int)` — は、読み出しがそこに達すると panic になる。そのまま読み戻されない例外が 2 つある：構造化キーの中の有限でない `Float`（`NaN` / `Infinity` / `-Infinity`）は JSON の `null` になるため 1 つのキーを共有し `null` として読み戻され、構造化キーの中の `Bytes` はプレーンなオブジェクトとして読み戻される。`Float` 単独のキーでは `NaN` と無限大は区別される。
 
 **値ごとに一つのキー**。エントリを書き込み・探し・取り除くすべてのメンバー — `add` / `remove` / `toggle` / `has`、`get` / `get-or` / `insert` / `remove` / `update`、インデックス読み取り `m[k]`、インデックス書き込み `m[k] := v` — はキーを同じ方法で保存し検索する。したがって二つのキーが一つのエントリになるのは、それらが `==` で等しいときに限る（[language §1.9.4](./language.md#_1-9-4-演算子の型)）。`picked.add(Red).has(Blue)` は `false` であり、`votes[Red] := 1` と `votes.insert(Green, 1)` は二つのエントリを書き、`Map(Int, V)` に対する `m.remove(1)` は `1` のエントリを取り除く。
 
-何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、それ自体が `List` や `Set` である要素、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
+何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
 
 ### 2.2.3 List(T)
 
@@ -169,9 +169,11 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 
 > **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
 
-**`map` / `filter` / `sort-by` の lambda 引数**:
-- List 要素には `$1` を、`.entries` 後の `[k, v]` ペアには `$1=key, $2=value` を束縛します（ランタイムが自動 destructure）
-- 例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`
+**`map` / `filter` / `find` / `sort-by` の lambda 引数**は、実行時の値ではなく受信側の**型**で決まる：
+- `Tuple(A, B)` である要素 — `.entries` が作る `[k, v]` ペア — は分解される：`$1` が前半、`$2` が後半。例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`。`Tuple(A, B)` を持つ `Option` / `Result` も同じく分解される。
+- `Map(K, V).filter` の述語は各エントリを受け取る：`$1=key`, `$2=value`（[§2.2.1](#_2-2-1-map-k-v)）。
+- それ以外の `List` の要素、`Option`（`map` / `filter`）や `Result`（`map`）の値は、**丸ごと** `$1` になる — 2 要素の `List` である要素も同じ：`[[1, 2], [3, 4, 5]].map($1.length)` は `[2, 3]`、`Some([1, 2]).filter($1.length > 1)` は `Some([1, 2])`。このようなフラグメントは `$2` を束縛しない：書けば添字や `$1` の複製ではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)（`"$2" is not bound here — …`）になる。これはフラグメントの中のどこでも同じで、別のメソッドの引数の中の `$2` も含む：positional を束縛するのはフラグメントだけで、その引数はフラグメントのものを読むので、`nums.map($1.min($2))` も E0103 である。
+- それ以外の場所では、lowering は値を見て判断する：2 要素の配列は分解して `$1` / `$2` とし、それ以外は `$1` とし、`$2` は添字（`map` / `find`）か再び `$1`（`filter` / `sort-by`）になる。型検査器が要素の型を決定できない場所（型パラメータ、型のない payload — `nums.fold([], $1.push([$2, $2])).map(…)`）と、受信側の型は分かっているがこの節がそのメソッドに束縛を与えていない場所がこれにあたる：`filter` が各要素を `[element, true]` のエントリとして渡す `Set`、`Map.map` / `find` / `sort-by`、`Option.find` / `sort-by`、`Result.filter` / `find` / `sort-by`、およびコレクションでない受信側。そこにフラグメントとして名指した `fn` が 2 つ目のパラメータを取れるのは、型検査器が決定できない受信側の上だけであり、決定できる受信側の上では [E0213](./errors.md#e0213-call-arity-mismatch) になる。これらは欠落であってプログラムが頼ってよい規則ではなく、型が決定できるようになり、メンバーが自身の束縛を得るにつれて閉じる。
 
 **`sort-by(expr)` はキーを `<` が 2 値を並べる順で並べる**（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。数値と `Time` は数値として、`Text` は `<` が 2 つの `Text` を比べる順で並べる。キーが等しい要素は元の順を保つ。順序を持たないキー（record、variant、`Bool`、`Option`、コンテナ）は、同じ 2 値の `a < b` と同じく [E0201](./errors.md#e0201-type-mismatch)。キーは名前で渡した `fn`（`xs.sort-by(keyOf)`）でもよく、その宣言された戻り値型がキーの型になる。
 
@@ -334,6 +336,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `link` | リンク | `to`, `external` |
 | `code` | コード | `lang` |
 | `markdown` | Markdown 描画 | （内容は引数） |
+
+値 builtin はそれぞれ内容を 1 か所から読む（[言語 §1.7.1](./language.md#_1-7-1-構文)）：`text`・`heading`・`code`・`markdown` は最初の位置引数から、`link`・`label`・`editable` は最初の位置引数から、それが無ければ `text=` から、`image`・`icon` は `src=`・`name=` から。builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、`image` / `icon` への位置引数、位置引数の無いテキスト系 builtin の `text=`、`link` / `label` / `editable` で位置引数と並べた `text=` —— 決して描画されず、[E0129](./errors.md#e0129-unrendered-arg) になる。
 
 `heading` は `level` に応じて `<h1>` … `<h6>` を描画する。クライアントでもサーバーレンダリングでも同じで、`level` が無ければ `<h1>` である。小数の `level` は小数部を切り捨て、1-6 の外にあるものは近い方の端で描かれる（`0` は `<h1>`、`9` は `<h6>`）。描画の間に `level` が変わると、タグはその場で変えられないため要素を作り直す。
 

@@ -2090,6 +2090,13 @@ export function mountCore(
      */
     tree: TileNode | null;
     map: TileElementMap;
+    /**
+     * The theme `tree` was painted under. Token props are resolved to literal
+     * values when a tile renders, so a node that compares equal across a theme
+     * switch still carries the old theme's values; a pass that finds the theme
+     * changed repaints instead of diffing (style.md §4.6).
+     */
+    theme: string | null;
   };
   /** What one pass produced: the tree it painted, and what it freshly built. */
   type PassResult = { tree: TileNode | null; touched: string[] };
@@ -2099,6 +2106,7 @@ export function mountCore(
     root: null,
     tree: null,
     map: new WeakMap(),
+    theme: null,
   });
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
@@ -2217,6 +2225,18 @@ export function mountCore(
     }
 
     maybeReapplyTheme(app);
+    const theme = resolvedThemeName(app) ?? null;
+    const themeChanged = theme !== view.theme;
+    // A switch that rebuilds a painted tree: what it inserts already played its
+    // enter animation on the element it replaces, and a refused bind's text
+    // goes with that element (§10.3.6), so its field error goes too.
+    const repaint = themeChanged && view.tree !== null;
+    view.theme = theme;
+    settling = repaint;
+    const refused = refusedBinds.get(app);
+    if (repaint && refused) {
+      for (const el of refused.keys()) if (target.contains(el)) refused.delete(el);
+    }
     // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
     // `newMap` (and recursively for its children). Reconcile also writes into
     // `newMap` when it decides to *reuse* an old element (bypassing render).
@@ -2241,7 +2261,7 @@ export function mountCore(
     touched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
-      if (view.tree && view.root) {
+      if (view.tree && view.root && !themeChanged) {
         // Diff path: reuse unchanged tile DOM in place, rebuild only changed
         // subtrees. `reconcileTree` returns the (possibly new) root — it can
         // differ from `view.root` if the root tile itself was rebuilt.
@@ -2274,8 +2294,9 @@ export function mountCore(
           target.replaceChild(dom, view.root);
         }
       } else {
-        // Initial mount, or first render after a panic reset — no old tree
-        // to diff against.
+        // Initial mount, first render after a panic reset, or a theme switch —
+        // no old tree to diff against, or one whose resolved token values are
+        // all stale.
         dom = tileCtx.render(renderedTree);
         if (view.root) {
           target.replaceChild(dom, view.root);
@@ -2332,6 +2353,7 @@ export function mountCore(
         target.appendChild(dom);
       }
     }
+    settling = false;
     view.root = dom;
     // On panic (either the primary render threw and no route.error recovered
     // it, or the recovery render also threw), abandon the diff baseline so the
@@ -5729,11 +5751,25 @@ export function ensureAnimationStyles(): void {
   appendStyleNode(style);
 }
 
+/**
+ * True while a theme switch rebuilds a painted tree (runtime.md §10.3.6). An
+ * element inserted then is marked settled, and the motion stylesheet moves a
+ * settled element's animation past its end: a one-shot enter animation shows
+ * its final frame instead of playing again, and a repeating one keeps going.
+ * The mark stays, because taking it off would restart the animation.
+ */
+let settling = false;
+
+function settle(el: HTMLElement): void {
+  if (settling) el.setAttribute("data-kumiki-settled", "");
+}
+
 function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
   const t = props.transition;
   if (typeof t !== "string") return;
   ensureAnimationStyles();
+  settle(el);
   el.classList.add("kumiki-anim", `kumiki-anim-${t}`);
   const d = props.transition_duration;
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
@@ -5825,6 +5861,7 @@ function ensureMotionStyles(app: AppShape): void {
   // a11y (M5 AC5): disable motion AND the transitions when the user asks.
   rules.push(
     `@media (prefers-reduced-motion: reduce) { .kumiki-motion, .kumiki-anim { animation: none !important } }`,
+    "[data-kumiki-settled] { animation-delay: -99999s !important }",
   );
   let style = findStyleNode("kumiki-motions");
   if (!style) {
@@ -5841,6 +5878,7 @@ function applyMotion(el: HTMLElement, props?: TileProps): void {
   const m = props.motion;
   if (typeof m !== "string") return;
   el.classList.add("kumiki-motion", `kumiki-motion-${m}`);
+  settle(el);
 }
 
 let stateStyleSeq = 0;

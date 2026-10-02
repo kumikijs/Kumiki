@@ -85,6 +85,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | core |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | core |
 | [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | core |
+| [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -279,10 +280,13 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
 | `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | routing | [§3.4](./routing.md#_3-4-route-lifecycle) |
 | `156-heading-level.kumiki` | slot, reducer, tile | stdlib | [§2.3.2](./stdlib.md#_2-3-2-text-elements) |
+| `157-theme-switch.kumiki` | slot, reducer, tile, app | style | [§4.6](./style.md#_4-6-dark-mode) |
 | `158-responsive-breakpoints.kumiki` | tile, app | style | [§4.5](./style.md#_4-5-responsive) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | core | [§10.5.3](./runtime.md#_10-5-3-replay) |
 | `160-tile-test-content-fields.kumiki` | slot, tile | testing | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | core | [§1.6.4](./language.md#_1-6-4-invariants) |
+| `162-fragment-binds-by-type.kumiki` | slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 <!-- examples:end -->
 :::

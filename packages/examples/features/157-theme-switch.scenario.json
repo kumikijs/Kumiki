@@ -1,0 +1,22 @@
+{
+  "steps": [
+    { "expect": { "noErrors": true, "domIncludes": ["theme: Light", "swatch", "inner"] } },
+    {
+      "label": "the toggle switches the theme and the page survives the repaint",
+      "do": { "clickText": "Toggle theme" },
+      "expect": {
+        "noErrors": true,
+        "state": { "themeName": "Dark" },
+        "domIncludes": ["theme: Dark", "swatch", "inner"]
+      }
+    },
+    {
+      "do": { "clickText": "Toggle theme" },
+      "expect": {
+        "noErrors": true,
+        "state": { "themeName": "Light" },
+        "domIncludes": ["theme: Light"]
+      }
+    }
+  ]
+}
