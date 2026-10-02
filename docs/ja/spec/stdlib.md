@@ -337,6 +337,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `code` | コード | `lang` |
 | `markdown` | Markdown 描画 | （内容は引数） |
 
+値 builtin はそれぞれ内容を 1 か所から読む（[言語 §1.7.1](./language.md#_1-7-1-構文)）：`text`・`heading`・`code`・`markdown` は最初の位置引数から、`link`・`label`・`editable` は最初の位置引数から、それが無ければ `text=` から、`image`・`icon` は `src=`・`name=` から。builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、`image` / `icon` への位置引数、位置引数の無いテキスト系 builtin の `text=`、`link` / `label` / `editable` で位置引数と並べた `text=` —— 決して描画されず、[E0129](./errors.md#e0129-unrendered-arg) になる。
+
 `heading` は `level` に応じて `<h1>` … `<h6>` を描画する。クライアントでもサーバーレンダリングでも同じで、`level` が無ければ `<h1>` である。小数の `level` は小数部を切り捨て、1-6 の外にあるものは近い方の端で描かれる（`0` は `<h1>`、`9` は `<h6>`）。描画の間に `level` が変わると、タグはその場で変えられないため要素を作り直す。
 
 `link` の `external` はリンクを新しいブラウジングコンテキストで開き（`target="_blank"` と、それに伴って必要な `rel="noopener noreferrer"`）、ルーターではなくブラウザに委ねる。

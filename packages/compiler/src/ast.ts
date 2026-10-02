@@ -559,13 +559,13 @@ export type TileMatchArm = {
   body: TileExpr;
 };
 
-export type TileArg = {
-  kind: "TileArg";
-  name?: string;
-  /** Position of the name, when the argument has one. */
-  namePos?: Pos;
-  value: Expr | TileExpr;
-};
+/**
+ * A tile call's argument: named (`level=2`), which always carries the position
+ * of its name, or positional (`"Hi"`), which has neither.
+ */
+export type TileArg =
+  | { kind: "TileArg"; name: string; namePos: Pos; value: Expr | TileExpr }
+  | { kind: "TileArg"; name?: never; namePos?: never; value: Expr | TileExpr };
 
 export type TileProp = {
   kind: "TileProp";
