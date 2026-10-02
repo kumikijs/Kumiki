@@ -282,5 +282,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `160-tile-test-content-fields.kumiki` | slot, tile | テスト | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | コア | [§1.6.4](./language.md#_1-6-4-不変条件) |
 | `164-decode-refused-value.kumiki` | type, slot, effect, reducer, tile | HTTP/Storage | [§6.7.2](./http.md#_6-7-2-宣言-localstorage) |
+| `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 <!-- examples:end -->
 :::
