@@ -740,6 +740,9 @@ kumiki replay --mock 'loadUser: from-log'   # effect mock 指定
 kumiki replay --until-step 5                # 途中まで
 ```
 
+- **入口の reducer は、記録時に受け取った payload で走る。** episode の `trigger.payload` はライブの runtime が最初の reducer に渡した payload そのもの — UI イベントなら `{$el, $event}`、effect の結果なら `{$1, $2}` — であり、replay はそれを加工せずに渡す。したがって `$el.idx` や `$event.value` はライブと同じ値を読む。payload を持たない trigger の最初の reducer が `.ok` / `.err` reducer である場合 — reducer ではなく SSR パスが開く `ssr.hydrate` の bootstrap episode — その reducer は、それより前に記録された同じ effect・同じ結果の `effect-end` のうち最後のものの上で走ったので、その値が reducer の `$1` になる。その記録済みの結果は消費され、同じ effect の `from-log` mock はその次から続く。
+  - ログにそのような step がない場合 — 切り詰められた、あるいは手で編集されたログ — reducer は `$1` なしで走り、それは**推測せずに報告される**：episode のトレース行に `(no recorded result for <reducer>)` が付き、実行の最後に `entry results missing:` の要約が出るので、その後の panic が reducer のバグに見えることはない。
+  - replay は episode ごとに入口の reducer を 1 つしか持たないので、SSR パスが複数の `app.init` effect を走らせた bootstrap は、最初の入口 reducer の連鎖しか replay されない。そのようなログに対する `slots-equal: from-log` の `episode-test` は panic ではなく slot の不一致で失敗し、2 つの `init` の連鎖が同じ effect を emit すると、入口が進めた `from-log` カーソルが再 emit にもう一方の連鎖の結果を渡しうる。この失敗は静かである：値は欠落ではなく交差する。
 - **環境の読みはログから答える。環境からではない。** reducer 本体を走らせる前に、replay はその reducer の記録済み `env-reads`（[§10.5.1](#_10-5-1-structure-of-an-episode)）を据える。以後 `now` / `random()` / `<T>.fresh()` / `prefers-dark()` は、時計・乱数源・ID 生成器・OS の設定を読み直すのではなく、記録時に返したのと同じ値を返す。したがって環境を読んだ reducer の episode を replay すると、記録された `slot-diffs` が毎回そのまま再現される。
   - 読みと記録済みの答えは **kind で** 対応付け、同じ kind の中では記録順に返す。あるビルトインの余分な読みが、別のビルトインの答えをずらすことはない。
   - 対応する答えが尽きた読み — 古いログ、あるいは記録時より多く読んだ本体 — は、replay を失敗させるのではなくライブの値にフォールバックする。その読みだけが replay に再現できないものなので、推測ではなく**報告される**：その step のトレース行に `(env: N read live)` が付き、実行の最後に `environment reads:` の要約が出る。同じ行が、replay 側の本体が使わなかった記録済みの答え（`N recorded unused`）と、ログが持っていた不正な要素（`N malformed`）も報告する。3 つとも無い step は何も言わない。

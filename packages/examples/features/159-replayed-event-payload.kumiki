@@ -1,0 +1,48 @@
+# Feature (runtime.md §10.5.3): replaying an episode hands its entry reducer
+# the payload the live run handed it.
+#
+# The live runtime records `trigger.payload` as the reducer payload itself:
+# `{$el: …, $event: …}` for a UI event, `{$1: value}` for an effect result.
+# Replay passes that object through unchanged, so `$el.idx` and
+# `$event.value` read what they read live. An episode opened by an effect
+# result gets the recorded value as `$1`, and so does the first reducer of an
+# `ssr.hydrate` bootstrap episode, which has no trigger payload: its value is
+# the `effect-end` step recorded before the reducer.
+#
+# `packages/tests/replayed-event-payload.test.ts` records this app's episodes
+# through the live runtime and SSR, replays them, and asserts the slots land
+# where they landed live.
+
+type Quote = {text: Text, author: Text}
+
+slot draft : Text = ""
+slot seen  : Text = ""
+slot n     : Int  = 0
+slot quote : Text = "none"
+
+effect fetchQuote cap=http.get
+                  in=Unit
+                  out=Result(Quote, HttpError)
+                  map-request={url: "/api/quote", decode: Decoder.Json(Quote)}
+
+reducer typed   on=ui.input(Field)          do= seen := $event.value
+reducer clicked on=ui.click(Row)            do= n := $el.idx
+reducer loaded  on=fetchQuote.ok($q, _)     do= quote := $q.text
+reducer failed  on=fetchQuote.err($e, _)    do= quote := "failed"
+
+tile Field = input(bind=draft)
+tile Row   = button(text="row")
+
+tile App
+    = column(
+        Field,
+        Row,
+        text("seen=" + seen),
+        text("n=" + n.show),
+        text("quote=" + quote))
+      {pad: "lg", gap: "md"}
+
+app ReplayedEventPayload
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [fetchQuote()]

@@ -272,8 +272,10 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
 | `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | core | [§1.7.2](./language.md#_1-7-2-invariants) inv. 1 |
+| `143-fn-positional-arguments.kumiki` | slot, reducer, fn, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
 | `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
+| `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | core | [§10.5.3](./runtime.md#_10-5-3-replay) |
 | `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 <!-- examples:end -->
 :::
