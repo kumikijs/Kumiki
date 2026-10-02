@@ -278,5 +278,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
 | `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | routing | [§3.4](./routing.md#_3-4-route-lifecycle) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | core | [§10.5.3](./runtime.md#_10-5-3-replay) |
+| `160-tile-test-content-fields.kumiki` | slot, tile | testing | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 <!-- examples:end -->
 :::
