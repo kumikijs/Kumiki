@@ -1,7 +1,7 @@
 // The check a `Decoder.Json(T)` carries (http.md §6.1.4): shipped only with
 // the handlers that decode — storage, IndexedDB and HTTP.
 
-import { type RefinementFailure, showRefinementPath } from "./core.ts";
+import { type RefinementFailure, showRefinementFailure } from "./core.ts";
 
 /**
  * What `Decoder.Json(T)` lowers to when `T` carries a predicate anywhere in it:
@@ -23,13 +23,11 @@ export function decodesJson(decode: Decode): boolean {
  * Why `decode` refuses a parsed value — `decode failed: uuid at .keys["k1"]`,
  * the whole `.err` of a storage-family read and the `message` of an HTTP
  * read's `HttpError` — or `undefined` when it accepts it.
- * The predicate and the path are spelled as a refused reducer write spells
- * them (runtime.md §10.3.3), since the value is refused by the same check.
+ * The predicate and the path go through the formatter a refused reducer
+ * write uses (runtime.md §10.3.3), since the value is refused by the same check.
  */
 export function decodeRefusal(decode: Decode | undefined, value: unknown): string | undefined {
   const f = typeof decode === "function" ? decode(value) : undefined;
   if (!f) return undefined;
-  const pred = f.args.length > 0 ? `${f.kind}(${f.args.join(", ")})` : f.kind;
-  const at = f.path.length > 0 ? ` at ${showRefinementPath(f.path)}` : "";
-  return `decode failed: ${pred}${at}`;
+  return `decode failed: ${showRefinementFailure(f)}`;
 }
