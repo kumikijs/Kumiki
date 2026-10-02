@@ -99,4 +99,28 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
     expect(text).toContain("problem: Error: provider down");
     expect(text).not.toContain("[object Object]");
   });
+
+  it("a host provider for storage.read that returns a {message} err is delivered as that message", async () => {
+    // A provider written against the old record contract returns `{message}`
+    // as its err value; `$e : Text` must still get the message, not the record
+    // (which `String(…)` would render as "[object Object]").
+    const app = await loadSource(failingAtBoot("storage.read", `{key: "k"}`));
+    const text = await problemShown(app, {
+      "storage.read": async () => ({ kind: "err", value: { message: "vault sealed" } }),
+    });
+    expect(text).toContain("problem: vault sealed");
+    expect(text).not.toContain("[object Object]");
+  });
+
+  it("a host provider for indexed.write that returns a Text err passes it through unchanged", async () => {
+    // Guard, passes before and after the coercion above: a provider already on
+    // the `Text` contract must not have its value touched.
+    const app = await loadSource(
+      failingAtBoot("indexed.write", `{store: "notes", key: "k", value: "v"}`),
+    );
+    const text = await problemShown(app, {
+      "indexed.write": () => ({ kind: "err", value: "disk full" }),
+    });
+    expect(text).toContain("problem: disk full");
+  });
 });
