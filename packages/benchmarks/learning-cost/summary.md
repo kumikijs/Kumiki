@@ -17,6 +17,12 @@ current toolchain across three vendors **under one protocol**.
 > including the ~880-LOC v4. The remaining failures (v3 Gemini, v4 Claude, v4
 > Gemini) are genuine authoring errors that #62 now documents as *intentionally*
 > rejected — the toolchain is correctly refusing them, not gapping.
+>
+> **Re-scored again when E0128 `value-as-child` landed.** Codex's v3 writes its
+> `Shell` tile's `Text` input as a child, `column(HeaderBar, $1)`. A value in a
+> child position renders nothing, and `check` used to accept it; it is now
+> E0128, so **Codex's v3 flips from build-green to typecheck-fail**. `Shell` is
+> never called, so the app itself rendered the same either way.
 
 ## Protocol (uniform — single pass, spec only)
 
@@ -43,7 +49,7 @@ current toolchain across three vendors **under one protocol**.
 | v2 Kanban | Codex | 243 | 6,517 | 1,881 | ✅ | ✅ | ✅ | — |
 | v2 Kanban | Gemini | 152 | 4,591 | 1,314 | ✅ | ✅ | ✅ | — |
 | v3 Issue Tracker | Claude | 629 | 23,915 | 5,325 | ✅ | ✅ | ✅ | — |
-| v3 Issue Tracker | Codex | 674 | 23,210 | 6,417 | ✅ | ✅ | ✅ | — |
+| v3 Issue Tracker | Codex | 674 | 23,210 | 6,417 | ✅ | ❌ | ❌ | typecheck E0128: `$1` as a child of `column` (×1) |
 | v3 Issue Tracker | Gemini | 440 | 20,270 | 4,995 | ✅ | ❌ | ❌ | typecheck E0103: `$1` w/o `in=` (×23) |
 | v4 Project Mgmt | Claude | 1029 | 39,178 | 9,552 | ❌ | ❌ | ❌ | parse @201:20 (literal match pattern) |
 | v4 Project Mgmt | Codex | 877 | 32,376 | 8,703 | ✅ | ✅ | ✅ | — |
@@ -51,19 +57,19 @@ current toolchain across three vendors **under one protocol**.
 
 ### Reading the table
 
-- **Build-green, single pass**: Codex 3/3 (v2–v4), Claude 3/4 (v1–v3), Gemini 1/3.
-- **Codex is the only vendor to build v4** (~880 LOC) in one pass — and it builds
-  *everything* it attempted. The earlier prediction held: the sole thing blocking
-  its v3/v4 was the `error`-tile codegen gap ([#61](https://github.com/kumikijs/Kumiki/issues/61)),
-  now fixed, so both flipped to build-green on re-score.
+- **Build-green, single pass**: Claude 3/4 (v1–v3), Codex 2/3 (v2, v4), Gemini 1/3.
+- **Codex is the only vendor to build v4** (~880 LOC) in one pass. The `error`-tile
+  codegen gap ([#61](https://github.com/kumikijs/Kumiki/issues/61)) had blocked
+  its v3 and v4; with it fixed both built, until E0128 refused v3's one value
+  written as a child — a single diagnostic in 674 lines.
 - **Claude leads on smaller tasks but parse-fails v4** — it used a literal `match`
   pattern, which is *not* supported (now stated in spec §1.9.1 via
   [#62](https://github.com/kumikijs/Kumiki/issues/62)).
 - **Token efficiency** (v2, the one task all three build): Gemini 1,314 <
   Claude 1,421 < Codex 1,881 tokens.
 - **Degradation with scale**: Gemini builds v2 → typecheck-fails v3 → parse-fails
-  v4. Claude holds through v3 then parse-fails v4. **Codex builds all the way
-  through v4** — the most robust at scale.
+  v4. Claude holds through v3 then parse-fails v4. **Codex builds v4** — the most
+  robust at scale — but trips one rule at v3.
 
 ## Fairness note (why this is a re-take of the re-take)
 
@@ -85,7 +91,8 @@ The re-take surfaced two real defects, now resolved:
   The `error` tile (and `code`/`video`/`list`/`table`/`modal`/`drawer`/`tooltip`/
   `popover`/`toast`/`progress`) was documented in `stdlib.md §2.3` and accepted by
   `check`, but missing from codegen — accept-then-crash-at-build. **Fixed**: all
-  built-in tiles are now single-sourced and implemented, so Codex v3/v4 build.
+  built-in tiles are now single-sourced and implemented, so Codex v3/v4 build
+  (v3 has since failed again on E0128 — see the note at the top).
 - **[#62](https://github.com/kumikijs/Kumiki/issues/62) — under-specified rules
   models reliably got wrong.** The three remaining failures each hit a rule the
   spec stated only by example: a literal `match` pattern (Claude v4), `$1` in a

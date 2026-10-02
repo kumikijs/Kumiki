@@ -48,8 +48,8 @@ is the point — the two positions agree.
 
 `genTile`'s other caller — the `_tilesById` table a `tile-test` compares against
 — is deliberately unchanged. Not because of the marker: `tileStructEqual`
-compares `kind`, `text` and `children` and ignores props, so `_named` is
-invisible to a `tile-test`. It is the boundary, which would make a test on a
+leaves the `_tile` marker out of the comparison, so `_named` is invisible to a
+`tile-test`. It is the boundary, which would make a test on a
 panicking tile compare the fallback tree instead.
 
 **A boundary catches a panic, and re-raises anything else.** Giving a route
