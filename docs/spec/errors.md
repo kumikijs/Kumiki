@@ -573,7 +573,7 @@ The identity is read at the **top level** of each operand only, which is where t
 
 ### E0202 `emit-arg-type-mismatch`
 
-An `emit` argument does not match the effect's declared `in=` type. A standard effect (`navigate`, `toast`, `log`, …) has no `effect` declaration, and is held to the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it, with the fields that section lets a call leave out: `emit navigate("/about")` is this code.
+An `emit` argument does not match the effect's declared `in=` type. A standard effect (`navigate`, `toast`, `log`, …) has no `effect` declaration, and is held to the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it, with the fields that section lets a call leave out: `emit navigate("/about")` is this code, and so is a `confirm` `onYes` / `onNo` that is not a reducer's name written bare (`ReducerRef`). The message names the whole `in=`, whatever the call left out.
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`
@@ -731,7 +731,7 @@ An application passes a different number of arguments than the thing it applies 
 |---|---|---|
 | `f(...)` on a `fn` | its parameter list | `Function "<name>" expects <n> argument(s) but got <m>` |
 | `b(...)` on a built-in call | the arguments a call to it must supply | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
-| `emit E(...)` | one argument, or none when `in=Unit` | `Effect "<name>" expects <n> argument(s) but got <m>` |
+| `emit E(...)` | one argument, or none when `in=Unit` — for a standard effect, the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
@@ -770,7 +770,7 @@ A **method** is checked when its lowering reads a fixed number of arguments — 
 
 ### E0214 `missing-record-field`
 
-A record literal omits a field its declared type requires. Kumiki records have no optional fields — a field that may be absent is `Option(T)` and must still be written.
+A record literal omits a field its declared type requires. Kumiki records have no optional fields — a field that may be absent is `Option(T)` and must still be written. The one exception is the argument of a standard effect, which may leave out an `Option(T)` field and the fields [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives a default; every other field of it is this code — `emit toast({kind: "info"})` has no `text`.
 
 > `Record literal is missing field "<name>" of type <type>`
 

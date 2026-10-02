@@ -325,6 +325,20 @@ describe("a standard effect is an effect", () => {
     expect(codes(src.replace("[toast]", '[toast({kind: "info", text: "hi"})]'))).toEqual([]);
   });
 
+  it("holds the expected argument to the standard effect's in=", () => {
+    // testing.md §8.2: an `expect.effects` argument stands for the one the
+    // reducer emits, and `toast` takes `{kind, text, duration}` — neither
+    // `message` nor `tone` is a field it has, and `kind` / `text` are required.
+    const src = withTest(`    reducer-test note
+        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 0}, effects: [toast({message: "hi", tone: "info"})]}`);
+    expect(codes(src).sort()).toEqual(["E0214", "E0214", "E0215", "E0215"]);
+    // The fields the reducer may leave out, the expectation may too.
+    expect(
+      codes(src.replace('{message: "hi", tone: "info"}', '{kind: "info", text: "hi"}')),
+    ).toEqual([]);
+  });
+
   it("still reports a name that is neither", () => {
     expect(codes(reducerTest(GIVEN, `{slots: {count: 1}, effects: [tost]}`))).toEqual(["E0104"]);
   });

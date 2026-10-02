@@ -41,4 +41,11 @@ describe("a standard effect's argument stops the build when it is the wrong one"
   it("builds the record navigate takes, with params and query left out", () => {
     expect(codesOf(`emit navigate({path: "/about"})`)).toEqual([]);
   });
+
+  it("builds an if whose branches leave out different fields", () => {
+    // Each branch is held to the fields it writes, not to the whole `if`.
+    expect(
+      codesOf(`emit navigate(if true then {path: "/about"} else {path: "/", query: {"q": "1"}})`),
+    ).toEqual([]);
+  });
 });

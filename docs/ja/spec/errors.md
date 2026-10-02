@@ -551,7 +551,7 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 
 ### E0202 `emit-arg-type-mismatch`
 
-`emit` の引数が、その effect の宣言する `in=` 型と一致しない。標準 effect（`navigate`・`toast`・`log` など）には `effect` 宣言が無く、[標準ライブラリ §2.6](./stdlib.md#_2-6-標準-effect) が与える `in=` と、その節が省略を認めるフィールドとで照合される：`emit navigate("/about")` はこのコードである。
+`emit` の引数が、その effect の宣言する `in=` 型と一致しない。標準 effect（`navigate`・`toast`・`log` など）には `effect` 宣言が無く、[標準ライブラリ §2.6](./stdlib.md#_2-6-標準-effect) が与える `in=` と、その節が省略を認めるフィールドとで照合される：`emit navigate("/about")` はこのコードであり、reducer の名前をそのまま書いたもの（`ReducerRef`）でない `confirm` の `onYes` / `onNo` もそうである。メッセージは、呼び出しが何を省略したかに関わらず `in=` 全体を示す。
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`
@@ -709,7 +709,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 |---|---|---|
 | `fn` への `f(...)` | 仮引数列 | `Function "<name>" expects <n> argument(s) but got <m>` |
 | 組み込み呼び出しへの `b(...)` | 呼び出し側が渡すべき引数の数 | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
-| `emit E(...)` | 引数 1 つ、`in=Unit` なら 0 | `Effect "<name>" expects <n> argument(s) but got <m>` |
+| `emit E(...)` | 引数 1 つ、`in=Unit` なら 0 —— 標準 effect では [標準ライブラリ §2.6](./stdlib.md#_2-6-標準-effect) が与える `in=` | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
@@ -748,7 +748,7 @@ tile と effect とルートの形は、これまで報告されていなかっ�
 
 ### E0214 `missing-record-field`
 
-record リテラルが、宣言型の要求するフィールドを欠いている。Kumiki の record に省略可能フィールドは無い — 欠けうるフィールドは `Option(T)` であり、それでも書く必要がある。
+record リテラルが、宣言型の要求するフィールドを欠いている。Kumiki の record に省略可能フィールドは無い — 欠けうるフィールドは `Option(T)` であり、それでも書く必要がある。唯一の例外は標準 effect の引数で、`Option(T)` のフィールドと [標準ライブラリ §2.6](./stdlib.md#_2-6-標準-effect) が既定値を与えるフィールドは省略してよい。それ以外のフィールドが欠ければこのコードである —— `emit toast({kind: "info"})` には `text` が無い。
 
 > `Record literal is missing field "<name>" of type <type>`
 

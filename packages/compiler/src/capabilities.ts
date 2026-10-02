@@ -5,7 +5,7 @@
 // the node-only submodule (`@kumikijs/compiler/node`).
 
 import type { TypeExpr } from "./ast.ts";
-import { synthType } from "./stdlib-types.ts";
+import { appType, primType, recordType, refType } from "./stdlib-types.ts";
 
 /** Capabilities that may appear in `app.caps` without any manifest. */
 export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
@@ -39,16 +39,24 @@ export const STANDARD_CAPABILITIES: ReadonlySet<string> = new Set([
   "socket.send",
 ]);
 
-const { prim, ref, app, record } = synthType;
-const text = prim("Text");
-const textMap = app("Map", text, text);
+const text = primType("Text");
+const textMap = appType("Map", text, text);
+const navigation: TypeExpr = recordType({ path: text, params: textMap, query: textMap });
+
+/**
+ * `confirm`'s `onYes` / `onNo` (stdlib.md §2.6.5, lifecycle.md §7.6): a
+ * reducer's name, written bare, which the runtime dispatches by name. It is not
+ * a type a program can write, so the checker matches this node itself rather
+ * than the name, and a program's own `type ReducerRef` cannot stand in for it.
+ */
+export const REDUCER_REF: TypeExpr = refType("ReducerRef");
 
 /** A standard effect: the capability it is gated on and the input it takes. */
 export type BuiltinEffect = {
   /** `null` for the one that needs none. */
   readonly cap: string | null;
   /** Its `in=`, as stdlib.md §2.6 declares it. */
-  readonly in: TypeExpr;
+  readonly inType: TypeExpr;
   /**
    * Record fields a call may leave out beside the `Option(T)` ones, which may
    * always be: `navigate`'s `params` and `query` default to `{}` (routing.md
@@ -57,31 +65,23 @@ export type BuiltinEffect = {
   readonly defaulted?: readonly string[];
 };
 
-const navigation: BuiltinEffect["in"] = record({ path: text, params: textMap, query: textMap });
-
 /**
  * The effects the runtime registers itself (docs/spec/stdlib.md §2.6): what
- * each is gated on and what it takes, in one table.
- *
- * They are not `effect` declarations, so nothing in a program says what they
- * require or accept. Without the capability the check had nothing to look at
- * and passed — the runtime refuses the effect and reports the refusal
- * (runtime.md §10.4.2), so `emit navigate(…)` under `caps=[]` compiled and the
- * first sign it could not work was a panic at run time. Without the input type
- * `emit navigate("/about")` compiled too, and the router read `.path` off a
- * string and never moved. An entry cannot have one without the other.
+ * each is gated on and what it takes, in one table. They are not `effect`
+ * declarations, so nothing in a program says either. An entry cannot have one
+ * without the other.
  */
 export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map<string, BuiltinEffect>([
   // `query` is routing.md §3.7's extension of the §2.6.1 `in=`.
-  ["navigate", { cap: "nav.push", in: navigation, defaulted: ["params", "query"] }],
-  ["navigate-replace", { cap: "nav.replace", in: navigation, defaulted: ["params", "query"] }],
-  ["navigate-back", { cap: "nav.back", in: prim("Unit") }],
-  ["scroll-to", { cap: null, in: record({ x: prim("Int"), y: prim("Int") }) }],
+  ["navigate", { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] }],
+  ["navigate-replace", { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] }],
+  ["navigate-back", { cap: "nav.back", inType: primType("Unit") }],
+  ["scroll-to", { cap: null, inType: recordType({ x: primType("Int"), y: primType("Int") }) }],
   [
     "toast",
     {
       cap: "notification.show",
-      in: record({ kind: text, text, duration: app("Option", ref("Duration")) }),
+      inType: recordType({ kind: text, text, duration: appType("Option", refType("Duration")) }),
     },
   ],
   [
@@ -89,12 +89,27 @@ export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map<strin
     {
       cap: "notification.show",
       // `message` is lifecycle.md §7.6's; left out, the dialog shows the title.
-      in: record({ title: text, message: text, onYes: ref("Reducer"), onNo: ref("Reducer") }),
+      inType: recordType({ title: text, message: text, onYes: REDUCER_REF, onNo: REDUCER_REF }),
       defaulted: ["message"],
     },
   ],
-  ["log", { cap: "log.write", in: record({ level: text, message: text, data: textMap }) }],
+  ["log", { cap: "log.write", inType: recordType({ level: text, message: text, data: textMap }) }],
 ]);
+
+/**
+ * Whether a call to the standard effect `builtin` may leave `field` out of its
+ * record argument: an `Option(T)` field always may, and so may the entry's
+ * `defaulted` ones (stdlib.md §2.6).
+ */
+export function builtinFieldOmittable(
+  builtin: BuiltinEffect,
+  field: { readonly name: string; readonly type: TypeExpr },
+): boolean {
+  return (
+    (builtin.defaulted ?? []).includes(field.name) ||
+    (field.type.kind === "TypeApp" && field.type.name === "Option")
+  );
+}
 
 /** Each standard effect's capability, read off `BUILTIN_EFFECTS`. */
 export const BUILTIN_EFFECT_CAPS: ReadonlyMap<string, string | null> = new Map(

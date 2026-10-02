@@ -576,7 +576,11 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 逆向きも検査される：これらを capability 無しで emit すると [E0301](./errors.md#e0301-missing-capability) になる。これらには `cap=` を読み取る `effect` 宣言が無い — ランタイム自身が登録するものだからである — ので、要求元は各 effect が登録されているケイパビリティであり、以下の各 effect に併記してある。この節はその全件であり、コンパイラが保持している一覧そのものである。
 
-各 effect に併記した `in=` も、宣言された effect のものと同じように照合される：`emit` は引数を 1 つ渡す（`in=` が `Unit` なら渡さない —— [E0213](./errors.md#e0213-call-arity-mismatch)）、そして引数は `in=` と照合される（[E0202](./errors.md#e0202-emit-arg-type-mismatch)）—— `emit navigate("/about")` はレコードを取る位置への `Text` である。レコードの引数は、型が `Option(T)` のフィールドを省略してよく、その場合は `None` として読まれる（`toast({kind: "info", text: "Saved"})`）。この節またはこの節が指す先で既定値が与えられているフィールドも省略してよい：`navigate` と `navigate-replace` の `params` と `query` は `{}`（[ルーティング §3.7](./routing.md#_3-7-query-parameters)）、`confirm` の `message` は無し。それ以外のフィールドは必須であり、`in=` に無いフィールドは [E0215](./errors.md#e0215-unknown-record-field) である。
+各 effect に併記した `in=` も、宣言された effect のものと同じように照合される：`emit` は引数を 1 つ渡す（`in=` が `Unit` なら渡さない —— [E0213](./errors.md#e0213-call-arity-mismatch)）、そして引数は `in=` と照合される（[E0202](./errors.md#e0202-emit-arg-type-mismatch)）—— `emit navigate("/about")` はレコードを取る位置への `Text` である。レコードの引数は、型が `Option(T)` のフィールドを省略してよく、その場合 effect はそれを `None` として扱う（`toast({kind: "info", text: "Saved"})`）。この節またはこの節が指す先で既定値が与えられているフィールドも省略してよい：`navigate` と `navigate-replace` の `params` と `query` は `{}`（[ルーティング §3.7](./routing.md#_3-7-query-parameters)）、`confirm` の `message` は無し。それ以外のフィールドは必須であり、省略すると [E0214](./errors.md#e0214-missing-record-field) になる（`toast({kind: "info"})` など）。`in=` に無いフィールドは [E0215](./errors.md#e0215-unknown-record-field) である。
+
+引数が何を省略しているかは、書かれた場所で読まれる：`if` や `match` の各分岐と `let` の本体は、それぞれ自分が省略したフィールドで判定され、既定値のあるフィールドを型として持たないレコード型の値（`slot target : {path: Text}` に対する `emit navigate(target)`）は、同じ形のリテラルと同様に通る。effect 呼び出しが書かれるどの位置でも引数は同じように照合される —— `emit`、`app.init` の要素、テストの `expect.effects` の引数（[テスト §8.2](./testing.md#_8-2-reducer-テスト)）。
+
+これらの省略は標準 effect だけのものである。宣言された effect の `in=` レコードは、`Option(T)` のものも含めて全フィールドを要求する —— 他のレコードリテラルと同じである。標準 effect と同名の宣言があれば、プログラムが dispatch するのはその宣言なので、照合されるのもその `in=` である。
 
 → 詳細仕様は [HTTP / Storage](./http.md)。
 
@@ -615,8 +619,10 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 ### 2.6.5 確認ダイアログ
 
 ```kumiki fragment
-effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: Reducer, onNo: Reducer}  out=Unit
+effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit
 ```
+
+`ReducerRef` は reducer の名前をそのまま書いたもの（`onYes: doDelete`）で、ランタイムが名前で dispatch する。プログラムが書ける型ではなく、この `in=` にだけ現れる。reducer の名前でない裸の名前は [E0103](./errors.md#e0103-undef-ref-undef-slot)、それ以外の値は [E0202](./errors.md#e0202-emit-arg-type-mismatch) である。
 
 ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)。
 

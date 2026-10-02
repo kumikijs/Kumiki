@@ -45,9 +45,9 @@ import {
 } from "./builtin-calls.ts";
 import { BUILTIN_TILES, positionalIsTile } from "./builtins.ts";
 import {
-  BUILTIN_EFFECT_CAPS,
   BUILTIN_EFFECTS,
-  type BuiltinEffect,
+  builtinFieldOmittable,
+  REDUCER_REF,
   STANDARD_CAPABILITIES,
 } from "./capabilities.ts";
 import {
@@ -2123,7 +2123,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
-    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECT_CAPS.has(r.on.effect)) {
+    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECTS.has(r.on.effect)) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -3506,8 +3506,13 @@ function checkAgainst(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode = "E0201",
+  omittable?: Omittable,
 ): void {
   if (declared === null) return;
+  if (declared === REDUCER_REF) {
+    checkReducerRef(e, sym, errors, ctx, code);
+    return;
+  }
   const d = unaliasType(declared, sym);
   if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
 
@@ -3562,7 +3567,7 @@ function checkAgainst(
     }
   }
   if (d.kind === "TypeRecord" && e.kind === "RecordLit") {
-    checkRecordLit(e, d, sym, errors, ctx, code);
+    checkRecordLit(e, d, sym, errors, ctx, code, omittable);
     return;
   }
   if (e.kind === "Variant") {
@@ -3572,13 +3577,13 @@ function checkAgainst(
   if (e.kind === "IfExpr") {
     // Both branches land in this position, and reporting at the branch beats
     // reporting at the `if`.
-    checkAgainst(e.consequent, declared, sym, errors, ctx, code);
-    checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable);
     return;
   }
   if (e.kind === "LetIn") {
     // The body is the value that lands here, read with the name bound.
-    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code);
+    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code, omittable);
     return;
   }
   if (e.kind === "MatchExpr") {
@@ -3590,7 +3595,8 @@ function checkAgainst(
     // whole-match comparison would pass the wrong arm without a word.
     const scrutType = inferType(e.scrutinee, sym, ctx);
     for (const arm of e.arms) {
-      checkAgainst(arm.body, declared, sym, errors, armScope(arm, scrutType, sym, ctx), code);
+      const scope = armScope(arm, scrutType, sym, ctx);
+      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
     }
     return;
   }
@@ -3615,7 +3621,51 @@ function checkAgainst(
 
   const actual = inferType(e, sym, ctx);
   if (actual === null || !isKnown(actual, sym)) return;
-  if (!assignable(actual, declared, sym)) mismatch(e, actual);
+  // A value of a record type may leave out what a literal may, so the
+  // comparison drops those fields when its type does — the message still
+  // names the whole `in=`.
+  const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
+  if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
+}
+
+/**
+ * `d` without the fields `omittable` allows `actual` to leave out and that it
+ * does leave out, or `null` when either side is not a record.
+ */
+function withoutOmitted(
+  d: TypeExpr,
+  actual: TypeExpr,
+  sym: SymbolTable,
+  omittable: Omittable,
+): TypeExpr | null {
+  const a = unaliasType(actual, sym);
+  if (d.kind !== "TypeRecord" || a?.kind !== "TypeRecord") return null;
+  const has = new Set(a.fields.map((f) => f.name));
+  return { ...d, fields: d.fields.filter((f) => has.has(f.name) || !omittable(f)) };
+}
+
+/**
+ * A `ReducerRef` (`confirm`'s `onYes` / `onNo`) is a reducer's name written
+ * bare: codegen lowers exactly that to the name the runtime dispatches, and
+ * anything else to a value the runtime cannot dispatch. A bare name is judged
+ * where the emit resolves it as a reducer (E0103), so only the other forms are
+ * reported here.
+ */
+function checkReducerRef(
+  e: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  code: MismatchCode,
+): void {
+  if (e.kind === "Ref") return;
+  const actual = inferType(e, sym, ctx);
+  pushMismatch(
+    errors,
+    code,
+    `Expected ${typeToString(REDUCER_REF)} but got ${actual ? typeToString(actual) : "an expression that is not a reducer name"}`,
+    e.pos,
+  );
 }
 
 /**
@@ -3657,10 +3707,11 @@ function checkRecordLit(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode,
+  omittable?: Omittable,
 ): void {
   const given = new Set(e.fields.map((f) => f.name));
   for (const declaredField of d.fields) {
-    if (given.has(declaredField.name)) continue;
+    if (given.has(declaredField.name) || omittable?.(declaredField)) continue;
     errors.push({
       code: "E0214",
       kind: "missing-record-field",
@@ -3955,9 +4006,8 @@ function checkEmitTarget(
   ctx: Ctx,
   pos: Pos,
 ): void {
-  const eff = sym.effects.get(effect);
-  const builtin = eff ? undefined : BUILTIN_EFFECTS.get(effect);
-  if (!eff && !builtin) {
+  const input = effectInput(effect, sym);
+  if (!input) {
     errors.push({
       code: "E0104",
       kind: "undef-effect",
@@ -3970,7 +4020,7 @@ function checkEmitTarget(
   // off, so both come from the table instead — the DOM runtime gates it either
   // way. `null` is the one entry that asks for nothing; an empty `cap=` on a
   // declared effect is not that, and stays reportable.
-  const cap = eff ? eff.cap : (builtin?.cap ?? null);
+  const { cap, inType, omittable } = input;
   if (cap !== null && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
     errors.push({
       code: "E0301",
@@ -3979,8 +4029,6 @@ function checkEmitTarget(
       pos,
     });
   }
-  const inType = eff ? eff.inType : builtin?.in;
-  if (!inType) return;
   // `in=Unit` is the "no input" declaration, so the effect takes no argument;
   // every other `in=` takes exactly one. Codegen destructures the argument, so
   // a missing one is `Cannot destructure property 'key' of 'input'` at the
@@ -4011,35 +4059,36 @@ function checkEmitTarget(
     }
     return;
   }
-  const declared = builtin ? builtinInputFor(builtin, arg, sym, ctx) : inType;
-  checkAgainst(arg, declared, sym, errors, ctx, "E0202");
+  checkAgainst(arg, inType, sym, errors, ctx, "E0202", omittable);
 }
 
 /**
- * The `in=` a built-in effect holds `arg` to: its record with the fields a call
- * may leave out removed, when `arg` leaves them out (stdlib.md §2.6). A field
- * typed `Option(T)` may always be omitted and reads as `None`; the entry's
- * `defaulted` ones (`navigate`'s `params` / `query`, routing.md §3.7) default.
- * Which fields `arg` has is read off a record literal, or off its type when
- * that is a record; anything else is held to the whole record.
+ * Which fields of a record `in=` an argument may leave out. A predicate rather
+ * than a narrowed type, because which ones a value leaves out is known only at
+ * each leaf `checkAgainst` reaches — an `if` whose branches write different
+ * fields has no single answer — and because the message names the whole `in=`.
  */
-function builtinInputFor(builtin: BuiltinEffect, arg: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr {
-  const declared = builtin.in;
-  if (declared.kind !== "TypeRecord") return declared;
-  const actual = arg.kind === "RecordLit" ? null : unaliasType(inferType(arg, sym, ctx), sym);
-  const written =
-    arg.kind === "RecordLit"
-      ? new Set(arg.fields.map((f) => f.name))
-      : actual?.kind === "TypeRecord"
-        ? new Set(actual.fields.map((f) => f.name))
-        : null;
-  if (written === null) return declared;
-  const omittable = (f: { name: string; type: TypeExpr }): boolean =>
-    (builtin.defaulted ?? []).includes(f.name) ||
-    (f.type.kind === "TypeApp" && f.type.name === "Option");
+type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;
+
+/**
+ * The effect a name dispatches: its capability, its `in=`, and the fields a
+ * call may leave out of it. A declaration wins over a standard effect of the
+ * same name and leaves nothing out; a standard effect (stdlib.md §2.6) may
+ * leave out what `builtinFieldOmittable` says. `undefined` when the name is
+ * neither.
+ */
+function effectInput(
+  name: string,
+  sym: SymbolTable,
+): { cap: string | null; inType: TypeExpr; omittable: Omittable | undefined } | undefined {
+  const eff = sym.effects.get(name);
+  if (eff) return { cap: eff.cap, inType: eff.inType, omittable: undefined };
+  const builtin = BUILTIN_EFFECTS.get(name);
+  if (!builtin) return undefined;
   return {
-    ...declared,
-    fields: declared.fields.filter((f) => written.has(f.name) || !omittable(f)),
+    cap: builtin.cap,
+    inType: builtin.inType,
+    omittable: (f) => builtinFieldOmittable(builtin, f),
   };
 }
 
@@ -5934,8 +5983,9 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
     const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
     if (name === undefined) continue;
     // The standard effects (`navigate`, `toast`, `log`, …) are declared by no
-    // program, so the table they live in is the capability one.
-    if (!sym.effects.has(name) && !BUILTIN_EFFECT_CAPS.has(name)) {
+    // program, so they live in a table of their own.
+    const input = effectInput(name, sym);
+    if (!input) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -5947,11 +5997,12 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
     for (const a of item.args) checkExpr(a, sym, errors, ctx);
     // The expected argument stands for the one the reducer emits, which is
     // checked, and lowered, against the effect's `in=` type — so this one is
-    // too, or a Set the reducer emits is compared with the array the literal
-    // would otherwise be.
-    const inType = sym.effects.get(name)?.inType ?? null;
+    // too, with the same fields left out, or a Set the reducer emits is
+    // compared with the array the literal would otherwise be.
     const arg = item.args[0];
-    if (arg && item.args.length === 1) checkAgainst(arg, inType, sym, errors, ctx);
+    if (input && arg && item.args.length === 1) {
+      checkAgainst(arg, input.inType, sym, errors, ctx, "E0201", input.omittable);
+    }
   }
 }
 

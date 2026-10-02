@@ -1,31 +1,43 @@
 # Feature: a standard effect's argument is checked against its `in=` like a
-# declared effect's (stdlib.md §2.6, errors.md E0202 / E0213).
+# declared effect's (stdlib.md §2.6, errors.md E0202 / E0213 / E0214).
 #
 # `navigate` takes a record, `{path: Text, params: Map(Text, Text), query:
 # Map(Text, Text)}`, and nothing in the program declares it. The checker used to
 # stop at the capability for a standard effect, so `emit navigate("/about")`
 # checked ok and navigated nowhere: the router read `.path` off a string. It is
-# E0202 now, and `emit navigate-back(1)` / `emit log(42, 43)` are E0213.
+# E0202 now, and `emit navigate-back(1)` / `emit toast()` are E0213.
 #
 # What a call may leave out is part of the rule: `params` and `query` default to
-# `{}` (routing.md §3.7), an `Option` field such as `toast`'s `duration` reads as
-# `None`, and `confirm`'s `message` as no message. Each emit below leaves one
-# out, and the scenario beside this file shows each of them still runs.
+# `{}` (routing.md §3.7), an `Option` field such as `toast`'s `duration` is
+# treated as `None`, and `confirm`'s `message` as no message. The emits below
+# leave each of those out, `confirm`'s `onYes` / `onNo` name reducers, and the
+# scenario beside this file shows each of them still runs — the `query` written
+# by `navigate-replace` included, read back off `route.query`.
 
-slot notices : Int = 0
+slot notices : Int  = 0
+slot answer  : Text = "-"
 
 reducer go     on=ui.click(GoBtn)     do= emit navigate({path: "/about"})
 reducer notify on=ui.click(NotifyBtn) do= notices := notices + 1
                                           emit toast({kind: "info", text: "notified"})
 reducer top    on=ui.click(TopBtn)    do= emit scroll-to({x: 0, y: 0})
 reducer home   on=ui.click(HomeBtn)   do= emit navigate-replace({path: "/", query: {"from": "about"}})
+reducer ask    on=ui.click(AskBtn)    do= emit confirm({title: "Reset?", onYes: agreed, onNo: declined})
+
+reducer agreed   on=ui.click(_) do= answer := "yes"
+reducer declined on=ui.click(_) do= answer := "no"
 
 tile GoBtn     = button(text="Go", onClick=go)
 tile NotifyBtn = button(text="Notify", onClick=notify)
 tile TopBtn    = button(text="Top", onClick=top)
 tile HomeBtn   = button(text="Home", onClick=home)
+tile AskBtn    = button(text="Ask", onClick=ask)
 
-tile Home  = page(heading("Home page"), text("notices: " + notices.show), GoBtn, NotifyBtn, TopBtn)
+tile Home  = page(heading("Home page"),
+                  text("notices: " + notices.show),
+                  text("from: " + route.query.get-or("from", "-")),
+                  text("answer: " + answer),
+                  GoBtn, NotifyBtn, TopBtn, AskBtn)
 tile About = page(heading("About page"), HomeBtn)
 
 app BuiltinEffectInput

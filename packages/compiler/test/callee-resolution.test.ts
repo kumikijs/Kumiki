@@ -326,6 +326,14 @@ app A caps=[${caps}] routes={"/" -> App, "/404" -> App} init=[${init}]
     expect(codes(app('toast({kind: "info", text: "hello"})'))).toEqual(["E0301"]);
   });
 
+  it("holds a built-in effect's argument to its in= too", () => {
+    // stdlib.md §2.6: `navigate` takes a record, and an init entry is no
+    // exception — the router would read `.path` off the string.
+    expect(codes(app('navigate("/x")', "nav.push"))).toEqual(["E0202"]);
+    expect(codes(app("toast()", "notification.show"))).toEqual(["E0213"]);
+    expect(codes(app('navigate({path: "/x"})', "nav.push"))).toEqual([]);
+  });
+
   it("reports a capability the app does not declare", () => {
     expect(codes(app('load("k")', ""))).toEqual(["E0301"]);
   });
