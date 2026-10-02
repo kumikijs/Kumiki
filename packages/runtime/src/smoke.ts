@@ -313,13 +313,9 @@ function pickNext(root: HTMLElement, fired: Set<string>): [HTMLElement, string] 
 
 /**
  * Forms are driven by dispatching `submit` on the form itself, which is what
- * the runtime listens for, for two reasons. A `form` tile usually has no submit
- * button — `02-todomvc`'s is the shape the spec's own example uses — so there
- * is nothing to click. And where there is a button, whether clicking it submits
- * is activation behaviour that differs per DOM: happy-dom submits on a
- * synthetic click even when the button's own handler calls `preventDefault`,
- * because the event this harness builds is not cancelable. Dispatching on the
- * form means the same thing everywhere.
+ * the runtime listens for, because a `form` tile usually has no submit button
+ * — `02-todomvc`'s is the shape the spec's own example uses — so there is
+ * nothing to click.
  */
 function collectForms(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>("form"));
@@ -401,7 +397,7 @@ function fire(el: HTMLElement): void {
   if (tag === "input") {
     const inp = el as HTMLInputElement;
     if (inp.type === "checkbox" || inp.type === "radio") {
-      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     } else {
       // file inputs are filtered out by collectInteractive — see the comment
       // there. Any input reaching here is text-like and tolerates a value
@@ -412,7 +408,7 @@ function fire(el: HTMLElement): void {
     }
     return;
   }
-  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
 function errStr(e: unknown): string {
