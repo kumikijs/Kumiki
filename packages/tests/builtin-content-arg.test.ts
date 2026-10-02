@@ -64,13 +64,15 @@ const rows: Row[] = [
   },
   {
     kind: "heading",
-    // The issue's own program. `level` is not observable in the DOM (the
-    // renderer draws every heading as an `h1`), so the prop half is held by
-    // `test-id`, written first as well.
+    // The issue's own program: `level` is read as the element's tag, and
+    // `test-id`, written first as well, reaches its attribute.
     tile: 'heading(test-id="probe", level=2, title)',
     says: "Title",
     notSays: "probe",
-    prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
+    prop: (el) => {
+      expect(el.tagName).toBe("H2");
+      expect(el.getAttribute("data-kumiki-test")).toBe("probe");
+    },
   },
   {
     kind: "heading, content first",
@@ -78,7 +80,10 @@ const rows: Row[] = [
     tile: 'heading(title, test-id="probe", level=2)',
     says: "Title",
     notSays: "probe",
-    prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
+    prop: (el) => {
+      expect(el.tagName).toBe("H2");
+      expect(el.getAttribute("data-kumiki-test")).toBe("probe");
+    },
   },
   {
     kind: "markdown",
