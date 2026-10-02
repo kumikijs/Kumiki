@@ -61,6 +61,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
@@ -4921,17 +4922,14 @@ function currentFnName(ctx: Ctx): string {
 }
 
 function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const scope = fnScope(fn);
   const ctx: Ctx = {
     kind: "fn",
-    localBinds: new Set(),
-    localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
+    localBinds: new Set(scope.map((b) => b.name)),
+    localTypes: new Map(scope.map((b) => [b.name, b.type])),
     routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
-  for (const p of fn.params) ctx.localBinds.add(p.name);
-  // also bind $1, $2 used in expression-fragment style
-  ctx.localBinds.add("$1");
-  ctx.localBinds.add("$2");
   for (const p of fn.params) resolveType(p.type, sym, errors);
   if (fn.ret) resolveType(fn.ret, sym, errors);
   checkExpr(fn.body, sym, errors, ctx);
@@ -6047,8 +6045,8 @@ function routeInSlotInitMessage(slot: string, name: string, chain?: readonly str
  *
  * Asked of the E0120 gate itself, in the `app-init` position, so that which
  * `route` counts (a local bind or a `fn` parameter of that name does not) is
- * decided in one place. `params` and `positional` are the binds in scope: a
- * `fn`'s parameters and the `$1` / `$2` `checkFn` binds, or nothing for a slot
+ * decided in one place. `params` are the binds in scope: a `fn`'s
+ * (`fnScope` — its parameters and their positionals), or nothing for a slot
  * initializer. `routeBind` is the `no-payload` both really have, and says
  * nothing either way here — the gate returns before the branch that reads it,
  * so a `$route` in a `fn` collects a read from this probe and E0103 from
@@ -6065,10 +6063,9 @@ function routeInSlotInitMessage(slot: string, name: string, chain?: readonly str
 function routeReadsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
-  positional: readonly string[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
-  return preMountProbe(e, sym, params, positional).routeReads;
+  return preMountProbe(e, sym, params).routeReads;
 }
 
 /**
@@ -6082,14 +6079,13 @@ function routeReadsIn(
 function preMountProbe(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[],
-  positional: readonly string[],
+  params: readonly FnScopeBind[],
 ): { routeReads: { name: string; pos: Pos }[]; fragmentFnCalls: { name: string; pos: Pos }[] } {
   const routeReads: { name: string; pos: Pos }[] = [];
   const fragmentFnCalls: { name: string; pos: Pos }[] = [];
   const ctx: Ctx = {
     kind: "app-init",
-    localBinds: new Set([...params.map((p) => p.name), ...positional]),
+    localBinds: new Set(params.map((p) => p.name)),
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
     routeReadsSeen: routeReads,
@@ -6109,20 +6105,19 @@ function preMountProbe(
  * runs wherever the method does (`FRAGMENT_ARGUMENTS`). A bare name anywhere
  * else is a value, E0127, and is never applied, so nothing it mentions is
  * evaluated — which is why this is narrower than `referencesIn`, whose edges
- * the cycle check follows. `params` and `positional` are the binds in scope,
- * as for `routeReadsIn`: a parameter named like a `fn` shadows it.
+ * the cycle check follows. `params` are the binds in scope, as for
+ * `routeReadsIn`: a parameter named like a `fn` shadows it.
  */
 function fnCallsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
-  positional: readonly string[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
   const out: { name: string; pos: Pos }[] = [];
   walkExpr(e, (n) => {
     if (n.kind === "Call" && sym.fns.has(n.callee)) out.push({ name: n.callee, pos: n.pos });
   });
-  out.push(...preMountProbe(e, sym, params, positional).fragmentFnCalls);
+  out.push(...preMountProbe(e, sym, params).fragmentFnCalls);
   return out.sort((a, b) => a.pos.line - b.pos.line || a.pos.col - b.pos.col);
 }
 
@@ -6168,9 +6163,7 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
     const cached = direct.get(name);
     if (cached !== undefined) return cached;
     const fn = sym.fns.get(name);
-    const answer = fn
-      ? (routeReadsIn(fn.body, sym, fn.params, ["$1", "$2"])[0]?.name ?? null)
-      : null;
+    const answer = fn ? (routeReadsIn(fn.body, sym, fnScope(fn))[0]?.name ?? null) : null;
     direct.set(name, answer);
     return answer;
   };
@@ -6178,7 +6171,7 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
   const callsOf = (fn: FnDef): readonly { name: string }[] => {
     const cached = calls.get(fn.name);
     if (cached !== undefined) return cached;
-    const answer = fnCallsIn(fn.body, sym, fn.params, ["$1", "$2"]);
+    const answer = fnCallsIn(fn.body, sym, fnScope(fn));
     calls.set(fn.name, answer);
     return answer;
   };
