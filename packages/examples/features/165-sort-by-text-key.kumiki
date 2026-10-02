@@ -1,0 +1,29 @@
+# Feature (stdlib.md §2.2.3): `sort-by(expr)` orders by any key `<` orders.
+#
+#   List(T).sort-by(expr) : List(T)   ; ascending by expr, stable
+#
+# The key is ordered the way `<` orders two values (language.md §1.9.4): a
+# number or a `Time` numerically, a `Text` as `<` compares two Texts. Records
+# with an equal key keep the order they had. A key with no order — a record, a
+# variant, a `Bool` — is an E0201 at check time.
+
+type User = {name: Text, age: Int}
+
+slot users : List(User) = [{name: "carol", age: 30}, {name: "alice", age: 20}, {name: "bob", age: 25}, {name: "abe", age: 20}]
+slot byName : List(Text) = []
+
+reducer order on=ui.click(Order)
+    do= byName := users.sort-by($1.name).map($1.name)
+
+tile Order = button(text="order", id="order")
+
+tile App = column(
+  Order,
+  text("by-name: " + users.sort-by($1.name).map($1.name).join(",")),
+  text("by-age: " + users.sort-by($1.age).map($1.name).join(",")),
+  text("state: " + byName.join(",")))
+
+app SortByTextKey
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

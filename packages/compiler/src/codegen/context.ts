@@ -25,6 +25,14 @@ export type GenCtx = {
    * every render and the node still compares equal to the last one.
    */
   usedReaders: Set<ParseReading>;
+  /**
+   * Set while lowering a tile-test's `expect` tree. The `{…}` block of each
+   * node there is styling, which a snapshot does not compare (testing.md
+   * §8.4), so its data stays out of the node's `props`: what is left there is
+   * what the expectation states with named arguments, and the runtime
+   * compares all of it.
+   */
+  expectedTree?: boolean;
 };
 
 /**
@@ -59,9 +67,21 @@ export function makeEvalCtx(
   return { gen, localBinds, reducerScope };
 }
 
+/**
+ * A nested scope inside `ctx`: its bindings, and its view of the slots. Every
+ * lowering that opens one — a `match` arm, a `let … in` body, a method's
+ * predicate, a `for` / `if` block — goes through here, so a slot read inside
+ * a reducer body keeps reading `_next` first and sees what the body has
+ * already written. A tile or other render-time context has no `reducerScope`
+ * to hand down, so its nested scopes read `_live`.
+ */
+export function childCtx(ctx: EvalCtx): EvalCtx {
+  return makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+}
+
 /** A copy of `ctx` with `name` declared in it — see {@link declareBind}. */
 export function addBind(ctx: EvalCtx, name: string): EvalCtx {
-  const out = makeEvalCtx(ctx.gen, ctx.localBinds);
+  const out = childCtx(ctx);
   declareBind(out, name);
   return out;
 }
