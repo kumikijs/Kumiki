@@ -327,6 +327,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
   }
 
+  // The two splices are order-dependent: `refinementsAt` is the larger index,
+  // so it goes in first and the readers' splice below, at the smaller
+  // `readersAt`, does not move it. Reversed, the refinement declarations
+  // would land as many lines early as the readers block is long, in the
+  // middle of whatever the body emitted there.
   lines.splice(refinementsAt, 0, ...ctx.refinements.decls);
   lines.push("  return App;");
   lines.push("}"); // end createApp
@@ -351,6 +356,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   }
   lines.push("");
 
+  // After the refinements splice above, which sits at a larger index.
   lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders));
 
   // ----- runtime usage analysis (#71) — the body above is fully generated, so
