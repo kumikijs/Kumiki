@@ -281,8 +281,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // beside the refused-bind record in core, which every app loads; a counter has
     // no form and still ships it.
     //
-    // Raised once to 63,000 with the owner's approval (61,525 measured, from
-    // 61,184): an index step reaches the setter apart from a field step
+    // Raised once to 63,000 with the owner's approval (61,184 measured on this
+    // branch, from 61,184 on dev): dev had already gone over 61,000 with the
+    // form submit gate above, and the owner chose to raise the budget once
+    // rather than hold every open change at the old line.
+    //
+    // Still 63,000 (61,525 measured, from 61,184):
+    // an index step reaches the setter apart from a field step
     // (language.md §1.6.3), so a write through a Map key that is absent writes
     // nothing and a read there panics. The 341 bytes are `isIndexSegment` and
     // the no-write branch in `_setPathHelper`, `isEntryOf` which both sides of
