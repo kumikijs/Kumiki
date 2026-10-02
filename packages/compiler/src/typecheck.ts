@@ -114,6 +114,18 @@ export type KumikiError = {
    * `docs/spec/errors.md` for the W02xx band.
    */
   severity?: "error" | "warning";
+  /**
+   * E0129 only: which argument is never rendered, so a reader (`kumiki fix`)
+   * tells the shapes apart without matching the message.
+   *
+   * - `positional`: a positional argument past the one the builtin reads, or
+   *   any on `image` / `icon` — `text("A", "B")`.
+   * - `text-prop`: `text=` on a builtin that reads only a positional argument
+   *   and has none written — `heading(text=title)`.
+   * - `text-shadowed`: `text=` on `label` / `link` / `editable` beside a
+   *   positional argument, which is the one rendered — `label(text="A", "B")`.
+   */
+  unrendered?: "positional" | "text-prop" | "text-shadowed";
 };
 
 /**
@@ -1141,9 +1153,7 @@ function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: Kumiki
 function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   if (!BIND_CONTROLS.has(t.name)) return;
   const written = [
-    ...t.args.flatMap((a) =>
-      a.name === "strict" ? [{ pos: a.namePos ?? (a.value as Expr).pos }] : [],
-    ),
+    ...t.args.flatMap((a) => (a.name === "strict" ? [{ pos: a.namePos }] : [])),
     ...t.props.flatMap((p) => (p.name === "strict" ? [{ pos: p.pos }] : [])),
   ];
   for (const { pos } of written) {
@@ -1526,13 +1536,16 @@ function checkTileInput(
  * never renders, read off the same table the lowering reads its content from
  * (`VALUE_BUILTIN_CONTENT`), so the two cannot disagree about which one shows.
  *
- * Two shapes. A positional argument past the one the builtin reads — the
- * second of `text("A", "B")`, or any on `image` / `icon`, which read `src=` /
- * `name=`. And content written as `text=` on a builtin that reads only a
- * positional argument (`heading(text=title)`): `text=` is the label argument
- * of `button` / `link` / `label` / `editable`, and a prop anywhere else, so
- * the call rendered "" while every tier said ok. With a positional argument
- * also written, `text=` is just a prop and the call renders its content.
+ * Three shapes, each named in the diagnostic's `unrendered` field. A
+ * positional argument past the one the builtin reads — the second of
+ * `text("A", "B")`, or any on `image` / `icon`, which read `src=` / `name=`.
+ * Content written as `text=` on a builtin that reads only a positional
+ * argument (`heading(text=title)`): `text=` is the label argument of `button`
+ * / `link` / `label` / `editable`, and a prop anywhere else, so the call
+ * rendered "" while every tier said ok. With a positional argument also
+ * written there, `text=` is just a prop and the call renders its content. And
+ * `text=` beside a positional argument on `label` / `link` / `editable`,
+ * which read `text=` only when no positional one is written.
  */
 function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   const reading = contentReading(t.name);
@@ -1550,18 +1563,34 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
         : `${t.name} takes its ${reading.named} as \`${reading.named}=\` — a positional ` +
           `argument is never rendered. Write \`${t.name}(${reading.named}=…)\``,
       pos: a.value.pos,
+      unrendered: "positional",
     });
   });
-  if (!reading.positional || reading.named !== undefined || positional.length > 0) return;
+  if (!reading.positional) return;
   const named = t.args.find((a) => a.name === "text");
-  if (!named) return;
+  if (!named?.name) return;
+  if (reading.named === "text" && positional.length > 0) {
+    errors.push({
+      code: "E0129",
+      kind: "unrendered-arg",
+      message:
+        `${t.name} renders its positional argument, so \`text=\` is never rendered — it is ` +
+        `read only when no positional argument is written. Remove \`text=\` or the ` +
+        `positional argument`,
+      pos: named.namePos,
+      unrendered: "text-shadowed",
+    });
+    return;
+  }
+  if (reading.named !== undefined || positional.length > 0) return;
   errors.push({
     code: "E0129",
     kind: "unrendered-arg",
     message:
       `content is positional: write \`${t.name}("…")\` — \`text=\` is a prop on ${t.name} ` +
       `and never renders (it is the label argument of button, link, label and editable)`,
-    pos: named.namePos ?? named.value.pos,
+    pos: named.namePos,
+    unrendered: "text-prop",
   });
 }
 

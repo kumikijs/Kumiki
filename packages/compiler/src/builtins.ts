@@ -204,6 +204,9 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   error: "status",
 };
 
+/** One row of `VALUE_BUILTIN_CONTENT`: where a value builtin reads its content. */
+export type ContentReading = { readonly positional: boolean; readonly named?: string };
+
 /**
  * Where each value builtin reads its content (language.md §1.7.1, stdlib.md
  * §2.3), and so which of the arguments written as content it renders.
@@ -211,9 +214,9 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
  * - `positional`: the first positional argument is the content. A second one
  *   is never rendered.
  * - `named`: the named argument read as the content when no positional one is
- *   written — `label` / `link` / `editable` take their label as `text=`, and
- *   `image` / `icon`, which read no positional argument at all, take theirs as
- *   `src=` / `name=`.
+ *   written, and never read when one is — `label` / `link` / `editable` take
+ *   their label as `text=`, and `image` / `icon`, which read no positional
+ *   argument at all, take theirs as `src=` / `name=`.
  *
  * The lowering reads the content through `contentArg`, and the checker reports
  * every argument this table says is dropped (E0129), so what `check` accepts
@@ -231,9 +234,7 @@ export const VALUE_BUILTIN_CONTENT = {
   editable: { positional: true, named: "text" },
   image: { positional: false, named: "src" },
   icon: { positional: false, named: "name" },
-} as const satisfies Record<string, { positional: boolean; named?: string }>;
-
-export type ContentReading = { readonly positional: boolean; readonly named?: string };
+} as const satisfies Record<string, ContentReading>;
 
 /** How `name` reads its content, or `undefined` when it is not a value builtin. */
 export function contentReading(name: string): ContentReading | undefined {

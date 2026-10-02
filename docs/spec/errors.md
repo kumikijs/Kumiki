@@ -516,14 +516,16 @@ A value builtin is written with an argument as content that it never renders. Ea
 
 - A positional argument past the one the builtin reads. `text("A", "B")` renders `A`; `B` is dropped. On `image` and `icon`, which read no positional argument, every one is dropped.
 - `text=` on `text` / `heading` / `code` / `markdown` with no positional argument. `text=` is the label argument of `button`, `link`, `label` and `editable`, and a prop on the text builtins, so `heading(text=title)` renders an empty heading.
+- `text=` beside a positional argument on `link` / `label` / `editable`. These read `text=` only when no positional argument is written, so `label(text="A", "B")` renders `B`; `A` is dropped.
 
 > `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
 > `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
 > `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
+> `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
 
-Each is reported at the dropped argument. `check`, `build` and `smoke` were all green on these: the argument parsed, type-checked and never reached the page. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
+Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional`, `text-prop` or `text-shadowed`, in the order above. `check`, `build` and `smoke` were all green on these: the argument parsed, type-checked and never reached the page. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
 
-**Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)` — and join values meant to show together (`text(a + " " + b)`). `kumiki fix` removes the `text=` of a text builtin that has no positional argument.
+**Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)` — and join values meant to show together (`text(a + " " + b)`). `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
 
 ## E02xx — Types
 

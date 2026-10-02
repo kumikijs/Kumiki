@@ -494,14 +494,16 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 - builtin が読む分を超える位置引数。`text("A", "B")` は `A` を描画し、`B` は捨てられる。位置引数を読まない `image` と `icon` では、すべて捨てられる。
 - 位置引数の無い `text` / `heading` / `code` / `markdown` の `text=`。`text=` は `button`・`link`・`label`・`editable` のラベル引数であり、テキスト系 builtin では prop なので、`heading(text=title)` は空の見出しを描画する。
+- `link` / `label` / `editable` で位置引数と並べた `text=`。これらは位置引数が無いときだけ `text=` を読むので、`label(text="A", "B")` は `B` を描画し、`A` は捨てられる。
 
 > `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
 > `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
 > `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
+> `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
 
-どれも捨てられる引数の位置で報告する。これらは `check`・`build`・`smoke` のすべてを通っていた：引数はパースされ、型検査され、ページには届かなかった。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
+どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを上の順に `positional`・`text-prop`・`text-shadowed` で示す。これらは `check`・`build`・`smoke` のすべてを通っていた：引数はパースされ、型検査され、ページには届かなかった。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
 
-**修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除く。
+**修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
 
 ## E02xx — 型
 

@@ -104,18 +104,10 @@ const rows: Row[] = [
     notSays: "probe",
     prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
   },
-  {
-    kind: "editable, text= beside a positional",
-    // `editable` also takes its content from `text=`, but only as a fallback
-    // for a call with no positional argument: written together, the
-    // positional one is the content.
-    tile: 'editable(text="A", "B")',
-    says: "B",
-    notSays: "A",
-  },
-  // `label` and `link` take their label the same way: the first positional
-  // argument, or `text=` when none is written. The positional one used to be
-  // parsed and then dropped, so both rendered empty.
+  // `label` and `link` take their label the same way as `editable`: the first
+  // positional argument, or `text=` when none is written (both together is
+  // E0129, see `packages/compiler/test/builtin-content-args.test.ts`). The
+  // positional one used to be parsed and then dropped, so both rendered empty.
   {
     kind: "label",
     tile: 'label(test-id="probe", title)',
@@ -124,22 +116,10 @@ const rows: Row[] = [
     prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
   },
   {
-    kind: "label, text= beside a positional",
-    tile: 'label(text="A", "B")',
-    says: "B",
-    notSays: "A",
-  },
-  {
     kind: "link",
     tile: 'link(to="/x", title)',
     says: "Title",
     notSays: "/x",
-  },
-  {
-    kind: "link, text= beside a positional",
-    tile: 'link(to="/x", text="A", "B")',
-    says: "B",
-    notSays: "A",
   },
 ];
 

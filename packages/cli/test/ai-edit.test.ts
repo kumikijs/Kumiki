@@ -349,6 +349,60 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("tells the E0129 shapes apart by the diagnostic's field, not its message", () => {
+    // Which shape a diagnostic is decides repair vs skip. Reworded messages
+    // must plan exactly what the real ones do.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-content-"));
+    const file = join(dir, "content.kumiki");
+    writeFileSync(
+      file,
+      `slot title : Text = "Hi"
+tile App = column(heading(level=2, text=title), text("A", "B"), label(text="X", "Y"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    const plan = (es: typeof errors) => {
+      const { patches, skipped } = planFixesExplained(store, es);
+      return { patches: patches.map((p) => p.description), skipped: skipped.map((s) => s.reason) };
+    };
+    const real = plan(errors);
+    expect(real.patches).toHaveLength(2);
+    expect(real.skipped).toEqual(["e0129-dropped-argument-has-no-single-repair"]);
+    expect(plan(errors.map((e) => ({ ...e, message: "reworded" })))).toEqual(real);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("removes a text= that a positional argument shadows (E0129)", () => {
+    // `label(text="X", "Y")` renders "Y": `text=` is read only when no
+    // positional argument is written. Removing it changes nothing rendered,
+    // wherever in the call it is written.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-shadowed-"));
+    const file = join(dir, "shadowed.kumiki");
+    writeFileSync(
+      file,
+      `tile A = label(text="X", "Y")
+tile B = link(to="/x", "Y", text=("X" + "Z"))
+tile App = column(A(), B())
+app P
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(2);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain(
+      `tile A = label("Y")\ntile B = link(to="/x", "Y")\n`,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("rewrites an out-of-scope $route to the slot that holds it (E0119)", () => {
     // The two name the same route. The bind is only filled in for a route
     // lifecycle reducer, and the slot is readable from all of them — so the

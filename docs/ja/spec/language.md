@@ -642,7 +642,7 @@ pattern      ::= identifier
 
 **builtin の内容 — 位置引数**:
 - テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
-- `button` のラベルは名前付き引数 `text=` である。`link` と `label` はどちらでも取る：最初の位置引数（`link("Home", to="/x")`、`label("Name")`）、それが無ければ `text=`（`link(to="/x", text="Home")`）。両方あれば `editable` と同じく位置引数が優先する。（`link` は旧来の `{text: "…"}` prop 形式も受け付け、いずれも同じノードにコンパイルされる。）builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、または位置引数の無いテキスト系 builtin の `text=` —— [E0129](./errors.md#e0129-unrendered-arg) になる：`text=` は `button` / `link` / `label` / `editable` のラベル引数であり、テキスト系 builtin では prop である。
+- `button` のラベルは名前付き引数 `text=` である。`link` と `label` はどちらでも取る：最初の位置引数（`link("Home", to="/x")`、`label("Name")`）、それが無ければ `text=`（`link(to="/x", text="Home")`）。したがって `editable` と同じく、位置引数と並べた `text=` は読まれない。（`link` は旧来の `{text: "…"}` prop 形式も受け付け、いずれも同じノードにコンパイルされる。）builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、位置引数の無いテキスト系 builtin の `text=`、または `link` / `label` / `editable` で位置引数と並べた `text=` —— [E0129](./errors.md#e0129-unrendered-arg) になる：`text=` は `button` / `link` / `label` / `editable` のラベル引数であり、テキスト系 builtin では prop である。
 
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
