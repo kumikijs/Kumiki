@@ -304,16 +304,27 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // time and still ships it, because `parseTime` sits in the stdlib module
     // every app loads.
     //
-    // Still 63,000 (62,621 measured, from 62,504 on dev at f9a999c): a `for`
+    // Still 63,000 (62,940 measured, from 62,504 on dev at f9a999c): the
+    // viewport pick reads the active theme's breakpoints over the style.md
+    // §4.2 defaults (`DEFAULT_BREAKPOINTS` in core.js) and orders them by their px size,
+    // counting rem and em at 16px (§4.5); a grid's track mapping moved from
+    // tiles-layout.js into core.js so SSR shares it without importing a
+    // renderer. A counter picks no viewport and lays out no grid and still
+    // ships them, because they sit in modules every app loads.
+    //
+    // 64,000 from 63,000 (63,057 measured, from 62,940 on dev at d8ff739): a `for`
     // keys each tile it renders apart from its siblings, a repeated value
     // included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which
     // writes the loop and the occurrence before the value's `show`. A counter
     // has no `for` and still ships it, because it sits in the stdlib module
     // every app loads.
+    // Dev was 60 bytes under the line at d8ff739, so this change crosses it;
+    // the budget moves up one step, as it did to 63,000, rather than holding
+    // the change at the old line.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(63_000);
+    expect(total).toBeLessThan(64_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });

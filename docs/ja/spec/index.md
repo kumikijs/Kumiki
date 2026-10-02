@@ -282,6 +282,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | ルーティング | [§3.4](./routing.md#_3-4-ルートライフサイクル) |
 | `156-heading-level.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.3.2](./stdlib.md#_2-3-2-テキスト要素) |
 | `157-theme-switch.kumiki` | slot, reducer, tile, app | スタイル | [§4.6](./style.md#_4-6-dark-mode) |
+| `158-responsive-breakpoints.kumiki` | tile, app | スタイル | [§4.5](./style.md#_4-5-responsive) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
 | `160-tile-test-content-fields.kumiki` | slot, tile | テスト | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | コア | [§1.6.4](./language.md#_1-6-4-不変条件) |
