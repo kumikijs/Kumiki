@@ -28,6 +28,8 @@ export {
 } from "./builtins.ts";
 export {
   BUILTIN_EFFECT_CAPS,
+  BUILTIN_EFFECTS,
+  type BuiltinEffect,
   type CapabilityManifest,
   type ManifestResult,
   parseCapabilityManifest,
