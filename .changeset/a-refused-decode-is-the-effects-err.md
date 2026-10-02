@@ -30,4 +30,6 @@ not checked.
 `apps/03-blog` decoded its stored session with `Decoder.Json(Option(Session))`,
 though a storage read already answers `Option` of what it decodes (http.md
 §6.7.2). The check now reads that `T` literally, so the example decodes
-`Session`.
+`Session`. Its `saveSession` stored the `Option` wrapper that check refuses on
+the next boot; it now stores the `Session` itself, and logout emits a new
+`clearSession`, a key-only write that removes the entry.
