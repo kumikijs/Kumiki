@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "a two-item list is one value to every fragment; an .entries pair is taken apart",
+      "do": { "click": "button" },
+      "expect": {
+        "state": {
+          "kept": { "_tag": "Some", "_0": [1, 2] },
+          "size": { "_tag": "Some", "_0": 2 },
+          "longOnes": 2,
+          "sizes": [2, 3],
+          "twoItem": { "_tag": "Some", "_0": [1, 2] },
+          "longest": [[3, 4, 5], [1, 2]],
+          "byScore": ["bob", "ann"],
+          "named": [2, 3],
+          "kept2": ["ann"]
+        }
+      }
+    }
+  ]
+}

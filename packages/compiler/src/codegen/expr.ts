@@ -1,8 +1,9 @@
-import type { Expr, KeyKind, Pattern, Pos } from "../ast.ts";
+import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
   bindRef,
+  childCtx,
   declareBind,
   type EvalCtx,
   fieldKey,
@@ -114,17 +115,8 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (ctx.localBinds.has(e.name)) return bindRef(ctx, e.name);
       if (e.name === "now") return `_s.now()`;
       // `route` is an auto-managed slot maintained by the runtime.
-      if (e.name === "route") {
-        return ctx.reducerScope
-          ? `((_next["route"] !== undefined) ? _next["route"] : _live["route"])`
-          : `_live["route"]`;
-      }
-      const isSlot = ctx.gen.slots.some((s) => s.name === e.name);
-      if (isSlot) {
-        const key = JSON.stringify(e.name);
-        return ctx.reducerScope
-          ? `((_next[${key}] !== undefined) ? _next[${key}] : _live[${key}])`
-          : `_live[${key}]`;
+      if (e.name === "route" || ctx.gen.slots.some((s) => s.name === e.name)) {
+        return slotReadJs(e.name, ctx.reducerScope);
       }
       return jsBinding(e.name);
     }
@@ -281,7 +273,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
-      return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind);
+      return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind, e.fragmentShape);
     }
     case "RecordLit": {
       const parts = e.fields.map((f) => `${fieldKey(f.name)}: ${jsOfExpr(f.value, ctx)}`);
@@ -423,10 +415,11 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
  *
  * `second` is why the checker cannot read `binds` alone. `fold` binds the
  * element as `$2` on every receiver, so a `fn` that stops at the accumulator
- * drops every element. The list methods bind `$2` to the value of a key/value
- * pair — a `Map`, or a `List` of pairs from `.entries` — and on any other
- * receiver `argFnList` fills it with the JS index or the element again, which
- * no `fn` written for it means.
+ * drops every element. The list methods bind `$2` only where the value handed
+ * over is taken apart — a `Map`'s filter entry, or a pair (stdlib.md §2.2.3).
+ * Where the checker decides the value is one value, `argFnList` declares no
+ * `$2` at all; only where the lowering falls back does it fill one with the
+ * JS index or the element again, which no `fn` written for it means.
  */
 export const FRAGMENT_ARGUMENTS: ReadonlyMap<
   string,
@@ -656,6 +649,7 @@ export function methodCallJs(
   written: Expr[],
   ctx: EvalCtx,
   keyKind?: KeyKind,
+  shape?: FragmentShape,
 ): string {
   // Chained `recv.run-reducer(name)` in a property-test invariant (§8.3): apply
   // the reducer to the receiver state. `_event` is bound in the generated trial.
@@ -663,17 +657,36 @@ export function methodCallJs(
     return `_s.runReducerStep(App, ${jsOfExpr(recv, ctx)}, ${JSON.stringify(reducerNameArg(written[0]))}, _event)`;
   }
   const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);
-  // Build inner ctx with $1, $2 bound for predicate expression fragments.
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
-  const p1 = declareBind(inner, "$1");
-  const p2 = declareBind(inner, "$2");
+  // The scopes a fragment is lowered in: `one` declares the lambda's `$1`
+  // alone (`flat-map` / `update` / `map-err`, and a fragment handed one
+  // value), `two` its `$1` and `$2`. A `$2` read where only `$1` is declared
+  // is the enclosing scope's, as the checker resolves it — and where nothing
+  // encloses one, the checker has already reported it (E0103).
+  const one = childCtx(ctx);
+  const p1 = declareBind(one, "$1");
+  const two = childCtx(one);
+  const p2 = declareBind(two, "$2");
 
   const recvJs = jsOfExpr(recv, ctx);
-  // For list ops, the element may be a plain T or a [K, V] tuple (from .entries).
-  // Generate a lambda that binds `$1` and `$2` accordingly: for a 2-tuple we
-  // bind ($1=k, $2=v); for any other element we bind $1=elem, $2=undefined.
+  // The lambda a `filter` / `map` / `find` / `sort-by` fragment is lowered
+  // into, binding `$1` / `$2` the way the checker decided from the receiver's
+  // type (`FragmentShape`, stdlib.md §2.2.3). A pair is taken apart; a Map's
+  // filter is handed each entry as one `[key, value]` pair (`_s.filter`
+  // passes it that way, the key restored to its type when the checker
+  // recorded a `keyKind`) and takes it apart the same way; any other value —
+  // a 2-element List included — is `$1` whole, with no `$2` declared at all.
+  // An undecided receiver falls back to reading the value: any 2-element
+  // array is taken apart there.
+  const takenApart = `const ${p1} = __x[0]; const ${p2} = __x[1];`;
+  const binds: Record<FragmentShape, string> = {
+    pair: takenApart,
+    "key-value": takenApart,
+    value: `const ${p1} = __x;`,
+    undecided: `const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
+  };
+  const decided = shape ?? "undecided";
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x); return ${jsOfExpr(a, inner)}; })`;
+    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" ? one : two)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {
@@ -688,7 +701,7 @@ export function methodCallJs(
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
-      return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, inner)}))`;
+      return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, one)}))`;
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
@@ -730,7 +743,7 @@ export function methodCallJs(
     case "fold":
       // List(T).fold(init, expr) — expr binds $1=acc, $2=elem (distinct from the
       // $1=elem/$2=value convention of filter/map), so emit its own lambda.
-      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, inner)})`;
+      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
     case "show":
       return `_s.show(${recvJs})`;
     case "is-some":
@@ -807,7 +820,7 @@ export function methodCallJs(
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
       // Map(K,V).update(k, expr) — within expr, $1 is the current value.
-      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, inner)})))`;
+      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, one)})))`;
     case "add":
       // Set(T).add(x)
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
@@ -822,7 +835,7 @@ export function methodCallJs(
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
       // Result(T,E).map-err(expr) — within expr, $1 is the current Err payload.
-      return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, inner)})))`;
+      return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
     case "replace":
       // Text.replace(from, to) — replaces every occurrence.
       return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;
@@ -923,6 +936,21 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
 }
 
 /**
+ * A read of slot `name`. Inside a reducer body (`reducerScope`) it answers the
+ * value the body last wrote to the slot, if it has written one, and the value
+ * the slot held when the reducer started otherwise (language.md §1.6.4
+ * invariant 7). "Has written" is whether `_next` holds the key, not whether the
+ * value is `undefined`: a `match` with no arm for its scrutinee writes
+ * `undefined`, the batch commits that, and a later read has to agree with it.
+ */
+export function slotReadJs(name: string, reducerScope: boolean | undefined): string {
+  const key = JSON.stringify(name);
+  return reducerScope
+    ? `(Object.hasOwn(_next, ${key}) ? _next[${key}] : _live[${key}])`
+    : `_live[${key}]`;
+}
+
+/**
  * One `emit` in a reducer body, statement or expression: the statements that
  * push its record onto `_emits`, and the `EffectId` that names it.
  *
@@ -936,10 +964,9 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
  *
  * The key reads slots in reducer scope unconditionally rather than from
  * `ctx.reducerScope`. `_emits`, which this pushes to, is declared beside
- * `_next` in the reducer body (`emit-reducer.ts`), so `_next` is in scope
- * wherever this code runs — and a lowering on the way here that rebuilt the
- * `EvalCtx` without the flag would otherwise make the key read `_live` and miss
- * the body's own writes.
+ * `_next` in the reducer body (`emit-reducer.ts`), so wherever this code runs
+ * `_next` is in scope and the key sees the body's own writes; the key never
+ * depends on how the `EvalCtx` that reached here was built.
  */
 export function reducerEmitJs(
   effect: string,
@@ -993,12 +1020,12 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     return `if (true) { const ${bindRef(inner, p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
   }
   if (p.kind === "PTuple") {
-    const { guard, binds, inner } = tupleArm(p, ctx, scVar, false);
+    const { guard, binds, inner } = tupleArm(p, ctx, scVar);
     return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
   // PVariant
   const tag = p.name;
-  const inner = makeEvalCtx(ctx.gen, ctx.localBinds);
+  const inner = childCtx(ctx);
   const bindAssigns: string[] = [];
   for (let i = 0; i < p.binds.length; i++) {
     const name = p.binds[i]!;
@@ -1011,23 +1038,15 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
 // Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
 // nested element guards) and a series of `const … = scVar[i]…;` bindings.
 // Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
-// the indexed access path. `inheritReducerScope` carries the caller's
-// reducer-scope flag into the arm; with it off, a slot read in the arm lowers to
-// `_live[...]`. A `match` statement passes true. TileMatch passes false because
-// a tile renders outside every reducer body. `matchExpr` passes false too, and
-// so drops the flag inside a reducer body as well — as its binding and variant
-// arms do by rebuilding the context — which is a known gap, not a rule.
+// the indexed access path. The arm is a `childCtx` of the caller's, so it reads
+// the slots the way the caller does: `_next` first inside a reducer body,
+// `_live` everywhere else.
 export function tupleArm(
   p: Pattern & { kind: "PTuple" },
   ctx: EvalCtx,
   scVar: string,
-  inheritReducerScope: boolean,
 ): { guard: string; binds: string; inner: EvalCtx } {
-  const inner = makeEvalCtx(
-    ctx.gen,
-    ctx.localBinds,
-    inheritReducerScope ? ctx.reducerScope : undefined,
-  );
+  const inner = childCtx(ctx);
   const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
   const binds: string[] = [];
   for (let i = 0; i < p.items.length; i++) {

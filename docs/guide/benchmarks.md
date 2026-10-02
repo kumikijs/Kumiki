@@ -53,7 +53,7 @@ Each task gives a model **only `docs/spec/` + a task spec** and asks for a singl
 | | Codex | 243 | 1,881 | ✅ | ✅ | ✅ |
 | | Gemini | 152 | 1,314 | ✅ | ✅ | ✅ |
 | v3 Issue Tracker (~600 LOC) | Claude | 629 | 5,325 | ✅ | ✅ | ✅ |
-| | Codex | 674 | 6,417 | ✅ | ✅ | ✅ |
+| | Codex | 674 | 6,417 | ✅ | ❌ | ❌ |
 | | Gemini | 440 | 4,995 | ✅ | ❌ | ❌ |
 | v4 Project Mgmt (~900 LOC) | Claude | 1,029 | 9,552 | ❌ | ❌ | ❌ |
 | | Codex | 877 | 8,703 | ✅ | ✅ | ✅ |
@@ -61,9 +61,9 @@ Each task gives a model **only `docs/spec/` + a task spec** and asks for a singl
 
 What the table says:
 
-- **Mid-size apps build from the spec alone, in one pass.** Every vendor builds v2; two of three build the ~600-LOC v3.
-- **Codex builds everything it attempted, including the ~880-LOC v4** — the only vendor to survive the largest task. Claude holds through v3, then trips on an unsupported `match` pattern at v4 scale; Gemini degrades earliest.
-- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build ([#61](https://github.com/kumikijs/Kumiki/issues/61)) and rules the spec stated only by example ([#62](https://github.com/kumikijs/Kumiki/issues/62)). Both are fixed, and the table above is scored against the patched compiler. The three remaining ❌ are genuine authoring errors the toolchain *correctly* rejects.
+- **Mid-size apps build from the spec alone, in one pass.** Every vendor builds v2; Claude builds the ~600-LOC v3, and Codex misses it by one E0128 (a value written as a child).
+- **Codex builds the ~880-LOC v4** — the only vendor to survive the largest task. Claude holds through v3, then trips on an unsupported `match` pattern at v4 scale; Gemini degrades earliest.
+- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build ([#61](https://github.com/kumikijs/Kumiki/issues/61)) and rules the spec stated only by example ([#62](https://github.com/kumikijs/Kumiki/issues/62)). Both are fixed, and the table above is scored against the patched compiler. The remaining ❌ are genuine authoring errors the toolchain *correctly* rejects.
 
 ## Reproducing
 

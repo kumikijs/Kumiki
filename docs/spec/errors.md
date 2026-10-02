@@ -246,6 +246,14 @@ A name written `count-1` is one name, not a subtraction: `-` continues an identi
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
+A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
+
+> `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`
+
+That holds anywhere inside the fragment, a `$2` in another method's argument included (`xs.map($1.min($2))`): only a fragment declares positionals, so such an argument reads the fragment's. Where the scope around the fragment binds a `$2` of its own — a `fn`'s second parameter, an enclosing pair's value — the fragment hides it, and the message says how to reach it:
+
+> `"$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
+
 A `let` is declared for the scope it is written in ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), and each branch of an `if`, a `for` body and each match arm is a scope of its own. So a name one `if` branch declares is undefined in the other branch and on every statement after the `if`, just as one a `for` body or match arm declares is undefined after it. To choose the value by the condition, declare it once before the `if` with an `if` expression — `let n = if c then "a" else "b"` — or move the read into the branch.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
@@ -504,11 +512,23 @@ A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-sh
 | `flat-map`, `map-err` | the only one | `$1` |
 | `update(k, f)` | the second | `$1` (the current value) |
 
-`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A list method's `fn` declares two only over a key/value pair; over any other receiver whose type the checker can decide, a second parameter would receive the JS index or the element again, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
+`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A `filter` / `map` / `find` / `sort-by` `fn` declares two only where the fragment takes each value apart — a Map's filter, a pair ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)); over any other receiver whose type the checker can decide, a second parameter would receive nothing, or the JS index or the element again where the lowering falls back, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
 
 The count is all the check compares. The `fn`'s parameter types are not checked against the element's, any more than the inline `f($1)` is: `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is not reported.
 
 **Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
+
+### E0128 `value-as-child`
+
+A value is written as a positional argument of a builtin that is not a value builtin — a builtin other than `text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image` and `icon`. Such a builtin renders a positional argument only when it is a tile: a `tile-expr` ([Language §1.7.1](./language.md#_1-7-1-syntax)) or the name of a tile the program defines. Containers (`column`, `row`, `card`, …) render it as a child; the others (`button`, `progress`, …) read no positional argument at all.
+
+> ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
+
+Codegen drops a value in that position, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
+
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`).
+
+**Fix**: Show the value with a tile — `column(text(n.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that.
 
 ## E02xx — Types
 
@@ -528,6 +548,7 @@ A value does not have the type its position requires.
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
+> `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
 
@@ -537,7 +558,7 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a variant tag carrying a payload (`onClick=Some(1)`), a tile call carrying arguments (`onClick=box(text("z"))`) or props (`onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
@@ -1089,7 +1110,7 @@ Three kinds of position have one today:
 
 - A `reducer-test`'s `given.mocks` binds an effect to something other than `ok(...)`, `err(...)` or `delay(<ms>, ok(...)|err(...))`. `mockScriptJs` answers anything else with `{outcome: "ok", value: null}`, so a mock written to drive the failure path drove the success one — and a test asserting what happens when an effect fails passed, permanently, having never failed it. ([E0712](#e0712-episode-mock-invalid) is the same rule for an `episode-test`, whose vocabulary also includes `from-log` and `ignore`.)
 - An `expect.effects` that is not a list. `effectListJs` lowers a non-list to `[]`, which is not an absent assertion but the assertion *no effects were emitted* — so `effects: persist(count)`, a forgotten pair of brackets, passes against a reducer that emits nothing, and the effect named inside it is never resolved.
-- A position read as a record of named parts that holds something else: a test's `given`, a `reducer-test`'s or `episode-test`'s `expect`, an `episode-test`'s `mocks`, and the `mocks` and `event` sections of a `given`. Every reader asks such a position for its fields, and a name or a literal has none, so the whole clause was read as empty. `given = setup` sets nothing and the reducer runs from the slots' declared defaults, an `expect = 41` asserts nothing, and `mocks = 41` scripts nothing, so each test passes against a state or an outcome nobody chose. `{}` is the empty record and is accepted. A `tile-test`'s `expect` is a tile expression and a `property-test`'s `invariant` is an expression, so neither is a record position.
+- A position read as a record of named parts that holds something else: a test's `given`, a `reducer-test`'s or `episode-test`'s `expect`, an `episode-test`'s `mocks`, the `mocks` and `event` sections of a `given`, and the slot → value sections: a `given`'s `slots`, a `reducer-test` `expect`'s `slots`, and an `episode-test` `expect`'s `slots-equal` (which also takes the bare name `from-log`). Every reader asks such a position for its fields, and a name or a literal has none, so the whole clause was read as empty. `given = setup` sets nothing and the reducer runs from the slots' declared defaults, an `expect = 41` asserts nothing, `mocks = 41` scripts nothing, and `given = {slots: 41, …}` with `expect = {slots: 41}` seeds no slot and asserts none, so each test passes against a state or an outcome nobody chose. `{}` is the empty record and is accepted. A `tile-test`'s `expect` is a tile expression and a `property-test`'s `invariant` is an expression, so neither is a record position.
 
 > `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
 > `` `expect.effects` must be a list of effects ``
@@ -1099,6 +1120,9 @@ Three kinds of position have one today:
 > `` `mocks` must be a record, `{<effect>: <policy>}` ``
 > `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
 > `` `given.event` must be a record, `{type: …, target: …}` ``
+> `` `given.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots-equal` must be a record, `{<slot>: …}`, or `from-log` ``
 
 E0713 is reported once, at the clause, and no name inside it is resolved as a section, so a `tile-test` does not also count its argument as missing. A rule that holds wherever it is written still applies inside: a wildcard in a `given` is still [E0109](#e0109-test-wildcard-misuse), and a `<slots.X>` naming no slot in a `reducer-test`'s `expect` is still [E0103](#e0103-undef-ref-undef-slot).
 

@@ -17,6 +17,7 @@ import type {
   EffectDef,
   Expr,
   FnDef,
+  FragmentShape,
   KeyKind,
   Lvalue,
   MatchArm,
@@ -43,7 +44,7 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES } from "./builtins.ts";
+import { BUILTIN_TILES, positionalIsTile } from "./builtins.ts";
 import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
@@ -60,6 +61,7 @@ import {
   findCycles,
   type GraphEdge,
 } from "./def-graph.ts";
+import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
@@ -69,6 +71,8 @@ import { type RefinementProblem, refinementBaseProblem, refinementProblem } from
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
+  bareNameAt,
+  fitsRecordPosition,
   type GivenSection,
   givenSection,
   isRecordValue,
@@ -1036,6 +1040,14 @@ type Ctx = {
    * same reason.
    */
   undeclaredInputReads?: Pos[];
+  /**
+   * Set inside the fragment of a list method handed one value per call
+   * (`fragmentShape` answered `"value"`): that method's name, and whether the
+   * fragment hides a `$2` the enclosing scope binds (a `fn`'s second
+   * parameter, an outer pair's value), so an unbound `$2` there says why it is
+   * unbound rather than only that it is.
+   */
+  oneValueFragment?: { method: string; hides: boolean };
 };
 
 /**
@@ -1593,6 +1605,30 @@ function checkTileCall(
     }
     if (isTileExpr(v)) {
       checkTileExpr(v, sym, errors, ctx);
+      continue;
+    }
+    // A positional argument of a builtin that is not a value builtin renders
+    // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
+    // program defines, and drops anything else — so a value there rendered
+    // nothing, and a slot named there lowered to a `null` child. It is
+    // reported at the value, and nothing inside it is checked: a `let` is the
+    // one value that can hold a tile call, which reads as a `fn` call there
+    // and would be reported wrongly, so a correct diagnostic under it (an
+    // undefined name, say) waits until the value is moved too.
+    if (
+      arg.name === undefined &&
+      positionalIsTile(t.name) &&
+      !(v.kind === "Ref" && sym.tiles.has(v.name))
+    ) {
+      errors.push({
+        code: "E0128",
+        kind: "value-as-child",
+        message:
+          `A value is not a tile: ${t.name} renders a positional argument only when it is a ` +
+          "tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, " +
+          "for a `let`, write the value where it is used or compute it in a `fn`",
+        pos: v.pos,
+      });
       continue;
     }
     checkExpr(v, sym, errors, ctx);
@@ -2925,6 +2961,18 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
         return;
       }
+      if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
+        const { method, hides } = ctx.oneValueFragment;
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: hides
+            ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
+            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+          pos: e.pos,
+        });
+        return;
+      }
       errors.push({
         code: "E0103",
         kind: "undef-ref",
@@ -3067,24 +3115,59 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         const kind = keyKindOfReader(recvType, e.method, sym);
         if (kind) e.keyKind = kind;
         const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+        // How a `filter` / `map` / `find` / `sort-by` fragment binds its
+        // positionals, recorded for codegen whatever the fragment is spelled
+        // as — `xs.map(len)` is `xs.map(len($1))` and binds the same way.
+        const shape =
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+        if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
         for (const [i, a] of e.args.entries()) {
-          if (fragment?.index === i && isFragmentFnName(a, sym, ctx)) {
-            checkFragmentFnArity(a, e.method, fragment, recvType, sym, errors);
-            ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
+          if (fragment?.index !== i) {
+            // Only the fragment argument is lowered into a lambda; every other
+            // argument is evaluated where the call is, so it reads the
+            // enclosing scope's `$1` / `$2`, as codegen emits it.
+            checkExpr(a, sym, errors, ctx);
+            const declared = memberArgType(recvType, e.method, i, sym);
+            if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
-          // Inside a method-call argument `$1` / `$2` are the implicit lambda's
-          // parameters, and they SHADOW any outer ones — a tile that declares
-          // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
-          // inside that tile is a different `$1`. What they are bound to is
-          // per method and per receiver, and `fragmentBindings` answers only
-          // where the lowering's own reading is certain: a wrong guess costs a
-          // diagnostic on a working program.
+          if (isFragmentFnName(a, sym, ctx)) {
+            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
+            ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
+            // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
+            // value), so the key it computes is what the fn declares it
+            // returns. A fn already refused for its arity is not checked again.
+            if (fits && e.method === "sort-by" && i === 0) {
+              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+            }
+            continue;
+          }
+          // Inside the fragment `$1` (and `$2`, where the lambda binds one) are
+          // the implicit lambda's parameters, and they SHADOW any outer ones —
+          // a tile that declares `in=TaskId` binds `$1` to it, and
+          // `dueDate.map(formatDate($1))` inside that tile is a different
+          // `$1`. What they are bound to is per method and per receiver, and
+          // `fragmentBindings` answers only where the lowering's own reading
+          // is certain: a wrong guess costs a diagnostic on a working program.
           const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
-          bindLocal(inner, "$2", p2);
+          if (shape === "value") {
+            // A fragment handed one value binds `$1` alone, and codegen
+            // declares no `$2` in it: a `$2` anywhere inside — nested method
+            // arguments included — is an error here, not the index or a
+            // second copy of `$1` there. An enclosing `$2` is hidden too,
+            // since the lambda's positionals shadow the enclosing ones.
+            inner.localBinds.delete("$2");
+            inner.localTypes.delete("$2");
+            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
+          } else if (fragment.binds === 2) {
+            bindLocal(inner, "$2", p2);
+          }
           checkExpr(a, sym, errors, inner);
+          if (e.method === "sort-by" && i === 0) {
+            checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
+          }
           // An argument whose type the receiver's fixes is checked against it
           // like any declared position — which is also what builds a list
           // literal there as the Set it is declared to be (stdlib.md §2.2.2).
@@ -3207,56 +3290,48 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
  * - none drops the element, and more than the method binds leaves a
  *   parameter unbound;
  * - `fold`'s `fn` takes both, because the element is the second;
- * - a list method's `$2` is the value of a key/value pair, so a `fn` of two
- *   takes it only over a `Map` or a `List` of pairs. Over any other receiver
- *   the second argument would be the JS index or the element again. A
- *   receiver whose type cannot be decided is given the benefit of the doubt.
+ * - a `filter` / `map` / `find` / `sort-by` fragment binds a second
+ *   positional only where `shape` says the value handed over is taken apart —
+ *   a pair, or a Map's filter entry. Where it binds one value (`"value"`), or
+ *   the receiver is known but §2.2.3 gives the method no binding on it
+ *   (`null`), a second parameter would be handed nothing the `fn` means. Only
+ *   a receiver whose type cannot be decided (`"undecided"`) is given the
+ *   benefit of the doubt.
+ *
+ * Answers whether the count fits, so a caller checks nothing further about a
+ * `fn` already reported here.
  */
 function checkFragmentFnArity(
   a: Expr & { kind: "Ref" },
   method: string,
   fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
   receiver: TypeExpr | null,
+  shape: FragmentShape | null | undefined,
   sym: SymbolTable,
   errors: KumikiError[],
-): void {
+): boolean {
   const n = sym.fns.get(a.name)?.params.length ?? 0;
-  const report = (why: string): void => {
+  const report = (why: string): false => {
     errors.push({
       code: "E0213",
       kind: "call-arity-mismatch",
       message: `Function "${a.name}" expects ${n} argument(s) but ${why}`,
       pos: a.pos,
     });
+    return false;
   };
   if (fragment.second === "element") {
-    if (n !== 2) report(`.${method} supplies exactly 2 — the accumulator and the element`);
-    return;
+    return n === 2 || report(`.${method} supplies exactly 2 — the accumulator and the element`);
   }
-  if (n === 0) report(`.${method} needs at least 1`);
-  else if (n > fragment.binds) report(`.${method} supplies at most ${fragment.binds}`);
-  else if (n === 2 && fragment.second === "pair-value" && bindsPairs(receiver, sym) === false) {
+  if (n === 0) return report(`.${method} needs at least 1`);
+  if (n > fragment.binds) return report(`.${method} supplies at most ${fragment.binds}`);
+  if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
-    report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)`,
+    return report(
+      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
     );
   }
-}
-
-/**
- * Whether a list method over `receiver` binds `$2` to the value of a key/value
- * pair: `true` for a `Map` or a `List` of 2-tuples, `false` for any other
- * receiver it can decide, `null` when it cannot tell.
- */
-function bindsPairs(receiver: TypeExpr | null, sym: SymbolTable): boolean | null {
-  const t = unaliasType(receiver, sym);
-  if (t === null || t.kind === "TypeRef") return null;
-  if (t.kind !== "TypeApp") return false;
-  if (t.name === "Map") return true;
-  if (t.name !== "List") return false;
-  const el = unaliasType(t.args[0] ?? null, sym);
-  if (el === null || el.kind === "TypeRef") return null;
-  return el.kind === "TypeApp" && el.name === "Tuple" && el.args.length === 2;
+  return true;
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -3273,6 +3348,35 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
   if (isPrimNamed(t, sym, "Text")) return "text";
   if (isPrimNamed(t, sym, "Time")) return "time";
   return null;
+}
+
+/**
+ * `List(T).sort-by(key)` orders the list by its key the way `<` orders two
+ * values (stdlib.md §2.2.3), so the key has to be one `<` accepts: numeric,
+ * `Text` or `Time` (language.md §1.9.4). A record, a variant, a `Bool`, an
+ * `Option` or a container has no such order, and the runtime would leave the
+ * list as it found it; that is reported here as the comparison it stands for
+ * would be. `t` is the key's type: the fragment's inferred type, or the
+ * declared return type of a `fn` passed by name. A key whose type is unknown —
+ * one the checker cannot infer, or a `fn` with no declared return type — is
+ * left alone, as is any receiver not known to be a `List`.
+ */
+function checkSortKey(
+  t: TypeExpr | null,
+  pos: Pos,
+  recv: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const r = unaliasType(recv, sym);
+  if (r?.kind !== "TypeApp" || r.name !== "List") return;
+  if (!isKnown(t, sym) || orderingFamily(t, sym) !== null) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${typeToString(t as TypeExpr)}`,
+    pos,
+  });
 }
 
 function binOpResult(e: Expr & { kind: "BinOp" }, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -4723,13 +4827,11 @@ function keyKindOfReader(
  *   `$1` is the current `V`.
  *
  * Everything else is `null`, which binds the name with no type — as every
- * fragment was bound before. That includes an element whose runtime value may
- * be a 2-element array without being a `Tuple` (a `List`, a `Set` — a Set
- * literal is built as a Set only where the checker knows its type, and one
- * that arrived as JSON may be an array — or a type parameter): the lowering
- * takes any such array apart, so the element type is not what `$1` holds
- * there. `Map.map` is absent because its lowering does not iterate a Map at
- * all.
+ * fragment was bound before. That includes an element the checker cannot
+ * decide (a type parameter), which the lowering's fallback may take apart.
+ * `Map.map` is absent because its lowering does not iterate a Map at all.
+ * Which of `$1` / `$2` a fragment binds at all is {@link fragmentShape}'s
+ * answer; this one only types them.
  */
 function fragmentBindings(
   recv: TypeExpr | null,
@@ -4765,9 +4867,6 @@ function fragmentBindings(
   }
 }
 
-/** Containers whose value may be a JavaScript array at runtime. */
-const ARRAY_SHAPED: ReadonlySet<string> = new Set(["List", "Set"]);
-
 /**
  * The `List` members whose fragment is handed each element (`argFnList`) —
  * read off `FRAGMENT_ARGUMENTS`, whose `pair-value` entries are exactly those,
@@ -4778,20 +4877,81 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
 );
 
 /**
- * `$1` / `$2` for a fragment the lowering hands one value through `argFnList`,
- * which takes any 2-element array apart. A `Tuple(A, B)` is exactly that, so
- * it binds both; a value that might be such an array without the type saying
- * so binds nothing.
+ * How the fragment of `recv.method(…)` — a `filter` / `map` / `find` /
+ * `sort-by`, lowered through `argFnList` — binds `$1` and `$2` (stdlib.md
+ * §2.2.3), decided from the receiver's static type:
+ *
+ * - `"pair"`: each value handed over is a `Tuple(A, B)` — a `List` of pairs
+ *   from `.entries`, or an `Option` / `Result` holding one — and is taken
+ *   apart, `$1 = A`, `$2 = B`.
+ * - `"key-value"`: `Map(K, V).filter`, handed each entry as the key and the
+ *   value, `$1` and `$2`.
+ * - `"value"`: any other element of a `List`, or the value of an `Option`
+ *   (`map` / `filter`) or a `Result` (`map`) — `$1` is that value whole,
+ *   whatever it is (a 2-element `List` included), and `$2` is not bound.
+ * - `"undecided"`: the receiver's type, or its element's, cannot be decided
+ *   here (a type parameter, an untyped payload).
+ * - `null`: the receiver's type is known, but §2.2.3 gives this method no
+ *   binding on it — a `Set`, whose `_s.filter` hands each element as an
+ *   `[element, true]` entry; `Map.map` / `find` / `sort-by`; `Option.find` /
+ *   `sort-by`; `Result.filter` / `find` / `sort-by`; any receiver that is not
+ *   a container.
+ *
+ * Under `"undecided"` and `null` alike the lowering falls back to the value's
+ * shape at run time, taking apart any 2-element array (`MethodCall` records
+ * both as `"undecided"`). They differ for a `fn` named as the fragment: only
+ * an undecidable receiver lets a `fn` of two through (`checkFragmentFnArity`).
+ *
+ * The one classifier codegen (through `MethodCall.fragmentShape`), the
+ * positional scope and the arity of a bare `fn` fragment all read.
  */
-function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+function fragmentShape(
+  recv: TypeExpr | null,
+  method: string,
+  sym: SymbolTable,
+): FragmentShape | null {
+  if (isOpaque(recv, sym)) return "undecided";
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp" || !ELEMENT_FRAGMENTS.has(method)) return null;
+  const [a] = t.args;
+  switch (t.name) {
+    case "List":
+      return elementShape(a ?? null, sym).shape;
+    case "Option":
+      return method === "map" || method === "filter" ? elementShape(a ?? null, sym).shape : null;
+    case "Result":
+      return method === "map" ? elementShape(a ?? null, sym).shape : null;
+    case "Map":
+      return method === "filter" ? "key-value" : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether one element is a pair the lowering takes apart (see
+ * {@link fragmentShape}), with the pair's halves when it is — read off the
+ * normalised type, so the halves are the ones the answer was made from.
+ */
+function elementShape(
+  elem: TypeExpr | null,
+  sym: SymbolTable,
+):
+  | { shape: "pair"; halves: [TypeExpr | null, TypeExpr | null] }
+  | { shape: "value" | "undecided" } {
   const u = unaliasType(elem, sym);
-  if (u?.kind === "TypeApp" && u.name === "Tuple") {
-    return u.args.length === 2 ? [u.args[0] ?? null, u.args[1] ?? null] : [elem, null];
+  if (u === null || u.kind === "TypeRef") return { shape: "undecided" };
+  if (u.kind === "TypeApp" && u.name === "Tuple" && u.args.length === 2) {
+    return { shape: "pair", halves: [u.args[0] ?? null, u.args[1] ?? null] };
   }
-  if (u === null || u.kind === "TypeRef" || (u.kind === "TypeApp" && ARRAY_SHAPED.has(u.name))) {
-    return [null, null];
-  }
-  return [elem, null];
+  return { shape: "value" };
+}
+
+/** `$1` / `$2` for a fragment handed `elem`, typed the way {@link elementShape} binds them. */
+function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+  const el = elementShape(elem, sym);
+  if (el.shape === "pair") return el.halves;
+  return el.shape === "value" ? [elem, null] : [null, null];
 }
 
 /**
@@ -4856,17 +5016,14 @@ function currentFnName(ctx: Ctx): string {
 }
 
 function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const scope = fnScope(fn);
   const ctx: Ctx = {
     kind: "fn",
-    localBinds: new Set(),
-    localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
+    localBinds: new Set(scope.map((b) => b.name)),
+    localTypes: new Map(scope.map((b) => [b.name, b.type])),
     routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
-  for (const p of fn.params) ctx.localBinds.add(p.name);
-  // also bind $1, $2 used in expression-fragment style
-  ctx.localBinds.add("$1");
-  ctx.localBinds.add("$2");
   for (const p of fn.params) resolveType(p.type, sym, errors);
   if (fn.ret) resolveType(fn.ret, sym, errors);
   checkExpr(fn.body, sym, errors, ctx);
@@ -5617,7 +5774,9 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
   for (const f of sectionsOf(t, t.testKind, "given", errors)) {
     switch (f.section) {
       case "slots":
-        checkTestSlotMap(f.value, sym, errors, owned);
+        if (requireRecord(f.value, "given.slots", errors)) {
+          checkTestSlotMap(f.value, sym, errors, owned);
+        }
         break;
       case "event":
         if (requireRecord(f.value, "given.event", errors)) {
@@ -5641,7 +5800,9 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     for (const f of sectionsOf(t, "reducer-test", "expect", errors)) {
       switch (f.section) {
         case "slots":
-          checkTestSlotMap(f.value, sym, errors, owned);
+          if (requireRecord(f.value, "expect.slots", errors)) {
+            checkTestSlotMap(f.value, sym, errors, owned);
+          }
           break;
         case "effects":
           checkTestEffects(f.value, sym, errors, owned);
@@ -5658,9 +5819,13 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     for (const f of sectionsOf(t, "episode-test", "expect", errors)) {
       switch (f.section) {
         case "slots-equal":
-          // `from-log` is the literal that means "take the log's own values".
-          if (f.value.kind === "Ref" && f.value.name === "from-log") break;
-          checkTestSlotMap(f.value, sym, errors, base);
+          // The position's bare name (`from-log`: the log's own values) has no
+          // slots of its own to check, so it stops here; anything past this
+          // line is a record or E0713.
+          if (bareNameAt(f.value, "expect.slots-equal") !== undefined) break;
+          if (requireRecord(f.value, "expect.slots-equal", errors)) {
+            checkTestSlotMap(f.value, sym, errors, base);
+          }
           break;
         case "no-panics":
         case "no-errors":
@@ -5747,15 +5912,17 @@ function nearestSectionHint(kind: TestKind, part: TestPart, written: string): st
 
 /**
  * E0713 when `value` — written at a test-body `position` the lowering reads
- * as a record — is something else; whether it is a record (or absent) to go on
- * reading. The sentence is the one the lowering throws, from the shared table.
+ * as a record — is something the position does not accept; whether it fits (a
+ * record, the position's bare name, or absent) to go on reading. A caller at a
+ * position with a bare name steps past it (`bareNameAt`) before reading fields.
+ * The sentence is the one the lowering throws, from the shared table.
  */
 function requireRecord(
   value: Expr | TileExpr | undefined,
   position: RecordPosition,
   errors: KumikiError[],
 ): boolean {
-  if (value === undefined || isRecordValue(value)) return true;
+  if (value === undefined || fitsRecordPosition(value, position)) return true;
   errors.push({
     code: "E0713",
     kind: "test-shape-invalid",
@@ -5771,13 +5938,13 @@ function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: 
   return e.fields;
 }
 
-/** `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots`. */
+/**
+ * `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots` /
+ * `slots-equal`, once `requireRecord` has said it fits and the caller has
+ * stepped past a bare name, so `rec` is a record.
+ */
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (rec.kind !== "RecordLit") {
-    checkExpr(rec, sym, errors, ctx);
-    return;
-  }
-  for (const f of rec.fields) {
+  for (const f of recordFieldsOf(rec)) {
     if (!isTestSlot(f.name, sym)) {
       errors.push({
         code: "E0103",
@@ -5982,8 +6149,8 @@ function routeInSlotInitMessage(slot: string, name: string, chain?: readonly str
  *
  * Asked of the E0120 gate itself, in the `app-init` position, so that which
  * `route` counts (a local bind or a `fn` parameter of that name does not) is
- * decided in one place. `params` and `positional` are the binds in scope: a
- * `fn`'s parameters and the `$1` / `$2` `checkFn` binds, or nothing for a slot
+ * decided in one place. `params` are the binds in scope: a `fn`'s
+ * (`fnScope` — its parameters and their positionals), or nothing for a slot
  * initializer. `routeBind` is the `no-payload` both really have, and says
  * nothing either way here — the gate returns before the branch that reads it,
  * so a `$route` in a `fn` collects a read from this probe and E0103 from
@@ -6000,10 +6167,9 @@ function routeInSlotInitMessage(slot: string, name: string, chain?: readonly str
 function routeReadsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
-  positional: readonly string[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
-  return preMountProbe(e, sym, params, positional).routeReads;
+  return preMountProbe(e, sym, params).routeReads;
 }
 
 /**
@@ -6017,14 +6183,13 @@ function routeReadsIn(
 function preMountProbe(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[],
-  positional: readonly string[],
+  params: readonly FnScopeBind[],
 ): { routeReads: { name: string; pos: Pos }[]; fragmentFnCalls: { name: string; pos: Pos }[] } {
   const routeReads: { name: string; pos: Pos }[] = [];
   const fragmentFnCalls: { name: string; pos: Pos }[] = [];
   const ctx: Ctx = {
     kind: "app-init",
-    localBinds: new Set([...params.map((p) => p.name), ...positional]),
+    localBinds: new Set(params.map((p) => p.name)),
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
     routeReadsSeen: routeReads,
@@ -6044,20 +6209,19 @@ function preMountProbe(
  * runs wherever the method does (`FRAGMENT_ARGUMENTS`). A bare name anywhere
  * else is a value, E0127, and is never applied, so nothing it mentions is
  * evaluated — which is why this is narrower than `referencesIn`, whose edges
- * the cycle check follows. `params` and `positional` are the binds in scope,
- * as for `routeReadsIn`: a parameter named like a `fn` shadows it.
+ * the cycle check follows. `params` are the binds in scope, as for
+ * `routeReadsIn`: a parameter named like a `fn` shadows it.
  */
 function fnCallsIn(
   e: Expr,
   sym: SymbolTable,
-  params: readonly { name: string; type: TypeExpr }[] = [],
-  positional: readonly string[] = [],
+  params: readonly FnScopeBind[] = [],
 ): { name: string; pos: Pos }[] {
   const out: { name: string; pos: Pos }[] = [];
   walkExpr(e, (n) => {
     if (n.kind === "Call" && sym.fns.has(n.callee)) out.push({ name: n.callee, pos: n.pos });
   });
-  out.push(...preMountProbe(e, sym, params, positional).fragmentFnCalls);
+  out.push(...preMountProbe(e, sym, params).fragmentFnCalls);
   return out.sort((a, b) => a.pos.line - b.pos.line || a.pos.col - b.pos.col);
 }
 
@@ -6103,9 +6267,7 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
     const cached = direct.get(name);
     if (cached !== undefined) return cached;
     const fn = sym.fns.get(name);
-    const answer = fn
-      ? (routeReadsIn(fn.body, sym, fn.params, ["$1", "$2"])[0]?.name ?? null)
-      : null;
+    const answer = fn ? (routeReadsIn(fn.body, sym, fnScope(fn))[0]?.name ?? null) : null;
     direct.set(name, answer);
     return answer;
   };
@@ -6113,7 +6275,7 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
   const callsOf = (fn: FnDef): readonly { name: string }[] => {
     const cached = calls.get(fn.name);
     if (cached !== undefined) return cached;
-    const answer = fnCallsIn(fn.body, sym, fn.params, ["$1", "$2"]);
+    const answer = fnCallsIn(fn.body, sym, fnScope(fn));
     calls.set(fn.name, answer);
     return answer;
   };
