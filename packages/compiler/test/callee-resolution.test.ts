@@ -315,13 +315,23 @@ app A caps=[${caps}] routes={"/" -> App, "/404" -> App} init=[${init}]
   it("accepts the built-in effects, which are not in the effect table", () => {
     // `toast` / `navigate` / `log` and the rest are legal at an `emit`, and
     // codegen's installer DCE already assumes an init entry can name one.
-    expect(codes(app('toast("hello")', "storage.read, notification.show"))).toEqual([]);
+    expect(
+      codes(app('toast({kind: "info", text: "hello"})', "storage.read, notification.show")),
+    ).toEqual([]);
   });
 
   it("holds a built-in effect to its capability too", () => {
     // Not having an `effect` declaration to read a `cap=` off is why this was
     // the one emit that never had to declare anything.
-    expect(codes(app('toast("hello")'))).toEqual(["E0301"]);
+    expect(codes(app('toast({kind: "info", text: "hello"})'))).toEqual(["E0301"]);
+  });
+
+  it("holds a built-in effect's argument to its in= too", () => {
+    // stdlib.md §2.6: `navigate` takes a record, and an init entry is no
+    // exception — the router would read `.path` off the string.
+    expect(codes(app('navigate("/x")', "nav.push"))).toEqual(["E0202"]);
+    expect(codes(app("toast()", "notification.show"))).toEqual(["E0213"]);
+    expect(codes(app('navigate({path: "/x"})', "nav.push"))).toEqual([]);
   });
 
   it("reports a capability the app does not declare", () => {
