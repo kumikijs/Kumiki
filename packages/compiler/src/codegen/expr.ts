@@ -1,4 +1,4 @@
-import type { Expr, KeyKind, Pattern, Pos } from "../ast.ts";
+import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
@@ -273,7 +273,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
-      return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind);
+      return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind, e.fragmentShape);
     }
     case "RecordLit": {
       const parts = e.fields.map((f) => `${fieldKey(f.name)}: ${jsOfExpr(f.value, ctx)}`);
@@ -415,10 +415,11 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
  *
  * `second` is why the checker cannot read `binds` alone. `fold` binds the
  * element as `$2` on every receiver, so a `fn` that stops at the accumulator
- * drops every element. The list methods bind `$2` to the value of a key/value
- * pair — a `Map`, or a `List` of pairs from `.entries` — and on any other
- * receiver `argFnList` fills it with the JS index or the element again, which
- * no `fn` written for it means.
+ * drops every element. The list methods bind `$2` only where the value handed
+ * over is taken apart — a `Map`'s filter entry, or a pair (stdlib.md §2.2.3).
+ * Where the checker decides the value is one value, `argFnList` declares no
+ * `$2` at all; only where the lowering falls back does it fill one with the
+ * JS index or the element again, which no `fn` written for it means.
  */
 export const FRAGMENT_ARGUMENTS: ReadonlyMap<
   string,
@@ -648,6 +649,7 @@ export function methodCallJs(
   written: Expr[],
   ctx: EvalCtx,
   keyKind?: KeyKind,
+  shape?: FragmentShape,
 ): string {
   // Chained `recv.run-reducer(name)` in a property-test invariant (§8.3): apply
   // the reducer to the receiver state. `_event` is bound in the generated trial.
@@ -655,17 +657,36 @@ export function methodCallJs(
     return `_s.runReducerStep(App, ${jsOfExpr(recv, ctx)}, ${JSON.stringify(reducerNameArg(written[0]))}, _event)`;
   }
   const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);
-  // Build inner ctx with $1, $2 bound for predicate expression fragments.
-  const inner = childCtx(ctx);
-  const p1 = declareBind(inner, "$1");
-  const p2 = declareBind(inner, "$2");
+  // The scopes a fragment is lowered in: `one` declares the lambda's `$1`
+  // alone (`flat-map` / `update` / `map-err`, and a fragment handed one
+  // value), `two` its `$1` and `$2`. A `$2` read where only `$1` is declared
+  // is the enclosing scope's, as the checker resolves it — and where nothing
+  // encloses one, the checker has already reported it (E0103).
+  const one = childCtx(ctx);
+  const p1 = declareBind(one, "$1");
+  const two = childCtx(one);
+  const p2 = declareBind(two, "$2");
 
   const recvJs = jsOfExpr(recv, ctx);
-  // For list ops, the element may be a plain T or a [K, V] tuple (from .entries).
-  // Generate a lambda that binds `$1` and `$2` accordingly: for a 2-tuple we
-  // bind ($1=k, $2=v); for any other element we bind $1=elem, $2=undefined.
+  // The lambda a `filter` / `map` / `find` / `sort-by` fragment is lowered
+  // into, binding `$1` / `$2` the way the checker decided from the receiver's
+  // type (`FragmentShape`, stdlib.md §2.2.3). A pair is taken apart; a Map's
+  // filter is handed each entry as one `[key, value]` pair (`_s.filter`
+  // passes it that way, the key restored to its type when the checker
+  // recorded a `keyKind`) and takes it apart the same way; any other value —
+  // a 2-element List included — is `$1` whole, with no `$2` declared at all.
+  // An undecided receiver falls back to reading the value: any 2-element
+  // array is taken apart there.
+  const takenApart = `const ${p1} = __x[0]; const ${p2} = __x[1];`;
+  const binds: Record<FragmentShape, string> = {
+    pair: takenApart,
+    "key-value": takenApart,
+    value: `const ${p1} = __x;`,
+    undecided: `const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
+  };
+  const decided = shape ?? "undecided";
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x); return ${jsOfExpr(a, inner)}; })`;
+    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" ? one : two)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {
@@ -680,7 +701,7 @@ export function methodCallJs(
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
-      return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, inner)}))`;
+      return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, one)}))`;
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
@@ -722,7 +743,7 @@ export function methodCallJs(
     case "fold":
       // List(T).fold(init, expr) — expr binds $1=acc, $2=elem (distinct from the
       // $1=elem/$2=value convention of filter/map), so emit its own lambda.
-      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, inner)})`;
+      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
     case "show":
       return `_s.show(${recvJs})`;
     case "is-some":
@@ -799,7 +820,7 @@ export function methodCallJs(
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
       // Map(K,V).update(k, expr) — within expr, $1 is the current value.
-      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, inner)})))`;
+      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, one)})))`;
     case "add":
       // Set(T).add(x)
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
@@ -814,7 +835,7 @@ export function methodCallJs(
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
       // Result(T,E).map-err(expr) — within expr, $1 is the current Err payload.
-      return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, inner)})))`;
+      return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
     case "replace":
       // Text.replace(from, to) — replaces every occurrence.
       return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;

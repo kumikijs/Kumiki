@@ -31,6 +31,15 @@ app A
 const LOUD = `fn loud(t: Text) -> Text = t + "!"`;
 
 describe("$1 is the element a List hands its fragment", () => {
+  // The lowering binds from the element type, not from the value's length, so
+  // an element that is a `List` is `$1` whole — two items or not.
+  it("binds an element that is itself a List whole", () => {
+    const defs = `${LOUD}\nslot xss : List(List(Int)) = []`;
+    expect(diagnostics(defs, "xss.map(loud($1))", "List(Text)")).toEqual([
+      "E0201 Expected Text but got List(Int)",
+    ]);
+  });
+
   it("reports an element passed where the fn wants another type", () => {
     const defs = `${LOUD}\nslot xs : List(Int) = [1, 2]`;
     expect(diagnostics(defs, "xs.map(loud($1))", "List(Text)")).toEqual([
@@ -76,15 +85,6 @@ describe("$1 / $2 are a Map's key and value, and the halves of an entry", () => 
 });
 
 describe("where the lowering's reading is not certain, nothing is bound", () => {
-  // The lowering takes any 2-element array apart, so an element that is a
-  // `List` is not what `$1` holds when it has two items.
-  it("an element that is itself a List", () => {
-    const defs = `${LOUD}\nslot xss : List(List(Int)) = []`;
-    expect(diagnostics(defs, "xss.map(loud($1))", "List(Text)")).not.toContain(
-      "E0201 Expected Text but got List(Int)",
-    );
-  });
-
   // A `fn` with no `->` has no inferred result yet, so its elements are not
   // known here. That is a gap in inference, not a rule: once the result is
   // inferred this is the E0201 above, so only its absence today is pinned.
