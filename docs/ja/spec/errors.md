@@ -488,6 +488,18 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 **修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
 
+### E0128 `value-as-child`
+
+値 builtin でない builtin —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon` 以外 —— の位置引数に値が書かれている。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr`（[言語 §1.7.1](./language.md#_1-7-1-構文)）か、プログラムが定義する tile の名前。コンテナ（`column`・`row`・`card` など）はそれを子として描画し、それ以外（`button`・`progress` など）は位置引数をまったく読まない。
+
+> ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
+
+codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
+
+値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。
+
+**修正**：値を tile で表示する —— `column(text(n.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。
+
 ## E02xx — 型
 
 ### E0201 `type-mismatch`
@@ -1067,7 +1079,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 - `reducer-test` の `given.mocks` が、`ok(...)` / `err(...)` / `delay(<ms>, ok(...)|err(...))` 以外を effect に束ねている。`mockScriptJs` はそれ以外を `{outcome: "ok", value: null}` として扱うため、失敗経路を駆動するつもりのモックが成功経路を駆動していた——「effect が失敗したときにどうなるか」を主張するテストが、一度も失敗させないまま永久に緑になる。（[E0712](#e0712-episode-mock-invalid) は `episode-test` に対する同じ規則で、そちらの語彙には `from-log` と `ignore` も含まれる。）
 - `expect.effects` がリストでない。`effectListJs` は非リストを `[]` に降ろすが、これは主張が無いのではなく**「effect は何も emit されなかった」という主張**である——角括弧を忘れた `effects: persist(count)` は、何も emit しない reducer に対して成功し、中の effect 名は解決すらされない。
-- 名前付きの部分からなるレコードとして読まれる位置に、別のものが書かれている：テストの `given`、`reducer-test` / `episode-test` の `expect`、`episode-test` の `mocks`、そして `given` の `mocks` / `event` セクション。読み手はどれもこの位置にフィールドを尋ねるが、名前やリテラルにはフィールドが無いため、節全体が空として読まれていた。`given = setup` は何も設定せず reducer は slot の宣言時の既定値から走り、`expect = 41` は何も主張せず、`mocks = 41` は何も台本にしない——どのテストも、誰も選んでいない状態や結果に対して成功する。`{}` は空のレコードとして受理する。`tile-test` の `expect` は tile 式、`property-test` の `invariant` は式なので、どちらもレコード位置ではない。
+- 名前付きの部分からなるレコードとして読まれる位置に、別のものが書かれている：テストの `given`、`reducer-test` / `episode-test` の `expect`、`episode-test` の `mocks`、`given` の `mocks` / `event` セクション、そして slot → 値のセクション：`given` の `slots`、`reducer-test` の `expect` の `slots`、`episode-test` の `expect` の `slots-equal`（こちらは裸の名前 `from-log` も取る）。読み手はどれもこの位置にフィールドを尋ねるが、名前やリテラルにはフィールドが無いため、節全体が空として読まれていた。`given = setup` は何も設定せず reducer は slot の宣言時の既定値から走り、`expect = 41` は何も主張せず、`mocks = 41` は何も台本にせず、`given = {slots: 41, …}` と `expect = {slots: 41}` はどの slot も設定せずどの slot も主張しない——どのテストも、誰も選んでいない状態や結果に対して成功する。`{}` は空のレコードとして受理する。`tile-test` の `expect` は tile 式、`property-test` の `invariant` は式なので、どちらもレコード位置ではない。
 
 > `Mock for "<name>" must be \`ok(...)\`, \`err(...)\`, or \`delay(ms, ok(...)|err(...))\``
 > `` `expect.effects` must be a list of effects ``
@@ -1077,6 +1089,9 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 > `` `mocks` must be a record, `{<effect>: <policy>}` ``
 > `` `given.mocks` must be a record, `{<effect>: <outcome>}` ``
 > `` `given.event` must be a record, `{type: …, target: …}` ``
+> `` `given.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots` must be a record, `{<slot>: …}` ``
+> `` `expect.slots-equal` must be a record, `{<slot>: …}`, or `from-log` ``
 
 E0713 は節の位置で 1 度だけ報告し、中の名前はセクションとして解決しない。そのため `tile-test` が引数の欠落を重ねて数えることもない。ただし、どこに書かれても成り立つ規則は中でも適用される：`given` の中のワイルドカードは引き続き [E0109](#e0109-test-wildcard-misuse)、`reducer-test` の `expect` の中で slot を名指さない `<slots.X>` は引き続き [E0103](#e0103-undef-ref-undef-slot) である。
 

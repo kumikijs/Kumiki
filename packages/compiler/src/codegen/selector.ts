@@ -155,9 +155,12 @@ export function propsFor(
   // reach the runtime — see `mergedAria`.
   const aria: AriaParts = { map: null, direct: [] };
 
+  // The `{…}` block's data; none in a tile-test's expected tree, which
+  // states what it compares with named arguments (see `GenCtx.expectedTree`).
+  const block = ctx.gen.expectedTree ? [] : t.props;
   // props block. A handler is wiring rather than data: it is in
   // `explicitByHandler`, and is emitted with the lifted ones below.
-  for (const p of t.props) {
+  for (const p of block) {
     if (HANDLER_NAMES.has(p.name)) continue;
     if (isNotPropData(t.name, p.name)) continue;
     if (collectAria(p.name, () => jsOfExpr(p.value, ctx), aria)) continue;
@@ -210,7 +213,7 @@ export function propsFor(
   }
   // Build `el` from explicit {name: expr} that aren't handlers
   const elProps: string[] = [];
-  for (const p of t.props) {
+  for (const p of block) {
     if (isNotPropData(t.name, p.name, true)) continue;
     if (p.name === "aria" || p.name.startsWith("aria-")) continue;
     elProps.push(`${fieldKey(p.name)}: ${jsOfExpr(p.value, ctx)}`);
@@ -231,7 +234,7 @@ export function propsFor(
   // are folded rather than enumerated away: a list of "what each kind already
   // took" would have to stay in step with forty lowering cases, and the day it
   // fell behind, a prop would go missing exactly the way this fixes.
-  const written = new Set(t.props.map((p) => p.name));
+  const written = new Set(block.map((p) => p.name));
   for (const a of t.args) {
     if (!a.name || written.has(a.name)) continue;
     if (isNotPropData(t.name, a.name, true)) continue;

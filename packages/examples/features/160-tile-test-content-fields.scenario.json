@@ -1,0 +1,11 @@
+{
+  "steps": [
+    {
+      "label": "the tiles render the fields their tile-tests assert",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Home", "Grace", "agreed=true name=Ada size=s"]
+      }
+    }
+  ]
+}
