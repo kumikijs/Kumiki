@@ -8,13 +8,20 @@
 // targets.
 //
 // What it does share with the renderers is the prop-to-style mapping, imported
-// from `core.ts` as data (`propStyleDecls`, applied to every kind). `core.ts`
-// touches no DOM at module scope — `ssr.ts` already imports values from it —
-// and the alternative is a second copy of the mapping, which is exactly the
-// drift the parity test exists to catch.
+// from `core.ts` as data (`propStyleDecls`, applied to every kind, and
+// `gridTracks` for a grid). `core.ts` touches no DOM at module scope — `ssr.ts`
+// already imports values from it — and the alternative is a second copy of the
+// mapping, which is exactly the drift the parity test exists to catch.
 
 import type { BindSegment, StyleDecl, TileNode, TileProps } from "./core.ts";
-import { attrValue, bindLabel, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
+import {
+  attrValue,
+  bindLabel,
+  commonAttrDecls,
+  gridTracks,
+  pickBaseValue,
+  propStyleDecls,
+} from "./core.ts";
 import { headingTag } from "./tiles/text/heading.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
@@ -130,10 +137,10 @@ function baseDecls(node: TileNode): StyleDecl[] {
       return token ? [["font-size", token]] : [];
     }
     case "grid": {
-      const rows = gridTracks(node.props?.rows);
+      const { cols, rows } = gridTracks(node.props, pickBaseValue);
       return [
         ["display", "grid"],
-        ["grid-template-columns", gridTracks(node.props?.cols) ?? "repeat(3, 1fr)"],
+        ["grid-template-columns", cols],
         ...(rows ? ([["grid-template-rows", rows]] as StyleDecl[]) : []),
       ];
     }
@@ -220,13 +227,6 @@ function overlayLayerStyle(align: string): string {
     ["justify-content", has("left") ? "flex-start" : has("right") ? "flex-end" : "center"],
   ];
   return decls.map(([k, v]) => `${k}: ${v}`).join("; ");
-}
-
-/** A grid track list: a count divides the axis equally, a string is CSS already. */
-function gridTracks(v: unknown): string | undefined {
-  if (typeof v === "number") return `repeat(${v}, 1fr)`;
-  if (typeof v === "string") return v;
-  return undefined;
 }
 
 /**
