@@ -43,7 +43,12 @@ export {
 export { applyRefine, type GenDescData } from "./codegen/emit-type.ts";
 // The write-path encoding the runtime decodes. Exported so the two
 // declarations can be checked against each other.
-export { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./codegen/path-segment.ts";
+export {
+  type BindSegment,
+  indexSegmentJs,
+  isUnwrapStep,
+  UNWRAP_SEGMENT,
+} from "./codegen/path-segment.ts";
 export {
   type CodegenOptions,
   type CodegenResult,

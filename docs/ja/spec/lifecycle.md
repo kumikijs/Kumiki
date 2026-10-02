@@ -124,6 +124,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 
 - reducer 内での `Option.get` で None を取った
 - インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
+- 読み取り `m[k]` が `Map` の持たないキーを指した
 - `Result.get` で Err
 - `panic(msg)` の明示呼び出し
 

@@ -8,7 +8,11 @@
 // The assertions are the assignments themselves: a drift fails `pnpm
 // typecheck` rather than this test body.
 
-import { type BindSegment as CompilerBindSegment, UNWRAP_SEGMENT } from "@kumikijs/compiler";
+import {
+  type BindSegment as CompilerBindSegment,
+  indexSegmentJs,
+  UNWRAP_SEGMENT,
+} from "@kumikijs/compiler";
 import { _setPathHelper, type BindSegment as RuntimeBindSegment } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
@@ -30,5 +34,15 @@ describe("the segment the compiler emits is the one the runtime decodes", () => 
       _tag: "Some",
       _0: { t: "b" },
     });
+  });
+
+  it("reads the index step the compiler emits as an index, not as a field", () => {
+    // `indexSegmentJs` is the JS codegen writes for `m[k]`; evaluated, it is
+    // the segment the setter receives. Through an absent key it writes
+    // nothing, which only an index step does.
+    const step = new Function("k", `return ${indexSegmentJs("k")};`) as (k: unknown) => never;
+    const todos = { t1: { done: false } };
+    expect(_setPathHelper(todos, [step("t9"), "done"], true)).toBe(todos);
+    expect(_setPathHelper(todos, [step("t1"), "done"], true)).toEqual({ t1: { done: true } });
   });
 });

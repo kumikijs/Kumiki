@@ -55,10 +55,9 @@ function attempt(backend: Backend, call: string, run: (s: Storage) => void): Eff
  * record with a `value` field writes it — whatever it is, so a `None` or an
  * empty list is still a write — and one without removes the key. The clear is
  * not decided here: codegen calls `storageClear` / `sessionClear` for an effect
- * declared `in=Unit` with no `map-request`. An empty request is also what a Map
- * index that found nothing produces, so a request that is not a record, a key
- * that is not a non-empty text, and a value JSON cannot encode are each an
- * `err` that touches nothing.
+ * declared `in=Unit` with no `map-request`. A request that is not a record (an
+ * empty one included), a key that is not a non-empty text, and a value JSON
+ * cannot encode are each an `err` that touches nothing.
  */
 function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   if (typeof input !== "object" || input === null) {

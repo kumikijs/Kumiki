@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "label": "an index write inserts the entry",
+      "do": { "click": "#add" },
+      "expect": {
+        "noErrors": true,
+        "state": { "todos": { "t1": { "title": "write docs", "done": false } } }
+      }
+    },
+    {
+      "label": "a field write through a present key edits the entry",
+      "do": { "click": "#mark" },
+      "expect": {
+        "noErrors": true,
+        "state": { "todos": { "t1": { "title": "write docs", "done": true } } }
+      }
+    },
+    {
+      "label": "a field write through an absent key writes nothing",
+      "do": { "click": "#mark-missing" },
+      "expect": {
+        "noErrors": true,
+        "state": { "todos": { "t1": { "title": "write docs", "done": true } } },
+        "domIncludes": ["count: 1", "t9: false"]
+      }
+    },
+    {
+      "label": "a read at an absent key panics, and the reducer's earlier write rolls back",
+      "do": { "navigate": "/read-missing" },
+      "expect": {
+        "state": { "tries": 0, "picked": "-" },
+        "domIncludes": ["tries: 0", "failed: Key \"zz\" is not in the Map"],
+        "errorIncludes": ["panic in reducer \"read-missing\""]
+      }
+    }
+  ]
+}

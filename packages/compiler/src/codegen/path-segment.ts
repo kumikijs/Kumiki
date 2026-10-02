@@ -23,3 +23,15 @@ export const UNWRAP_SEGMENT: { get: true } = { get: true };
 export function isUnwrapStep(field: string, accessKind?: "field" | "shortcut"): boolean {
   return accessKind !== "field" && field === "get";
 }
+
+/**
+ * An index step (`xs[i]`, `m[k]`) of a reducer's write path, around the JS of
+ * its key: `{at: key}`. Encoded apart from a field step because the two mean
+ * different things where the place is absent — a record field missing from a
+ * decoded value is a level to build, and a Map entry missing from the Map is
+ * one `m[k].f := v` writes nothing through (language.md §1.6.3). A bare key
+ * could not say which it was: both are a string once evaluated.
+ */
+export function indexSegmentJs(keyJs: string): string {
+  return `{ at: ${keyJs} }`;
+}

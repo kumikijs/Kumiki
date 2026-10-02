@@ -78,7 +78,7 @@ tile App = column(
   row(AddRed, TogGreen, VoteRed, VoteGreen, Mark, Remove, Read, Positive),
   text("picked: " + picked.size.show + " red=" + picked.has(Red).show + " green=" + picked.has(Green).show + " blue=" + picked.has(Blue).show),
   text("votes: " + votes.size.show + " red=" + votes.get-or(Red, 0).show + " green=" + votes.get-or(Green, 0).show + " blue=" + votes.get-or(Blue, 0).show),
-  text("cells: " + cells.size.show + " above=" + cells.get-or({x: 0, y: 1}, "-") + " origin=" + cells[{y: 0, x: 0}]),
+  text("cells: " + cells.size.show + " above=" + cells.get-or({x: 0, y: 1}, "-") + " origin=" + cells.get-or({y: 0, x: 0}, "-")),
   text("items: " + items.size.show + " has1=" + items.has(ItemId(1)).show),
   text("nums: " + nums.size.show + " has1=" + nums.has(1).show),
   text("ids: " + ids.size.show + " has1=" + ids.has(1).show),
