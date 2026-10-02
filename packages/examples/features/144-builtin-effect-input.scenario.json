@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "label": "starts on the home page, with no query",
+      "expect": { "noErrors": true, "domIncludes": ["Home page", "notices: 0", "from: -"] }
+    },
+    {
+      "label": "toast runs with its duration left out",
+      "do": { "clickText": "Notify" },
+      "expect": { "noErrors": true, "state": { "notices": 1 } }
+    },
+    {
+      "label": "scroll-to takes its record",
+      "do": { "clickText": "Top" },
+      "expect": { "noErrors": true }
+    },
+    {
+      "label": "confirm runs with its message left out",
+      "do": { "clickText": "Ask" },
+      "expect": { "noErrors": true, "state": { "answer": "-" } }
+    },
+    {
+      "label": "its onYes names the reducer the answer reaches",
+      "do": { "click": "[data-kumiki-confirm] button[data-kumiki-confirm-action='yes']" },
+      "expect": { "noErrors": true, "state": { "answer": "yes" }, "domIncludes": ["answer: yes"] }
+    },
+    {
+      "label": "navigate with only a path moves the route",
+      "do": { "clickText": "Go" },
+      "expect": { "noErrors": true, "domIncludes": ["About page"] }
+    },
+    {
+      "label": "navigate-replace with a query and no params moves it back, query and all",
+      "do": { "clickText": "Home" },
+      "expect": { "noErrors": true, "domIncludes": ["Home page", "from: about"] }
+    }
+  ]
+}
