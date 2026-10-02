@@ -256,6 +256,16 @@ describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
     expect(calls).toEqual([[[[1, 2], "a"]]]);
     expect(out).toEqual({ "[1,2]": "a!" });
   });
+
+  // A `Map(Text, _)` may have a `"_tag"` key; only a real variant tag makes it
+  // an Option / Result, as `filter` decides with `variantIs`.
+  it("maps a Map that has a \"_tag\" key instead of returning it unchanged", () => {
+    const out = _stdlibCore.mapOver(
+      { _tag: "label", a: "x" },
+      (pair) => `${String((pair as [unknown, unknown])[1])}!`,
+    );
+    expect(out).toEqual({ _tag: "label!", a: "x!" });
+  });
 });
 
 // `Option(T).filter` lowers to the polymorphic `_s.filter`, which used to read

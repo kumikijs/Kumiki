@@ -413,12 +413,14 @@ export const _stdlibCore = {
    */
   mapOver(coll: unknown, fn: (x: unknown) => unknown, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.map(fn);
-    if (coll && typeof coll === "object" && "_tag" in (coll as Record<string, unknown>)) {
-      const tagged = coll as { _tag: string; _0?: unknown };
-      if (tagged._tag === "Some") return { _tag: "Some", _0: fn(tagged._0) };
-      if (tagged._tag === "Ok") return { _tag: "Ok", _0: fn(tagged._0) };
-      return coll; // None / Err pass through
+    // Told apart by the variant tag, as `filter` does, not by a `_tag` field
+    // alone, which a `Map(Text, _)` may hold as a key.
+    for (const tag of ["Some", "Ok"]) {
+      if (_stdlibCore.variantIs(coll, tag)) {
+        return { _tag: tag, _0: fn((coll as { _0: unknown })._0) };
+      }
     }
+    if (_stdlibCore.variantIs(coll, "None") || _stdlibCore.variantIs(coll, "Err")) return coll;
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
