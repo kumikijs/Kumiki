@@ -286,6 +286,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // form submit gate above, and the owner chose to raise the budget once
     // rather than hold every open change at the old line.
     //
+    // Still 63,000 (61,430 measured, from 61,164):
+    // `heading` renders the element its level names. The 266 bytes are
+    // `headingTag` and the patcher's rebuild on a level change; a counter
+    // renders a heading, so it ships them.
+    //
     // Still 63,000 (61,733 measured, from 61,162): `Time.parse` reads ISO 8601
     // `YYYY-MM-DD` with an optional time and zone itself, and refuses a date
     // that is not on the calendar (stdlib.md §2.2.8). The bytes are
