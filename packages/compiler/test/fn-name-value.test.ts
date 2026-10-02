@@ -212,10 +212,10 @@ slot t : Text              = ""`;
   });
 
   it("binds a second positional only over a key/value pair", () => {
-    // Over a plain list the second argument would be the JS index, and over
-    // an Option the element again.
+    // A plain list's element and an Option's value are handed over as one
+    // value, so a second parameter would be handed nothing (stdlib.md §2.2.3).
     const only =
-      "supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)";
+      "supplies 1 — a second positional is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)";
     expect(arity("xs := xs.map(add)")).toEqual([
       `E0213 Function "add" expects 2 argument(s) but .map on "List(Int)" ${only}`,
     ]);

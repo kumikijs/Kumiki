@@ -321,14 +321,15 @@ export const _stdlibCore = {
     return out;
   },
   /**
-   * Polymorphic `.filter` dispatch — used by codegen when the receiver type
-   * isn't statically known (e.g. `m.keys.filter(...)` vs `m.filter(...)`).
+   * Polymorphic `.filter` dispatch — what codegen emits for every `.filter`,
+   * whatever the receiver (`m.keys.filter(...)` and `m.filter(...)` alike).
    * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
    * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
-   * so it has to be told apart before the Map branch reads its `_tag` / `_0`
-   * fields as entries; other objects (Maps in Kumiki) hand the predicate
-   * each `[key, value]` pair, the key restored to its declared kind as
-   * `keys` restores it.
+   * so it has to be told apart before the object branch reads its `_tag` /
+   * `_0` fields as entries; any other object — a Map, or a Set, whose
+   * elements are its keys and whose values are `true` — hands the predicate
+   * each `[key, value]` pair, the key restored to its declared kind as `keys`
+   * restores it when codegen passes `kind`.
    */
   filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
