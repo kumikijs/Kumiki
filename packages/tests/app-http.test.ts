@@ -171,4 +171,64 @@ describe("the blog app's Authorization header (#340)", () => {
       root.remove();
     }
   });
+
+  it("a login's stored session is read back after a reload", async () => {
+    // The round trip: `loginOk` writes the session with `saveSession`, and the
+    // next boot's `loadSession` decodes `Session` from the same key. The writer
+    // has to store the shape the reader decodes — a stored `Option` wrapper is
+    // refused by the reader's `uuid` check, and with no `loadSession.err`
+    // reducer that refusal lands on `console.error` and the user is logged out.
+    const userId = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
+    const app = await loadApp(BLOG_EXAMPLE);
+    double = stubFetch((call) =>
+      call.url.endsWith("/api/auth/login")
+        ? new Response(JSON.stringify({ userId, token: "fresh-token" }))
+        : new Response(JSON.stringify([])),
+    );
+    const mountAt = (path: string): { root: HTMLElement; dispose: () => void } => {
+      history.pushState(null, "", path);
+      const root = document.createElement("div");
+      document.body.appendChild(root);
+      const { dispose } = mount(app, root);
+      return { root, dispose };
+    };
+    const first = mountAt("/login");
+    try {
+      await waitUntil(() => first.root.querySelector("#loginEmail") !== null);
+      for (const [id, value] of [
+        ["loginEmail", "a@example.com"],
+        ["loginPw", "pw"],
+      ] as const) {
+        const input = first.root.querySelector<HTMLInputElement>(`#${id}`);
+        if (!input) throw new Error(`#${id} not found`);
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      first.root
+        .querySelector("form")
+        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await waitUntil(() => localStorage.getItem("session") !== null);
+      expect(JSON.parse(localStorage.getItem("session") ?? "null")).toEqual({
+        userId,
+        token: "fresh-token",
+      });
+    } finally {
+      first.dispose();
+      first.root.remove();
+    }
+
+    const second = mountAt("/posts");
+    try {
+      await waitUntil(() => (second.root.textContent ?? "").includes("Hi, 5c6d7e8f"));
+      // Logout removes the key (a key-only write, http.md §6.7.2) rather than
+      // storing a `None` the next boot's decode would refuse.
+      clickByText(second.root, "Logout");
+      await waitUntil(() => localStorage.getItem("session") === null);
+      expect(errors).toEqual([]);
+    } finally {
+      second.dispose();
+      second.root.remove();
+      history.pushState(null, "", "/");
+    }
+  });
 });

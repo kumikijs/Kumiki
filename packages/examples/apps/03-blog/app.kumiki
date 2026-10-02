@@ -41,9 +41,14 @@ effect loadSession cap=storage.read
                    map-request={key: "session", decode: Decoder.Json(Session)}
 
 effect saveSession cap=storage.write
-                   in=Option(Session)
+                   in=Session
                    out=Result(Unit, Text)
                    map-request={key: "session", value: $1}
+
+effect clearSession cap=storage.write
+                    in=Unit
+                    out=Result(Unit, Text)
+                    map-request={key: "session"}
 
 effect login    cap=http.post
                 in={email: Text, password: Text}
@@ -143,7 +148,7 @@ reducer loginOk
     do= loginPending := false
         session := Some($s)
         loginPw := ""
-        emit saveSession(Some($s))
+        emit saveSession($s)
         emit navigate({path: "/posts", params: {}, query: {}})
 
 reducer loginFailed
@@ -154,7 +159,7 @@ reducer loginFailed
 reducer doLogout
     on=ui.click(LogoutBtn)
     do= session := None
-        emit saveSession(None)
+        emit clearSession()
         emit logout()
         emit navigate({path: "/login", params: {}, query: {}})
 
