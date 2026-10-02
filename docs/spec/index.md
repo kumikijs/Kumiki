@@ -276,6 +276,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `143-fn-positional-arguments.kumiki` | slot, reducer, fn, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
 | `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
+| `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | routing | [§3.4](./routing.md#_3-4-route-lifecycle) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | core | [§10.5.3](./runtime.md#_10-5-3-replay) |
 <!-- examples:end -->
 :::
