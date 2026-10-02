@@ -291,7 +291,7 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,582 measured, from 61,527 on dev at bf86b16): a decoded
+    // Still 63,000 (61,886 measured, from 61,840 on dev at 1a3b24c): a decoded
     // value its type refuses is the effect's err (http.md §6.1.4), named by the
     // formatter a refused slot write uses. That formatter, `showRefinementFailure`,
     // now sits in core as an export the decode handlers share instead of inline
