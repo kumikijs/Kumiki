@@ -107,7 +107,12 @@ export function formatEvent(ev: ReplayEvent): string | null {
   switch (ev.kind) {
     case "episode-start": {
       const target = ev.trigger.target ? ` on ${ev.trigger.target}` : "";
-      return `episode ${ev.episodeId} — ${ev.trigger.kind}${target}`;
+      // The log lost the entry reducer's value (§10.5.3); said here so the
+      // panic that follows does not read as a bug in the reducer.
+      const missing = ev.entryResultMissing
+        ? `  (no recorded result for ${ev.entryResultMissing})`
+        : "";
+      return `episode ${ev.episodeId} — ${ev.trigger.kind}${target}${missing}`;
     }
     case "reducer": {
       const diffs = ev.slotDiffs
@@ -210,6 +215,12 @@ export async function replayCmd(
     // Named at the end as well as per-step, because the summary is what says
     // whether this run reproduced the recorded one at all.
     console.log(`environment reads: ${formatEnvDrift(drift)}`);
+  }
+  if (report.entryResultsMissing.length > 0) {
+    const formatted = report.entryResultsMissing
+      .map((m) => `${m.episodeId}: ${m.reducer}`)
+      .join(", ");
+    console.log(`entry results missing: ${formatted}`);
   }
   if (report.stoppedAt !== null) {
     console.log(`(stopped at step ${report.stoppedAt})`);

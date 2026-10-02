@@ -281,8 +281,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // beside the refused-bind record in core, which every app loads; a counter has
     // no form and still ships it.
     //
-    // Raised once to 63,000 with the owner's approval (61,466 measured, from
-    // 61,184): `Time.parse` refuses a date that is not on the calendar
+    // Raised once to 63,000 with the owner's approval (61,184 measured on this
+    // branch, from 61,184 on dev): dev had already gone over 61,000 with the
+    // form submit gate above, and the owner chose to raise the budget once
+    // rather than hold every open change at the old line.
+    //
+    // Still 63,000 (61,466 measured, from 61,184):
+    // `Time.parse` refuses a date that is not on the calendar
     // (stdlib.md §2.2.8). The 282 bytes are `isCalendarDate` and the branch in
     // `parseTime` that consults it before the platform's parser can roll
     // `2026-02-30` over into March. A counter parses no time and still ships

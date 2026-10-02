@@ -548,6 +548,11 @@ export type ReplayEvent =
       kind: "episode-start";
       episodeId: string;
       trigger: { kind: string; target?: string; payload?: unknown };
+      /**
+       * The entry reducer, when it is an `.ok` / `.err` reducer whose value
+       * the log does not carry (§10.5.3): it runs with no `$1`.
+       */
+      entryResultMissing?: string;
     }
   | {
       kind: "reducer";
@@ -636,6 +641,8 @@ export type ReplayReport = {
   finalSlots: Record<string, unknown>;
   /** Environment-read provenance, summed over every replayed reducer body. */
   envDrift: EnvDrift;
+  /** Episodes whose entry reducer's recorded result was not in the log (§10.5.3). */
+  entryResultsMissing: { episodeId: string; reducer: string }[];
 };
 
 /**
@@ -652,6 +659,48 @@ function resetLiveFromSlots(app: ReplayApp): void {
   for (const k of Object.keys(app.live)) delete app.live[k];
   for (const [k, m] of Object.entries(app.slots)) app.live[k] = m.value;
   seedRoute(app.live);
+}
+
+/**
+ * The payload the episode's entry reducer ran with (§10.5.3).
+ *
+ * The live runtime records `trigger.payload` as the payload it handed the
+ * reducer — `{$el, $event}` for a UI event, `{$1, $2}` for an effect result —
+ * so it is passed on as it is. A trigger with no payload whose entry reducer
+ * is an `.ok` / `.err` reducer (an `ssr.hydrate` bootstrap, which is opened
+ * by the SSR pass rather than by a reducer) ran on the last `effect-end` of
+ * that effect and outcome recorded before it, and that step's value is its
+ * `$1`. There is deliberately no `$2`: the SSR pass itself passes
+ * `$2: undefined`. Handing the value over consumes it, so the `from-log`
+ * cursor of that effect starts past it. With no such step the log cannot
+ * answer, and `undefined` says so for the caller to report.
+ */
+function entryPayload(
+  ep: EpisodeLogEntry,
+  entry: ReducerSpec,
+  firstRed: EpisodeStepLite,
+  cursors: Record<string, number>,
+): Record<string, unknown> | undefined {
+  const recorded = ep.trigger.payload;
+  if (recorded !== null && typeof recorded === "object" && !Array.isArray(recorded)) {
+    return recorded as Record<string, unknown>;
+  }
+  if (entry.event.kind !== "effect") return {};
+  const { effect, outcome } = entry.event;
+  let nth = -1;
+  let value: unknown;
+  let found = false;
+  for (const s of ep.steps) {
+    if (s === firstRed) break;
+    if (s.kind !== "effect-end" || s.name !== effect) continue;
+    nth++;
+    if (s.result === outcome) {
+      value = s.value;
+      found = true;
+      cursors[effect] = nth + 1;
+    }
+  }
+  return found ? { $1: value } : undefined;
 }
 
 function executeEpisode(
@@ -729,10 +778,6 @@ function executeEpisode(
     return false;
   };
 
-  if (emit({ kind: "episode-start", episodeId: ep.id, trigger: ep.trigger })) {
-    return { panics, unhandledErrors, stopped: true };
-  }
-
   // The episode's entry reducer. A reducer whose body threw wrote NO `reducer`
   // step — only a `panic` one — so an episode that crashed on its first
   // reducer would otherwise replay as an episode with nothing in it, and
@@ -742,12 +787,20 @@ function executeEpisode(
     (s): s is EpisodeReducerStep | (EpisodeStepLite & { kind: "panic"; name: string }) =>
       s.kind === "reducer" || (s.kind === "panic" && typeof s.name === "string"),
   );
-  if (!firstRed) {
-    emit({ kind: "episode-end", episodeId: ep.id });
-    return { panics, unhandledErrors, stopped: false };
-  }
-  const entry = app.reducers.find((r) => r.name === firstRed.name);
-  if (!entry) {
+  const entry = firstRed && app.reducers.find((r) => r.name === firstRed.name);
+  const cursors: Record<string, number> = {};
+  const entryIn = firstRed && entry ? entryPayload(ep, entry, firstRed, cursors) : {};
+  // Reported rather than inferred (§10.5.3): a trimmed or hand-edited log that
+  // lost the value would otherwise read as a reducer that panics on its own.
+  const entryResultMissing = entryIn === undefined ? entry?.name : undefined;
+  const started: ReplayEvent = {
+    kind: "episode-start",
+    episodeId: ep.id,
+    trigger: ep.trigger,
+    ...(entryResultMissing !== undefined ? { entryResultMissing } : {}),
+  };
+  if (emit(started)) return { panics, unhandledErrors, stopped: true };
+  if (!firstRed || !entry) {
     emit({ kind: "episode-end", episodeId: ep.id });
     return { panics, unhandledErrors, stopped: false };
   }
@@ -785,7 +838,6 @@ function executeEpisode(
     }
     if (s.kind === "reducer" || s.kind === "panic") harvestEnvReads(s.name, s["env-reads"]);
   }
-  const cursors: Record<string, number> = {};
   const envCursors: Record<string, number> = {};
 
   /**
@@ -801,9 +853,8 @@ function executeEpisode(
     return list[idx] ?? [];
   };
 
-  const triggerPayload = (ep.trigger.payload as Record<string, unknown> | undefined) ?? {};
   const queue: { reducer: ReducerSpec; payload: Record<string, unknown> }[] = [
-    { reducer: entry, payload: { $el: triggerPayload, $event: triggerPayload } },
+    { reducer: entry, payload: entryIn ?? {} },
   ];
 
   let guard = 0;
@@ -1011,9 +1062,16 @@ export function replayEpisodes(input: {
   const unhandledErrors: { episodeId: string; effect: string }[] = [];
   const stepCounter = { n: 0 };
   const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
+  const entryResultsMissing: ReplayReport["entryResultsMissing"] = [];
+  const noting: ReplayObserver = (ev) => {
+    if (ev.kind === "episode-start" && ev.entryResultMissing !== undefined) {
+      entryResultsMissing.push({ episodeId: ev.episodeId, reducer: ev.entryResultMissing });
+    }
+    return observer(ev);
+  };
   let stopped = false;
   for (const ep of episodes) {
-    const r = executeEpisode(app, ep, mocks, observer, stepCounter, untilStep, envDrift);
+    const r = executeEpisode(app, ep, mocks, noting, stepCounter, untilStep, envDrift);
     for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
     for (const u of r.unhandledErrors) unhandledErrors.push({ episodeId: ep.id, effect: u.effect });
     if (r.stopped) {
@@ -1029,6 +1087,7 @@ export function replayEpisodes(input: {
     stoppedAt: stopped ? stepCounter.n : null,
     finalSlots,
     envDrift,
+    entryResultsMissing,
   };
 }
 
