@@ -2225,7 +2225,16 @@ export function mountCore(
     maybeReapplyTheme(app);
     const theme = resolvedThemeName(app) ?? null;
     const themeChanged = theme !== view.theme;
+    // A switch that rebuilds a painted tree: what it inserts already played its
+    // enter animation on the element it replaces, and a refused bind's text
+    // goes with that element (§10.3.6), so its field error goes too.
+    const repaint = themeChanged && view.tree !== null;
     view.theme = theme;
+    settling = repaint;
+    const refused = refusedBinds.get(app);
+    if (repaint && refused) {
+      for (const el of refused.keys()) if (target.contains(el)) refused.delete(el);
+    }
     // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
     // `newMap` (and recursively for its children). Reconcile also writes into
     // `newMap` when it decides to *reuse* an old element (bypassing render).
@@ -2342,6 +2351,7 @@ export function mountCore(
         target.appendChild(dom);
       }
     }
+    settling = false;
     view.root = dom;
     // On panic (either the primary render threw and no route.error recovered
     // it, or the recovery render also threw), abandon the diff baseline so the
@@ -5679,11 +5689,25 @@ export function ensureAnimationStyles(): void {
   appendStyleNode(style);
 }
 
+/**
+ * True while a theme switch rebuilds a painted tree (runtime.md §10.3.6). An
+ * element inserted then is marked settled, and the motion stylesheet moves a
+ * settled element's animation past its end: a one-shot enter animation shows
+ * its final frame instead of playing again, and a repeating one keeps going.
+ * The mark stays, because taking it off would restart the animation.
+ */
+let settling = false;
+
+function settle(el: HTMLElement): void {
+  if (settling) el.setAttribute("data-kumiki-settled", "");
+}
+
 function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
   const t = props.transition;
   if (typeof t !== "string") return;
   ensureAnimationStyles();
+  settle(el);
   el.classList.add("kumiki-anim", `kumiki-anim-${t}`);
   const d = props.transition_duration;
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
@@ -5775,6 +5799,7 @@ function ensureMotionStyles(app: AppShape): void {
   // a11y (M5 AC5): disable motion AND the transitions when the user asks.
   rules.push(
     `@media (prefers-reduced-motion: reduce) { .kumiki-motion, .kumiki-anim { animation: none !important } }`,
+    "[data-kumiki-settled] { animation-delay: -99999s !important }",
   );
   let style = findStyleNode("kumiki-motions");
   if (!style) {
@@ -5791,6 +5816,7 @@ function applyMotion(el: HTMLElement, props?: TileProps): void {
   const m = props.motion;
   if (typeof m !== "string") return;
   el.classList.add("kumiki-motion", `kumiki-motion-${m}`);
+  settle(el);
 }
 
 let stateStyleSeq = 0;

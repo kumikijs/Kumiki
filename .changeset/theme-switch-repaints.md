@@ -15,7 +15,10 @@ Each view now records the theme its tree was painted under. A pass that finds
 the resolved theme changed builds the tree afresh instead of diffing it, so
 every tile, nested ones included, carries the new theme's values, the same as
 a fresh mount under that theme. That applies to a hydrated view too. Focus and
-selection come back the way they do after any rebuild; DOM state no slot holds
-starts over. runtime.md §10.3.6 describes what a switch re-applies, in both
+selection come back the way they do after any rebuild. Enter animations
+(`transition`, `motion`) do not play again on the rebuilt elements: a one-shot
+animation shows its final frame and a repeating one keeps running. DOM state no
+slot holds starts over, including text a `bind` refused, whose field error goes
+with it. runtime.md §10.3.6 describes what a switch re-applies, in both
 language tracks. `packages/examples/features/157-theme-switch.kumiki` toggles
 between two themes.
