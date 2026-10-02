@@ -101,7 +101,7 @@ describe("compile output snapshots", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     // The fix for the localStorage persistence bug introduced
-    // `((_next[key] !== undefined) ? _next[key] : _live[key])` reads inside reducers.
-    expect(result.js).toMatch(/_next\["todos"\] !== undefined/);
+    // `(Object.hasOwn(_next, key) ? _next[key] : _live[key])` reads inside reducers.
+    expect(result.js).toContain('Object.hasOwn(_next, "todos") ? _next["todos"] : _live["todos"]');
   });
 });

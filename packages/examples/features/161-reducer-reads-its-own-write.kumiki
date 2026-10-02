@@ -1,0 +1,46 @@
+# Feature (language.md §1.6.4 / runtime.md §10.3.3): a slot read inside a
+# reducer body sees what that body has already written — in every position.
+#
+# `go` writes `noteKey := "b"` first and then reads `noteKey` in each nested
+# form: a `match` arm (wildcard, binding, variant, tuple), the body of a
+# `let … in`, and a method's predicate or element lambda. Each nested form
+# opens a scope of its own; every one of them keeps the reducer's view of the
+# slots, so each read answers `"b"`, not the `"a"` the slot held before the click.
+
+type Shape = Circle(Int) | Square(Int)
+
+slot noteKey : Text       = "a"
+slot names   : List(Text) = ["b", "b", "c"]
+slot shape   : Shape      = Circle(1)
+slot out0    : Text       = ""
+slot out1    : Text       = ""
+slot out2    : Text       = ""
+slot out3    : Text       = ""
+slot out4    : Text       = ""
+slot out5    : Text       = ""
+slot hits    : Int        = 0
+
+reducer go on=ui.click(Go)
+    do= noteKey := "b"
+        out0 := match 1 with | _ -> noteKey
+        out1 := match 1 with | n -> noteKey
+        out2 := match shape with | Circle(r) -> noteKey | Square(s) -> noteKey
+        out3 := match ("x", 1) with | (s, _) -> noteKey
+        out4 := let k = "x" in noteKey
+        out5 := names.map($1 + noteKey).join(",")
+        hits := names.filter($1 == noteKey).size
+
+tile Go = button(text="go", onClick=go)
+
+tile App
+    = column(
+        Go,
+        text("wildcard=" + out0 + " bind=" + out1 + " variant=" + out2),
+        text("tuple=" + out3 + " let=" + out4 + " map=" + out5),
+        text("hits=" + hits.show))
+      {pad: "lg", gap: "md"}
+
+app ReducerReadsItsOwnWrite
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
