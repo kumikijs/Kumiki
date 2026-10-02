@@ -563,6 +563,8 @@ issue.copy(status=Done, priority=High)
 
 > **On `.ok`, the first bind has the type the effect's `out=` declares.** On `out=Result(T, E)`, `load.ok($v, _)` binds `$v : T`; any other `out=` is the whole value. So `session := $v` into a slot of another type is **E0201**, and a member call on `$v` answers from `T` as it would on a slot of that type. The first bind on `.err` is not typed from `out=`: what arrives there is the capability's failure value — a built-in storage / session / indexed handler, a provider with none registered and a thrown invoke all deliver a `{message: Text}` record ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), whatever `E` declares — so reads of `$e` are not checked. The second bind (the request key) and a built-in effect's result have no declared type either.
 
+> **In a `fn`, a positional is a parameter.** `$1` is the first parameter and `$2` the second — the same value, with the type the parameter declares — so `fn plus(a: Int, b: Int) -> Int = $1 + $2` is `a + b`. There is one positional per parameter: `$1` in a `fn` with none, or `$2` in a one-parameter `fn`, is an undefined reference (**E0103**). A fragment inside the body binds its own `$1` / `$2`, which shadow the `fn`'s: in `fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` the receiver is `xs` and the fragment's `$1` is each element.
+
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 
 ### 1.6.6 Examples
