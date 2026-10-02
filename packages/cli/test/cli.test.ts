@@ -286,6 +286,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // form submit gate above, and the owner chose to raise the budget once
     // rather than hold every open change at the old line.
     //
+    // Still 63,000 (61,430 measured, from 61,164):
+    // `heading` renders the element its level names. The 266 bytes are
+    // `headingTag` and the patcher's rebuild on a level change; a counter
+    // renders a heading, so it ships them.
+    //
     // Still 63,000 (61,597 measured, from 61,162): the viewport pick reads the
     // active theme's breakpoints over the style.md §4.2 defaults
     // (`DEFAULT_BREAKPOINTS` in core.js) and orders them by their px size,
