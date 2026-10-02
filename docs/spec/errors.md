@@ -292,7 +292,7 @@ A `recv.member` access where the **inferred type** of `recv` is known, but `memb
 
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
 
-When the name is a member of other receivers, the message ends with `— it is a member of <receivers>`, naming them (`Type "Result" has no member ".filter" — it is a member of Map / List / Option`).
+When the name is a member of other receivers, the message ends with `— it is a member of <receivers>`, naming them (`Type "Result" has no member ".filter" — it is a member of Map / List / Option`). `<T>` is the receiver the member table reads, through any alias, `where` or `nominal` over it — and a `Duration` is named `Duration`, not the `Int` it is a `nominal` over (`Type "Duration" has no member ".ms"`).
 
 **Fix**: Correct the member name, or — if `recv` is a record — use a field that exists. See [List(T)](./stdlib.md#_2-2-3-list-t).
 

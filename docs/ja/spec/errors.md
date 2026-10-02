@@ -270,7 +270,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
 
-その名前が他の受け手のメンバーであるとき、メッセージの末尾はそれらを挙げる `— it is a member of <receivers>` になる（`Type "Result" has no member ".filter" — it is a member of Map / List / Option`）。
+その名前が他の受け手のメンバーであるとき、メッセージの末尾はそれらを挙げる `— it is a member of <receivers>` になる（`Type "Result" has no member ".filter" — it is a member of Map / List / Option`）。`<T>` はメンバー表が読む受け手で、別名・`where`・`nominal` を通した先の型。`Duration` は、その下の `Int` ではなく `Duration` と書かれる（`Type "Duration" has no member ".ms"`）。
 
 **修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
 

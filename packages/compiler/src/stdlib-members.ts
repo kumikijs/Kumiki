@@ -4,9 +4,10 @@
  * `recv.m` is a member only when `m` is listed for `recv`'s own type. A name
  * that the runtime understands on *some* receiver is not thereby a member of
  * every one: `Result.filter` was accepted because `Map.filter` exists, and the
- * runtime read the `Result` as a `Map`. The runtime's flat name list
- * (`KNOWN_MEMBERS`) is still what answers for a receiver whose type the
- * checker cannot decide.
+ * runtime read the `Result` as a `Map`. A receiver whose type the checker
+ * cannot decide is not looked up here at all: codegen lowers it by the
+ * member's name alone (the `FieldAccess` / `MethodCall` lowering in
+ * `codegen/expr.ts`), which is §2.2.3's name-based dispatch.
  *
  * `show` is not listed here: every value has it (§2.2.7), including a record,
  * so it is `UNIVERSAL_MEMBERS` rather than a line in every row.
@@ -131,6 +132,18 @@ const MEMBER_SETS = new Map<string, ReadonlySet<string>>(
 /** True when `r` is a receiver this table speaks for. */
 export function isReceiver(r: string): r is Receiver {
   return MEMBER_SETS.has(r);
+}
+
+/**
+ * True when `member` is listed in `receiver`'s own row — not `show`, which
+ * every value has and no row lists. The narrowing is what lets a `switch` over
+ * one row's members be checked for having a case for each of them.
+ */
+export function isOwnMember<R extends Receiver>(
+  receiver: R,
+  member: string,
+): member is MemberOf<R> {
+  return MEMBER_SETS.get(receiver)?.has(member) ?? false;
 }
 
 /** True when `member` is a member of `receiver` — its own, or one every value has. */

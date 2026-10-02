@@ -4,7 +4,7 @@
       "label": "nothing is filtered before the click",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["kept: 0", "opt: 1", "big: 0", "set: 3"]
+        "domIncludes": ["kept: 0", "opt: 1", "big: 0", "set: 3", "delay: 2000"]
       }
     },
     {

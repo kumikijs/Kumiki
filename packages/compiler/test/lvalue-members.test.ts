@@ -193,7 +193,7 @@ describe("the write side answers the read side's question too", () => {
   // \"Text\"") would be false. The read side has always said so; saying
   // something else here would make the same expression two different errors
   // depending on which side of `:=` it landed on.
-  it("reports a numeric-only member on a non-numeric receiver as E0108, not E0602", () => {
+  it("reports a member of a number on a non-numeric receiver as E0108, not E0602", () => {
     const errs = errsOf(withBody(`slot s : Text = ""`, `s.abs := 1`));
     expect(errs.map((x) => x.code)).toEqual(["E0108"]);
     expect(errs[0]?.message).toContain("Int / Float");

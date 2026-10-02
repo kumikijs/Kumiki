@@ -81,9 +81,11 @@ describe("Issue #92: paren-form stdlib methods do not fall through to native JS"
     const onlyDuLines = (js: string): string[] =>
       js.split("\n").filter((line) => line.includes('"du"'));
     expect(onlyDuLines(jsParen)).toEqual(onlyDuLines(jsNoParen));
-    // Belt-and-braces: neither form may fall through to native `)["to-ms"](`.
-    expect(jsParen).not.toMatch(/\)\["to-ms"\]/);
-    expect(jsNoParen).not.toMatch(/\)\["to-ms"\]/);
+    // Belt-and-braces: neither form may fall through to a native call, in
+    // either shape the fallback writes a hyphenated name — `).to_ms(` or
+    // `)["to-ms"](`.
+    expect(jsParen).not.toMatch(/\)(\.to_ms|\["to-ms"\])\(/);
+    expect(jsNoParen).not.toMatch(/\)(\.to_ms|\["to-ms"\])\(/);
   });
 
   it("no listed method falls through to the native-JS fallback shape", () => {

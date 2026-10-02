@@ -137,7 +137,7 @@ describe("a receiver the checker cannot decide stays silent", () => {
   // A `$1` bound to an element that is itself a `List` is the honest example:
   // the checker leaves it untyped (stdlib.md §2.2.2), so there is genuinely
   // nothing here to decide, and the whole result can be asserted. (A `$1`
-  // over a `List(Int)` is an `Int` now, and `.get-or` on it is E0108.)
+  // over a `List(Int)` is an `Int`, and `.get-or` on it is E0108.)
   it("says nothing about a lambda parameter whose type is undecided", () => {
     const errs = errsOf(
       withCall(

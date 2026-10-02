@@ -574,11 +574,13 @@ export const FIELD_ACCESS_SHORTCUTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Every member name the runtime understands on a stdlib receiver — the union of
- * the method-call methods and the no-paren shortcuts. Flat, not per-type: it is
- * the name-based dispatch §2.2.3 keeps for a receiver whose type the checker
- * cannot decide. Which names a *known* receiver has is `RECEIVER_MEMBERS`
- * (`stdlib-members.ts`), per receiver.
+ * Every member name codegen lowers to a stdlib helper on some receiver — the
+ * union of the method-call methods and the no-paren shortcuts. Flat, not
+ * per-type, and a public name list only: neither the checker nor codegen
+ * consults it. Which names a *known* receiver has is `RECEIVER_MEMBERS`
+ * (`stdlib-members.ts`); a receiver whose type the checker cannot decide is
+ * lowered by name in `jsOfExpr`'s `FieldAccess` case and `methodCallJs`, which
+ * is the name-based dispatch §2.2.3 keeps for it.
  */
 export const KNOWN_MEMBERS: ReadonlySet<string> = new Set([
   ...KNOWN_METHODS,

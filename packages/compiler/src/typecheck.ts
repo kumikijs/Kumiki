@@ -68,8 +68,8 @@ import { type RefinementProblem, refinementBaseProblem, refinementProblem } from
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import {
   hasMember,
+  isOwnMember,
   isReceiver,
-  type MemberOf,
   type Receiver,
   receiversOf,
   UNIVERSAL_MEMBERS,
@@ -2482,7 +2482,7 @@ function checkMemberLvalue(
       errors.push({
         code: "E0602",
         kind: "unassignable-member",
-        message: `Cannot assign through ".${lv.field}": it is a member of "${typeName(base, sym)}", not a field`,
+        message: `Cannot assign through ".${lv.field}": it is a member of "${receiverName(raw, base, sym)}", not a field`,
         pos: lv.pos,
       });
       return;
@@ -2492,7 +2492,7 @@ function checkMemberLvalue(
     // and now the write side's too. Calling it E0602 would have put a false
     // sentence in the message: `.abs` is not "a member of Text".
     case "unknown":
-      errors.push(undefMemberError(base, lv.field, lv.pos, sym));
+      errors.push(undefMemberError(raw, base, lv.field, lv.pos, sym));
       return;
 
     case "undecidable":
@@ -3058,7 +3058,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         // which names the record's fields rather than a member.
         const recordUpdate = e.method === "copy" && rt?.kind === "TypeRecord";
         if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
-          errors.push(undefMemberError(rt, e.method, e.pos, sym));
+          errors.push(undefMemberError(raw, rt, e.method, e.pos, sym));
         }
       }
       {
@@ -4225,12 +4225,18 @@ function freshResultType(qualifier: string, pos: Pos, sym: SymbolTable): TypeExp
  * readings — `.get` is `Option(V)` on a `Map` given a key and `T` on an
  * `Option` given nothing.
  *
- * Deliberately not here: `map` / `flat-map` / `fold` / `map-err`, whose result
- * a lambda body decides rather than the receiver, and the `Time` / `Duration`
- * members (§2.2.8 / §2.2.9). Those two are a family of their own — they answer
- * in each other's types rather than in a type argument, and `Duration` is a
- * nominal over `Int` rather than a prim, so neither the `TypePrim` branch below
- * nor the `TypeApp` one reaches them.
+ * Each `switch` below lists its receiver's whole row, and `unlisted` makes
+ * that a compile-time fact: a member the table gains without a case here is a
+ * `tsc` error, and a case for a name the row does not list is one too. The
+ * members that answer `null` on purpose are cases of their own, so the reason
+ * sits next to the name: `map` / `flat-map` / `fold` / `map-err` / `zip`,
+ * whose result a lambda body or an argument decides rather than the receiver.
+ *
+ * Not here at all: the `Time` / `Duration` members (§2.2.8 / §2.2.9). Those
+ * two are a family of their own — they answer in each other's types rather
+ * than in a type argument, and `Duration` is a nominal over `Int` rather than
+ * a prim, so neither the `TypePrim` branch below nor the `TypeApp` one
+ * reaches them.
  */
 function receiverMemberResult(
   recv: TypeExpr | null,
@@ -4242,15 +4248,9 @@ function receiverMemberResult(
   const t = unaliasType(recv, sym);
   if (!t) return null;
   // The table decides whether this is a member at all, so a result is never
-  // answered for a name the receiver does not have — and each `switch` below
-  // is typed by its receiver's row, so a case the row does not list is a
-  // compile error here rather than a second list.
-  const receiver = t.kind === "TypePrim" || t.kind === "TypeApp" ? t.name : "";
-  if (!isReceiver(receiver) || !hasMember(receiver, member)) return null;
-
-  // One name, two readings, told apart by the count — and already resolved by
-  // a function that takes both, so it is asked here rather than copied.
-  if (member === "get-or") return getOrResultType(t, argCount);
+  // answered for a name the receiver does not have.
+  const receivers = memberReceivers(recv, t, sym);
+  if (receivers === null || !receivers.some((r) => hasMember(r, member))) return null;
 
   const int = () => prim("Int", pos);
   const bool = () => prim("Bool", pos);
@@ -4259,7 +4259,8 @@ function receiverMemberResult(
   const option = (of: TypeExpr) => container("Option", [of], pos);
 
   if (t.kind === "TypePrim" && t.name === "Text") {
-    switch (member as MemberOf<"Text">) {
+    if (!isOwnMember("Text", member)) return null;
+    switch (member) {
       case "length":
         return int();
       case "is-empty":
@@ -4280,7 +4281,7 @@ function receiverMemberResult(
       case "parse-float":
         return option(prim("Float", pos));
       default:
-        return null;
+        return unlisted(member);
     }
   }
 
@@ -4296,7 +4297,8 @@ function receiverMemberResult(
 
   switch (t.name) {
     case "Map":
-      switch (member as MemberOf<"Map">) {
+      if (!isOwnMember("Map", member)) return null;
+      switch (member) {
         case "size":
           return int();
         case "is-empty":
@@ -4312,17 +4314,25 @@ function receiverMemberResult(
         // common `m.get(k).get-or(d)` shape type at all.
         case "get":
           return argCount === 1 && a1 ? option(a1) : null;
+        // One name, two readings, told apart by the count — and already
+        // resolved by a function that takes both, so it is asked rather than
+        // copied.
+        case "get-or":
+          return getOrResultType(t, argCount);
         case "insert":
         case "remove":
         case "update":
         case "merge":
         case "filter":
           return t;
-        default:
+        case "map":
           return null;
+        default:
+          return unlisted(member);
       }
     case "Set":
-      switch (member as MemberOf<"Set">) {
+      if (!isOwnMember("Set", member)) return null;
+      switch (member) {
         case "size":
           return int();
         case "has":
@@ -4337,10 +4347,11 @@ function receiverMemberResult(
         case "to-list":
           return a0 && list(a0);
         default:
-          return null;
+          return unlisted(member);
       }
     case "List":
-      switch (member as MemberOf<"List">) {
+      if (!isOwnMember("List", member)) return null;
+      switch (member) {
         case "length":
           return int();
         case "is-empty":
@@ -4367,11 +4378,18 @@ function receiverMemberResult(
           return text();
         case "chunk":
           return list(t);
-        default:
+        // A lambda body decides `map` / `fold`, and `zip` pairs with the
+        // argument's element type, which this function is not given.
+        case "map":
+        case "fold":
+        case "zip":
           return null;
+        default:
+          return unlisted(member);
       }
     case "Option":
-      switch (member as MemberOf<"Option">) {
+      if (!isOwnMember("Option", member)) return null;
+      switch (member) {
         case "is-some":
         case "is-none":
           return bool();
@@ -4379,16 +4397,22 @@ function receiverMemberResult(
         // Option is the Map reading, which `checkGetArity` reports.
         case "get":
           return argCount === 0 ? unwrappedType(t) : null;
+        case "get-or":
+          return getOrResultType(t, argCount);
         case "filter":
         case "or":
           return t;
         case "to-list":
           return a0 && list(a0);
-        default:
+        case "map":
+        case "flat-map":
           return null;
+        default:
+          return unlisted(member);
       }
     case "Result":
-      switch (member as MemberOf<"Result">) {
+      if (!isOwnMember("Result", member)) return null;
+      switch (member) {
         case "is-ok":
         case "is-err":
           return bool();
@@ -4396,16 +4420,31 @@ function receiverMemberResult(
           return argCount === 0 ? unwrappedType(t) : null;
         case "get-err":
           return argCount === 0 ? a1 : null;
+        case "get-or":
+          return getOrResultType(t, argCount);
         case "or":
           return t;
         case "to-option":
           return a0 && option(a0);
-        default:
+        case "map":
+        case "map-err":
+        case "flat-map":
           return null;
+        default:
+          return unlisted(member);
       }
     default:
       return null;
   }
+}
+
+/**
+ * The `default` of a `switch` that lists a receiver's whole row: `member` is
+ * `never` there exactly when every member has a case, so a row that gains a
+ * name without one fails `tsc` at the call.
+ */
+function unlisted(_member: never): null {
+  return null;
 }
 
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
@@ -4683,20 +4722,20 @@ function sharedBase(
  * "field or member?" is one question with one answer, whichever spelling asks
  * it. It used to be asked twice, by two ladders that had
  * drifted: the write side knew only how to answer it for a record, and treated
- * every numeric-only member as a member of whatever receiver it was written
+ * every member of a number as a member of whatever receiver it was written
  * on. Now the ladder is here and the callers only decide what to do with the
  * verdict.
  *
  * - `field`       — a real field, and therefore a real lvalue step.
  * - `member`      — a stdlib member of this receiver (stdlib.md §2.2).
  * - `unknown`     — the receiver is understood and has no such name, even if
- *                   another receiver does: `Result` has no `filter` because
- *                   `Map` has one.
+ *                   another receiver does: `Result` has no `filter` even
+ *                   though `Map` has one.
  * - `undecidable` — a union, an opaque type parameter, or no type at all. We
  *                   only speak about types we fully understand, because a
  *                   false error on a dynamic receiver is worse than silence.
- *                   The runtime's flat name list answers for these, in
- *                   codegen, exactly as §2.2.3 says it does.
+ *                   Codegen lowers these by the member's name alone, which
+ *                   is the name-based dispatch §2.2.3 keeps for them.
  *
  * `raw` is the receiver's type as written, before aliases and `nominal`s are
  * followed, because one of the receivers is a `nominal`: a `Duration` is an
@@ -4738,13 +4777,33 @@ function memberReceivers(raw: TypeExpr | null, t: TypeExpr, sym: SymbolTable): R
   return isStdlibDuration(raw, sym) ? [name, "Duration"] : [name];
 }
 
+/**
+ * The receiver's name in a diagnostic: the row it reads (`List`, `Int`), except
+ * that a `Duration` is called a `Duration` rather than the `Int` it is
+ * underneath — its own row is the one a reader is looking for.
+ */
+function receiverName(raw: TypeExpr | null, t: TypeExpr, sym: SymbolTable): string {
+  return isStdlibDuration(raw, sym) ? "Duration" : typeName(t, sym);
+}
+
 const STDLIB_DURATION = STDLIB_TYPES.find((d) => d.name === "Duration");
 
-/** True when `t`, followed through aliases, names the standard library's `Duration`. */
+/**
+ * True when `t` is the standard library's `Duration`, seen through everything
+ * that keeps a type what it is (stdlib.md §2.2.2): an alias, a `where`
+ * refinement, a `nominal` over it. The walk stops on reaching `Duration`
+ * itself, before its own body (`nominal Int`) — past that point every `Int`
+ * would look like a `Duration`.
+ */
 function isStdlibDuration(t: TypeExpr | null, sym: SymbolTable): boolean {
   const seen = new Set<string>();
   let cur = t;
-  while (cur?.kind === "TypeRef" && !seen.has(cur.name)) {
+  while (cur !== null) {
+    if (cur.kind === "TypeRefinement" || cur.kind === "TypeNominal") {
+      cur = cur.inner;
+      continue;
+    }
+    if (cur.kind !== "TypeRef" || seen.has(cur.name)) return false;
     const def = sym.types.get(cur.name);
     if (def === undefined) return false;
     if (def === STDLIB_DURATION) return true;
@@ -4758,13 +4817,20 @@ function isStdlibDuration(t: TypeExpr | null, sym: SymbolTable): boolean {
  * The one wording for "this receiver has no such member", so the two sides
  * cannot report the same expression differently depending on which side of
  * `:=` it landed on. A record says "record type" because naming its shape adds
- * nothing a reader of the line does not already have.
+ * nothing a reader of the line does not already have. `raw` is the receiver as
+ * written and `t` the same type unaliased.
  */
-function undefMemberError(t: TypeExpr, field: string, pos: Pos, sym: SymbolTable): KumikiError {
+function undefMemberError(
+  raw: TypeExpr | null,
+  t: TypeExpr,
+  field: string,
+  pos: Pos,
+  sym: SymbolTable,
+): KumikiError {
   const head =
     t.kind === "TypeRecord"
       ? `Record type has no field or method ".${field}"`
-      : `Type "${typeName(t, sym)}" has no member ".${field}"`;
+      : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
   const owners = receiversOf(field);
   return {
     code: "E0108",
@@ -4938,7 +5004,7 @@ function classifyFieldAccess(
     }
 
     case "unknown":
-      errors.push(undefMemberError(t, e.field, e.pos, sym));
+      errors.push(undefMemberError(raw, t, e.field, e.pos, sym));
       return;
 
     case "undecidable":

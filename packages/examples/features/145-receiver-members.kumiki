@@ -9,12 +9,19 @@
 # spelling §2.2 gives each receiver: a `Result` becomes an `Option` before it
 # is filtered, a `Set` becomes a `List` before it is mapped, and a `List` is
 # measured by `length` (a `Map` / `Set` by `size`).
+#
+# A `Duration` is a `nominal Int` with `to-ms` besides, and stays one under a
+# `where`: `delay.to-ms` on a `Duration where between(…)` reads the Duration
+# row, not only the Int one underneath it.
 
 slot res  : Result(Int, Text) = Ok(3)
 slot opt  : Option(Int)       = Some(3)
 slot st   : Set(Int)          = [1, 2, 3]
 slot kept : Option(Int)       = None
 slot big  : List(Int)         = []
+
+type Delay = Duration where between(0, 60000)
+slot delay : Delay = Duration.s(2)
 
 reducer run on=ui.click(Run)
     do= kept := res.to-option.filter($1 > 2)
@@ -27,7 +34,8 @@ tile App = column(
     text("kept: " + kept.get-or(0).show),
     text("opt: " + opt.to-list.length.show),
     text("big: " + big.length.show),
-    text("set: " + st.size.show)
+    text("set: " + st.size.show),
+    text("delay: " + delay.to-ms.show)
 )
 
 app ReceiverMembers
