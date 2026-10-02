@@ -1515,6 +1515,12 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
     .map((e): [number, number] => [e.range.startLine, e.range.endLine]);
 }
 
+/** The kind of the `test` definition named `testName`, if the file has one. */
+function testKindOf(store: Store, testName: string): TestDef["testKind"] | undefined {
+  const entry = store.defs.find((e) => e.def.kind === "TestDef" && e.name === testName);
+  return entry ? (entry.def as TestDef).testKind : undefined;
+}
+
 /**
  * Line ranges of the target def and every def it transitively references, used
  * to constrain a literal search to code the failing test can actually reach.
@@ -1622,6 +1628,14 @@ export function planTestPatchExplained(
     return excludedLineRanges.some(([lo, hi]) => line >= lo && line <= hi);
   };
   const scope = store ? scopeOfTest(store, r.name) : null;
+  // A tile-test's text is a rendered string the tile's literals spell, so a
+  // literal the tier finds is the one to repair. Any other leaf — a `checked`
+  // state, an `options` list, a `disabled` flag — is often decided by
+  // `given.slots`, which overrides the slot whose initial literal would be
+  // matched: the proposal could not make the test pass.
+  if (store && typeof actual !== "string" && testKindOf(store, r.name) === "tile-test") {
+    return bail("tile-leaf-not-text");
+  }
 
   // ----- Planner 1: exact-literal repair (string / number / boolean) -----
 

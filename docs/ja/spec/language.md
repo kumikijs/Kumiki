@@ -643,6 +643,7 @@ pattern      ::= identifier
 
 **builtin の内容 — 位置引数**:
 - テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
+- 値 builtin（`text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon`）以外の builtin の位置引数は、tile —— `tile-expr` か定義済み tile の名前 —— のときにだけ描画される。そこに書いた値 —— `column(text("a"), 42)`、slot、`column(let x = 42 in Card(x))` —— は何も描画せず [E0128](./errors.md#e0128-value-as-child) になる：tile で表示する（`text(n.show)`）か、値を使う位置に直接書くか、`fn` で計算する。値の位置（値 builtin の内容、ユーザー tile の入力、名前付き引数）では `let` は値であり、値として検査される。tile 本体と `when` / `if` / `for` / `match` の腕はそれ自体が `tile-expr` なので、そこでの `let` はパースエラーになる。
 
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
@@ -993,7 +994,7 @@ app TodoApp
 
 ```kumiki snippet
 # ❌ ローカル状態
-tile Foo = let x = 0 in button(text=x.show)   # tile 内で代入は不可（let で式束縛は可、slot 代わりにはならない）
+tile Foo = let x = 0 in button(text=x.show)   # tile 本体に `let` はない：ここではパースエラー、子としては E0128
 
 # ❌ effect の直接呼び出し
 reducer r on=ui.click(B) do= http.get("/")   # emit 必須
