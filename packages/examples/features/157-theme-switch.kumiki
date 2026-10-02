@@ -1,0 +1,31 @@
+# Feature (style.md §4.6): `app.theme = themeName` names a slot, and changing
+# the slot re-themes the whole page, including every tile whose own props did
+# not change. `Swatch` below is never touched by the toggle, yet its
+# background, colour and padding follow the active theme, and so does the
+# nested `Inner` card.
+
+slot themeName : Text = "Light"
+
+reducer toggle on=ui.click(ToggleBtn) do= themeName := if themeName == "Light" then "Dark" else "Light"
+
+tile ToggleBtn = button(text="Toggle theme", onClick=toggle)
+tile Inner  = box(text("inner")) {bg: "primary", pad: "sm", radius: "md", id: "inner"}
+tile Swatch = box(text("swatch"), Inner) {bg: "surface", color: "fg", pad: "md", gap: "sm", id: "sw"}
+tile App    = page(text("theme: " + themeName), ToggleBtn, Swatch)
+
+theme Light = {
+    colors:  {bg: "#ffffff", fg: "#1a1a1a", primary: "#0070f3", surface: "#ffffff"},
+    spacing: {sm: "4px", md: "16px"},
+    radius:  {md: "4px"}
+}
+theme Dark = {
+    colors:  {bg: "#111111", fg: "#eeeeee", primary: "#3291ff", surface: "#1c1c1c"},
+    spacing: {sm: "8px", md: "32px"},
+    radius:  {md: "12px"}
+}
+
+app ThemeSwitch
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    theme  = themeName

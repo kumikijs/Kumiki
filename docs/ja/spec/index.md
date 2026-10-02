@@ -85,6 +85,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | コア |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | コア |
 | [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | コア |
+| [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | コア |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | コア |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | コア |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | HTTP/Storage |
@@ -279,6 +280,7 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `154-ssr-redirect.kumiki` | tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
 | `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | ルーティング | [§3.4](./routing.md#_3-4-ルートライフサイクル) |
 | `156-heading-level.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.3.2](./stdlib.md#_2-3-2-テキスト要素) |
+| `157-theme-switch.kumiki` | slot, reducer, tile, app | スタイル | [§4.6](./style.md#_4-6-dark-mode) |
 | `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | コア | [§10.5.3](./runtime.md#_10-5-3-replay) |
 | `160-tile-test-content-fields.kumiki` | slot, tile | テスト | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
 | `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | コア | [§1.6.4](./language.md#_1-6-4-不変条件) |
