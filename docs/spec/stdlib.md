@@ -141,7 +141,7 @@ concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
 sort                        : List(T)          ; T is Ord
-sort-by(expr)               : List(T)
+sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
 unique                      : List(T)
 map(expr)                   : List(T')
 filter(pred)                : List(T)
@@ -172,6 +172,12 @@ fn norm() -> List(Todo) = todos.reverse       # same as above
 **The lambda arguments of `map` / `filter` / `sort-by`**:
 - For a List element, `$1` is bound; for the `[k, v]` pair after `.entries`, `$1=key, $2=value` are bound (the runtime destructures automatically)
 - Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`
+
+**`sort-by(expr)` orders by the key the way `<` orders two values** ([language §1.9.4](./language.md#_1-9-4-operator-types)): a number or a `Time` numerically, a `Text` as `<` compares two `Text`s. Elements whose keys are equal keep the order they had. A key with no order — a record, a variant, a `Bool`, an `Option`, a container — is [E0201](./errors.md#e0201-type-mismatch), as `a < b` on the same two values would be. The key may also be a `fn` passed by name (`xs.sort-by(keyOf)`); its declared return type is the key's type.
+
+- **`Text` order is UTF-16 code-unit order**, not a locale's collation: `"Z" < "a"`, `"B" < "a"`, and kana and kanji sort by code point rather than in dictionary (reading) order.
+- **A key is ordered as the value it is at runtime.** A field declared numeric or `Time` whose value arrives as `Text` — for example from an HTTP JSON body, which is not converted to the declared types — is ordered as `Text`: `"10"` before `"9"`.
+- **A key with no value to order — absent, or `NaN` — sorts after every other key**, keeping its order. Only a key the checker could not type can be one; compared as "equal" to every key, a single one would otherwise stop the rest from sorting.
 
 ### 2.2.4 Option(T)
 
@@ -328,6 +334,8 @@ Kumiki's built-in tiles. They are **semantic tags** and are not literal translat
 | `link` | link | `to`, `external` |
 | `code` | code | `lang` |
 | `markdown` | Markdown rendering | (content is the argument) |
+
+`heading` renders `<h1>` … `<h6>` for its `level`, on the client and in server rendering alike, and `<h1>` when no `level` is given. A fractional `level` drops its fraction, and one outside 1-6 is drawn at the nearer end (`0` is an `<h1>`, `9` an `<h6>`). A `level` that changes between renders re-creates the element, since a tag cannot change in place.
 
 `link` `external` opens the link in a new browsing context (`target="_blank"`, with the `rel="noopener noreferrer"` that has to accompany it) and leaves it to the browser rather than the router.
 
