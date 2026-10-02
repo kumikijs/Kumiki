@@ -70,6 +70,8 @@ import { type RefinementProblem, refinementBaseProblem, refinementProblem } from
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
+  bareNameAt,
+  fitsRecordPosition,
   type GivenSection,
   givenSection,
   isRecordValue,
@@ -5615,7 +5617,9 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
   for (const f of sectionsOf(t, t.testKind, "given", errors)) {
     switch (f.section) {
       case "slots":
-        checkTestSlotMap(f.value, sym, errors, owned);
+        if (requireRecord(f.value, "given.slots", errors)) {
+          checkTestSlotMap(f.value, sym, errors, owned);
+        }
         break;
       case "event":
         if (requireRecord(f.value, "given.event", errors)) {
@@ -5639,7 +5643,9 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     for (const f of sectionsOf(t, "reducer-test", "expect", errors)) {
       switch (f.section) {
         case "slots":
-          checkTestSlotMap(f.value, sym, errors, owned);
+          if (requireRecord(f.value, "expect.slots", errors)) {
+            checkTestSlotMap(f.value, sym, errors, owned);
+          }
           break;
         case "effects":
           checkTestEffects(f.value, sym, errors, owned);
@@ -5656,9 +5662,13 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     for (const f of sectionsOf(t, "episode-test", "expect", errors)) {
       switch (f.section) {
         case "slots-equal":
-          // `from-log` is the literal that means "take the log's own values".
-          if (f.value.kind === "Ref" && f.value.name === "from-log") break;
-          checkTestSlotMap(f.value, sym, errors, base);
+          // The position's bare name (`from-log`: the log's own values) has no
+          // slots of its own to check, so it stops here; anything past this
+          // line is a record or E0713.
+          if (bareNameAt(f.value, "expect.slots-equal") !== undefined) break;
+          if (requireRecord(f.value, "expect.slots-equal", errors)) {
+            checkTestSlotMap(f.value, sym, errors, base);
+          }
           break;
         case "no-panics":
         case "no-errors":
@@ -5745,15 +5755,17 @@ function nearestSectionHint(kind: TestKind, part: TestPart, written: string): st
 
 /**
  * E0713 when `value` — written at a test-body `position` the lowering reads
- * as a record — is something else; whether it is a record (or absent) to go on
- * reading. The sentence is the one the lowering throws, from the shared table.
+ * as a record — is something the position does not accept; whether it fits (a
+ * record, the position's bare name, or absent) to go on reading. A caller at a
+ * position with a bare name steps past it (`bareNameAt`) before reading fields.
+ * The sentence is the one the lowering throws, from the shared table.
  */
 function requireRecord(
   value: Expr | TileExpr | undefined,
   position: RecordPosition,
   errors: KumikiError[],
 ): boolean {
-  if (value === undefined || isRecordValue(value)) return true;
+  if (value === undefined || fitsRecordPosition(value, position)) return true;
   errors.push({
     code: "E0713",
     kind: "test-shape-invalid",
@@ -5769,13 +5781,13 @@ function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: 
   return e.fields;
 }
 
-/** `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots`. */
+/**
+ * `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots` /
+ * `slots-equal`, once `requireRecord` has said it fits and the caller has
+ * stepped past a bare name, so `rec` is a record.
+ */
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (rec.kind !== "RecordLit") {
-    checkExpr(rec, sym, errors, ctx);
-    return;
-  }
-  for (const f of rec.fields) {
+  for (const f of recordFieldsOf(rec)) {
     if (!isTestSlot(f.name, sym)) {
       errors.push({
         code: "E0103",
