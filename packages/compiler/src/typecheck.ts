@@ -45,7 +45,12 @@ import {
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
 import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./builtins.ts";
-import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
+import {
+  BUILTIN_EFFECTS,
+  builtinFieldOmittable,
+  REDUCER_REF,
+  STANDARD_CAPABILITIES,
+} from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
   FRAGMENT_ARGUMENTS,
@@ -2201,7 +2206,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
-    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECT_CAPS.has(r.on.effect)) {
+    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECTS.has(r.on.effect)) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -3042,7 +3047,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           kind: "undef-ref",
           message: hides
             ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
-            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
           pos: e.pos,
         });
         return;
@@ -3366,7 +3371,7 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
  * - `fold`'s `fn` takes both, because the element is the second;
  * - a `filter` / `map` / `find` / `sort-by` fragment binds a second
  *   positional only where `shape` says the value handed over is taken apart —
- *   a pair, or a Map's filter entry. Where it binds one value (`"value"`), or
+ *   a pair, or a Map's filter or map entry. Where it binds one value (`"value"`), or
  *   the receiver is known but §2.2.3 gives the method no binding on it
  *   (`null`), a second parameter would be handed nothing the `fn` means. Only
  *   a receiver whose type cannot be decided (`"undecided"`) is given the
@@ -3402,7 +3407,7 @@ function checkFragmentFnArity(
   if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     return report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`,
+      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
     );
   }
   return true;
@@ -3652,8 +3657,13 @@ function checkAgainst(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode = "E0201",
+  omittable?: Omittable,
 ): void {
   if (declared === null) return;
+  if (declared === REDUCER_REF) {
+    checkReducerRef(e, sym, errors, ctx, code);
+    return;
+  }
   const d = unaliasType(declared, sym);
   if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
 
@@ -3708,7 +3718,7 @@ function checkAgainst(
     }
   }
   if (d.kind === "TypeRecord" && e.kind === "RecordLit") {
-    checkRecordLit(e, d, sym, errors, ctx, code);
+    checkRecordLit(e, d, sym, errors, ctx, code, omittable);
     return;
   }
   if (e.kind === "Variant") {
@@ -3718,13 +3728,13 @@ function checkAgainst(
   if (e.kind === "IfExpr") {
     // Both branches land in this position, and reporting at the branch beats
     // reporting at the `if`.
-    checkAgainst(e.consequent, declared, sym, errors, ctx, code);
-    checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable);
     return;
   }
   if (e.kind === "LetIn") {
     // The body is the value that lands here, read with the name bound.
-    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code);
+    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code, omittable);
     return;
   }
   if (e.kind === "MatchExpr") {
@@ -3736,7 +3746,8 @@ function checkAgainst(
     // whole-match comparison would pass the wrong arm without a word.
     const scrutType = inferType(e.scrutinee, sym, ctx);
     for (const arm of e.arms) {
-      checkAgainst(arm.body, declared, sym, errors, armScope(arm, scrutType, sym, ctx), code);
+      const scope = armScope(arm, scrutType, sym, ctx);
+      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
     }
     return;
   }
@@ -3761,7 +3772,51 @@ function checkAgainst(
 
   const actual = inferType(e, sym, ctx);
   if (actual === null || !isKnown(actual, sym)) return;
-  if (!assignable(actual, declared, sym)) mismatch(e, actual);
+  // A value of a record type may leave out what a literal may, so the
+  // comparison drops those fields when its type does — the message still
+  // names the whole `in=`.
+  const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
+  if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
+}
+
+/**
+ * `d` without the fields `omittable` allows `actual` to leave out and that it
+ * does leave out, or `null` when either side is not a record.
+ */
+function withoutOmitted(
+  d: TypeExpr,
+  actual: TypeExpr,
+  sym: SymbolTable,
+  omittable: Omittable,
+): TypeExpr | null {
+  const a = unaliasType(actual, sym);
+  if (d.kind !== "TypeRecord" || a?.kind !== "TypeRecord") return null;
+  const has = new Set(a.fields.map((f) => f.name));
+  return { ...d, fields: d.fields.filter((f) => has.has(f.name) || !omittable(f)) };
+}
+
+/**
+ * A `ReducerRef` (`confirm`'s `onYes` / `onNo`) is a reducer's name written
+ * bare: codegen lowers exactly that to the name the runtime dispatches, and
+ * anything else to a value the runtime cannot dispatch. A bare name is judged
+ * where the emit resolves it as a reducer (E0103), so only the other forms are
+ * reported here.
+ */
+function checkReducerRef(
+  e: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  code: MismatchCode,
+): void {
+  if (e.kind === "Ref") return;
+  const actual = inferType(e, sym, ctx);
+  pushMismatch(
+    errors,
+    code,
+    `Expected ${typeToString(REDUCER_REF)} but got ${actual ? typeToString(actual) : "an expression that is not a reducer name"}`,
+    e.pos,
+  );
 }
 
 /**
@@ -3803,10 +3858,11 @@ function checkRecordLit(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode,
+  omittable?: Omittable,
 ): void {
   const given = new Set(e.fields.map((f) => f.name));
   for (const declaredField of d.fields) {
-    if (given.has(declaredField.name)) continue;
+    if (given.has(declaredField.name) || omittable?.(declaredField)) continue;
     errors.push({
       code: "E0214",
       kind: "missing-record-field",
@@ -4101,8 +4157,8 @@ function checkEmitTarget(
   ctx: Ctx,
   pos: Pos,
 ): void {
-  const eff = sym.effects.get(effect);
-  if (!eff && !BUILTIN_EFFECT_CAPS.has(effect)) {
+  const input = effectInput(effect, sym);
+  if (!input) {
     errors.push({
       code: "E0104",
       kind: "undef-effect",
@@ -4111,11 +4167,11 @@ function checkEmitTarget(
     });
     return;
   }
-  // A built-in effect has no `effect` declaration to read a `cap=` off, so the
-  // requirement comes from the table instead — the DOM runtime gates it either
+  // A built-in effect has no `effect` declaration to read a `cap=` or an `in=`
+  // off, so both come from the table instead — the DOM runtime gates it either
   // way. `null` is the one entry that asks for nothing; an empty `cap=` on a
   // declared effect is not that, and stays reportable.
-  const cap = eff ? eff.cap : (BUILTIN_EFFECT_CAPS.get(effect) ?? null);
+  const { cap, inType, omittable } = input;
   if (cap !== null && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
     errors.push({
       code: "E0301",
@@ -4124,12 +4180,11 @@ function checkEmitTarget(
       pos,
     });
   }
-  if (!eff) return;
   // `in=Unit` is the "no input" declaration, so the effect takes no argument;
   // every other `in=` takes exactly one. Codegen destructures the argument, so
   // a missing one is `Cannot destructure property 'key' of 'input'` at the
   // first dispatch rather than a diagnostic.
-  const wants = isPrimNamed(eff.inType, sym, "Unit") ? 0 : 1;
+  const wants = isPrimNamed(inType, sym, "Unit") ? 0 : 1;
   if (args.length !== wants) {
     errors.push({
       code: "E0213",
@@ -4143,7 +4198,7 @@ function checkEmitTarget(
   if (!arg) return;
   // The EffectId case keeps its own wording: the fix is never "convert the
   // value" but "pass the handle an earlier emit returned".
-  if (isPrimNamed(eff.inType, sym, "EffectId")) {
+  if (isPrimNamed(inType, sym, "EffectId")) {
     const actual = inferType(arg, sym, ctx);
     if (actual && !isPrimNamed(actual, sym, "EffectId")) {
       errors.push({
@@ -4155,7 +4210,37 @@ function checkEmitTarget(
     }
     return;
   }
-  checkAgainst(arg, eff.inType, sym, errors, ctx, "E0202");
+  checkAgainst(arg, inType, sym, errors, ctx, "E0202", omittable);
+}
+
+/**
+ * Which fields of a record `in=` an argument may leave out. A predicate rather
+ * than a narrowed type, because which ones a value leaves out is known only at
+ * each leaf `checkAgainst` reaches — an `if` whose branches write different
+ * fields has no single answer — and because the message names the whole `in=`.
+ */
+type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;
+
+/**
+ * The effect a name dispatches: its capability, its `in=`, and the fields a
+ * call may leave out of it. A declaration wins over a standard effect of the
+ * same name and leaves nothing out; a standard effect (stdlib.md §2.6) may
+ * leave out what `builtinFieldOmittable` says. `undefined` when the name is
+ * neither.
+ */
+function effectInput(
+  name: string,
+  sym: SymbolTable,
+): { cap: string | null; inType: TypeExpr; omittable: Omittable | undefined } | undefined {
+  const eff = sym.effects.get(name);
+  if (eff) return { cap: eff.cap, inType: eff.inType, omittable: undefined };
+  const builtin = BUILTIN_EFFECTS.get(name);
+  if (!builtin) return undefined;
+  return {
+    cap: builtin.cap,
+    inType: builtin.inType,
+    omittable: (f) => builtinFieldOmittable(builtin, f),
+  };
 }
 
 // Closed set of theme token namespaces (spec/style.md §4.2). The token name
@@ -4855,12 +4940,12 @@ function undefMemberError(
 
 /**
  * The members that hand a `Set`'s elements or a `Map`'s keys back — as a list
- * (`to-list`, `keys`, `entries`) or, for `Map.filter`, as the `$1` its
- * predicate is given for each entry.
+ * (`to-list`, `keys`, `entries`) or, for `Map.filter` and `Map.map`, as the
+ * `$1` their fragment is given for each entry.
  */
 const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
   Set: new Set(["to-list"]),
-  Map: new Set(["keys", "entries", "filter"]),
+  Map: new Set(["keys", "entries", "filter", "map"]),
 };
 
 const KEY_READER_NAMES: ReadonlySet<string> = new Set(
@@ -4896,14 +4981,13 @@ function keyKindOfReader(
  * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E).map`: `$1`
  *   is `T`, taken apart like a `List`'s element except under `flat-map`,
  *   whose lowering does not; `Result.map-err`: `$1` is `E`.
- * - `Map(K, V).filter`: `$1` is the key and `$2` the value — the key only when
- *   it reads back as a value of `K` (`keyRepresentation`); `Map.update(k, expr)`:
- *   `$1` is the current `V`.
+ * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value — the key
+ *   only when it reads back as a value of `K` (`keyRepresentation`);
+ *   `Map.update(k, expr)`: `$1` is the current `V`.
  *
  * Everything else is `null`, which binds the name with no type — as every
  * fragment was bound before. That includes an element the checker cannot
  * decide (a type parameter), which the lowering's fallback may take apart.
- * `Map.map` is absent because its lowering does not iterate a Map at all.
  * Which of `$1` / `$2` a fragment binds at all is {@link fragmentShape}'s
  * answer; this one only types them.
  */
@@ -4934,7 +5018,7 @@ function fragmentBindings(
       return method === "map-err" ? [b ?? null, null] : none;
     case "Map":
       if (method === "update") return argIndex === 1 ? [b ?? null, null] : none;
-      if (method !== "filter" || argIndex !== 0) return none;
+      if ((method !== "filter" && method !== "map") || argIndex !== 0) return none;
       return [keyRepresentation(a ?? null, sym) === null ? null : (a ?? null), b ?? null];
     default:
       return none;
@@ -4958,8 +5042,8 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
  * - `"pair"`: each value handed over is a `Tuple(A, B)` — a `List` of pairs
  *   from `.entries`, or an `Option` / `Result` holding one — and is taken
  *   apart, `$1 = A`, `$2 = B`.
- * - `"key-value"`: `Map(K, V).filter`, handed each entry as the key and the
- *   value, `$1` and `$2`.
+ * - `"key-value"`: `Map(K, V).filter` / `map`, handed each entry as the key
+ *   and the value, `$1` and `$2`.
  * - `"value"`: any other element of a `List`, or the value of an `Option`
  *   (`map` / `filter`) or a `Result` (`map`) — `$1` is that value whole,
  *   whatever it is (a 2-element `List` included), and `$2` is not bound.
@@ -4967,7 +5051,7 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
  *   here (a type parameter, an untyped payload).
  * - `null`: the receiver's type is known, but §2.2.3 gives this method no
  *   binding on it — a `Set`, whose `_s.filter` hands each element as an
- *   `[element, true]` entry; `Map.map` / `find` / `sort-by`; `Option.find` /
+ *   `[element, true]` entry; `Map.find` / `sort-by`; `Option.find` /
  *   `sort-by`; `Result.filter` / `find` / `sort-by`; any receiver that is not
  *   a container.
  *
@@ -4996,7 +5080,7 @@ function fragmentShape(
     case "Result":
       return method === "map" ? elementShape(a ?? null, sym).shape : null;
     case "Map":
-      return method === "filter" ? "key-value" : null;
+      return method === "filter" || method === "map" ? "key-value" : null;
     default:
       return null;
   }
@@ -6105,8 +6189,9 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
     const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
     if (name === undefined) continue;
     // The standard effects (`navigate`, `toast`, `log`, …) are declared by no
-    // program, so the table they live in is the capability one.
-    if (!sym.effects.has(name) && !BUILTIN_EFFECT_CAPS.has(name)) {
+    // program, so they live in a table of their own.
+    const input = effectInput(name, sym);
+    if (!input) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -6118,11 +6203,12 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
     for (const a of item.args) checkExpr(a, sym, errors, ctx);
     // The expected argument stands for the one the reducer emits, which is
     // checked, and lowered, against the effect's `in=` type — so this one is
-    // too, or a Set the reducer emits is compared with the array the literal
-    // would otherwise be.
-    const inType = sym.effects.get(name)?.inType ?? null;
+    // too, with the same fields left out, or a Set the reducer emits is
+    // compared with the array the literal would otherwise be.
     const arg = item.args[0];
-    if (arg && item.args.length === 1) checkAgainst(arg, inType, sym, errors, ctx);
+    if (input && arg && item.args.length === 1) {
+      checkAgainst(arg, input.inType, sym, errors, ctx, "E0201", input.omittable);
+    }
   }
 }
 

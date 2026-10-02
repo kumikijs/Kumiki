@@ -291,7 +291,11 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (62,276 measured, from 61,840 on dev at 1a3b24c): the
+    // Still 63,000 (61,620 measured, from 61,527): `Map.map` maps each entry.
+    // `mapOver` tells a Map apart from a tagged Option / Result and restores
+    // each key as `keys` does; it sits in stdlib, which every app loads.
+    //
+    // Still 63,000 (62,369 measured, from 61,933 on dev at 6925c32): the
     // viewport pick reads the active theme's breakpoints over the style.md
     // §4.2 defaults (`DEFAULT_BREAKPOINTS` in core.js) and orders them by their px size,
     // counting rem and em at 16px (§4.5); a grid's track mapping moved from

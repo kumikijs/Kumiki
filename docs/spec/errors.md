@@ -248,7 +248,7 @@ A name written `count-1` is one name, not a subtraction: `-` continues an identi
 
 A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
 
-> `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or a pair (Tuple(A, B), e.g. from .entries)`
+> `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
 
 That holds anywhere inside the fragment, a `$2` in another method's argument included (`xs.map($1.min($2))`): only a fragment declares positionals, so such an argument reads the fragment's. Where the scope around the fragment binds a `$2` of its own — a `fn`'s second parameter, an enclosing pair's value — the fragment hides it, and the message says how to reach it:
 
@@ -512,7 +512,7 @@ A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-sh
 | `flat-map`, `map-err` | the only one | `$1` |
 | `update(k, f)` | the second | `$1` (the current value) |
 
-`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A `filter` / `map` / `find` / `sort-by` `fn` declares two only where the fragment takes each value apart — a Map's filter, a pair ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)); over any other receiver whose type the checker can decide, a second parameter would receive nothing, or the JS index or the element again where the lowering falls back, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
+`xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A `filter` / `map` / `find` / `sort-by` `fn` declares two only where the fragment takes each value apart — a Map's filter or map, a pair ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)); over any other receiver whose type the checker can decide, a second parameter would receive nothing, or the JS index or the element again where the lowering falls back, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
 
 The count is all the check compares. The `fn`'s parameter types are not checked against the element's, any more than the inline `f($1)` is: `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is not reported.
 
@@ -599,7 +599,7 @@ The identity is read at the **top level** of each operand only, which is where t
 
 ### E0202 `emit-arg-type-mismatch`
 
-An `emit` argument does not match the effect's declared `in=` type.
+An `emit` argument does not match the effect's declared `in=` type. A standard effect (`navigate`, `toast`, `log`, …) has no `effect` declaration, and is held to the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it, with the fields that section lets a call leave out: `emit navigate("/about")` is this code, and so is a `confirm` `onYes` / `onNo` that is not a reducer's name written bare (`ReducerRef`). The message names the whole `in=`, whatever the call left out.
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`
@@ -757,7 +757,7 @@ An application passes a different number of arguments than the thing it applies 
 |---|---|---|
 | `f(...)` on a `fn` | its parameter list | `Function "<name>" expects <n> argument(s) but got <m>` |
 | `b(...)` on a built-in call | the arguments a call to it must supply | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
-| `emit E(...)` | one argument, or none when `in=Unit` | `Effect "<name>" expects <n> argument(s) but got <m>` |
+| `emit E(...)` | one argument, or none when `in=Unit` — for a standard effect, the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
@@ -796,7 +796,7 @@ A **method** is checked when its lowering reads a fixed number of arguments — 
 
 ### E0214 `missing-record-field`
 
-A record literal omits a field its declared type requires. Kumiki records have no optional fields — a field that may be absent is `Option(T)` and must still be written.
+A record literal omits a field its declared type requires. Kumiki records have no optional fields — a field that may be absent is `Option(T)` and must still be written. The one exception is the argument of a standard effect, which may leave out an `Option(T)` field and the fields [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives a default; every other field of it is this code — `emit toast({kind: "info"})` has no `text`.
 
 > `Record literal is missing field "<name>" of type <type>`
 
