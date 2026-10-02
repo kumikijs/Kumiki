@@ -1,7 +1,7 @@
 // Writing a `.kumiki` file (or one of its sidecars) so that no reader sees it
 // half-written, and serializing the write verbs on one file across processes.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 // Every `fs` call goes through the namespace so tests can intercept it: a named
 // import is resolved as a snapshot binding by Vitest's mock spread, defeating
 // `vi.spyOn(fs, "writeFileSync")`, while property access on the namespace goes
@@ -138,7 +138,7 @@ export function withWriteLock<T>(path: string, fn: () => T): T {
     heldWriteLocks.delete(key);
     if (!claimLock(lock, mine)) {
       process.emitWarning(
-        `kumiki left the write lock ${lock} in place: it could not be moved, or it is no longer the one this call created`,
+        `kumiki left the write lock ${lock} in place: it could not be removed, or it is no longer the one this call created`,
       );
     }
   }
@@ -306,42 +306,76 @@ function describeHolder(path: string, seen: LockSighting, lock: string): string 
  *
  * Deleting by path would remove whatever lock is there by then: two waiters
  * that both saw a dead holder would each delete, and the second would delete
- * the lock the first had just created. Instead the lock is moved aside with a
- * rename, which only one caller can do to one file, and the file moved aside
- * is checked: if it is the lock that was seen it is deleted, and if it is a
- * newer one it is linked back into place. The link does not replace a lock
- * created in the meantime, so the only case this cannot put right is a third
- * writer creating the lock in the instant between the rename and the link.
+ * the lock the first had just created. Moving the lock aside to inspect it
+ * does not help either: while a live lock is aside, a third writer can create
+ * the lock, and the live one can then neither return nor be kept.
+ *
+ * So the lock itself is never touched until it is known to be the one seen.
+ * A claim on that one sighting is a sibling file named after it and created
+ * the way the lock is, so only one caller at a time can hold it. Holding it,
+ * the caller looks at the lock again and deletes it only if it is still the
+ * one seen. Nothing else can remove that lock meanwhile — its holder is gone,
+ * or is this caller releasing its own, and every other remover would need the
+ * same claim — and nothing can be created while it exists, so the lock looked
+ * at is the lock deleted.
+ *
+ * A claim is held for a look and an unlink, and is then removed. One left by a
+ * caller that stopped in between is judged like a lock (`isAbandoned`); a
+ * caller that finds an abandoned claim moves on to the next claim name for
+ * the same sighting rather than deleting it, so two callers never both
+ * remove one and both proceed. A claim held by a live caller makes this call
+ * report `false`, and a waiter looks again later.
+ *
+ * It never throws: a filesystem failure is reported as `false`, the lock left
+ * as it was.
  */
 export function claimLock(lock: string, seen: LockSighting): boolean {
-  const aside = `${lock}.${process.pid}-${randomBytes(4).toString("hex")}`;
+  const base = `${lock}.takeover-${sightingKey(seen)}`;
   try {
-    fs.renameSync(lock, aside);
+    for (let gen = 0; ; ) {
+      const claim = `${base}.${gen}`;
+      const created = tryCreateLock(claim);
+      if (created.kind === "transient") return false;
+      if (created.kind === "exists") {
+        const look = lookAtLock(claim);
+        if (look.kind === "gone") continue;
+        if (look.kind === "seen" && isAbandoned(look.lock)) {
+          gen++;
+          continue;
+        }
+        return false;
+      }
+      try {
+        const now = lookAtLock(lock);
+        if (now.kind !== "seen" || !sameLock(now.lock, seen)) return false;
+        fs.unlinkSync(lock);
+        // The claims abandoned before this one can no longer apply to anything.
+        for (let g = 0; g < gen; g++) unlinkQuietly(`${base}.${g}`);
+        return true;
+      } finally {
+        unlinkQuietly(claim);
+      }
+    }
   } catch {
-    // Gone already (someone else claimed or released it), or not movable now.
     return false;
   }
-  const moved = lookAtLock(aside);
-  if (moved.kind === "seen" && sameLock(moved.lock, seen)) {
-    try {
-      fs.unlinkSync(aside);
-    } catch {
-      // Moved aside, the lock no longer holds anyone off; the leftover file is
-      // named like the lock and ignored with it.
-    }
-    return true;
-  }
+}
+
+/** A file name for one sighting, the same for every caller that saw it. */
+function sightingKey(seen: LockSighting): string {
+  return createHash("sha256")
+    .update(`${seen.dev}:${seen.ino}:${seen.mtimeNs}:${seen.content}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function unlinkQuietly(path: string): void {
   try {
-    fs.linkSync(aside, lock);
+    fs.unlinkSync(path);
   } catch {
-    // A lock was created in the meantime; the one moved aside cannot return.
+    // Already gone, or not removable now; a claim left over is abandoned and
+    // its name is passed over.
   }
-  try {
-    fs.unlinkSync(aside);
-  } catch {
-    // As above.
-  }
-  return false;
 }
 
 function sameLock(a: LockSighting, b: LockSighting): boolean {
