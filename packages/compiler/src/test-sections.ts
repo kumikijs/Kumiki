@@ -68,26 +68,49 @@ export type ExpectSection<K extends TestKind> = SectionName<K, "expect">;
 
 /**
  * The positions of a test body whose value is read as a record of named parts,
- * and the shape each one takes. Every reader asks such a position for its
- * fields, and a value that is not a record literal has none — so a `given`
- * written as `setup` or `41` was read as empty and the setup never happened, an
- * `expect` asserted nothing, and a `mocks` scripted nothing, each without a
- * word. The checker reports E0713 at any of them that is not a record, and the
- * lowering throws the same sentence for a caller that skipped `check`.
+ * the shape each one takes, and the one bare name a position accepts in its
+ * place, if any. Every reader asks such a position for its fields, and a value
+ * that is not a record literal has none — so a `given` written as `setup` or
+ * `41` was read as empty and the setup never happened, an `expect` asserted
+ * nothing, and a `mocks` scripted nothing, each without a word. A `slots`
+ * section is read as slot → value pairs the same way, one level down: a
+ * `given.slots` that is not a record seeded no slot, and an `expect.slots`
+ * asserted none. The checker reports E0713 at any of them that is neither a
+ * record nor its bare name, and the lowering throws the same sentence for a
+ * caller that skipped `check`.
  */
 const RECORD_POSITIONS = {
-  given: "{<section>: …}",
-  expect: "{<section>: …}",
-  mocks: "{<effect>: <policy>}",
-  "given.mocks": "{<effect>: <outcome>}",
-  "given.event": "{type: …, target: …}",
-} as const;
+  given: { shape: "{<section>: …}" },
+  expect: { shape: "{<section>: …}" },
+  mocks: { shape: "{<effect>: <policy>}" },
+  "given.mocks": { shape: "{<effect>: <outcome>}" },
+  "given.event": { shape: "{type: …, target: …}" },
+  "given.slots": { shape: "{<slot>: …}" },
+  "expect.slots": { shape: "{<slot>: …}" },
+  // `from-log` takes the log's own final values as the expectation.
+  "expect.slots-equal": { shape: "{<slot>: …}", or: "from-log" },
+} as const satisfies Record<string, { shape: string; or?: string }>;
 
 export type RecordPosition = keyof typeof RECORD_POSITIONS;
 
+/** The bare names the table accepts in place of a record. */
+export type BareName = Extract<(typeof RECORD_POSITIONS)[RecordPosition], { or: string }>["or"];
+
+/**
+ * What the table says about `position`, with its literal types: only
+ * `positionSpec("expect.slots-equal")` has an `or`, and it is `"from-log"`. A
+ * caller asks `"or" in spec` rather than widening the entry to an optional
+ * `or: string`, which would let any position grow a bare name unnoticed.
+ */
+export function positionSpec<P extends RecordPosition>(position: P): (typeof RECORD_POSITIONS)[P] {
+  return RECORD_POSITIONS[position];
+}
+
 /** What E0713 says about a record position holding something else. */
 export function notARecordMessage(position: RecordPosition): string {
-  return `\`${position}\` must be a record, \`${RECORD_POSITIONS[position]}\``;
+  const spec = positionSpec(position);
+  const or = "or" in spec ? `, or \`${spec.or}\`` : "";
+  return `\`${position}\` must be a record, \`${spec.shape}\`${or}`;
 }
 
 /**
@@ -101,15 +124,45 @@ export function isRecordValue(e: Expr | TileExpr): boolean {
 }
 
 /**
+ * The bare name `e` is when it is the one `position` accepts in place of a
+ * record, and `undefined` otherwise — including at a position with no such
+ * name. A reader that walks fields asks this first: a bare name has none.
+ */
+export function bareNameAt(e: Expr | TileExpr, position: RecordPosition): BareName | undefined {
+  const spec = positionSpec(position);
+  if (!("or" in spec) || isTileExpr(e) || e.kind !== "Ref" || e.name !== spec.or) return undefined;
+  return spec.or;
+}
+
+/** Whether `e` is what `position` accepts: a record, or its one bare name. */
+export function fitsRecordPosition(e: Expr | TileExpr, position: RecordPosition): boolean {
+  return isRecordValue(e) || bareNameAt(e, position) !== undefined;
+}
+
+/**
+ * The value written at `position`, for a lowering that reads it whole; a throw
+ * when it is not what the position accepts. A position with a bare-name
+ * alternative returns that name unchanged — the caller still has to recognise
+ * it (`bareNameAt`), since it is not a value to lower.
+ */
+export function recordValueAt(e: Expr, position: RecordPosition): Expr {
+  if (!fitsRecordPosition(e, position)) throw new Error(`E0713 ${notARecordMessage(position)}`);
+  return e;
+}
+
+/**
  * The fields of the record written at `position`, none when nothing is written
- * there, and a throw when something that is not a record is.
+ * there, and a throw when something the position does not accept is. It gates
+ * on `fitsRecordPosition`, as `recordValueAt` does, so the bare name a position
+ * accepts is not thrown on — and has no fields: a caller at such a position
+ * recognises it with `bareNameAt` before asking for fields.
  */
 export function recordFieldsAt(
   e: Expr | TileExpr | undefined,
   position: RecordPosition,
 ): (Expr & { kind: "RecordLit" })["fields"] {
   if (e === undefined) return [];
-  if (!isRecordValue(e)) throw new Error(`E0713 ${notARecordMessage(position)}`);
+  if (!fitsRecordPosition(e, position)) throw new Error(`E0713 ${notARecordMessage(position)}`);
   return !isTileExpr(e) && e.kind === "RecordLit" ? e.fields : [];
 }
 
