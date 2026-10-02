@@ -115,17 +115,8 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (ctx.localBinds.has(e.name)) return bindRef(ctx, e.name);
       if (e.name === "now") return `_s.now()`;
       // `route` is an auto-managed slot maintained by the runtime.
-      if (e.name === "route") {
-        return ctx.reducerScope
-          ? `((_next["route"] !== undefined) ? _next["route"] : _live["route"])`
-          : `_live["route"]`;
-      }
-      const isSlot = ctx.gen.slots.some((s) => s.name === e.name);
-      if (isSlot) {
-        const key = JSON.stringify(e.name);
-        return ctx.reducerScope
-          ? `((_next[${key}] !== undefined) ? _next[${key}] : _live[${key}])`
-          : `_live[${key}]`;
+      if (e.name === "route" || ctx.gen.slots.some((s) => s.name === e.name)) {
+        return slotReadJs(e.name, ctx.reducerScope);
       }
       return jsBinding(e.name);
     }
@@ -921,6 +912,21 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
 export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
   const { stmts, idJs } = reducerEmitJs(e.effect, e.args, ctx);
   return `((() => { ${stmts} return ${idJs}; })())`;
+}
+
+/**
+ * A read of slot `name`. Inside a reducer body (`reducerScope`) it answers the
+ * value the body last wrote to the slot, if it has written one, and the value
+ * the slot held when the reducer started otherwise (language.md §1.6.4
+ * invariant 7). "Has written" is whether `_next` holds the key, not whether the
+ * value is `undefined`: a `match` with no arm for its scrutinee writes
+ * `undefined`, the batch commits that, and a later read has to agree with it.
+ */
+export function slotReadJs(name: string, reducerScope: boolean): string {
+  const key = JSON.stringify(name);
+  return reducerScope
+    ? `(Object.hasOwn(_next, ${key}) ? _next[${key}] : _live[${key}])`
+    : `_live[${key}]`;
 }
 
 /**

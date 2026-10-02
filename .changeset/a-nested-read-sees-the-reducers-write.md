@@ -14,3 +14,5 @@ reducer go on=ui.click(B) do= noteKey := "b"
 Before this fix, each of those reads saw `noteKey` as it was before the click: in a `match` binding, variant or tuple arm, in a `let … in` body, and in a method's predicate or element lambda. Each of those lowerings rebuilt its scope without the reducer's view of the slots, so the read lowered to `_live[...]`; a wildcard arm and a top-level read already saw the write.
 
 Every nested scope is now opened through one helper that carries the view down. A tile's nested forms have no reducer view to carry and still read the live slots.
+
+A read after a write whose value is JS `undefined` (a `match` with no arm for its scrutinee) also sees that write, the value the batch commits, instead of the value from before the reducer ran: a read checks whether the body wrote the slot, not whether the written value is `undefined`.

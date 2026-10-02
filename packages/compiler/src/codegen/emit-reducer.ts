@@ -11,7 +11,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
-import { jsOfExpr, reducerEmitJs, reducerNameArg, tupleArm } from "./expr.ts";
+import { jsOfExpr, reducerEmitJs, reducerNameArg, slotReadJs, tupleArm } from "./expr.ts";
 import { isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 /**
@@ -381,10 +381,7 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   // Generate an inline `setPath(root, path, value)` expression. Inside a reducer
   // body we read from `_next` first so successive writes in a `for` loop see
   // the previous iteration's updates.
-  const rootKey = JSON.stringify(root);
-  const baseJs = ctx.reducerScope
-    ? `(((_next[${rootKey}] !== undefined) ? _next[${rootKey}] : _live[${rootKey}]) ?? {})`
-    : `(_live[${rootKey}] ?? {})`;
+  const baseJs = `(${slotReadJs(root, ctx.reducerScope)} ?? {})`;
   let pathExpr = "";
   for (const seg of path) {
     if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
