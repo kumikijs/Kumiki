@@ -28,9 +28,29 @@ app A
     ),
   ).map((e) => `${e.code} ${e.message}`);
 
+/** The `fragmentShape` the checker recorded on every `.method(…)` call in `node`. */
+function shapesOf(node: unknown, method: string): unknown[] {
+  if (Array.isArray(node)) return node.flatMap((n) => shapesOf(n, method));
+  if (node === null || typeof node !== "object") return [];
+  const own =
+    "kind" in node && node.kind === "MethodCall" && "method" in node && node.method === method
+      ? ["fragmentShape" in node ? node.fragmentShape : undefined]
+      : [];
+  return [...own, ...Object.values(node).flatMap((v) => shapesOf(v, method))];
+}
+
 const LOUD = `fn loud(t: Text) -> Text = t + "!"`;
 
 describe("$1 is the element a List hands its fragment", () => {
+  // The lowering binds from the element type, not from the value's length, so
+  // an element that is a `List` is `$1` whole — two items or not.
+  it("binds an element that is itself a List whole", () => {
+    const defs = `${LOUD}\nslot xss : List(List(Int)) = []`;
+    expect(diagnostics(defs, "xss.map(loud($1))", "List(Text)")).toEqual([
+      "E0201 Expected Text but got List(Int)",
+    ]);
+  });
+
   it("reports an element passed where the fn wants another type", () => {
     const defs = `${LOUD}\nslot xs : List(Int) = [1, 2]`;
     expect(diagnostics(defs, "xs.map(loud($1))", "List(Text)")).toEqual([
@@ -67,6 +87,33 @@ describe("$1 / $2 are a Map's key and value, and the halves of an entry", () => 
     ]);
   });
 
+  it("binds the key and value of Map.map's expression", () => {
+    const defs = `fn label(k: Int, v: Text) -> Text = v\nslot m : Map(Text, Text) = {}`;
+    expect(diagnostics(defs, "m.map(label($1, $2))", "Map(Text, Text)", "{}")).toEqual([
+      "E0201 Expected Int but got Text",
+    ]);
+  });
+
+  it("records Map.map's fragment as handed the key and the value", () => {
+    // Codegen binds from this decision; without it the fragment falls back to
+    // reading the value's length at run time, and a `fn` of two named there
+    // is refused.
+    const ast = parse(
+      lex(`slot m : Map(Int, Int) = {}
+slot res : Map(Int, Int) = {}
+reducer act on=ui.click(Btn)
+    do= res := m.map($1 * 10 + $2)
+tile Btn = button(text="go")
+tile App = column(Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`),
+    );
+    expect(check(ast)).toEqual([]);
+    expect(shapesOf(ast, "map")).toEqual(["key-value"]);
+  });
+
   it("takes an entry apart the way the lowering does", () => {
     const defs = `${KEEP("Int")}\nslot m : Map(Text, Int) = {}`;
     expect(diagnostics(defs, "m.entries.filter(keep($1, $2))", "List(Tuple(Text, Int))")).toEqual([
@@ -76,15 +123,6 @@ describe("$1 / $2 are a Map's key and value, and the halves of an entry", () => 
 });
 
 describe("where the lowering's reading is not certain, nothing is bound", () => {
-  // The lowering takes any 2-element array apart, so an element that is a
-  // `List` is not what `$1` holds when it has two items.
-  it("an element that is itself a List", () => {
-    const defs = `${LOUD}\nslot xss : List(List(Int)) = []`;
-    expect(diagnostics(defs, "xss.map(loud($1))", "List(Text)")).not.toContain(
-      "E0201 Expected Text but got List(Int)",
-    );
-  });
-
   // A `fn` with no `->` has no inferred result yet, so its elements are not
   // known here. That is a gap in inference, not a rule: once the result is
   // inferred this is the E0201 above, so only its absence today is pinned.
