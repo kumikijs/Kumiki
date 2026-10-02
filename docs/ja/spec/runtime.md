@@ -212,11 +212,11 @@ app App ... theme = themeName    # ← slot 名を渡す
 ### 10.3.7 polymorphic collection methods
 
 `.filter` / `.map` / `.get-or` などはランタイムで型 dispatch:
-- `.filter(pred)`: Array なら `Array.prototype.filter`、Object なら `mapFilter`
+- `.filter(pred)`: Array なら `Array.prototype.filter`、Option なら `Some` の値、それ以外のオブジェクト — Map、または値が `true` の Set — なら各エントリを 1 つの `[key, value]` ペアとして渡す（`_s.filter`）
 - `.map(fn)`: Array なら要素 map、Option/Result なら Some/Ok の中身に map (`mapOver`)
 - `.flat-map(fn)`: Option/Result の Some/Ok を f に渡し、None/Err は素通り (`flatMapOption`)
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): 引数数で判別
-- `m.entries` は `[[k, v], ...]` で返り、後続の list ops の lambda は `$1=k, $2=v` に自動 destructure される
+- `m.entries` は `[[k, v], ...]` で返る。後続の list ops の lambda が `$1` / `$2` をどう束縛するかはここではなく、受信側の型から型検査器が決める（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— `Tuple(K, V)` の要素は `$1=k, $2=v` に分解される
 
 ### 10.3.8 select の値マッチング
 

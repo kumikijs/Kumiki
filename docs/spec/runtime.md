@@ -212,11 +212,11 @@ app App ... theme = themeName    # ← pass the slot name
 ### 10.3.7 polymorphic collection methods
 
 `.filter` / `.map` / `.get-or`, etc., are type-dispatched at runtime:
-- `.filter(pred)`: `Array.prototype.filter` for an Array, `mapFilter` for an Object
+- `.filter(pred)`: `Array.prototype.filter` for an Array, the value of a `Some` for an Option, and each entry as one `[key, value]` pair for any other object — a Map, or a Set, whose value is `true` (`_s.filter`)
 - `.map(fn)`: element map for an Array; for Option/Result, map over the contents of Some/Ok (`mapOver`)
 - `.flat-map(fn)`: passes the Some/Ok of Option/Result to f, while None/Err passes through (`flatMapOption`)
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): distinguished by the argument count
-- `m.entries` returns `[[k, v], ...]`, and the lambda of a subsequent list op is automatically destructured to `$1=k, $2=v`
+- `m.entries` returns `[[k, v], ...]`; how a subsequent list op's lambda binds `$1` / `$2` is decided by the checker from the receiver's type, not here ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)) — a `Tuple(K, V)` element is taken apart into `$1=k, $2=v`
 
 ### 10.3.8 Value Matching of select
 
