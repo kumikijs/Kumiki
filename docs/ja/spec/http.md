@@ -82,7 +82,7 @@ Decoder.None         # レスポンス本文を捨てる
 
 レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
-decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。
+decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
 
 ### 6.1.5 共通 props（自動付与）
 
