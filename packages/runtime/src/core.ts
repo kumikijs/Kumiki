@@ -5357,9 +5357,25 @@ const DEFAULT_BREAKPOINTS: Record<string, ThemeValue> = {
 };
 
 /**
+ * A breakpoint's width as `[min-width query value, px]`, or undefined for a
+ * value that is not one (a nested theme value, `"wide"`, `"40ch"`). A number
+ * and a bare numeric string are px; rem and em count 16px each, the initial
+ * font size a media query resolves them against (style.md §4.5). The px is
+ * only for ordering — the query keeps the unit the theme wrote.
+ */
+function breakpointWidth(w: ThemeValue): [string, number] | undefined {
+  if (typeof w === "object") return undefined;
+  const m = /^(\d+(?:\.\d+)?|\.\d+)(px|rem|em)?$/.exec(String(w).trim());
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return m[2] ? [`${m[1]}${m[2]}`, m[2] === "px" ? n : n * 16] : [`${n}px`, n];
+}
+
+/**
  * The largest matching breakpoint, falling back to the base. The breakpoints
  * are the active theme's (style.md §4.5), over the §4.2 defaults for any key
- * it leaves out, so a theme can move `md` or add a key of its own.
+ * it leaves out, so a theme can move `md` or add a key of its own. They are
+ * tried widest first by their px size, so a theme may mix px, rem and em.
  */
 export const pickForViewport: ResponsivePick = (raw) => {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
@@ -5369,9 +5385,12 @@ export const pickForViewport: ResponsivePick = (raw) => {
     ...DEFAULT_BREAKPOINTS,
     ...(declared && typeof declared === "object" ? declared : {}),
   };
-  const widest = Object.entries(bps)
-    .map(([k, w]): [string, string] => [k, typeof w === "number" ? `${w}px` : String(w)])
-    .sort((a, b) => Number.parseFloat(b[1]) - Number.parseFloat(a[1]));
+  const widest: [string, string, number][] = [];
+  for (const [k, w] of Object.entries(bps)) {
+    const width = breakpointWidth(w);
+    if (width) widest.push([k, ...width]);
+  }
+  widest.sort((a, b) => b[2] - a[2]);
   for (const [bp, w] of widest) {
     if (m[bp] !== undefined && window.matchMedia(`(min-width: ${w})`).matches) {
       return asScalar(m[bp]);
@@ -5379,6 +5398,25 @@ export const pickForViewport: ResponsivePick = (raw) => {
   }
   return asScalar(m.base);
 };
+
+/**
+ * A grid's tracks (style.md §4.4.2). `cols` and `rows` take the same shapes: a
+ * count, which divides the axis equally, a CSS track list, or a responsive map
+ * of either (§4.5), which `pick` collapses — to the viewport's breakpoint on
+ * the client (`tiles-layout.ts`), to `base` in SSR (`ssr-render.ts`). Only
+ * `cols` has a default — a grid with no `rows` grows one row per line of
+ * content, which is what a grid does.
+ */
+export function gridTracks(
+  props: TileProps | undefined,
+  pick: ResponsivePick,
+): { cols: string; rows: string | undefined } {
+  return { cols: track(pick(props?.cols)) ?? "repeat(3, 1fr)", rows: track(pick(props?.rows)) };
+}
+
+function track(v: string | number | undefined): string | undefined {
+  return typeof v === "number" ? `repeat(${v}, 1fr)` : v;
+}
 
 /**
  * The declarations a `style: { ... }` block contributes (spec/style.md §4.3) —

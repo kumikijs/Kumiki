@@ -8,14 +8,20 @@
 // targets.
 //
 // What it does share with the renderers is the prop-to-style mapping, imported
-// from `core.ts` as data (`propStyleDecls`, applied to every kind). `core.ts`
-// touches no DOM at module scope — `ssr.ts` already imports values from it —
-// and the alternative is a second copy of the mapping, which is exactly the
-// drift the parity test exists to catch.
+// from `core.ts` as data (`propStyleDecls`, applied to every kind, and
+// `gridTracks` for a grid). `core.ts` touches no DOM at module scope — `ssr.ts`
+// already imports values from it — and the alternative is a second copy of the
+// mapping, which is exactly the drift the parity test exists to catch.
 
 import type { BindSegment, StyleDecl, TileNode, TileProps } from "./core.ts";
-import { attrValue, bindLabel, commonAttrDecls, pickBaseValue, propStyleDecls } from "./core.ts";
-import { gridTracks } from "./tiles-layout.ts";
+import {
+  attrValue,
+  bindLabel,
+  commonAttrDecls,
+  gridTracks,
+  pickBaseValue,
+  propStyleDecls,
+} from "./core.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
 

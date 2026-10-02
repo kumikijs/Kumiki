@@ -286,11 +286,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // form submit gate above, and the owner chose to raise the budget once
     // rather than hold every open change at the old line.
     //
-    // Still 63,000 (61,428 measured, from 61,184):
-    // the viewport pick reads the active theme's breakpoints over the
-    // style.md §4.2 defaults (`DEFAULT_BREAKPOINTS` in core.js). The 244 bytes
-    // are that lookup; a counter picks no viewport and still ships it, because
-    // it sits in the core module every app loads.
+    // Still 63,000 (61,597 measured, from 61,162): the viewport pick reads the
+    // active theme's breakpoints over the style.md §4.2 defaults
+    // (`DEFAULT_BREAKPOINTS` in core.js) and orders them by their px size,
+    // counting rem and em at 16px (§4.5); a grid's track mapping moved from
+    // tiles-layout.js into core.js so SSR shares it without importing a
+    // renderer. A counter picks no viewport and lays out no grid and still
+    // ships them, because they sit in modules every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

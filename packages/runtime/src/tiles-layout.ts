@@ -4,8 +4,8 @@
 
 import {
   applyContainerProps,
+  gridTracks,
   pickForViewport,
-  type ResponsivePick,
   type TileCtx,
   type TileNode,
   type TilePatchers,
@@ -26,25 +26,6 @@ function applyGridTracks(div: HTMLElement, props?: TileProps): void {
   div.style.gridTemplateColumns = t.cols;
   if (t.rows) div.style.gridTemplateRows = t.rows;
   else div.style.removeProperty("grid-template-rows");
-}
-
-/**
- * A grid's tracks (style.md §4.4.2). `cols` and `rows` take the same shapes: a
- * count, which divides the axis equally, a CSS track list, or a responsive map
- * of either (§4.5), which `pick` collapses — to the viewport's breakpoint on
- * the client, to `base` in SSR, which shares this function. Only `cols` has a
- * default — a grid with no `rows` grows one row per line of content, which is
- * what a grid does.
- */
-export function gridTracks(
-  props: TileProps | undefined,
-  pick: ResponsivePick,
-): { cols: string; rows: string | undefined } {
-  return { cols: track(pick(props?.cols)) ?? "repeat(3, 1fr)", rows: track(pick(props?.rows)) };
-}
-
-function track(v: string | number | undefined): string | undefined {
-  return typeof v === "number" ? `repeat(${v}, 1fr)` : v;
 }
 
 /**

@@ -13,9 +13,12 @@ so a theme that declared `md: "500px"` still switched at 768 px.
 
 The grid's `cols` and `rows` now go through the same responsive pick as
 `gap` / `pad`: the viewport's breakpoint on mount, `base` in SSR. The DOM and SSR
-renderers share one `gridTracks`. The pick reads the active theme's
-`breakpoints` over the §4.2 defaults, so a theme can move a key or add one of its
-own. §4.5 states this in both language tracks.
+renderers share one `gridTracks`, which lives in core beside `propStyleDecls`. The
+pick reads the active theme's `breakpoints` over the §4.2 defaults, so a theme can
+move a key or add one of its own, and tries them widest first by their px size
+(rem and em count 16px each), so `md: "48rem"` sits above `sm: "640px"`. A width
+that is not px, rem, em or a number is left out. §4.2 and §4.5 state this in both
+language tracks.
 `packages/examples/features/158-responsive-breakpoints.kumiki` uses a theme with
 moved and added breakpoints, and the e2e tier checks its grid in Chromium at
 four viewport widths.
