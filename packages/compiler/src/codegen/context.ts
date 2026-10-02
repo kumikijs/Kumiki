@@ -1,6 +1,7 @@
 import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "../ast.ts";
 import { isPerTileFamily, TILE_FAMILY, type TileFamily } from "../builtins.ts";
 import type { ParseReading } from "../parse-reading.ts";
+import type { NestedRefinements } from "./nested-refinements.ts";
 
 export type GenCtx = {
   slots: SlotDef[];
@@ -18,6 +19,13 @@ export type GenCtx = {
    * are not captured — they resolve via `theme.icons` at runtime.
    */
   usedIcons: Set<string>;
+  /**
+   * The walks that answer where a value fails a predicate written anywhere in
+   * its type (language.md §1.3.3). One per program, shared by every reader —
+   * a slot's gate and a `Decoder.Json(T)`'s check — so a type is lowered to one
+   * helper however many places ask about it.
+   */
+  refinements: NestedRefinements;
   /**
    * The readings an `input` parses its text by when the bound position's base
    * is an `Int`, a `Float` or a `Time` (forms.md §5.1.1). Each is declared

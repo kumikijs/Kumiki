@@ -311,6 +311,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // tiles-layout.js into core.js so SSR shares it without importing a
     // renderer. A counter picks no viewport and lays out no grid and still
     // ships them, because they sit in modules every app loads.
+    //
+    // Still 63,000 (62,985 measured, from 62,940 on dev at d8ff739): a decoded
+    // value its type refuses is the effect's err (http.md §6.1.4), named by the
+    // formatter a refused slot write uses. That formatter, `showRefinementFailure`,
+    // now sits in core as an export the decode handlers share instead of inline
+    // in the slot-write report; a counter decodes nothing and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

@@ -3,26 +3,37 @@
 // `storage-*` uses localStorage; `session-*` is the same shape over
 // sessionStorage (spec §6.7.4). Both treat backend unavailability
 // (opaque-origin sandbox, private mode, SecurityError) as a clean
-// `err` result so reducers can opt into a `.err` branch (#37).
+// `err` result so reducers can opt into a `.err` branch (#37). The err value
+// is the failure's message as a plain string: the `Text` these effects
+// declare as `E` in `out=Result(T, Text)` (spec §6.7.2).
 
 import type { EffectResult } from "./core.ts";
+import { type Decode, decodeRefusal } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
 
-async function readFrom(storage: Storage, key: string): Promise<EffectResult> {
+/**
+ * A stored value is JSON, so it is always parsed; a `Decoder.Json(T)` whose
+ * `T` refuses what it parsed to makes the read an `err` (http.md §6.7.2), the
+ * same way a value that does not parse does.
+ */
+async function readFrom(storage: Storage, key: string, decode?: Decode): Promise<EffectResult> {
   try {
     const raw = storage.getItem(key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
     const value = JSON.parse(raw);
+    const refused = decodeRefusal(decode, value);
+    if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return { kind: "err", value: String(e) };
   }
 }
 
+/** An `err` whose value is the message itself, the declared `Text` (http.md §6.7.2). */
 function failed(message: string): EffectResult {
-  return { kind: "err", value: { message } };
+  return { kind: "err", value: message };
 }
 
 /**
@@ -72,8 +83,8 @@ function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
 }
 
 export async function storageRead(input: unknown): Promise<EffectResult> {
-  const { key } = input as { key: string };
-  return readFrom(localStorage, key);
+  const { key, decode } = input as { key: string; decode?: Decode };
+  return readFrom(localStorage, key, decode);
 }
 
 export async function storageWrite(input: unknown): Promise<EffectResult> {
@@ -86,8 +97,8 @@ export async function storageClear(): Promise<EffectResult> {
 }
 
 export async function sessionRead(input: unknown): Promise<EffectResult> {
-  const { key } = input as { key: string };
-  return readFrom(sessionStorage, key);
+  const { key, decode } = input as { key: string; decode?: Decode };
+  return readFrom(sessionStorage, key, decode);
 }
 
 export async function sessionWrite(input: unknown): Promise<EffectResult> {

@@ -44,6 +44,30 @@ const textMap = appType("Map", text, text);
 const navigation: TypeExpr = recordType({ path: text, params: textMap, query: textMap });
 
 /**
+ * The capabilities whose effects declare their failure as `Text`
+ * (`out=Result(T, Text)`, docs/spec/http.md §6.7) — localStorage,
+ * sessionStorage and IndexedDB. Their built-in handlers deliver that `Text` to
+ * `.err`, so the checker types an `.err` bind on one of them from `out=`, and
+ * codegen turns a throw inside one of their invokes (a `map-request` that
+ * throws, a host provider that throws) into the same `Text` rather than
+ * leaving it to the dispatcher, which cannot know the effect's `E`.
+ */
+const TEXT_FAILURE_CAPABILITIES: ReadonlySet<string> = new Set([
+  "storage.read",
+  "storage.write",
+  "session.read",
+  "session.write",
+  "indexed.read",
+  "indexed.write",
+  "indexed.delete",
+]);
+
+/** Whether an effect on `cap` fails with the `Text` its `out=` declares. */
+export function failsWithText(cap: string): boolean {
+  return TEXT_FAILURE_CAPABILITIES.has(cap);
+}
+
+/**
  * `confirm`'s `onYes` / `onNo` (stdlib.md §2.6.5, lifecycle.md §7.6): a
  * reducer's name, written bare, which the runtime dispatches by name. It is not
  * a type a program can write, so the checker matches this node itself rather

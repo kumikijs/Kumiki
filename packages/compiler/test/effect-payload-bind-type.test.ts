@@ -9,9 +9,10 @@ import { describe, expect, it } from "vitest";
 // `check` although the same call on a slot receiver is a pair of E0201s.
 //
 // `$1` on `.ok` now has the type `out=` declares: the Ok payload of a
-// `Result(T, E)`, or the whole value of any other `out=`. `$1` on `.err`, the
-// request key (`$2`) and a result no declaration types stay undecided — the
-// err value is the runtime's failure record, which `E` does not describe.
+// `Result(T, E)`, or the whole value of any other `out=`. `$1` on `.err` is the
+// `E` for a storage / session / indexed effect, whose handlers deliver the
+// declared `Text`. `.err` on any other capability, the request key (`$2`) and
+// a result no declaration types stay undecided.
 //
 // Each case that pins something staying *quiet* shares its program with one
 // that must report, and the expectation is the whole list — so the quiet half
@@ -87,24 +88,69 @@ reducer keep on=loadSession.ok($s, _) do= session := $s`),
   });
 });
 
-describe("the Err payload", () => {
-  it("is undecided: the runtime's err value is not the declared E, so no read of it is claimed", () => {
-    // `out=Result(T, E)` declares `E`, but the built-in handlers deliver their
-    // own failure record — storage / session / indexed and the dispatcher's
-    // catch give `{message: …}`, whatever `E` says. Typing `$e` as `E` would
-    // reject `$e.message`, the read that matches what arrives, and accept
-    // `problem := $e`, which puts a record into a `Text` slot. Until the two
-    // agree, `$e` is not typed from `out=`. The `.ok` reducer in the same
-    // program shows the binds are typed at all.
+describe("the Err payload of a storage-family effect", () => {
+  // The storage / session / indexed handlers deliver the `Text` their effects
+  // declare as `E` (http.md §6.7), so `$e` on `.err` is that `E`.
+  it("is the declared E: reading it as Text passes, reading a member Text lacks does not", () => {
     expect(
       diagnostics(
         app(`slot problem : Text = ""
-slot label : Text = ""
+slot detail : Text = ""
 ${LOAD}
-reducer raw    on=loadSession.ok($s, _)  do= label := $s
-reducer failed on=loadSession.err($e, _) do= problem := $e.message`),
+reducer failed on=loadSession.err($e, _) do= problem := $e
+reducer member on=loadSession.err($e, _) do= detail := $e.message`),
       ),
-    ).toEqual(["E0201 7 Expected Text but got Option(Session)"]);
+    ).toEqual(['E0108 8 Type "Text" has no member ".message"']);
+  });
+
+  it("a slot of another type is a mismatch", () => {
+    expect(
+      diagnostics(
+        app(`slot n : Int = 0
+${LOAD}
+reducer failed on=loadSession.err($e, _) do= n := $e`),
+      ),
+    ).toEqual(["E0201 6 Expected Int but got Text"]);
+  });
+
+  it.each([
+    ["session.read", `map-request={key: "k", decode: Decoder.Json(Session)}`],
+    ["indexed.read", `map-request={store: "s", key: "k", decode: Decoder.Json(Session)}`],
+    ["indexed.write", `map-request={store: "s", key: "k", value: $1}`],
+    ["indexed.delete", `map-request={store: "s", key: "k"}`],
+    ["storage.write", `map-request={key: "k", value: $1}`],
+    ["session.write", `map-request={key: "k", value: $1}`],
+  ])("holds for cap=%s", (cap, mapRequest) => {
+    const src = `type Session = {email: Text}
+slot n : Int = 0
+effect run cap=${cap} in=Unit out=Result(Unit, Text)
+    ${mapRequest}
+reducer boot   on=app.start        do= emit run()
+reducer failed on=run.err($e, _)   do= n := $e
+tile App = column(text("x"))
+app A
+    caps   = [${cap}]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`;
+    expect(diagnostics(src)).toEqual(["E0201 6 Expected Int but got Text"]);
+  });
+});
+
+describe("the Err payload of an effect whose failure value the runtime does not fix", () => {
+  it("an HTTP effect's $e reads as the HttpError record it is", () => {
+    // `effects-http.ts` delivers `{status, message, body}`; the read of
+    // `.message` is the one that matches it.
+    const src = `slot problem : Text = ""
+effect load cap=http.get in=Unit out=Result(Text, HttpError)
+    map-request={url: "/x", decode: Decoder.Text}
+reducer boot   on=app.start       do= emit load()
+reducer failed on=load.err($e, _) do= problem := $e.message
+tile App = column(text("x"))
+app A
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`;
+    expect(diagnostics(src)).toEqual([]);
   });
 });
 

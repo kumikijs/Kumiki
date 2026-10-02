@@ -10,7 +10,9 @@ import { sessionClear, sessionWrite, storageClear, storageWrite } from "../src/e
 
 function message(r: EffectResult): string {
   expect(r.kind).toBe("err");
-  return (r.value as { message: string }).message;
+  // The declared `Text`, not a record wrapping it (http.md §6.7.2).
+  expect(typeof r.value).toBe("string");
+  return r.value as string;
 }
 
 function snapshot(storage: Storage): Record<string, string> {
