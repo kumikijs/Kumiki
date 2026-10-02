@@ -4,7 +4,26 @@
       "label": "a keyed call to a for-bodied tile renders every node of its list",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["tag:a", "tag:b", "x/x1", "x/x2", "y/y1", "end"]
+        "domIncludes": [
+          "tag:a",
+          "tag:b",
+          "x/x1",
+          "x/x2",
+          "y/y1",
+          "a.1",
+          "a.2",
+          "b.1",
+          "b.2",
+          "a-1",
+          "a-2",
+          "b-1",
+          "b-2",
+          "a~1",
+          "a~2",
+          "b~1",
+          "b~2",
+          "end"
+        ]
       }
     },
     {
@@ -19,12 +38,27 @@
       }
     },
     {
-      "label": "reordering the list inside the explicitly keyed call keeps every tag",
+      "label": "reordering the list inside the explicitly keyed call keeps every tag, however deeply the fors nest",
       "do": { "clickText": "swap" },
       "expect": {
         "noErrors": true,
         "state": { "tags": ["b", "a"] },
-        "domIncludes": ["tag:a", "tag:b"]
+        "domIncludes": [
+          "tag:a",
+          "tag:b",
+          "a.1",
+          "a.2",
+          "b.1",
+          "b.2",
+          "a-1",
+          "a-2",
+          "b-1",
+          "b-2",
+          "a~1",
+          "a~2",
+          "b~1",
+          "b~2"
+        ]
       }
     }
   ]

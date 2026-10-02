@@ -42,9 +42,11 @@ function _named(node, name) {
 // rebuild rather than silently reusing the wrong DOM element.
 // A user tile whose body renders a list (a for) is keyed per node: one key on
 // every node would collapse them onto one identity, the thing this refuses.
-// Each takes the pair of the call site's key and its own key — or its
-// position, when it has none — encoded as JSON, so no two pairs can spell the
-// same string.
+// The list is flattened first — an entry is itself a list when the body's for
+// calls another for-bodied tile, or is a for of its own — so each node keeps
+// the key its own for gave it. Each takes the pair of the call site's key and
+// its own key — or its position in the flattened list, when it has none —
+// encoded as JSON, so no two pairs can spell the same string.
 function _wk(node, key) {
   if (node === null || node === undefined) return node;
   if (key === undefined || key === null || key === "") {
@@ -55,8 +57,8 @@ function _wk(node, key) {
     );
   }
   if (Array.isArray(node)) {
-    return node.map((n, i) =>
-      _wk(n, JSON.stringify([key, n && typeof n.key === "string" ? n.key : i])),
+    return _children(node).map((n, i) =>
+      _wk(n, JSON.stringify([key, typeof n.key === "string" ? n.key : i])),
     );
   }
   return { ...node, key: key };
