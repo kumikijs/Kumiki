@@ -149,6 +149,8 @@ fn pair(a: Int, b: Int) -> Option(Int) = Some(a + b)
 fn join2(a: Text, b: Text) -> Text = a + b
 fn keep(k: Text, v: Int) -> Bool = v > 0
 fn entry(k: Text, v: Int) -> Text = k + v.show
+fn bump(k: Text, v: Int) -> Int = v + k.length
+fn klen(k: Text) -> Int = k.length
 slot m : Map(Text, Int)    = {"a": 1}
 slot o : Option(Int)       = None
 slot r : Result(Int, Text) = Err("x")
@@ -212,10 +214,10 @@ slot t : Text              = ""`;
   });
 
   it("binds a second positional only over a key/value pair", () => {
-    // Over a plain list the second argument would be the JS index, and over
-    // an Option the element again.
+    // A plain list's element and an Option's value are handed over as one
+    // value, so a second parameter would be handed nothing (stdlib.md §2.2.3).
     const only =
-      "supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)";
+      "supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)";
     expect(arity("xs := xs.map(add)")).toEqual([
       `E0213 Function "add" expects 2 argument(s) but .map on "List(Int)" ${only}`,
     ]);
@@ -227,6 +229,9 @@ slot t : Text              = ""`;
     ]);
     // A Map and its `.entries` bind `$1` to the key and `$2` to the value.
     expect(arity("m := m.filter(keep)")).toEqual([]);
+    expect(arity("m := m.map(bump)")).toEqual([]);
+    // One parameter takes the key alone, as a Map's filter's does.
+    expect(arity("m := m.map(klen)")).toEqual([]);
     expect(arity('t := m.entries.map(entry).join(",")')).toEqual([]);
   });
 

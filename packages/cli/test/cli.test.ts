@@ -291,15 +291,18 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `headingTag` and the patcher's rebuild on a level change; a counter
     // renders a heading, so it ships them.
     //
-    // Still 63,000 (61,872 measured, from 61,527):
-    // an index step reaches the setter apart from a field step
-    // (language.md §1.6.3), so a write through a Map key that is absent writes
-    // nothing, an index key is never taken for a `.get` unwrap, and a read
-    // there panics. The 345 bytes are `isIndexSegment` and the two branches in
-    // `_setPathHelper` that ask it, `isEntryOf` which both sides of `:=` ask,
-    // and the panic in `_stdlibCore.index`. A counter indexes nothing
-    // and still ships them, because the setter and the stdlib sit on paths
-    // every app loads.
+    // Still 63,000 (61,620 measured, from 61,527): `Map.map` maps each entry.
+    // `mapOver` tells a Map apart from a tagged Option / Result and restores
+    // each key as `keys` does; it sits in stdlib, which every app loads.
+    //
+    // Still 63,000 (62,274 measured, from 61,933 on dev at 46d9dca): an index
+    // step reaches the setter apart from a field step (language.md §1.6.3), so
+    // a write through a Map key that is absent writes nothing, an index key is
+    // never taken for a `.get` unwrap, and a read there panics. The 341 bytes
+    // are `isIndexSegment` and the two branches in `_setPathHelper` that ask
+    // it, `isEntryOf` which both sides of `:=` ask, and the panic in
+    // `_stdlibCore.index`. A counter indexes nothing and still ships them,
+    // because the setter and the stdlib sit on paths every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

@@ -197,7 +197,8 @@ You can bind to a **nested lvalue path** like `bind=draft.title`. The runtime:
 
 You can **specify the theme by slot name**, like `app theme = themeName`. The runtime:
 - If `app.themeName` does not exist in `app.themes`, reads `_live[app.themeName]` to resolve the theme name
-- Re-runs `applyThemeDefaults` at the beginning of each `render()` → changes to the slot value are reflected in the body style
+- Re-runs `applyThemeDefaults` at the beginning of each `render()` → changes to the slot value are reflected in the body style and the injected base stylesheet
+- Repaints the page when the resolved theme differs from the one the mounted tree was painted under. Token props (`bg`, `color`, `pad`, `gap`, `radius`, `shadow`, typography, …) are resolved to literal values when a tile renders, so a tile whose own props did not change would otherwise keep the old theme's values; that pass builds the tree afresh instead of diffing it. Element identity is not kept across a switch: a focused control gets its focus and selection back the way it does after any rebuild, and DOM state no slot holds starts over: a scroll offset, an uncontrolled `<details>`, the text of an unbound input, a file input's selection, playing media, and text a `bind` refused (the rebuilt control shows the value its slot kept, and the field's `error(field=…)` message goes with the refused text). A switch does not replay enter animations: an element it rebuilds that carries `transition` or `motion` shows a one-shot animation's final frame at once, and a repeating one keeps running. Every view of the app, hydrated or not, does the same
 
 ```kumiki snippet
 slot themeName : Text = "Light"
@@ -210,11 +211,11 @@ app App ... theme = themeName    # ← pass the slot name
 ### 10.3.7 polymorphic collection methods
 
 `.filter` / `.map` / `.get-or`, etc., are type-dispatched at runtime:
-- `.filter(pred)`: `Array.prototype.filter` for an Array, `mapFilter` for an Object
+- `.filter(pred)`: `Array.prototype.filter` for an Array, the value of a `Some` for an Option, and each entry as one `[key, value]` pair for any other object — a Map, or a Set, whose value is `true` (`_s.filter`)
 - `.map(fn)`: element map for an Array; for Option/Result, map over the contents of Some/Ok (`mapOver`)
 - `.flat-map(fn)`: passes the Some/Ok of Option/Result to f, while None/Err passes through (`flatMapOption`)
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): distinguished by the argument count
-- `m.entries` returns `[[k, v], ...]`, and the lambda of a subsequent list op is automatically destructured to `$1=k, $2=v`
+- `m.entries` returns `[[k, v], ...]`; how a subsequent list op's lambda binds `$1` / `$2` is decided by the checker from the receiver's type, not here ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)) — a `Tuple(K, V)` element is taken apart into `$1=k, $2=v`
 
 ### 10.3.8 Value Matching of select
 
@@ -362,10 +363,24 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    `_s.show(<loopVar>)`. Explicit keys always win. Nested `for` loops
    overwrite the enclosing implicit key with the inner loop's binding, so a
    tile call under `for i in inner` gets `_s.show(i)` regardless of any
-   outer `for o in outer`.
+   outer `for o in outer`. The inner `for` — the outer one's body, or an arm
+   of a branch there — renders a list per outer iteration, so each of its
+   nodes is then keyed as a list under the outer key, the way item 3 keys a
+   list-bodied call: siblings from different outer iterations that share an
+   inner key stay distinct.
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.
+   When the body renders a **list** (its body is a `for`), the call site's key
+   — explicit or implicit — names the list, not one node, and one key on every
+   node would collapse them onto a single identity. Each node takes the pair
+   of the call site's key and its own key — the one its own `for` gave it,
+   however deeply that `for` nests — or, when it has none, its position in
+   the flattened list, encoded as the JSON array `[callKey, nodeKey]`, so the
+   nodes stay distinct and two pairs never spell the same string. A reorder of
+   the outer list moves each node's element; a reorder inside the list moves
+   them by their own keys. The list's nodes are children of the container the
+   call sits in, however deeply the `for`s that produced them nest.
 4. **`TileWhen` / `TileIf` / `TileMatch`** are transparent: the implicit key
    flows through the branch that emits the tile.
 

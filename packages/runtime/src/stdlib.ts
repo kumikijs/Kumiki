@@ -322,14 +322,15 @@ export const _stdlibCore = {
     return out;
   },
   /**
-   * Polymorphic `.filter` dispatch — used by codegen when the receiver type
-   * isn't statically known (e.g. `m.keys.filter(...)` vs `m.filter(...)`).
+   * Polymorphic `.filter` dispatch — what codegen emits for every `.filter`,
+   * whatever the receiver (`m.keys.filter(...)` and `m.filter(...)` alike).
    * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
    * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
-   * so it has to be told apart before the Map branch reads its `_tag` / `_0`
-   * fields as entries; other objects (Maps in Kumiki) hand the predicate
-   * each `[key, value]` pair, the key restored to its declared kind as
-   * `keys` restores it.
+   * so it has to be told apart before the object branch reads its `_tag` /
+   * `_0` fields as entries; any other object — a Map, or a Set, whose
+   * elements are its keys and whose values are `true` — hands the predicate
+   * each `[key, value]` pair, the key restored to its declared kind as `keys`
+   * restores it when codegen passes `kind`.
    */
   filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
@@ -405,14 +406,31 @@ export const _stdlibCore = {
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {
     return (xs ?? []).map(fn);
   },
-  /** Polymorphic `.map`: over List elements, or over Option/Result Some/Ok. */
-  mapOver(coll: unknown, fn: (x: unknown) => unknown): unknown {
+  /**
+   * Polymorphic `.map`: over List elements, over Option/Result Some/Ok, or
+   * over a Map's entries (stdlib.md §2.2.1) — the same keys, each value
+   * replaced by `fn([key, value])`, the key restored to its declared kind as
+   * `keys` restores it. A Map is a plain object, so it is told apart from a
+   * tagged Option / Result first, as `filter` does.
+   */
+  mapOver(coll: unknown, fn: (x: unknown) => unknown, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.map(fn);
-    if (coll && typeof coll === "object" && "_tag" in (coll as Record<string, unknown>)) {
-      const tagged = coll as { _tag: string; _0?: unknown };
-      if (tagged._tag === "Some") return { _tag: "Some", _0: fn(tagged._0) };
-      if (tagged._tag === "Ok") return { _tag: "Ok", _0: fn(tagged._0) };
-      return coll; // None / Err pass through
+    // Told apart by the variant tag, as `filter` does, not by a `_tag` field
+    // alone, which a `Map(Text, _)` may hold as a key.
+    for (const tag of ["Some", "Ok"]) {
+      if (_stdlibCore.variantIs(coll, tag)) {
+        return { _tag: tag, _0: fn((coll as { _0: unknown })._0) };
+      }
+    }
+    if (_stdlibCore.variantIs(coll, "None") || _stdlibCore.variantIs(coll, "Err")) return coll;
+    if (coll && typeof coll === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
+        // One argument, the `[key, value]` pair, as `filter` hands its
+        // predicate: a two-element key is then never taken for the pair.
+        out[k] = fn([restoreKey(k, kind), v]);
+      }
+      return out;
     }
     return coll == null ? [] : fn(coll);
   },
