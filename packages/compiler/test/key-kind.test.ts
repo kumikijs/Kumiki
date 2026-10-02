@@ -22,7 +22,7 @@ const app = (defs: string): string =>
 const emptyOf = (type: string): string =>
   type.startsWith("Option") ? "None" : type.startsWith("Map") ? "{}" : "[]";
 
-const READERS = new Set(["to-list", "keys", "entries", "filter"]);
+const READERS = new Set(["to-list", "keys", "entries", "filter", "map"]);
 type Reader = Extract<Expr, { kind: "FieldAccess" } | { kind: "MethodCall" }>;
 
 /** Every reader node in the checked program, a receiver before a fragment argument. */
@@ -234,6 +234,18 @@ describe("Map.filter is a key reader too", () => {
   });
 });
 
+describe("Map.map is a key reader too", () => {
+  it("records the key's kind, since its expression is handed each key as $1", () => {
+    const decls = `slot m : Map(Int, Int) = {}`;
+    expect(kindOf(decls, "Map(Int, Int)", "m.map($1 * 10)")).toBe("number");
+  });
+
+  it("records nothing on a List, whose expression is handed elements", () => {
+    const decls = `slot xs : List(Int) = []`;
+    expect(kindOf(decls, "List(Int)", "xs.map($1 * 10)")).toBeUndefined();
+  });
+});
+
 describe("the recorded kind reaches the emitted call", () => {
   /** The emitted module for one reducer that writes `rhs` into `res`. */
   function jsFor(decls: string, resType: string, rhs: string): string {
@@ -251,6 +263,7 @@ reducer act on=ui.click(Btn)
     ["mapKeys", "slot m : Map(Int, Text) = {}", "List(Int)", "m.keys"],
     ["mapEntries", "slot m : Map(Int, Text) = {}", "List(Tuple(Int, Text))", "m.entries"],
     ["filter", "slot m : Map(Int, Text) = {}", "Map(Int, Text)", "m.filter($1 == 3)"],
+    ["mapOver", "slot m : Map(Int, Int) = {}", "Map(Int, Int)", "m.map($1 * 10)"],
   ])("_s.%s", (helper, decls, resType, rhs) => {
     // The helper's last argument, however the receiver and the fragment lower.
     expect(jsFor(decls, resType, rhs)).toMatch(new RegExp(`_s\\.${helper}\\(.*, "number"\\)`));

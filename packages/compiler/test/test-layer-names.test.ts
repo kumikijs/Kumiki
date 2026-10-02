@@ -35,7 +35,7 @@ reducer inc on=ui.click(B) do= count := count + 1
 reducer save on=ui.click(S) do= emit persist(count)
 reducer tick on=timer(1s, name=countdown) do= count := count + 1
 reducer failed on=persist.err($e, _) do= label := $e
-reducer note on=ui.click(B) do= emit toast({message: "hi", tone: "info"})
+reducer note on=ui.click(B) do= emit toast({kind: "info", text: "hi"})
 tile B = button(text="+", onClick=inc)
 tile S = button(text="save", onClick=save)
 tile Greeting in=Text = heading("Hi, " + $1)
@@ -322,7 +322,21 @@ describe("a standard effect is an effect", () => {
         given  = {slots: {count: 0}, event: {type: ui.click, target: B}}
         expect = {slots: {count: 0}, effects: [toast]}`);
     expect(codes(src)).toEqual([]);
-    expect(codes(src.replace("[toast]", '[toast({message: "hi", tone: "info"})]'))).toEqual([]);
+    expect(codes(src.replace("[toast]", '[toast({kind: "info", text: "hi"})]'))).toEqual([]);
+  });
+
+  it("holds the expected argument to the standard effect's in=", () => {
+    // testing.md §8.2: an `expect.effects` argument stands for the one the
+    // reducer emits, and `toast` takes `{kind, text, duration}` — neither
+    // `message` nor `tone` is a field it has, and `kind` / `text` are required.
+    const src = withTest(`    reducer-test note
+        given  = {slots: {count: 0}, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 0}, effects: [toast({message: "hi", tone: "info"})]}`);
+    expect(codes(src).sort()).toEqual(["E0214", "E0214", "E0215", "E0215"]);
+    // The fields the reducer may leave out, the expectation may too.
+    expect(
+      codes(src.replace('{message: "hi", tone: "info"}', '{kind: "info", text: "hi"}')),
+    ).toEqual([]);
   });
 
   it("still reports a name that is neither", () => {

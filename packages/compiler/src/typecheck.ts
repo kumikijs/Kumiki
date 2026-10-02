@@ -17,6 +17,7 @@ import type {
   EffectDef,
   Expr,
   FnDef,
+  FragmentShape,
   KeyKind,
   Lvalue,
   MatchArm,
@@ -43,8 +44,13 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES, positionalIsTile } from "./builtins.ts";
-import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
+import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./builtins.ts";
+import {
+  BUILTIN_EFFECTS,
+  builtinFieldOmittable,
+  REDUCER_REF,
+  STANDARD_CAPABILITIES,
+} from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
   FRAGMENT_ARGUMENTS,
@@ -120,6 +126,18 @@ export type KumikiError = {
    * `docs/spec/errors.md` for the W02xx band.
    */
   severity?: "error" | "warning";
+  /**
+   * E0129 only: which argument is never rendered, so a reader (`kumiki fix`)
+   * tells the shapes apart without matching the message.
+   *
+   * - `positional`: a positional argument past the one the builtin reads, or
+   *   any on `image` / `icon` — `text("A", "B")`.
+   * - `text-prop`: `text=` on a builtin that reads only a positional argument
+   *   and has none written — `heading(text=title)`.
+   * - `text-shadowed`: `text=` on `label` / `link` / `editable` beside a
+   *   positional argument, which is the one rendered — `label(text="A", "B")`.
+   */
+  unrendered?: "positional" | "text-prop" | "text-shadowed";
 };
 
 /**
@@ -1045,6 +1063,14 @@ type Ctx = {
    * same reason.
    */
   undeclaredInputReads?: Pos[];
+  /**
+   * Set inside the fragment of a list method handed one value per call
+   * (`fragmentShape` answered `"value"`): that method's name, and whether the
+   * fragment hides a `$2` the enclosing scope binds (a `fn`'s second
+   * parameter, an outer pair's value), so an unbound `$2` there says why it is
+   * unbound rather than only that it is.
+   */
+  oneValueFragment?: { method: string; hides: boolean };
 };
 
 /**
@@ -1147,9 +1173,7 @@ function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: Kumiki
 function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   if (!BIND_CONTROLS.has(t.name)) return;
   const written = [
-    ...t.args.flatMap((a) =>
-      a.name === "strict" ? [{ pos: a.namePos ?? (a.value as Expr).pos }] : [],
-    ),
+    ...t.args.flatMap((a) => (a.name === "strict" ? [{ pos: a.namePos }] : [])),
     ...t.props.flatMap((p) => (p.name === "strict" ? [{ pos: p.pos }] : [])),
   ];
   for (const { pos } of written) {
@@ -1349,7 +1373,7 @@ function checkIconName(
   errors: KumikiError[],
 ): void {
   if (t.name !== "icon") return;
-  const nameArg = t.args.find((a) => a.name === "name");
+  const nameArg = contentArg(t);
   if (!nameArg) return;
   const v = nameArg.value as Expr;
   if (v.kind !== "Str") return;
@@ -1410,7 +1434,7 @@ function checkA11y(
     }
   }
   if (t.name === "link") {
-    const hasText = t.args.some((a) => a.name === "text") || t.props.some((p) => p.name === "text");
+    const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
     const hasAria = t.props.some((p) => p.name === "aria-label");
     if (!hasText && !hasAria) {
       errors.push({
@@ -1527,6 +1551,69 @@ function checkTileInput(
   checkAgainst(value, def.in, sym, errors, ctx);
 }
 
+/**
+ * E0129 at every argument a value builtin is written with as content and
+ * never renders, read off the same table the lowering reads its content from
+ * (`VALUE_BUILTIN_CONTENT`), so the two cannot disagree about which one shows.
+ *
+ * Three shapes, each named in the diagnostic's `unrendered` field. A
+ * positional argument past the one the builtin reads — the second of
+ * `text("A", "B")`, or any on `image` / `icon`, which read `src=` / `name=`.
+ * Content written as `text=` on a builtin that reads only a positional
+ * argument (`heading(text=title)`): `text=` is the label argument of `button`
+ * / `link` / `label` / `editable`, and a prop anywhere else, so the call
+ * rendered "" while every tier said ok. With a positional argument also
+ * written there, `text=` is just a prop and the call renders its content. And
+ * `text=` beside a positional argument on `label` / `link` / `editable`,
+ * which read `text=` only when no positional one is written.
+ */
+function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const reading = contentReading(t.name);
+  if (!reading) return;
+  const positional = t.args.filter((a) => a.name === undefined);
+  const read = reading.positional ? 1 : 0;
+  positional.slice(read).forEach((a, i) => {
+    errors.push({
+      code: "E0129",
+      kind: "unrendered-arg",
+      message: reading.positional
+        ? `${t.name} renders its first positional argument only — positional argument ` +
+          `${i + read + 1} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
+          `each its own ${t.name}`
+        : `${t.name} takes its ${reading.named} as \`${reading.named}=\` — a positional ` +
+          `argument is never rendered. Write \`${t.name}(${reading.named}=…)\``,
+      pos: a.value.pos,
+      unrendered: "positional",
+    });
+  });
+  if (!reading.positional) return;
+  const named = t.args.find((a) => a.name === "text");
+  if (!named?.name) return;
+  if (reading.named === "text" && positional.length > 0) {
+    errors.push({
+      code: "E0129",
+      kind: "unrendered-arg",
+      message:
+        `${t.name} renders its positional argument, so \`text=\` is never rendered — it is ` +
+        `read only when no positional argument is written. Remove \`text=\` or the ` +
+        `positional argument`,
+      pos: named.namePos,
+      unrendered: "text-shadowed",
+    });
+    return;
+  }
+  if (reading.named !== undefined || positional.length > 0) return;
+  errors.push({
+    code: "E0129",
+    kind: "unrendered-arg",
+    message:
+      `content is positional: write \`${t.name}("…")\` — \`text=\` is a prop on ${t.name} ` +
+      `and never renders (it is the label argument of button, link, label and editable)`,
+    pos: named.namePos,
+    unrendered: "text-prop",
+  });
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -1544,6 +1631,7 @@ function checkTileCall(
   }
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
+  checkContentArgs(t, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
@@ -2124,7 +2212,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
-    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECT_CAPS.has(r.on.effect)) {
+    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECTS.has(r.on.effect)) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -2956,6 +3044,18 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
         return;
       }
+      if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
+        const { method, hides } = ctx.oneValueFragment;
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: hides
+            ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
+            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
+          pos: e.pos,
+        });
+        return;
+      }
       errors.push({
         code: "E0103",
         kind: "undef-ref",
@@ -3097,9 +3197,24 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         const kind = keyKindOfReader(recvType, e.method, sym);
         if (kind) e.keyKind = kind;
         const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+        // How a `filter` / `map` / `find` / `sort-by` fragment binds its
+        // positionals, recorded for codegen whatever the fragment is spelled
+        // as — `xs.map(len)` is `xs.map(len($1))` and binds the same way.
+        const shape =
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+        if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
         for (const [i, a] of e.args.entries()) {
-          if (fragment?.index === i && isFragmentFnName(a, sym, ctx)) {
-            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, sym, errors);
+          if (fragment?.index !== i) {
+            // Only the fragment argument is lowered into a lambda; every other
+            // argument is evaluated where the call is, so it reads the
+            // enclosing scope's `$1` / `$2`, as codegen emits it.
+            checkExpr(a, sym, errors, ctx);
+            const declared = memberArgType(recvType, e.method, i, sym);
+            if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
+            continue;
+          }
+          if (isFragmentFnName(a, sym, ctx)) {
+            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
             // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
             // value), so the key it computes is what the fn declares it
@@ -3109,17 +3224,28 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             }
             continue;
           }
-          // Inside a method-call argument `$1` / `$2` are the implicit lambda's
-          // parameters, and they SHADOW any outer ones — a tile that declares
-          // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
-          // inside that tile is a different `$1`. What they are bound to is
-          // per method and per receiver, and `fragmentBindings` answers only
-          // where the lowering's own reading is certain: a wrong guess costs a
-          // diagnostic on a working program.
+          // Inside the fragment `$1` (and `$2`, where the lambda binds one) are
+          // the implicit lambda's parameters, and they SHADOW any outer ones —
+          // a tile that declares `in=TaskId` binds `$1` to it, and
+          // `dueDate.map(formatDate($1))` inside that tile is a different
+          // `$1`. What they are bound to is per method and per receiver, and
+          // `fragmentBindings` answers only where the lowering's own reading
+          // is certain: a wrong guess costs a diagnostic on a working program.
           const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
-          bindLocal(inner, "$2", p2);
+          if (shape === "value") {
+            // A fragment handed one value binds `$1` alone, and codegen
+            // declares no `$2` in it: a `$2` anywhere inside — nested method
+            // arguments included — is an error here, not the index or a
+            // second copy of `$1` there. An enclosing `$2` is hidden too,
+            // since the lambda's positionals shadow the enclosing ones.
+            inner.localBinds.delete("$2");
+            inner.localTypes.delete("$2");
+            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
+          } else if (fragment.binds === 2) {
+            bindLocal(inner, "$2", p2);
+          }
           checkExpr(a, sym, errors, inner);
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
@@ -3246,10 +3372,13 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
  * - none drops the element, and more than the method binds leaves a
  *   parameter unbound;
  * - `fold`'s `fn` takes both, because the element is the second;
- * - a list method's `$2` is the value of a key/value pair, so a `fn` of two
- *   takes it only over a `Map` or a `List` of pairs. Over any other receiver
- *   the second argument would be the JS index or the element again. A
- *   receiver whose type cannot be decided is given the benefit of the doubt.
+ * - a `filter` / `map` / `find` / `sort-by` fragment binds a second
+ *   positional only where `shape` says the value handed over is taken apart —
+ *   a pair, or a Map's filter or map entry. Where it binds one value (`"value"`), or
+ *   the receiver is known but §2.2.3 gives the method no binding on it
+ *   (`null`), a second parameter would be handed nothing the `fn` means. Only
+ *   a receiver whose type cannot be decided (`"undecided"`) is given the
+ *   benefit of the doubt.
  *
  * Answers whether the count fits, so a caller checks nothing further about a
  * `fn` already reported here.
@@ -3259,6 +3388,7 @@ function checkFragmentFnArity(
   method: string,
   fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
   receiver: TypeExpr | null,
+  shape: FragmentShape | null | undefined,
   sym: SymbolTable,
   errors: KumikiError[],
 ): boolean {
@@ -3277,29 +3407,13 @@ function checkFragmentFnArity(
   }
   if (n === 0) return report(`.${method} needs at least 1`);
   if (n > fragment.binds) return report(`.${method} supplies at most ${fragment.binds}`);
-  if (n === 2 && fragment.second === "pair-value" && bindsPairs(receiver, sym) === false) {
+  if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     return report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map or a List of pairs (.entries)`,
+      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
     );
   }
   return true;
-}
-
-/**
- * Whether a list method over `receiver` binds `$2` to the value of a key/value
- * pair: `true` for a `Map` or a `List` of 2-tuples, `false` for any other
- * receiver it can decide, `null` when it cannot tell.
- */
-function bindsPairs(receiver: TypeExpr | null, sym: SymbolTable): boolean | null {
-  const t = unaliasType(receiver, sym);
-  if (t === null || t.kind === "TypeRef") return null;
-  if (t.kind !== "TypeApp") return false;
-  if (t.name === "Map") return true;
-  if (t.name !== "List") return false;
-  const el = unaliasType(t.args[0] ?? null, sym);
-  if (el === null || el.kind === "TypeRef") return null;
-  return el.kind === "TypeApp" && el.name === "Tuple" && el.args.length === 2;
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -3546,8 +3660,13 @@ function checkAgainst(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode = "E0201",
+  omittable?: Omittable,
 ): void {
   if (declared === null) return;
+  if (declared === REDUCER_REF) {
+    checkReducerRef(e, sym, errors, ctx, code);
+    return;
+  }
   const d = unaliasType(declared, sym);
   if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
 
@@ -3602,7 +3721,7 @@ function checkAgainst(
     }
   }
   if (d.kind === "TypeRecord" && e.kind === "RecordLit") {
-    checkRecordLit(e, d, sym, errors, ctx, code);
+    checkRecordLit(e, d, sym, errors, ctx, code, omittable);
     return;
   }
   if (e.kind === "Variant") {
@@ -3612,13 +3731,13 @@ function checkAgainst(
   if (e.kind === "IfExpr") {
     // Both branches land in this position, and reporting at the branch beats
     // reporting at the `if`.
-    checkAgainst(e.consequent, declared, sym, errors, ctx, code);
-    checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable);
     return;
   }
   if (e.kind === "LetIn") {
     // The body is the value that lands here, read with the name bound.
-    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code);
+    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code, omittable);
     return;
   }
   if (e.kind === "MatchExpr") {
@@ -3630,7 +3749,8 @@ function checkAgainst(
     // whole-match comparison would pass the wrong arm without a word.
     const scrutType = inferType(e.scrutinee, sym, ctx);
     for (const arm of e.arms) {
-      checkAgainst(arm.body, declared, sym, errors, armScope(arm, scrutType, sym, ctx), code);
+      const scope = armScope(arm, scrutType, sym, ctx);
+      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
     }
     return;
   }
@@ -3655,7 +3775,51 @@ function checkAgainst(
 
   const actual = inferType(e, sym, ctx);
   if (actual === null || !isKnown(actual, sym)) return;
-  if (!assignable(actual, declared, sym)) mismatch(e, actual);
+  // A value of a record type may leave out what a literal may, so the
+  // comparison drops those fields when its type does — the message still
+  // names the whole `in=`.
+  const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
+  if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
+}
+
+/**
+ * `d` without the fields `omittable` allows `actual` to leave out and that it
+ * does leave out, or `null` when either side is not a record.
+ */
+function withoutOmitted(
+  d: TypeExpr,
+  actual: TypeExpr,
+  sym: SymbolTable,
+  omittable: Omittable,
+): TypeExpr | null {
+  const a = unaliasType(actual, sym);
+  if (d.kind !== "TypeRecord" || a?.kind !== "TypeRecord") return null;
+  const has = new Set(a.fields.map((f) => f.name));
+  return { ...d, fields: d.fields.filter((f) => has.has(f.name) || !omittable(f)) };
+}
+
+/**
+ * A `ReducerRef` (`confirm`'s `onYes` / `onNo`) is a reducer's name written
+ * bare: codegen lowers exactly that to the name the runtime dispatches, and
+ * anything else to a value the runtime cannot dispatch. A bare name is judged
+ * where the emit resolves it as a reducer (E0103), so only the other forms are
+ * reported here.
+ */
+function checkReducerRef(
+  e: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  code: MismatchCode,
+): void {
+  if (e.kind === "Ref") return;
+  const actual = inferType(e, sym, ctx);
+  pushMismatch(
+    errors,
+    code,
+    `Expected ${typeToString(REDUCER_REF)} but got ${actual ? typeToString(actual) : "an expression that is not a reducer name"}`,
+    e.pos,
+  );
 }
 
 /**
@@ -3697,10 +3861,11 @@ function checkRecordLit(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode,
+  omittable?: Omittable,
 ): void {
   const given = new Set(e.fields.map((f) => f.name));
   for (const declaredField of d.fields) {
-    if (given.has(declaredField.name)) continue;
+    if (given.has(declaredField.name) || omittable?.(declaredField)) continue;
     errors.push({
       code: "E0214",
       kind: "missing-record-field",
@@ -3995,8 +4160,8 @@ function checkEmitTarget(
   ctx: Ctx,
   pos: Pos,
 ): void {
-  const eff = sym.effects.get(effect);
-  if (!eff && !BUILTIN_EFFECT_CAPS.has(effect)) {
+  const input = effectInput(effect, sym);
+  if (!input) {
     errors.push({
       code: "E0104",
       kind: "undef-effect",
@@ -4005,11 +4170,11 @@ function checkEmitTarget(
     });
     return;
   }
-  // A built-in effect has no `effect` declaration to read a `cap=` off, so the
-  // requirement comes from the table instead — the DOM runtime gates it either
+  // A built-in effect has no `effect` declaration to read a `cap=` or an `in=`
+  // off, so both come from the table instead — the DOM runtime gates it either
   // way. `null` is the one entry that asks for nothing; an empty `cap=` on a
   // declared effect is not that, and stays reportable.
-  const cap = eff ? eff.cap : (BUILTIN_EFFECT_CAPS.get(effect) ?? null);
+  const { cap, inType, omittable } = input;
   if (cap !== null && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
     errors.push({
       code: "E0301",
@@ -4018,12 +4183,11 @@ function checkEmitTarget(
       pos,
     });
   }
-  if (!eff) return;
   // `in=Unit` is the "no input" declaration, so the effect takes no argument;
   // every other `in=` takes exactly one. Codegen destructures the argument, so
   // a missing one is `Cannot destructure property 'key' of 'input'` at the
   // first dispatch rather than a diagnostic.
-  const wants = isPrimNamed(eff.inType, sym, "Unit") ? 0 : 1;
+  const wants = isPrimNamed(inType, sym, "Unit") ? 0 : 1;
   if (args.length !== wants) {
     errors.push({
       code: "E0213",
@@ -4037,7 +4201,7 @@ function checkEmitTarget(
   if (!arg) return;
   // The EffectId case keeps its own wording: the fix is never "convert the
   // value" but "pass the handle an earlier emit returned".
-  if (isPrimNamed(eff.inType, sym, "EffectId")) {
+  if (isPrimNamed(inType, sym, "EffectId")) {
     const actual = inferType(arg, sym, ctx);
     if (actual && !isPrimNamed(actual, sym, "EffectId")) {
       errors.push({
@@ -4049,7 +4213,37 @@ function checkEmitTarget(
     }
     return;
   }
-  checkAgainst(arg, eff.inType, sym, errors, ctx, "E0202");
+  checkAgainst(arg, inType, sym, errors, ctx, "E0202", omittable);
+}
+
+/**
+ * Which fields of a record `in=` an argument may leave out. A predicate rather
+ * than a narrowed type, because which ones a value leaves out is known only at
+ * each leaf `checkAgainst` reaches — an `if` whose branches write different
+ * fields has no single answer — and because the message names the whole `in=`.
+ */
+type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;
+
+/**
+ * The effect a name dispatches: its capability, its `in=`, and the fields a
+ * call may leave out of it. A declaration wins over a standard effect of the
+ * same name and leaves nothing out; a standard effect (stdlib.md §2.6) may
+ * leave out what `builtinFieldOmittable` says. `undefined` when the name is
+ * neither.
+ */
+function effectInput(
+  name: string,
+  sym: SymbolTable,
+): { cap: string | null; inType: TypeExpr; omittable: Omittable | undefined } | undefined {
+  const eff = sym.effects.get(name);
+  if (eff) return { cap: eff.cap, inType: eff.inType, omittable: undefined };
+  const builtin = BUILTIN_EFFECTS.get(name);
+  if (!builtin) return undefined;
+  return {
+    cap: builtin.cap,
+    inType: builtin.inType,
+    omittable: (f) => builtinFieldOmittable(builtin, f),
+  };
 }
 
 // Closed set of theme token namespaces (spec/style.md §4.2). The token name
@@ -4842,12 +5036,12 @@ function undefMemberError(
 
 /**
  * The members that hand a `Set`'s elements or a `Map`'s keys back — as a list
- * (`to-list`, `keys`, `entries`) or, for `Map.filter`, as the `$1` its
- * predicate is given for each entry.
+ * (`to-list`, `keys`, `entries`) or, for `Map.filter` and `Map.map`, as the
+ * `$1` their fragment is given for each entry.
  */
 const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
   Set: new Set(["to-list"]),
-  Map: new Set(["keys", "entries", "filter"]),
+  Map: new Set(["keys", "entries", "filter", "map"]),
 };
 
 const KEY_READER_NAMES: ReadonlySet<string> = new Set(
@@ -4883,18 +5077,15 @@ function keyKindOfReader(
  * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E).map`: `$1`
  *   is `T`, taken apart like a `List`'s element except under `flat-map`,
  *   whose lowering does not; `Result.map-err`: `$1` is `E`.
- * - `Map(K, V).filter`: `$1` is the key and `$2` the value — the key only when
- *   it reads back as a value of `K` (`keyRepresentation`); `Map.update(k, expr)`:
- *   `$1` is the current `V`.
+ * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value — the key
+ *   only when it reads back as a value of `K` (`keyRepresentation`);
+ *   `Map.update(k, expr)`: `$1` is the current `V`.
  *
  * Everything else is `null`, which binds the name with no type — as every
- * fragment was bound before. That includes an element whose runtime value may
- * be a 2-element array without being a `Tuple` (a `List`, a `Set` — a Set
- * literal is built as a Set only where the checker knows its type, and one
- * that arrived as JSON may be an array — or a type parameter): the lowering
- * takes any such array apart, so the element type is not what `$1` holds
- * there. `Map.map` is absent because its lowering does not iterate a Map at
- * all.
+ * fragment was bound before. That includes an element the checker cannot
+ * decide (a type parameter), which the lowering's fallback may take apart.
+ * Which of `$1` / `$2` a fragment binds at all is {@link fragmentShape}'s
+ * answer; this one only types them.
  */
 function fragmentBindings(
   recv: TypeExpr | null,
@@ -4923,15 +5114,12 @@ function fragmentBindings(
       return method === "map-err" ? [b ?? null, null] : none;
     case "Map":
       if (method === "update") return argIndex === 1 ? [b ?? null, null] : none;
-      if (method !== "filter" || argIndex !== 0) return none;
+      if ((method !== "filter" && method !== "map") || argIndex !== 0) return none;
       return [keyRepresentation(a ?? null, sym) === null ? null : (a ?? null), b ?? null];
     default:
       return none;
   }
 }
-
-/** Containers whose value may be a JavaScript array at runtime. */
-const ARRAY_SHAPED: ReadonlySet<string> = new Set(["List", "Set"]);
 
 /**
  * The `List` members whose fragment is handed each element (`argFnList`) —
@@ -4943,20 +5131,81 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
 );
 
 /**
- * `$1` / `$2` for a fragment the lowering hands one value through `argFnList`,
- * which takes any 2-element array apart. A `Tuple(A, B)` is exactly that, so
- * it binds both; a value that might be such an array without the type saying
- * so binds nothing.
+ * How the fragment of `recv.method(…)` — a `filter` / `map` / `find` /
+ * `sort-by`, lowered through `argFnList` — binds `$1` and `$2` (stdlib.md
+ * §2.2.3), decided from the receiver's static type:
+ *
+ * - `"pair"`: each value handed over is a `Tuple(A, B)` — a `List` of pairs
+ *   from `.entries`, or an `Option` / `Result` holding one — and is taken
+ *   apart, `$1 = A`, `$2 = B`.
+ * - `"key-value"`: `Map(K, V).filter` / `map`, handed each entry as the key
+ *   and the value, `$1` and `$2`.
+ * - `"value"`: any other element of a `List`, or the value of an `Option`
+ *   (`map` / `filter`) or a `Result` (`map`) — `$1` is that value whole,
+ *   whatever it is (a 2-element `List` included), and `$2` is not bound.
+ * - `"undecided"`: the receiver's type, or its element's, cannot be decided
+ *   here (a type parameter, an untyped payload).
+ * - `null`: the receiver's type is known, but §2.2.3 gives this method no
+ *   binding on it — a `Set`, whose `_s.filter` hands each element as an
+ *   `[element, true]` entry; `Map.find` / `sort-by`; `Option.find` /
+ *   `sort-by`; `Result.filter` / `find` / `sort-by`; any receiver that is not
+ *   a container.
+ *
+ * Under `"undecided"` and `null` alike the lowering falls back to the value's
+ * shape at run time, taking apart any 2-element array (`MethodCall` records
+ * both as `"undecided"`). They differ for a `fn` named as the fragment: only
+ * an undecidable receiver lets a `fn` of two through (`checkFragmentFnArity`).
+ *
+ * The one classifier codegen (through `MethodCall.fragmentShape`), the
+ * positional scope and the arity of a bare `fn` fragment all read.
  */
-function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+function fragmentShape(
+  recv: TypeExpr | null,
+  method: string,
+  sym: SymbolTable,
+): FragmentShape | null {
+  if (isOpaque(recv, sym)) return "undecided";
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp" || !ELEMENT_FRAGMENTS.has(method)) return null;
+  const [a] = t.args;
+  switch (t.name) {
+    case "List":
+      return elementShape(a ?? null, sym).shape;
+    case "Option":
+      return method === "map" || method === "filter" ? elementShape(a ?? null, sym).shape : null;
+    case "Result":
+      return method === "map" ? elementShape(a ?? null, sym).shape : null;
+    case "Map":
+      return method === "filter" || method === "map" ? "key-value" : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether one element is a pair the lowering takes apart (see
+ * {@link fragmentShape}), with the pair's halves when it is — read off the
+ * normalised type, so the halves are the ones the answer was made from.
+ */
+function elementShape(
+  elem: TypeExpr | null,
+  sym: SymbolTable,
+):
+  | { shape: "pair"; halves: [TypeExpr | null, TypeExpr | null] }
+  | { shape: "value" | "undecided" } {
   const u = unaliasType(elem, sym);
-  if (u?.kind === "TypeApp" && u.name === "Tuple") {
-    return u.args.length === 2 ? [u.args[0] ?? null, u.args[1] ?? null] : [elem, null];
+  if (u === null || u.kind === "TypeRef") return { shape: "undecided" };
+  if (u.kind === "TypeApp" && u.name === "Tuple" && u.args.length === 2) {
+    return { shape: "pair", halves: [u.args[0] ?? null, u.args[1] ?? null] };
   }
-  if (u === null || u.kind === "TypeRef" || (u.kind === "TypeApp" && ARRAY_SHAPED.has(u.name))) {
-    return [null, null];
-  }
-  return [elem, null];
+  return { shape: "value" };
+}
+
+/** `$1` / `$2` for a fragment handed `elem`, typed the way {@link elementShape} binds them. */
+function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+  const el = elementShape(elem, sym);
+  if (el.shape === "pair") return el.halves;
+  return el.shape === "value" ? [elem, null] : [null, null];
 }
 
 /**
@@ -6033,8 +6282,9 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
     const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
     if (name === undefined) continue;
     // The standard effects (`navigate`, `toast`, `log`, …) are declared by no
-    // program, so the table they live in is the capability one.
-    if (!sym.effects.has(name) && !BUILTIN_EFFECT_CAPS.has(name)) {
+    // program, so they live in a table of their own.
+    const input = effectInput(name, sym);
+    if (!input) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -6046,11 +6296,12 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
     for (const a of item.args) checkExpr(a, sym, errors, ctx);
     // The expected argument stands for the one the reducer emits, which is
     // checked, and lowered, against the effect's `in=` type — so this one is
-    // too, or a Set the reducer emits is compared with the array the literal
-    // would otherwise be.
-    const inType = sym.effects.get(name)?.inType ?? null;
+    // too, with the same fields left out, or a Set the reducer emits is
+    // compared with the array the literal would otherwise be.
     const arg = item.args[0];
-    if (arg && item.args.length === 1) checkAgainst(arg, inType, sym, errors, ctx);
+    if (input && arg && item.args.length === 1) {
+      checkAgainst(arg, input.inType, sym, errors, ctx, "E0201", input.omittable);
+    }
   }
 }
 
