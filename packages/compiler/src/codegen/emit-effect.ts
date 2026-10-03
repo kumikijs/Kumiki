@@ -104,13 +104,16 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
     ? `try { ${head}${lookup} const _r = await (_provider ? ${call} : ${fallback}); if (_r?.kind === "ok") return _r; if (_r?.kind === "err") return { kind: "err", value: _errText(_r.value) }; throw new Error(${JSON.stringify(`the ${eff.cap} provider returned `)} + _errText(_r) + ", not {kind, value}"); } catch (_thrown) { return { kind: "err", value: _errText(_thrown), final: true }; }`
     : `${head}${lookup} if (_provider) return ${call}; return ${fallback};`;
   const invokeBody = `async (${params}) => { ${body} }`;
+  // The same `_errText`, on the spec: a mock that replaces `invoke` (the
+  // scenario runner) reads a scripted err through it rather than a copy.
+  const errText = failsWithText(eff.cap) ? "\n    errText: _errText," : "";
 
   return `{
     name: ${JSON.stringify(eff.name)},
     cap: ${JSON.stringify(eff.cap)},
     policy: ${policyJs(gen, eff.policy)},
     retry: ${retryJs(eff.retry)},
-    invoke: ${invokeBody},
+    invoke: ${invokeBody},${errText}
   }`;
 }
 
@@ -160,7 +163,9 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
  * (the old provider contract) is that `message`; anything else is its JSON
  * text, or `String` of it when JSON has none (`undefined`, a symbol). A value
  * no reading survives (a cyclic record, a hostile `toString`) is a fixed
- * sentence rather than a second throw, which would reach the dispatcher.
+ * sentence rather than a second throw, which would reach the dispatcher. Each
+ * such effect's spec also carries it as `errText`, which is how the scenario
+ * runner reads a scripted err the same way.
  */
 export const TEXT_FAILURE_HELPER = `function _errText(v) {
   try {
