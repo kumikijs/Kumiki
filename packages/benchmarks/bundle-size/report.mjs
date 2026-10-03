@@ -112,8 +112,18 @@ export function renderReport(report) {
   return lines.join("\n");
 }
 
-/** The PR comment: head against base, one row per example app. */
+const FOOTNOTE =
+  "<sub>bytes · gzip level 9, brotli quality 11 · **bundle** = `kumiki build --bundle` (one file) · **modular** = `kumiki build --minify`, each file compressed on its own · **runtime/ raw** = the modular build minus app.js, uncompressed · head = the PR's merge commit, base = its first parent</sub>";
+
+/**
+ * The PR comment: head against base, one row per example app.
+ *
+ * `base` is undefined when the base could not be measured — a base whose CLI
+ * predates `kumiki build --bundle`, as `main` does until the release that
+ * ships it. The head's sizes then show on their own.
+ */
 export function renderComparison(base, head) {
+  if (!base) return renderHeadOnly(head);
   const { rows, total } = compareReports(base, head);
   const moved = rows.some((r) => r.status !== "unchanged");
   const headline = moved
@@ -138,9 +148,23 @@ export function renderComparison(base, head) {
     const vals = COLUMNS.map(([, pick]) => cell(pick(r.base), pick(r.head)));
     lines.push(`| ${r.name} | ${vals.join(" | ")} |`);
   }
-  lines.push(
+  lines.push("", FOOTNOTE);
+  return `${lines.join("\n")}\n`;
+}
+
+function renderHeadOnly(head) {
+  const lines = [
+    MARKER,
+    "## Bundle size",
     "",
-    "<sub>bytes · gzip level 9, brotli quality 11 · **bundle** = `kumiki build --bundle` (one file) · **modular** = `kumiki build --minify`, each file compressed on its own · **runtime/ raw** = the modular build minus app.js, uncompressed · head = the PR's merge commit, base = its first parent</sub>",
-  );
+    "The base could not be measured (its CLI cannot build what this script asks for), so these are the head's sizes alone.",
+    "",
+    `| App | ${COLUMNS.map(([label]) => label).join(" | ")} |`,
+    `|---|${COLUMNS.map(() => "---:").join("|")}|`,
+  ];
+  for (const a of head.apps) {
+    lines.push(`| ${a.name} | ${COLUMNS.map(([, pick]) => fmt(pick(a))).join(" | ")} |`);
+  }
+  lines.push("", FOOTNOTE);
   return `${lines.join("\n")}\n`;
 }

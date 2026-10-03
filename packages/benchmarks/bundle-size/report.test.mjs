@@ -146,4 +146,15 @@ describe("renderComparison", () => {
     expect(md).toMatch(/new.*added/);
     expect(md).toMatch(/old.*removed/);
   });
+
+  it("shows the head alone, and says why, when the base could not be measured", () => {
+    // A base whose CLI predates `kumiki build --bundle` (main before v0.14)
+    // cannot build what the script asks for; the head's sizes still show.
+    const md = renderComparison(undefined, { apps: [app("01-counter", 20_346)] });
+    expect(md.startsWith(MARKER)).toBe(true);
+    expect(md).toContain("base could not be measured");
+    expect(md).toMatch(/\| 01-counter \| 20,346 \|/);
+    expect(md).not.toContain("<sub>+");
+    expect(md).not.toContain("No change");
+  });
 });
