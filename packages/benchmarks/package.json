@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Token / LOC / edit-cost benchmarks comparing Kumiki against React, plus learning-cost evaluation.",
+  "description": "Token / LOC / edit-cost benchmarks comparing Kumiki against React, shipped bundle size, plus learning-cost evaluation.",
   "license": "Apache-2.0",
   "scripts": {
     "measure": "tsx size-comparison/scripts/measure.mjs",
@@ -11,6 +11,7 @@
     "measure:ops": "tsx size-comparison/scripts/measure-ops.mjs",
     "measure:reactivity": "tsx reactivity/reactivity-cost.mjs",
     "measure:keyed-moves": "tsx reactivity/keyed-move-cost.mjs",
+    "measure:bundle": "node bundle-size/measure.mjs",
     "eval": "tsx learning-cost/eval.mjs",
     "test": "vitest run",
     "lint": "biome check ."
