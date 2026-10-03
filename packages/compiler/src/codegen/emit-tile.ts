@@ -115,13 +115,76 @@ export function genRouteTile(tile: TileDef, gen: GenCtx, where: string, fill?: s
   return boundaryJs(tile, fill ? `${fill}(${named})` : named, gen);
 }
 
+/**
+ * What names a `for` in its implicit keys (runtime.md §10.3.10): the tile
+ * definition it is written in and its ordinal among that definition's loops,
+ * in source order (`App_0`, `App_1`, …). It is stable across renders, distinct
+ * per loop in the source, and unchanged by an edit outside that definition or
+ * a blank line above the loop, which a source position is not. `id` is the
+ * loop's ordinal in the whole program, a JS-safe suffix for the names the
+ * lowering declares (a tile name may hold a `-`).
+ *
+ * A loop no tile definition holds is in a tile-test's `expect` tree; it is
+ * named in the order it is first lowered, under a name no tile can have.
+ */
+function loopName(t: TileExpr & { kind: "TileFor" }, gen: GenCtx): LoopName {
+  let names = loopNames.get(gen.tiles);
+  if (!names) {
+    const table = new Map<TileExpr, LoopName>();
+    for (const def of gen.tiles) {
+      let n = 0;
+      forEachLoop(def.body, (loop) => {
+        table.set(loop, { name: `${def.name}_${n++}`, id: table.size });
+      });
+    }
+    names = table;
+    loopNames.set(gen.tiles, names);
+  }
+  const known = names.get(t);
+  if (known) return known;
+  const named = { name: `expect_${names.size}`, id: names.size };
+  names.set(t, named);
+  return named;
+}
+
+type LoopName = { readonly name: string; readonly id: number };
+
+const loopNames = new WeakMap<readonly TileDef[], Map<TileExpr, LoopName>>();
+
+/** Every `for` under `t`, outer before inner and in source order. */
+function forEachLoop(t: TileExpr, f: (loop: TileExpr & { kind: "TileFor" }) => void): void {
+  switch (t.kind) {
+    case "TileFor":
+      f(t);
+      forEachLoop(t.body, f);
+      return;
+    case "TileWhen":
+      forEachLoop(t.body, f);
+      return;
+    case "TileIf":
+      forEachLoop(t.consequent, f);
+      forEachLoop(t.alternate, f);
+      return;
+    case "TileMatch":
+      for (const arm of t.arms) forEachLoop(arm.body, f);
+      return;
+    case "TileCall":
+      for (const a of t.args) if (isTileExpr(a.value)) forEachLoop(a.value, f);
+      return;
+    default: {
+      const unhandled: never = t;
+      throw new Error(`forEachLoop: unhandled tile kind ${(unhandled as TileExpr).kind}`);
+    }
+  }
+}
+
 export function tileExprJs(
   t: TileExpr,
   gen: GenCtx,
   ctx: EvalCtx,
   enclosingTiles?: EnclosingTiles,
   // When the enclosing scope is a `TileFor`, this carries the implicit key
-  // expression (`_s.show(<loopVar>)`) that any tile call in the body should
+  // expression (the iteration's entry of `_s.loopKeys`) that any tile call in the body should
   // stamp on itself unless it declared an explicit `{key: …}`. Propagates
   // transparently through TileWhen / TileIf / TileMatch arms; resets at
   // user-tile boundaries (see `tileCallJs`).
@@ -138,14 +201,28 @@ export function tileExprJs(
       const iter = jsOfExpr(t.iter, ctx);
       const inner = childCtx(ctx);
       const bind = declareBind(inner, t.bind);
-      const impl = `_s.show(${bind})`;
+      // The implicit key of each iteration (runtime.md §10.3.10): `_s.loopKeys`
+      // answers, per element, the loop, the occurrence of this value, and the
+      // value's `show`. So a list that repeats a value, or two loops under one
+      // parent that share one, still keys every child apart. The one exception
+      // is a single loop in the source whose tile is expanded twice into one
+      // parent's children: both expansions are the same loop.
+      const { name, id } = loopName(t, gen);
+      const keys = `__fk${id}`;
+      const index = `__fi${id}`;
+      const impl = `${keys}[${index}]`;
+      const body = tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers);
       // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      const list = `((${iter}) || []).map((${bind}) => (${tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers)}))`;
+      // A body whose every tile call carries its own `{key: …}` never reads the
+      // implicit key, so the keys are not computed on each render.
+      const list = body.includes(impl)
+        ? `((__xs) => { const ${keys} = _s.loopKeys(__xs, ${JSON.stringify(name)}); return __xs.map((${bind}, ${index}) => (${body})); })((${iter}) || [])`
+        : `((${iter}) || []).map((${bind}) => (${body}))`;
       // A `for` reached by an enclosing `for`'s implicit key — its body, or an
       // arm of a branch there — renders a list per outer iteration, each node
-      // keyed by this loop's variable alone, so siblings from different outer
-      // iterations would collide once flattened. `_wk` pairs each node's key
-      // with the outer iteration's.
+      // keyed by this loop alone, so siblings from different outer iterations
+      // would collide once flattened. `_wk` pairs each node's key with the
+      // outer iteration's.
       return implicitKeyExpr ? `_wk(${list}, ${implicitKeyExpr})` : list;
     }
     case "TileWhen":

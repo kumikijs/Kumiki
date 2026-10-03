@@ -329,6 +329,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // Dev was 15 bytes under the line at fbbec02, so this change crosses it;
     // the budget moves up one step, as it did to 63,000, rather than holding
     // the change at the old line.
+    //
+    // Still 64,000 (63,448 measured, from 63,331 on dev at 29aa08e): a `for`
+    // keys each tile it renders apart from its siblings, a repeated value
+    // included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which
+    // writes the loop and the occurrence before the value's `show`. A counter
+    // has no `for` and still ships it, because it sits in the stdlib module
+    // every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "the lists render, a repeated value once per occurrence",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["score 7", "score 3", "even 2", "prime 2", "prime 3", "todo a", "todo b"]
+      }
+    },
+    {
+      "label": "a re-render from an unrelated slot reconciles without error",
+      "do": { "click": "#tick" },
+      "expect": { "noErrors": true, "domIncludes": ["n=1"] }
+    },
+    {
+      "label": "another equal value joins the list",
+      "do": { "click": "#more" },
+      "expect": { "noErrors": true, "state": { "scores": [7, 3, 7, 7] } }
+    }
+  ]
+}

@@ -32,14 +32,18 @@ function _named(node, name) {
 }
 // _wk (with-key) — stamps stable tile identity onto the emitted TileNode.
 // Used by codegen at every tile call site that either declared its own
-// {key: expr} or sits inside a for iteration whose loop variable supplies
-// the implicit key. The reconciler in runtime/core.ts reads node.key on both
-// sides of a diff to do keyed child matching (survives reorder/insert/remove).
+// {key: expr} or sits inside a for iteration, whose _s.loopKeys entry
+// supplies the implicit key. The reconciler in runtime/core.ts reads node.key
+// on both sides of a diff to do keyed child matching (survives
+// reorder/insert/remove).
 // Rejects null / undefined / empty-string keys — those collapse different
 // tiles onto one identity and mask real bugs (e.g. show() on nil coerces
 // to the empty string, making every "no-key" item collide). Throws so
 // the outer render bailout catches the panic and falls back to a full
-// rebuild rather than silently reusing the wrong DOM element.
+// rebuild rather than silently reusing the wrong DOM element. Only an
+// explicit {key: expr} can reach it: an implicit key always starts with the
+// loop's name, so a nil element is keyed apart by its occurrence instead
+// (runtime.md §10.3.10).
 // A user tile whose body renders a list (a for) is keyed per node: one key on
 // every node would collapse them onto one identity, the thing this refuses.
 // The list is flattened first — an entry is itself a list when the body's for
@@ -53,7 +57,7 @@ function _wk(node, key) {
     throw new Error(
       "TileNode.key must be a non-empty string; got " +
         (key === "" ? '""' : String(key)) +
-        ". A {key: expr} value (or a for-loop variable used as an implicit key) evaluated to null / undefined / empty string, which would collapse distinct tiles onto a single identity in the keyed reconciler."
+        ". A {key: expr} value evaluated to null / undefined / empty string, which would collapse distinct tiles onto a single identity in the keyed reconciler."
     );
   }
   if (Array.isArray(node)) {

@@ -78,8 +78,10 @@ describe("compile output snapshots", () => {
     expect(result.js).toContain("_s.freshId()");
     expect(result.js).toContain('effect: "saveTodos"');
     // The for/when shape inside TodoList should compile to .map(...) over sorted ids
-    // and a ternary for the filter check.
+    // and a ternary for the filter check. Its row carries an explicit key, so
+    // the loop computes no implicit ones (runtime.md §10.3.10).
     expect(result.js).toMatch(/sortedIds\([^)]+\)\)\s*\|\|\s*\[\]\)\.map\(/);
+    expect(result.js).not.toMatch(/_s\.loopKeys\(/);
   });
 
   it("counter: variant equality stays correct", () => {
