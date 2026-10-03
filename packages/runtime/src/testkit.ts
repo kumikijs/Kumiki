@@ -6,6 +6,7 @@
 
 import {
   batchRejections,
+  type EffectSpec,
   type EnvRead,
   emptyRoute,
   type PanicCategory,
@@ -624,12 +625,38 @@ function shrinkCounterexample(
  */
 type SlotMetaLike = { value: unknown; refine?: (v: unknown) => boolean } & RefinementNaming;
 
-/** The minimum app shape `executeEpisode` / `replayEpisodes` consume. */
+/**
+ * The minimum app shape `executeEpisode` / `replayEpisodes` / `runEpisodeTest`
+ * consume, and the reducer-test runner too. `effects` is required, not optional: it is where a
+ * mocked or replayed err is read ({@link standInValue}), and a caller that
+ * left it out would deliver every such err as written.
+ */
 export type ReplayApp = {
   live: Record<string, unknown>;
   slots: Record<string, SlotMetaLike>;
   reducers: ReducerSpec[];
+  effects: Record<string, Pick<EffectSpec, "errText">>;
 };
+
+/**
+ * The value `.ok` / `.err` receives from a result that stands in for `eff`'s
+ * invoke instead of running it — a scenario script, a `reducer-test` /
+ * `episode-test` mock, a `kumiki replay --mock`, a replayed effect-end
+ * (stdlib.md §2.5, testing.md §8.5). An err on an effect that fails with
+ * `Text` is read through the spec's own `errText`, as the invoke reads a
+ * provider's err. A missing err value there is a provider's err with no
+ * `value`, not `null`: `errText(undefined)` is the `Text` `"undefined"`. Any
+ * other value — an ok, an `HttpError`, a custom capability's `E` — is
+ * delivered as written, with a missing one as `null`. `eff` is undefined for a
+ * name the app declares no effect for.
+ */
+export function standInValue(
+  eff: Pick<EffectSpec, "errText"> | undefined,
+  outcome: "ok" | "err",
+  value: unknown,
+): unknown {
+  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
+}
 
 /**
  * Observer event for a single replay step (spec/runtime.md §10.5.1 step kinds,
@@ -764,13 +791,15 @@ function resetLiveFromSlots(app: ReplayApp): void {
  * so it is passed on as it is. A trigger with no payload whose entry reducer
  * is an `.ok` / `.err` reducer (an `ssr.hydrate` bootstrap, which is opened
  * by the SSR pass rather than by a reducer) ran on the last `effect-end` of
- * that effect and outcome recorded before it, and that step's value is its
- * `$1`. There is deliberately no `$2`: the SSR pass itself passes
+ * that effect and outcome recorded before it, and that step's value, read
+ * as any replayed result is ({@link standInValue}), is its `$1`. There is
+ * deliberately no `$2`: the SSR pass itself passes
  * `$2: undefined`. Handing the value over consumes it, so the `from-log`
  * cursor of that effect starts past it. With no such step the log cannot
  * answer, and `undefined` says so for the caller to report.
  */
 function entryPayload(
+  effects: ReplayApp["effects"],
   ep: EpisodeLogEntry,
   entry: ReducerSpec,
   firstRed: EpisodeStepLite,
@@ -790,7 +819,7 @@ function entryPayload(
     if (s.kind !== "effect-end" || s.name !== effect) continue;
     nth++;
     if (s.result === outcome) {
-      value = s.value;
+      value = standInValue(effects[effect], outcome, s.value);
       found = true;
       cursors[effect] = nth + 1;
     }
@@ -884,7 +913,7 @@ function executeEpisode(
   );
   const entry = firstRed && app.reducers.find((r) => r.name === firstRed.name);
   const cursors: Record<string, number> = {};
-  const entryIn = firstRed && entry ? entryPayload(ep, entry, firstRed, cursors) : {};
+  const entryIn = firstRed && entry ? entryPayload(app.effects, ep, entry, firstRed, cursors) : {};
   // Reported rather than inferred (§10.5.3): a trimmed or hand-edited log that
   // lost the value would otherwise read as a reducer that panics on its own.
   const entryResultMissing = entryIn === undefined ? entry?.name : undefined;
@@ -1081,11 +1110,11 @@ function executeEpisode(
         }
         cursors[eEmit.effect] = idx + 1;
         outcome = recorded.result;
-        value = recorded.value;
+        value = standInValue(app.effects[eEmit.effect], outcome, recorded.value);
         source = "from-log";
       } else {
         outcome = mock.outcome;
-        value = mock.value;
+        value = standInValue(app.effects[eEmit.effect], outcome, mock.value);
         source = "fixed";
       }
       if (
@@ -1353,11 +1382,7 @@ export const _stdlibTest = {
    */
   runReducerTestFlow(input: {
     name: string;
-    app: {
-      live: Record<string, unknown>;
-      slots: Record<string, SlotMetaLike>;
-      reducers: ReducerSpec[];
-    };
+    app: ReplayApp;
     target: string;
     el: Record<string, unknown>;
     mocks: Record<string, { outcome: "ok" | "err"; value?: unknown; delayMs?: number }>;
@@ -1388,8 +1413,10 @@ export const _stdlibTest = {
     const enqueue = (emits: { effect: string; args: unknown[] }[] | undefined): void => {
       for (const emit of emits ?? []) {
         const m = mocks[emit.effect];
-        if (m) queue.push({ effect: emit.effect, outcome: m.outcome, value: m.value ?? null });
-        else residual.push(emit);
+        if (m) {
+          const value = standInValue(app.effects[emit.effect], m.outcome, m.value);
+          queue.push({ effect: emit.effect, outcome: m.outcome, value });
+        } else residual.push(emit);
       }
     };
 
@@ -1441,11 +1468,7 @@ export const _stdlibTest = {
    */
   runEpisodeTest(input: {
     name: string;
-    app: {
-      live: Record<string, unknown>;
-      slots: Record<string, SlotMetaLike>;
-      reducers: ReducerSpec[];
-    };
+    app: ReplayApp;
     episodes: EpisodeLogEntry[];
     mocks: Record<string, EpisodeMockPolicy>;
     expect: {

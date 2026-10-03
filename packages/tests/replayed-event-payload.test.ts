@@ -57,7 +57,7 @@ async function replay(episodes: EpisodeLogEntry[]) {
   const app = (await loadApp(EXAMPLE)) as LiveApp;
   const events: ReplayEvent[] = [];
   const report = replayEpisodes({
-    app: { live: app.live, slots: app.slots, reducers: app.reducers },
+    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
     episodes,
     mocks: { fetchQuote: { policy: "from-log" } },
     observer: (ev) => {
@@ -73,7 +73,7 @@ async function episodeTest(episodes: EpisodeLogEntry[]) {
   const app = (await loadApp(EXAMPLE)) as LiveApp;
   return _stdlibTest.runEpisodeTest({
     name: "replays-from-log",
-    app: { live: app.live, slots: app.slots, reducers: app.reducers },
+    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
     episodes,
     mocks: { fetchQuote: { policy: "from-log" } },
     expect: { slotsEqual: "from-log", noPanics: true },
@@ -157,6 +157,7 @@ describe("the entry reducer's recorded result is consumed", () => {
     return {
       live: {},
       slots: { got: { value: [] } },
+      effects: {},
       reducers: [
         {
           name: "load.ok",

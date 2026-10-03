@@ -347,6 +347,7 @@ describe("every tier applies the same rule", () => {
       live: { count: 0, log: "" } as Record<string, unknown>,
       slots: makeApp().slots,
       reducers: [overflow("bump")],
+      effects: {},
     };
     const result = _stdlib.runEpisodeTest({
       name: "replay",
@@ -381,6 +382,7 @@ describe("every tier applies the same rule", () => {
           }),
         } as ReducerSpec,
       ],
+      effects: {},
     };
     const result = _stdlib.runReducerTestFlow({
       name: "t",
@@ -401,6 +403,7 @@ describe("every tier applies the same rule", () => {
       live: { count: 0, log: "" } as Record<string, unknown>,
       slots: makeApp().slots,
       reducers: [overflow("bump")],
+      effects: {},
     };
     // Chained steps are why this one matters: without the check the refused
     // state becomes the next step's input and the invariant is proved about a

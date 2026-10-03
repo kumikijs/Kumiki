@@ -104,8 +104,10 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
     ? `try { ${head}${lookup} const _r = await (_provider ? ${call} : ${fallback}); if (_r?.kind === "ok") return _r; if (_r?.kind === "err") return { kind: "err", value: _errText(_r.value) }; throw new Error(${JSON.stringify(`the ${eff.cap} provider returned `)} + _errText(_r) + ", not {kind, value}"); } catch (_thrown) { return { kind: "err", value: _errText(_thrown), final: true }; }`
     : `${head}${lookup} if (_provider) return ${call}; return ${fallback};`;
   const invokeBody = `async (${params}) => { ${body} }`;
-  // The same `_errText`, on the spec: a mock that replaces `invoke` (the
-  // scenario runner) reads a scripted err through it rather than a copy.
+  // The same `_errText`, on the spec: a result that takes the place of
+  // `invoke` — a scenario script, a test mock, `replay --mock`, a replayed
+  // effect-end — reads its err through it (`standInValue`, runtime testkit.ts)
+  // rather than a copy.
   const errText = failsWithText(eff.cap) ? "\n    errText: _errText," : "";
 
   return `{
@@ -164,8 +166,10 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
  * text, or `String` of it when JSON has none (`undefined`, a symbol). A value
  * no reading survives (a cyclic record, a hostile `toString`) is a fixed
  * sentence rather than a second throw, which would reach the dispatcher. Each
- * such effect's spec also carries it as `errText`, which is how the scenario
- * runner reads a scripted err the same way.
+ * such effect's spec also carries it as `errText`, which is how every result
+ * that stands in for the invoke — a scenario script, a test mock, `replay
+ * --mock`, a replayed effect-end — reads its err the same way (`standInValue`,
+ * runtime testkit.ts).
  */
 export const TEXT_FAILURE_HELPER = `function _errText(v) {
   try {

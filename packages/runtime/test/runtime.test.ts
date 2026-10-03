@@ -878,6 +878,7 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   const makeFlowApp = (): FlowApp => ({
     slots: { users: { value: {} }, error: { value: "" } },
     live: {},
+    effects: {},
     reducers: [
       {
         name: "fetchUser",

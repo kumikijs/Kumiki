@@ -691,9 +691,11 @@ export type EffectSpec = {
    * How `invoke` reads an err value as the `Text` `.err` receives, present only
    * on an effect whose capability fails with `Text` (storage / session /
    * indexed; http.md §6.7, stdlib.md §2.5). Codegen sets it to the same
-   * function the generated invoke calls, so a mock that takes the place of
-   * `invoke` — the scenario runner's scripted outcome — reads its err exactly
-   * as the real one would, without a second copy of the rule or of the list.
+   * function the generated invoke calls, so a result that takes the place of
+   * `invoke` — a scenario script, a test mock, a replayed effect-end — reads
+   * its err exactly as the real one would, without a second copy of the rule
+   * or of the list. Every such stand-in reads it through `standInValue`
+   * (testkit.ts).
    */
   errText?: (value: unknown) => string;
 };

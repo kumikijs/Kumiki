@@ -268,6 +268,8 @@ test loadUser-success =
 
 `mocks: {effect-name: ok(value) | err(error) | delay(ms, ok(value))}` で任意の effect の結果を差し替える。
 
+mock は effect の結果の代わりに置かれるので、その結果と同じように読まれる。`.kumiki` のテストでは checker が先に payload を見て、effect の `out=` の片側に照らす（[§8.1.1](#_8-1-1-the-names-a-test-body-writes)）。`storage.*` / `session.*` / `indexed.*` の effect は `Text` で失敗するので、そこへの `err({message: "blocked"})` は **E0201** であり、テストは `err("blocked")` と書く。checker が見ない値 — [`kumiki replay --mock`](./runtime.md#_10-5-3-replay) の JSON payload や、`from-log` で replay される記録済みの `effect-end`（[§8.6](#_8-6-episode-replay)） — は、そうした effect では、その effect が provider の err 値を読むのと同じ読み方で読まれる（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。scenario の effect スクリプトと同じである（[§8.10](#_8-10-the-three-layers-of-tooling-verification)）：`Text` は書いたとおり、`Text` の `message` を持つレコードはそのフィールド（`{"message": "blocked"}` は `"blocked"`）、それ以外はその JSON テキスト。したがって mock の下でも、アプリには決して入れられない値を `Text` の slot が持つことはない。それ以外の capability への `err`（`HttpError` や、カスタム capability 自身の `E`）は、書いたとおり `.err` に届く。
+
 ## 8.6 Episode replay
 
 実運用で記録した episode log を再生して結果を検証：
