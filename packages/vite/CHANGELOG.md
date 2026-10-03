@@ -1,5 +1,165 @@
 # @kumikijs/vite
 
+## 0.6.1
+
+### Patch Changes
+
+- fe8e6a4: Publish the `.js` artifacts without their JSDoc
+
+  The largest file any of these packages ships was mostly prose. `dist/index.js`
+  of `@kumikijs/runtime` — the package entry, and the `./bundle` export codegen
+  inlines for `bundle: true` / smoke / run / test — was 296 kB, of which 83 kB
+  was JSDoc. `@kumikijs/compiler`'s was 372 kB with 95 kB of it.
+
+  That prose has two better readers than a published bundle. Editors read it
+  from the `.d.ts`, which keeps every block. People read it from the source on
+  GitHub. What was left was a per-install download nobody opens.
+
+  `tsdown.shared.ts` now carries one output setting for every package:
+
+  ```ts
+  comments: { legal: true, annotation: true, jsdoc: false }
+  ```
+
+  | artifact                  | before | after  | gzip before → after |
+  | ------------------------- | ------ | ------ | ------------------- |
+  | `@kumikijs/runtime` dist  | 621 kB | 538 kB | 163 kB → 128 kB     |
+  | `@kumikijs/compiler` dist | 423 kB | 328 kB | 105 kB → 65 kB      |
+  | `@kumikijs/cli` dist      | 196 kB | 162 kB | 45 kB → 30 kB       |
+  | `@kumikijs/mcp` dist      | 33 kB  | 29 kB  | 10 kB → 9 kB        |
+
+  This is not minification, and the two comment kinds a build cannot regenerate
+  are kept:
+
+  - `annotation` (`@__PURE__`, `@__NO_SIDE_EFFECTS__`, `@vite-ignore`). Dropping
+    these would silently cost downstream bundlers the tree-shaking
+    `sideEffects: false` promises — a fatter app bundle with no error anywhere.
+  - `legal` (`@license`, `@preserve`, `//!`, `/*!`), which has to survive
+    redistribution.
+
+  Identifiers, formatting and the trailing `export { … }` line are untouched, so
+  `@kumikijs/runtime`'s `dist/index.js` stays unminified, readable in a stack
+  trace, and inline-able by `inlineRuntime` exactly as before.
+  `packages/tests/dist-comments.test.ts` pins all of that: no JSDoc in any
+  published `.js`, JSDoc still in the `.d.ts`, annotations still present, and an
+  `inlineRuntime` round-trip over the real built bundle.
+
+  What a compiled app downloads is unchanged — `kumiki build` ships
+  `dist/modules/*`, which were already minified. An app built with
+  `bundle: true` inlines 83 kB less.
+
+- Updated dependencies [276089b]
+- Updated dependencies [f36269f]
+- Updated dependencies [8eca379]
+- Updated dependencies [6cae7d8]
+- Updated dependencies [72ff1df]
+- Updated dependencies [b2b14c4]
+- Updated dependencies [a69f7f4]
+- Updated dependencies [0a8762c]
+- Updated dependencies [13eacc9]
+- Updated dependencies [e96eba6]
+- Updated dependencies [62cc960]
+- Updated dependencies [68b27a1]
+- Updated dependencies [2dfc73f]
+- Updated dependencies [027cf25]
+- Updated dependencies [bf86b16]
+- Updated dependencies [3db2d76]
+- Updated dependencies [b74e05a]
+- Updated dependencies [fe62177]
+- Updated dependencies [eb5215c]
+- Updated dependencies [9a2965f]
+- Updated dependencies [4f7e35b]
+- Updated dependencies [1e90ba3]
+- Updated dependencies [b53ae7f]
+- Updated dependencies [1c1cb23]
+- Updated dependencies [9237208]
+- Updated dependencies [8820b8e]
+- Updated dependencies [e7da073]
+- Updated dependencies [fbbec02]
+- Updated dependencies [fac7523]
+- Updated dependencies [3e8d1ba]
+- Updated dependencies [18f2e91]
+- Updated dependencies [1bc3e8a]
+- Updated dependencies [c858728]
+- Updated dependencies [3043987]
+- Updated dependencies [6925c32]
+- Updated dependencies [8d3595f]
+- Updated dependencies [fbbec02]
+- Updated dependencies [e709ac7]
+- Updated dependencies [8f2d978]
+- Updated dependencies [13a5cbb]
+- Updated dependencies [6b334a4]
+- Updated dependencies [e2b8d2d]
+- Updated dependencies [0aff1de]
+- Updated dependencies [14522b7]
+- Updated dependencies [e0ce4ed]
+- Updated dependencies [7ed2e94]
+- Updated dependencies [6b861ce]
+- Updated dependencies [730690b]
+- Updated dependencies [528c9d3]
+- Updated dependencies [67a6ea1]
+- Updated dependencies [29e24c1]
+- Updated dependencies [e2a3cda]
+- Updated dependencies [36340c7]
+- Updated dependencies [8f7b051]
+- Updated dependencies [1ed9ec0]
+- Updated dependencies [f2a7d92]
+- Updated dependencies [4e52e29]
+- Updated dependencies [178199f]
+- Updated dependencies [3aae0ea]
+- Updated dependencies [b33d62d]
+- Updated dependencies [39eb32b]
+- Updated dependencies [fbd7685]
+- Updated dependencies [5945a3e]
+- Updated dependencies [0f4dc74]
+- Updated dependencies [5072599]
+- Updated dependencies [d029b60]
+- Updated dependencies [88effc6]
+- Updated dependencies [5907ee2]
+- Updated dependencies [b2ee6a6]
+- Updated dependencies [2adec5b]
+- Updated dependencies [6f38fd8]
+- Updated dependencies [1c1cb23]
+- Updated dependencies [d0b334d]
+- Updated dependencies [0f93dda]
+- Updated dependencies [aa8ce0b]
+- Updated dependencies [dbae0a7]
+- Updated dependencies [dbf5258]
+- Updated dependencies [a489ee1]
+- Updated dependencies [4cd6c29]
+- Updated dependencies [29aa08e]
+- Updated dependencies [46d9dca]
+- Updated dependencies [4b126f4]
+- Updated dependencies [21dc29e]
+- Updated dependencies [c1df514]
+- Updated dependencies [1b92331]
+- Updated dependencies [3573ca7]
+- Updated dependencies [d8ff739]
+- Updated dependencies [3573ca7]
+- Updated dependencies [58d3da3]
+- Updated dependencies [db913dc]
+- Updated dependencies [8d4eb0c]
+- Updated dependencies [891a942]
+- Updated dependencies [d3d6611]
+- Updated dependencies [d9d29ca]
+- Updated dependencies [ead317d]
+- Updated dependencies [7cedcce]
+- Updated dependencies [ad2c6f8]
+- Updated dependencies [43ccd6e]
+- Updated dependencies [2546469]
+- Updated dependencies [fe8e6a4]
+- Updated dependencies [2061f11]
+- Updated dependencies [b7e922c]
+- Updated dependencies [0a7ae12]
+- Updated dependencies [1a3b24c]
+- Updated dependencies [da4069f]
+- Updated dependencies [fe8e6a4]
+- Updated dependencies [f9a999c]
+- Updated dependencies [739cd7a]
+- Updated dependencies [b9e5ca6]
+  - @kumikijs/compiler@0.14.0
+  - @kumikijs/runtime@0.14.0
+
 ## 0.6.0
 
 ### Minor Changes
