@@ -3,9 +3,10 @@
 //
 //   node bundle-size/compare.mjs <base.json> <head.json>
 //
-// Both files are `measure.mjs --out` reports.
+// Both files are `measure.mjs --out` reports. A base file that does not exist
+// means the base could not be measured; the head is then shown alone.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { renderComparison } from "./report.mjs";
 
 const [basePath, headPath] = process.argv.slice(2);
@@ -14,4 +15,6 @@ if (!basePath || !headPath) {
   process.exit(2);
 }
 const read = (p) => JSON.parse(readFileSync(p, "utf8"));
-process.stdout.write(renderComparison(read(basePath), read(headPath)));
+process.stdout.write(
+  renderComparison(existsSync(basePath) ? read(basePath) : undefined, read(headPath)),
+);

@@ -74,7 +74,11 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --filter @kumikijs/runtime build
 
+      # A base whose CLI predates `kumiki build --bundle` (`main` until the
+      # release that ships it) cannot build what the script asks for. It
+      # writes no report then, and Compare shows the head's sizes alone.
       - name: Measure base
+        continue-on-error: true
         run: node packages/benchmarks/bundle-size/measure.mjs --root .bundle-size-base --out "$RUNNER_TEMP/base.json"
 
       - name: Compare
