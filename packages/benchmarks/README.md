@@ -51,7 +51,7 @@ node packages/benchmarks/bundle-size/measure.mjs --root ../other-checkout --out 
 node packages/benchmarks/bundle-size/compare.mjs base.json head.json   # base vs head, Markdown
 ```
 
-Requires the checkout's runtime built (`pnpm --filter @kumikijs/runtime build`, or a whole `pnpm build`): `kumiki build` copies its prebuilt `dist/modules`, while the CLI and compiler run from `src`. `--root` measures another checkout with that checkout's own CLI and runtime, which is how the `Bundle size` workflow (`.github/workflows/bundle-size.yml`) compares a PR's merge commit against its base and posts the table as a PR comment. The workflow is informational; the size gate is still the counter budget in `packages/cli/test/cli.test.ts`, whose figure is the `runtime/ raw` column.
+Requires the checkout's runtime built (`pnpm --filter @kumikijs/runtime build`, or a whole `pnpm build`): `kumiki build` copies its prebuilt `dist/modules`, while the CLI and compiler run from `src`. `--root` measures another checkout with that checkout's own CLI and runtime, which is how the `Bundle size` workflow (`.github/workflows/bundle-size.yml`) compares a PR's merge commit against its first parent (the base-branch commit it was merged onto) and posts the table as a PR comment. The workflow is informational; the size gate is still the counter budget in `packages/cli/test/cli.test.ts`, whose figure is the `runtime/ raw` column.
 
 ## Reactivity cost (runtime re-render baseline)
 

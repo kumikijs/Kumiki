@@ -140,7 +140,7 @@ export function renderComparison(base, head) {
   }
   lines.push(
     "",
-    "<sub>bytes · gzip level 9, brotli quality 11 · **bundle** = `kumiki build --bundle` (one file) · **modular** = `kumiki build --minify`, each file compressed on its own · **runtime/ raw** = the modular build minus app.js, uncompressed · base = the PR's base commit, head = the merge commit</sub>",
+    "<sub>bytes · gzip level 9, brotli quality 11 · **bundle** = `kumiki build --bundle` (one file) · **modular** = `kumiki build --minify`, each file compressed on its own · **runtime/ raw** = the modular build minus app.js, uncompressed · head = the PR's merge commit, base = its first parent</sub>",
   );
   return `${lines.join("\n")}\n`;
 }
