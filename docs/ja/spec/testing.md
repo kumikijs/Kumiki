@@ -87,6 +87,8 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 Set リテラルの**要素**としての `<any-id>` は、それぞれ他のどれとも対応しない要素一つと対になる。`[<any-id>, <any-id>]` はちょうど二つの生成された要素を、`["a", <any-id>]` は `"a"` ともう一つを求める。
 
+map のキーや Set リテラルの要素としての `<slots.X>` も、値としての場合と同じく slot `X` の実行後の値を表す。`{<slots.pick>: 1}` はその値をキーとするエントリを、`["z", <slots.pick>]` は `"z"` とその値を求める。その値をその場所に書いた場合と同じに照合される。
+
 ### 8.2.3 バッチ規則はここにも適用される
 
 reducer テストは*実行中のアプリ*の挙動を表明するものなので、refinement が拒否したバッチはすべての slot を `given` の値のまま残し、effect も発行しない（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。拒否は `expect` ではなく `console.error` に報告される。このティアには `errorIncludes` に相当するものが無いため、`expect` ブロックだけでは「バッチが拒否された」と「reducer が何もしなかった」を区別できない。

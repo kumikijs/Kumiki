@@ -8,6 +8,7 @@ import {
   batchRejections,
   type EnvRead,
   emptyRoute,
+  entryKey,
   type PanicCategory,
   type PanicCauseLink,
   panicInfo,
@@ -113,9 +114,36 @@ const WILD = "@@kumiki:wild";
 const WILD_KEY = "@@kumiki:wild-key";
 /** How many `<any-id>` members a Set literal has: each pairs with one generated member. */
 const WILD_MEMBERS = "@@kumiki:wild-members";
+/**
+ * The `<slots.X>` keys of a Set or Map literal, as `[sentinel, value]` pairs
+ * (a Set member's value is `true`): keyed only once the slots are known.
+ */
+const WILD_SLOT_KEYS = "@@kumiki:wild-slot-keys";
 
 function isWildValue(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && Object.hasOwn(v, WILD);
+}
+
+/** The value a `<slots.X>` sentinel stands for: slot X after execution. */
+function slotWildValue(w: Record<string, unknown>, finalSlots: Record<string, unknown>): unknown {
+  return finalSlots[w.slot as string];
+}
+
+/**
+ * Key each `<slots.X>` entry of an expected Set or Map by its slot's value,
+ * the way `add` / `insert` key that value (`entryKey`), so it then matches as
+ * if the value had been written in its place.
+ */
+function keySlotEntries(
+  eo: Record<string, unknown>,
+  finalSlots: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Object.hasOwn(eo, WILD_SLOT_KEYS)) return eo;
+  const { [WILD_SLOT_KEYS]: entries, ...rest } = eo;
+  for (const [w, v] of entries as [Record<string, unknown>, unknown][]) {
+    rest[entryKey(slotWildValue(w, finalSlots))] = v;
+  }
+  return rest;
 }
 
 /**
@@ -123,8 +151,8 @@ function isWildValue(v: unknown): v is Record<string, unknown> {
  * matched by exact key set; `<any-id>` (value) matches any present value, a
  * `<any-id>` map key pairs with exactly one otherwise-unmatched entry (0 or >1 →
  * fail), each `<any-id>` member of a Set literal pairs with one otherwise-unmatched
- * member (the counts must agree), and `<slots.X>` matches slot X's post-execution value. Falls back to
- * deep equality when no wildcard is involved.
+ * member (the counts must agree), and `<slots.X>` stands for slot X's post-execution value — as a
+ * value, a Set member or a map key alike. Falls back to deep equality when no wildcard is involved.
  */
 function wildcardEqual(
   expected: unknown,
@@ -134,7 +162,7 @@ function wildcardEqual(
   if (isWildValue(expected)) {
     const kind = expected[WILD];
     if (kind === "any-id") return actual !== undefined;
-    if (kind === "slot") return valueEqual(actual, finalSlots[expected.slot as string]);
+    if (kind === "slot") return valueEqual(actual, slotWildValue(expected, finalSlots));
     return false;
   }
   if (expected === actual) return true;
@@ -152,7 +180,7 @@ function wildcardEqual(
     if (!eArr || !aArr || expected.length !== actual.length) return false;
     return expected.every((x, i) => wildcardEqual(x, (actual as unknown[])[i], finalSlots));
   }
-  const eo = expected as Record<string, unknown>;
+  const eo = keySlotEntries(expected as Record<string, unknown>, finalSlots);
   const ao = actual as Record<string, unknown>;
   const literalKeys = Object.keys(eo).filter((k) => k !== WILD_KEY && k !== WILD_MEMBERS);
   for (const k of literalKeys) {
@@ -1192,6 +1220,8 @@ export const _stdlibTest = {
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
   WILD_MEMBERS,
+  /** The `<slots.X>` members of a Set literal and keys of a Map literal; codegen lowers them to it. */
+  WILD_SLOT_KEYS,
   /** Build a value-position wildcard sentinel: `wild("any-id")` / `wild("slot", name)`. */
   wild(kind: "any-id" | "slot", slot?: string): Record<string, unknown> {
     return slot === undefined ? { [WILD]: kind } : { [WILD]: kind, slot };

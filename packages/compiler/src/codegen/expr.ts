@@ -320,15 +320,23 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "ListLit": {
       if (!e.asSet) return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
-      // A Set's members are its keys, so a `<any-id>` member (test expect,
-      // §8.2.2) is a key wildcard, not a value: it cannot go through `setOf`,
-      // which would key the sentinel by its string form. The literal members
-      // are built as usual, and the wildcards are counted for the matcher,
-      // which pairs each with one otherwise-unmatched member.
-      const members = e.items.filter((it) => !(it.kind === "Wildcard" && it.wild === "any-id"));
+      // A Set's members are its keys, so a wildcard member (test expect,
+      // §8.2.2) cannot go through `setOf`, which would key the sentinel by its
+      // string form. The literal members are built as usual; each `<any-id>`
+      // is counted for the matcher, which pairs it with one otherwise-unmatched
+      // member, and each `<slots.X>` is handed to the matcher as a key it
+      // resolves once the slot's post-execution value is known.
+      const members = e.items.filter((it) => it.kind !== "Wildcard");
       const set = `_s.setOf([${members.map((it) => jsOfExpr(it, ctx)).join(", ")}])`;
-      const wild = e.items.length - members.length;
-      return wild === 0 ? set : `{ ...${set}, [_s.WILD_MEMBERS]: ${wild} }`;
+      const anyIds = e.items.filter((it) => it.kind === "Wildcard" && it.wild === "any-id").length;
+      const slotKeys = e.items.flatMap((it) =>
+        it.kind === "Wildcard" && it.wild === "slot" ? [`[${jsOfExpr(it, ctx)}, true]`] : [],
+      );
+      const extra = [
+        ...(anyIds === 0 ? [] : [`[_s.WILD_MEMBERS]: ${anyIds}`]),
+        ...(slotKeys.length === 0 ? [] : [`[_s.WILD_SLOT_KEYS]: [${slotKeys.join(", ")}]`]),
+      ];
+      return extra.length === 0 ? set : `{ ...${set}, ${extra.join(", ")} }`;
     }
     // The same array a tuple pattern destructures — `tupleArm` guards with
     // `Array.isArray` and reads by index, so the two halves already agreed on
@@ -336,16 +344,24 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     case "TupleLit":
       return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
     case "MapLit": {
-      const parts = e.entries.map((en) => {
-        // A `<any-id>` map key (test expect, §8.2.2) lowers to the runtime's
-        // wild-key sentinel so the matcher pairs it with the one generated entry.
-        // Any other key is stored as every Map member stores one (`entryKey`).
+      // A `<slots.X>` map key (test expect, §8.2.2) names a key only the
+      // post-execution slots know, so it cannot be keyed here: its entries are
+      // handed to the matcher, which keys each once it has resolved the slot.
+      const slotKeys: string[] = [];
+      const parts = e.entries.flatMap((en) => {
+        const value = jsOfExpr(en.value, ctx);
+        if (en.key.kind === "Wildcard" && en.key.wild === "slot") {
+          slotKeys.push(`[${jsOfExpr(en.key, ctx)}, ${value}]`);
+          return [];
+        }
+        // A `<any-id>` map key lowers to the runtime's wild-key sentinel so the
+        // matcher pairs it with the one generated entry. Any other key is
+        // stored as every Map member stores one (`entryKey`).
         const keyJs =
-          en.key.kind === "Wildcard" && en.key.wild === "any-id"
-            ? "[_s.WILD_KEY]"
-            : `[_s.entryKey(${jsOfExpr(en.key, ctx)})]`;
-        return `${keyJs}: ${jsOfExpr(en.value, ctx)}`;
+          en.key.kind === "Wildcard" ? "[_s.WILD_KEY]" : `[_s.entryKey(${jsOfExpr(en.key, ctx)})]`;
+        return [`${keyJs}: ${value}`];
       });
+      if (slotKeys.length > 0) parts.push(`[_s.WILD_SLOT_KEYS]: [${slotKeys.join(", ")}]`);
       return `{ ${parts.join(", ")} }`;
     }
     case "Wildcard":

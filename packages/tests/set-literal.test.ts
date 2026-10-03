@@ -239,6 +239,58 @@ test names-a-member-it-lacks = reducer-test grow
     ).toEqual(["keeps-the-given:true", "names-a-member-it-lacks:false @slots.sel"]);
   });
 
+  it("resolves a <slots.X> member to the slot's value after the reducer", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(`slot tags : Set(Text) = []
+slot pick : Text      = ""
+slot other : Text     = ""
+reducer addTag on=ui.click(Go) do= tags := tags.add(pick)
+test add-tag = reducer-test addTag
+    given  = {slots: {tags: [], pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: [<slots.pick>]}}
+test beside-a-literal = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: ["z", <slots.pick>]}}
+test names-a-value-it-lacks = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "a", other: "q"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: ["a", <slots.other>]}}
+test one-is-not-two = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: [<slots.pick>]}}`),
+    ).toEqual([
+      "add-tag:true",
+      "beside-a-literal:true",
+      "names-a-value-it-lacks:false @slots.tags",
+      "one-is-not-two:false @slots.tags",
+    ]);
+  });
+
+  it("resolves a <slots.X> map key to the slot's value after the reducer", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(`slot counts : Map(Text, Int) = {}
+slot pick   : Text           = ""
+slot other  : Text           = ""
+reducer bump on=ui.click(Go) do= counts := counts.insert(pick, 1)
+test bumps = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {"z": 2, <slots.pick>: 1}}}
+test names-a-key-it-lacks = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "a", other: "q"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {"z": 2, <slots.other>: 1}}}
+test wrong-value = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {"z": 2, <slots.pick>: 5}}}`),
+    ).toEqual([
+      "bumps:true",
+      "names-a-key-it-lacks:false @slots.counts",
+      "wrong-value:false @slots.counts",
+    ]);
+  });
+
   it("expects an empty Set with []", { timeout: 30_000 }, async () => {
     expect(
       await runTests(`slot w : Set(Text) = ["a"]

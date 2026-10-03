@@ -113,6 +113,22 @@ test t = reducer-test pick
     );
   });
 
+  it("hands each <slots.X> member and map key to the matcher instead of keying the sentinel", () => {
+    const out = js(`slot tags : Set(Text)       = []
+slot m    : Map(Text, Int) = {}
+slot pick : Text           = ""
+reducer go on=ui.click(Btn) do= tags := tags.add(pick)
+test t = reducer-test go
+    given  = {event: {type: ui.click, target: Btn}}
+    expect = {slots: {tags: ["z", <slots.pick>], m: {"y": 2, <slots.pick>: 1}}}`);
+    expect(out).toContain(
+      '{ ..._s.setOf(["z"]), [_s.WILD_SLOT_KEYS]: [[_s.wild("slot", "pick"), true]] }',
+    );
+    expect(out).toContain(
+      '{ [_s.entryKey("y")]: 2, [_s.WILD_SLOT_KEYS]: [[_s.wild("slot", "pick"), 1]] }',
+    );
+  });
+
   it("is built as a Set in an expected effect's argument and in a mocked result", () => {
     const out = js(
       // An HTTP effect: a storage-family one must declare its error as Text
