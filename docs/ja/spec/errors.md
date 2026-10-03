@@ -297,7 +297,11 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 > `Test wildcard "<any-id>" is only valid inside a reducer-test \`expect\``
 
-**修正**：ワイルドカードを削除するか、`reducer-test` の `expect` 内に移す。
+`reducer-test` の `expect` の中でも、構造を持つ Set の要素や map のキーの内側に入れ子になったワイルドカード（`[{id: <slots.pick>}]`、`{ {x: <any-id>}: 1 }`）は E0109 になる。Set の要素や map のキーはその値全体でキー付けされるので、ワイルドカードが代わりになれるのは要素やキーの全体だけで、それより小さい部分にはなれない。内側に入れ子になったものはワイルドカード自身の形でキー付けされ、そのテストは決して通らない。
+
+> `Test wildcard "<slots.pick>" cannot stand inside a Set member or map key: the member or key is keyed by its whole value, so a wildcard there can only be the whole member or key`
+
+**修正**：ワイルドカードを削除するか、`reducer-test` の `expect` 内に移す。入れ子になったものは、要素やキーを省略せずに書き下すか、ワイルドカードを要素やキーの全体の位置に置く（slot `pick` がレコード全体を保持するなら `[<slots.pick>]`）。
 
 ### E0111 `orphan-sub-routes`
 

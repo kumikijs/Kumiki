@@ -132,18 +132,30 @@ function slotWildValue(w: Record<string, unknown>, finalSlots: Record<string, un
 /**
  * Key each `<slots.X>` entry of an expected Set or Map by its slot's value,
  * the way `add` / `insert` key that value (`entryKey`), so it then matches as
- * if the value had been written in its place.
+ * if the value had been written in its place. Every member or key the literal
+ * writes asks for one of its own, so a slot whose key is already among the
+ * others answers `undefined`: the literal names more members than any Set or
+ * Map can hold under those keys, and the match fails.
+ *
+ * Keys are defined as own properties, never assigned: assigning `__proto__`
+ * would set the prototype instead of adding the key.
  */
 function keySlotEntries(
   eo: Record<string, unknown>,
   finalSlots: Record<string, unknown>,
-): Record<string, unknown> {
+): Record<string, unknown> | undefined {
   if (!Object.hasOwn(eo, WILD_SLOT_KEYS)) return eo;
-  const { [WILD_SLOT_KEYS]: entries, ...rest } = eo;
-  for (const [w, v] of entries as [Record<string, unknown>, unknown][]) {
-    rest[entryKey(slotWildValue(w, finalSlots))] = v;
+  const keyed: Record<string, unknown> = {};
+  const put = (k: string, v: unknown): void => {
+    Object.defineProperty(keyed, k, { value: v, enumerable: true });
+  };
+  for (const k of Object.keys(eo)) if (k !== WILD_SLOT_KEYS) put(k, eo[k]);
+  for (const [w, v] of eo[WILD_SLOT_KEYS] as [Record<string, unknown>, unknown][]) {
+    const k = entryKey(slotWildValue(w, finalSlots));
+    if (Object.hasOwn(keyed, k)) return undefined;
+    put(k, v);
   }
-  return rest;
+  return keyed;
 }
 
 /**
@@ -152,7 +164,8 @@ function keySlotEntries(
  * `<any-id>` map key pairs with exactly one otherwise-unmatched entry (0 or >1 →
  * fail), each `<any-id>` member of a Set literal pairs with one otherwise-unmatched
  * member (the counts must agree), and `<slots.X>` stands for slot X's post-execution value — as a
- * value, a Set member or a map key alike. Falls back to deep equality when no wildcard is involved.
+ * value, a Set member or a map key alike (as a member or key, one distinct from every other the
+ * literal writes; `<any-id>` pairs only with what they leave). Falls back to deep equality when no wildcard is involved.
  */
 function wildcardEqual(
   expected: unknown,
@@ -181,6 +194,7 @@ function wildcardEqual(
     return expected.every((x, i) => wildcardEqual(x, (actual as unknown[])[i], finalSlots));
   }
   const eo = keySlotEntries(expected as Record<string, unknown>, finalSlots);
+  if (eo === undefined) return false;
   const ao = actual as Record<string, unknown>;
   const literalKeys = Object.keys(eo).filter((k) => k !== WILD_KEY && k !== WILD_MEMBERS);
   for (const k of literalKeys) {
@@ -1220,7 +1234,10 @@ export const _stdlibTest = {
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
   WILD_MEMBERS,
-  /** The `<slots.X>` members of a Set literal and keys of a Map literal; codegen lowers them to it. */
+  /**
+   * The `<slots.X>` members of a Set literal and keys of a Map literal; codegen collects
+   * them under this key as `[sentinel, value]` pairs.
+   */
   WILD_SLOT_KEYS,
   /** Build a value-position wildcard sentinel: `wild("any-id")` / `wild("slot", name)`. */
   wild(kind: "any-id" | "slot", slot?: string): Record<string, unknown> {

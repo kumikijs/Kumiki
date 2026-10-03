@@ -121,12 +121,32 @@ reducer go on=ui.click(Btn) do= tags := tags.add(pick)
 test t = reducer-test go
     given  = {event: {type: ui.click, target: Btn}}
     expect = {slots: {tags: ["z", <slots.pick>], m: {"y": 2, <slots.pick>: 1}}}`);
-    expect(out).toContain(
-      '{ ..._s.setOf(["z"]), [_s.WILD_SLOT_KEYS]: [[_s.wild("slot", "pick"), true]] }',
-    );
-    expect(out).toContain(
-      '{ [_s.entryKey("y")]: 2, [_s.WILD_SLOT_KEYS]: [[_s.wild("slot", "pick"), 1]] }',
-    );
+    // The sentinel is never keyed at build time, by `setOf` or `entryKey` ...
+    expect(out).not.toMatch(/setOf\(\[[^\]]*_s\.wild|entryKey\(_s\.wild/);
+    // ... it reaches the matcher paired with what its entry holds.
+    expect(out).toContain('[_s.WILD_SLOT_KEYS]: [[_s.wild("slot", "pick"), true]]');
+    expect(out).toContain('[_s.WILD_SLOT_KEYS]: [[_s.wild("slot", "pick"), 1]]');
+  });
+
+  it("refuses a wildcard inside a structured Set member or map key (E0109)", () => {
+    const defs = (expect: string): string => `type P = {x: Int}
+slot ps   : Set(P)      = {}
+slot pm   : Map(P, Int) = {}
+slot pl   : List(P)     = []
+slot n    : Int         = 0
+reducer go on=ui.click(Btn) do= n := 1
+test t = reducer-test go
+    given  = {event: {type: ui.click, target: Btn}}
+    expect = {slots: ${expect}}`;
+    const msg = (w: string): string =>
+      `Test wildcard "${w}" cannot stand inside a Set member or map key: the member or key is keyed by its whole value, so a wildcard there can only be the whole member or key`;
+    expect(diagnostics(defs("{ps: [{x: <slots.n>}]}"))).toEqual([`E0109 9:32 ${msg("<slots.n>")}`]);
+    expect(diagnostics(defs("{ps: [{x: <any-id>}]}"))).toEqual([`E0109 9:32 ${msg("<any-id>")}`]);
+    expect(diagnostics(defs("{pm: {{x: <slots.n>}: 1}}"))).toEqual([
+      `E0109 9:32 ${msg("<slots.n>")}`,
+    ]);
+    // The whole member or key, a List item and a map value are all fine.
+    expect(diagnostics(defs("{pl: [{x: <slots.n>}], pm: {{x: 1}: <slots.n>}}"))).toEqual([]);
   });
 
   it("is built as a Set in an expected effect's argument and in a mocked result", () => {
