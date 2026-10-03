@@ -22,13 +22,22 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    env:
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
+      # Neither checkout keeps its token in .git/config: this job's token can
+      # write to the PR, and `pnpm install` / `pnpm build` run the checked-out
+      # code. The comment step gets the token from github-script instead.
       - uses: actions/checkout@v6
         with:
-          # The base commit has to be in the clone for the worktree below.
-          fetch-depth: 0
+          persist-credentials: false
+
+      # The base goes in its own shallow checkout — one commit, not the
+      # history — and is measured with the head's script but its own CLI and
+      # runtime (`--root`), so the two reports differ only by the PR's change.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .bundle-size-base
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 
@@ -39,23 +48,23 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # `kumiki build` copies the runtime's prebuilt dist/modules; the CLI and
+      # compiler run from src through tsx, so the runtime is all either side
+      # needs built.
       - name: Build head
-        run: pnpm build
+        run: pnpm --filter @kumikijs/runtime build
 
       - name: Measure head
         run: node packages/benchmarks/bundle-size/measure.mjs --out "$RUNNER_TEMP/head.json"
 
-      # The base is measured with the head's script but the base's own CLI and
-      # runtime (`--root`), so the two reports differ only by the PR's change.
       - name: Build base
+        working-directory: .bundle-size-base
         run: |
-          git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
-          cd "$RUNNER_TEMP/base"
           pnpm install --frozen-lockfile
-          pnpm build
+          pnpm --filter @kumikijs/runtime build
 
       - name: Measure base
-        run: node packages/benchmarks/bundle-size/measure.mjs --root "$RUNNER_TEMP/base" --out "$RUNNER_TEMP/base.json"
+        run: node packages/benchmarks/bundle-size/measure.mjs --root .bundle-size-base --out "$RUNNER_TEMP/base.json"
 
       - name: Compare
         run: |
@@ -80,7 +89,7 @@ jobs:
               issue_number,
             });
             const mine = comments.find(
-              (c) => c.user?.type === "Bot" && c.body?.startsWith(marker),
+              (c) => c.user?.login === "github-actions[bot]" && c.body?.startsWith(marker),
             );
             if (mine) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });

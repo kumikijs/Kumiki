@@ -6,8 +6,9 @@
 //
 // `--root` measures another checkout with THAT checkout's CLI and runtime, so
 // CI can measure a PR's base with the head's script and compare like for like.
-// The checkout must be built (`pnpm build`): `kumiki build` copies the
-// runtime's prebuilt `dist/modules`.
+// The checkout's runtime must be built (`pnpm --filter @kumikijs/runtime build`,
+// or a whole `pnpm build`): `kumiki build` copies its prebuilt `dist/modules`.
+// Nothing else needs a build — the CLI and compiler run from `src` via tsx.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

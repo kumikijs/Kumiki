@@ -1,6 +1,13 @@
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { compareReports, formatDelta, MARKER, renderComparison, sizes } from "./report.mjs";
+import {
+  compareReports,
+  formatDelta,
+  MARKER,
+  renderComparison,
+  renderReport,
+  sizes,
+} from "./report.mjs";
 
 /** One app's row with every metric at `n`, so a test changes only what it names. */
 function app(name, n, overrides = {}) {
@@ -47,6 +54,10 @@ describe("formatDelta", () => {
   it("separates thousands", () => {
     expect(formatDelta(10_000, 12_500)).toBe("+2,500 (+25.0%)");
   });
+
+  it("gives no percentage against a zero base, where a share has no meaning", () => {
+    expect(formatDelta(0, 512)).toBe("+512");
+  });
 });
 
 describe("compareReports", () => {
@@ -76,6 +87,35 @@ describe("compareReports", () => {
     const { total } = compareReports(base, head);
     expect(total.base.bundle.gzip).toBe(100);
     expect(total.head.bundle.gzip).toBe(110);
+  });
+
+  it("keeps an app only the base builds out of the total too, so removing one is not a win", () => {
+    const base = { apps: [app("a", 100), app("old", 5_000)] };
+    const head = { apps: [app("a", 110)] };
+    const { total } = compareReports(base, head);
+    expect(total.base.bundle.gzip).toBe(100);
+    expect(total.head.bundle.gzip).toBe(110);
+  });
+});
+
+describe("renderReport", () => {
+  it("prints one row per app with every metric of a single run, in report order", () => {
+    const md = renderReport({
+      apps: [
+        {
+          name: "01-counter",
+          bundle: { raw: 60_782, gzip: 20_129, brotli: 18_191 },
+          modular: { files: 7, raw: 66_691, gzip: 24_132, brotli: 21_830 },
+          runtime: 63_331,
+        },
+        app("02-todomvc", 1),
+      ],
+    });
+    const rows = md.split("\n").filter((l) => l.startsWith("| 0"));
+    expect(rows).toEqual([
+      "| 01-counter | 60,782 | 20,129 | 18,191 | 7 | 24,132 | 63,331 |",
+      "| 02-todomvc | 1 | 1 | 1 | 3 | 1 | 1 |",
+    ]);
   });
 });
 
