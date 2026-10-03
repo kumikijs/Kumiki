@@ -1132,6 +1132,24 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
     expect(out).not.toMatch(/"status":\s*"disk full"/);
   });
 
+  it("--mock 'effect: err(<json>)' on a storage effect delivers the Text the handler would", {
+    timeout: 30000,
+  }, () => {
+    // `persist` is `storage.write`, whose `.err` is `Text`: the JSON is never
+    // typechecked, so a `{message}` record is read as a provider's err is.
+    const { out, code } = runCli([
+      "replay",
+      REPLAY_PERSIST,
+      "--from-log",
+      REPLAY_PERSIST_LOG,
+      "--mock",
+      'persist: err({"message":"blocked"})',
+    ]);
+    expect(code).toBe(0);
+    expect(out).toContain('[effect-end] persist err = "blocked" (mock:fixed)');
+    expect(out).toMatch(/"status":\s*"blocked"/);
+  });
+
   it("--mock 'effect: from-log' resolves to the recorded effect-end", { timeout: 30000 }, () => {
     const { out, code } = runCli([
       "replay",

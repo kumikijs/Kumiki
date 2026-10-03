@@ -52,6 +52,7 @@ describe("replayEpisodes panic emit", () => {
         live: defined(app.live, "the app's live map"),
         slots: app.slots,
         reducers: app.reducers,
+        effects: app.effects,
       },
       episodes: [panicEpisode],
       mocks: {},

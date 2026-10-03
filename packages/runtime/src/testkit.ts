@@ -6,6 +6,7 @@
 
 import {
   batchRejections,
+  type EffectSpec,
   type EnvRead,
   emptyRoute,
   type PanicCategory,
@@ -624,12 +625,35 @@ function shrinkCounterexample(
  */
 type SlotMetaLike = { value: unknown; refine?: (v: unknown) => boolean } & RefinementNaming;
 
-/** The minimum app shape `executeEpisode` / `replayEpisodes` consume. */
+/**
+ * The minimum app shape `executeEpisode` / `replayEpisodes` consume, and the
+ * reducer-test runner too. `effects` is required, not optional: it is where a
+ * mocked or replayed err is read ({@link standInValue}), and a caller that
+ * left it out would deliver every such err as written.
+ */
 export type ReplayApp = {
   live: Record<string, unknown>;
   slots: Record<string, SlotMetaLike>;
   reducers: ReducerSpec[];
+  effects: Record<string, Pick<EffectSpec, "errText">>;
 };
+
+/**
+ * The value `.ok` / `.err` receives from a result that stands in for `eff`'s
+ * invoke instead of running it — a scenario script, a `reducer-test` /
+ * `episode-test` mock, a `kumiki replay --mock`, a replayed effect-end
+ * (stdlib.md §2.5, testing.md §8.5). An err on an effect that fails with
+ * `Text` is read through the spec's own `errText`, as the invoke reads a
+ * provider's err; any other value is delivered as written, and a missing one
+ * as `null`. `eff` is undefined for a name the app declares no effect for.
+ */
+export function standInValue(
+  eff: Pick<EffectSpec, "errText"> | undefined,
+  outcome: "ok" | "err",
+  value: unknown,
+): unknown {
+  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
+}
 
 /**
  * Observer event for a single replay step (spec/runtime.md §10.5.1 step kinds,
@@ -1081,11 +1105,11 @@ function executeEpisode(
         }
         cursors[eEmit.effect] = idx + 1;
         outcome = recorded.result;
-        value = recorded.value;
+        value = standInValue(app.effects[eEmit.effect], outcome, recorded.value);
         source = "from-log";
       } else {
         outcome = mock.outcome;
-        value = mock.value;
+        value = standInValue(app.effects[eEmit.effect], outcome, mock.value);
         source = "fixed";
       }
       if (
@@ -1353,11 +1377,7 @@ export const _stdlibTest = {
    */
   runReducerTestFlow(input: {
     name: string;
-    app: {
-      live: Record<string, unknown>;
-      slots: Record<string, SlotMetaLike>;
-      reducers: ReducerSpec[];
-    };
+    app: ReplayApp;
     target: string;
     el: Record<string, unknown>;
     mocks: Record<string, { outcome: "ok" | "err"; value?: unknown; delayMs?: number }>;
@@ -1388,8 +1408,10 @@ export const _stdlibTest = {
     const enqueue = (emits: { effect: string; args: unknown[] }[] | undefined): void => {
       for (const emit of emits ?? []) {
         const m = mocks[emit.effect];
-        if (m) queue.push({ effect: emit.effect, outcome: m.outcome, value: m.value ?? null });
-        else residual.push(emit);
+        if (m) {
+          const value = standInValue(app.effects[emit.effect], m.outcome, m.value);
+          queue.push({ effect: emit.effect, outcome: m.outcome, value });
+        } else residual.push(emit);
       }
     };
 
@@ -1441,11 +1463,7 @@ export const _stdlibTest = {
    */
   runEpisodeTest(input: {
     name: string;
-    app: {
-      live: Record<string, unknown>;
-      slots: Record<string, SlotMetaLike>;
-      reducers: ReducerSpec[];
-    };
+    app: ReplayApp;
     episodes: EpisodeLogEntry[];
     mocks: Record<string, EpisodeMockPolicy>;
     expect: {

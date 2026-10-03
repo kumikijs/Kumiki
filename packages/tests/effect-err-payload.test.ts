@@ -1,17 +1,24 @@
 // What a `.err` reducer on a built-in storage-family effect actually receives.
-// A test mock can deliver any shape it likes, so it only shows the shape its
-// author believed in; these run programs against the real
-// `storage.*` / `session.*` / `indexed.*` handlers, failing, and check that the
-// reducer's `problem := $e` gets the `Text` the effect's `out=Result(_, Text)`
-// declares (http.md §6.7) — not a record, which renders as "[object Object]".
+// These run programs against the real `storage.*` / `session.*` / `indexed.*`
+// handlers, failing, and check that the reducer's `problem := $e` gets the
+// `Text` the effect's `out=Result(_, Text)` declares (http.md §6.7) — not a
+// record, which renders as "[object Object]". A scripted or mocked result
+// stands in for the provider's, so the later blocks hold each of those to
+// what the real run delivers: a scenario script, a `reducer-test` /
+// `episode-test` mock, and a `kumiki replay` mock.
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compile } from "@kumikijs/compiler";
 import {
+  _stdlibTest,
   type AppShape,
   type CapabilityProvider,
   type EffectResult,
+  type EpisodeLogEntry,
+  type EpisodeMockPolicy,
   mount,
+  replayEpisodes,
   runScenario,
   type Scenario,
 } from "@kumikijs/runtime";
@@ -61,6 +68,23 @@ reducer boot   on=app.start      do= emit run()
 reducer failed on=run.err($e, _) do= problem := $e
 tile App = column(text("problem: " + problem))
 app ErrPayload
+    caps   = [${cap}]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`;
+
+/**
+ * A program on a capability that defines its own `E` — `HttpError` for
+ * `http.get`, the declared `Fault` for a custom one — whose `.err` keeps `$e`.
+ */
+const keepsItsErr = (cap: string, decl: string, request: string): string => `
+${decl}
+slot failure : Option(${cap === "http.get" ? "HttpError" : "Fault"}) = None
+effect run cap=${cap} in=Unit out=Result(Unit, ${cap === "http.get" ? "HttpError" : "Fault"})
+    map-request=${request}
+reducer boot   on=app.start      do= emit run()
+reducer failed on=run.err($e, _) do= failure := Some($e)
+tile App = column(text("failure"))
+app KeepsErr
     caps   = [${cap}]
     routes = {"/" -> App, "/404" -> App}
     init   = []`;
@@ -350,19 +374,6 @@ describe("a scripted err on a storage-family effect is the Text the real app del
 
   // The other capabilities define their own `E`, and a script writes it as the
   // provider would return it: it reaches `.err` as written.
-  const keepsItsErr = (cap: string, decl: string, request: string): string => `
-${decl}
-slot failure : Option(${cap === "http.get" ? "HttpError" : "Fault"}) = None
-effect run cap=${cap} in=Unit out=Result(Unit, ${cap === "http.get" ? "HttpError" : "Fault"})
-    map-request=${request}
-reducer boot   on=app.start      do= emit run()
-reducer failed on=run.err($e, _) do= failure := Some($e)
-tile App = column(text("failure"))
-app KeepsErr
-    caps   = [${cap}]
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-
   it("an http.* err is the HttpError record the script writes", async () => {
     const httpError = { status: 503, message: "down", body: { _tag: "None" } };
     const src = keepsItsErr("http.get", "", `{url: "/x", decode: Decoder.None}`);
@@ -380,5 +391,145 @@ app KeepsErr
       ["acme.fault"],
     );
     expect(state.failure).toEqual({ _tag: "Some", _0: { code: 7 } });
+  });
+});
+
+// The test tier. A `reducer-test` / `episode-test` mock and a `kumiki replay
+// --mock` stand in for the provider's result exactly as a scenario script
+// does, and are read the same way. In a `.kumiki` test the checker sees the
+// value first: it must be the effect's `E`, so a record on a `Text`-failing
+// effect is E0201 there. The runtime reading is what a mock the checker never
+// saw gets — `--mock` JSON, a recorded effect-end, a host calling the runner
+// directly — and it is the same `errText` the scenario runner reads through.
+describe("a test mock's err on a storage-family effect is the Text the real app delivers", () => {
+  type LiveApp = AppShape & { live: Record<string, unknown> };
+
+  /** `src` with one `test` definition appended, checked; the codes it reports. */
+  const testCodes = (src: string, test: string): string[] => {
+    const r = compile(`${src}\n\n${test}`, { runtimeSpecifier: "./runtime.js" });
+    return r.kind === "ok" ? [] : r.errors.map((e) => e.code);
+  };
+  const reducerTest = (mock: string): string => `
+test mocked =
+    reducer-test boot
+        given  = {slots: {}, mocks: {run: ${mock}}}
+        expect = {slots: {problem: "blocked"}, effects: []}`;
+  const episodeTest = (mock: string): string => `
+test mocked =
+    episode-test
+        load   = "boot.jsonl"
+        mocks  = {run: ${mock}}
+        expect = {slots-equal: {problem: "blocked"}, no-panics: true}`;
+
+  it.each([
+    ["reducer-test", reducerTest],
+    ["episode-test", episodeTest],
+  ])("a %s mock err must be the effect's Text: a record is E0201", (_, test) => {
+    const src = failingAtBoot("storage.read", `{key: "k"}`);
+    expect(testCodes(src, test(`err({message: "blocked"})`))).toEqual(["E0201"]);
+    // The control: the same test with a Text is accepted, so the E0201 above
+    // is the payload's and not the test's shape.
+    expect(testCodes(src, test(`err("blocked")`))).toEqual([]);
+  });
+
+  /** What `boot`'s `.err` stores when a reducer-test mocks `run` with `mock`. */
+  async function reducerTestStores(
+    src: string,
+    mock: { outcome: "ok" | "err"; value: unknown },
+    capabilities: string[] = [],
+  ): Promise<unknown> {
+    const app = (await loadSource(src, capabilities)) as LiveApp;
+    _stdlibTest.runReducerTestFlow({
+      name: "mocked",
+      app,
+      target: "boot",
+      el: {},
+      mocks: { run: mock },
+      expect: { kind: "state", slots: {}, effects: [] },
+    });
+    return app.live.problem ?? app.live.failure;
+  }
+
+  /** One recorded boot whose `run` failed with `recorded`. */
+  const bootEpisode = (recorded: unknown): EpisodeLogEntry => ({
+    id: "ep_1",
+    trigger: { kind: "app.start" },
+    steps: [
+      { kind: "reducer", name: "boot", "slot-diffs": [], emits: ["run"] },
+      { kind: "effect-end", name: "run", result: "err", value: recorded },
+    ],
+    status: "completed",
+  });
+
+  /** What `.err` stores when the boot episode is replayed with `run` under `mock`. */
+  async function replayStores(
+    src: string,
+    mock: EpisodeMockPolicy,
+    recorded: unknown = "recorded",
+    capabilities: string[] = [],
+  ): Promise<unknown> {
+    const app = (await loadSource(src, capabilities)) as LiveApp;
+    const report = replayEpisodes({
+      app,
+      episodes: [bootEpisode(recorded)],
+      mocks: { run: mock },
+      observer: () => "continue",
+    });
+    return report.finalSlots.problem ?? report.finalSlots.failure;
+  }
+
+  const blocked = { message: "blocked" };
+
+  it.each([
+    ["storage.read", `{key: "k"}`],
+    ["session.write", `{key: "k", value: "v"}`],
+    ["indexed.delete", `{store: "notes", key: "k"}`],
+  ])("%s: a {message} err reaches .err as its message, as a provider's would", async (cap, req) => {
+    const src = failingAtBoot(cap, req);
+    expect(await reducerTestStores(src, { outcome: "err", value: blocked })).toBe("blocked");
+    const fixed: EpisodeMockPolicy = { policy: "fixed", outcome: "err", value: blocked };
+    expect(await replayStores(src, fixed)).toBe("blocked");
+    // A recorded effect-end is a provider's result too — one logged before
+    // the handlers delivered Text, say.
+    expect(await replayStores(src, { policy: "from-log" }, blocked)).toBe("blocked");
+  });
+
+  it("an episode-test with a {message} mock passes on the Text it would see live", async () => {
+    const app = (await loadSource(failingAtBoot("storage.read", `{key: "k"}`))) as LiveApp;
+    const result = _stdlibTest.runEpisodeTest({
+      name: "mocked",
+      app,
+      episodes: [bootEpisode("recorded")],
+      mocks: { run: { policy: "fixed", outcome: "err", value: blocked } },
+      expect: { slotsEqual: { problem: "blocked" }, noPanics: true },
+    });
+    expect(result.pass, result.actual).toBe(true);
+  });
+
+  it("a Text err is delivered unchanged", async () => {
+    const src = failingAtBoot("storage.read", `{key: "k"}`);
+    expect(await reducerTestStores(src, { outcome: "err", value: "blocked" })).toBe("blocked");
+    const fixed: EpisodeMockPolicy = { policy: "fixed", outcome: "err", value: "blocked" };
+    expect(await replayStores(src, fixed)).toBe("blocked");
+  });
+
+  it.each([
+    [
+      "an http.* err is the HttpError record the mock writes",
+      keepsItsErr("http.get", "", `{url: "/x", decode: Decoder.None}`),
+      { status: 503, message: "down", body: { _tag: "None" } },
+      [],
+    ],
+    [
+      "a custom capability's err is the record the mock writes",
+      keepsItsErr("acme.fault", "type Fault = {code: Int}", `{id: "k"}`),
+      { code: 7 },
+      ["acme.fault"],
+    ],
+  ])("%s", async (_, src, value, caps) => {
+    const want = { _tag: "Some", _0: value };
+    expect(await reducerTestStores(src, { outcome: "err", value }, caps)).toEqual(want);
+    const fixed: EpisodeMockPolicy = { policy: "fixed", outcome: "err", value };
+    expect(await replayStores(src, fixed, "recorded", caps)).toEqual(want);
   });
 });

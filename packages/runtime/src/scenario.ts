@@ -19,6 +19,7 @@ import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
+import { standInValue } from "./testkit.ts";
 
 /** One thing to do to the app. Exactly one field should be set. */
 export type Action =
@@ -368,15 +369,11 @@ export async function runScenario(
   const def = scenario.defaultEffect ?? { outcome: "ok" as const, value: null };
   for (const [name, eff] of Object.entries(app.effects)) {
     // A scripted outcome takes the place of a provider's result (stdlib.md
-    // §2.5), so an err on an effect that fails with `Text` is read the way the
-    // invoke it replaces reads a provider's err — through the spec's own
-    // `errText`, the compiled reading. A missing `value` is a provider's err
-    // with no `value`, not `null`. Any other err (an `HttpError`, a custom
-    // capability's `E`) reaches `.err` as the script wrote it.
-    const result = (s: EffectScript): EffectResult =>
-      s.outcome === "err" && eff.errText
-        ? { kind: "err", value: eff.errText(s.value) }
-        : { kind: s.outcome, value: s.value ?? null };
+    // §2.5), so it is read as one, by the same rule a test mock is.
+    const result = (s: EffectScript): EffectResult => ({
+      kind: s.outcome,
+      value: standInValue(eff, s.outcome, s.value),
+    });
     eff.invoke = async (input) => {
       emitBuf.push({ effect: name, args: [input] });
       const queue = scripts[name];
