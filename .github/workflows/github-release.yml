@@ -1,0 +1,37 @@
+name: GitHub Release
+
+# Create the GitHub Release for tags that were published but have none, e.g.
+# after a Release run that failed at that step. A tag that already has a
+# release is left as it is. The body is the tag's CHANGELOG section, cut to
+# GitHub's limit when needed (.github/scripts/github-release.mjs).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Space-separated tags, e.g. @kumikijs/compiler@0.14.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # The tags arrive through the environment, never spliced into the
+      # command line, and are split into arguments by the shell.
+      - name: Create GitHub Releases
+        run: node .github/scripts/github-release.mjs $TAGS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ inputs.tags }}

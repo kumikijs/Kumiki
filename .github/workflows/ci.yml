@@ -43,6 +43,10 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # The release scripts in .github/scripts belong to no package.
+      - name: Test release scripts
+        run: node --test .github/scripts/*.test.mjs
+
       - name: Lint
         run: pnpm exec turbo run lint
 

@@ -55,9 +55,22 @@ jobs:
       # When that PR is merged (versions bumped, changesets consumed), publishes
       # via OIDC trusted publishing (changeset publish shells out to npm publish).
       - name: Create Release PR or Publish
+        id: changesets
         uses: changesets/action@v1
         with:
           version: pnpm run version
           publish: pnpm release
+          # The step below makes the GitHub Releases. changesets/action would
+          # send each CHANGELOG section whole, and GitHub refuses a body over
+          # 125,000 characters: v0.14's compiler section was 167,000, so that
+          # release failed and turned the run red after npm had published.
+          createGithubReleases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Releases
+        if: steps.changesets.outputs.published == 'true'
+        run: node .github/scripts/github-release.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
