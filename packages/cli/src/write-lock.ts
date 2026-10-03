@@ -1,5 +1,6 @@
 // Writing a `.kumiki` file (or one of its sidecars) so that no reader sees it
-// half-written, and serializing the write verbs on one file across processes.
+// half-written, and serializing the write verbs on one file across processes
+// and across the worker threads of one process.
 
 import { createHash, randomBytes } from "node:crypto";
 // Every `fs` call goes through the namespace so tests can intercept it: a named
@@ -276,7 +277,7 @@ function lookAtLock(lock: string): Look {
 function parseHolder(content: string): LockHolder | null {
   try {
     const parsed = JSON.parse(content) as Partial<LockHolder>;
-    const thread = parsed.threadId ?? 0;
+    const thread = parsed.threadId === undefined ? 0 : parsed.threadId;
     return Number.isInteger(parsed.pid) &&
       (parsed.pid as number) > 0 &&
       typeof parsed.host === "string" &&
@@ -315,13 +316,23 @@ function describeHolder(path: string, seen: LockSighting, lock: string): string 
   if (holder === null) {
     return `${path} is locked by ${lock}, which names no writer; it is taken over once it is ${UNREADABLE_LOCK_GRACE_MS / 1000} s old`;
   }
-  const here = holder.host === hostname();
   return (
     `${path} is being written by ${describeWriter(holder)} (${lock})` +
-    (here
-      ? ""
-      : `; whether it is still running cannot be checked from ${hostname()}, so if it is not, delete the lock file`)
+    (holder.host !== hostname()
+      ? `; whether it is still running cannot be checked from ${hostname()}, so if it is not, delete the lock file`
+      : isOtherThread(holder)
+        ? "; it is waited on until this process exits, so if that thread is not writing this file, delete the lock file"
+        : "")
   );
+}
+
+/**
+ * Whether `holder` is another thread of this process. Whether a thread is
+ * still running cannot be asked from another thread, so its lock is waited on
+ * until the process exits, even when the thread ended mid-write.
+ */
+function isOtherThread(holder: LockHolder): boolean {
+  return holder.host === hostname() && holder.pid === process.pid && holder.threadId !== threadId;
 }
 
 /** `kumiki process <pid> on <host>`, and which thread when it is not the main one. */
@@ -342,9 +353,11 @@ function describeClaim(path: string, lock: string, claim: string, by: LockSighti
   }
   return (
     `${why} is held by ${describeWriter(holder)}` +
-    (holder.host === hostname()
-      ? "; it is passed over once that process exits, so if that process is not writing this file, stop it or delete the claim file"
-      : `; whether it is still running cannot be checked from ${hostname()}, so if it is not, delete the claim file`)
+    (holder.host !== hostname()
+      ? `; whether it is still running cannot be checked from ${hostname()}, so if it is not, delete the claim file`
+      : isOtherThread(holder)
+        ? "; it is passed over once this process exits, so if that thread is not writing this file, delete the claim file"
+        : "; it is passed over once that process exits, so if that process is not writing this file, stop it or delete the claim file")
   );
 }
 
@@ -440,8 +453,9 @@ function unlinkQuietly(path: string): void {
     // Already gone, or not removable now. A claim left over is judged like a
     // lock: only once the process that left it has exited is it abandoned and
     // its name passed over. Until then — a long-running process such as the
-    // MCP server — it holds off every other process's takeover of that lock,
-    // until its own process claims again and passes over it.
+    // MCP server — it holds off every other caller's takeover of that lock,
+    // other threads of its own process included, until the thread that left
+    // it claims again and passes over it.
   }
 }
 

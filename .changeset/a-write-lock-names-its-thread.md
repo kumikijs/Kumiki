@@ -24,7 +24,12 @@ next to the pid and host. Only a lock naming this pid and this thread is taken
 over as a leftover. A lock naming another thread of this process is waited on
 like any running writer's, and the wait-out message names the thread. A lock
 written without a thread, by an earlier kumiki, names the main thread, and a
-thread id that is not a non-negative integer names no writer.
+thread id that is not a non-negative integer (`null` included) names no writer.
+
+Whether a thread is still running cannot be asked from another thread, so a
+lock left by a worker thread that ended mid-write (a `terminate()` while it
+held the lock) is waited on until its process exits. The wait-out message for
+such a lock says to delete the lock file if that thread is not writing it.
 
 The CLI and the MCP server write on the main thread only. This reached a host
 calling `addDef`, `replaceDef` and the other exported verbs from worker
