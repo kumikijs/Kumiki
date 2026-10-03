@@ -17,7 +17,7 @@ import {
 } from "./control-check.ts";
 import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
-import type { AppShape, RuntimeDiagnostic } from "./index.ts";
+import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
 
 /** One thing to do to the app. Exactly one field should be set. */
@@ -248,7 +248,11 @@ function validateExpect(expect: Expect, where: string): string[] {
   return problems;
 }
 
-/** A scripted effect outcome, returned in order each time the effect fires. */
+/**
+ * A scripted effect outcome, returned in order each time the effect fires. An
+ * `err` on a storage / session / indexed effect is read as the `Text` its
+ * `out=` declares, as a provider's would be (testing.md §8.10).
+ */
 export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
 
 export type Scenario = {
@@ -363,6 +367,16 @@ export async function runScenario(
   const cursors: Record<string, number> = {};
   const def = scenario.defaultEffect ?? { outcome: "ok" as const, value: null };
   for (const [name, eff] of Object.entries(app.effects)) {
+    // A scripted outcome takes the place of a provider's result (stdlib.md
+    // §2.5), so an err on an effect that fails with `Text` is read the way the
+    // invoke it replaces reads a provider's err — through the spec's own
+    // `errText`, the compiled reading. A missing `value` is a provider's err
+    // with no `value`, not `null`. Any other err (an `HttpError`, a custom
+    // capability's `E`) reaches `.err` as the script wrote it.
+    const result = (s: EffectScript): EffectResult =>
+      s.outcome === "err" && eff.errText
+        ? { kind: "err", value: eff.errText(s.value) }
+        : { kind: s.outcome, value: s.value ?? null };
     eff.invoke = async (input) => {
       emitBuf.push({ effect: name, args: [input] });
       const queue = scripts[name];
@@ -370,9 +384,9 @@ export async function runScenario(
         const idx = cursors[name] ?? 0;
         const scripted = queue[Math.min(idx, queue.length - 1)] ?? def;
         cursors[name] = idx + 1;
-        return { kind: scripted.outcome, value: scripted.value ?? null };
+        return result(scripted);
       }
-      return { kind: def.outcome, value: def.value ?? null };
+      return result(def);
     };
   }
 

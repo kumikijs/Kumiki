@@ -1,6 +1,6 @@
 // What a `.err` reducer on a built-in storage-family effect actually receives.
-// A scenario or test mock can deliver any shape it likes, so it only shows the
-// shape its author believed in; these run programs against the real
+// A test mock can deliver any shape it likes, so it only shows the shape its
+// author believed in; these run programs against the real
 // `storage.*` / `session.*` / `indexed.*` handlers, failing, and check that the
 // reducer's `problem := $e` gets the `Text` the effect's `out=Result(_, Text)`
 // declares (http.md §6.7) — not a record, which renders as "[object Object]".
@@ -12,6 +12,8 @@ import {
   type CapabilityProvider,
   type EffectResult,
   mount,
+  runScenario,
+  type Scenario,
 } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadApp, loadSource } from "./helpers/load.ts";
@@ -261,5 +263,122 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
     expect(text).toContain(
       "problem: Error: the storage.read provider returned null, not {kind, value}",
     );
+  });
+});
+
+// The scenario tier (#715). A scripted outcome takes the place of a provider's
+// result (stdlib.md §2.5), so it is read as one: each row runs the same value
+// through a real mount, as a host provider's err, and through `runScenario`, as
+// a scripted err, and the slot must hold the same `Text` both ways. The runner
+// used to hand the script's value to `.err` as written, so a record or a number
+// reached the `Text` slot and the page showed "[object Object]".
+describe("a scripted err on a storage-family effect is the Text the real app delivers", () => {
+  type Script = { outcome: "err"; value?: unknown };
+
+  /** The slot a scenario's boot leaves behind, with `effects` / `defaultEffect` scripted. */
+  async function scenarioState(
+    src: string,
+    scripts: Pick<Scenario, "effects" | "defaultEffect">,
+    capabilities: string[] = [],
+  ): Promise<Record<string, unknown>> {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const report = await runScenario(await loadSource(src, capabilities), root, {
+        ...scripts,
+        steps: [{ label: "boot fails", expect: { noErrors: true } }],
+      });
+      const failures = report.steps.flatMap((s) => s.failures);
+      expect(report.ok, failures.join("\n")).toBe(true);
+      return report.steps[0]?.state ?? {};
+    } finally {
+      root.remove();
+    }
+  }
+
+  /** The `Text` a real mount stores when the capability's provider returns `script`'s err. */
+  async function realDelivers(cap: string, src: string, script: Script): Promise<string> {
+    // A script with no `value` is a provider's err with no `value`, not one of `null`.
+    const result = { kind: "err", ...("value" in script ? { value: script.value } : {}) };
+    const app = await loadSource(src);
+    await problemShown(app, { [cap]: () => result as EffectResult });
+    return (app.live as Record<string, unknown>).problem as string;
+  }
+
+  // [what is scripted, cap, map-request, the script, the Text the real app shows]
+  const ROWS: [string, string, string, Script, string][] = [
+    ["a Text", "storage.read", `{key: "k"}`, { outcome: "err", value: "blocked" }, "blocked"],
+    [
+      "a {message} record",
+      "storage.read",
+      `{key: "k"}`,
+      { outcome: "err", value: { message: "blocked" } },
+      "blocked",
+    ],
+    ["a number", "storage.read", `{key: "k"}`, { outcome: "err", value: 42 }, "42"],
+    ["no value", "storage.read", `{key: "k"}`, { outcome: "err" }, "undefined"],
+    [
+      "a record with no message",
+      "session.write",
+      `{key: "k", value: "v"}`,
+      { outcome: "err", value: { code: 5 } },
+      '{"code":5}',
+    ],
+    [
+      "a {message} record",
+      "indexed.delete",
+      `{store: "notes", key: "k"}`,
+      { outcome: "err", value: { message: "locked" } },
+      "locked",
+    ],
+  ];
+
+  it.each(ROWS)("%s on %s", async (_, cap, mapRequest, script, shown) => {
+    const src = failingAtBoot(cap, mapRequest);
+    const real = await realDelivers(cap, src, script);
+    expect(real).toBe(shown);
+    expect((await scenarioState(src, { effects: { run: [script] } })).problem).toBe(real);
+  });
+
+  it("a defaultEffect err is read the same way", async () => {
+    const src = failingAtBoot("storage.read", `{key: "k"}`);
+    const script: Script = { outcome: "err", value: { message: "blocked" } };
+    const real = await realDelivers("storage.read", src, script);
+    expect(real).toBe("blocked");
+    expect((await scenarioState(src, { defaultEffect: script })).problem).toBe(real);
+  });
+
+  // The other capabilities define their own `E`, and a script writes it as the
+  // provider would return it: it reaches `.err` as written.
+  const keepsItsErr = (cap: string, decl: string, request: string): string => `
+${decl}
+slot failure : Option(${cap === "http.get" ? "HttpError" : "Fault"}) = None
+effect run cap=${cap} in=Unit out=Result(Unit, ${cap === "http.get" ? "HttpError" : "Fault"})
+    map-request=${request}
+reducer boot   on=app.start      do= emit run()
+reducer failed on=run.err($e, _) do= failure := Some($e)
+tile App = column(text("failure"))
+app KeepsErr
+    caps   = [${cap}]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []`;
+
+  it("an http.* err is the HttpError record the script writes", async () => {
+    const httpError = { status: 503, message: "down", body: { _tag: "None" } };
+    const src = keepsItsErr("http.get", "", `{url: "/x", decode: Decoder.None}`);
+    const state = await scenarioState(src, {
+      effects: { run: [{ outcome: "err", value: httpError }] },
+    });
+    expect(state.failure).toEqual({ _tag: "Some", _0: httpError });
+  });
+
+  it("a custom capability's err is the record the script writes", async () => {
+    const src = keepsItsErr("acme.fault", "type Fault = {code: Int}", `{id: "k"}`);
+    const state = await scenarioState(
+      src,
+      { effects: { run: [{ outcome: "err", value: { code: 7 } }] } },
+      ["acme.fault"],
+    );
+    expect(state.failure).toEqual({ _tag: "Some", _0: { code: 7 } });
   });
 });

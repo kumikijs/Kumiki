@@ -687,6 +687,15 @@ export type EffectSpec = {
     | { kind: "linear"; n: number; ms: number }
     | { kind: "exponential"; n: number; ms: number; factor: number };
   invoke: (input: unknown, caps: CapabilityRegistry, signal?: AbortSignal) => Promise<EffectResult>;
+  /**
+   * How `invoke` reads an err value as the `Text` `.err` receives, present only
+   * on an effect whose capability fails with `Text` (storage / session /
+   * indexed; http.md §6.7, stdlib.md §2.5). Codegen sets it to the same
+   * function the generated invoke calls, so a mock that takes the place of
+   * `invoke` — the scenario runner's scripted outcome — reads its err exactly
+   * as the real one would, without a second copy of the rule or of the list.
+   */
+  errText?: (value: unknown) => string;
 };
 
 /**
