@@ -9,6 +9,7 @@ import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import { hostname } from "node:os";
 import { resolve as resolvePath } from "node:path";
+import { threadId } from "node:worker_threads";
 
 /**
  * Replace `path` with `content` through a sibling temp file and a rename, so a
@@ -29,7 +30,8 @@ import { resolve as resolvePath } from "node:path";
  * is the one caller that does not, since that content was on disk before.
  */
 export function atomicWriteFileSync(path: string, content: string): void {
-  const tmp = `${path}.kumiki-write-${process.pid}.tmp`;
+  // Named for the thread, not just the process: worker threads share a pid.
+  const tmp = `${path}.kumiki-write-${process.pid}-${threadId}.tmp`;
   try {
     fs.writeFileSync(tmp, content);
     fs.renameSync(tmp, path);
@@ -73,10 +75,19 @@ const UNREADABLE_LOCK_GRACE_MS = 2_000;
 /** Errors from creating the lock that another attempt may not meet. */
 const TRANSIENT = new Set(["EPERM", "EACCES", "EBUSY", "EMFILE", "ENFILE"]);
 
-/** The files this process holds the write lock on, with how deeply it is re-entered. */
+/**
+ * The files this thread holds the write lock on, with how deeply it is
+ * re-entered. Each worker thread loads its own copy of this module, so the map
+ * says nothing about other threads of the process.
+ */
 const heldWriteLocks = new Map<string, number>();
 
-type LockHolder = { pid: number; host: string };
+/**
+ * The writer a lock names. `threadId` is `node:worker_threads`' id of the
+ * writing thread (0 for the main thread), since every thread of a process
+ * shares its pid.
+ */
+type LockHolder = { pid: number; host: string; threadId: number };
 
 /**
  * One lock file as it was seen: which file (device and inode), when it was
@@ -105,14 +116,15 @@ type Look =
  * both log an op. The lock is a sibling file created with `wx`, so while it
  * exists no other writer can create it; the others wait for it, and give up
  * with an error — nothing written, nothing logged — if it is not released in
- * time. It is re-entrant within a process, because `patch apply` and
+ * time. It is re-entrant within a thread, because `patch apply` and
  * `patch revert` are made of the other verbs.
  *
  * A lock is taken over, not waited on, when its holder is known to be gone:
- * it names a process on this host that has exited, it names this process
+ * it names a process on this host that has exited, it names this thread
  * (which holds nothing, so a release of its own failed), or it names no valid
- * writer and is older than a writer takes to fill it in. A holder on another
- * host is never presumed gone: its pid cannot be asked about from here.
+ * writer and is older than a writer takes to fill it in. A lock naming another
+ * thread of this process is live, like any running process's. A holder on
+ * another host is never presumed gone: its pid cannot be asked about from here.
  *
  * Releasing removes the lock only if it is still the one this call created, so
  * a lock deleted by hand and taken by another writer meanwhile is left alone.
@@ -196,7 +208,7 @@ function tryCreateLock(lock: string): Created {
     if (TRANSIENT.has(code)) return { kind: "transient", code };
     throw e;
   }
-  const holder: LockHolder = { pid: process.pid, host: hostname() };
+  const holder: LockHolder = { pid: process.pid, host: hostname(), threadId };
   const content = JSON.stringify({ ...holder, token: randomBytes(8).toString("hex") });
   let open = true;
   try {
@@ -255,18 +267,23 @@ function lookAtLock(lock: string): Look {
 }
 
 /**
- * The writer a lock names, or `null` when it names none: empty, not JSON, or a
+ * The writer a lock names, or `null` when it names none: empty, not JSON, a
  * pid that is not a process id (`0` and negative pids address process groups,
- * so asking whether they are alive answers about other processes).
+ * so asking whether they are alive answers about other processes), or a
+ * `threadId` that is not a thread id. A lock with no `threadId`, written
+ * before it was recorded, names the main thread.
  */
 function parseHolder(content: string): LockHolder | null {
   try {
     const parsed = JSON.parse(content) as Partial<LockHolder>;
+    const thread = parsed.threadId ?? 0;
     return Number.isInteger(parsed.pid) &&
       (parsed.pid as number) > 0 &&
       typeof parsed.host === "string" &&
-      parsed.host !== ""
-      ? { pid: parsed.pid as number, host: parsed.host }
+      parsed.host !== "" &&
+      Number.isInteger(thread) &&
+      thread >= 0
+      ? { pid: parsed.pid as number, host: parsed.host, threadId: thread }
       : null;
   } catch {
     return null;
@@ -280,9 +297,10 @@ function isAbandoned(seen: LockSighting): boolean {
     return ageMs > UNREADABLE_LOCK_GRACE_MS;
   }
   if (holder.host !== hostname()) return false;
-  // This process holds no lock on this file (`withWriteLock` checked), so a
-  // lock naming it was left by one of its own releases that failed.
-  if (holder.pid === process.pid) return true;
+  // This thread holds no lock on this file (`withWriteLock` checked), so a
+  // lock naming it was left by one of its own releases that failed. A lock
+  // naming another thread of this process is held by a running process.
+  if (holder.pid === process.pid) return holder.threadId === threadId;
   try {
     process.kill(holder.pid, 0);
     return false;
@@ -299,11 +317,17 @@ function describeHolder(path: string, seen: LockSighting, lock: string): string 
   }
   const here = holder.host === hostname();
   return (
-    `${path} is being written by kumiki process ${holder.pid} on ${holder.host} (${lock})` +
+    `${path} is being written by ${describeWriter(holder)} (${lock})` +
     (here
       ? ""
       : `; whether it is still running cannot be checked from ${hostname()}, so if it is not, delete the lock file`)
   );
+}
+
+/** `kumiki process <pid> on <host>`, and which thread when it is not the main one. */
+function describeWriter(holder: LockHolder): string {
+  const thread = holder.threadId === 0 ? "" : ` (thread ${holder.threadId})`;
+  return `kumiki process ${holder.pid}${thread} on ${holder.host}`;
 }
 
 /**
@@ -317,7 +341,7 @@ function describeClaim(path: string, lock: string, claim: string, by: LockSighti
     return `${why} names no writer; it is passed over once it is ${UNREADABLE_LOCK_GRACE_MS / 1000} s old`;
   }
   return (
-    `${why} is held by kumiki process ${holder.pid} on ${holder.host}` +
+    `${why} is held by ${describeWriter(holder)}` +
     (holder.host === hostname()
       ? "; it is passed over once that process exits, so if that process is not writing this file, stop it or delete the claim file"
       : `; whether it is still running cannot be checked from ${hostname()}, so if it is not, delete the claim file`)

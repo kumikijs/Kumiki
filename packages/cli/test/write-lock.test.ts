@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { threadId } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { claimLock, type LockSighting, withWriteLock, writeLockPath } from "../src/write-lock.ts";
 
@@ -206,6 +207,39 @@ describe("releasing the lock", () => {
     expect(withWriteLock(file, () => 43)).toBe(43);
     expect(fs.existsSync(lock)).toBe(false);
     expect(fs.readdirSync(dir)).toEqual(["c.kumiki"]);
+  });
+});
+
+describe("a lock naming this process", () => {
+  // `threadId` is 0 here: the tests run on the worker's main thread.
+  it.each([
+    ["this thread", { threadId }],
+    ["no thread, as written before threads were recorded", {}],
+  ])("is taken over when it names %s, which holds nothing", (_, thread) => {
+    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "2000";
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname(), ...thread }));
+    expect(withWriteLock(file, () => "done")).toBe("done");
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it("is waited on when it names another thread, which is running", () => {
+    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    const other = JSON.stringify({ pid: process.pid, host: hostname(), threadId: threadId + 1 });
+    writeFileSync(lock, other);
+    expect(() => withWriteLock(file, () => "done")).toThrow(
+      `is being written by kumiki process ${process.pid} (thread ${threadId + 1}) on ${hostname()}`,
+    );
+    expect(readFileSync(lock, "utf8")).toBe(other);
+  });
+
+  it.each([
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["not a number", "1"],
+  ])("names no writer when its thread is %s", (_, bad) => {
+    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname(), threadId: bad }));
+    expect(() => withWriteLock(file, () => "done")).toThrow("which names no writer");
   });
 });
 
