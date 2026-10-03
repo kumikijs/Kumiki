@@ -372,10 +372,10 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-A file that does not compile runs no test. The runner names the file and prints each diagnostic as `kumiki check` does — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
+A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
 
 ```
-compile failed (app.kumiki):
+compile failed (/path/to/app.kumiki):
 E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 

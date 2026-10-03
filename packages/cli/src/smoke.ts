@@ -83,7 +83,7 @@ export async function loadApp(
   } as const;
   const first = compile(source, baseOpts);
   if (first.kind !== "ok") {
-    throw new Error(compileFailure(source, first.errors, opts.sourcePath));
+    throw new Error(compileFailure(source, [...first.warnings, ...first.errors], opts.sourcePath));
   }
 
   // Two-pass when the source uses `icon(name="...")` literals AND we have a
@@ -121,13 +121,13 @@ export async function loadApp(
 
 /**
  * What `loadApp` throws for a program that does not compile: the file, then
- * each diagnostic as `kumiki check` prints it. One inside a `test` definition
- * also names that test.
+ * each diagnostic — warnings first, then errors — as `kumiki check` prints it.
+ * One inside a `test` definition also names that test.
  */
-function compileFailure(source: string, errors: KumikiError[], sourcePath?: string): string {
+function compileFailure(source: string, diagnostics: KumikiError[], sourcePath?: string): string {
   // `compile` returned diagnostics rather than throwing, so the source parsed.
   const tests = loadSource(source).defs.filter((e) => e.layer === "test");
-  const lines = errors.map((d) => {
+  const lines = diagnostics.map((d) => {
     const test = tests.find(
       ({ range }) => d.pos.line >= range.startLine && d.pos.line <= range.endLine,
     );

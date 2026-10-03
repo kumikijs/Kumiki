@@ -14,12 +14,13 @@ Error: compile failed:
 E0713 `given.slots` must be a record, `{<slot>: …}`
 ```
 
-The runner now names the file and prints each diagnostic through the same
-formatter `check` and `build` use, plus the `test` the diagnostic sits inside:
+The runner now names the file by its resolved path and prints each diagnostic,
+warnings before errors, through the same formatter `check` and `build` use, plus
+the `test` the diagnostic sits inside:
 
 ```
 $ kumiki test app.kumiki
-Error: compile failed (app.kumiki):
+Error: compile failed (/path/to/app.kumiki):
 E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 

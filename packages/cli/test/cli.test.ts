@@ -962,6 +962,35 @@ test starts-at-41 =
       expect(tested.stderr).toContain('in test "starts-at-41"');
     });
 
+    it("prints the warnings `check` prints, before the errors", { timeout: 30000 }, () => {
+      // A `box` cannot fire `focus`, so subscribing to one is W0212.
+      const file = join(dir, "warned.kumiki");
+      writeFileSync(
+        file,
+        `slot f : Text = ""
+reducer recordFocus on=ui.focus(Card) do= f := "focused"
+tile Card = box(text("hi"))
+${NOT_A_RECORD}`,
+      );
+      const checked = cli(["check", file]);
+      expect(checked.status).toBe(1);
+      const lines = checked.stderr.trim().split("\n");
+      expect(lines).toEqual([
+        expect.stringMatching(/^W0212 /),
+        expect.stringMatching(/^E0713 test-shape-invalid at 11:26: /),
+      ]);
+
+      const tested = cli(["test", file]);
+      expect(tested.status).toBe(1);
+      const reported = tested.stderr.split("\n");
+      const at = reported.findIndex((l) => l.includes(`compile failed (${file}):`));
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(reported.slice(at + 1, at + 3)).toEqual([
+        lines[0],
+        `${lines[1]} (in test "starts-at-41")`,
+      ]);
+    });
+
     it("names no test when the diagnostic is outside one", { timeout: 30000 }, () => {
       const file = join(dir, "unknown-name.kumiki");
       writeFileSync(
