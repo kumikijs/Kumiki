@@ -3,6 +3,11 @@
 # it only after a button flips `reveal`, so the read panics during render — and
 # the enclosing `error-boundary` catches it and shows the fallback instead of
 # the exception escaping uncaught.
+#
+# `Risky` is reachable two ways on purpose: as a child of `App` at `/`, and as
+# the route root at `/risky`. The boundary belongs to the tile, so it holds in
+# both — §7.3 scopes it to renders *under that tile*, which says nothing about
+# where the tile was written.
 
 slot secret : Option(Text) = None
 slot reveal : Bool         = false
@@ -30,5 +35,5 @@ reducer doReveal on=ui.click(RevealBtn) do= reveal := true
 
 app PanicBoundaryDemo
     caps   = []
-    routes = {"/" -> App, "/404" -> App}
+    routes = {"/" -> App, "/risky" -> Risky, "/404" -> App}
     init   = []

@@ -1,0 +1,101 @@
+# Feature (stdlib.md §2.2.1 / §2.2.2): one key per value.
+#
+#   Set(T).add / remove / toggle / has
+#   Map(K, V).get / get-or / insert / remove / update, m[k], m[k] := v
+#
+# Every member that writes, finds or removes an entry stores and looks up its
+# key the same way, so two keys are one entry exactly when they are equal by
+# `==`. A union value, a record or a tuple is a key of its own: `add(Red)`
+# does not make `has(Blue)` true, and `votes[Red]` and `votes[Green]` are two
+# counts. `remove` takes out the entry `add` / `insert` put in, whatever the
+# key's type — an `Int`, a nominal over one, a `Bool`, a `Text`. The readers
+# hand a structured key back as the value it was written from. A key written
+# in a Map literal — a record, a variant with a payload, a tuple — is stored
+# the way `insert` stores it, and a Map's `filter` hands its predicate the key
+# and the value whatever shape the key has.
+
+type Color  = Red | Green | Blue
+type ItemId = nominal Int
+type Pt     = {x: Int, y: Int}
+
+slot picked : Set(Color)        = {}
+slot votes  : Map(Color, Int)   = {}
+slot cells  : Map(Pt, Text)     = {}
+slot items  : Map(ItemId, Text) = {}
+slot nums   : Map(Int, Text)    = {1: "one", 2: "two"}
+slot ids    : Set(Int)          = {}
+slot flags  : Set(Bool)         = {}
+slot words  : Set(Text)         = {}
+
+slot litCells : Map(Pt, Text)             = {{y: 2, x: 1}: "rec"}
+slot litOpts  : Map(Option(Int), Text)    = {Some(1): "one", None: "none"}
+slot litPairs : Map(Tuple(Int, Int), Int) = {(1, 2): 10, (3, 4): 0}
+
+slot pickedList : List(Color)            = []
+slot voteKeys   : List(Color)            = []
+slot cellPairs  : List(Tuple(Pt, Text))  = []
+slot litKeys    : List(Pt)               = []
+slot litOptList : List(Tuple(Option(Int), Text)) = []
+slot litPairKeys : List(Tuple(Int, Int))  = []
+
+reducer addRed on=ui.click(AddRed) do= picked := picked.add(Red)
+reducer toggleGreen on=ui.click(TogGreen) do= picked := picked.toggle(Green)
+reducer voteRed on=ui.click(VoteRed) do= votes[Red] := votes.get-or(Red, 0) + 1
+reducer voteGreen on=ui.click(VoteGreen) do= votes := votes.insert(Green, votes.get-or(Green, 0) + 1)
+
+reducer mark on=ui.click(Mark) do=
+    cells := cells.insert({x: 0, y: 0}, "origin").insert({y: 1, x: 0}, "above").update({x: 0, y: 1}, $1 + "!")
+
+reducer removeAll on=ui.click(Remove) do=
+    items := items.insert(ItemId(1), "a").insert(ItemId(2), "b").remove(ItemId(1))
+    nums := nums.remove(1)
+    ids := ids.add(1).add(2).remove(1)
+    flags := flags.add(true).add(false).remove(true)
+    words := words.add("x").add("y").remove("x")
+    picked := picked.remove(Red)
+    votes := votes.remove(Green)
+
+reducer read on=ui.click(Read) do=
+    pickedList := picked.to-list
+    voteKeys := votes.keys
+    cellPairs := cells.entries
+    litKeys := litCells.keys
+    litOptList := litOpts.entries
+    litPairKeys := litPairs.keys
+
+reducer keepPositive on=ui.click(Positive) do= litPairs := litPairs.filter($2 > 0)
+
+tile AddRed    = button(text="red") {id: "red"}
+tile TogGreen  = button(text="green") {id: "green"}
+tile VoteRed   = button(text="vote red") {id: "vote-red"}
+tile VoteGreen = button(text="vote green") {id: "vote-green"}
+tile Mark      = button(text="mark") {id: "mark"}
+tile Remove    = button(text="remove") {id: "remove"}
+tile Read      = button(text="read") {id: "read"}
+tile Positive  = button(text="positive") {id: "positive"}
+
+tile App = column(
+  row(AddRed, TogGreen, VoteRed, VoteGreen, Mark, Remove, Read, Positive),
+  text("picked: " + picked.size.show + " red=" + picked.has(Red).show + " green=" + picked.has(Green).show + " blue=" + picked.has(Blue).show),
+  text("votes: " + votes.size.show + " red=" + votes.get-or(Red, 0).show + " green=" + votes.get-or(Green, 0).show + " blue=" + votes.get-or(Blue, 0).show),
+  text("cells: " + cells.size.show + " above=" + cells.get-or({x: 0, y: 1}, "-") + " origin=" + cells.get-or({y: 0, x: 0}, "-")),
+  text("items: " + items.size.show + " has1=" + items.has(ItemId(1)).show),
+  text("nums: " + nums.size.show + " has1=" + nums.has(1).show),
+  text("ids: " + ids.size.show + " has1=" + ids.has(1).show),
+  text("flags: " + flags.size.show + " true=" + flags.has(true).show),
+  text("words: " + words.size.show + " x=" + words.has("x").show),
+  text("literal record: has=" + litCells.has({x: 1, y: 2}).show + " at=" + litCells.get-or({x: 1, y: 2}, "-")),
+  text("literal variant: some=" + litOpts.get-or(Some(1), "-") + " none=" + litOpts.get-or(None, "-") + " two=" + litOpts.has(Some(2)).show),
+  text("literal tuple: " + litPairs.size.show + " has12=" + litPairs.has((1, 2)).show + " has34=" + litPairs.has((3, 4)).show))
+
+app OneKeyPerValue
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
+
+# The expected state is a Map literal with record keys, compared with the Map
+# the reducer built through `insert` and `update`.
+test mark-writes-two-cells =
+    reducer-test mark
+        given  = {slots: {cells: {}}, event: {type: ui.click, target: Mark}}
+        expect = {slots: {cells: {{x: 0, y: 0}: "origin", {y: 1, x: 0}: "above!"}}, effects: []}

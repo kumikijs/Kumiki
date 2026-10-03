@@ -106,9 +106,14 @@ describe("the Int / Float methods the spec lists", () => {
     });
   }
 
-  for (const m of ["to-float", "to-int"]) {
-    it(`i.${m} and i.${m}() lower alike`, () => {
-      expect(loweringOf(`i.${m}()`)).toBe(loweringOf(`i.${m}`));
+  // Each is the member of one of the two: `to-float` of an `Int`, `to-int` of
+  // a `Float` (§2.2.7).
+  for (const [m, recv] of [
+    ["to-float", "i"],
+    ["to-int", "f"],
+  ] as const) {
+    it(`${recv}.${m} and ${recv}.${m}() lower alike`, () => {
+      expect(loweringOf(`${recv}.${m}()`)).toBe(loweringOf(`${recv}.${m}`));
     });
   }
 });
@@ -139,12 +144,13 @@ describe("a numeric method on something that is not a number", () => {
 
   it("says nothing about a receiver whose type it does not know", () => {
     // The file's standing policy: a diagnostic is only for types understood
-    // fully. A lambda-bound receiver keeps the dynamic pass-through.
-    const src = `slot xs : List(Float) = [1.5]
+    // fully. A `fold`'s result has no type (stdlib.md §2.2.2), so the `$1` a
+    // `map` over it binds is untyped and keeps the dynamic pass-through.
+    const src = `slot xs : List(Float) = []
 slot dst : List(Float) = []
-reducer r on=ui.click(B) do= dst := xs.map($1.sqrt)
+reducer r on=ui.click(B) do= dst := xs.fold([], $1.push($2)).map($1.sqrt)
 tile B = button(text="b")
-tile App = column(B, text(dst.size.show))
+tile App = column(B, text(dst.length.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
     expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
@@ -223,7 +229,7 @@ describe("random", () => {
   });
 
   it("lowers to the platform's generator", () => {
-    expect(loweringOf("random()")).toContain("Math.random()");
+    expect(loweringOf("random()")).toContain("_s.random()");
   });
 
   // Unlike `now`, which the checker also accepts as a bare reference, `random`

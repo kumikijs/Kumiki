@@ -129,7 +129,7 @@ on reducer execution:
 
 #### バッチは全部通るか全部通らないかのどちらか {#a-batch-commits-all-or-nothing}
 
-**書き込みごとに**、対象 slot の refinement（[登録済み refinement 述語](./language.md#_1-3-3-登録済み-refinement-述語)）に照らして検査する。バッチ最終値だけではない。**いずれか 1 つの書き込みでも**拒否された場合、その reducer 適用は丸ごと破棄される。slot は 1 つも書かれず、`emit` は 1 つも発行されず、`stop-timer` も走らず、再レンダリングも起きない。
+**書き込みごとに**、対象 slot の refinement（[登録済み refinement 述語](./language.md#_1-3-3-登録済み-refinement-述語)）に照らして検査する。バッチ最終値だけではない。検査に使う refinement は、slot の*型*が表す連鎖 — 別名・`nominal` ラッパー・`where`・型引数をそのまま返すジェネリック（`type NonEmpty(T) = T where nonempty` のもとでの `NonEmpty(Text)`） — に沿って持たれているものであり、標準ライブラリ自身の宣言も含まれる：`Email` は標準ライブラリが宣言する refinement 付き nominal（[ドメイン型](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）なので、`slot e : Email` は `slot e : Text where email` とまったく同じように `email` で検査される。型の**内側**に書かれた refinement も、それが書かれたパスで検査される（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）：`slot form : {email: Text where email}` のもとで `form.email := "nope"` も `form := {email: "nope"}` も拒否され、自身の述語を満たさない union のペイロードやコンテナの要素も同様である。述語を複数持つ型はそのすべてに照らして検査され、拒否が名指すのは、§1.3.1 が与える順で値が最初に失敗した述語である（[§1.3.1](./language.md#_1-3-1-構文)）。**いずれか 1 つの書き込みでも**拒否された場合、その reducer 適用は丸ごと破棄される。slot は 1 つも書かれず、`emit` は 1 つも発行されず、`stop-timer` も走らず、再レンダリングも起きない。
 
 バッチ単位ではなく書き込み単位なのは、バッチが map であり各 slot について最後に代入された値しか覚えていないからである。slot の範囲から出て戻ってくる `for` ループは合法な値で終わり、途中で通過した非合法な値 — 下記のとおり後続のすべての文から読める — は一度も検査されない:
 
@@ -145,7 +145,7 @@ reducer drift on=ui.click(Btn)
 [kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3)). No slot was written and no effect was emitted.
 ```
 
-を `console.error` に報告する。未処理の effect エラー（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）と同じ経路・同じ契約であり、検証ティア（`smoke` / `runScenario` / e2e）がすべて拾う。
+を `console.error` に報告する（slot の型の内側に書かれた述語なら、失敗した場所へのパスを添えて `slot "form" cannot hold {"email":"nope"} (email at .email)` と報告する）。未処理の effect エラー（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）と同じ経路・同じ契約であり、検証ティア（`smoke` / `runScenario` / e2e）がすべて拾う。
 
 このルールがあるのは、もう一方の選択肢 — 拒否された slot だけを飛ばして残りを書く — が reducer を半分だけ適用し、さらに slot が一度も取らなかった値を隣の slot へ逃がしてしまうからである。body の後続文は構築途中のバッチを読むためだ:
 
@@ -166,10 +166,12 @@ reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
 
+プログラムの外から来る値は、reducer に届く前に検査される。`Decoder.Json(T)` が decode した値を `T` の述語が拒否するレスポンスや保存値は、effect の `.err` になり（[§6.1.4](./http.md#_6-1-4-decoder-型)、[§6.7.2](./http.md#_6-7-2-宣言-localstorage)）、プログラムの `.err` reducer が扱う。そうでなければ、その書き込みがこの規則で破棄される `.ok` になり、reducer が行った他のすべて（ロード状態を終えることなど）も一緒に破棄される。
+
 refinement が門番を**しない**ものが 2 つある:
 
 - **宣言時の初期値**。`slot email : Text where email = ""` は自身の refinement が拒否する値を最初から保持する。これこそが、手つかずのフォームで `error(field=email)` にメッセージを出させている仕組みである（[エラー表示](./forms.md#_5-7-エラー表示)）。
-- **双方向 `bind`**。入力の拒否はフィールド単位で、報告も出ない（[refinement の扱い](./forms.md#_5-1-2-refinement-の扱い)）。入力途中の値は欠陥ではなく想定内だからである。デフォルトでは slot は以前の値を保つが、`strict=false` では新しい値を取り、代わりにフォームの `valid` フラグが false になる。
+- **双方向 `bind`**。入力の拒否はフィールド単位で、報告も出ない（[refinement の扱い](./forms.md#_5-1-2-refinement-の扱い)）。入力途中の値は欠陥ではなく想定内だからである。slot は以前の値を保ち、フィールドは入力されたものを表示し続け、`error(field=…)` はフィールドが表示しているものについてメッセージを出す。
 
 **この 2 つは組み合わさると罠になる**。宣言時の初期値が自身の refinement に違反している slot は、reducer からその初期値に*リセット*できない。`Text where nonempty` の slot に対する `name := ""` は他と変わらない書き込みなので、バッチを破棄する。slot の型を広げて境界で refine するか、空のケースを `Option` でモデル化すること:
 
@@ -197,7 +199,8 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 
 `app theme = themeName` のように **slot 名で theme を指定**できる。ランタイムは：
 - `app.themeName` が `app.themes` に存在しなければ、`_live[app.themeName]` を読んで theme 名を解決
-- 各 `render()` の冒頭で `applyThemeDefaults` を再実行 → slot 値の変更が body スタイルに反映
+- 各 `render()` の冒頭で `applyThemeDefaults` を再実行 → slot 値の変更が body スタイルと注入済みのベーススタイルシートに反映
+- 解決された theme が、マウント済みツリーを塗ったときの theme と違えば、ページを塗り直す。トークン prop（`bg`, `color`, `pad`, `gap`, `radius`, `shadow`、タイポグラフィ等）は tile の描画時にリテラル値へ解決されるため、自身の prop が変わらない tile は放っておくと旧 theme の値のままになる。その描画パスは差分を取らず、ツリーを作り直す。切替をまたいで要素の同一性は保たれない：フォーカス中のコントロールは他の再構築と同じ方法でフォーカスと選択範囲を取り戻し、どの slot も持たない DOM 状態は初期状態に戻る：スクロール位置、制御されていない `<details>`、bind されていない input の入力中テキスト、file input の選択、再生中のメディア、そして `bind` が拒否したテキスト（作り直されたコントロールは slot が保持している値を表示し、そのフィールドの `error(field=…)` のメッセージも拒否されたテキストとともに消える）。切替は入場アニメーションを再生し直さない：作り直された要素のうち `transition` や `motion` を持つものは、一回きりのアニメーションなら最終フレームをすぐに表示し、繰り返すアニメーションは動き続ける。アプリのどのビューも、hydration の有無にかかわらず同じように振る舞う
 
 ```kumiki snippet
 slot themeName : Text = "Light"
@@ -210,11 +213,11 @@ app App ... theme = themeName    # ← slot 名を渡す
 ### 10.3.7 polymorphic collection methods
 
 `.filter` / `.map` / `.get-or` などはランタイムで型 dispatch:
-- `.filter(pred)`: Array なら `Array.prototype.filter`、Object なら `mapFilter`
+- `.filter(pred)`: Array なら `Array.prototype.filter`、Option なら `Some` の値、それ以外のオブジェクト — Map、または値が `true` の Set — なら各エントリを 1 つの `[key, value]` ペアとして渡す（`_s.filter`）
 - `.map(fn)`: Array なら要素 map、Option/Result なら Some/Ok の中身に map (`mapOver`)
 - `.flat-map(fn)`: Option/Result の Some/Ok を f に渡し、None/Err は素通り (`flatMapOption`)
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): 引数数で判別
-- `m.entries` は `[[k, v], ...]` で返り、後続の list ops の lambda は `$1=k, $2=v` に自動 destructure される
+- `m.entries` は `[[k, v], ...]` で返る。後続の list ops の lambda が `$1` / `$2` をどう束縛するかはここではなく、受信側の型から型検査器が決める（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— `Tuple(K, V)` の要素は `$1=k, $2=v` に分解される
 
 ### 10.3.8 select の値マッチング
 
@@ -251,8 +254,11 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 **コントラクト**
 
 - `key` は **additive で optional**。key を持たないタイルも合法な `TileNode`
-  で、key を含まない旧コンパイル出力は新 runtime でそのまま mount し、逆に
-  新コンパイラの keyed 出力も旧 runtime で（key を無視して）動く。
+  で、key を含まない旧コンパイル出力は新 runtime でそのまま mount し、旧
+  runtime はこのフィールドを無視する。これはフィールドについての記述に限られる。
+  コンパイラが key を計算するために呼ぶ stdlib ヘルパ（後述の暗黙 key の
+  `_s.loopKeys`）は前方互換ではなく、新コンパイラの出力にはそれ以上に新しい
+  runtime が要る（**Migration** を参照）。
 - reconciler は **親ごとに all-or-nothing** で keyed matching を判断する: ある
   レベルの全子が `key` を持つときのみ key で pairing し、reorder/insert/remove
   を親サブツリー再構築なしで乗り越える。1 つでも key を欠く子があれば、
@@ -341,15 +347,78 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 
 1. **作者が書いた `{key: <expr>}`** はタイル呼び出しのプロップから剥がされ、
    emit される `TileNode` のトップレベル `key` に置かれる。値は `_s.show(...)`
-   で文字列化される。`props.el` には流れない。
+   で文字列化される。`props.el` には流れない。兄弟の中で一意であること、
+   つまり 1 つのループの中でも、1 つの親の下のループどうしや他の key 付きの子
+   との間でも一意であることは作者が約束する。そのレベルの全子が key を持つとき
+   （上述の all-or-nothing 規則）、同じ key を持つ 2 つの兄弟は、どちらを指すかを
+   runtime が判断できないため、次のレンダで `location: "reconcile"` の panic になる。
+   このとき `{key: …}` の値が衝突するループ（`for s in [7, 3, 7] text(s.show) {key: s.show}`）
+   はプログラムの誤りであり、runtime は位置による対応に退避せず、
+   `[kumiki] error in reconcile: reconcile: duplicate TileNode.key "7" among sibling tiles — keys must be unique within a parent's children list`
+   を報告してツリー全体を再構築し、ページ上のすべての要素を置き換える
+   （[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。
+   そのレベルに key を持たない兄弟があるときは keyed pass が走らないため、
+   衝突した key は使われず、親は構造 diff をたどる。
 2. **`for` 反復の内側** で `{key: ...}` を書いていないタイル呼び出しには、
-   ループ変数から `_s.show(<loopVar>)` を暗黙 key として合成する。明示 key
-   が常に優先。ネストした `for` は内側のループ変数で上書きされ、`for i in
-   inner` 配下のタイルは外側の `for o in outer` の影響を受けず `_s.show(i)`
-   になる。
+   次の 3 つの部分をこの順に持つ暗黙 key を合成する。
+   - **ループ**: レンダをまたいで安定し、ソース上のループごとに異なる識別子。
+   - **出現回数**: この要素までに同じ表示値を持つ要素がいくつあるか（最初の
+     `7` は 1、2 つ目は 2）。
+   - **表示値** `_s.show(<loopVar>)`。
+
+   *参考（非規範）:* 実装はループを、それが書かれたタイル定義の名前と、その定義の
+   ループのうちソース順で何番目か（`App_0`、`App_1`、…）で名付ける。したがって
+   空行の追加やその定義の外の編集ではどの key も変わらない。各部分は
+   `<loop>|<occurrence>|<shown>` と連結され、ループの評価ごとに 1 回呼ばれる
+   `_s.loopKeys(<list>, "<loop>")` の *i* 番目の要素が反復 *i* に渡される。
+   ループ名と出現回数は `|` を含まず、出現回数は数字の並びなので、3 つの部分は
+   一意に読み戻せ、どの表示値も別の要素の key を綴れない。本体のすべての
+   タイル呼び出しが `{key: …}` を持つループは暗黙 key を読まないため、実装は
+   それを計算しない。
+
+   したがってリストの要素は相異なる必要はない。`[7, 3, 7]` も、1 つの親の下で
+   値を共有する 2 つのループも、すべての子を別の key にする。`None` だけの
+   リストや表示値が空の要素も同様に区別される。出現回数が key に含まれる前は、
+   前者は重複 key の panic、後者は `_wk` が拒否する空 key だった。唯一の例外は、
+   ソース上の 1 つのループが 1 つの親の子リストに 2 回以上寄与する場合である。
+   `tile Items = for x in xs text(x.show)` を `column(Items, Items)` と使うと
+   1 つのループが 2 回展開され、両方の展開が同じ key を持ち、親は 1. の重複 key
+   の panic になる。それぞれの使用箇所に別のコンテナを与える
+   （`column(row(Items), row(Items))`）。
+
+   **表示値が相異なる**要素の並べ替えでは、どの要素もその表示値の最初の出現
+   なので key は変わらず、上述の再利用の保証はそのまま成り立つ。出現回数から
+   次の 2 つの留保が生じる。
+   - 繰り返される値より前への挿入や削除は、その値の後の出現の番号を振り直す
+     ため、等しい値の要素どうしが入れ替わることがあり、そのための移動が隣の
+     行を巻き込むこともある。
+   - 要素の型について `show` が単射でないとき、暗黙 key は**位置に退化する**。
+     レコードはどれも同じ表示（`[object Object]`）になり、ヴァリアントはタグ
+     だけを表示するので `Done(1)` と `Done(2)` は同じ表示値を持つ。このとき
+     出現回数は要素の位置そのものであり、並べ替え・挿入・削除は行を移動せず
+     その場でパッチする。上述の保証（最小の移動、`<input>` のフォーカスと
+     キャレット、開いた `<select>`、IME composition）はそのようなリストには
+     成り立たない。並べ替えるレコードのリストには明示 key `{key: t.id}` を書く。
+
+   明示 key が常に優先。ネストした `for` は内側のループの key で上書きされ、
+   `for i in inner` 配下のタイルは外側の `for o in outer` の影響を受けず `i` で
+   key 付けされる。
+   内側の `for`（外側の body、またはそこにある分岐の腕）は外側の
+   反復ごとにリストを描くので、そのノードは項目 3 のリストを描く呼び出しと
+   同じく、外側の key の下のリストとして key が付く。内側の key が同じでも、
+   外側の反復が違う兄弟は区別される。
 3. **ユーザタイル境界** は外側の暗黙 key を body に持ち込まない。`_wk` は
    境界ノードそのものに巻かれ、body 側の identity は body が反復すれば
    body 自身で組む。
+   body が**リスト**を描く（body が `for`）とき、呼び出し側の key — 明示でも
+   暗黙でも — は 1 つのノードではなくリストを名指す。全ノードに同じ key を
+   付ければ 1 つの identity に潰れてしまう。そこで各ノードは、呼び出し側の key
+   と自身の key — どれだけ深く入れ子でも、そのノード自身の `for` が付けた
+   key — （無ければ平坦化したリスト内の位置）の組を JSON 配列 `[callKey, nodeKey]` として
+   符号化した key を持つ。ノードは互いに区別され、2 つの組が同じ文字列になる
+   ことはない。外側のリストを並べ替えると各ノードの要素が移動し、リスト内の
+   並べ替えはノード自身の key で移動する。リストのノードは、それを生んだ `for`
+   がどれだけ入れ子でも、呼び出しが置かれたコンテナの子になる。
 4. **`TileWhen` / `TileIf` / `TileMatch`** は透過。タイルを emit する分岐に
    暗黙 key を素通しで伝える。
 
@@ -359,10 +428,16 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 起こさない — key は「どの旧子がどの新子と対応するか」を決めるだけで、
 タイル自体が再構築されるかどうかを決めるものではない。
 
-**Migration**  runtime とコンパイラは matched pair として同じ minor bump で
-リリースする。片側だけでも壊れない（graceful degradation）が、`<select>`
-value / `<input>` focus と caret / event listener が insert/remove/reorder を
-またいで保持されるという保証は両方が揃って初めて成立する。
+**Migration**  runtime とコンパイラは key コントラクトを matched pair として
+出荷する。コントラクトの変更は、その changeset が指定するレベルで両パッケージを
+同じリリースで bump する。`@kumikijs/compiler` は `@kumikijs/runtime` に依存し、
+runtime のリリースはコンパイラ側の依存範囲を引き上げるので、レジストリから
+入れたコンパイラはそれ以上に新しい runtime を伴う。旧コンパイラの出力は新
+runtime で動く。新コンパイラの出力にはそれ以上に新しい runtime が要る。出力は
+`_s.loopKeys` を呼ぶが、それより古い runtime はこれを持たず、最初のレンダで
+`_s.loopKeys is not a function` で失敗する。`<select>` value / `<input>` focus と
+caret / event listener が insert/remove/reorder をまたいで保持されるという保証は
+両方が揃って初めて成立する。
 
 ### 10.3.11 要素同一性を保った reconciliation (#190)
 
@@ -627,6 +702,16 @@ reducer が完了すると、emit された effect 集合がディスパッチ�
 
 各 effect の `cap` が `app.caps` に含まれるか検査。違反は実行せず `app.error` に通知。
 
+`cap` が空の effect は標準の表示系 effect であり、ゲートを通さない。
+
+通知の中身は [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) の `PanicInfo` であり、`category` は `"capability"`、`location` は拒否された effect を名指す。併せて、検証ティアが読むチャネルである `console.error` にも出力し、その emit を囲む episode が開いていればその episode に `panic` step としても記録する。throw は発生していないので `stack` も `cause` も持たない。
+
+報告は live・SSR の両経路が同じ言葉で行う。異なるのは報告*先*である。`renderToString` には発火すべき `app.error` が無い — そのパスでは reducer の panic も `panic` step だけで終わり、拒否もその同じ規則に従わせる — ので、サーバ側ではコンソールと episode がすべてである。
+
+step が付く episode は、いま開いている episode ではなく、その emit を**所有する** episode である。default policy では dispatcher は発火元の episode が開いたまま拒否するので、step はそこに落ちる。遅延 policy（[§10.4.3](#_10-4-3-policy-処理)）では launch はタイマーやキューの末尾から、その episode が閉じたずっと後に発火する。それでも step は `effect-start` を確保した episode に落ちなければならず、`episode-id` もそれを名指さなければならない — 「episode 無し」に落ちると、その episode には `effect-start` と `effect-cancel` だけが残り、置き換えられた `debounce` タイマーと見分けがつかなくなる。拒否が `panic` step と `effect-cancel` の両方を生む場合、`panic` step が**先**に来る。cancel は episode を確定させるので、読み手は結果より先に理由に出会う。
+
+名指せる episode が無い唯一の emit は `app.init` からのものである。最初の episode が開く前に dispatch されるため、コンソールと `app.error` には `episode-id: None` を伴って報告される。
+
 ### 10.4.3 policy 処理
 
 | policy | 実装 |
@@ -671,14 +756,15 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 1 つのトリガから派生する因果列を 1 つの **episode** として記録する。
 
-### 10.5.1 episode の構造
+### 10.5.1 episode の構造 {#_10-5-1-structure-of-an-episode}
 
 ```json
 {
   "id": "ep_01JC...",
   "trigger": {"kind": "ui.click", "target": "AddBtn", "payload": {...}, "ts": ...},
   "steps": [
-    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"], "ts": ...},
+    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"],
+     "env-reads": [{"kind": "now", "value": 1717900000000}], "ts": ...},
     {"kind": "effect-start", "name": "persist", "args": {...}, "ts": ...},
     {"kind": "effect-end", "name": "persist", "result": "ok", "value": "()", "ts": ...},
     {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...}
@@ -686,6 +772,23 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
   "status": "completed" | "panic" | "cancelled" | "ongoing"
 }
 ```
+
+`reducer` step は次も持つ：
+
+- `env-reads`: reducer 本体が実行中に**環境**から読んだ値を、読んだ順に並べたもの。各要素は `{kind, value}` で、`kind` は `now` / `random` / `fresh-id` / `prefers-dark` のいずれか — 答えがプログラムの外から来るビルトイン、すなわち slot の値からは決まらないものである。本体が何も読まなかった場合（大半の reducer がそうである）このフィールドは**省略される**。refinement がバッチを棄却した reducer（[§10.3.3](#_10-3-3-batching)）でも読みは記録する：本体は走ったのであり、それを再実行する replay が同じ答えを見なければ、そもそも棄却しないかもしれない。
+
+  記録されるスコープは **reducer 本体** であり、それだけである。これらのビルトインは式が書ける場所ならどこでも呼べる（[§10.10](#_10-10-implementation-responsibilities-of-the-standard-library)）が、tile の式の中の `now` や描画中の `prefers-dark()` のように reducer 本体の外で読まれた値は**記録されず、再現もされない**。描画を replay するものは無いので、それらの読みには再現すべき対象が無い。
+
+  記録されるのは読みが返した値であって、その値を後で何を使って**整形したか**ではない。`now.format(...)` と `Time.parse("yyyy-MM-dd")` はホストの**ローカルタイムゾーン**で解決される（[stdlib.md §2.4.2](./stdlib.md#_2-4-2-時刻)）。タイムゾーンは `env-reads` の kind ではないので、あるゾーンで記録した episode を別のゾーンで replay すると、記録された時刻そのものは再現されるが整形結果は変わる。以下の保証は 4 つの kind についてのものであり、そこから導かれるあらゆる値についてではない。
+
+  `env-reads` があるからこそ replay は*同じ実行*になる。reducer が書いた結果だけを記録した episode は replay できない：`replay` は本体を再実行し、環境を読む本体はもう一度環境を読む — 新しいサイコロの目、後の時刻 — ので、replay された `slot-diffs` は記録されたものとは別の実行のものになる。`env-reads` は記録された実行の環境そのものであり、あとで返せるように保持される（[§10.5.3](#_10-5-3-replay)）。
+
+  このフィールドは前方互換のため**省略可能**である：古いランタイムが書いた episode ログは `env-reads` を持たず、それらは今も変わらず parse でき replay できなければならない。
+
+`panic` step は次も持つ：
+
+- `name`: 本体が throw した reducer（throw が reducer 由来のとき）。`location` は散文であり、replay には鍵が要る。`render` / `hydrate` の panic では無い。
+- `env-reads`: その本体が throw する前に読んだ値。`reducer` step と同じ形である。throw した reducer は `reducer` step を**残さない**ので、この 2 つが無ければ、ユーザがバグ報告に添える episode — つまりクラッシュしたもの — こそが replay で再現できないものになる：環境を読み直し、別の分岐を通り、最後まで完走してしまう。
 
 **遅延 policy effect の帰属。** `policy=debounce(d)` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に `setTimeout` が満了する。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、満了後の `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。`debounce` timer が発火前に置換された場合、元 episode に `effect-cancel` step (`targetId = <effect-name>`) を残し、その episode は `effect-end` なしで `status="completed"` として commit する。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
 
@@ -704,6 +807,16 @@ kumiki replay --mock 'loadUser: from-log'   # effect mock 指定
 kumiki replay --until-step 5                # 途中まで
 ```
 
+- **入口の reducer は、記録時に受け取った payload で走る。** episode の `trigger.payload` はライブの runtime が最初の reducer に渡した payload そのもの — UI イベントなら `{$el, $event}`、effect の結果なら `{$1, $2}` — であり、replay はそれを加工せずに渡す。したがって `$el.idx` や `$event.value` はライブと同じ値を読む。payload を持たない trigger の最初の reducer が `.ok` / `.err` reducer である場合 — reducer ではなく SSR パスが開く `ssr.hydrate` の bootstrap episode — その reducer は、それより前に記録された同じ effect・同じ結果の `effect-end` のうち最後のものの上で走ったので、その値が reducer の `$1` になる。その記録済みの結果は消費され、同じ effect の `from-log` mock はその次から続く。
+  - ログにそのような step がない場合 — 切り詰められた、あるいは手で編集されたログ — reducer は `$1` なしで走り、それは**推測せずに報告される**：episode のトレース行に `(no recorded result for <reducer>)` が付き、実行の最後に `entry results missing:` の要約が出るので、その後の panic が reducer のバグに見えることはない。
+  - replay は episode ごとに入口の reducer を 1 つしか持たないので、SSR パスが複数の `app.init` effect を走らせた bootstrap は、最初の入口 reducer の連鎖しか replay されない。そのようなログに対する `slots-equal: from-log` の `episode-test` は panic ではなく slot の不一致で失敗し、2 つの `init` の連鎖が同じ effect を emit すると、入口が進めた `from-log` カーソルが再 emit にもう一方の連鎖の結果を渡しうる。この失敗は静かである：値は欠落ではなく交差する。
+- **環境の読みはログから答える。環境からではない。** reducer 本体を走らせる前に、replay はその reducer の記録済み `env-reads`（[§10.5.1](#_10-5-1-structure-of-an-episode)）を据える。以後 `now` / `random()` / `<T>.fresh()` / `prefers-dark()` は、時計・乱数源・ID 生成器・OS の設定を読み直すのではなく、記録時に返したのと同じ値を返す。したがって環境を読んだ reducer の episode を replay すると、記録された `slot-diffs` が毎回そのまま再現される。
+  - 読みと記録済みの答えは **kind で** 対応付け、同じ kind の中では記録順に返す。あるビルトインの余分な読みが、別のビルトインの答えをずらすことはない。
+  - 対応する答えが尽きた読み — 古いログ、あるいは記録時より多く読んだ本体 — は、replay を失敗させるのではなくライブの値にフォールバックする。その読みだけが replay に再現できないものなので、推測ではなく**報告される**：その step のトレース行に `(env: N read live)` が付き、実行の最後に `environment reads:` の要約が出る。同じ行が、replay 側の本体が使わなかった記録済みの答え（`N recorded unused`）と、ログが持っていた不正な要素（`N malformed`）も報告する。3 つとも無い step は何も言わない。
+  - `value` が欠けている、あるいは `kind` が要求する型でない（`now` / `random` は数値、`fresh-id` は文字列、`prefers-dark` は真偽値）要素は、本体に渡す前にスコープを開く時点で**棄却される**。不正な要素をそのまま消費すると `undefined` が返り、`now.show` は `"undefined"` を描画し算術は `NaN` になるが、理由を告げる throw は起きない。棄却された要素は `malformed` に数え、その読みはライブにフォールバックする。
+  - 記録された `panic` step は `reducer` step と同じように replay される：`name` が入口の reducer を指し、`env-reads` が同じ手順で据えられるので、記録されたクラッシュは再びクラッシュする。
+  - 記録済み `env-reads` と replay 中の reducer は**名前で**対応付ける：replay はログの step を辿るのではなく reducer を再実行して連鎖を導くため、reducer `foo` の n 回目の実行が、記録された n 個目の `foo` step の読みを取る。これは順序の仮定であって整合の保証ではない — replay は reducer の emit を宣言順に辿るが、記録側は `.ok` / `.err` step を effect の**完了順**に並べるので、宣言順と違う順で完了した 2 つの effect から同じ reducer に 2 回到達すると、記録された 2 つの読みの組は**入れ替わる**。この失敗は静かである：値は欠落ではなく交差するので、`live` の数には現れない。
+
 ---
 
 ## 10.6 SSR / Edge / Client 分割
@@ -711,10 +824,18 @@ kumiki replay --until-step 5                # 途中まで
 ### 10.6.1 SSR
 
 - HTML 生成は **server-side** で初期 route の tile を 1 回描画
+  - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`mount` と同じ解決で先に処理され、その行き先が描画される。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、行き先を指す。
+  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。クライアントのルーターがロケーションを読むのと同じ方法で分割され、pathname は**書かれたとおりに**照合される：`//foo` や `/a/../b` は正規化されない。ブラウザの `location.pathname` がそれらを保つためであり、サーバーはクライアントと同じ場所に行き着かなければならない。
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
 - **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` のボックス寸法、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
   - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
   - **配信されない**のは、インライン宣言では運べないもの：`transition` と `hover:` / `focus:` / `active:` ブロック、`motion` 層は注入された CSS に紐づくクラスであり、hydration 時にクライアントが付ける。イベントハンドラ・フォーカス状態・解決済みの `icon` SVG も同様 — プレースホルダはレンダラが書くのと同じ要素・同じ属性だが、クライアントがパスを解決するまでは空でサイズも無いので、icon の到着は後続を動かす。テーマのスタイルシートが塗るものも同じ理由で配信されない：`card` の面・境界・影、`button` / `input` / `link` のリングはクライアントがマウント時に注入する規則であり、サーバはそれらを欠いた箱を配信する。
+- **配信される要素ツリーはクライアントが組み立てるものと同じ**であり、外側の要素だけが一致するのではない：レンダラが自前の要素を入れ子にする tile は、同じ入れ子で配信される。初期描画のレイアウトを決めるのは要素ツリーであり（平坦なツリーは入れ子のツリーと違う並び方をする）、クローラが読むのもそれである。
+  - `markdown` はレンダラが解釈するのと同じ段落（空行ごとに 1 つ、`white-space: pre-wrap`）として配信される。生のソースを 1 つのテキストノードに入れるのではない。
+  - `overlay` は 2 つめ以降の子を、レンダラが組むのと同じ絶対配置のレイヤーで包み、`align` で配置する。
+  - **閉じた** `modal` / `drawer` / `popover` は、空文字列ではなく、レンダラがマウントするのと同じ「存在するが隠れた」ホスト（コンテンツ箱を包む `display: none`）として配信される。サーフェスの開閉は両方の経路でスタイルの切り替えであり、閉じたサーフェスの中身はクローラから読める。（理由は hydration ではない：hydration はどちらの形を配信しても、配信された DOM を丸ごと置き換える — [§10.6.2](#_10-6-2-hydration)。）
+  - `check` / `switch` / `radio` はコントロールを包む `<label>` として、`error` はメッセージが入る `<span>` として配信される。
+- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value` / `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。
 - レスポンス bundle 構成：
   - HTML（初期 tile 描画結果）
   - JSON（初期 slot snapshot）
@@ -764,7 +885,29 @@ kumiki build --target=ssr           # Node.js SSR
 kumiki build --target=edge          # Edge runtime
 kumiki build --target=static        # 静的サイト
 kumiki build --analyze              # bundle 分析
+kumiki build --minify               # 生成されたアプリモジュールを minify
+kumiki build --bundle               # アプリとランタイムを1ファイルに結合
 ```
+
+`--bundle` は、生成モジュールとそれが import するランタイムモジュールを 1 つの
+minify 済み `app.js` に結合し、`runtime/` を出力しない。`--minify` に含めず独立し
+たフラグにしてあるのは、2 つが逆方向を最適化するからである。モジュール構成は
+`runtime/core.js` にアプリの変更で変わらない URL を与えるので、再訪者は `app.js`
+だけを取り直せばよい。バンドルは初回訪問者にリクエスト 1 回と、ペイロード全体に対
+する圧縮ストリーム 1 本を与える — gzip も brotli も辞書をレスポンスごとに構築する
+ので、小さなモジュール 20 個は同じバイト列を結合したものより明確に圧縮率が悪い —
+さらに、モジュール境界が隠していた範囲を越えて tree-shake できる。サンプルアプリ
+では圧縮後のペイロードが 19〜28% 減る。
+
+既定にしていない理由は `--minify` と同じである — これは minify を含意し、読める
+`app.js` こそデバッグループ（§10.5）がスタックトレースを読み取る対象だからである。
+取り除かれる `runtime/` の構成はキャッシュ上の関心事にすぎず、他に読み手はいない。
+
+`--minify` はオプトインであり、読める出力が既定であることには理由がある — 生成モ
+ジュールはスタックトレースが指す先そのものなので、求められてもいないのに minify す
+るビルドはデバッグループ（§10.5）から最も直接的な証拠を奪う。ビルドが併せてコピー
+するランタイムモジュールはどちらの場合も minify 済みである — ランタイム自身のビル
+ドがそう出力している。
 
 出力構成：
 
@@ -844,9 +987,23 @@ app.unmount()
 
 **独立したインスタンス**が欲しい場合は、モジュールの `createApp` factory を使う（`createApp()` ごとに固有の状態を持つ `AppShape` が返る）。
 
+reducer 本体を自前で走らせるホスト — 独自のテストハーネスや自前の replayer — は、ランタイムが使うのと同じジャーナルでその環境読みを囲める（[§10.5.1](#_10-5-1-structure-of-an-episode)）：
+
+```ts
+import { withEnvRecord, withEnvReplay } from "@kumikijs/runtime";
+
+const run = withEnvRecord(() => reducer.apply(live, payload));
+run.env.reads;                                  // ログに書く `env-reads`
+const again = withEnvReplay(run.env.reads, () => reducer.apply(live, payload));
+again.env.live;                                 // その一覧では答えられなかった読み
+```
+
+どちらも本体をコールバックで受け取る。スコープは開いている間プロセス全体に効くため、閉じ忘れたフレームはそれ以降のあらゆる読みを捕まえてしまう。釣り合いを保つ唯一の開き方が「本体を渡すこと」である。生の `beginEnvRecord` / `beginEnvReplay` / `endEnvScope` は、コールバックでは跨げない境界を挟む必要があるホストのために公開してあり、その場合の釣り合いは呼び出し側の責任になる。
+
+
 ---
 
-## 10.10 標準ライブラリの実装責務
+## 10.10 標準ライブラリの実装責務 {#_10-10-implementation-responsibilities-of-the-standard-library}
 
 [標準ライブラリ](./stdlib.md) で列挙したビルトインは、ランタイム実装が次の挙動を保証する：
 
@@ -854,8 +1011,8 @@ app.unmount()
 |---|---|
 | `Map`, `Set`, `List` | 純粋（in-place mutation なし） |
 | `Option`, `Result` | パターンマッチ網羅検査 |
-| `now`, `random()` | 式が書ける場所ならどこでも呼べる。読んだ値は記録**されない**ため、それを読んだ episode の replay は新しい値を引く |
-| `*.fresh()` | UUIDv7 を生成 |
+| `now`, `random()` | 式が書ける場所ならどこでも呼べる。**reducer 本体の中で**読んだ値は、その episode の step に `env-reads` として記録される（[§10.5.1](#_10-5-1-structure-of-an-episode)）ため、replay は新しい値を引かずに同じ値を再現する。それ以外の場所（tile の式、描画）での読みは記録されず、それらを replay するものも無い |
+| `*.fresh()` | UUIDv7 を生成。`now` / `random()` と同じ reducer 本体スコープで `env-reads` として記録されるため、replay した episode は実行が実際に刻んだ ID を刻む |
 | `panic(message)` | episode を `panic` 状態にして slot をロールバック |
 
 ---

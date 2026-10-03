@@ -4,6 +4,8 @@
 
 import {
   applyContainerProps,
+  gridTracks,
+  pickForViewport,
   type TileCtx,
   type TileNode,
   type TilePatchers,
@@ -19,23 +21,11 @@ function appendChildren(el: HTMLElement, children: TileNode[], ctx: TileCtx): vo
   }
 }
 
-/**
- * A grid's tracks (style.md §4.4.2). `cols` and `rows` take the same two
- * shapes: a count, which divides the axis equally, or a CSS track list. Only
- * `cols` has a default — a grid with no `rows` grows one row per line of
- * content, which is what a grid does.
- */
 function applyGridTracks(div: HTMLElement, props?: TileProps): void {
-  div.style.gridTemplateColumns = gridTracks(props?.cols) ?? "repeat(3, 1fr)";
-  const rows = gridTracks(props?.rows);
-  if (rows) div.style.gridTemplateRows = rows;
+  const t = gridTracks(props, pickForViewport);
+  div.style.gridTemplateColumns = t.cols;
+  if (t.rows) div.style.gridTemplateRows = t.rows;
   else div.style.removeProperty("grid-template-rows");
-}
-
-function gridTracks(v: unknown): string | undefined {
-  if (typeof v === "number") return `repeat(${v}, 1fr)`;
-  if (typeof v === "string") return v;
-  return undefined;
 }
 
 /**

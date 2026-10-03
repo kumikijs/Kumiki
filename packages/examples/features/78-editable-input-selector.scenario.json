@@ -1,0 +1,29 @@
+{
+  "steps": [
+    {
+      "label": "initial render — nothing typed yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "", "edits": 0 },
+        "domIncludes": ["edits: 0"]
+      }
+    },
+    {
+      "label": "typing into the editable writes the bind AND runs the ui.input reducer",
+      "do": { "fill": "#ed", "value": "hello" },
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "hello", "edits": 1 },
+        "domIncludes": ["note: hello", "edits: 1"]
+      }
+    },
+    {
+      "label": "a second edit counts again — the handler is not a one-shot",
+      "do": { "fill": "#ed", "value": "hello there" },
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "hello there", "edits": 2 }
+      }
+    }
+  ]
+}

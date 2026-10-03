@@ -13,9 +13,13 @@
   "devDependencies": {
     "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
+    "@kumikijs/icons": "workspace:*",
+    "@kumikijs/mcp": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
+    "@kumikijs/syntax": "workspace:*",
     "@types/node": "catalog:",
     "happy-dom": "catalog:",
+    "kumiki": "workspace:*",
     "typescript": "catalog:",
     "vitepress": "catalog:",
     "vitest": "catalog:"

@@ -7,19 +7,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = resolve(here, "../src/kumiki.ts");
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 /** Run the CLI, capturing stdout+stderr and the exit code without throwing. */
 function runCli(args: string[], input?: string): { out: string; code: number } {
   if (input !== undefined) {
-    const res = spawnSync("npx", ["tsx", CLI_PATH, ...args], {
+    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
-      shell: true,
       encoding: "utf8",
       input,
     });
@@ -29,9 +25,8 @@ function runCli(args: string[], input?: string): { out: string; code: number } {
     };
   }
   try {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     return { out, code: 0 };

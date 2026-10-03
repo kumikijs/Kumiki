@@ -1,0 +1,34 @@
+# Feature: a bound field its refinement refuses keeps what was typed, and
+# `error(field=…)` speaks for it (spec/forms.md §5.1.2, §5.7.1).
+#
+# A `bind` whose value the slot's refinement refuses leaves the slot on the
+# last value it accepted — quietly, because a half-typed address is expected
+# rather than a defect. The field still shows what was typed, so the message
+# has to be about that. It used to be computed from the slot, which still held
+# the old, valid address: the field showed "ada@examplecom", the slot held
+# "ada@example.com", and the page said nothing at all (#443).
+#
+# The scenario beside this file types into the field and reads the message;
+# `smoke` fills it with a value its refinement refuses, which is the state
+# this example exists to show, and must stay quiet about it.
+
+slot contact : Text where email = "ada@example.com"
+slot saved   : Int              = 0
+
+reducer save on=ui.click(SaveBtn) do= saved := saved + 1
+
+tile SaveBtn = button(text="save", onClick=save)
+
+tile App = column(
+             label(text="Email") {for: "contact"},
+             input(bind=contact, id="contact", type="email"),
+             error(field=contact),
+             text("holding: " + contact),
+             text("saved: " + saved.show),
+             SaveBtn)
+           {pad: "lg", gap: "sm"}
+
+app RefusedBind
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

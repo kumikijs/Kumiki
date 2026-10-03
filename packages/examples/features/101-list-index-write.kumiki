@@ -1,0 +1,83 @@
+# Feature (language.md §1.6.3): an index step into a List.
+#
+# `xs[i] := v` replaces the element at `i` and leaves a List. Reached through a
+# field or another index, the element is written the same way, and every level
+# keeps its shape: a List stays a List, a record stays a record. A `for` loop
+# writes several indices, one statement at a time.
+#
+# A List index is an `Int` — any other index is E0201. An index that names no
+# element — past the end, or negative — is a panic (lifecycle.md §7.2.2), on
+# both sides of `:=`: the reducer's writes roll back and `app.error` runs.
+# `xs.get(i)` is the read that answers `None` there instead of panicking.
+#
+# The panicking writes are armed by entering a route rather than by a button.
+# A reducer panic is reported on the error channel by design, and `smoke`
+# drives every button and fails on anything that reaches it; a scenario claims
+# the error with `errorIncludes`, and `smoke` never navigates.
+#
+# A Set has membership and no places, so an index write into one is E0602;
+# `.add` / `.remove` / `.toggle` change it.
+
+type Row = { name: Text, n: Int }
+
+slot xs   : List(Int)       = [1, 2, 3]
+slot rows : List(Row)       = [{name: "a", n: 1}, {name: "b", n: 2}]
+slot grid : List(List(Int)) = [[1, 2], [3, 4]]
+
+slot tries  : Int  = 0
+slot picked : Int  = 0
+slot failed : Text = "-"
+
+reducer set-first on=ui.click(First)
+    do= xs[0] := 7
+
+reducer set-nested on=ui.click(Nested)
+    do= rows[1].n := 9
+        grid[1][0] := 0
+
+reducer zero-ends on=ui.click(ZeroEnds)
+    do= for i in [0, 2] { xs[i] := 0 }
+
+# Each counts the attempt first, so the rollback is visible: `tries` stays 0.
+reducer write-outside on=route.enter("/outside")
+    do= tries := tries + 1
+        xs[3] := 99
+
+reducer write-negative on=route.enter("/negative")
+    do= tries := tries + 1
+        xs[-1] := 99
+
+reducer read-outside on=route.enter("/read-outside")
+    do= tries := tries + 1
+        picked := xs[7]
+
+reducer on-panic on=app.error
+    do= failed := $event.message
+
+tile First    = button(text="first")     {id: "first"}
+tile Nested   = button(text="nested")    {id: "nested"}
+tile ZeroEnds = button(text="zero ends") {id: "zero-ends"}
+
+tile App
+    = column(
+        heading("index writes into a List"),
+        row(First, Nested, ZeroEnds) {gap: "sm"},
+        text("length: " + xs.length.show),
+        text("head: " + xs.head.get-or(-1).show),
+        text("sum: " + xs.fold(0, $1 + $2).show),
+        text("second row: " + rows.get(1).map($1.n).get-or(-1).show),
+        text("grid: " + grid.length.show),
+        text("tries: " + tries.show),
+        text("failed: " + failed))
+      {pad: "lg", gap: "md"}
+
+app ListIndexWrite
+    caps   = []
+    routes = {
+        "/"             -> App,
+        "/outside"      -> App,
+        "/negative"     -> App,
+        "/read-outside" -> App,
+        "/404"          -> App
+    }
+    init   = []

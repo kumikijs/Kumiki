@@ -3,8 +3,9 @@
 // structure, E07 opt-in checks and testing-DSL invariants, E08 runtime hazards
 // — so no scope selects them, and a filter that drops what no scope can ask
 // for turns every narrowing flag into a hole. The end-to-end coverage in
-// cli.test.ts reaches this through `npx tsx` at ~3s per case, which is why it
-// only exercises a couple of codes; this covers the whole table directly.
+// cli.test.ts reaches this through a spawned CLI process per case, which is
+// why it only exercises a couple of codes; this covers the whole table
+// directly.
 
 import { filterByScope } from "@kumikijs/cli";
 import type { KumikiError } from "@kumikijs/compiler";

@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {
+      "label": "the app starts at / with both links rendered",
+      "expect": { "noErrors": true, "domIncludes": ["Home", "the docs", "next page"] }
+    },
+    {
+      "label": "clicking the off-origin link is left to the browser, not routed",
+      "do": { "clickText": "the docs" },
+      "expect": { "noErrors": true, "domIncludes": ["Home"] }
+    },
+    {
+      "label": "a same-origin link still routes",
+      "do": { "clickText": "next page" },
+      "expect": { "noErrors": true, "domIncludes": ["Next"] }
+    }
+  ]
+}

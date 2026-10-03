@@ -1,0 +1,61 @@
+# Feature (runtime.md §10.5.1 / §10.5.3): an episode records what the reducer
+# read from the environment, so replaying it is the same run again.
+#
+# `random()` and `now` answer from outside the program — no slot holds what
+# they are about to say. An episode that recorded only the slots the reducer
+# WROTE could not be replayed: the body runs again, reads again, and the
+# replayed `slot-diffs` belong to a different run. So the recorder journals
+# each read and the step carries it as `env-reads`; replay hands those answers
+# back instead of re-reading.
+#
+# The `episode-test` below is that guarantee written down. Its fixture pins
+# `random()` to 0.5 and `now` to a fixed instant, so the replayed slots are
+# asserted BY VALUE — `roll` is 4 because `(0.5 * 6.0).floor + 1` is 4, and
+# that is the assertion a re-rolling replay fails.
+
+slot roll    : Int  = 0
+slot stamped : Text = ""
+slot inRange : Bool = false
+
+reducer stamp on=ui.click(StampBtn)
+    do= roll    := (random() * 6.0).floor + 1
+        stamped := now.show
+        inRange := roll >= 1 && roll <= 6
+
+tile StampBtn = button(text="stamp", onClick=stamp)
+
+tile App
+    = column(
+        heading("a replayed environment read"),
+        StampBtn,
+        text("roll=" + roll.show + " inRange=" + inRange.show),
+        text("stamped=" + stamped))
+      {pad: "lg", gap: "md"}
+
+app ReplayedEnvironmentRead
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+# What a live run can pin about a random number is its range — the same thing
+# `77-int-float-math` asserts, and the reason a scenario alone is not enough
+# of an answer for this feature.
+test roll-is-in-range =
+    reducer-test stamp
+        given  = {slots: {roll: 0, inRange: false},
+                  event: {type: ui.click, target: StampBtn}}
+        expect = {slots: {inRange: true}}
+
+# The replay tier is where the value itself becomes assertable. The fixture's
+# `env-reads` are the run's environment; without them this expects 4 and gets
+# whatever the replay's own `Math.random()` said.
+#
+# CI does not run this block — `kumiki test` is driven against `28-tests.kumiki`
+# only — so what actually guards the fixture is the same assertion in
+# `packages/tests/episode-replay-env.test.ts`. Edit one and the other fails.
+test replay-reproduces-the-read =
+    episode-test
+        load   = "87-replayed-environment-read.fixture.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {roll: 4, stamped: "1718700000000", inRange: true},
+                  no-panics: true}

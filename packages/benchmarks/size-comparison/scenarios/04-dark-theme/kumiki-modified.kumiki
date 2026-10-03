@@ -63,7 +63,7 @@ reducer addTodo
         emit saveTodos(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit saveTodos(todos)
 
@@ -91,10 +91,12 @@ tile RemoveBtn = button(text="x") {variant: "ghost"}
 tile ClearBtn  = button(text="Clear completed", onClick=clearDone) {variant: "ghost"}
 tile ThemeBtn  = button(text="theme") {variant: "ghost"}
 
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow
     in=TodoId
     = row(
-        check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+        TodoCheck($1),
         text(todos[$1].text) {
           strike: todos[$1].done,
           color:  if todos[$1].done then "muted" else "fg"

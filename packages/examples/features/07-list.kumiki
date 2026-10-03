@@ -5,7 +5,7 @@ slot nums : List(Int) = [1, 2, 3, 4, 5]
 fn doubled(xs: List(Int)) -> List(Int) = xs.map($1 * 2)
 fn evens(xs: List(Int))   -> List(Int) = xs.filter($1 % 2 == 0)
 
-reducer push on=ui.click(PushBtn) do= nums := nums.push(nums.size + 1)
+reducer push on=ui.click(PushBtn) do= nums := nums.push(nums.length + 1)
 
 tile PushBtn = button(text="append", onClick=push)
 tile App = column(

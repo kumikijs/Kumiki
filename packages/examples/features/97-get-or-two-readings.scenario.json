@@ -1,0 +1,57 @@
+{
+  "steps": [
+    {
+      "label": "nothing read yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "fromMap": -1, "fromOpt": -1, "fromRes": -1 },
+        "domIncludes": ["map: -1", "opt: -1", "res: -1"]
+      }
+    },
+    {
+      "label": "the Map reading answers the value at a present key",
+      "do": { "click": "#look" },
+      "expect": { "noErrors": true, "state": { "fromMap": 7 }, "domIncludes": ["map: 7"] }
+    },
+    {
+      "label": "and answers a present key whose value is zero, not the default",
+      "do": { "click": "#look-zero" },
+      "expect": { "noErrors": true, "state": { "fromMap": 0 }, "domIncludes": ["map: 0"] }
+    },
+    {
+      "label": "and the default for a key that is absent",
+      "do": { "click": "#look-missing" },
+      "expect": { "noErrors": true, "state": { "fromMap": -1 } }
+    },
+    {
+      "label": "the Option reading answers the default on a None",
+      "do": { "click": "#unwrap" },
+      "expect": { "noErrors": true, "state": { "fromOpt": -1 } }
+    },
+    {
+      "label": "and the payload on a Some",
+      "do": { "click": "#pick" },
+      "expect": { "noErrors": true, "state": { "picked": { "_tag": "Some", "_0": 42 } } }
+    },
+    {
+      "label": "which the same call now reaches",
+      "do": { "click": "#unwrap" },
+      "expect": { "noErrors": true, "state": { "fromOpt": 42 }, "domIncludes": ["opt: 42"] }
+    },
+    {
+      "label": "the same reading on a Result answers the default on an Err",
+      "do": { "click": "#unwrap-res" },
+      "expect": { "noErrors": true, "state": { "fromRes": -1 } }
+    },
+    {
+      "label": "and the payload on an Ok",
+      "do": { "click": "#parse-ok" },
+      "expect": { "noErrors": true, "state": { "parsed": { "_tag": "Ok", "_0": 5 } } }
+    },
+    {
+      "label": "which the same call now reaches",
+      "do": { "click": "#unwrap-res" },
+      "expect": { "noErrors": true, "state": { "fromRes": 5 }, "domIncludes": ["res: 5"] }
+    }
+  ]
+}

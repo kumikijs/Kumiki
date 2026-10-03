@@ -12,6 +12,9 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 |---|---|
 | [01-slot-and-reducer](./01-slot-and-reducer.kumiki) | The basic cycle of slot (state) + reducer (update) + tile (render) |
 | [02-nominal-type](./02-nominal-type.kumiki) | nominal types and `between` refinement |
+| [91-conjoined-refinements](./91-conjoined-refinements.kumiki) | several `where` predicates on one type, and which one a rejection names |
+| [103-generic-alias-refinement](./103-generic-alias-refinement.kumiki) | a `where` on a generic alias (`type NonEmpty(T) = T where nonempty`) gates the slot, with its argument's predicates first |
+| [104-nested-refinements](./104-nested-refinements.kumiki) | a `where` on a record field, a union payload or a container element gates the slot, and the rejection names the path |
 | [03-union-and-match](./03-union-and-match.kumiki) | union types and the `match` expression |
 | [04-record-and-copy](./04-record-and-copy.kumiki) | record types and `.copy(field=value)` immutable update |
 | [05-pure-fn](./05-pure-fn.kumiki) | pure functions `fn` (don't read slots) |
@@ -50,13 +53,25 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [39-effect-session](./39-effect-session.kumiki) | sessionStorage persistence (per-tab; same shape as `storage-*`) |
 | [21-timer](./21-timer.kumiki) | periodic execution with `timer(1s)` |
 | [23-lifecycle-route-enter](./23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
+| [92-outlet-error-boundary](./92-outlet-error-boundary.kumiki) | an `error-boundary` on a `sub-routes` shell covering the child in its `route-outlet`, and a child's own boundary winning |
+| [93-panic-info](./93-panic-info.kumiki) | every field of `PanicInfo` read from an `error-boundary` fallback and from an `app.error` reducer, side by side |
 | [46-stdlib-paren-methods](./46-stdlib-paren-methods.kumiki) | paren-form stdlib methods (`is-ok()` / `values()` / `lower()` / `sort()` etc.) + `Bytes.from-text/base64/bytes` constructors |
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | names that are JS reserved words (`new` / `class` / `var`) or look like runtime internals (`_live` / `_s`) |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | a conditional swapping two inline tiles that differ only in their handler |
 | [76-conditional-adds-a-universal-handler](./76-conditional-adds-a-universal-handler.kumiki) | a conditional whose later branch *adds* `onFocus` / `onBlur`, which the runtime lifts rather than any renderer |
+| [86-container-selector-through-reference](./86-container-selector-through-reference.kumiki) | `ui.key` / `ui.focus` / `ui.blur` / `ui.hover` on a container whose body is a tile reference, beside the inline form of the same tree |
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | a refinement rejects the whole reducer batch, and the guard to write instead |
+| [90-refinement-validation](./90-refinement-validation.kumiki) | every registered predicate as a runtime check — `positive` / `negative` / `email` / `url` / `uuid` / `regex` / `one-of`, and the standard library's refined nominals |
+| [105-refused-bind](./105-refused-bind.kumiki) | a bound field its refinement refuses keeps what was typed, and `error(field=…)` speaks for it |
+| [132-toggle-bind](./132-toggle-bind.kumiki) | `check` / `switch` bind a `Bool` and `radio` binds one variant of a union: the box shows the slot and writes it back |
+| [133-typed-input-bind](./133-typed-input-bind.kumiki) | an `input` bound to an `Int` / `Float` / `Time` slot reads its text as that type, and refuses text that is none |
+| [134-record-field-bind](./134-record-field-bind.kumiki) | a `bind` into one field of a record slot is judged at that field, so a failing sibling does not refuse it |
+| [135-form-submit-gate](./135-form-submit-gate.kumiki) | a form submits only while every field bound inside it shows a valid value — a failing default or a refused edit holds it back |
+| [136-submit-button-click](./136-submit-button-click.kumiki) | a submit button with a click reducer runs it and still submits its form; `type="button"` is what keeps a button from submitting |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | `app.init` firing an effect with a slot reference as its argument |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |
 | [66-value-types](./66-value-types.kumiki) | the shapes value-level type checking accepts, and the mistake each one used to hide |
+| [87-replayed-environment-read](./87-replayed-environment-read.kumiki) | an episode records what `random()` / `now` answered, so replaying it reproduces the run |
+| [88-string-formatting](./88-string-formatting.kumiki) | `fmt("{0}", …)` substitution — a repeated index, an index the arguments do not reach, and a `{` that opens no placeholder |
 
 New questions and bugs are answered first by adding a minimal reproduction here.

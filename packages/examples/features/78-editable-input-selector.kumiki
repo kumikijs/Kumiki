@@ -1,0 +1,25 @@
+# Feature: `ui.input(<editable tile>)` — the selector form of an editable's
+# input event. The `editable` renderer registers its own `input` listener and
+# calls the tile's `onInput`, so a reducer subscribes to it by selector the
+# same way it does for `input` and `textarea`. Writing the handler on the tile
+# (`editable(onInput=edited)`) is the other spelling of the same wiring.
+
+slot note  : Text = ""
+slot edits : Int  = 0
+
+reducer edited on=ui.input(Ed) do= edits := edits + 1
+
+tile Ed = editable(bind=note) {id: "ed"}
+
+tile App
+    = column(
+        heading("editable + ui.input selector"),
+        Ed,
+        text("note: " + note),
+        text("edits: " + edits.show))
+      {pad: "lg", gap: "md"}
+
+app EditableInputSelector
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -1,0 +1,31 @@
+# Feature: a handler binds the reducer its name resolves to, whatever the
+# name's capitalisation. The handler position is the one argument position
+# resolved in the reducer namespace, and the shape the parser gives a
+# capitalised name there — a tile call as a named argument of a builtin that
+# takes tiles, a variant tag in a props block or on a user tile — is decided
+# by capitalisation and by which tile the argument sits on, not by anything
+# the author is saying.
+#
+# `Bump` and `Reset` are declared against `Sink`, which the scenario never
+# clicks: every count below is one the explicit wirings delivered.
+
+slot n : Int = 0
+
+reducer Bump  on=ui.click(Sink) do= n := n + 1
+reducer Reset on=ui.click(Sink) do= n := 0
+
+tile Sink = button(text="sink")
+tile Plus = button(text="plus")
+
+tile App = column(
+             button(text="up (arg)", onClick=Bump),
+             button(text="up (prop)") {onClick: Bump},
+             Plus(onClick=Reset),
+             Sink,
+             text("n: " + n.show))
+           {pad: "lg", gap: "md"}
+
+app CapitalisedReducerHandler
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -1,0 +1,36 @@
+# Feature: a link whose target is not this origin.
+#
+# `{external: true}` (stdlib.md §2.3.2) is how a link says it leaves the app:
+# it opens in a new browsing context and the router never sees the click.
+#
+# Forgetting it used to be fatal rather than merely unadorned (#298). The click
+# handler cancelled the browser's own navigation and handed the target to
+# `history.pushState`, which refuses an off-origin URL:
+#
+#   SecurityError: A history state object with URL 'https://example.com/docs'
+#   cannot be created in a document with origin 'http://localhost:3000'
+#
+# So the link was dead — the navigation was cancelled AND did not happen — and
+# the console named the History API rather than the link. A target this app's
+# router cannot serve is now left to the browser, which is what the `<a href>`
+# was always going to do. `external` still decides the new tab; it is no longer
+# what decides whether the link works at all.
+
+tile Home     = page(heading("Home"),
+                     link(to="/next", text="next page"),
+                     link(to="https://example.com/docs", text="the docs"),
+                     link(to="https://example.com/docs",
+                          text="the docs, in a new tab") {external: true})
+tile Next     = page(heading("Next"),
+                     link(to="/", text="home"))
+tile NotFound = page(heading("404 — not found"),
+                     link(to="/", text="home"))
+
+app OffOriginLink
+    caps   = []
+    routes = {
+        "/"     -> Home,
+        "/next" -> Next,
+        "/404"  -> NotFound
+    }
+    init   = []

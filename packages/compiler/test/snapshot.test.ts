@@ -58,7 +58,7 @@ describe("compile output snapshots", () => {
         "ReducerDef": 8,
         "SlotDef": 4,
         "ThemeDef": 1,
-        "TileDef": 10,
+        "TileDef": 11,
         "TypeDef": 3,
       }
     `);
@@ -78,8 +78,10 @@ describe("compile output snapshots", () => {
     expect(result.js).toContain("_s.freshId()");
     expect(result.js).toContain('effect: "saveTodos"');
     // The for/when shape inside TodoList should compile to .map(...) over sorted ids
-    // and a ternary for the filter check.
+    // and a ternary for the filter check. Its row carries an explicit key, so
+    // the loop computes no implicit ones (runtime.md §10.3.10).
     expect(result.js).toMatch(/sortedIds\([^)]+\)\)\s*\|\|\s*\[\]\)\.map\(/);
+    expect(result.js).not.toMatch(/_s\.loopKeys\(/);
   });
 
   it("counter: variant equality stays correct", () => {
@@ -101,7 +103,7 @@ describe("compile output snapshots", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     // The fix for the localStorage persistence bug introduced
-    // `((_next[key] !== undefined) ? _next[key] : _live[key])` reads inside reducers.
-    expect(result.js).toMatch(/_next\["todos"\] !== undefined/);
+    // `(Object.hasOwn(_next, key) ? _next[key] : _live[key])` reads inside reducers.
+    expect(result.js).toContain('Object.hasOwn(_next, "todos") ? _next["todos"] : _live["todos"]');
   });
 });

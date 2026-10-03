@@ -1,0 +1,40 @@
+# Feature (stdlib.md §2.2.4): `Option(T).filter(pred) : Option(T)`.
+#
+# A `Some` whose value passes the predicate stays that `Some`; a `Some` whose
+# value fails it becomes `None`; a `None` stays `None`. The predicate sees the
+# Option's value as `$1`.
+#
+# `.filter` is polymorphic (List / Map / Option), and an Option is an object at
+# runtime, so it used to be read as a Map: the predicate was called with the
+# Option's own fields, and the result was neither a `Some` nor a `None` — so
+# `is-some` was false on a value that passed, and `get-or` could not unwrap it.
+
+slot seed   : Option(Int)  = Some(3)
+slot empty  : Option(Int)  = None
+slot kept   : Option(Int)  = None
+slot gone   : Option(Int)  = Some(0)
+slot still  : Option(Int)  = Some(0)
+slot isKept : Bool         = false
+
+reducer run on=ui.click(Run)
+    do= kept   := seed.filter($1 > 2)
+        gone   := seed.filter($1 > 5)
+        still  := empty.filter($1 > 0)
+        isKept := seed.filter($1 > 2).is-some
+
+tile Run = button(text="filter") {id: "run"}
+
+tile App
+    = column(
+        heading("Option.filter"),
+        Run,
+        text("kept: " + kept.get-or(-1).show),
+        text("gone: " + gone.get-or(-1).show),
+        text("still: " + still.get-or(-1).show),
+        text("is-some: " + isKept.show))
+      {pad: "lg", gap: "md"}
+
+app OptionFilter
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

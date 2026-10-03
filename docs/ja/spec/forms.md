@@ -25,25 +25,29 @@ tile Compose = column(
 
 | 要素 | 受け取れる型 |
 |---|---|
-| `input` | `Text` (`type=text/email/password/url/search/tel`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime`) |
+| `input` | `Text` (`type=text/email/password/url/search/tel`、または値が入力されたテキストそのものである他のフィールド：`number/date/datetime-local/time/month/week/color`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime-local`) |
 | `textarea` | `Text` |
 | `select` | 任意（`options` の `value` と同型） |
 | `slider` | `Int` / `Float` |
 | `check` / `switch` | `Bool` |
 | `radio` | union 型のいずれか |
 
+`Int` / `Float` / `Time` に bind した `input` は、テキストを `Int.parse` / `Float.parse` / `Time.parse` と同じように読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、読んだ値を書き込む。型は bind した位置の基底型である：slot の型をレコードのフィールド、または `.get` による `Option` / `Result` のペイロードを辿り、エイリアスを解いた型なので、`type Qty = Int where positive` や `nominal Int` は `Int` として読まれる。読み方は `T.parse` と完全に同じである — number フィールドが保持しうる `".5"` は `Float` ではなく、`"1e3"` は `Float` だが `Int` ではない。基底型の値を表さないテキスト（`""`、`Int` に対する `"1.5"` など）は refinement 違反と同じく拒否される（[§5.1.2](#_5-1-2-refinement-の扱い)）：slot は最後に受け入れた値を保ち、フィールドは入力されたテキストを保ち、`error(field=…)` は失敗した読み方を示す（[§5.7.2](#_5-7-2-standard-messages)）。`Time` は `type="date"` のフィールドには `yyyy-MM-dd`、`type="datetime-local"` のフィールドには `yyyy-MM-ddTHH:mm` として、`Time.parse` がゾーンなし文字列を読むのと同じローカル時刻で表示されるので、フィールドの表示は同じ日（または同じ分）として読み戻される。`Text` は入力されたとおりに書き込まれるので、値が入力されたテキストそのものであるどのフィールドとも組み合わせられる。`Int` / `Float` / `Time` は表にあるフィールド種別、つまりテキストが往復できるものとだけ組み合わせられる。それ以外の組み合わせ — `type="time"` のフィールドの `Time`、text フィールドの `Int`、`Bool`、`.get` を通さずに丸ごと bind した `Option` など — は `kumiki check` が報告する（[E0226](./errors.md#e0226-input-bind-type)）。（`type="datetime"` は HTML では廃止されており、text フィールドとして描画される。）
+
+`check` / `switch` は bind した `Bool` を表示し、チェックの切り替えで新しい状態を書き戻す。`radio(group=…, bind=b, value=V)` は `b == V` のときちょうど選択状態になり、選ばれると `V` を書き込む。3 つとも `input` と同じ書き戻し経路を通り、[§5.1.2](#_5-1-2-refinement-の扱い) の refinement による拒否もそのまま適用される。書き戻しはコントロール自身の `onClick` / `onChange` より先に行われるので、ハンドラは書き込み済みの slot を読む：`check(value=b, onClick=toggle)` を `check(bind=b, onClick=toggle)` に移すと `b` は 2 回反転するので、`onClick` は外す必要がある。`bind=` があるとき、bind していないコントロールの選択状態を決める引数 — `check` / `switch` の `value=`、`radio` の `selected=` — は読まれない（[W0216](./errors.md#w0216-selection-beside-bind-warning)）。radio 自身の `value=` は引き続き書き込む値である。`check` / `switch` に別の型を bind した場合や、bind した型の値でない radio の `value` は `kumiki check` が報告する（[E0201](./errors.md#e0201-type-mismatch)。別の union のバリアントなら [E0216](./errors.md#e0216-unknown-variant)）。書き込む `value=` のない bind した radio も同様である（[E0225](./errors.md#e0225-radio-bind-without-value)）。
+
 ### 5.1.2 refinement の扱い
 
-`slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えると：
+`slot draft : Text where len-lt(280)` の場合、入力が 280 文字を超えるとその値は**拒否**される：slot は最後に受け取った値を保つ。モードは 1 つで、意図的に静かである — 入力途中の値は欠陥ではなく想定内なので、何も報告しない。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
 
-- **デフォルト**: 入力を弾く（slot は更新されない）
-- **`strict=false`**: slot は更新するが、フォームの `valid` フラグが false になる
+コントロールは入力されたものを表示し続けるので、フィールドが slot の受け取る値に編集されるまで、フィールドと slot は食い違う。`error(field=draft)` は**フィールドが表示しているもの**について語る（[§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)）：refinement が拒否した値をフィールドが表示している間は、その値のメッセージを出す。slot を書き換える reducer はフィールドも一緒に動かし、メッセージは再び slot に従う。bind した `Int` / `Float` / `Time` がそもそも読めないテキスト（[§5.1.1](#_5-1-1-elements-that-support-bind)）も、refinement の有無にかかわらず同様である：そのメッセージは読み方のものであり、どの refinement のメッセージよりも先に出る。したがって、フィールドが slot の保持していない値を表示するのは、その理由を述べるメッセージと一緒のときだけである。この規則には 2 つの補足がある。対象のフィールドは同じビューのものである — 1 つの app を複数のホストにマウントした場合（[runtime.md §10.9](./runtime.md#_10-9-ランタイム-api-埋め込み用)）、各ビューの `error(field=…)` は自分のビューのフィールドについて語り、他のビューのフィールドは slot の値を表示したままである。また IME の変換中は、変換が経由する途中の値ごとにメッセージを再計算せず、変換が確定したときに一度だけ決める。
 
 ```kumiki snippet
-input(bind=draft, strict=false)
+input(bind=draft)
+error(field=draft)
 ```
 
-この 2 つの挙動はどちらも `bind` に固有のもので、どちらも意図的に静かである。入力途中の値は欠陥ではなく想定内だからだ。**代入**経路（reducer 内の `draft := …`）での refinement 違反は逆のケースで、reducer のバッチを丸ごと破棄したうえで報告される。[batching](./runtime.md#a-batch-commits-all-or-nothing) を参照。
+本節の以前の版が第 2 のモードとして規定していた `strict` prop（拒否された値を受け取り、フォーム単位の `valid` フラグを false にする）は [E0219](./errors.md#e0219-bind-strict-prop) である。そのフラグを読むものは存在せず、自身の型が拒否する値を slot が保持することは、そこへ至る他のすべての経路が防ぐように作られている状態である。
 
 ---
 
@@ -95,11 +99,14 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 ### 5.2.2 submit の挙動
 
-- すべての `bind` された slot がバリデーションを通過していれば `ui.submit(WrapperTile)` reducer が呼ばれる
+- form の中のコントロールが bind しているすべての slot がバリデーションを通過していれば `ui.submit(WrapperTile)` reducer が呼ばれる
 - 1 つでも失敗していれば呼ばれない（個別の error 表示は出る）
-- 厳密モード切替が必要なら `strict=false` を該当入力に
+- 判定するのは各コントロールが**表示している**値であり、`error(field=…)` と同じ判定を同じ順序で行う（[§5.1.2](#_5-1-2-refinement-の扱い)）：`Int` / `Float` / `Time` のフィールドがその型の値としてまったく読めないテキストを表示していればそれ、そうでなければ refinement に拒否された値を form の中のコントロールがまだ表示していればその値、そうでなければ slot 自身の値。したがって、宣言時の初期値が refinement を満たさない未入力のフィールドも form の送信を止める（[§5.6](#_5-6-バリデーション戦略)）— 理由を示す `error(field=…)` タイルの有無によらない。そのため、そのようなフィールドを持つ form にはそのタイルを置くべきである。拒否された編集や読めないテキストを表示しているフィールドも送信を止める — そうでなければ reducer はフィールドが表示していない、slot が最後に受け入れた値を読むことになる
+- 数えるのは form の中で bind されている slot だけであり、それについて判定に加わるのも form 自身のコントロールだけである。form のコントロールが bind していない slot は問わず、form の**外**のコントロールが表示している拒否された値も送信を止めない：form 自身のコントロールは slot の値を表示しており、reducer が読むのもその値である。`error(field=…)` は描画中のビュー全体について判定するので、form の中の `error` タイルがその外側の編集についてメッセージを表示したまま form が送信されることがある
 - `button(type="submit")` をクリックするか、`input` で Enter キーで発火
+- そのボタンのクリック reducer（ボタン自身への `ui.click`、ボタンを包む tile から持ち上げられたもの、`onClick=` 引数）は submit とは独立している：ボタンをクリックすると、クリック reducer が走り、**かつ** form が送信される。クリック reducer を束縛してもクリックはキャンセルされないので、ここでクリック reducer が代わりを務められないのは `type` だけである：クリック reducer は form の中のボタンの送信を止めず、止めるのは `type="button"` である。（`disabled` / `loading` のボタンも送信しない：無効化されているので、そもそも活性化されない。）
 - `type` は `submit` / `button` / `reset` のいずれかで、そのまま DOM に書かれ、意味を持つのは form の中だけである。`type` を書かなかったボタンは HTML の既定に従う — すなわち `submit` になるので、form の中にあって送信させたくないボタンには `type="button"` が必要である。3 つ以外のリテラルは [E0201](./errors.md#e0201-type-mismatch) になる：不正な `type` 属性は `submit` に解決されるので、綴り間違いは送信してしまう
+- クリック reducer を持つ `type="reset"` のボタンは、reducer を実行し、**かつ** form をリセットする。リセットはフィールドの DOM 上の値を既定値に戻すが、`bind` された slot はそのまま残る — `reset` を listen しているものはない。form をクリアするには、`type="button"` のボタンの reducer で slot に書き込む
 
 ---
 
@@ -117,7 +124,6 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 | `required` | `Bool` | 必須 |
 | `auto-focus` | `Bool` | マウント時にフォーカス |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off` 等 |
-| `strict` | `Bool` | refinement 違反時に入力を弾くか（デフォルト true） |
 | `id` | `Text` | HTML id（label の `for` で参照） |
 
 ### 5.3.1 input type 別
@@ -238,6 +244,17 @@ Kumiki のバリデーションは **3 層**：
 | refinement | ランタイム | `age : Int where between(0, 120)` |
 | フォーム横断 | reducer / fn | 「password と password-confirm が一致」 |
 
+refinement 層は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) が登録する**すべて**の述語を対象とする。標準ライブラリのドメイン型が宣言に使っている述語も含まれる — `Email`、`Url`、`Uuid`、`HttpStatus` は refinement 付きの nominal（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）なので、これらで宣言された slot は `Text where email` と書かれた slot とまったく同じように検査される。ツールチェーンがチェックへ lowering できない述語は、黙って通るチェックではなくビルドエラー（[E0803](./errors.md#e0803-unimplemented-refinement)）になる。
+
+2 つの書き込み経路は報告の大きさが異なり、さらに `bind` は書き込むパスでだけ判定される（後述）。代入は、1 つのフィールドだけを書くもの（`signup.name := …`）でも値全体で判定される：
+
+- **代入**（reducer 内の `age := …`）はバッチ全体を破棄し、報告する — slot は書かれず、effect も発行されない（[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）。
+- **`bind`** はそのフィールドの値だけを受け取らず、何も報告しない。入力途中の値は欠陥ではなく想定内だからである。フィールドはその値を表示し続け、`error(field=…)` がそのメッセージを出す（[§5.1.2](#_5-1-2-refinement-の扱い)）。
+
+どちらも**宣言時の初期値**は通さない： `slot email : Email = ""` は自分自身の refinement が拒否する値から始まり、それが未入力のフォームにメッセージを出す仕組みである（[§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)）。
+
+slot の一部への `bind`（`input(bind=form.age)`、`input(bind=draft.nick.get)`）は、**書き込むパスで**判定する：そのパスに沿った述語（slot 自身の型のものを含む）と、パスの終点より下のすべての述語である。兄弟フィールドの述語はそのパス上にないので、兄弟が失敗していても書き込みは拒否されない。これにより、デフォルトが複数のフィールドで失敗するレコードでも、どの順番でも入力できる。`error(field=…)` が判定するときは、拒否された値を表示しているフィールドをその時点の slot に重ねて判定する。したがって、後から兄弟フィールドを書いても、そのフィールドにもう当てはまらないメッセージが戻ってくることはない。slot 全体に bind したコントロールは、その中へ bind したフィールドが収まる値を表示しているので、両方が拒否された値を表示しているときは slot 全体の値を先に重ね、その上にフィールドの値を重ねる。
+
 ### 5.6.1 フォーム横断の例
 
 ```kumiki snippet
@@ -270,7 +287,7 @@ reducer doSignup on=ui.submit(SignupForm) do= ...
 
 ## 5.7 エラー表示
 
-### 5.7.1 個別フィールドの refinement 違反
+### 5.7.1 個別フィールドの refinement 違反 {#_5-7-1-refinement-violation-of-an-individual-field}
 
 `error` 要素で表示：
 
@@ -279,22 +296,29 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` は対象 slot の現在の検査エラーをレンダリングする組み込み tile。
+`error(field=...)` は対象フィールドの現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、フィールドが**表示している**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。それは slot の現在の値だが、bind されたコントロールが refinement に拒否された値を表示している間は、その値が判定される（[§5.1.2](#_5-1-2-refinement-の扱い)）。したがって型に refinement を持たない slot にはどの値についても表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。それでも表示しうるのは、値についてではない唯一のメッセージである：bind された `input` が slot の `Int` / `Float` / `Time` としてそもそも読めないテキストを表示している間（[§5.1.1](#_5-1-1-elements-that-support-bind)）、メッセージはその読み方のもの（下の `int` / `float` / `time`）であり、どの slot でも、どの refinement よりも先に出る — `Int where between(0, 120)` への `"1.5"` は整数ではないのであって、範囲外の数ではない。
 
-### 5.7.2 標準メッセージ
+述語を複数持つ型（[§1.3.1](./language.md#_1-3-1-構文)）では、§1.3.1 が与える順で、現在の値が**最初に失敗した述語**のメッセージが出る。`slot draft : Text where nonempty where len-lt(7) = ""` の手つかずのフィールドは「Required」であり、空の値が十分満たしている側の境界ではない。
+
+### 5.7.2 標準メッセージ {#_5-7-2-standard-messages}
 
 | 述語 | デフォルト |
 |---|---|
 | `email` | "Invalid email format" |
 | `url` | "Invalid URL" |
+| `uuid` | "Invalid identifier" |
 | `nonempty` | "Required" |
 | `len-eq(N)` | "Must be exactly N characters" |
 | `len-lt(N)` / `len-gt(N)` | "Must be less than / more than N characters" |
 | `between(A, B)` | "Must be between A and B" |
+| `positive` / `negative` | "Must be positive" / "Must be negative" |
 | `regex(P)` | "Does not match pattern" |
 | `one-of(...)` | "Must be one of: ..." |
+| `int`（`Int` でないテキスト、[§5.1.1](#_5-1-1-elements-that-support-bind)） | "Must be a whole number" |
+| `float`（`Float` でないテキスト） | "Must be a number" |
+| `time`（`Time` でないテキスト） | "Must be a date" |
 
-カスタムメッセージは `theme.errors` で上書き：
+カスタムメッセージは `theme.errors` で上書き（キーは表の 1 列目で、`int` / `float` / `time` も含む）：
 
 ```kumiki snippet
 theme MyTheme = {

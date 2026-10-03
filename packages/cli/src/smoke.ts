@@ -6,7 +6,6 @@ import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { compile } from "@kumikijs/compiler";
 import {
   nodeEpisodeLogReader,
@@ -26,15 +25,30 @@ import {
   type TestResult,
 } from "@kumikijs/runtime";
 import {
+  clearStorage,
   type HttpFixture,
   installTestDoubles,
   readHttpFixture,
   useHttpFixture,
 } from "./harness.ts";
 
-let domReady = false;
-export function ensureDom(): void {
-  if (domReady) return;
+// The registration in flight or done, shared by every caller. A promise rather
+// than a flag: the import makes this async, so two overlapping calls would both
+// pass a "not yet" check and happy-dom throws on the second registration.
+let domReady: Promise<void> | null = null;
+export function ensureDom(): Promise<void> {
+  domReady ??= registerDom().catch((err: unknown) => {
+    // A failed import must not poison every later call.
+    domReady = null;
+    throw err;
+  });
+  return domReady;
+}
+
+async function registerDom(): Promise<void> {
+  // Loaded on first use, not at the top: happy-dom is a heavy import, and
+  // check / build / the edit verbs never touch a DOM.
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
   // Registers window/document/Event/… onto globalThis, overwriting Node's own
   // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
   // accept events constructed from the DOM realm).
@@ -43,7 +57,6 @@ export function ensureDom(): void {
   // example's own fixture instead of the network, and an IntersectionObserver
   // that actually notifies. Installed after registration, which overwrites both.
   installTestDoubles();
-  domReady = true;
 }
 
 /**
@@ -119,7 +132,8 @@ export async function smokeSource(
     settleMs?: number;
   } = {},
 ): Promise<SmokeReport> {
-  ensureDom();
+  await ensureDom();
+  clearStorage();
   // Effects run for real here (unlike `runScenario`, which replaces every
   // `invoke`), so the http capability is answered by the example's own
   // `.http.json`. Without a path there is no fixture, and any request reports
@@ -209,7 +223,8 @@ export async function runScenarioSource(
   capabilities: string[] = [],
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
 ): Promise<ScenarioReport> {
-  ensureDom();
+  await ensureDom();
+  clearStorage();
   // A scenario scripts effects at the `invoke` boundary, so http never reaches
   // `fetch` — the fixture is here for a capability the runner does not wrap,
   // and to keep a stray request reported rather than live.
@@ -286,10 +301,19 @@ export async function runCmd(
     const s = report.steps[i];
     if (!s) continue;
     const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
-    const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
-    console.log(`[${status}] ${head}`);
+    console.log(`[${s.ok ? "ok" : "FAIL"}] ${head}`);
+    // Printed first: the action did not run, so the `error:` and `diagnostic:`
+    // lines below it are what the app did on its own during this step's settle
+    // window — not a response to the action.
+    if (s.actionError !== undefined) console.log(`    action failed: ${s.actionError}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const e of s.expectedErrors) console.log(`    expected error: ${e}`);
+    // The same, for the other channel — a refusal the step asked for is off
+    // `actionError`, and a step whose whole point is that the platform turned
+    // it away must not print as a step where nothing happened.
+    if (s.expectedActionError !== undefined) {
+      console.log(`    expected refusal: ${s.expectedActionError}`);
+    }
     for (const f of s.failures) console.log(`    assert: ${f}`);
     // Advisory, and attributed to the action above it — that pairing is the
     // whole reason the runner buffers diagnostics per step. Listed rather than
@@ -315,7 +339,7 @@ export async function runTestsSource(
   capabilities: string[] = [],
   opts: { sourcePath?: string } = {},
 ): Promise<TestResult[]> {
-  ensureDom();
+  await ensureDom();
   await loadApp(source, capabilities, {
     includeTests: true,
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),

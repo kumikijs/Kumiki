@@ -3,7 +3,7 @@
   "version": "0.1.14",
   "private": true,
   "type": "module",
-  "description": "Kumiki real-browser verification tier — runs the same scenarios in Chromium (Playwright) to catch CSS layout, real focus, and rendering bugs a headless DOM can't see.",
+  "description": "Kumiki real-browser verification tier \u2014 runs the same scenarios in Chromium (Playwright) to catch CSS layout, real focus, and rendering bugs a headless DOM can't see.",
   "license": "Apache-2.0",
   "bin": {
     "kumiki-e2e": "./src/cli.ts"
@@ -27,10 +27,10 @@
   },
   "dependencies": {
     "@kumikijs/compiler": "workspace:*",
+    "@kumikijs/runtime": "workspace:*",
     "playwright": "catalog:"
   },
   "devDependencies": {
-    "@kumikijs/runtime": "workspace:*",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "tsx": "catalog:",

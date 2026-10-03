@@ -49,10 +49,13 @@ When you want a static bundle instead:
 
 ```sh
 kumiki build app.kumiki ./out
-# → Wrote out/index.html, app.js, runtime/ (core, stdlib, tiles-layout, tiles-text, tiles-input)
+# → Wrote out/index.html, app.js, runtime/ (core, stdlib, tiles-layout,
+#   tiles-input-button, tiles-text-heading, tiles-input-shared)
 ```
 
-`out/index.html` opens straight from disk. `runtime/` carries only the modules this app touches, so the counter ships about 9KB gzipped; an app that never routes or renders a table ships no router and no table code.
+`out/index.html` opens straight from disk. `runtime/` carries only what this app touches — not just the tile families but the individual tiles, so the counter gets the button and the heading and none of the other fifteen. It ships about 22KB gzipped; an app that never routes or renders a table ships no router and no table code.
+
+Add `--bundle` to link `app.js` and those modules into one minified file (no `runtime/`): about 18KB gzipped for the counter, at the cost of a readable `app.js` and of a `runtime/` a returning visitor could have kept cached.
 
 ## Verify it
 

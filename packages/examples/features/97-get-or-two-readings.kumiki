@@ -1,0 +1,72 @@
+# Feature (stdlib.md §2.2.1 / §2.2.4): `.get-or` is one name with two readings,
+# and the receiver decides which.
+#
+#   Option(T).get-or(default)       → T
+#   Result(T, E).get-or(default)    → T
+#   Map(K, V).get-or(key, default)  → V
+#
+# The argument count is what selects between them, so a count that does not fit
+# its receiver is an arity error rather than a third reading. That rule has to
+# leave this app alone: both readings are written here on the same two lines
+# apart, and each one's answer is asserted, because the failure being guarded
+# is a wrong *value* rather than a crash — the mismatched shapes used to lower
+# to the other reading and produce a plausible-looking answer.
+
+slot stock : Map(Text, Int) = {"apple": 7, "pear": 0}
+slot picked : Option(Int)   = None
+slot parsed : Result(Int, Text) = Err("not a number")
+
+slot fromMap  : Int = -1
+slot fromOpt  : Int = -1
+slot fromRes  : Int = -1
+
+# The Map reading: a key and a default. A key that is present answers its
+# value, and `pear` is the case that matters — `0` is falsy, so a lowering
+# written with `||` instead of a presence test answers the default here.
+reducer look on=ui.click(Look)
+    do= fromMap := stock.get-or("apple", -1)
+
+reducer look-zero on=ui.click(LookZero)
+    do= fromMap := stock.get-or("pear", -1)
+
+reducer look-missing on=ui.click(LookMissing)
+    do= fromMap := stock.get-or("plum", -1)
+
+# The Option reading: a default and nothing else. `None` answers the default,
+# and a `Some` answers its payload.
+reducer pick on=ui.click(Pick)
+    do= picked := Some(42)
+
+reducer unwrap on=ui.click(Unwrap)
+    do= fromOpt := picked.get-or(-1)
+
+# The same reading on a Result, where `Err` answers the default and `Ok`
+# answers the payload.
+reducer parse-ok on=ui.click(ParseOk)
+    do= parsed := Ok(5)
+
+reducer unwrap-res on=ui.click(UnwrapRes)
+    do= fromRes := parsed.get-or(-1)
+
+tile Look        = button(text="look")        {id: "look"}
+tile LookZero    = button(text="look-zero")   {id: "look-zero"}
+tile LookMissing = button(text="look-missing"){id: "look-missing"}
+tile Pick        = button(text="pick")        {id: "pick"}
+tile Unwrap      = button(text="unwrap")      {id: "unwrap"}
+tile ParseOk     = button(text="parse-ok")    {id: "parse-ok"}
+tile UnwrapRes   = button(text="unwrap-res")  {id: "unwrap-res"}
+
+tile App
+    = column(
+        heading("two readings of one name"),
+        row(Look, LookZero, LookMissing) {gap: "sm"},
+        row(Pick, Unwrap, ParseOk, UnwrapRes) {gap: "sm"},
+        text("map: " + fromMap.show),
+        text("opt: " + fromOpt.show),
+        text("res: " + fromRes.show))
+      {pad: "lg", gap: "md"}
+
+app GetOrTwoReadings
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -1,0 +1,27 @@
+# Feature: a named argument on a user-tile call is a prop, not the tile's
+# input. `Btn(onClick=tap)` binds the handler to what `Btn` renders, and
+# `Row(onClick=tap, label)` still passes `label` as the tile's `$1`.
+#
+# `tap` is declared against `Other`, which the scenario never clicks — so the
+# taps it counts are the ones the two explicit wirings delivered.
+
+slot taps  : Int  = 0
+slot label : Text = "row"
+
+reducer tap on=ui.click(Other) do= taps := taps + 1
+
+tile Other       = button(text="other")
+tile Btn         = button(text="tap me")
+tile Row in=Text = button(text=$1)
+
+tile App = column(
+             Btn(onClick=tap),
+             Row(onClick=tap, label),
+             Other,
+             text("taps: " + taps.show))
+           {pad: "lg", gap: "md"}
+
+app HandlerOnUserTile
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -33,7 +33,7 @@ import { registerView } from "./commands/view.ts";
  * action ever runs.
  */
 const USAGES: Record<string, string> = {
-  build: "Usage: kumiki build <input.kumiki> <outdir>",
+  build: "Usage: kumiki build <input.kumiki> <outdir> [--minify] [--bundle]",
   list: "Usage: kumiki list <input.kumiki> [layer]",
   view: "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]",
   refs: "Usage: kumiki refs <input.kumiki> <qname>",

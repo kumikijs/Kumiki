@@ -1,8 +1,14 @@
 // indexed.* built-in capability handlers (#79): shipped only when an app
 // declares an indexed-* effect. The DB is opened lazily on the first call so
 // apps that never actually run an effect don't trigger an upgrade transaction.
+// A failure is an `err` whose value is its message as a plain string: the
+// `Text` these effects declare as `E` in `out=Result(T, Text)` (http.md
+// §6.7). The request is read inside each handler's `try`, so one that is
+// missing (an `in=Unit` effect with no `map-request`) is that err too rather
+// than a rejection.
 
 import type { EffectResult } from "./core.ts";
+import { type Decode, decodeRefusal } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 export type IndexedDbStore = { name: string; key: string; indexes?: string[] };
@@ -66,35 +72,45 @@ export async function indexedRead(input: unknown, cfg?: IndexedDbCfg): Promise<E
   // `indexed.read` cap covers two spec-§6.7.4 effects that share the cap:
   // `indexed-read` (point lookup, returns Option) and `indexed-query` (range,
   // returns List). Dispatch by input shape — a `key` means point lookup.
-  const x = input as { store: string; key?: unknown };
-  if (x.key !== undefined) return pointRead(x as { store: string; key: string }, cfg);
+  // `?.`: an `in=Unit` effect with no `map-request` has no request at all,
+  // which falls through to the query and fails there as its `Text` err.
+  const x = input as { store: string; key?: unknown } | undefined;
+  if (x?.key !== undefined)
+    return pointRead(x as { store: string; key: string; decode?: Decode }, cfg);
   return indexedQuery(input, cfg);
 }
 
+/**
+ * A stored record is a structured clone, not JSON, so nothing is parsed; a
+ * `Decoder.Json(T)` whose `T` refuses the record makes the read an `err`, as a
+ * refused `storage.read` is (http.md §6.7.4).
+ */
 async function pointRead(
-  input: { store: string; key: string },
+  input: { store: string; key: string; decode?: Decode },
   cfg?: IndexedDbCfg,
 ): Promise<EffectResult> {
   if (!ensureCfg(cfg)) {
-    return { kind: "err", value: { message: "app.indexed-db is not declared" } };
+    return { kind: "err", value: "app.indexed-db is not declared" };
   }
   try {
     const db = await openDb(cfg);
     const tx = db.transaction(input.store, "readonly");
     const value = await reqToPromise(tx.objectStore(input.store).get(input.key));
     if (value === undefined) return { kind: "ok", value: _stdlibCore.None };
+    const refused = decodeRefusal(input.decode, value);
+    if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return { kind: "err", value: String(e) };
   }
 }
 
 export async function indexedWrite(input: unknown, cfg?: IndexedDbCfg): Promise<EffectResult> {
-  const { store, key, value } = input as { store: string; key: string; value: unknown };
   if (!ensureCfg(cfg)) {
-    return { kind: "err", value: { message: "app.indexed-db is not declared" } };
+    return { kind: "err", value: "app.indexed-db is not declared" };
   }
   try {
+    const { store, key, value } = input as { store: string; key: string; value: unknown };
     const db = await openDb(cfg);
     const tx = db.transaction(store, "readwrite");
     const os = tx.objectStore(store);
@@ -107,29 +123,29 @@ export async function indexedWrite(input: unknown, cfg?: IndexedDbCfg): Promise<
     await reqToPromise(os.put(record));
     return { kind: "ok", value: null };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return { kind: "err", value: String(e) };
   }
 }
 
 export async function indexedDelete(input: unknown, cfg?: IndexedDbCfg): Promise<EffectResult> {
-  const { store, key } = input as { store: string; key: string };
   if (!ensureCfg(cfg)) {
-    return { kind: "err", value: { message: "app.indexed-db is not declared" } };
+    return { kind: "err", value: "app.indexed-db is not declared" };
   }
   try {
+    const { store, key } = input as { store: string; key: string };
     const db = await openDb(cfg);
     const tx = db.transaction(store, "readwrite");
     await reqToPromise(tx.objectStore(store).delete(key));
     return { kind: "ok", value: null };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return { kind: "err", value: String(e) };
   }
 }
 
 export async function indexedQuery(input: unknown, cfg?: IndexedDbCfg): Promise<EffectResult> {
   const x = input as { store: string; index?: unknown; range?: unknown };
   if (!ensureCfg(cfg)) {
-    return { kind: "err", value: { message: "app.indexed-db is not declared" } };
+    return { kind: "err", value: "app.indexed-db is not declared" };
   }
   try {
     const db = await openDb(cfg);
@@ -140,7 +156,7 @@ export async function indexedQuery(input: unknown, cfg?: IndexedDbCfg): Promise<
     const values = await reqToPromise(source.getAll(range));
     return { kind: "ok", value: values };
   } catch (e) {
-    return { kind: "err", value: { message: String(e) } };
+    return { kind: "err", value: String(e) };
   }
 }
 

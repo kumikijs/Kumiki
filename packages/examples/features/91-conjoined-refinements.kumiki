@@ -1,0 +1,77 @@
+# Feature: a type may carry more than one `where`, and the predicates conjoin
+# (spec/language.md §1.3.1). Every one of them has to hold, and the one that
+# refuses a value is the one the report names.
+#
+# `Handle` below is written with two: a value has to be longer than 3 and
+# shorter than 7. Codegen used to read exactly one layer of the type, so the
+# outer predicate was emitted and the inner one silently disappeared — `handle`
+# accepted "kum" against a type that says it is too short, with `check`,
+# `build` and the emitted descriptor all looking well formed (#353).
+#
+# Both bounds are reachable from the buttons, which is the shape of a real
+# rejection: a refinement is a type constraint, not a saturating `+`, so a
+# reducer that can reach a bound guards itself or takes its whole batch down
+# with it (spec/runtime.md §10.3.3). Neither bound is reached in one click —
+# the scenario next to this file is where both are, because only that tier
+# can assert an error *was* reported.
+
+type Handle = nominal Text where len-gt(3) where len-lt(7)
+
+slot handle : Handle = "kumik"
+
+# The same shape on a bound field. The declared default violates its own
+# refinement, which is what makes `error(field=…)` speak on a pristine form
+# (spec/forms.md §5.7.1). These two are the message's two directions: `""` is
+# refused by `nonempty`, the FIRST predicate the chain reaches, and "kumiki" by
+# `len-lt(5)`, the second. The tile renders the predicate the value actually
+# fails, so the pair also says the rule is "first FAILING", not "first".
+slot draft : Text where nonempty where len-lt(7) = ""
+slot tag   : Text where nonempty where len-lt(5) = "kumiki"
+
+reducer grow   on=ui.click(GrowBtn)   do= handle := handle + "!"
+reducer shrink on=ui.click(ShrinkBtn) do= handle := handle.slice(0, handle.length - 1)
+
+tile GrowBtn   = button(text="longer",  onClick=grow)
+tile ShrinkBtn = button(text="shorter", onClick=shrink)
+
+tile DraftField = column(
+                    label(text="Draft") {for: "draft"},
+                    input(bind=draft, id="draft", placeholder="4-6 characters"),
+                    error(field=draft))
+                  {gap: "xs"}
+
+tile TagField = column(
+                  label(text="Tag") {for: "tag"},
+                  input(bind=tag, id="tag", placeholder="1-4 characters"),
+                  error(field=tag))
+                {gap: "xs"}
+
+tile App = column(
+             heading("handle: " + handle),
+             row(ShrinkBtn, GrowBtn) {gap: "sm"},
+             DraftField,
+             TagField)
+           {pad: "lg", gap: "md"}
+
+app ConjoinedRefinements
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+# Both bounds hold in the reducer-test tier too, where a rejected batch leaves
+# every slot at its `given` value.
+
+test grow-fits-under-the-bound =
+    reducer-test grow
+        given  = {slots: {handle: "kumi"}, event: {type: ui.click, target: GrowBtn}}
+        expect = {slots: {handle: "kumi!"}, effects: []}
+
+test grow-at-the-bound-does-nothing =
+    reducer-test grow
+        given  = {slots: {handle: "kumi!!"}, event: {type: ui.click, target: GrowBtn}}
+        expect = {slots: {handle: "kumi!!"}, effects: []}
+
+test shrink-at-the-bound-does-nothing =
+    reducer-test shrink
+        given  = {slots: {handle: "kumi"}, event: {type: ui.click, target: ShrinkBtn}}
+        expect = {slots: {handle: "kumi"}, effects: []}

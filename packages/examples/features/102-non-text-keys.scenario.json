@@ -1,0 +1,33 @@
+{
+  "steps": [
+    {
+      "label": "the containers are built up through add and insert",
+      "do": { "click": "#fill" },
+      "expect": { "noErrors": true }
+    },
+    {
+      "label": "each reader hands back the key's declared type, and later readers agree with it",
+      "do": { "click": "#read" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "listed": [8, 10],
+          "keys": [1, 2],
+          "pairs": [[1, "one"], [2, "two"]],
+          "bools": [true],
+          "words": ["7"],
+          "sum": 21,
+          "has8": true,
+          "kept": { "2": "two" },
+          "crewed": [[4, 5]]
+        },
+        "domIncludes": ["sum: 21", "has 8: true", "next: 101", "next: 102"]
+      }
+    },
+    {
+      "label": "a for over Map.keys binds numbers",
+      "do": { "click": "#walk" },
+      "expect": { "noErrors": true, "state": { "looped": 3 }, "domIncludes": ["looped: 3"] }
+    }
+  ]
+}

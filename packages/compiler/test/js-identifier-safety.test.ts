@@ -307,3 +307,65 @@ describe("runtime-managed slot names", () => {
     expect(() => parse(lex(`slot now : Text = "x"`))).toThrow(/Expected ident, got kw\(now\)/);
   });
 });
+
+describe("the identifier a shadowed declaration takes", () => {
+  // `freshBinding` (codegen/context.ts) declares a name that is already in
+  // scope as `jsBinding(name) + "$" + n`. That is only safe if no OTHER Kumiki
+  // name maps onto the result — a collision would silently point two distinct
+  // bindings at one identifier, which is the failure this whole file exists to
+  // catch. The argument for it rests on `jsBinding`'s mapping and on the
+  // lexer's rule that an identifier never ends in `-`, so it is brute-forced
+  // here rather than trusted: neither rule is local to the function.
+
+  /** Every string over `alphabet` up to `maxLen`, as one flat list. */
+  function stringsUpTo(alphabet: string[], maxLen: number): string[] {
+    let level = [""];
+    const out: string[] = [];
+    for (let n = 0; n < maxLen; n++) {
+      level = level.flatMap((prefix) => alphabet.map((c) => prefix + c));
+      out.push(...level);
+    }
+    return out;
+  }
+
+  /** The candidates the lexer really accepts as one identifier token. */
+  function lexableIdentifiers(candidates: string[]): string[] {
+    return candidates.filter((c) => {
+      try {
+        const tokens = lex(c);
+        // `lex` appends an eof token; one identifier means exactly one before it.
+        return tokens.length === 2 && tokens[0]?.kind === "ident" && tokens[0]?.value === c;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  it("cannot be produced by jsBinding from any other name", () => {
+    // `-` and `_` are the two characters that move under the mapping, and a
+    // digit is what a `$n` suffix looks like; the rest are carried for shape.
+    const names = lexableIdentifiers(stringsUpTo(["a", "n", "_", "-", "0", "1"], 5));
+    expect(names.length).toBeGreaterThan(500);
+
+    const mapped = new Set(names.map((n) => jsBinding(n)));
+    // Injective to begin with: `a-b` and `a_b` used to converge, and the suffix
+    // rule below says nothing useful if the base mapping already collides.
+    expect(mapped.size).toBe(names.length);
+
+    const collisions = names.flatMap((n) =>
+      [1, 2, 3].map((k) => `${jsBinding(n)}$${k}`).filter((shadow) => mapped.has(shadow)),
+    );
+    expect(collisions).toEqual([]);
+  });
+
+  it("stays clear of the module's own bindings and of JS reserved words", () => {
+    // The suffix is appended to a `jsBinding` output, which has already been
+    // pushed clear of both — so this asserts the suffix does not walk it back
+    // into one (`new` → `new$` → `new$1`, not `new1`).
+    for (const name of ["new", "class", "String", "App", "createApp", "route"]) {
+      const shadow = `${jsBinding(name)}$1`;
+      expect(EMITTED_MODULE_BINDINGS).not.toContain(shadow);
+      expect(shadow).toMatch(/\$\d+$/);
+    }
+  });
+});

@@ -141,6 +141,16 @@ refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
 
+`refinement-type` は再帰的なので、1 つの型が `where` を **2 つ以上**持てる。そのとき述語は**連言**であり、すべてが成り立つ値だけが受理される。
+
+```kumiki fragment
+type Handle = nominal Text where len-gt(3) where len-lt(7)
+```
+
+`Handle` は 3 文字より長く、**かつ** 7 文字より短い。述語は型が指す連鎖をたどって読まれるので（[§1.3.6](#_1-3-6-不変条件) 不変条件 1）、1 つの型式の上だけでなく名前をまたいでも積み上がる：`type Short = Text where len-lt(7)` に対する `type Handle = nominal Short where len-gt(3)` は両方を持つ。引数をそのまま返すジェネリックも同じ連鎖の一環であり（不変条件 2）、`type NonEmpty(T) = T where nonempty` のもとで `NonEmpty(Short)` は `len-lt(7)`、続いて `nonempty` を持つ。
+
+違反した値は、**連鎖を基底型の側から外側へ読む順**で**最初に失敗した述語**に対して報告される。1 つの型式の中ではそれが書かれた順であり、名前をまたぐ場合は宣言がたどる順である——`Handle` が `Short` の上に宣言されている以上、ファイル内でどちらの定義が先にあろうと `Short` の `len-lt(7)` が `Handle` 自身の `len-gt(3)` より先に来る。書き込みが reducer のバッチを破棄したときに拒否が名指すのはその述語であり（[batching](./runtime.md#a-batch-commits-all-or-nothing)）、`error` tile が描画するのもその述語のメッセージである（[エラー表示](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
+
 ### 1.3.2 ビルトイン汎化型
 
 ```
@@ -163,6 +173,50 @@ email             url               uuid
 regex("pattern")
 one-of(v1, v2, ...)
 ```
+
+いずれも**実行時チェック**である。値は slot へ書き込まれる際に検査され、通らない書き込みは拒否される（[フォーム §5.6](./forms.md#_5-6-バリデーション戦略)、[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）。各述語が検査する内容：
+
+| 述語 | 成立条件 | 引数 |
+|---|---|---|
+| `nonempty` | 値がテキストで、1 文字以上ある | — |
+| `len-eq(N)` / `len-lt(N)` / `len-gt(N)` | テキストの長さが `= N` / `< N` / `> N` | 0 以上の整数 1 個 |
+| `between(A, B)` | 値が数値で `A <= v <= B`（両端を含む） | 数値 2 個、`A` は `B` 以下 |
+| `positive` / `negative` | 値が数値で `v > 0` / `v < 0` — 0 はどちらでもない | — |
+| `email` | テキストが `local@host` の形で、host にドットがあり、いずれの側にも空白や 2 個目の `@` がない | — |
+| `url` | テキストが絶対 URL — スキーム、`://`、ホストの順（`https://kumiki.dev` は可、`kumiki.dev` は不可） | — |
+| `uuid` | テキストが 8-4-4-4-12 の 16 進形式（バージョン不問・大文字小文字不問） | — |
+| `regex("p")` | `p` が値**全体**にマッチする。パターンは両端がアンカーされるため、`regex("[0-9]{4}")` は `"AB1234"` を拒否する | パターンとして解釈できるテキストリテラル 1 個 |
+| `one-of(v1, ...)` | 値が列挙されたリテラルのいずれか | リテラル 1 個以上 |
+
+述語は型そのものの上だけでなく、**型のどこに書かれていても**検査される：レコードのフィールド、union のバリアントのペイロード、コンテナの要素（`List` / `Set` の要素、`Map` のキーと値、`Option` の `Some`、`Result` の `Ok` / `Err`、`Tuple` の各要素）は値の位置であり、値が受理されるのは、その値が持つすべての位置ですべての述語が成り立つときだけである。
+
+```kumiki fragment
+type Contact = {email: Text where email, age: Int where between(0, 120)}
+slot form : Contact = {email: "ada@example.com", age: 36}
+```
+
+のもとで `form.email := "nope"` は `form := {email: "nope", age: 36}` とまったく同じように拒否され、どちらの経路でも `age := 999` も同様である。位置は入れ子にも再帰にもなり — `List(Contact)`、再帰型 `type Tree = {label: Text where nonempty, kids: List(Tree)}` — 検査は有限である値をたどる。拒否された値は、フィールドの宣言順で最初に失敗した述語に対して、失敗した場所への**パス**付きで報告される：`(email at .email)`、`(nonempty at .kids[1].label)`、バリアントのペイロードなら `(nonempty at .Found)`、リスト要素なら `(len-lt(6) at [1])`。`error` タイルはその述語のメッセージを描画する（[フォーム §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
+
+パスは slot の値から内側へ向かうステップの列（ランタイムの `RefinementFailure.path`）であり、報告は各ステップを次のように書く：
+
+| ステップ | 表記 | 位置 |
+|---|---|---|
+| フィールド | `.email` | レコードのフィールド |
+| インデックス | `[1]` | `List` の要素、`Tuple` の要素 |
+| バリアント | `.Found`、`.Pair[1]` | union / `Option` / `Result` のペイロード。バリアントが複数持つときは位置で示す |
+| キー | `.keys["k"]` | `Map` のキーそのもの |
+| エントリ | `["k"]` | `k` の下に格納された `Map` の値。Kumiki 自身のインデックスと同じ読み方 |
+| メンバー | `{"x"}` | `Set` の要素 |
+
+キー・エントリ・メンバーはキーの型が読むとおりの値を持つので、`Int` のキーは `["3"]` ではなく `[3]` と書かれる。表記は読むためのものであり、ステップ自体は区別された値なので、`Map` のキーが `keys` という名前のフィールドと取り違えられることも、キー `1` のエントリがリストのインデックスと取り違えられることもない。
+
+各位置は述語より先に値の形を検査する：レコードと `Map` はオブジェクト、`List` と `Tuple` は配列、union / `Option` / `Result` の値はそのバリアントのいずれかである。そこで形の合わない値 — リストのあるべき場所にデコードされた `{}`、フィールドの欠けたペイロード — は、次の段落があらゆる述語について述べるとおりその位置の述語に `false` を返し、そのうち最初のものに対して報告される。
+
+たどられない位置が二つある。ランタイムが保持するキーから取り出せない型の `Set` の要素 — 型パラメータや `Bytes` — は検査されない。テキスト・数値・真偽値の要素は取り出せ、JSON として保持されるレコード・バリアント・タプルも取り出せる（`Set({n: Text where nonempty})` はたどられる）。また、自分自身を大きくなっていく引数に適用するジェネリック（`type T(A) = {v: A, next: Option(T(List(A)))}`）は段ごとに lowering すべき新しい型になるので、refinement がそれに沿って 32 段より深くにある slot は、途中で止まる検査ではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。互いに異なる名前付き型はいくらでも深く入れ子にできる。
+
+述語は値についての問いなので、形の合わない値に対しては例外を投げず `false` を返す。テキストに対する `positive` は false であり、数値に対する `nonempty` も false である。したがって形の合わない基底型の上に書かれた述語は、slot が保持しうるあらゆる値を拒否する — `Text where positive` — これは [E0804](./errors.md#e0804-refinement-args-invalid) である。`len-*` 系・`nonempty`・`email`・`url`・`uuid`・`regex` は `Text` を、`between`・`positive`・`negative` は `Int`・`Float`・`Time` を必要とする。`one-of` は厳密に比較するので、リテラルがテキストなら `Text`、数値なら `Int`・`Float`・`Time` の基底型を必要とする。ジェネリックの型パラメータは適用箇所で判定される：`type NonEmpty(T) = T where nonempty` は問題なく、`NonEmpty(Int)` は E0804 である。
+
+述語の集合は閉じており、集合外の名前はパースエラーになる。引数も検査される。テキストの境界値、小数や負の長さ、`len-lt(0)`（あらゆるテキストより短い）、コンパイルできないパターン、空の範囲はいずれも [E0804](./errors.md#e0804-refinement-args-invalid) である — どの値も満たせない refinement と、あらゆる値が満たしてしまう refinement は同じ欠陥だからである。登録済みでもツールチェインが lower しない述語は、黙って通るチェックではなくビルド時の [E0803](./errors.md#e0803-unimplemented-refinement) になる。
 
 任意 Boolean 述語は禁止。理由：AI が証明を書く必要が生じるとデバッグループが壊れる。
 
@@ -189,7 +243,9 @@ type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```
 
-`Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
+`Cents` と `Yen` は互いを受理しない。一方を他方の要求される位置に置くことは [E0201](./errors.md#e0201-type-mismatch) であり、`nominal Text where uuid` を 2 つ宣言したうえでの `postId := userId` も同様である。**比較** も同じ誤りであり同じエラーになる：`postId == userId` も `cents < yen` も E0201 である（[§1.9.4](#_1-9-4-演算子の型)）。nominal への別名は同じ型を指し（`type Money = Cents`）、使用位置に直接書かれた `nominal` は名前を宣言しないので、他の型式と同じく構造的に比較される。
+
+この同定は、id を**生成する**呼び出しにも及ぶ。id の出所は通常そこだからである：`TypeName.fresh()` は `TypeName` であり、`TypeName.parse(t)` は `Option(TypeName)` である（[stdlib §2.4.1](./stdlib.md#_2-4-1-id-生成) / [§2.4.3](./stdlib.md#_2-4-3-型変換)）。したがって `postId := UserId.fresh()` は両方の型名を挙げる E0201 であり、`slot found : Option(PostId) = UserId.parse(t)` も同様である。`fresh` が生成するのは uuid なので、§2.4.1 が対象とする `nominal Text` については読まれ、uuid がその値になり得ない qualifier — `nominal Int`・レコード・素の `Int` — では呼び出しはどの型の値でもなく [E0802](./errors.md#e0802-unimplemented-function) になる。そもそも型を指さない qualifier は [E0117](./errors.md#e0117-undef-type) であり、こちらも値については何も言わない。
 
 **自身の nominal 名を持たない**型は、その上に宣言されたどの nominal とも双方向に受理し合う。これが `slot c : Cents = 1` を構築形式なしで成立させており、算術は基底型を返すので（[§1.9](#_1-9-式言語)）`c := c + 1` もそのまま通る。
 
@@ -211,6 +267,24 @@ fn toUser(p: PostId) -> UserId       = p + ""
 前者は算術が `Int` に、後者は `+ ""` が `Text` に着地する。恒等な body はコンパイルできない — `fn toUser(p: PostId) -> UserId = p` は E0201 である。`p` はまだ `PostId` だからである。この `fn` が実際に何かを変換していることは検査されない。記録されるのは意図であり、強制されるのは body の型だけである。
 
 `where` の refinement 自体は同定に寄与せず（`type Positive = Int where positive` は `Int` である）、compile 時ではなく runtime の検査のままである（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)）：`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` は型としては正しく、範囲を決めるのはバリデーションである。
+
+
+### 1.3.6 不変条件
+
+1. **`type` はその body を指す。** 別名（`type A = B`）、`nominal` の被せ、`where` refinement はいずれも下にある型の代わりに立つものであり、たどった先には body が無ければならない。
+2. **別名の連鎖は自分自身へ戻ってはならない。** 定義から次の名前へ — 別名、`nominal`、`where`、あるいは型引数をそのまま返す汎化型（`type Alias(T) = T`）を経由して — たどっていったとき、連鎖上にすでに現れた名前へ到達してはならない。`type A = A` および `type A = B` / `type B = A` の組は何も指していない。たどり着く body が無いからである。[E0009](./errors.md#e0009-type-cycle)。
+3. **連鎖は構造的な型で終わる。** レコード・ユニオン・コンテナ・プリミティブはそれ自体が型であるため、その内側に書かれたものが連鎖を続けることはない。
+4. **再帰型は合法である。** これが、自分自身を用いて書かれた型の受理される形である：
+
+```kumiki fragment
+type Node  = {value: Int, next: Node}
+type Tree  = {children: List(Tree)}
+type Shape = Leaf | Branch(Shape, Shape)
+```
+
+いずれも不変条件 3 により、自分自身へ戻るより先に構造的な型へ到達する。2 つを比較したときに停止するのは、この関係が**書かれたとおりの型**に対して**余帰納的**に読まれるからである：比較の途中で同じ組へ再入したら「はい」と答える。これは、比較の有限な部分が下りの途中ですでに検査済みであることから健全である。停止性は値が有限であることには依存しない — 上の `Node` は `next` が optional でもコンテナでもないため値を 1 つも持たないが、それでも合法な型である。
+
+5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
 
 ---
 
@@ -239,7 +313,7 @@ modifier は最大 1 つ。`volatile` は `transient` がすることをすべ�
 1. **全 slot がグローバル**
 2. 書き換えは **reducer の `do=` からのみ**
 3. 初期値は **純粋式のみ**（effect 実行不可）
-4. **派生 slot は禁止**（派生計算は `fn` レイヤを使う）
+4. **派生 slot は禁止**（派生計算は `fn` レイヤを使う）。runtime の `route` slot も含む。直接読んでも `fn` 呼び出し越しに読んでも同じで、route はすべての初期値が評価された後のマウントで設置される（[E0304](./errors.md#e0304-derived-slot)）
 
 ### 1.4.3 例
 
@@ -284,6 +358,14 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - 実行は **runtime の effect dispatcher**
 - 実行前に **capability check**（未宣言なら**コンパイル時エラー**）
 - 結果は `effect-name.ok($value, $key)` または `effect-name.err($error, $key)` として reducer に届く
+- `policy=latest-per-key(<expr>)` と `map-request` は effect 自身の式。どちらも
+  effect の入力に適用されるため、`$1` が唯一の束縛であり、slot と `fn` は読めるが
+  `$route` はここでは名前ではない
+- 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
+  エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
+  reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
+  （[http.md §6.4](./http.md#_6-4-cancellation)）
 
 ### 1.5.3 例
 
@@ -385,9 +467,27 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 
 `{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。[§1.6.4](#_1-6-4-不変条件) Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
 
+**コンテナへのセレクタは、そのイベントを発火できる子孫に届く。** コンテナ種別の多くは自分自身では何も発火しない（`box` に `keydown` も `focus` も `submit` もない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
+
+**子孫の書き方は結果を変えない。** 子 tile を名前で参照する本体も、インラインの本体とまったく同じように（何段でも）辿られる。したがって次の 2 つは同じプログラムである:
+
+```kumiki snippet
+tile Leaf   = input(placeholder="type")
+tile RefBox = box(Leaf)                          # tile 参照
+tile Inline = box(input(placeholder="type"))     # 同じ木を直接書いたもの
+
+reducer typed on=ui.key(RefBox) do= ...          # どちらでも input に配線される
+```
+
+subscription が届く tile を決めるのは、その子孫が「どの経路で描画されたか」であって子孫そのものではない。`RefBox` の*隣*に描画された `Leaf` はその内側ではないので、ハンドラを受け取らない。1 つの子孫に対して複数の外側 tile が同じイベントを subscribe している場合は、通常どおり [§1.6.4](#_1-6-4-不変条件) Invariant 3 が適用され、マッチしたすべてが定義順で発火する。
+
+同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は置き換えられずに**結合される**：`r` と外側の各 tile の reducer がすべて定義順で発火する（[§1.7.3](#_1-7-3-event-handler-props)）。したがってコンテナへの subscription は、そのイベントを発火する子孫の*すべて*に届き、自分のハンドラを持つボタンも例外ではない：チェックボックスと削除ボタンを持つ行に対する `ui.click(TodoRow)` は、その両方で実行される。行全体ではなく、そのイベントが意味する最も狭い tile を subscribe すること — `tile TodoCheck = check(...)` に対する `ui.click(TodoCheck)` のように。
+
 ### 1.6.3 lvalue の意味論
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。
+
+path が取れるステップは**閉じた集合**である：フィールド（`.name`）、インデックス（`[key]`）、そして `Option` / `Result` への `.get` の3つ。それ以外は lvalue ではない。特に標準ライブラリのメンバーは lvalue ではなく、`name.length := 9` は書き込みではなく [E0602](./errors.md#e0602-unassignable-member) である。そもそもそうした書き込みには意味が無い：メンバーはレシーバから値を導出するものなので、代入が着地すべき場所がレシーバ内に存在しない。
 
 ```kumiki snippet
 # これらの reducer 文は:
@@ -401,7 +501,17 @@ editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
 ```
 
-**`.get` 経由は安全**: Option が `None` のときの代入は no-op（panic しない）。明示的に panic させたい場合は `editor := Some(editor.get.copy(body="Body"))` と書く。
+**`.get` 経由は安全**: Option が `None` のときの代入は no-op（panic しない）。明示的に panic させたい場合は `editor := Some(editor.get.copy(body="Body"))` と書く。`.get` は読み取り時と同じ多相 unwrap（[標準ライブラリ §2.2.4](./stdlib.md#_2-2-4-option-t)）であり、`Result` も同様に振る舞う — `Ok` の payload を書き換え、`Err` は素通りする。安全なのは*代入*だけである点に注意: 右辺が `None` の `editor.get` を読めば従来どおり panic する。
+
+**インデックスのステップはレシーバ内の場所を指し**、何を指すかはレシーバによって決まる：
+
+- **`Map(K, V)`** — そのキーのエントリ。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
+- **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
+- **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member) である。所属は `.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
+
+この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
+
+`bind=` が `.get` を経由する場合、それは書き込みであると同時に **読み取り** でもあるため、値が空のときは panic する: `draft = None` の状態で `input(bind=draft.get.title)` は初回レンダーで失敗し、アプリはマウントしない。他の `.get` 読み取りと同様に、Option の `match` を通して到達させること。
 
 **`.copy(field=value, ...)`**: record の immutable update を行うショートカット。method 呼び出しに見えるが、内部的には named-arg を集めて `recordCopy(rec, {field: value, ...})` に展開される。複数 field を 1 度に更新できる：
 
@@ -429,6 +539,7 @@ issue.copy(status=Done, priority=High)
 6. **バッチは全部通るか全部通らないか**: どれか 1 つの slot の新しい値がその型の refinement に違反したら、その reducer 適用は丸ごと破棄される — slot 書き込みなし、`emit` なし、`stop-timer` なし — そして拒否が報告される（[batching](./runtime.md#a-batch-commits-all-or-nothing) 参照）。到達しうる境界はプログラム側の責任である。ガードは自分で書く
    - `Volume = nominal Int where between(0, 11)` に対する `volume := volume + 1` は 11 で ✗（拒否され、報告される）
    - `if volume < 11 then volume := volume + 1` ✓
+7. **slot の読みは、同じ本体がその slot に最後に書き込んだ値を読む。** 読みがどこにあっても同じ：`match` の arm、文としての `if` / `match`、`let … in` の本体、メソッドの述語や要素ラムダ（`names.filter($1 == noteKey)`）、本体の直下。`noteKey := "b"` の後に実行される `noteKey` の読みは、その適用の中ではすべて `"b"` になる。その適用の中でその slot への書き込みがまだ一つも実行されていないうちに実行される読みは、reducer が始まったときに slot が持っていた値を読む。
 
 ### 1.6.5 positional binding
 
@@ -439,6 +550,14 @@ issue.copy(status=Done, priority=High)
 | `$event` | イベントペイロード |
 | `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
 | `$now` | 現在時刻 |
+
+> **`effect-event` のトリガはこれらの名前を束縛できない。** コンパイラは `$el` / `$event` / `$route` をどの reducer の body にも宣言し、種にはトリガのペイロードが持っている値を使う。したがってこの名前を取る束縛は同じ名前の2つ目の宣言になり、`on=load.ok($el, _)` は **E0121** である。番号付きの束縛はこれまでどおり束縛できる — 他に宣言する者がいないからである。
+
+> **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
+
+> **最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` では `.ok` の値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` では、storage / session / indexed の capability の effect が `$e : Text` を束縛する。これらの effect は失敗のメッセージを渡す（`map-request` やホストの provider が例外を投げた場合も同じ。[ストレージ Effect](./http.md#_6-7-storage-effects)）ので、`problem := $e` はそれを格納し、`$e.message` は **E0108** になる。その `out=` もそう宣言しなければならない — `Result(T, Text)` であり、それ以外の `E` は **E0306** である。それ以外の capability の `.err` は `out=` から型付けされない。HTTP ハンドラは `{status, message, body}` レコードを渡し、カスタム capability の値はその provider が決める（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、そこでの `$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
+> **`fn` 内の positional は引数である。** `$1` は1番目の引数、`$2` は2番目の引数で、値も型もその引数が宣言するものと同じである。したがって `fn plus(a: Int, b: Int) -> Int = $1 + $2` は `a + b` である。positional は引数1つにつき1つだけあり、引数を持たない `fn` の `$1` や、引数が1つの `fn` の `$2` は未定義参照（**E0103**）になる。body 内のフラグメントは自分の `$1` / `$2` を束縛し、それが `fn` のものを隠す：`fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` では、レシーバは `xs` で、フラグメントの `$1` は各要素である。
 
 ### 1.6.6 例
 
@@ -451,7 +570,7 @@ reducer addTodo
         emit persist(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit persist(todos)
 
@@ -462,6 +581,28 @@ reducer loaded
 reducer editTitle
     on=ui.input(TitleInput)
     do= editor.get.title := $event.value
+```
+
+### 1.6.7 スコープとシャドーイング {#_1-6-7-scoping-and-shadowing}
+
+すでにスコープにある名前の上に宣言された名前は、それを**シャドーイング**する。宣言より下のすべての読みは内側の束縛であり、内側を宣言したスコープが終われば外側が戻る。束縛するすべての形がこの規則に従う — `let` 文、`for` の束縛、match のアームのパターン、そして `let … in` 式（[§1.9](#_1-9-式言語)）である。
+
+スコープは reducer の body と、その中の入れ子になった各文の body である：`for` の body、`if` の各分岐、そして catch-all の `_` を含む match の各アーム。そこで宣言された束縛はそのスコープとともに終わる。
+
+宣言の右辺は、それが宣言する名前がスコープに入る**前**に評価される。したがって `let n = n + 1` は、宣言しようとしている束縛ではなく、シャドーイングする側の束縛を読む。
+
+**横に並んだ**束縛どうしは、シャドーイングの関係ではなく対等である。入れ子にするものが何もないからである：ひとつのパターンの2つの束縛（`Both(a, a)`）は [E0122](./errors.md#e0122-duplicate-pattern-bind) であり、`effect-event` の束縛リストも同じ形である（[E0123](./errors.md#e0123-duplicate-effect-bind)）。そこで繰り返された名前はシャドーイングではなく、パターンやトリガが読めなくしてしまった値である。
+
+`let` は [positional binding](#_1-6-5-positional-binding) の名前を取ってよい。これらも他と変わらない宣言なので、`let` が下のすべての読みで勝つ — トリガが `$route` を束縛しない reducer での `$route` も含めて、それはペイロードの読みではなくその `let` の値である（[E0119](./errors.md#e0119-route-bind-out-of-scope)）。この名前を取れない唯一の位置が `effect-event` の束縛である（[E0121](./errors.md#e0121-reserved-bind-name)）。束縛リストはペイロードの positional に名前を与えるものなので、`$el` を取る束縛には、それが表す positional を置く場所が残らない。
+
+```kumiki fragment
+reducer shadowing
+    on=ui.click(Btn)
+    do= let $el   = "chosen"                # positional binding に勝つ
+        let label = "first"
+        let label = label + "+second"       # 右辺は上の `let` を読む
+        for label in tags { hits := hits + 1 }   # 束縛はループの内側だけ
+        note := label + "/" + $el           # "first+second/chosen"
 ```
 
 ---
@@ -498,6 +639,11 @@ pattern      ::= identifier
                | '_'
 ```
 
+**builtin の内容 — 位置引数**:
+- テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
+- `button` のラベルは名前付き引数 `text=` である。`link` と `label` はどちらでも取る：最初の位置引数（`link("Home", to="/x")`、`label("Name")`）、それが無ければ `text=`（`link(to="/x", text="Home")`）。したがって `editable` と同じく、位置引数と並べた `text=` は読まれない。（`link` は旧来の `{text: "…"}` prop 形式も受け付け、いずれも同じノードにコンパイルされる。）builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、位置引数の無いテキスト系 builtin の `text=`、または `link` / `label` / `editable` で位置引数と並べた `text=` —— [E0129](./errors.md#e0129-unrendered-arg) になる：`text=` は `button` / `link` / `label` / `editable` のラベル引数であり、テキスト系 builtin では prop である。
+- 値 builtin（`text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon`）以外の builtin の位置引数は、tile —— `tile-expr` か定義済み tile の名前 —— のときにだけ描画される。そこに書いた値 —— `column(text("a"), 42)`、slot、`column(let x = 42 in Card(x))` —— は何も描画せず [E0128](./errors.md#e0128-value-as-child) になる：tile で表示する（`text(n.show)`）か、値を使う位置に直接書くか、`fn` で計算する。値の位置（値 builtin の内容、ユーザー tile の入力、名前付き引数）では `let` は値であり、値として検査される。tile 本体と `when` / `if` / `for` / `match` の腕はそれ自体が `tile-expr` なので、そこでの `let` はパースエラーになる。
+
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
 - `cond` が偽 → **当該子要素を tree から省略**（兄弟への影響なし）
@@ -520,9 +666,9 @@ pattern      ::= identifier
 6. tile プロパティ `{...}` の値式中で **slot を読むのは可**（イベントハンドラ引数の固定キャプチャ用途）
 7. **`fn` 呼び出し可**
 
-### 1.7.3 イベントハンドラ props
+### 1.7.3 イベントハンドラ props {#_1-7-3-event-handler-props}
 
-イベントハンドラは **reducer 名を渡す**：
+イベントハンドラは **reducer 名を渡す**。builtin だけでなく user tile にも書ける。user tile に書いた場合は他の prop と同じ扱いで、その tile が描画するノード（本体が一覧を描画する `for` なら、その各ノード）にマージされる — つまり `Btn(onClick=tap)` と `Btn() {onClick: tap}` は同じ配線であり、実際に発火するかどうかは `Btn` が何を描画するかの問題である。ここでのマージは**結合**を意味する：そのハンドラは、そのノードが同じイベントに対して既に持っているもの — builtin 自身に書かれたハンドラ、そのノードをルートとする別の呼び出し側に書かれたハンドラ、そのノードに持ち上げられたすべての `ui.<ev>(<Tile>)` subscription（[§1.6.2](#_1-6-2-セレクタ)）— に加わる。マッチした各 reducer は 1 回ずつ、すべて**定義順**で実行される。これは [§1.6.4](#_1-6-4-不変条件) Invariant 3 が同じイベントにマッチする reducer 一般について述べていることであり、ハンドラがどこに書かれたかは実行順を決めない。[W0213](./errors.md#w0213-handler-on-inert-tile-warning) はその問いを両方の呼び出し位置で立てる：tile の描画ツリーを辿り、そのハンドラを発火できる種類が 1 つも無い user tile に書かれたハンドラは、発火しない builtin に書かれたものと同じように報告される。名前付き引数が tile の入力になることはない — 入力は位置引数の方である — ので、`in=` を宣言した tile はそれを受け取り続ける：`Row(onClick=tap, label)` は `label` を `$1` として渡す。
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
@@ -530,12 +676,18 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
 
+名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。大文字始まりの名前は、tile を取る builtin（`box` / `button` / `input` / `modal` / `form`）の名前付き引数では *tile call* に、それ以外——props ブロック、`link` のような値引数 builtin の名前付き引数、user tile の名前付き引数——では variant タグになる。
+
+これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
+
 ### 1.7.4 例
 
 ```kumiki fragment
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow  in=TodoId
               = row(
-                  check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+                  TodoCheck($1),
                   text(todos[$1].text) {strike: todos[$1].done},
                   button(text="x", onClick=remove) {todoId: $1})
 
@@ -637,6 +789,8 @@ fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
 
+式断片の位置に置いた fn 名は、メソッドが式断片の positional で行う呼び出しである：`items.map(double)` は `items.map(double($1))`、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。括弧のない fn 名が正しいのは**この位置だけ**である — fn は値ではないので、値の位置に書いた `label` は [E0127](./errors.md#e0127-fn-as-value) であり、呼び出しは `label()` と書く。位置の一覧と、それぞれが束縛する positional の数は E0127 の項に挙げてある。
+
 ---
 
 ## 1.9 式言語
@@ -676,6 +830,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
               | '&' | '|'
 unop        ::= '-' | '!'
 ```
+
+`if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
 
 ### 1.9.1 禁止事項
 
@@ -722,7 +878,7 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 | `/` | 両方が数値 | **常に `Float`** |
 | `<` `>` `<=` `>=` | 両方が数値、両方が `Text`、または両方が `Time` | `Bool` |
 | `&` `\|` | 両方が `Bool` | `Bool` |
-| `==` `!=` | 任意の 2 値 | `Bool` |
+| `==` `!=` | 任意の 2 値。ただし互いに異なる nominal 同一性を持つ 2 値を除く | `Bool` |
 | 単項 `-` | 数値 | オペランドと同じ型 |
 | 単項 `!` | `Bool` | `Bool` |
 
@@ -730,6 +886,36 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 は `2` ではなく `2.5` になる — 結果型を `Int` と宣言することは runtime が守らない約束をす
 ることであり、`fn half(x: Int) -> Int = x / 2` は拒否される。整数が欲しい箇所では `.to-int`
 （切り捨て。[stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)）を取るか、`Float` を宣言する。
+
+`==` は **値で** 比較する。Kumiki の値は不変である
+（[§1.6.3](#_1-6-3-lvalue-の意味論)）から、プログラムが比較しようとする参照の同一性はそもそも
+存在しない：2 つの List・タプル・レコード・Map・バリアントは、保持するものが最後まで
+等しければ等しい — 空リストに対する `xs == []`、`(0, 0) == (0, 0)`、
+`Some({x: 1}) == Some({x: 1})` は `true` であり、`[1, 2] == [2, 1]` は `false` である。
+レコードのフィールドと Map のエントリは書かれた順序によらず比較される。`!=` はその否定である。
+`List.contains` と `List.unique` も同じ問いを立て
+（[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、テスト層の比較も同じである。
+`Set` は格納されているキーとして比較され（[stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)）、
+それは Set がどう作られたかに依存するので、Set 同士の等価はプログラムが頼ってよい規則ではない。
+
+`==` はあらゆる *形* に対して全域である — `Int` と `Text`、`Option` とその `None` —
+が、`nominal` だけが例外である。1 つの基底型に対する 2 つの宣言は 2 つの型であり
+（[§1.3.5](#_1-3-5-型の一意化)）、それらを比較することは一方を他方に代入するのと同じ誤り
+で、同じエラーになる：`postId == userId` は `postId := userId` とまったく同様に
+[E0201](./errors.md#e0201-type-mismatch) である。順序比較は族の理由に加えてこの理由でも
+その組を拒否する — `cents < yen` は number 族を共有するがそれでも E0201 である。
+
+比較が拒否されるのは **両辺** が nominal 名を持ち、かつどちらも他方として宣言されていない
+場合だけである。これは代入の規則を対称に読んだものである：自身の同一性を持たない値はその
+上に宣言されたどの nominal とも比較でき、代入と同じく `cents == 0` と `postId == ""` は通
+り、`nominal Cents` として宣言された `Deep` は `Cents` とどちらの順でも比較できる。変換に
+必要なのは、代入の場合と同じ、共有する基底型を経由する `fn` である。
+
+同一性が読まれるのは各オペランドの **最上位** だけである。型引数・コンテナ・レコードの
+フィールドの内側にある nominal はここからは見えず、そこが演算子と代入の分かれ目である：
+`List(Cents) := List(Yen)` は [E0201](./errors.md#e0201-type-mismatch) だが、同じ組に対する
+`lc == ly` は報告されない。この沈黙は誤った診断ではなく欠けた診断であり、それが検査の
+すべての規則が保つ読み方である。
 
 `EffectId` はこの表の外にある：適用できるのは `==` と `!=` だけである
 （[E0204](./errors.md#e0204-effect-id-misuse)）。
@@ -795,6 +981,8 @@ app TodoApp
 
 その時点で slot 参照が見るのは**宣言時の初期値**である。`route` だけは例外で、runtime が管理していてまだ存在しないため、`init = [load(route.path)]` はコンパイルエラーになる（[E0120](./errors.md#e0120-route-in-app-init)）。`$route` も同様に、ここでは runtime が束縛しない。route が必要なら `route.enter` reducer 側で受け取ること。
 
+制約がかかるのは引数が**到達する先**であって、書き方ではない：`fn here() -> Text = route.path` に対する `init = [load(here())]` も同じエラーであり、呼び出し位置に、ルートまでの連鎖を添えて報告される。ルートを読む `fn` 自体は他のどの位置でも合法である — tile も reducer も effect の `map-request` も、ルートを用意するマウントの後に走る。
+
 `now` は使えるが、捕捉のされ方は同じ — app オブジェクトが構築された瞬間に評価され、effect が走る瞬間ではない。dispatch 時点の時刻が要るなら、結果を受ける reducer 側で取ること。
 
 引数の周りに reducer も無いので、`emit` 式もここでは使えない（[E0305](./errors.md#e0305-fn-impurity)）。エントリそのものが dispatch である。
@@ -805,7 +993,7 @@ app TodoApp
 
 ```kumiki snippet
 # ❌ ローカル状態
-tile Foo = let x = 0 in button(text=x.show)   # tile 内で代入は不可（let で式束縛は可、slot 代わりにはならない）
+tile Foo = let x = 0 in button(text=x.show)   # tile 本体に `let` はない：ここではパースエラー、子としては E0128
 
 # ❌ effect の直接呼び出し
 reducer r on=ui.click(B) do= http.get("/")   # emit 必須

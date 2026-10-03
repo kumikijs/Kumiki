@@ -6,13 +6,18 @@
 
 import {
   batchRejections,
+  type EnvRead,
+  emptyRoute,
   type PanicCategory,
   type PanicCauseLink,
   panicInfo,
   type ReducerSpec,
+  type RefinementNaming,
   type RefinementRejection,
   reportRejectedBatch,
+  withEnvReplay,
 } from "./core.ts";
+import { valueEqual } from "./stdlib.ts";
 
 /**
  * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
@@ -25,6 +30,8 @@ type EpisodeReducerStep = {
   name: string;
   "slot-diffs"?: { name: string; before?: unknown; after: unknown }[];
   emits?: string[];
+  /** What the body read from the environment (§10.5.1). Absent in older logs. */
+  "env-reads"?: EnvRead[];
   ts?: number;
 };
 type EpisodeEffectEndStep = {
@@ -43,6 +50,10 @@ type EpisodeStepLite =
       kind: "panic";
       message: string;
       location?: string;
+      /** The reducer that threw, when the throw came from a reducer body. */
+      name?: string;
+      /** What that body read from the environment before it threw (§10.5.1). */
+      "env-reads"?: EnvRead[];
       /** Root-cause devtools trail — optional so older logs still parse. */
       stack?: string;
       cause?: PanicCauseLink[];
@@ -74,8 +85,9 @@ export type TestResult = {
   actual?: string;
   diffAt?: string;
   /**
-   * The scalar values at the divergence point (`diffAt`), when the runner can
-   * isolate one. Powers the §8.7.1 value arrow (`expected -> actual`) and lets
+   * The values at the divergence point (`diffAt`), when the runner can
+   * isolate one — a scalar, or a list or record for a tile field such as
+   * `options`. Powers the §8.7.1 value arrow (`expected -> actual`) and lets
    * `kumiki fix --auto-patch` find the responsible source literal.
    */
   leaf?: { expected: unknown; actual: unknown };
@@ -93,31 +105,14 @@ function _jsonStr(v: unknown): string {
   }
 }
 
-/** Deep structural equality for slot values (records / lists / primitives). */
-function deepEqualValue(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
-  const aArr = Array.isArray(a);
-  const bArr = Array.isArray(b);
-  if (aArr || bArr) {
-    if (!aArr || !bArr || a.length !== b.length) return false;
-    return a.every((x, i) => deepEqualValue(x, (b as unknown[])[i]));
-  }
-  const ao = a as Record<string, unknown>;
-  const bo = b as Record<string, unknown>;
-  const ak = Object.keys(ao);
-  if (ak.length !== Object.keys(bo).length) return false;
-  // Compare key presence too — `{a: undefined}` and `{b: undefined}` have equal
-  // key counts but are not equal.
-  return ak.every((k) => Object.hasOwn(bo, k) && deepEqualValue(ao[k], bo[k]));
-}
-
 // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
 // `@@`-prefixed sentinels never collide with a Kumiki field name (identifiers
 // are alphanumeric + hyphen, so `@` can never appear in one).
 const WILD = "@@kumiki:wild";
 /** A wildcard map key (`<any-id>` in key position): pairs with the one generated entry. */
 const WILD_KEY = "@@kumiki:wild-key";
+/** How many `<any-id>` members a Set literal has: each pairs with one generated member. */
+const WILD_MEMBERS = "@@kumiki:wild-members";
 
 function isWildValue(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && Object.hasOwn(v, WILD);
@@ -127,7 +122,8 @@ function isWildValue(v: unknown): v is Record<string, unknown> {
  * Wildcard-aware structural match for reducer-test `expect` (§8.2.2). Records are
  * matched by exact key set; `<any-id>` (value) matches any present value, a
  * `<any-id>` map key pairs with exactly one otherwise-unmatched entry (0 or >1 →
- * fail), and `<slots.X>` matches slot X's post-execution value. Falls back to
+ * fail), each `<any-id>` member of a Set literal pairs with one otherwise-unmatched
+ * member (the counts must agree), and `<slots.X>` matches slot X's post-execution value. Falls back to
  * deep equality when no wildcard is involved.
  */
 function wildcardEqual(
@@ -138,7 +134,7 @@ function wildcardEqual(
   if (isWildValue(expected)) {
     const kind = expected[WILD];
     if (kind === "any-id") return actual !== undefined;
-    if (kind === "slot") return deepEqualValue(actual, finalSlots[expected.slot as string]);
+    if (kind === "slot") return valueEqual(actual, finalSlots[expected.slot as string]);
     return false;
   }
   if (expected === actual) return true;
@@ -158,11 +154,14 @@ function wildcardEqual(
   }
   const eo = expected as Record<string, unknown>;
   const ao = actual as Record<string, unknown>;
-  const literalKeys = Object.keys(eo).filter((k) => k !== WILD_KEY);
+  const literalKeys = Object.keys(eo).filter((k) => k !== WILD_KEY && k !== WILD_MEMBERS);
   for (const k of literalKeys) {
     if (!Object.hasOwn(ao, k) || !wildcardEqual(eo[k], ao[k], finalSlots)) return false;
   }
   const leftover = Object.keys(ao).filter((k) => !literalKeys.includes(k));
+  if (Object.hasOwn(eo, WILD_MEMBERS)) {
+    return leftover.length === eo[WILD_MEMBERS] && leftover.every((k) => ao[k] === true);
+  }
   if (Object.hasOwn(eo, WILD_KEY)) {
     if (leftover.length !== 1) return false;
     return wildcardEqual(eo[WILD_KEY], ao[leftover[0] as string], finalSlots);
@@ -180,9 +179,87 @@ function tileChildren(node: unknown): unknown[] {
 }
 
 /**
- * Structural tile comparison for tile-tests: compares `kind`, `text`, and
- * `children` recursively. Props (styles, onClick handlers, …) are out of scope,
- * per spec §8.4. Returns the first differing path on mismatch.
+ * Top-level fields of a tile node that are not content: `kind` (compared
+ * first), `children` (recursed into), `props` (read below), and the identity
+ * and wiring a node carries beside its content — `key` (the reconciler's
+ * identity, stamped by `_wk`), `bind` / `bindPath` / `parse` (form
+ * write-back) and `prefetch` / `prefetchArgs` (a link's §3.8 prefetch).
+ */
+const TILE_NOT_CONTENT: ReadonlySet<string> = new Set([
+  "kind",
+  "children",
+  "props",
+  "key",
+  "bind",
+  "bindPath",
+  "parse",
+  "prefetch",
+  "prefetchArgs",
+]);
+
+/**
+ * Entries of a node's `props` that are not content: `el` (the same arguments
+ * again, as the element's attribute bag), `_tile` (the user-tile marker
+ * `_named` adds) and the classes and styles spec §8.4 leaves out.
+ */
+const TILE_PROPS_NOT_CONTENT: ReadonlySet<string> = new Set(["el", "_tile", "class", "style"]);
+
+/**
+ * The content of a tile node, by name, in comparison order (spec §8.4).
+ *
+ * First the fields its builtin lifts to the top level — `text`, `src`, `to`,
+ * `value`, `options`, … — then the named arguments codegen folds into `props`
+ * (`alt`, `disabled`, `id`, …). Codegen folds a lifted argument into `props`
+ * as well, so a name the top level already has is read there, once — and so
+ * is a props key whose kebab argument the builtin lifted under its camelCase
+ * name (`auto-focus` is `autoFocus` above and `auto_focus` here).
+ *
+ * Two fields are named the way the source writes them rather than the way
+ * the node stores them, so that a path and a report line read like the
+ * test: a toggle's `checked` state is its `value` argument, and the `aria`
+ * map codegen merges every `aria-*` argument into is one entry per
+ * attribute, named the attribute `commonAttrDecls` (core.ts) renders — so
+ * stating one attribute asserts that one alone.
+ *
+ * Handlers are functions and are left out with everything listed above. A
+ * tile-test's expected node never carries its `{…}` block in `props` — the
+ * compiler leaves it out of the lowering (`GenCtx.expectedTree`) — so what
+ * is left there is what the expectation was written with.
+ */
+function tileContent(node: unknown): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  if (node === null || typeof node !== "object") return out;
+  const isContent = (v: unknown): boolean => v !== undefined && typeof v !== "function";
+  for (const [k, v] of Object.entries(node)) {
+    if (!TILE_NOT_CONTENT.has(k) && isContent(v)) out.set(k === "checked" ? "value" : k, v);
+  }
+  const props = tileField(node, "props");
+  if (props === null || typeof props !== "object") return out;
+  for (const [k, v] of Object.entries(props)) {
+    if (TILE_PROPS_NOT_CONTENT.has(k) || !isContent(v)) continue;
+    if (out.has(k) || out.has(k.replace(/_(\w)/g, (_, c: string) => c.toUpperCase()))) continue;
+    if (k === "aria" && v !== null && typeof v === "object" && !Array.isArray(v)) {
+      for (const [attr, a] of Object.entries(v)) {
+        if (a != null) out.set(attr.startsWith("aria-") ? attr : `aria-${attr}`, a);
+      }
+      continue;
+    }
+    out.set(k, v);
+  }
+  return out;
+}
+
+/** A content value as compared: `text` went through `show` on both sides. */
+function contentValue(k: string, v: unknown): unknown {
+  return k === "text" && v !== undefined ? String(v) : v;
+}
+
+/**
+ * Structural tile comparison for tile-tests (spec §8.4): compares `kind`,
+ * every content field the EXPECTED node carries ({@link tileContent}), and
+ * `children` recursively. A field only the actual node carries was not
+ * asserted, so it is not compared. Returns the first differing path on
+ * mismatch, with the two values there.
  */
 function tileStructEqual(
   expected: unknown,
@@ -195,13 +272,14 @@ function tileStructEqual(
   const ek = tileField(expected, "kind");
   const here = path || String(ek ?? "(root)");
   if (ek !== tileField(actual, "kind")) return { ok: false, path: `${here}.kind` };
-  if (tileField(expected, "text") !== undefined) {
-    const et = String(tileField(expected, "text"));
-    const at = String(tileField(actual, "text"));
-    if (et !== at) {
-      // Carry the scalar leaf values so the runner can print the §8.7.1 value
-      // arrow and `kumiki fix --auto-patch` can locate the responsible literal.
-      return { ok: false, path: `${here}.text`, expectedLeaf: et, actualLeaf: at };
+  const got = tileContent(actual);
+  for (const [k, raw] of tileContent(expected)) {
+    const ev = contentValue(k, raw);
+    const av = contentValue(k, got.get(k));
+    if (!valueEqual(ev, av)) {
+      // Carry the leaf values so the runner can print the §8.7.1 value arrow;
+      // `kumiki fix --auto-patch` repairs a text leaf from them.
+      return { ok: false, path: `${here}.${k}`, expectedLeaf: ev, actualLeaf: av };
     }
   }
   const ec = tileChildren(expected);
@@ -214,15 +292,30 @@ function tileStructEqual(
   return { ok: true };
 }
 
-function serializeTileNode(node: unknown): string {
+/**
+ * One line per tile tree for the `expected:` / `actual:` report. `shape` is
+ * the expected node at the same position, and only the fields
+ * {@link tileStructEqual} compares there are printed — the text positionally,
+ * the rest as `name=value`, a field `node` lacks left out — then the
+ * children, each against the expected child beside it. A child with no
+ * expected counterpart prints its kind and text.
+ */
+function serializeTileNode(node: unknown, shape: unknown = node): string {
   if (node == null) return "null";
   const kind = String(tileField(node, "kind"));
-  const kids = tileChildren(node);
-  if (tileField(node, "text") !== undefined && kids.length === 0) {
-    return `${kind}(${_jsonStr(tileField(node, "text"))})`;
+  const have = tileContent(node);
+  const names = shape === null ? ["text"] : [...tileContent(shape).keys()];
+  const parts: string[] = [];
+  for (const k of names) {
+    const v = have.get(k);
+    if (v === undefined) continue;
+    parts.push(k === "text" ? _jsonStr(String(v)) : `${k}=${_jsonStr(v)}`);
   }
-  if (kids.length === 0) return `${kind}()`;
-  return `${kind}(${kids.map(serializeTileNode).join(", ")})`;
+  const shapeKids = shape === null ? [] : tileChildren(shape);
+  tileChildren(node).forEach((kid, i) => {
+    parts.push(serializeTileNode(kid, shapeKids[i] ?? null));
+  });
+  return `${kind}(${parts.join(", ")})`;
 }
 
 type ReducerExpect =
@@ -326,9 +419,16 @@ function compareReducerExpect(
 
 /** A type's generation recipe, emitted by codegen from the `for-all` types. */
 export type GenDesc =
-  | { t: "Int"; min?: number; max?: number }
-  | { t: "Float"; min?: number; max?: number }
-  | { t: "Text"; minLen?: number; maxLen?: number }
+  | { t: "Int"; min?: number; max?: number; oneOf?: (number | string)[] }
+  | { t: "Float"; min?: number; max?: number; oneOf?: (number | string)[] }
+  | {
+      t: "Text";
+      minLen?: number;
+      maxLen?: number;
+      /** A refined shape to build an instance of, rather than free text. */
+      form?: "email" | "url" | "uuid";
+      oneOf?: (number | string)[];
+    }
   | { t: "Bool" }
   | { t: "List"; elem: GenDesc }
   | { t: "Set"; elem: GenDesc }
@@ -361,7 +461,29 @@ function _hashStr(s: string): number {
 
 const _GEN_ASCII = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
 
+/** A value of one of the shapes `email` / `url` / `uuid` refine to (#352). */
+function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
+  const hex = (n: number): string => {
+    let s = "";
+    for (let i = 0; i < n; i++) s += "0123456789abcdef"[Math.floor(rng() * 16)];
+    return s;
+  };
+  const word = (n: number): string => {
+    let s = "";
+    for (let i = 0; i < n; i++) s += "abcdefghijklmnopqrstuvwxyz"[Math.floor(rng() * 26)];
+    return s;
+  };
+  if (form === "uuid") return `${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-${hex(12)}`;
+  if (form === "email") return `${word(6)}@${word(6)}.example.com`;
+  return `https://${word(6)}.example.com/${word(4)}`;
+}
+
 function genValue(desc: GenDesc, rng: () => number): unknown {
+  // `one-of` names the whole domain, whatever the base type is, so it is
+  // answered ahead of the type it refines.
+  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
+    return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
+  }
   switch (desc.t) {
     case "Int": {
       const lo = desc.min ?? -1000;
@@ -374,6 +496,7 @@ function genValue(desc: GenDesc, rng: () => number): unknown {
       return lo + rng() * (hi - lo);
     }
     case "Text": {
+      if (desc.form) return genForm(desc.form, rng);
       const minLen = desc.minLen ?? 0;
       const maxLen = desc.maxLen ?? 50;
       const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
@@ -490,10 +613,21 @@ function shrinkCounterexample(
 // single implementation keeps `from-log` cursor / refine ward / unhandled-err
 // accounting from drifting between the test runner and the CLI replay verb.
 
+/**
+ * The slot descriptor every harness in this file reads: the value, its
+ * refinement, and the fields that say which predicate refused a write. The
+ * naming fields are load-bearing rather than decorative — `batchRejections`
+ * resolves the failed predicate from `refineAll` (core.ts), so a shape that
+ * left them out would have this tier name a different predicate than the live
+ * mount for the same rejected value — and `refineFailure` among them is, for
+ * a type with a predicate written inside it, the gate itself (`slotAccepts`).
+ */
+type SlotMetaLike = { value: unknown; refine?: (v: unknown) => boolean } & RefinementNaming;
+
 /** The minimum app shape `executeEpisode` / `replayEpisodes` consume. */
 export type ReplayApp = {
   live: Record<string, unknown>;
-  slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+  slots: Record<string, SlotMetaLike>;
   reducers: ReducerSpec[];
 };
 
@@ -509,6 +643,11 @@ export type ReplayEvent =
       kind: "episode-start";
       episodeId: string;
       trigger: { kind: string; target?: string; payload?: unknown };
+      /**
+       * The entry reducer, when it is an `.ok` / `.err` reducer whose value
+       * the log does not carry (§10.5.3): it runs with no `$1`.
+       */
+      entryResultMissing?: string;
     }
   | {
       kind: "reducer";
@@ -516,6 +655,12 @@ export type ReplayEvent =
       stepIndex: number;
       name: string;
       slotDiffs: { name: string; before: unknown; after: unknown }[];
+      /**
+       * Where this body's environment reads came from. Omitted when the log
+       * answered every one of them and the body asked for every one it
+       * carried — the case a reader does not need told about.
+       */
+      env?: EnvDrift;
     }
   | {
       kind: "effect-start";
@@ -555,6 +700,21 @@ export type ReplayEvent =
  */
 export type ReplayObserver = (event: ReplayEvent) => "continue" | "stop";
 
+/**
+ * Environment-read provenance for a replay (§10.5.3). A read the log could not
+ * answer was taken live, which is the one thing a replay cannot reproduce;
+ * without a count there is no way, after the fact, to tell that apart from a
+ * read that WAS answered from the log.
+ */
+export type EnvDrift = {
+  /** Reads with no recorded answer left; the live source was used instead. */
+  live: number;
+  /** Recorded answers the replayed bodies never asked for. */
+  unused: number;
+  /** Entries in the log that were not well-formed reads, and were rejected. */
+  malformed: number;
+};
+
 export type ReplayReport = {
   panics: {
     episodeId: string;
@@ -574,12 +734,68 @@ export type ReplayReport = {
   /** Step index at which `--until-step` interrupted the run, or `null` if all episodes finished. */
   stoppedAt: number | null;
   finalSlots: Record<string, unknown>;
+  /** Environment-read provenance, summed over every replayed reducer body. */
+  envDrift: EnvDrift;
+  /** Episodes whose entry reducer's recorded result was not in the log (§10.5.3). */
+  entryResultsMissing: { episodeId: string; reducer: string }[];
 };
+
+/**
+ * Seed the router-maintained `route` slot (testing.md §8.2.5). Seeded only
+ * when absent: no `.kumiki` can declare `route`, but a host-built slot table
+ * can carry one, and that one wins.
+ */
+function seedRoute(live: Record<string, unknown>): void {
+  if (!("route" in live)) live.route = emptyRoute();
+}
 
 /** Reset `app.live` to the slot defaults (hermetic start, §8.6). */
 function resetLiveFromSlots(app: ReplayApp): void {
   for (const k of Object.keys(app.live)) delete app.live[k];
   for (const [k, m] of Object.entries(app.slots)) app.live[k] = m.value;
+  seedRoute(app.live);
+}
+
+/**
+ * The payload the episode's entry reducer ran with (§10.5.3).
+ *
+ * The live runtime records `trigger.payload` as the payload it handed the
+ * reducer — `{$el, $event}` for a UI event, `{$1, $2}` for an effect result —
+ * so it is passed on as it is. A trigger with no payload whose entry reducer
+ * is an `.ok` / `.err` reducer (an `ssr.hydrate` bootstrap, which is opened
+ * by the SSR pass rather than by a reducer) ran on the last `effect-end` of
+ * that effect and outcome recorded before it, and that step's value is its
+ * `$1`. There is deliberately no `$2`: the SSR pass itself passes
+ * `$2: undefined`. Handing the value over consumes it, so the `from-log`
+ * cursor of that effect starts past it. With no such step the log cannot
+ * answer, and `undefined` says so for the caller to report.
+ */
+function entryPayload(
+  ep: EpisodeLogEntry,
+  entry: ReducerSpec,
+  firstRed: EpisodeStepLite,
+  cursors: Record<string, number>,
+): Record<string, unknown> | undefined {
+  const recorded = ep.trigger.payload;
+  if (recorded !== null && typeof recorded === "object" && !Array.isArray(recorded)) {
+    return recorded as Record<string, unknown>;
+  }
+  if (entry.event.kind !== "effect") return {};
+  const { effect, outcome } = entry.event;
+  let nth = -1;
+  let value: unknown;
+  let found = false;
+  for (const s of ep.steps) {
+    if (s === firstRed) break;
+    if (s.kind !== "effect-end" || s.name !== effect) continue;
+    nth++;
+    if (s.result === outcome) {
+      value = s.value;
+      found = true;
+      cursors[effect] = nth + 1;
+    }
+  }
+  return found ? { $1: value } : undefined;
 }
 
 function executeEpisode(
@@ -589,6 +805,9 @@ function executeEpisode(
   observer: ReplayObserver,
   stepCounter: { n: number },
   untilStep: number | undefined,
+  // Accumulated across episodes by the caller, for the same reason
+  // `stepCounter` is: every `return` below would otherwise have to carry it.
+  envDrift: EnvDrift,
 ): {
   panics: {
     message: string;
@@ -628,7 +847,7 @@ function executeEpisode(
     for (const [k, v] of Object.entries(res?.slots ?? {})) {
       const before = app.live[k];
       app.live[k] = v;
-      if (!deepEqualValue(before, v)) diffs.push({ name: k, before, after: v });
+      if (!valueEqual(before, v)) diffs.push({ name: k, before, after: v });
     }
     return diffs;
   };
@@ -654,35 +873,83 @@ function executeEpisode(
     return false;
   };
 
-  if (emit({ kind: "episode-start", episodeId: ep.id, trigger: ep.trigger })) {
-    return { panics, unhandledErrors, stopped: true };
-  }
-
-  const firstRed = ep.steps.find((s): s is EpisodeReducerStep => s.kind === "reducer");
-  if (!firstRed) {
-    emit({ kind: "episode-end", episodeId: ep.id });
-    return { panics, unhandledErrors, stopped: false };
-  }
-  const entry = app.reducers.find((r) => r.name === firstRed.name);
-  if (!entry) {
+  // The episode's entry reducer. A reducer whose body threw wrote NO `reducer`
+  // step — only a `panic` one — so an episode that crashed on its first
+  // reducer would otherwise replay as an episode with nothing in it, and
+  // `kumiki replay` would exit 0 on a recorded crash. The panic step carries
+  // the reducer's name for exactly this.
+  const firstRed = ep.steps.find(
+    (s): s is EpisodeReducerStep | (EpisodeStepLite & { kind: "panic"; name: string }) =>
+      s.kind === "reducer" || (s.kind === "panic" && typeof s.name === "string"),
+  );
+  const entry = firstRed && app.reducers.find((r) => r.name === firstRed.name);
+  const cursors: Record<string, number> = {};
+  const entryIn = firstRed && entry ? entryPayload(ep, entry, firstRed, cursors) : {};
+  // Reported rather than inferred (§10.5.3): a trimmed or hand-edited log that
+  // lost the value would otherwise read as a reducer that panics on its own.
+  const entryResultMissing = entryIn === undefined ? entry?.name : undefined;
+  const started: ReplayEvent = {
+    kind: "episode-start",
+    episodeId: ep.id,
+    trigger: ep.trigger,
+    ...(entryResultMissing !== undefined ? { entryResultMissing } : {}),
+  };
+  if (emit(started)) return { panics, unhandledErrors, stopped: true };
+  if (!firstRed || !entry) {
     emit({ kind: "episode-end", episodeId: ep.id });
     return { panics, unhandledErrors, stopped: false };
   }
 
   // Per-effect FIFO of recorded effect-end values for `from-log` mocks.
   const recordedResults: Record<string, { result: "ok" | "err"; value: unknown }[]> = {};
+  // Per-reducer FIFO of recorded environment reads (§10.5.1). Replay derives
+  // the chain by re-executing reducers rather than walking the log's steps, so
+  // there is no step to read the reads off — they are keyed by reducer NAME,
+  // and the nth run of reducer `foo` takes the nth recorded `foo`.
+  //
+  // That is an ordering assumption, not an alignment guarantee. Replay walks
+  // `res.emits` in declaration order while the recording appended `.ok` / `.err`
+  // steps in effect-COMPLETION order, so a reducer reached twice by two
+  // effects that completed out of declaration order gets the two recorded read
+  // sets swapped. The failure is silent — crossed-over values, not a fallback
+  // — which is why the `live` count below cannot detect it and §10.5.3 names
+  // the case.
+  //
+  // A `panic` step is harvested on the same key: it carries the reducer's name
+  // for exactly this, so the episode that crashed replays the reads that
+  // crashed it.
+  const recordedEnvReads: Record<string, EnvRead[][]> = {};
+  const harvestEnvReads = (name: string | undefined, reads: EnvRead[] | undefined): void => {
+    if (name === undefined) return;
+    const list = recordedEnvReads[name] ?? [];
+    list.push(reads ?? []);
+    recordedEnvReads[name] = list;
+  };
   for (const s of ep.steps) {
     if (s.kind === "effect-end") {
       const list = recordedResults[s.name] ?? [];
       list.push({ result: s.result, value: s.value });
       recordedResults[s.name] = list;
     }
+    if (s.kind === "reducer" || s.kind === "panic") harvestEnvReads(s.name, s["env-reads"]);
   }
-  const cursors: Record<string, number> = {};
+  const envCursors: Record<string, number> = {};
 
-  const triggerPayload = (ep.trigger.payload as Record<string, unknown> | undefined) ?? {};
+  /**
+   * Hand the reducer the environment it read when the episode was recorded.
+   * With nothing recorded for it — an older log, or a reducer the chain
+   * reached that the recording never logged — the scope is empty and every
+   * read falls through to the live source, which is the pre-#337 behaviour.
+   */
+  const takeEnvReads = (reducerName: string): EnvRead[] => {
+    const list = recordedEnvReads[reducerName] ?? [];
+    const idx = envCursors[reducerName] ?? 0;
+    envCursors[reducerName] = idx + 1;
+    return list[idx] ?? [];
+  };
+
   const queue: { reducer: ReducerSpec; payload: Record<string, unknown> }[] = [
-    { reducer: entry, payload: { $el: triggerPayload, $event: triggerPayload } },
+    { reducer: entry, payload: entryIn ?? {} },
   ];
 
   let guard = 0;
@@ -691,10 +958,20 @@ function executeEpisode(
   while (queue.length > 0 && guard++ < 10000) {
     const job = queue.shift();
     if (!job) break;
-    let res: ReturnType<ReducerSpec["apply"]>;
-    try {
-      res = job.reducer.apply(app.live, job.payload);
-    } catch (e) {
+    const outcome = withEnvReplay(takeEnvReads(job.reducer.name), () =>
+      job.reducer.apply(app.live, job.payload),
+    );
+    const stepEnv: EnvDrift = {
+      live: outcome.env.live,
+      unused: outcome.env.unused,
+      malformed: outcome.env.malformed,
+    };
+    envDrift.live += stepEnv.live;
+    envDrift.unused += stepEnv.unused;
+    envDrift.malformed += stepEnv.malformed;
+    const envClean = stepEnv.live === 0 && stepEnv.unused === 0 && stepEnv.malformed === 0;
+    if (!outcome.ok) {
+      const e = outcome.error;
       // Derive the record via panicInfo so stack + Error.cause reach the
       // replay CLI unchanged. The runner treats this catch site as `reducer`
       // — it's replaying the initial reducer of a recorded episode. If the
@@ -729,6 +1006,7 @@ function executeEpisode(
       }
       continue;
     }
+    const res = outcome.value;
     const written = writeSlots(job.reducer.name, res);
     const diffs = written ?? [];
     for (const d of diffs) dirtyForEpisode.add(d.name);
@@ -739,6 +1017,7 @@ function executeEpisode(
         stepIndex: 0,
         name: job.reducer.name,
         slotDiffs: diffs,
+        ...(envClean ? {} : { env: stepEnv }),
       })
     ) {
       return { panics, unhandledErrors, stopped: true };
@@ -877,9 +1156,17 @@ export function replayEpisodes(input: {
   const panics: { episodeId: string; message: string }[] = [];
   const unhandledErrors: { episodeId: string; effect: string }[] = [];
   const stepCounter = { n: 0 };
+  const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
+  const entryResultsMissing: ReplayReport["entryResultsMissing"] = [];
+  const noting: ReplayObserver = (ev) => {
+    if (ev.kind === "episode-start" && ev.entryResultMissing !== undefined) {
+      entryResultsMissing.push({ episodeId: ev.episodeId, reducer: ev.entryResultMissing });
+    }
+    return observer(ev);
+  };
   let stopped = false;
   for (const ep of episodes) {
-    const r = executeEpisode(app, ep, mocks, observer, stepCounter, untilStep);
+    const r = executeEpisode(app, ep, mocks, noting, stepCounter, untilStep, envDrift);
     for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
     for (const u of r.unhandledErrors) unhandledErrors.push({ episodeId: ep.id, effect: u.effect });
     if (r.stopped) {
@@ -894,6 +1181,8 @@ export function replayEpisodes(input: {
     unhandledErrors,
     stoppedAt: stopped ? stepCounter.n : null,
     finalSlots,
+    envDrift,
+    entryResultsMissing,
   };
 }
 
@@ -901,6 +1190,8 @@ export const _stdlibTest = {
   // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
+  /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
+  WILD_MEMBERS,
   /** Build a value-position wildcard sentinel: `wild("any-id")` / `wild("slot", name)`. */
   wild(kind: "any-id" | "slot", slot?: string): Record<string, unknown> {
     return slot === undefined ? { [WILD]: kind } : { [WILD]: kind, slot };
@@ -923,7 +1214,7 @@ export const _stdlibTest = {
   runReducerStep(
     app: {
       live: Record<string, unknown>;
-      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      slots: Record<string, SlotMetaLike>;
       reducers: ReducerSpec[];
     },
     state: { slots?: Record<string, unknown> } | undefined,
@@ -988,7 +1279,18 @@ export const _stdlibTest = {
     return { name, pass: true, cases: count };
   },
   // ----- in-language test runner (`kumiki test`) -----
-  /** Reset live slot state to slot defaults, then apply the test's `given` slots. */
+  /**
+   * Reset live slot state to slot defaults, seed `route`, then apply the
+   * test's `given` slots — with one further pass over `route`, because a
+   * `given` one names only the fields the test cares about and takes the empty
+   * route's values for the rest. `route.params` reading `undefined` is the
+   * panic this seam exists to prevent, and an abbreviation must not
+   * reintroduce it. The field names are checked when the program is checked.
+   *
+   * Shared by `reducer-test`, its multi-step form and `tile-test`, and by
+   * `run-reducer` inside a `property-test`; `episode-test` and `kumiki replay`
+   * reach the same seed through `resetLiveFromSlots`.
+   */
   resetLive(
     live: Record<string, unknown>,
     slots: Record<string, { value: unknown }>,
@@ -996,7 +1298,13 @@ export const _stdlibTest = {
   ): void {
     for (const k of Object.keys(live)) delete live[k];
     for (const [k, v] of Object.entries(slots)) live[k] = v.value;
+    seedRoute(live);
+    const base = live.route;
     Object.assign(live, given);
+    const seeded = given.route;
+    if (seeded && typeof seeded === "object" && !Array.isArray(seeded)) {
+      live.route = { ...(base as Record<string, unknown>), ...(seeded as Record<string, unknown>) };
+    }
   },
   /**
    * Compare a reducer's resulting slots + emitted effects (or a panic) to
@@ -1008,7 +1316,7 @@ export const _stdlibTest = {
     name: string;
     target: string;
     givenSlots: Record<string, unknown>;
-    slotMetas: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+    slotMetas: Record<string, SlotMetaLike>;
     result: {
       slots: Record<string, unknown>;
       emits: { effect: string; args: unknown[] }[];
@@ -1047,7 +1355,7 @@ export const _stdlibTest = {
     name: string;
     app: {
       live: Record<string, unknown>;
-      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      slots: Record<string, SlotMetaLike>;
       reducers: ReducerSpec[];
     };
     target: string;
@@ -1135,7 +1443,7 @@ export const _stdlibTest = {
     name: string;
     app: {
       live: Record<string, unknown>;
-      slots: Record<string, { value: unknown; refine?: (v: unknown) => boolean }>;
+      slots: Record<string, SlotMetaLike>;
       reducers: ReducerSpec[];
     };
     episodes: EpisodeLogEntry[];
@@ -1155,9 +1463,12 @@ export const _stdlibTest = {
     const unhandledErrors: string[] = [];
     const stepCounter = { n: 0 };
     const observer: ReplayObserver = () => "continue";
+    // `episode-test` asserts against slots, not provenance; the drift is still
+    // accumulated so the executor has one shape to write into.
+    const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
 
     for (const ep of episodes) {
-      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined);
+      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
       for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
       for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
     }
@@ -1181,7 +1492,7 @@ export const _stdlibTest = {
 
     if (expectedSlots) {
       for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!deepEqualValue(app.live[k], v)) {
+        if (!valueEqual(app.live[k], v)) {
           return {
             name,
             pass: false,
@@ -1220,7 +1531,7 @@ export const _stdlibTest = {
       name: input.name,
       pass: cmp.ok,
       expected: serializeTileNode(input.expected),
-      actual: serializeTileNode(input.actual),
+      actual: serializeTileNode(input.actual, input.expected),
       ...(cmp.path ? { diffAt: cmp.path } : {}),
       ...(cmp.expectedLeaf !== undefined || cmp.actualLeaf !== undefined
         ? { leaf: { expected: cmp.expectedLeaf, actual: cmp.actualLeaf } }

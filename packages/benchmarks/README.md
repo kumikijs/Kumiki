@@ -1,6 +1,6 @@
 # @kumikijs/benchmarks
 
-Three benchmark suites for Kumiki. Private workspace package; run via `pnpm --filter @kumikijs/benchmarks <script>`.
+Four benchmark suites for Kumiki. Private workspace package; run via `pnpm --filter @kumikijs/benchmarks <script>`.
 
 ```
 benchmarks/
@@ -8,6 +8,10 @@ benchmarks/
 │   ├── todomvc-react/      #   React baseline (App.tsx)
 │   ├── scenarios/          #   4 edit scenarios (kumiki-modified / react-modified)
 │   └── scripts/            #   measure.mjs · measure-scenarios.mjs · measure-ops.mjs
+├── bundle-size/            # How many bytes does each example app ship?
+│   ├── measure.mjs         #   build every app (--bundle / --minify) → raw / gzip / brotli
+│   ├── compare.mjs         #   base vs head as Markdown (the CI comment)
+│   └── report.mjs          #   pure counting + rendering (+ report.test.mjs, measure.test.mjs)
 ├── reactivity/             # How costly is a re-render? (runtime baseline)
 │   ├── reactivity-cost.mjs #   nodes created + render time across app sizes
 │   ├── keyed-move-cost.mjs #   children moved per reorder of a keyed list
@@ -35,6 +39,19 @@ pnpm --filter @kumikijs/benchmarks measure:ops        # Kumiki edit cost: full-f
 ```
 
 Tokenized with `gpt-tokenizer` (cl100k_base / o200k_base). Latest headline: a Kumiki app is ~1.4× fewer tokens and ~2.0× fewer lines than the equivalent React.
+
+## Bundle size (what each example ships)
+
+Builds every `packages/examples/apps/*/app.kumiki` the two ways `kumiki build` ships it and counts the bytes a browser downloads: `--bundle` (app + runtime linked into one file) and `--minify` (`app.js` beside the `runtime/` modules it imports, each compressed on its own because each is its own response). gzip at level 9 and brotli at quality 11 — what a precompressed static deploy serves.
+
+```sh
+pnpm --filter @kumikijs/benchmarks measure:bundle                       # table to stdout
+node packages/benchmarks/bundle-size/measure.mjs --out head.json        # also write the report
+node packages/benchmarks/bundle-size/measure.mjs --root ../other-checkout --out base.json
+node packages/benchmarks/bundle-size/compare.mjs base.json head.json   # base vs head, Markdown
+```
+
+Requires the checkout's runtime built (`pnpm --filter @kumikijs/runtime build`, or a whole `pnpm build`): `kumiki build` copies its prebuilt `dist/modules`, while the CLI and compiler run from `src`. `--root` measures another checkout with that checkout's own CLI and runtime, which is how the `Bundle size` workflow (`.github/workflows/bundle-size.yml`) compares a PR's merge commit against its first parent (the base-branch commit it was merged onto) and posts the table as a PR comment. The workflow is informational; the size gate is still the counter budget in `packages/cli/test/cli.test.ts`, whose figure is the `runtime/ raw` column.
 
 ## Reactivity cost (runtime re-render baseline)
 

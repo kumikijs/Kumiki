@@ -1,4 +1,5 @@
-import type { Refinement, TypeExpr } from "../ast.ts";
+import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
+import { refinementBodyJs, refinementToJs } from "../refinements.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
@@ -56,7 +57,21 @@ export function primGenDesc(name: string): GenDescData {
   return { t: "Unknown" };
 }
 
-/** Fold a refinement into a base descriptor so generation respects it (§8.3.2). */
+/**
+ * Fold a refinement into a base descriptor so generation respects it (§8.3.2).
+ *
+ * Every predicate the runtime enforces belongs here, because the two answer
+ * the same question from opposite ends: a generator that ignores a refinement
+ * produces values the slot it is generating for would refuse, so the property
+ * under test is run on states the app can never be in. While `email` / `url` /
+ * `uuid` lowered to `(_v) => true` this was harmless and the descriptor
+ * ignored them; enforcing them (#352) is what makes the omission visible.
+ *
+ * `regex` is the one predicate with no constraint to fold: generating from an
+ * arbitrary pattern is a different problem from checking against one. §8.3.2
+ * says so, and a `for-all` over a `regex`-refined type is a case to write by
+ * hand.
+ */
 export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDescData {
   if (!r) return desc;
   const num = (i: number): number => (typeof r.args[i] === "number" ? (r.args[i] as number) : 0);
@@ -65,7 +80,16 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
       return desc.t === "Int" || desc.t === "Float" ? { ...desc, min: num(0), max: num(1) } : desc;
     case "positive":
       if (desc.t === "Int") return { ...desc, min: 1 };
-      if (desc.t === "Float") return { ...desc, min: 0 };
+      // Strictly above zero, because `positive` is `v > 0` and a generator
+      // bounded at 0 can hand the check the one value it refuses. `EPSILON`
+      // rather than `MIN_VALUE` (the smallest Float above zero): the bound is
+      // the low end of a range the generator then samples, and a denormal one
+      // buys nothing a representable gap does not.
+      if (desc.t === "Float") return { ...desc, min: Number.EPSILON };
+      return desc;
+    case "negative":
+      if (desc.t === "Int") return { ...desc, max: -1 };
+      if (desc.t === "Float") return { ...desc, max: -Number.EPSILON };
       return desc;
     case "nonempty":
       return desc.t === "Text" ? { ...desc, minLen: 1 } : desc;
@@ -75,55 +99,138 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
       return desc.t === "Text" ? { ...desc, minLen: num(0) + 1 } : desc;
     case "len-lt":
       return desc.t === "Text" ? { ...desc, maxLen: Math.max(0, num(0) - 1) } : desc;
+    case "email":
+    case "url":
+    case "uuid":
+      // A shape rather than a length: the generator builds an instance of the
+      // form, so the value passes the same check the runtime applies.
+      return desc.t === "Text" ? { ...desc, form: r.pred } : desc;
+    case "one-of":
+      // Independent of the base type — the choices *are* the domain.
+      return { ...desc, oneOf: [...r.args] };
     default:
       return desc;
   }
 }
 
-/** Resolve a slot/type's refinement (through a TypeRef), for the `error` tile. */
-export function slotRefinement(t: TypeExpr, gen: GenCtx): Refinement | undefined {
-  let target = t;
-  if (t.kind === "TypeRef") {
-    const def = gen.types.get(t.name);
-    if (!def) return undefined;
-    target = def.body;
-  }
-  if (target.kind === "TypeNominal" || target.kind === "TypeRefinement") {
-    return (target as { refinement?: Refinement }).refinement;
-  }
-  return undefined;
+/**
+ * Every refinement a type carries, base outward.
+ *
+ * A type may be written with more than one `where` (spec/language.md §1.3.1),
+ * and the predicates conjoin. The parser folds the first onto a `nominal` node
+ * as a property and wraps each one after it, so the predicates sit on nested
+ * nodes rather than in a list — and a named type reached through a `TypeRef`
+ * hides its own underneath that. Reading exactly one layer, which is what this
+ * module used to do, emitted the outermost predicate and dropped every other
+ * (#353): `nominal Text where len-gt(3) where nonempty` accepted `"ab"`.
+ *
+ * The order is the one the chain the type denotes is read in, from the base
+ * outward (§1.3.6, inv. 1). Inside a single type expression that is the order
+ * the predicates are written in; across names it is not, and it does not depend
+ * on which definition was declared first — on `type Handle = nominal Short
+ * where len-gt(3)` over `type Short = Text where len-lt(9)`, `len-lt` comes
+ * first wherever the two definitions sit in the file, because `Short` is what
+ * `Handle` is declared over. It is the order a failed predicate is named in.
+ *
+ * The edges are the ones normalization (`unaliasType`) follows: an alias, a
+ * `nominal` wrapper, a `where`, and a program-defined generic applied to its
+ * arguments — `type NonEmpty(T) = T where nonempty` makes `NonEmpty(Handle)`
+ * carry Handle's predicates and then `nonempty`. The walk stops at a structural
+ * type: nothing written inside a record, a union or a container is a refinement
+ * of the type itself, and a stdlib constructor (`List`, `Option`, …) has no
+ * definition here to follow.
+ *
+ * `seen` is what makes a name written in terms of itself terminate: a generic
+ * is guarded by its name like an alias. Its body is walked under `seen` plus
+ * that name, but an argument is not part of the body — it is syntax of the
+ * application site — so a parameter the body reaches is walked in the scope the
+ * application was written in, under the `seen` in force there. Substituting the
+ * argument into the body and walking it under the body's `seen` instead would
+ * let the outer guard swallow a nested application of the same generic:
+ * `NonEmpty(NonEmpty(Short))` would lose Short's predicates and the inner
+ * `nonempty`. Arguments are sub-expressions of the caller's syntax, so the walk
+ * still ends — `type Loop(T) = Loop(T) where nonempty` stops at the inner
+ * `Loop`, and `type A = NonEmpty(A)` at the argument `A`. The cycle is E0009's
+ * to report, and this walk still has to end on the way there.
+ */
+export function refinementsOf(t: TypeExpr, gen: Pick<GenCtx, "types">): Refinement[] {
+  return collectRefinements(t, gen, { seen: new Set(), params: new Map() });
 }
 
-export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
-  let target = t;
-  if (t.kind === "TypeRef") {
-    const def = gen.types.get(t.name);
-    if (!def) return undefined;
-    target = def.body;
-  }
-  if (target.kind === "TypeNominal" || target.kind === "TypeRefinement") {
-    const r = (target as { refinement?: Refinement }).refinement;
-    if (r) return refinementToJs(r);
-  }
-  return undefined;
-}
+/**
+ * Where a type expression is read: the names already entered on the way to it
+ * and, inside a generic's body, what each parameter was applied to and where.
+ * A parameter is looked up here before the program's definitions, so one that
+ * shares its name with a top-level type reads as its argument; one with no
+ * argument (an arity mismatch, the checker's to report) reads as nothing.
+ */
+type Scope = {
+  seen: ReadonlySet<string>;
+  params: ReadonlyMap<string, { arg: TypeExpr; scope: Scope } | undefined>;
+};
 
-export function refinementToJs(r: Refinement): string | undefined {
-  switch (r.pred) {
-    case "between": {
-      const a = r.args[0] as number;
-      const b = r.args[1] as number;
-      return `(v) => typeof v === "number" && v >= ${a} && v <= ${b}`;
+function collectRefinements(t: TypeExpr, gen: Pick<GenCtx, "types">, scope: Scope): Refinement[] {
+  switch (t.kind) {
+    case "TypeRef":
+    case "TypeApp": {
+      if (t.kind === "TypeRef" && scope.params.has(t.name)) {
+        const bound = scope.params.get(t.name);
+        return bound ? collectRefinements(bound.arg, gen, bound.scope) : [];
+      }
+      if (scope.seen.has(t.name)) return [];
+      const def = gen.types.get(t.name);
+      if (!def) return [];
+      // A plain alias's body has no parameters; a generic's are bound to the
+      // arguments as written here, to be read back in this scope.
+      const params = new Map<string, { arg: TypeExpr; scope: Scope } | undefined>();
+      if (t.kind === "TypeApp") {
+        def.params.forEach((p, i) => {
+          const arg = t.args[i];
+          params.set(p, arg ? { arg, scope } : undefined);
+        });
+      }
+      return collectRefinements(def.body, gen, { seen: new Set([...scope.seen, t.name]), params });
     }
-    case "nonempty":
-      return `(v) => typeof v === "string" && v.length > 0`;
-    case "len-lt":
-      return `(v) => typeof v === "string" && v.length < ${r.args[0] as number}`;
-    case "len-gt":
-      return `(v) => typeof v === "string" && v.length > ${r.args[0] as number}`;
-    case "len-eq":
-      return `(v) => typeof v === "string" && v.length === ${r.args[0] as number}`;
+    case "TypeNominal":
+    case "TypeRefinement": {
+      const inner = collectRefinements(t.inner, gen, scope);
+      return t.refinement ? [...inner, t.refinement] : inner;
+    }
+    // A type in its own right. Listed rather than defaulted so `assertNever`
+    // reports the next node kind added to `TypeExpr` instead of silently losing
+    // its refinements.
+    case "TypePrim":
+    case "TypeRecord":
+    case "TypeUnion":
+      return [];
     default:
-      return `(_v) => true`;
+      assertNever(t);
+      return [];
   }
 }
+
+/**
+ * The runtime test for a slot's type: every predicate it carries, conjoined.
+ * `undefined` when the type carries none — the slot then has no `refine` at
+ * all, which is what the runtime reads to mean "unrefined".
+ */
+export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
+  const rs = refinementsOf(t, gen);
+  if (rs.length === 0) return undefined;
+  const bodies = rs.map(refinementBodyJs).filter((b): b is string => b !== undefined);
+  // Every predicate this type carries is one the table has no lowering for —
+  // which E0803 has already reported, because the parser accepts exactly the
+  // names that table holds and every one of them lowers (#352). Emitting
+  // nothing rather than the `(_v) => true` that used to stand here is the
+  // point: a slot with no `refine` is one the runtime does not gate, where a
+  // `refine` that answers `true` to every value reads as a gate and is not one.
+  if (bodies.length === 0) return undefined;
+  if (bodies.length === 1) return `(v) => ${bodies[0]}`;
+  return `(v) => ${bodies.map((b) => `(${b})`).join(" && ")}`;
+}
+
+/**
+ * One predicate's test, for the per-predicate entries the `error` tile reads.
+ * `undefined` for a predicate with no lowering, as above.
+ */
+export { refinementToJs };

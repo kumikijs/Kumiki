@@ -235,3 +235,95 @@ describe("dispatcher http.cancel (#102)", () => {
     }
   });
 });
+
+describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
+  // The reducer writes the slot the key reads *after* emitting, so the key the
+  // emit carries ("a") and the one `keyOf` would read from the committed slots
+  // ("b") differ. The request is registered under the carried key.
+  function makeKeyedApp(emitted: { effect: string; args: unknown[]; key?: string }): {
+    app: AppShape;
+    log: AbortLog;
+  } {
+    const log: AbortLog = { aborted: false };
+    const app: AppShape = {
+      slots: { noteKey: { value: "a" } },
+      caps: ["http.get", "http.cancel"],
+      effects: {
+        load: {
+          name: "load",
+          cap: "http.get",
+          policy: { kind: "latest-per-key", keyOf: () => String(app.live?.noteKey) },
+          invoke: (_input, _caps, signal) =>
+            new Promise<EffectResult>((resolve) => {
+              log.signal = signal;
+              signal?.addEventListener("abort", () => {
+                log.aborted = true;
+                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+              });
+            }),
+        },
+        cancel: {
+          name: "cancel",
+          cap: "http.cancel",
+          invoke: async () => ({ kind: "ok", value: null }),
+        },
+      },
+      init: [],
+      reducers: [
+        {
+          name: "go",
+          event: { kind: "ui", ev: "click" },
+          selector: { tile: "Go" },
+          apply: () => ({ slots: { noteKey: "b" }, emits: [emitted] }),
+        },
+        {
+          name: "killA",
+          event: { kind: "ui", ev: "click" },
+          selector: { tile: "KillA" },
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["load:a"] }] }),
+        },
+        {
+          name: "killB",
+          event: { kind: "ui", ev: "click" },
+          selector: { tile: "KillB" },
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["load:b"] }] }),
+        },
+      ],
+    };
+    return { app, log };
+  }
+
+  async function run(
+    emitted: { effect: string; args: unknown[]; key?: string },
+    kill: "killA" | "killB",
+  ): Promise<boolean> {
+    const { app, log } = makeKeyedApp(emitted);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      const { dispose } = mount(app, root);
+      const dispatch = (
+        app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
+      )._dispatch;
+      dispatch("go", {});
+      await tick();
+      expect(log.signal).toBeDefined();
+      dispatch(kill, {});
+      await tick(20);
+      // Read before `dispose()`, which aborts whatever is still in flight.
+      const aborted = log.aborted;
+      dispose();
+      return aborted;
+    } finally {
+      root.remove();
+    }
+  }
+
+  it("registers the request under the carried key, not the one keyOf reads", async () => {
+    expect(await run({ effect: "load", args: ["x"], key: "a" }, "killA")).toBe(true);
+  });
+
+  it("falls back to keyOf against the live slots when the emit carries no key", async () => {
+    expect(await run({ effect: "load", args: ["x"] }, "killB")).toBe(true);
+  });
+});

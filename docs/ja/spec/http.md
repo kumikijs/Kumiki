@@ -14,7 +14,7 @@
 | `http.patch` | PATCH |
 | `http.delete` | DELETE |
 
-### 6.1.2 標準 effect
+### 6.1.2 標準 effect {#_6-1-2-standard-effect}
 
 プログラムは capability に対して自分の effect を宣言する。以下は各メソッドでツールチェインが期待する形 — 名前は任意で、`cap` とレコードがランタイムの dispatch 先を決める：
 
@@ -32,6 +32,7 @@ effect http-post cap=http.post
                  in={
                    url: Url,
                    headers: Map(Text, Text),
+                   query: Map(Text, Text),
                    body: HttpBody,
                    decode: Decoder
                  }
@@ -39,6 +40,8 @@ effect http-post cap=http.post
 
 # put / patch / delete も同じ形
 ```
+
+`query` は `http.*` のすべてのメソッド（get・post・put・patch・delete）で同じく URL のクエリ文字列として送られる。各エントリは URL エンコードされ（`URLSearchParams` による。空白は `+` に、値の中の `&` はエスケープされる）、`url` が既に持つクエリ文字列の後ろ・フラグメントの前に付け足される。空の `query` は `url` をそのまま残す。クエリ文字列中のエントリの順序は保証されないので、それに依存してはならない。
 
 `http.get` 等は **未指定なら使えない**（capability ガード）。`app.caps` に列挙必須。
 
@@ -53,6 +56,21 @@ type HttpBody = Json(JsonValue)
               | Empty
 ```
 
+各 variant は、その名前が示すものとして送られる：
+
+| variant | リクエスト本文 |
+|---|---|
+| `Json(v)` | `v` の JSON。`Unit` の `Json` は `null` |
+| `Form(m)` | `m` を URL エンコードしたもの（`a=1&b=2`） |
+| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る。ファイルを持たない `FileV`（永続化から復元したファイルレコード）はリクエスト前に `HttpError{status: 0}` で effect を失敗させる |
+| `Text(t)` | `t` そのまま |
+| `Bytes(b)` | `b` のバイト列 |
+| `Empty` | 本文なし |
+
+HttpBody の variant でない `body`（レコード・リスト・素の `Text`）は、`Json` と同じく JSON で送られる。`Text` を入力に取る `body: $1` は `x` ではなく `"x"` を送る。生のテキストを送るには `Text($1)` と書く。
+
+`GET` と `HEAD` は `body` が何であっても本文を送らない。
+
 ### 6.1.4 Decoder 型
 
 ```kumiki snippet
@@ -62,18 +80,23 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-レスポンスの decode は型安全。`Decoder.Json(User)` を指定すれば、レスポンス JSON が `User` 型に decode される。失敗は `HttpError` の `body` に格納される。
+レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
+
+decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
 
 ### 6.1.5 共通 props（自動付与）
 
 すべての HTTP effect は次を自動付与：
 
 - `Accept: application/json`（Decoder が Json のとき）
-- `Content-Type: application/json`（HttpBody が Json のとき）
-- `Content-Type: multipart/form-data`（Multipart のとき）
+- `Content-Type: application/json`（HttpBody が Json のとき、または本文が HttpBody の variant でないとき）
+- `Content-Type: application/x-www-form-urlencoded`（Form のとき）
+- `Content-Type: multipart/form-data`（Multipart のとき。boundary を含めるため fetch 自身が書く）
 - `User-Agent: Kumiki`
 
-ユーザー指定の headers が優先される。
+ユーザー指定の headers が優先される。上の既定値より `app.http.headers` が、`app.http.headers` より effect 自身の `headers` が優先される。ヘッダ名はどの段階でも大文字小文字を区別せずに比べるので、effect の `content-type` はグローバルの `Content-Type` を置き換え、送られる値はちょうど 1 つになる。
+
+例外は `Multipart` だけである。プログラムが指定した `Content-Type` は捨てられる。このヘッダには fetch だけが知る boundary が必要で、boundary のない `multipart/form-data` はサーバが解析できないからである。
 
 ---
 
@@ -137,7 +160,7 @@ reducer added
 
 ## 6.3 認証
 
-### 6.3.1 グローバル header の注入
+### 6.3.1 グローバル header の注入 {#_6-3-1-injecting-global-headers}
 
 `app.http` で全 HTTP effect に自動付与する header を宣言できる：
 
@@ -155,14 +178,52 @@ app App
     }
 ```
 
-| http フィールド | 意味 |
-|---|---|
-| `base-url` | 相対 URL のベース |
-| `headers` | 全リクエストに付与（式可、slot 参照可） |
-| `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） |
-| `on-403` | 403 を受けた reducer（同上） |
-| `on-5xx` | 5xx を受けた reducer（同上） |
-| `timeout` | デフォルトタイムアウト（duration） |
+| http フィールド | 意味 | 評価タイミング |
+|---|---|---|
+| `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
+| `headers` | 全リクエストに付与 — リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
+| `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
+| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
+| `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
+| `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
+| `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
+
+値を取るフィールドはすべて**式**であり、slot を読んでよい。4 つとも評価されるのは
+アプリの構築時ではなく**リクエストを行う時**である：slot を書く reducer は次の
+リクエストの内容を変え、そのために再マウントする必要はない。したがって
+`base-url: endpoint` は `endpoint` に代入した瞬間から接続先を切り替え、
+`headers: {"Authorization": fmt("Bearer {0}", session.get-or("anon"))}` は
+マウント時ではなくリクエスト時点のセッションを載せる。
+
+reducer 名の 3 つだけは例外で、そもそも値ではない：コンパイラが `reducer` 定義に
+対して一度だけ解決する。
+
+4 つの式について検査されるのは名前と値である。解決されない名前は書かれた位置で
+[E0103](./errors.md#e0103-undef-ref-undef-slot) になる。型の合わない値は、下の項目が別に定めない限り
+フィールドの位置で [E0201](./errors.md#e0201-type-mismatch) になる：
+
+- `base-url` は `Text` に代入可能なものを取る — `Url` など `Text` の上に作られた型を含む。
+- `headers` は `Map(Text, Text)` に代入可能なものを取る。リクエスト自身の `headers`
+  （[§6.1.2](#_6-1-2-standard-effect)）と同じ型であり、値がすべて `Text` の
+  リテラル `{"Name": value}` か、その型を持つそれ以外の式 — slot、`fn` 呼び出し — である。
+  リテラルの中の `Text` でないキーや値はそれが書かれた位置で、map でないものは
+  フィールドの位置、またはそれを生む `if` の分岐の位置で報告される。キーは引用符で
+  囲む：キーを裸で書いた `{Content-Type: "application/json"}` は map ではなく
+  レコードであり、フィールドの位置で E0201 になる。ランタイムはこの値を
+  各リクエストの headers に展開する：数値は何も展開せず、文字列は `0`・`1`・… という名前の
+  header に展開される — いずれにせよ意図した header は 1 つもリクエストに届かない。
+- `timeout` は `Int` に代入可能なものを取り、ミリ秒として読まれる。`Duration` は
+  その 1 つであり（実行時にはミリ秒）、ユーザ定義の `nominal Int` も同様である。
+  `Float` は含まれない。`Text` は `setTimeout` に `NaN` として届いて、すべての
+  リクエストを応答前に中断させる。
+- `credentials` は `Text` に代入可能なものを取り、フィールドに届くリテラル —
+  フィールド自身の値、または `if` のリテラルの分岐 — はすべて Fetch の 3 つの
+  モードのいずれかでなければならない。それ以外を指定した init はブラウザが拒否する。
+
+照合されるのは型であり、`credentials` についてはリテラルも照合される：それ以外の
+方法で計算される値 — slot、呼び出し、連結 — は実行時に決まるので、型の合うものは
+何を保持するかにかかわらず受理される。`timeout: 0` や負の `Int` も `Int` であり、
+受理される。
 
 ### 6.3.2 401 のグローバル処理
 
@@ -199,12 +260,14 @@ reducer cancelSearch
 
 `emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
 
+id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
 ### 6.4.1 挙動
 
 - 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
-- キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。
+- キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
 - 同 effect に対する `debounce` タイマーは cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
 - `throttle` のウィンドウマーカーは **そのまま維持される**。元の effect はすでに launch 済み（cancel はその進行中リクエストを abort）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
 
@@ -225,7 +288,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | N 回まで、ms 間隔で再試行 |
 | `exponential(N, initial-ms, factor)` | N 回まで、初回 initial-ms、毎回 factor 倍 |
 
-リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。
+リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文が JSON として壊れている 2xx、および decode した値を `T` が拒否した 2xx（[6.1.4](#_6-1-4-decoder-型)）もリトライしない。サーバーはすでにリクエストを受理しているので、リトライは同じ副作用をもう一度起こすだけになる。
 
 ---
 
@@ -254,6 +317,8 @@ effect loadUser cap=http.get
 
 ## 6.7 Storage Effects
 
+**err 値は宣言どおりの `Text`。** 以下の capability の effect はすべて `out=Result(T, Text)` を宣言する。別の `E` を宣言すると **E0306** になる。失敗した effect は失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら呼び出しとキーを示すメッセージ（§6.7.2）、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、その capability に登録されたホストの provider、または組み込みハンドラが例外を投げた場合も同じ `Text` が渡り、渡るのは1度である：`retry=`（[6.5](#_6-5-リトライ)）はそれを再試行しない。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。ホストの provider の err 値が何になるかは [標準 capability](./stdlib.md#_2-5-standard-capabilities) にある。
+
 ### 6.7.1 capability
 
 | capability | 対応 |
@@ -281,6 +346,14 @@ effect storage-clear  cap=storage.write
                       in=Unit
                       out=Result(Unit, Text)
 ```
+
+クリアは宣言で決まる。`map-request` を持たず `in=Unit`（直接、または別名を通して）と宣言した effect がストレージを空にする。空になるのはこのアプリが書いたキーだけでなく、**オリジン全体**の localStorage である。それ以外の `storage.write` は書き込みか削除で、リクエスト（effect の入力、または `map-request` が組み立てたもの）で区別される。`key` を持ち `value` フィールドを持たないレコードはそのキーを削除し（以後の `storage-read` は `Ok(None)` を返す）、`value` フィールドを持つレコードはそれを書き込む。値そのものは問わない。`None`・`[]`・レコードはいずれも書き込まれる。
+
+このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、JSON で表せない `value` がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
+
+保存された値は常に JSON として parse される。read の `Decoder.Json(T)` が parse した値を拒否した場合（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）、read は `decode failed:` で始まる `Text` を値とする `.err` になる。parse できない値と同じ扱いである。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
+
+**err 値は宣言どおりの `Text`。** storage / session / indexed の effect が失敗すると、失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら上記の呼び出しとキーを示すメッセージ、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、またはその capability に登録されたホストの provider が例外を投げた場合も同じ `Text` が渡る。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。
 
 ### 6.7.3 例
 
@@ -315,7 +388,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` も同じ形。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。
+`session-*` も同じ形。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read
@@ -363,6 +436,7 @@ reducer loaded on=loadAll.ok($data, _) do= state := $data
 effect save cap=storage.write
             in=Map(TodoId, Todo)
             out=Result(Unit, Text)
+            map-request={key: "todos", value: $1}
             policy=debounce(300ms)
 
 reducer afterChange
@@ -394,7 +468,7 @@ reducer addErr
 
 ---
 
-## 6.9 デフォルト設定
+## 6.9 デフォルト設定 {#_6-9-default-settings}
 
 すべての HTTP effect のデフォルト：
 

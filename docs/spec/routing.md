@@ -34,9 +34,24 @@ app TodoApp
 1. More specific routes take precedence (static > parameter > wildcard)
 2. At equal specificity, **definition order** wins (so behavior does not change under parallel development)
 
+Specificity is compared segment by segment from the left: at the first segment where two patterns differ in kind, the static one beats the parameter, and the parameter beats the wildcard. `"/todos/new"` therefore takes `/todos/new` even when `"/todos/:id"` is written above it, and `"/todos/:id"` takes `/todos/42` ahead of an earlier `"/todos/*"`. Redirect entries ([§3.10](#_3-10-redirects-static)) are ranked in the same table as the routes that render: the first entry in this order that matches the path owns it, so `"/todos/new" -> NewTodo` renders even when `"/todos/*" ->> "/"` is written above it. The same order picks the entry inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), redirects included. Server rendering (`renderToString`) picks the rendered route by this order only when it is handed the routing module; without it, the path is compared to the declared patterns verbatim. It never follows a `->>`.
+
 ### 3.1.3 `/404` Is Reserved
 
 `/404` is the fallback used **when no route matches**. Including `/404 -> X` in `app.routes` is mandatory (omitting it is a compile error).
+
+### 3.1.4 A Route Target Takes No Argument
+
+A route entry names a tile and gives it nothing, so **the tile it names may not declare `in=`** — one that does is [E0213](./errors.md#e0213-call-arity-mismatch), reported at the entry.
+
+```kumiki invalid
+tile Panel in=Text = column(text($1))
+app M caps=[] routes={"/" -> Panel, "/404" -> Panel} init=[]
+```
+
+The same holds for a sub-route target ([§3.6.2](#_3-6-2-child-route-map)), and therefore for whatever `route-outlet` renders — the outlet shows the matched sub-route target, which is entered the same way.
+
+There is nothing a target would need the argument for: the route being rendered is in the standard `route` slot ([§3.2](#_3-2-current-route-state)), which every tile can read. A tile that takes an input stays callable from a tile body — `column(Panel("a"))` is unaffected; it is the route position alone that supplies none.
 
 ---
 
@@ -82,6 +97,8 @@ tile Nav = row(
 ```
 
 `link` automatically uses the `nav.push` capability (implicitly). Unlike `<a href>`, it does not trigger a full reload.
+
+`to` names a path **this app serves**. A target on another origin — `https://example.com/docs`, or a `mailto:` / `tel:` URL — is one the router cannot serve: only a same-origin URL can reach `history.pushState`. Such a link is not intercepted at all; the browser keeps the click and navigates it exactly as an `<a href>` would. `external` ([stdlib §2.3.2](./stdlib.md#_2-3-2-text-elements)) is how a link *says* it leaves the app, and additionally opens it in a new browsing context — it is not what makes an off-origin link work. An absolute URL to this origin (`http://localhost:3000/todos`) is same-origin, so the router takes it rather than the browser.
 
 ### 3.3.2 Writing It as an effect
 
@@ -132,6 +149,8 @@ Events fired on route switches:
 | `route.leave(pattern)` | Just before leaving the old route |
 | `route.enter(pattern)` | Just after entering the new route |
 | `route.error(pattern)` | A tile of that route threw while rendering ([Lifecycle](./lifecycle.md#_7-1-list-of-lifecycle-events)) |
+
+A navigation to another path is a switch, and fires both events in that order: `route.leave` for the route being left, then `route.enter` for the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves and re-enters the parent's pattern. A navigation that changes only the query or the hash, or that goes to the path already shown, is not a switch: it stays on the route, so `route.leave` does not run and a leave guard (§3.5.2) never asks. It still updates the `route` slot and runs `route.enter` again with the new `$route`, so a reducer that loads from `$route.query` sees the new query. The initial route fires only `route.enter` as well, since there is nothing to leave.
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -225,10 +244,12 @@ tile SettingsLayout
 
 ### 3.6.3 Matching Rules
 
+- A parent's `sub-routes` map applies only when [§3.1.2](#_3-1-2-match-order) selects that parent for the path; a more specific sibling (`"/settings/:section"` beside `"/settings/*"`) takes the path and renders its own target, without the parent
 - Child routes are re-matched within the parent pattern `/settings/*`
 - If no child route matches, the parent's `/settings` (default) is used
 - If that also fails, fall through to the global `/404`
 - Multiple `route-outlet()` calls inside a single parent tile are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
+- The child renders **under** the parent: an `error-boundary` on the parent covers it, and a boundary the child declares itself wins ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)).
 
 ---
 
@@ -305,7 +326,7 @@ app App
     }
 ```
 
-`->>` is a **static redirect**. The moment it matches, it performs the equivalent of `navigate-replace`.
+`->>` is a **static redirect**. The moment it matches, it performs the equivalent of `navigate-replace`. It applies only when it is the entry that owns the path under [§3.1.2](#_3-1-2-match-order): a more specific rendering route declared anywhere in the table wins over it.
 
 ---
 

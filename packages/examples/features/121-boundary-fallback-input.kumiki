@@ -1,0 +1,31 @@
+# Feature (lifecycle.md §7.3): a fallback's `in=` may name an alias of
+# `PanicInfo` — an alias is the same declaration, and every field arrives
+# through it. Before E0220, a fallback declaring `in=Text` here passed `check`
+# and rendered `recovered: [object Object]`.
+
+type Crash = PanicInfo
+
+slot secret : Option(Text) = None
+slot reveal : Bool         = false
+
+tile Risky error-boundary=Recovered = when(reveal, text(secret.get))
+
+tile Recovered
+    in=Crash
+    = column(
+        text("recovered: " + $1.message),
+        text("location: " + $1.location),
+        text("category: " + $1.category),
+        text("episode: " + $1.episode-id.get-or("(none)")),
+        text("cause: " + $1.cause.get-or("(none)")))
+
+tile RevealBtn = button(text="reveal") {id: "reveal"}
+
+reducer doReveal on=ui.click(RevealBtn) do= reveal := true
+
+tile App = column(Risky, RevealBtn)
+
+app BoundaryFallbackInput
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

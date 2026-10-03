@@ -1,0 +1,41 @@
+{
+  "steps": [
+    {
+      "label": "nothing has panicked yet",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["guarded: ready", "error message: -"],
+        "domExcludes": ["fallback message:"]
+      }
+    },
+    {
+      "label": "a render panic reaches the boundary with every field readable",
+      "do": { "click": "#break-render" },
+      "expect": {
+        "domIncludes": [
+          "fallback message: get called on None",
+          "fallback location: Guarded",
+          "fallback category: tile-render",
+          "fallback episode: (none)",
+          "fallback cause: (none)"
+        ],
+        "domExcludes": ["undefined"]
+      }
+    },
+    {
+      "label": "a reducer panic reaches app.error with the same five",
+      "do": { "navigate": "/boom" },
+      "expect": {
+        "domIncludes": [
+          "error message: get called on None",
+          "error location: reducer \"breakOnEnter\"",
+          "error category: reducer",
+          "error episode: (none)",
+          "error cause: (none)"
+        ],
+        "domExcludes": ["undefined"],
+        "errorIncludes": ["panic in reducer \"breakOnEnter\""]
+      }
+    }
+  ]
+}

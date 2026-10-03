@@ -49,10 +49,13 @@ kumiki dev app.kumiki
 
 ```sh
 kumiki build app.kumiki ./out
-# → Wrote out/index.html, app.js, runtime/ (core, stdlib, tiles-layout, tiles-text, tiles-input)
+# → Wrote out/index.html, app.js, runtime/ (core, stdlib, tiles-layout,
+#   tiles-input-button, tiles-text-heading, tiles-input-shared)
 ```
 
-`out/index.html` はそのままブラウザで開ける。`runtime/` にはこのアプリが触るモジュールしか入らないので、カウンターは gzip 約 9KB で済む。ルーティングもテーブルも使わないアプリに、ルーターとテーブルのコードは含まれない。
+`out/index.html` はそのままブラウザで開ける。`runtime/` にはこのアプリが触るものしか入らない — tile ファミリ単位ではなく tile 単位なので、カウンターが受け取るのは button と heading だけで、残り 15 個の tile は入らない。gzip 約 22KB で済む。ルーティングもテーブルも使わないアプリに、ルーターとテーブルのコードは含まれない。
+
+`--bundle` を付けると `app.js` とそれらのモジュールを 1 つの minify 済みファイルに結合する（`runtime/` は出力されない）。カウンターで gzip 約 18KB になるが、`app.js` の可読性と、再訪者がキャッシュを使い回せる `runtime/` を手放すことになる。
 
 ## 検査する
 

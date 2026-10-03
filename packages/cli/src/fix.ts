@@ -1,26 +1,23 @@
 // kumiki fix — propose auto-patches for repairable typecheck errors.
 
-// `writeFileSync` is dereferenced through the `node:fs` namespace so tests can
-// intercept it — a plain named import would be resolved as a snapshot binding
-// by Vitest's mock spread, defeating `vi.spyOn(fs, "writeFileSync")`. Property
-// access on the namespace goes through the live slot every call. `readFileSync`
-// stays named — no test needs to mock reads.
-import * as fs from "node:fs";
 import { readFileSync } from "node:fs";
-import type { KumikiError, Pos, TestDef } from "@kumikijs/compiler";
+import type { KumikiError, Pos, TestDef, Token } from "@kumikijs/compiler";
 import {
   BUILTIN_EFFECT_CAPS,
   calleeCandidates,
   check,
   collectTimerNames,
+  LexError,
   lex,
+  nearestName,
   parse,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
-import { testFile } from "./smoke.ts";
+import { runTestsSource, testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
+import { atomicWriteFileSync } from "./write-lock.ts";
 
 /**
  * How much of the source a patch's `apply` disturbs — the only thing that
@@ -99,22 +96,6 @@ function debugSkip(where: string, reason: string, detail?: string): void {
   console.warn(`[kumiki fix] skip ${where}: ${reason}${detail ? ` — ${detail}` : ""}`);
 }
 
-function levenshtein(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  // Rolling single-row DP — `prev` holds the previous row's distances.
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  for (let i = 1; i <= m; i++) {
-    const curr = [i, ...new Array<number>(n).fill(0)];
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min((prev[j] ?? 0) + 1, (curr[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + cost);
-    }
-    prev = curr;
-  }
-  return prev[n] ?? 0;
-}
-
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -180,6 +161,63 @@ function replaceAt(text: string, pos: Pos, missing: string, replacement: string)
   return text.slice(0, at) + replacement + text.slice(at + missing.length);
 }
 
+const OPENING = new Set(["(", "[", "{"]);
+const CLOSING = new Set([")", "]", "}"]);
+
+/**
+ * Remove the named argument `name=…` whose name is at `pos`, with the comma
+ * that separates it from its neighbour: `label(text="A", "B")` and
+ * `label("B", text="A")` both become `label("B")`.
+ *
+ * The position says where the argument starts and not where it ends, so the
+ * end is read off the tokens: the first `,` or closing bracket outside every
+ * bracket the value opens. Returns the text unchanged when `pos` does not hold
+ * `name =`, the source no longer lexes, or the argument is the only one.
+ */
+function removeNamedArg(text: string, pos: Pos, name: string): string {
+  const offset = (p: Pos): number | null => {
+    const span = lineSpan(text, p.line);
+    return span ? span.start + p.col - 1 : null;
+  };
+  let tokens: Token[];
+  try {
+    tokens = lex(text);
+  } catch {
+    return text;
+  }
+  const at = tokens.findIndex((t) => t.pos.line === pos.line && t.pos.col === pos.col);
+  const nameTok = tokens[at];
+  const eq = tokens[at + 1];
+  if (nameTok?.kind !== "ident" && nameTok?.kind !== "kw") return text;
+  if (nameTok.value !== name || eq?.kind !== "op" || eq.value !== "=") return text;
+  let depth = 0;
+  let stop: Token | undefined;
+  for (const t of tokens.slice(at + 2)) {
+    if (t.kind !== "op") continue;
+    if (OPENING.has(t.value)) depth += 1;
+    else if (CLOSING.has(t.value) && depth > 0) depth -= 1;
+    else if (CLOSING.has(t.value) || (t.value === "," && depth === 0)) {
+      stop = t;
+      break;
+    }
+  }
+  const start = offset(pos);
+  const stopAt = stop && offset(stop.pos);
+  if (start === null || !stop || stopAt == null) return text;
+  if (stop.kind === "op" && stop.value === ",") {
+    // `name=…, next` → `next`, keeping whatever precedes the argument.
+    const gap = /^[ \t]*/.exec(text.slice(stopAt + 1))?.[0].length ?? 0;
+    return text.slice(0, start) + text.slice(stopAt + 1 + gap);
+  }
+  // The last argument: `prev, name=…)` → `prev)`, from the comma before it to
+  // the end of its value, keeping the whitespace before the closing bracket.
+  const comma = tokens[at - 1];
+  const commaAt = comma && offset(comma.pos);
+  if (comma?.kind !== "op" || comma.value !== "," || commaAt == null) return text;
+  const valueEnd = start + text.slice(start, stopAt).trimEnd().length;
+  return text.slice(0, commaAt) + text.slice(valueEnd);
+}
+
 /**
  * Replace the first `\b`-delimited `missing` anywhere on line `pos.line`.
  *
@@ -226,57 +264,17 @@ function applyNameFix(anchor: PatchAnchor, missing: string, suggested: string) {
 }
 
 /**
- * Write a file such that a failure (EACCES / ENOSPC / EBUSY) leaves the target
- * byte-identical to before the call. Node's `writeFileSync` opens with
- * `O_TRUNC`, so a mid-write ENOSPC produces a truncated file — unsafe for a
- * repair tool whose contract is "cleaner or unchanged". We stage the content
- * to a sibling temp file first, then `renameSync` it over the target.
- * `renameSync` is atomic on the same filesystem on both POSIX and Windows
- * (via `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`). On any throw the temp
- * file is best-effort unlinked so a subsequent retry sees a clean directory.
- */
-function atomicWriteFileSync(path: string, content: string): void {
-  const tmp = `${path}.kumiki-tmp`;
-  try {
-    fs.writeFileSync(tmp, content);
-    fs.renameSync(tmp, path);
-  } catch (e) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      // Temp file may not exist (throw happened before create) or belong to a
-      // concurrent invocation. Best-effort cleanup — swallow.
-    }
-    throw e;
-  }
-}
-
-/**
- * Closest candidate name for `missing` under the same threshold used by every
- * name-suggest branch (Levenshtein ≤ 2 edits or ≤ 25% of the missing name's
- * length). Takes candidates as an iterable so callers can supply a scoped
- * set — top-level defs for the generic `NAME_SUGGEST_CODES` codes, timer
+ * Closest candidate name for `missing`, argument-ordered the way this file's
+ * call sites read. Takes candidates as an iterable so callers can supply a
+ * scoped set — top-level defs for the generic `NAME_SUGGEST_CODES` codes, timer
  * names for E0106, variant tags for E0209.
+ *
+ * The rule itself is `nearestName`, shared with the verification tiers' own
+ * unknown-name message. It used to live here, and the threshold — not the
+ * metric — is the half that drifts when a rule has two homes.
  */
 function suggestNameFrom(candidates: Iterable<string>, missing: string): string | null {
-  let best: string | null = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (const cand of candidates) {
-    const d = levenshtein(missing, cand);
-    // Skip self-matches so `missing === cand` never dominates a genuinely close
-    // alternative. Relying on the `applied ⇔ source changed` invariant to
-    // suppress `replace X with X` downstream is fragile: a candidate at
-    // distance 1 that would otherwise win never gets a chance if the loop
-    // latches onto the self-match first.
-    if (d === 0) continue;
-    if (d < bestScore) {
-      bestScore = d;
-      best = cand;
-    }
-  }
-  if (best === null) return null;
-  if (bestScore <= 2 || bestScore <= Math.ceil(missing.length * 0.25)) return best;
-  return null;
+  return nearestName(missing, candidates);
 }
 
 function suggestName(store: Store, missing: string): string | null {
@@ -698,6 +696,45 @@ export function planFixesExplained(
         apply: (text: string) => replaceAt(text, err.pos, "$route", "route"),
       });
     }
+    if (err.code === "E0129") {
+      // Which argument is dropped decides the repair, and the diagnostic says
+      // which in `unrendered`. Two shapes have one answer that changes nothing
+      // rendered: `text=` on a builtin that reads only a positional argument,
+      // with none written, becomes that argument; and `text=` beside the
+      // positional argument `label` / `link` / `editable` render is removed.
+      // A dropped positional argument has no such answer — join it, give it
+      // its own builtin, or delete it.
+      if (err.unrendered === "text-prop") {
+        // The diagnostic points at `text`, and `replaceAt` writes only if
+        // `text=` is what is there.
+        add({
+          code: err.code,
+          message: err.message,
+          description: `make the text= value the positional content at ${err.pos.line}:${err.pos.col}`,
+          apply: (text: string) => replaceAt(text, err.pos, "text=", ""),
+        });
+        continue;
+      }
+      if (err.unrendered === "text-shadowed") {
+        add({
+          code: err.code,
+          message: err.message,
+          description: `remove the text= argument the positional one shadows at ${err.pos.line}:${err.pos.col}`,
+          apply: (text: string) => removeNamedArg(text, err.pos, "text"),
+        });
+        continue;
+      }
+      skip(err.code, "e0129-dropped-argument-has-no-single-repair", err.message);
+      continue;
+    }
+    if (err.code === "E0124") {
+      // The repair is a type that applies the constructor — `type IntList =
+      // List(Int)`, then `IntList.fresh()` — and which arguments to apply is
+      // the one thing the program does not say. Named here rather than left to
+      // `no-repair-branch`, which would read as a branch nobody has written.
+      skip(err.code, "e0124-type-arguments-unknown", err.message);
+      continue;
+    }
     // Default classifier: this diagnostic code has no repair branch at all.
     // Distinct from `*-quoted-name-extract-failed` (which means "a branch
     // fired but the message shape didn't match") — `no-repair-branch` means
@@ -793,12 +830,31 @@ function reportWarnings(warnings: KumikiError[]): void {
 }
 
 /**
- * The warnings to report for a path that wrote nothing: the ones the plan
- * already typechecked. Spelled as a helper so a return that leaves the file
- * alone cannot quietly claim the post-patch set instead.
+ * The fields every `applyFixPlan` return that left the file alone answers the
+ * same way: nothing applied, `after` equal to `before`, and the warnings and
+ * skip reasons the plan already typechecked. Spelled as a helper so a return
+ * that wrote nothing cannot quietly claim the post-patch set instead.
  */
-function unchanged(plan: FixPlan): { warnings: KumikiError[] } {
-  return { warnings: plan.warnings };
+function nothingWritten(
+  plan: FixPlan,
+  before: string,
+  approved = 0,
+): {
+  applied: 0;
+  approved: number;
+  before: string;
+  after: string;
+  warnings: KumikiError[];
+  skipped: SkipReason[];
+} {
+  return {
+    applied: 0,
+    approved,
+    before,
+    after: before,
+    warnings: plan.warnings,
+    skipped: plan.skipped,
+  };
 }
 
 /** The other half of the same split, kept beside it so neither drifts. */
@@ -854,17 +910,17 @@ export type FixPlan = {
  * Apply the planned patches to `path`, re-typecheck the result, and return
  * before/after source plus the residual diagnostic set.
  *
- * The result carries three mutually-exclusive failure modifiers, each of which
+ * The result carries two mutually-exclusive failure modifiers, each of which
  * pins `applied: 0` and leaves the on-disk file byte-identical:
- *  - `parseError`: the composed patches produced source the lexer/parser
- *    cannot accept. Nothing is written; `remaining` includes a synthetic
- *    `E0000` so the empty-⇔-clean invariant holds without a caller inspecting
- *    `parseError` first.
- *  - `regressionBlocked`: the composed patches would introduce a diagnostic
- *    the pre-patch file did not have, or fail to resolve any pre-patch error.
- *  - `writeError`: the composed patches passed both gates but the atomic
- *    write threw (EACCES / ENOSPC / EBUSY, …). Raw message preserved for the
- *    caller to render.
+ *  - `regressionBlocked`: the gate refused the write. `blocked` says which of
+ *    its three conditions it was — the composed patches would introduce a
+ *    diagnostic the pre-patch file did not have, they resolve none of the ones
+ *    it did, or the composed source does not parse. The last also sets
+ *    `parseError` and puts a synthetic `E0000` in `remaining`, so the
+ *    empty-⇔-clean invariant holds for a caller that reads neither.
+ *  - `writeError`: the composed patches passed the gate but the atomic write
+ *    threw (EACCES / ENOSPC / EBUSY, …). Raw message preserved for the caller
+ *    to render.
  *
  * Callers that need a dry preview should use `planFix` and apply
  * `patches[i].apply` themselves.
@@ -877,7 +933,7 @@ export function applyFixPlan(
   const plan = planFix(path, onlyCode, capabilities);
   const before = readFileSync(path, "utf8");
   if (plan.patches.length === 0) {
-    return { applied: 0, before, after: before, remaining: plan.errors, ...unchanged(plan) };
+    return { ...nothingWritten(plan, before), remaining: plan.errors };
   }
   // Counted one patch at a time, because a patch can decline to change
   // anything: `replaceAt` returns the source untouched when the reported
@@ -895,27 +951,29 @@ export function applyFixPlan(
     // Nothing changed, so there is nothing to gate and nothing to write. This
     // is "no auto-patch took effect", not a rollback — `regressionBlocked`
     // stays unset so the caller reports it as such.
-    return { applied: 0, before, after: before, remaining: plan.errors, ...unchanged(plan) };
+    return { ...nothingWritten(plan, before), remaining: plan.errors };
   }
   // Regression gate. Every path that would touch disk first re-parses and
-  // re-typechecks the composed source, then compares diagnostic *sets* (code
-  // + position) rather than counts. Rollback triggers when any of:
+  // re-typechecks the composed source, then compares the two diagnostic
+  // multisets by `diagnosticKey` rather than by count. Rollback triggers when
+  // any of:
   //   1. The composed source no longer parses at all — a *parse-error* is
   //      strictly worse than the original type errors, so we discard even
   //      though the pre-patch file had errors.
-  //   2. Any *error* exists in `after` but not `before` — introduced a
-  //      new failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
+  //   2. `after` holds a diagnostic `before` does not — introduced a new
+  //      failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
   //      count-only guard would miss. Warnings are outside the comparison in
   //      both directions, deliberately: a repair that clears an error and
   //      reveals an advisory diagnostic is still a repair, and rolling it back
   //      would leave the file holding the error to avoid holding the warning.
-  //   3. No diagnostic from `before` was resolved — the patch either did
-  //      nothing (silent noop) or replaced errors position-for-position
-  //      with different codes (still a swap).
+  //   3. Nothing from `before` was resolved — the composed source carries the
+  //      same diagnostics the original did, so the patches changed text and
+  //      improved nothing. A swap normally trips (2) instead, because the
+  //      diagnostic that replaced the old one is one `before` did not have;
+  //      this is the condition for a write with no diagnostic consequence at
+  //      all.
   // Invariant: "apply => file is either strictly cleaner or unchanged".
   // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
-  const key = (e: KumikiError): string => `${e.code}@${e.pos.line}:${e.pos.col}`;
-  const beforeSet = new Set(plan.errors.map(key));
   // Parse and typecheck have distinct failure semantics: a parse-error is a
   // rollback (case 1), a `check()` throw is an internal typechecker bug that
   // must surface, not be silently reported as `parseError`. Keep the catches
@@ -937,12 +995,10 @@ export function applyFixPlan(
       pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
     };
     return {
-      applied: 0,
-      before,
-      after: before,
+      ...nothingWritten(plan, before),
       remaining: [...plan.errors, synthetic],
-      ...unchanged(plan),
       regressionBlocked: true,
+      blocked: { reason: "parse-error", message },
       parseError: message,
     };
   }
@@ -953,16 +1009,12 @@ export function applyFixPlan(
   // not there before.
   const afterDiagnostics = check(parsed, { capabilities });
   const dryRemaining = repairable(afterDiagnostics);
-  const afterSet = new Set(dryRemaining.map(key));
-  const introduced = dryRemaining.filter((e) => !beforeSet.has(key(e)));
-  const resolved = plan.errors.filter((e) => !afterSet.has(key(e)));
+  const introduced = surplus(dryRemaining, plan.errors);
+  const resolved = surplus(plan.errors, dryRemaining);
   if (introduced.length > 0 || resolved.length === 0) {
     return {
-      applied: 0,
-      before,
-      after: before,
+      ...nothingWritten(plan, before),
       remaining: plan.errors,
-      ...unchanged(plan),
       regressionBlocked: true,
       blocked:
         introduced.length > 0 ? { reason: "introduced", introduced } : { reason: "resolved-none" },
@@ -975,21 +1027,36 @@ export function applyFixPlan(
     // above: I/O failure is a structured return, not a raw stack. The atomic
     // helper guarantees the on-disk file is unchanged on throw, so
     // `remaining` echoes the pre-patch diagnostics.
+    // The gate approved these; the filesystem is what refused them. Passed as
+    // an argument rather than spread over afterwards, so reordering the fields
+    // cannot silently lose the count on the one path it exists for.
     return {
-      applied: 0,
-      before,
-      after: before,
+      ...nothingWritten(plan, before, applied),
       remaining: plan.errors,
-      ...unchanged(plan),
       writeError: e instanceof Error ? e.message : String(e),
     };
   }
-  return { applied, before, after, remaining: dryRemaining, warnings: advisory(afterDiagnostics) };
+  return {
+    applied,
+    approved: applied,
+    before,
+    after,
+    remaining: dryRemaining,
+    warnings: advisory(afterDiagnostics),
+    skipped: plan.skipped,
+  };
 }
 
 export type FixApplyResult = {
   /** Number of patches actually applied. `0` when the file was already clean or nothing was auto-fixable. */
   applied: number;
+  /**
+   * The patches the regression gate approved. Equal to `applied` on every path
+   * that reached disk, and `0` wherever the gate refused or there was nothing
+   * to write. The two differ on exactly one path — a write that threw — where
+   * nothing landed and this is what the filesystem refused.
+   */
+  approved: number;
   /** Source before writing. Equal to `after` when `applied === 0`. */
   before: string;
   /** Source after writing (already on disk). */
@@ -1021,13 +1088,24 @@ export type FixApplyResult = {
    */
   regressionBlocked?: boolean;
   /**
-   * Why the gate rolled back. `introduced` carries the diagnostics the
-   * re-check reported that the original did not — which is not the same as
-   * "new failures": the gate reads a diagnostic's identity as `code@line:col`,
-   * so a diagnostic no patch repaired appears here when a patch to its left
-   * moved it. Naming them is what lets a reader tell the two apart.
+   * Why the gate rolled back — one member per condition, so a reader never has
+   * to consult a second field to learn which it was.
+   *
+   * `introduced` carries the diagnostics the composed source has that the
+   * original did not, by `diagnosticKey` — so a diagnostic a repair only moved
+   * is not one of them, and what is listed here is a failure the repair would
+   * have created. Naming them is what lets a reader check that.
+   *
+   * `parse-error` is the composed source failing to lex or parse. It carries
+   * its own message rather than deferring to `parseError`, because a consumer
+   * reading only this field would otherwise be told the repair was pointless
+   * when what happened was that a repair rule emitted source that does not
+   * parse — the opposite conclusion, and a defect on the compiler's side.
    */
-  blocked?: { reason: "introduced"; introduced: KumikiError[] } | { reason: "resolved-none" };
+  blocked?:
+    | { reason: "introduced"; introduced: KumikiError[] }
+    | { reason: "resolved-none" }
+    | { reason: "parse-error"; message: string };
   /**
    * Raw filesystem error message when the composed patches passed the
    * regression gate but the write threw (EACCES / ENOSPC / EBUSY, …). When
@@ -1039,7 +1117,107 @@ export type FixApplyResult = {
    * `regressionBlocked` — those short-circuit before the write.
    */
   writeError?: string;
+  /**
+   * Why each unrepaired error got no patch, from the same plan the patches
+   * came from. Carried so a caller reporting "nothing to apply" can say which
+   * silent skip produced it without planning the file a second time — a second
+   * plan would read the file again and could answer about a different one.
+   */
+  skipped: SkipReason[];
 };
+
+/**
+ * What the regression gate reads a diagnostic as: its code, its kind, and its
+ * message — **not** where it sits.
+ *
+ * Position is what a repair moves. A rewrite shorter than what it replaced
+ * shifts every diagnostic to its right on that line, and a repair that inserts
+ * lines (`E0001` prepends a tile) shifts every diagnostic below it. Keyed on
+ * position, each of those reads as a diagnostic the composed source has and the
+ * original did not — so the gate called an untouched diagnostic introduced and
+ * rolled back a repair that was correct.
+ *
+ * The message is what distinguishes two diagnostics of one code. Counting
+ * codes alone is *nearly* enough — a swap within one code leaves the count
+ * unchanged, so the resolved-nothing condition below catches it — and it fails
+ * exactly when a second repair balances the books: reword one `E0211` and
+ * resolve one `E0119`, and the per-code counts say a clean repair happened
+ * while the reworded diagnostic is still in the file.
+ *
+ * Normalising positions through each patch's edit instead was the other
+ * option. It loses because a region patch's delta is the whole file, so every
+ * patch would have to declare the span it touches for the gate to undo it.
+ *
+ * What this accepts: a repair that resolves one diagnostic while moving and
+ * recreating another with the same wording elsewhere reads as no change at
+ * all. No repair branch can produce it — every one substitutes a name that is
+ * already declared, so none can mint a diagnostic with a message the file
+ * already had.
+ */
+function diagnosticKey(e: KumikiError): string {
+  return JSON.stringify([e.code, e.kind, e.message]);
+}
+
+/**
+ * The entries of `a` that `b` does not account for, compared as **multisets**.
+ *
+ * A set would answer "nothing was resolved" for a file holding two
+ * diagnostics with one key where a repair cleared one of them, and roll a real
+ * repair back. Counting is what makes one of two a difference.
+ *
+ * Returns real diagnostics rather than keys, because the printer reports an
+ * introduced one as `code@line:col` and the MCP wire serialises it whole. When
+ * a key is over-represented, the earliest entries account for `b` and the
+ * surplus is what is left at the end of `a`. Which of a set of identical
+ * diagnostics gets reported is arbitrary — only the count carries meaning —
+ * so the rule is stated rather than left to whichever way the loop runs.
+ */
+function surplus(a: readonly KumikiError[], b: readonly KumikiError[]): KumikiError[] {
+  const budget = new Map<string, number>();
+  for (const e of b) {
+    const k = diagnosticKey(e);
+    budget.set(k, (budget.get(k) ?? 0) + 1);
+  }
+  const extra: KumikiError[] = [];
+  for (const e of a) {
+    const k = diagnosticKey(e);
+    const left = budget.get(k) ?? 0;
+    if (left > 0) budget.set(k, left - 1);
+    else extra.push(e);
+  }
+  return extra;
+}
+
+/**
+ * The one sentence describing a write this gate refused, for whichever verb is
+ * printing. Two verbs cannot describe one rollback differently if only one of
+ * them spells it.
+ *
+ * Reads `blocked` alone, which carries one member per condition — so no branch
+ * here depends on being asked before another.
+ */
+function rollbackLine(r: {
+  blocked?: FixApplyResult["blocked"];
+  regressionBlocked?: boolean;
+}): string {
+  switch (r.blocked?.reason) {
+    case "parse-error":
+      return `fixes broke the file: ${r.blocked.message}`;
+    case "resolved-none":
+      return "(auto-patch rolled back — it resolved none of the reported diagnostics)";
+    case "introduced": {
+      // Named rather than summarised as "new errors": these are diagnostics the
+      // file would have gained, and the position is where the repair would have
+      // put each one.
+      const where = r.blocked.introduced
+        .map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)
+        .join(", ");
+      return `(auto-patch rolled back — the re-check reported ${where}, which it did not before)`;
+    }
+    default:
+      return r.regressionBlocked ? "(auto-patch rolled back)" : "(no auto-patches available)";
+  }
+}
 
 /**
  * Print what `fix` found (and, with `apply`, what it wrote) and return the exit
@@ -1109,28 +1287,7 @@ export function fixCmd(
       reportWarnings(result.warnings);
       return 0;
     }
-    // Order matters: a parse-error sets `regressionBlocked` as well, so asking
-    // about the rollback first tells the reader the patch "would have
-    // introduced new errors" and never that it broke the file's syntax.
-    if (result.parseError) {
-      console.log(`fixes broke the file: ${result.parseError}`);
-    } else if (result.blocked?.reason === "resolved-none") {
-      console.log("(auto-patch rolled back — it resolved none of the reported diagnostics)");
-    } else if (result.blocked?.reason === "introduced") {
-      // Named rather than summarised as "new errors": the commonest cause is a
-      // diagnostic no patch repaired that a repair to its left moved, and the
-      // position in this list is what shows that.
-      const where = result.blocked.introduced
-        .map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)
-        .join(", ");
-      console.log(
-        `(auto-patch rolled back — the re-check reported ${where}, which it did not before)`,
-      );
-    } else if (result.regressionBlocked) {
-      console.log("(auto-patch rolled back)");
-    } else {
-      console.log("(no auto-patches available)");
-    }
+    console.log(rollbackLine(result));
     for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
     reportWarnings(result.warnings);
     return 1;
@@ -1149,10 +1306,12 @@ export function fixCmd(
 // ----- `kumiki fix --auto-patch <test-name>` (M4b) -----
 //
 // Repair a `.kumiki` file from a failing `test` definition. Two tiers:
-//   1. compile-blocked — the file doesn't typecheck, so the test can't run;
-//      reuse `planFixes` to clear the blocking errors first.
-//   2. behavioral — the file compiles but the test fails; apply a deterministic
-//      literal repair when one is provable (see `planTestPatch`), else report.
+//   1. compile tier — the file doesn't typecheck, so the test can't run;
+//      clear the blocking errors with `applyFixPlan` (the `fix --apply` gate).
+//   2. behavioural tier — the file compiles but the test fails; plan a
+//      deterministic literal repair (see `planTestPatch`), and on apply write
+//      it only through `gateTestPatch` (it compiles, the named test passes,
+//      nothing that passed before fails), else report.
 
 /**
  * Two-tier fix-from-test outcome as a discriminated union on `status`. Each
@@ -1161,19 +1320,27 @@ export function fixCmd(
  * the named test either already passes, will pass after applying, or a fix is
  * available in dry-run; every other case is `ok: false`.
  *
- * Tier-1 failures short-circuit before the test can run:
+ * Compile-tier failures short-circuit before the test can run:
  *   `no-patch` (compile-blocked, nothing repairable) |
  *   `compile-proposed` (dry-run: repairable compile errors) |
- *   `compile-remaining` (apply: still broken after Tier-1 write).
+ *   `compile-blocked` (apply: the regression gate refused the write) |
+ *   `compile-remaining` (apply: still broken after the compile-tier write).
  *
- * Tier-2 covers the compiling file:
+ * The behavioural tier covers the compiling file:
  *   `not-found` | `already-pass` | `no-patch` (no deterministic patch) |
- *   `proposed` (dry-run patch) | `applied` (patch written; carries `regressed`).
+ *   `proposed` (dry-run patch; not gated) |
+ *   `applied` (patch passed the gate and is written) |
+ *   `test-blocked` (the gate refused the patch; it was not written).
  *
  * Independent of tier: `write-failed` fires when a patch was chosen but
  * `atomicWriteFileSync` threw. `phase` (`compile` | `test`) picks the site,
- * `patch` is preserved on `phase: "test"` for retry / display, and the
- * on-disk file is byte-identical to before the call.
+ * `patch` is preserved on `phase: "test"` for retry / display, and the write
+ * that threw left nothing behind.
+ *
+ * "Not written" on the behavioural tier (`proposed`, `test-blocked`,
+ * `write-failed` with `phase: "test"`) means the file is exactly as the
+ * compile tier left it: byte-identical to the start of the call when
+ * `compileFixes` is absent, and carrying those compile fixes when present.
  */
 type FixFromTestStatus =
   | {
@@ -1188,9 +1355,9 @@ type FixFromTestStatus =
       /**
        * Stable kebab-case classifier for the silent-skip that produced the
        * no-patch outcome. Compile-tier: the first `planFixesExplained.skipped`
-       * entry's reason when `patches.length === 0` (this includes the new
-       * default `no-repair-branch` reason, so it's populated for every
-       * compile-tier no-patch outcome). Behavioral tier: the tier planner's
+       * entry's reason, or `every-patch-declined` when there were no skips at
+       * all — see `noCompilePatch`, which is why this is populated for every
+       * compile-tier no-patch outcome. Behavioral tier: the tier planner's
        * bail reason. Test-runner threw: `test-runner-threw`.
        */
       reason?: string;
@@ -1203,11 +1370,32 @@ type FixFromTestStatus =
       compilePatches: AutoPatch[];
     }
   | {
+      /**
+       * The regression gate refused the compile-tier write, so the file on disk is
+       * byte-identical to before the call. Distinct from `no-patch`, which
+       * means no repair was found at all: here one was, and applying it would
+       * have left the file no cleaner. `compileErrors` is the author's own set
+       * — the diagnostics the refused patch was offered for, never the ones it
+       * would have created, which `blocked` names instead. `blocked` also says
+       * which of the gate's three conditions refused it, including the one
+       * where the composed source did not parse.
+       */
+      ok: false;
+      status: "compile-blocked";
+      compileErrors: KumikiError[];
+      blocked: NonNullable<FixApplyResult["blocked"]>;
+    }
+  | {
+      /**
+       * The Tier-1 write landed and the file still does not compile. Syntax
+       * breakage is not one of these: the gate rejects source that does not
+       * parse before anything reaches disk, and reports it as
+       * `compile-blocked`.
+       */
       ok: false;
       status: "compile-remaining";
       compileFixes: number;
       compileErrors?: KumikiError[];
-      parseError?: string;
     }
   | {
       ok: false;
@@ -1228,24 +1416,46 @@ type FixFromTestStatus =
       compileFixes?: number;
     }
   | {
-      ok: boolean;
+      /**
+       * The behavioural patch passed the gate and is on disk: the file
+       * compiles, the named test passes, and no test that passed before
+       * fails. `regressed` is always `[]` — a patch that would have regressed
+       * a test is `test-blocked` instead — and is kept only so a client that
+       * read it from earlier versions still finds the field.
+       */
+      ok: true;
       status: "applied";
-      pass: boolean;
+      pass: true;
       patch: AutoPatch;
-      /** Names of other tests that were passing before the write and now fail. Always populated (may be []). */
-      regressed: string[];
+      regressed: [];
+      compileFixes?: number;
+    }
+  | {
+      /**
+       * A behavioural patch was found and the gate refused it, so that patch
+       * was not written. The file is exactly as the compile tier left it:
+       * byte-identical to the start of the call when `compileFixes` is
+       * absent, and carrying those `compileFixes` compile repairs when
+       * present. The behavioural counterpart of `compile-blocked`: `blocked`
+       * says which condition refused it.
+       */
+      ok: false;
+      status: "test-blocked";
+      patch: AutoPatch;
+      blocked: TestPatchBlock;
       compileFixes?: number;
     }
   | {
       /**
        * A patch was chosen but `writeFileSync` threw before it could land.
-       * `phase` distinguishes the two write sites in `runFixFromTest`:
-       *  - `"compile"`: Tier-1 compile patches were about to be written.
-       *    `compileFixes` is the *proposed* count (nothing landed); the
-       *    on-disk file is byte-identical to before the call.
-       *  - `"test"`: Tier-2 behavioral patch was selected. `patch` carries
-       *    the proposed `AutoPatch` that never landed; `compileFixes` is
-       *    present only when Tier-1 wrote successfully first.
+       * `phase` distinguishes the two writes a fix-from-test run can make:
+       *  - `"compile"`: compile-tier patches passed the regression gate and
+       *    the write itself threw. `compileFixes` is the count that would have
+       *    landed; the on-disk file is byte-identical to before the call.
+       *  - `"test"`: the behavioural patch passed its gate and its write
+       *    threw. `patch` carries the `AutoPatch` that never landed;
+       *    `compileFixes` is present only when the compile tier wrote first,
+       *    and those repairs stay on disk.
        */
       ok: false;
       status: "write-failed";
@@ -1254,6 +1464,31 @@ type FixFromTestStatus =
       compileFixes?: number;
       patch?: AutoPatch;
     };
+
+/**
+ * Why the behavioural gate refused a patch.
+ *
+ *  - `parse-error` / `introduced`: the patched source fails to parse or
+ *    typecheck — the same two arms, with the same payloads, as the compile
+ *    tier's `FixApplyResult["blocked"]`. `introduced` lists every error, since
+ *    the file compiled before the patch.
+ *  - `test-runner-threw`: the test runner threw on the patched source, e.g.
+ *    `check` passed but `compile()` did not.
+ *  - `named-test-missing`: the runner returned without a result for the named
+ *    test. Nothing threw. The planner never searches a `test` definition, so a
+ *    patch cannot rename or remove the test; this arm is the gate refusing to
+ *    read an absent result as a pass, not an outcome a planned patch is known
+ *    to produce.
+ *  - `still-fails`: the named test ran and failed; carries its result.
+ *  - `regressed`: tests that passed before and would fail — or not run at
+ *    all — after.
+ */
+export type TestPatchBlock =
+  | Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "parse-error" | "introduced" }>
+  | { reason: "test-runner-threw"; message: string }
+  | { reason: "named-test-missing" }
+  | { reason: "still-fails"; failingTest: TestResult }
+  | { reason: "regressed"; regressed: string[] };
 
 /**
  * One of the statuses above, plus the advisory diagnostics from the last
@@ -1368,6 +1603,12 @@ function testBodyLineRanges(store: Store): Array<[number, number]> {
     .map((e): [number, number] => [e.range.startLine, e.range.endLine]);
 }
 
+/** The kind of the `test` definition named `testName`, if the file has one. */
+function testKindOf(store: Store, testName: string): TestDef["testKind"] | undefined {
+  const entry = store.defs.find((e) => e.def.kind === "TestDef" && e.name === testName);
+  return entry ? (entry.def as TestDef).testKind : undefined;
+}
+
 /**
  * Line ranges of the target def and every def it transitively references, used
  * to constrain a literal search to code the failing test can actually reach.
@@ -1475,16 +1716,24 @@ export function planTestPatchExplained(
     return excludedLineRanges.some(([lo, hi]) => line >= lo && line <= hi);
   };
   const scope = store ? scopeOfTest(store, r.name) : null;
+  // A tile-test's text is a rendered string the tile's literals spell, so a
+  // literal the tier finds is the one to repair. Any other leaf — a `checked`
+  // state, an `options` list, a `disabled` flag — is often decided by
+  // `given.slots`, which overrides the slot whose initial literal would be
+  // matched: the proposal could not make the test pass.
+  if (store && typeof actual !== "string" && testKindOf(store, r.name) === "tile-test") {
+    return bail("tile-leaf-not-text");
+  }
 
-  // ----- Tier 1: exact-literal repair (string / number / boolean) -----
+  // ----- Planner 1: exact-literal repair (string / number / boolean) -----
 
   const exact = planExactLiteralPatchExplained(source, r, actual, expected, at, inExcluded, scope);
   if (exact.patch) return { patch: exact.patch };
-  const tier1Reason = exact.reason;
+  const exactReason = exact.reason;
 
-  // ----- Tier 2: string prefix/suffix partial repair -----
+  // ----- Planner 2: string prefix/suffix partial repair -----
 
-  let tier2Reason: string | null = null;
+  let partialReason: string | null = null;
   if (typeof actual === "string" && typeof expected === "string") {
     const partial = planPartialStringPatchExplained(
       source,
@@ -1496,12 +1745,12 @@ export function planTestPatchExplained(
       scope,
     );
     if (partial.patch) return { patch: partial.patch };
-    tier2Reason = partial.reason;
+    partialReason = partial.reason;
   }
 
-  // ----- Tier 3: numeric slot delta → reducer arithmetic pattern -----
+  // ----- Planner 3: numeric slot delta → reducer arithmetic pattern -----
 
-  let tier3Reason: string | null = null;
+  let arithReason: string | null = null;
   if (
     store &&
     typeof actual === "number" &&
@@ -1521,13 +1770,13 @@ export function planTestPatchExplained(
       inExcluded,
     );
     if (arith.patch) return { patch: arith.patch };
-    tier3Reason = arith.reason;
+    arithReason = arith.reason;
   }
 
-  // Prefer the most specific tier's reason: Tier-3 (arithmetic) if it ran,
-  // then Tier-2 (partial string), else Tier-1 (exact-literal). This surfaces
-  // *why the deepest tier declined* rather than the coarse first-line signal.
-  const reason = tier3Reason ?? tier2Reason ?? tier1Reason;
+  // Prefer the most specific planner's reason: arithmetic if it ran,
+  // then partial string, else exact-literal. This surfaces
+  // *why the deepest planner declined* rather than the coarse first-line signal.
+  const reason = arithReason ?? partialReason ?? exactReason;
   debugSkip("planTestPatch", reason, r.name);
   return { patch: null, reason };
 }
@@ -1593,10 +1842,8 @@ function pickScopedHit(
  * Every `"..."` string literal in `source`, one pass. `start` / `end` are the
  * quote-inclusive source offsets; `body` is the raw inner slice (no quotes,
  * no decoding — callers that need the runtime string must call
- * `decodeKumikiStringBody`). Shared by `stringLiteralSpans` (needs only the
- * spans, to reject numeric hits landing inside a string) and the partial-
- * string tier (needs the decoded body to match the divergent middle), so the
- * `"(?:[^"\\]|\\.)*"` regex lives in exactly one place.
+ * `decodeKumikiStringBody`). Used by the partial-string tier, which needs the
+ * decoded body to match the divergent middle.
  */
 export function iterStringLiterals(
   source: string,
@@ -1614,14 +1861,48 @@ export function iterStringLiterals(
 }
 
 /**
- * True at offsets that sit inside a `"..."` string literal. Number / boolean
- * exact-literal searches must reject these so a leaf like `-1` doesn't get
- * matched against the substring `-1` inside a source string like `text="-1"`.
- * Cached per call via a closure — pre-scanning the whole source once beats
- * re-checking every candidate hit.
+ * Where the source's tokens begin and end, as character offsets.
+ *
+ * A hit the exact-literal planner replaces is a run of source that starts
+ * where a token starts and ends where a token ends. The `1` in `Btn1` starts
+ * inside an identifier, the `1` in `10` ends inside a number, and a `1` inside
+ * a string or a comment is not the start of any token at all — one rule
+ * answers all of them, from the lexer that decides what the program's tokens
+ * are. A `-1` hit spans two tokens (`-` then `1`); that follows from the same
+ * rule, and it holds for a binary `x -1` as much as for a negative literal —
+ * the behavioural gate is what refuses a patch that changes the wrong one.
+ *
+ * `null` when the source does not lex. Only a `LexError` is caught: any other
+ * throw is a lexer defect and propagates rather than passing for "no literal".
  */
-function stringLiteralSpans(source: string): Array<[number, number]> {
-  return iterStringLiterals(source).map((l) => [l.start, l.end]);
+function tokenBounds(source: string): { starts: Set<number>; ends: Set<number> } | null {
+  let tokens: ReturnType<typeof lex>;
+  try {
+    tokens = lex(source);
+  } catch (e) {
+    if (e instanceof LexError) return null;
+    throw e;
+  }
+  const lineStarts = [0];
+  for (let i = 0; i < source.length; i++) if (source[i] === "\n") lineStarts.push(i + 1);
+  const starts = new Set<number>();
+  const ends = new Set<number>();
+  for (const t of tokens) {
+    if (t.kind === "eof") continue;
+    const start = (lineStarts[t.pos.line - 1] ?? 0) + t.pos.col - 1;
+    starts.add(start);
+    ends.add(start + tokenLength(source, t, start));
+  }
+  return { starts, ends };
+}
+
+/** The source length of one token: a string's is read back from its quotes. */
+function tokenLength(source: string, t: Exclude<Token, { kind: "eof" }>, start: number): number {
+  if (t.kind === "num") return t.raw.length;
+  if (t.kind !== "str") return t.value.length;
+  let i = start + 1;
+  while (i < source.length && source[i] !== '"') i += source[i] === "\\" ? 2 : 1;
+  return i + 1 - start;
 }
 
 type PatchOrReason = { patch: AutoPatch } | { patch: null; reason: string };
@@ -1639,21 +1920,11 @@ function planExactLiteralPatchExplained(
   const expectedLit = leafLit(expected);
   if (actualLit === null || expectedLit === null)
     return { patch: null, reason: "leaf-not-a-kumiki-literal" };
-  // For non-string leaves, hits inside string literals are false positives
-  // (e.g. numeric `-1` matching inside `text="-1"`). Build a rejection filter
-  // that composes with `inExcluded`. The `[lo, hi]` span is quote-inclusive,
-  // so we reject only when the candidate sits *strictly* between the quotes
-  // (`offset > lo && offset + len < hi`) — landing on a quote itself is
-  // impossible for a numeric/boolean actualLit but the strict form documents
-  // the "inside the body, not the quotes" intent for future readers.
-  const isStringLeaf = typeof actual === "string";
-  const spans = isStringLeaf ? null : stringLiteralSpans(source);
-  const combinedExcluded = spans
-    ? (offset: number): boolean =>
-        inExcluded(offset) ||
-        spans.some(([lo, hi]) => offset > lo && offset + actualLit.length < hi)
-    : inExcluded;
-  const hit = pickScopedHit(source, actualLit, combinedExcluded, scope);
+  const bounds = tokenBounds(source);
+  if (bounds === null) return { patch: null, reason: "source-does-not-lex" };
+  const notWholeToken = (offset: number): boolean =>
+    inExcluded(offset) || !bounds.starts.has(offset) || !bounds.ends.has(offset + actualLit.length);
+  const hit = pickScopedHit(source, actualLit, notWholeToken, scope);
   if (hit === null) return { patch: null, reason: "no-scoped-literal-hit" };
   return {
     patch: {
@@ -1847,13 +2118,39 @@ function planArithmeticPatchExplained(
 }
 
 /**
- * Two-tier fix-from-test. Tier 1 clears compile errors with `planFixes` so the
- * test can run; Tier 2 applies a deterministic literal repair from the failing
- * test with `planTestPatch`. Every branch returns via the `FixFromTestOutcome`
- * discriminated union — no stdout side effects. `fixFromTest` wraps this and
- * adds the CLI printer. The outcome carries compile-tier errors
- * (`compileErrors`), the failing test
- * itself (`failingTest`), and the current set of test results (`tests`) so
+ * The compile tier's "nothing was repaired" outcome, and the reason it was not.
+ *
+ * The first skip reason lets an AI loop distinguish "no auto-repairable code
+ * fired" from "the compiler message drifted and every quoted-name branch fell
+ * through". Every error lands in `patches` or `skipped`, and an error that
+ * matched no branch at all is skipped as `no-repair-branch` — so an empty
+ * `skipped` means the opposite of no repair: every error had a patch, and
+ * every patch declined to change the source it was pointed at. That is its own
+ * classifier rather than a missing one, which is what keeps `reason` populated
+ * for every compile-tier no-patch outcome.
+ */
+function noCompilePatch(
+  compileErrors: KumikiError[],
+  skipped: SkipReason[],
+): Extract<FixFromTestStatus, { status: "no-patch" }> {
+  return {
+    ok: false,
+    status: "no-patch",
+    compileErrors,
+    reason: skipped[0]?.reason ?? "every-patch-declined",
+  };
+}
+
+/**
+ * Two-tier fix-from-test. The compile tier clears compile errors with
+ * `applyFixPlan` so the test can run. The behavioural tier plans a
+ * deterministic literal repair from the failing test with `planTestPatch`;
+ * a dry run proposes it as is, and `apply` writes it only when
+ * `gateTestPatch` accepts it (otherwise `test-blocked`, and the patch is not
+ * written). Every branch returns via the `FixFromTestOutcome` discriminated
+ * union — no stdout side effects. `fixFromTest` wraps this and adds the CLI
+ * printer. The outcome carries compile-tier errors (`compileErrors`), the
+ * failing test itself (`failingTest`) and the gate's refusal (`blocked`) so
  * MCP callers can render diagnostics without stdout scraping.
  */
 export async function runFixFromTest(
@@ -1862,12 +2159,12 @@ export async function runFixFromTest(
   apply: boolean,
   capabilities: string[] = [],
 ): Promise<FixFromTestOutcome> {
-  // Tier 1: a file that doesn't compile can't run its tests — repair first.
+  // Compile tier: a file that doesn't compile can't run its tests — repair first.
   const store = load(path);
   const firstPass = check(store.program, { capabilities });
   const compileErrors = repairable(firstPass);
-  // Updated by the only other typecheck this function runs, so whichever
-  // outcome it reaches describes the file as that typecheck last saw it.
+  // Replaced by whatever the compile-tier repair last typechecked, so whichever
+  // outcome this reaches describes the file as of the newest read it made.
   let warnings = advisory(firstPass);
   /**
    * Attach them. Every return goes through here rather than repeating the
@@ -1880,16 +2177,11 @@ export async function runFixFromTest(
   });
   let compileFixes = 0;
   if (compileErrors.length > 0) {
-    const { patches, skipped } = planFixesExplained(store, compileErrors);
-    if (patches.length === 0) {
-      // Surface the first skip reason so the AI loop can distinguish
-      // "no auto-repairable code fired" from "the compiler message drifted
-      // and every quoted-name branch fell through". Absent when the compile
-      // errors didn't match any repair branch at all (no skip recorded).
-      const reason = skipped[0]?.reason;
-      return stamp({ ok: false, status: "no-patch", compileErrors, ...(reason ? { reason } : {}) });
-    }
     if (!apply) {
+      // The dry run proposes; `compileFixes` is the planned count here, which
+      // is the honest number for something that has not been applied.
+      const { patches, skipped } = planFixesExplained(store, compileErrors);
+      if (patches.length === 0) return stamp(noCompilePatch(compileErrors, skipped));
       return stamp({
         ok: true,
         status: "compile-proposed",
@@ -1897,47 +2189,43 @@ export async function runFixFromTest(
         compilePatches: patches,
       });
     }
-    let text = readFileSync(path, "utf8");
-    for (const p of applicationOrder(patches)) text = p.apply(text);
-    try {
-      atomicWriteFileSync(path, text);
-    } catch (e) {
-      // Tier-1 write failed. `compileFixes` here is the *proposed* count —
-      // nothing landed. The `write-failed` variant + `phase: "compile"` tells
-      // the printer / MCP serializer to avoid the misleading "applied N
-      // compile fix(es)" header.
-      return stamp({
-        ok: false,
-        status: "write-failed",
-        phase: "compile",
-        writeError: e instanceof Error ? e.message : String(e),
-        compileFixes: patches.length,
-      });
+    // The same write every other `fix --apply` makes, through the same
+    // regression gate: composed, re-parsed, re-typechecked, and rolled back
+    // unless the file comes out strictly cleaner. One gate and one write, so a
+    // repair this verb accepts is one `fix --apply` would accept — and an
+    // error a repair creates can never be reported to the author as their own.
+    const result = applyFixPlan(path, undefined, capabilities);
+    warnings = result.warnings;
+    if (result.applied === 0) {
+      if (result.writeError !== undefined) {
+        // The gate passed and the write threw: nothing landed, and the count
+        // is what would have. `phase: "compile"` keeps the printer and the MCP
+        // serialiser from heading it "applied N compile fix(es)".
+        return stamp({
+          ok: false,
+          status: "write-failed",
+          phase: "compile",
+          writeError: result.writeError,
+          compileFixes: result.approved,
+        });
+      }
+      if (result.blocked !== undefined) {
+        return stamp({
+          ok: false,
+          status: "compile-blocked",
+          compileErrors,
+          blocked: result.blocked,
+        });
+      }
+      return stamp(noCompilePatch(compileErrors, result.skipped));
     }
-    compileFixes = patches.length;
-    // Split the catches: only `parse(lex(text))` may legitimately throw with
-    // a caller-facing parse-error. `check()` throwing is an internal
-    // typechecker bug and must NOT be laundered into a `parseError` string.
-    let parsed: ReturnType<typeof parse>;
-    try {
-      parsed = parse(lex(text));
-    } catch (e) {
+    compileFixes = result.applied;
+    if (result.remaining.length > 0) {
       return stamp({
         ok: false,
         status: "compile-remaining",
         compileFixes,
-        parseError: e instanceof Error ? e.message : String(e),
-      });
-    }
-    const afterRepair = check(parsed, { capabilities });
-    warnings = advisory(afterRepair);
-    const remaining = repairable(afterRepair);
-    if (remaining.length > 0) {
-      return stamp({
-        ok: false,
-        status: "compile-remaining",
-        compileFixes,
-        compileErrors: remaining,
+        compileErrors: result.remaining,
       });
     }
   }
@@ -1951,7 +2239,7 @@ export async function runFixFromTest(
       ok: false,
       status: "no-patch",
       testRunError: e instanceof Error ? e.message : String(e),
-      // Classify test-run failures under the same family as Tier-3 skips so
+      // Classify test-run failures under the same family as the planner skips so
       // an AI loop tallying `outcome.reason` can distinguish "the runner
       // itself blew up" from "the file compiles but no patch applies".
       reason: "test-runner-threw",
@@ -1976,8 +2264,8 @@ export async function runFixFromTest(
     });
   }
 
-  // Tier 2: behavioral, deterministic literal repair. Re-load from the current
-  // (possibly Tier-1-patched) file so the source, the `test` body line ranges
+  // Behavioural tier: deterministic literal repair. Re-load from the current
+  // (possibly compile-tier-patched) file so the source, the `test` body line ranges
   // used to exclude fixture literals, and the scope-aware disambiguation store
   // are all consistent.
   const curSource = readFileSync(path, "utf8");
@@ -2007,6 +2295,22 @@ export async function runFixFromTest(
   // land in the `write-failed` variant, which is reserved for filesystem
   // errors the caller can act on (retry, elevate permissions, free space).
   const patched = patch.apply(curSource);
+  // The same contract the compile-tier write keeps — this write either lands
+  // a repair or does not happen — held by gating before the write rather
+  // than rolling back after it. The patched source is parsed, typechecked and
+  // tested in memory, and only a source that compiles, passes the named test
+  // and fails nothing that passed before reaches disk. A refusal leaves the
+  // file as the compile tier left it (its repairs, if any, stay).
+  const refused = await gateTestPatch(patched, testName, before, path, capabilities);
+  if (refused !== null) {
+    return stamp({
+      ok: false,
+      status: "test-blocked",
+      patch,
+      blocked: refused,
+      ...(compileFixes ? { compileFixes } : {}),
+    });
+  }
   try {
     atomicWriteFileSync(path, patched);
   } catch (e) {
@@ -2019,21 +2323,54 @@ export async function runFixFromTest(
       ...(compileFixes ? { compileFixes } : {}),
     });
   }
-  const after = await testFile(path, capabilities);
-  const nowPass = after.find((r) => r.name === testName)?.pass === true;
-  const regressed = after
-    .filter((r) => !r.pass && before.find((b) => b.name === r.name)?.pass === true)
-    .map((r) => r.name);
   return stamp({
-    ok: nowPass && regressed.length === 0,
+    ok: true,
     status: "applied",
-    pass: nowPass,
+    pass: true,
     patch,
-    // Always populated: `[]` means "checked, none regressed" — never absent
-    // on the `applied` branch. Baked into the type by the discriminated union.
-    regressed,
+    regressed: [],
     ...(compileFixes ? { compileFixes } : {}),
   });
+}
+
+/**
+ * Why the behavioural gate refused a patch, or `null` when it may be written.
+ * The conditions are checked in the order a reader would ask them: does it
+ * parse, does it typecheck, does the named test run and pass, did anything
+ * that passed before stop passing. A test that already failed before the
+ * patch is not the gate's business: it may keep failing, or start passing.
+ */
+async function gateTestPatch(
+  patched: string,
+  testName: string,
+  before: readonly TestResult[],
+  path: string,
+  capabilities: string[],
+): Promise<TestPatchBlock | null> {
+  let parsed: ReturnType<typeof parse>;
+  try {
+    parsed = parse(lex(patched));
+  } catch (e) {
+    return { reason: "parse-error", message: e instanceof Error ? e.message : String(e) };
+  }
+  const introduced = repairable(check(parsed, { capabilities }));
+  if (introduced.length > 0) return { reason: "introduced", introduced };
+  let after: TestResult[];
+  try {
+    after = await runTestsSource(patched, capabilities, { sourcePath: path });
+  } catch (e) {
+    return { reason: "test-runner-threw", message: e instanceof Error ? e.message : String(e) };
+  }
+  const named = after.find((r) => r.name === testName);
+  if (named === undefined) return { reason: "named-test-missing" };
+  if (!named.pass) return { reason: "still-fails", failingTest: named };
+  // Walk what passed before, so a test that stops running counts as well as
+  // one that starts failing.
+  const regressed = before
+    .filter((b) => b.pass && after.find((r) => r.name === b.name)?.pass !== true)
+    .map((b) => b.name);
+  if (regressed.length > 0) return { reason: "regressed", regressed };
+  return null;
 }
 
 export async function fixFromTest(
@@ -2058,18 +2395,23 @@ export async function fixFromTest(
  * can identify the affected file at a glance.
  */
 function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: string): void {
-  // Applied-tier-1 header: only when Tier-1 patches were *written* — i.e. the
+  // Applied-compile-tier header: only when compile-tier patches were *written* — i.e. the
   // apply path. `compile-proposed` also carries `compileFixes` (the count of
   // proposed patches), but printing "applied N" for it would lie about a
   // dry-run.
+  // `compile-blocked` is the one member with no `compileFixes` — a refusal
+  // wrote nothing, so it has no count to report — which is why it is tested
+  // first rather than left to the `> 0` guard: without it the next line does
+  // not typecheck.
   if (
+    outcome.status !== "compile-blocked" &&
     outcome.compileFixes !== undefined &&
     outcome.compileFixes > 0 &&
     outcome.status !== "compile-remaining" &&
     outcome.status !== "compile-proposed" &&
-    // `write-failed` with `phase: "compile"` carries the *proposed* count —
-    // nothing landed on disk, so the "applied N" header would lie. On
-    // `phase: "test"` the Tier-1 write did land; header is honest.
+    // `write-failed` with `phase: "compile"` carries the count the gate
+    // approved — nothing landed on disk, so the "applied N" header would lie.
+    // On `phase: "test"` the compile-tier write did land; header is honest.
     !(outcome.status === "write-failed" && outcome.phase === "compile")
   ) {
     console.log(
@@ -2118,14 +2460,19 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       }
       return;
     }
+    case "compile-blocked": {
+      // The same sentence `fix --apply` prints for the same refusal, from the
+      // same function — a repair `fix` declines and `--auto-patch` accepts is
+      // the disagreement this verb is not allowed to have.
+      console.log(rollbackLine({ ...outcome, regressionBlocked: true }));
+      console.log(
+        `test "${testName}" is still blocked by ${outcome.compileErrors.length} compile error(s):`,
+      );
+      for (const e of outcome.compileErrors) console.error(`  ${e.code} ${e.message}`);
+      return;
+    }
     case "compile-remaining": {
       const n = outcome.compileFixes ?? 0;
-      if (outcome.parseError) {
-        console.log(
-          `applied ${n} compile fix(es) but they broke the file (${outcome.parseError}); cannot run "${testName}"`,
-        );
-        return;
-      }
       const rem = outcome.compileErrors?.length ?? 0;
       console.log(
         `applied ${n} compile fix(es) — ${rem} error(s) remain; cannot run "${testName}"`,
@@ -2149,17 +2496,29 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       return;
     }
     case "applied": {
-      const nowPass = outcome.pass === true;
-      console.log(
-        verdict(
-          `applied fix — test "${testName}" now ${nowPass ? "PASSES" : "still FAILS"}`,
-          outcome.warnings,
-        ),
-      );
-      if (outcome.regressed && outcome.regressed.length > 0) {
-        console.log(
-          `  WARNING: ${outcome.regressed.length} other test(s) regressed: ${outcome.regressed.join(", ")}`,
-        );
+      console.log(verdict(`applied fix — test "${testName}" now PASSES`, outcome.warnings));
+      return;
+    }
+    case "test-blocked": {
+      // The compile fixes, when there were any, are already on disk (the
+      // header above says so); only the behavioural patch was held back.
+      const kept = outcome.compileFixes
+        ? "behavioural patch not written (compile fixes kept)"
+        : "file left unchanged";
+      console.log(`refused fix for "${testName}" — ${kept}:`);
+      console.log(`  ${outcome.patch.description}`);
+      console.log(`  reason: ${outcome.blocked.reason}`);
+      const b = outcome.blocked;
+      if (b.reason === "introduced")
+        for (const e of b.introduced) console.error(`  ${e.code} ${e.message}`);
+      else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
+        console.error(`  ${b.message}`);
+      else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);
+      else if (b.reason === "still-fails") {
+        const t = b.failingTest;
+        if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
+        if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
+        if (t.diffAt !== undefined) console.log(`  diff at:  ${t.diffAt}`);
       }
       return;
     }

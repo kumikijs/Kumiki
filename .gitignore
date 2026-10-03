@@ -17,6 +17,11 @@ test-results/
 *.kumiki-ops.jsonl
 *.kumiki-episodes.jsonl
 *.kumiki-locks.json
+# An interrupted write verb: the write lock, a claim to take over a lock,
+# and a staging file not yet renamed into place.
+*.kumiki-write.lock
+*.kumiki-write.lock.*
+*.kumiki-write-*.tmp
 
 # Docs site build
 .vitepress/cache/

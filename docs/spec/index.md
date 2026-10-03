@@ -59,6 +59,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0006](./errors.md#e0006-fn-cycle) | `fn-cycle` | fn | core |
 | [E0007](./errors.md#e0007-duplicate-definition) | `duplicate-definition` | all | core |
 | [E0008](./errors.md#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) | `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant` | all | core |
+| [E0009](./errors.md#e0009-type-cycle) | `type-cycle` | type | core |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | core |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | core |
 | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | core |
@@ -78,6 +79,13 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | style |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | routing |
 | [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | routing |
+| [E0121](./errors.md#e0121-reserved-bind-name) | `reserved-bind-name` | reducer | core |
+| [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | core |
+| [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
+| [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | core |
+| [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | core |
+| [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | core |
+| [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | core |
 | [E0201](./errors.md#e0201-type-mismatch) | `type-mismatch` | type | core |
 | [E0202](./errors.md#e0202-emit-arg-type-mismatch) | `emit-arg-type-mismatch` | reducer | core |
 | [E0204](./errors.md#e0204-effect-id-misuse) | `effect-id-misuse` | effect | http |
@@ -96,16 +104,24 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0216](./errors.md#e0216-unknown-variant) | `unknown-variant` | type | core |
 | [E0217](./errors.md#e0217-int-literal-precision) | `int-literal-precision` | type | core |
 | [E0218](./errors.md#e0218-for-over-non-list) | `for-over-non-list` | type | core |
+| [E0219](./errors.md#e0219-bind-strict-prop) | `bind-strict-prop` | tile | forms |
+| [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | lifecycle |
+| [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | forms |
+| [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | forms |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
+| [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
+| [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
 | [E0304](./errors.md#e0304-derived-slot) | `derived-slot` | slot | core |
 | [E0305](./errors.md#e0305-fn-impurity) | `fn-impurity` | fn | core |
+| [E0306](./errors.md#e0306-err-type-not-text) | `err-type-not-text` | effect | http |
 | [E0401](./errors.md#e0401-motion-unknown-property) | `motion-unknown-property` | tile | style |
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | style |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | core |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | core |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | lifecycle |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |
@@ -113,8 +129,11 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0705](./errors.md#e0705-a11y-label-for) | `a11y-label-for` | tile | lifecycle |
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
 | [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | testing |
+| [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
+| [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | core |
+| [E0804](./errors.md#e0804-refinement-args-invalid) | `refinement-args-invalid` | type | core |
 <!-- codes:end -->
 :::
 
@@ -190,7 +209,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `64-init-slot-argument.kumiki` | app, effect | core | [§1.12](./language.md#_1-12-application-entry-app) |
 | `65-prefers-dark.kumiki` | app, reducer | style | [§4.6.1](./style.md#_4-6-1-following-os-settings) |
 | `66-value-types.kumiki` | type, slot, fn | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
-| `67-self-reference.kumiki` | tile, slot, fn | core | [§1.7.2](./language.md#_1-7-2-invariants) |
+| `67-self-reference.kumiki` | type, slot, tile, fn | core | [§1.3.6](./language.md#_1-3-6-invariants) |
 | `68-name-uniqueness.kumiki` | type, slot, fn | core | [§1.3.1](./language.md#_1-3-1-syntax) |
 | `69-builtin-effect-capabilities.kumiki` | reducer, effect | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
 | `70-spec-grammar.kumiki` | type, slot, fn, reducer | core | [§1.2](./language.md#_1-2-lexical) |
@@ -201,5 +220,81 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `75-paren-less-stdlib-constants.kumiki` | slot, effect, reducer | http | [§6.1.4](./http.md#_6-1-4-the-decoder-type) |
 | `76-conditional-adds-a-universal-handler.kumiki` | slot, reducer, tile | core | [§10.3.11](./runtime.md#_10-3-11-identity-preserving-reconciliation-190) |
 | `77-int-float-math.kumiki` | slot, reducer, tile | stdlib | [§2.2.7](./stdlib.md#_2-2-7-int-float) |
+| `78-editable-input-selector.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
+| `79-option-get-assignment.kumiki` | slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
+| `80-route-in-tests.kumiki` | slot, effect, reducer, tile | testing | [§8.2.5](./testing.md#_8-2-5-the-route-slot) |
+| `81-http-config-from-slots.kumiki` | slot, effect, reducer, tile | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
+| `82-handler-on-a-user-tile.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
+| `83-let-shadowing.kumiki` | slot, reducer, fn, tile | core | [§1.6.7](./language.md#_1-6-7-scoping-and-shadowing) |
+| `84-off-origin-link.kumiki` | app, tile | routing | [§3.3.1](./routing.md#_3-3-1-the-link-element-recommended) |
+| `85-capitalised-reducer-handler.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
+| `86-container-selector-through-reference.kumiki` | slot, reducer, tile | core | [§1.6.2](./language.md#_1-6-2-selectors) |
+| `87-replayed-environment-read.kumiki` | slot, reducer, tile | core | [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode) |
+| `88-string-formatting.kumiki` | slot, reducer, tile | stdlib | [§2.4.5](./stdlib.md#_2-4-5-string-formatting) |
+| `89-qualified-show.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
+| `90-refinement-validation.kumiki` | type, slot, reducer | forms | [§5.6](./forms.md#_5-6-validation-strategy) |
+| `91-conjoined-refinements.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
+| `92-outlet-error-boundary.kumiki` | slot, reducer, tile, app | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
+| `93-panic-info.kumiki` | slot, reducer, tile, app | lifecycle | [§7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) |
+| `94-editable-key-focus-blur-selectors.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
+| `95-disabled-controls-refuse-a-step.kumiki` | slot, reducer, tile | testing | [§8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification) |
+| `96-shortcut-named-fields.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
+| `97-get-or-two-readings.kumiki` | slot, reducer, tile | core | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `98-receiver-decided-results.kumiki` | slot, reducer, tile | core | [§2.2](./stdlib.md#_2-2-collection-methods) |
+| `99-route-into-a-slot.kumiki` | slot, fn, reducer, tile | routing | [§E0304](./errors.md#e0304-derived-slot) |
+| `100-option-filter.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
+| `101-list-index-write.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
+| `102-non-text-keys.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.2](./stdlib.md#_2-2-2-set-t) |
+| `103-generic-alias-refinement.kumiki` | type, slot, reducer, tile | core | [§1.3.1](./language.md#_1-3-1-syntax) |
+| `104-nested-refinements.kumiki` | type, slot, reducer, tile | core | [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates) |
+| `105-refused-bind.kumiki` | slot, reducer, tile | forms | [§5.1.2](./forms.md#_5-1-2-handling-of-refinement) |
+| `107-builtin-content-is-positional.kumiki` | slot, reducer, tile | core | [§1.7.1](./language.md#_1-7-1-syntax) |
+| `108-call-site-handler-joins-lifted.kumiki` | slot, reducer, tile | core | [§1.7.3](./language.md#_1-7-3-event-handler-props) |
+| `109-control-key-focus-blur-selectors.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
+| `110-parse-by-base.kumiki` | type, slot, reducer, tile | stdlib | [§2.4.3](./stdlib.md#_2-4-3-type-conversion) |
+| `111-applied-type-qualifier.kumiki` | type, slot, reducer, tile | stdlib | [§E0124](./errors.md#e0124-type-constructor-qualifier) |
+| `113-match-value-type.kumiki` | type, slot, reducer, fn, tile | core | [§1.9](./language.md#_1-9-expression-language) |
+| `114-unit-value.kumiki` | slot, reducer, fn, tile | stdlib | [§2.1](./stdlib.md#_2-1-built-in-types) |
+| `115-fn-name-fragment.kumiki` | slot, reducer, fn, tile | core | [§1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions) |
+| `116-emit-id-after-key-write.kumiki` | slot, effect, reducer, tile | http | [§6.4](./http.md#_6-4-cancellation) |
+| `119-effect-payload-bind-types.kumiki` | type, slot, effect, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
+| `120-http-config-value-types.kumiki` | slot, effect, reducer, tile, app | http | [§6.3.1](./http.md#_6-3-1-injecting-global-headers) |
+| `121-boundary-fallback-input.kumiki` | type, slot, reducer, tile | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
+| `122-value-equality.kumiki` | type, slot, reducer, tile | core | [§1.9.4](./language.md#_1-9-4-operator-types) |
+| `123-one-key-per-value.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `124-set-literal.kumiki` | type, slot, reducer, tile, fn | stdlib | [§2.2.2](./stdlib.md#_2-2-2-set-t) |
+| `127-http-query-string.kumiki` | type, slot, effect, reducer, tile | http | [§6.1.2](./http.md#_6-1-2-standard-effect) |
+| `128-http-body-variants.kumiki` | slot, effect, reducer, tile | http | [§6.1.3](./http.md#_6-1-3-the-httpbody-type) |
+| `129-http-decode-failure.kumiki` | type, slot, effect, reducer, tile | http | [§6.5](./http.md#_6-5-retry) |
+| `130-storage-remove-clear.kumiki` | slot, effect, reducer, tile | http | [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage) |
+| `132-toggle-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
+| `133-typed-input-bind.kumiki` | type, slot, reducer, tile | forms | [§5.1.1](./forms.md#_5-1-1-elements-that-support-bind) |
+| `134-record-field-bind.kumiki` | type, slot, tile | forms | [§5.6](./forms.md#_5-6-validation-strategy) |
+| `135-form-submit-gate.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
+| `136-submit-button-click.kumiki` | slot, reducer, tile | forms | [§5.2.2](./forms.md#_5-2-2-submit-behavior) |
+| `139-get-unwrap-with-parentheses.kumiki` | slot, reducer, tile | stdlib | [§2.2.4](./stdlib.md#_2-2-4-option-t) |
+| `140-is-empty-both-spellings.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `141-el-kebab-prop.kumiki` | type, slot, reducer, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
+| `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | core | [§1.7.2](./language.md#_1-7-2-invariants) inv. 1 |
+| `143-fn-positional-arguments.kumiki` | slot, reducer, fn, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
+| `144-builtin-effect-input.kumiki` | slot, reducer, tile | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
+| `145-receiver-members.kumiki` | slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
+| `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
+| `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | routing | [§3.4](./routing.md#_3-4-route-lifecycle) |
+| `156-heading-level.kumiki` | slot, reducer, tile | stdlib | [§2.3.2](./stdlib.md#_2-3-2-text-elements) |
+| `157-theme-switch.kumiki` | slot, reducer, tile, app | style | [§4.6](./style.md#_4-6-dark-mode) |
+| `158-responsive-breakpoints.kumiki` | tile, app | style | [§4.5](./style.md#_4-5-responsive) |
+| `159-replayed-event-payload.kumiki` | type, slot, effect, reducer, tile | core | [§10.5.3](./runtime.md#_10-5-3-replay) |
+| `160-tile-test-content-fields.kumiki` | slot, tile | testing | [§8.4](./testing.md#_8-4-tile-snapshot-tests) |
+| `161-reducer-reads-its-own-write.kumiki` | type, slot, reducer, tile | core | [§1.6.4](./language.md#_1-6-4-invariants) |
+| `162-fragment-binds-by-type.kumiki` | slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `163-keyed-list-tile.kumiki` | type, slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
+| `164-decode-refused-value.kumiki` | type, slot, effect, reducer, tile | http | [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage) |
+| `165-sort-by-text-key.kumiki` | type, slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
+| `166-map-map.kumiki` | slot, reducer, tile | stdlib | [§2.2.1](./stdlib.md#_2-2-1-map-k-v) |
+| `167-time-parse-calendar.kumiki` | slot, reducer, fn, tile | stdlib | [§2.2.8](./stdlib.md#_2-2-8-time) |
+| `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
+| `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 <!-- examples:end -->
 :::

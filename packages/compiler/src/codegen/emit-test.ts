@@ -1,15 +1,26 @@
-import type { EffectDef, Expr, ReducerDef, TestDef, TileDef, TileExpr } from "../ast.ts";
+import {
+  assertNever,
+  type EffectDef,
+  type Expr,
+  type ReducerDef,
+  type TestDef,
+  type TileDef,
+  type TileExpr,
+} from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
-import { type EvalCtx, type GenCtx, jsBinding, makeEvalCtx } from "./context.ts";
+import {
+  bareNameAt,
+  expectSection,
+  givenSection,
+  isSectionName,
+  recordFieldsAt,
+  recordValueAt,
+} from "../test-sections.ts";
+import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
 import { typeToGenDesc } from "./emit-type.ts";
 import { jsOfExpr } from "./expr.ts";
-
-function recordField(e: Expr | TileExpr, name: string): Expr | undefined {
-  if ((e as Expr).kind !== "RecordLit") return undefined;
-  return (e as Expr & { kind: "RecordLit" }).fields.find((f) => f.name === name)?.value;
-}
 
 /** The outcome of a mock value `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`. */
 function mockOutcome(v: Expr): "ok" | "err" | undefined {
@@ -56,7 +67,7 @@ export function coverageJs(
   for (const t of tests) {
     if (t.testKind === "reducer-test") {
       if (t.target) markReducer(t.target);
-      const mocks = recordField(t.given, "mocks");
+      const mocks = givenSection(t, "reducer-test", "mocks");
       if (mocks?.kind === "RecordLit") {
         for (const f of mocks.fields) {
           usedEffects.add(f.name);
@@ -134,17 +145,16 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     // `const <name> = _b[...]` we destructure at the top of the trial fn.
     const pctx = makeEvalCtx(gen, new Set(forAll.map((f) => f.name)));
     const varsJs = forAll
-      .map(
-        (f) =>
-          `${JSON.stringify(f.name)}: ${JSON.stringify(typeToGenDesc(f.type, gen, new Set()))}`,
-      )
+      .map((f) => `${fieldKey(f.name)}: ${JSON.stringify(typeToGenDesc(f.type, gen, new Set()))}`)
       .join(", ");
     const binds = forAll
-      .map((f) => `const ${jsBinding(f.name)} = _b[${JSON.stringify(f.name)}];`)
+      .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)
       .join(" ");
-    const givenSlots = recordField(t.given, "slots");
-    const initSlotsJs = givenSlots ? jsOfExpr(givenSlots, pctx) : "({})";
-    const event = recordField(t.given, "event");
+    const givenSlots = givenSection(t, "property-test", "slots");
+    const initSlotsJs = givenSlots
+      ? jsOfExpr(recordValueAt(givenSlots, "given.slots"), pctx)
+      : "({})";
+    const event = givenSection(t, "property-test", "event");
     const eventJs = eventPayloadJs(event, pctx);
     const invariantJs = t.invariant ? jsOfExpr(t.invariant, pctx) : "true";
     const runOpts = [
@@ -169,26 +179,24 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   },`;
   }
   if (t.testKind === "reducer-test") {
-    // A reducer-test always has an Expr `expect` (only property-test omits it).
-    const expectExpr = t.expect as Expr;
-    const slots = recordField(t.given, "slots");
-    const event = recordField(t.given, "event");
-    const slotsJs = slots ? jsOfExpr(slots, ctx) : "({})";
+    const slots = givenSection(t, "reducer-test", "slots");
+    const event = givenSection(t, "reducer-test", "event");
+    const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
     const elJs = eventPayloadJs(event, ctx);
-    const panic = recordField(expectExpr, "panic");
+    const panic = expectSection(t, "reducer-test", "panic");
     let expectJs: string;
     if (panic) {
       expectJs = `{ kind: "panic", message: ${jsOfExpr(panic, ctx)} }`;
     } else {
-      const xs = recordField(expectExpr, "slots");
-      const xe = recordField(expectExpr, "effects");
-      const xsJs = xs ? jsOfExpr(xs, ctx) : "({})";
+      const xs = expectSection(t, "reducer-test", "slots");
+      const xe = expectSection(t, "reducer-test", "effects");
+      const xsJs = xs ? jsOfExpr(recordValueAt(xs, "expect.slots"), ctx) : "({})";
       const effectsJs = xe ? effectListJs(xe, ctx) : "[]";
       expectJs = `{ kind: "state", slots: ${xsJs}, effects: ${effectsJs} }`;
     }
     // §8.5: with `given.mocks`, drive the multi-step emit→result→reducer flow
     // (effect results injected from the mocks) instead of a single reducer apply.
-    const mocks = recordField(t.given, "mocks");
+    const mocks = givenSection(t, "reducer-test", "mocks");
     if (mocks) {
       return `  {
     name: ${nameJs},
@@ -216,11 +224,40 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   },`;
   }
   // tile-test
-  const slots = recordField(t.given, "slots");
-  const slotsJs = slots ? jsOfExpr(slots, ctx) : "({})";
-  const inField = recordField(t.given, "in");
+  const slots = givenSection(t, "tile-test", "slots");
+  const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
+  const inField = givenSection(t, "tile-test", "in");
+  // A tile-test applies its target, so `given.in` is that application's single
+  // argument and has to agree with the target's `in=`. Emitting the
+  // disagreement is what produced a `TypeError: Cannot read properties of
+  // undefined` carrying no test name, no position and no code — nothing catches
+  // it, so it reached the CLI and took the rest of the file's results with it —
+  // or, the other way, a snapshot compared against a render that silently never
+  // saw the value. E0213 refuses both at check time, so the throw is for a
+  // caller that skipped `check`, as with `effectListJs` and `episodeMockJs`; it
+  // names the code so the last line of defence is as identifiable as the first.
+  // The checker defers two shapes instead: a `given` with a section nothing
+  // reads (E0714), which this would still count as a missing argument — but
+  // `compile()` stops at that error, so the two never answer the same program —
+  // and a `given` that is not a record at all (E0713), which `givenSection`
+  // above has already thrown on.
+  // A target with no definition is undefined or a built-in, which E0105 refuses
+  // before either question is asked.
+  const target = gen.tiles.find((x) => x.name === t.target);
+  if (target) {
+    const wants = target.in ? 1 : 0;
+    const got = inField ? 1 : 0;
+    if (wants !== got) {
+      throw new Error(
+        `E0213 tile-test ${JSON.stringify(t.name)}: Tile "${target.name}" expects ${wants} argument(s) but got ${got}`,
+      );
+    }
+  }
   const inJs = inField ? jsOfExpr(inField, ctx) : "undefined";
-  const expectedJs = tileExprJs(t.expect as TileExpr, gen, ctx);
+  // Lowered like any tile, but without the `{…}` blocks' data — §8.4 does
+  // not compare styles, and the runtime compares what is left in `props`.
+  const expectGen: GenCtx = { ...gen, expectedTree: true };
+  const expectedJs = tileExprJs(t.expect as TileExpr, expectGen, { ...ctx, gen: expectGen });
   return `  {
     name: ${nameJs},
     kind: "tile-test",
@@ -285,13 +322,13 @@ function parseEpisodeLog(raw: string): unknown[] {
  * Lower an `episode-test`'s `mocks = { effect: from-log | ignore | ok(v) | err(e) }`
  * record into the runtime call shape. `from-log` and `ignore` arrive as bare
  * identifiers (Ref nodes); `ok` / `err` carry a payload Expr that we evaluate
- * in the test's binding context.
+ * in the test's binding context. A `mocks` that is not a record throws E0713
+ * (`recordFieldsAt`) rather than lowering to `{}`, which scripted nothing.
  */
 function episodeMockJs(e: Expr, ctx: EvalCtx): string {
-  if (e.kind !== "RecordLit") return "{}";
-  const parts = e.fields.map((f) => {
+  const parts = recordFieldsAt(e, "mocks").map((f) => {
     const v = f.value;
-    const key = JSON.stringify(f.name);
+    const key = fieldKey(f.name);
     if (v.kind === "Ref" && v.name === "from-log") return `${key}: { policy: "from-log" }`;
     if (v.kind === "Ref" && v.name === "ignore") return `${key}: { policy: "ignore" }`;
     if (v.kind === "Call" && (v.callee === "ok" || v.callee === "err")) {
@@ -311,30 +348,55 @@ function episodeMockJs(e: Expr, ctx: EvalCtx): string {
 /**
  * Lower an `episode-test`'s `expect = { slots-equal, no-panics, no-errors }`.
  * `slots-equal` accepts either the literal `from-log` (use the log's recorded
- * final slot values) or a record of expected slot → value pairs.
+ * final slot values) or a record of expected slot → value pairs. An `expect`
+ * that is not a record throws E0713 rather than lowering to `{}`, which
+ * asserted nothing.
  */
 function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
-  if (e.kind !== "RecordLit") return "{}";
   const parts: string[] = [];
-  for (const f of e.fields) {
-    if (f.name === "slots-equal" || f.name === "slotsEqual") {
-      if (f.value.kind === "Ref" && f.value.name === "from-log") {
-        parts.push(`slotsEqual: "from-log"`);
-      } else {
-        parts.push(`slotsEqual: ${jsOfExpr(f.value, ctx)}`);
+  for (const f of recordFieldsAt(e, "expect")) {
+    if (!isSectionName("episode-test", "expect", f.name)) {
+      // Dropping it silently is what an episode-test asserting nothing is made
+      // of: `testkit` leaves `expectedSlots` null, skips both flags, and
+      // reports PASS. E0714 says so at check time; this is what a caller that
+      // skipped `check` gets, as with `effectListJs` and `episodeMockJs`.
+      throw new Error(`episode-test expect has no section "${f.name}"`);
+    }
+    switch (f.name) {
+      case "slots-equal": {
+        // The position's bare name (the table's `or`) is passed through as
+        // itself; anything else must be a record (`recordValueAt` throws E0713
+        // rather than evaluating it as the expectation).
+        const bare = bareNameAt(f.value, "expect.slots-equal");
+        parts.push(
+          bare !== undefined
+            ? `slotsEqual: ${JSON.stringify(bare)}`
+            : `slotsEqual: ${jsOfExpr(recordValueAt(f.value, "expect.slots-equal"), ctx)}`,
+        );
+        break;
       }
-    } else if (f.name === "no-panics" || f.name === "noPanics") {
-      parts.push(`noPanics: ${jsOfExpr(f.value, ctx)}`);
-    } else if (f.name === "no-errors" || f.name === "noErrors") {
-      parts.push(`noErrors: ${jsOfExpr(f.value, ctx)}`);
+      case "no-panics":
+        parts.push(`noPanics: ${jsOfExpr(f.value, ctx)}`);
+        break;
+      case "no-errors":
+        parts.push(`noErrors: ${jsOfExpr(f.value, ctx)}`);
+        break;
+      default:
+        assertNever(f.name);
     }
   }
   return `{ ${parts.join(", ")} }`;
 }
 
+/**
+ * Lower a reducer-test's `given.mocks` into the runtime's mock scripts. One
+ * that is not a record throws E0713 rather than lowering to `{}`, which
+ * scripted nothing.
+ */
 function mocksJs(e: Expr, ctx: EvalCtx): string {
-  if (e.kind !== "RecordLit") return "{}";
-  const parts = e.fields.map((f) => `${JSON.stringify(f.name)}: ${mockScriptJs(f.value, ctx)}`);
+  const parts = recordFieldsAt(e, "given.mocks").map(
+    (f) => `${fieldKey(f.name)}: ${mockScriptJs(f.value, ctx)}`,
+  );
   return `{ ${parts.join(", ")} }`;
 }
 
@@ -362,16 +424,18 @@ function mockScriptJs(v: Expr, ctx: EvalCtx): string {
 }
 
 /**
- * The reducer payload (`$el` / `$event`) for a reducer-test's `given.event`.
- * Uses `el` when present (spec §8.5), otherwise the event's other fields
- * (everything except `type` / `target`) so flat `{type, target, value}` forms
- * still reach the reducer.
+ * The reducer payload (`$el` / `$event`) for a reducer-test's or a
+ * property-test's `given.event`. Uses `el` when present (spec §8.5), otherwise
+ * the event's other fields (everything except `type` / `target`) so flat
+ * `{type, target, value}` forms still reach the reducer. An event that is not
+ * a record throws E0713 rather than answering an empty payload.
  */
 function eventPayloadJs(event: Expr | undefined, ctx: EvalCtx): string {
-  if (event?.kind !== "RecordLit") return "({})";
-  const el = event.fields.find((f) => f.name === "el");
+  if (event === undefined) return "({})";
+  const fields = recordFieldsAt(event, "given.event");
+  const el = fields.find((f) => f.name === "el");
   if (el) return jsOfExpr(el.value, ctx);
-  const rest = event.fields.filter((f) => f.name !== "type" && f.name !== "target");
+  const rest = fields.filter((f) => f.name !== "type" && f.name !== "target");
   if (rest.length === 0) return "({})";
   return jsOfExpr({ kind: "RecordLit", fields: rest, pos: event.pos }, ctx);
 }

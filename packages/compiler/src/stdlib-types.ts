@@ -32,6 +32,13 @@ const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
 });
+
+/**
+ * The constructors for a type the standard library writes rather than parses,
+ * for the other tables that hold one (the built-in effects' `in=` types).
+ */
+export { app as appType, prim as primType, record as recordType, ref as refType };
+
 const nominal = (inner: TypeExpr, pred?: string, args: (number | string)[] = []): TypeExpr => ({
   kind: "TypeNominal",
   inner,
@@ -57,7 +64,7 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
  * these are seeded before the program's definitions, not after.
  */
 export const STDLIB_TYPES: readonly TypeDef[] = [
-  def("HttpStatus", nominal(prim("Int"), "between", [100, 599])),
+  def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
     "HttpError",
     record({
@@ -89,12 +96,18 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   // The payload of `app.error` and of an `error-boundary` tile's `in=`
   // (docs/spec/lifecycle.md §7.2.3). Filed with the domain types rather than
   // with lifecycle because a program names it exactly the way it names `Route`.
+  //
+  // `episode-id` is `Option(Text)` because an episode is not always open: a
+  // host that attached no episode logger has none to name. It was declared
+  // `Text` and supplied by nothing, which made §7.2.3's own instruction —
+  // treat it as `None`-equivalent — inexpressible, since a `Text` has no
+  // `None` and what arrived was `undefined` (#364).
   def(
     "PanicInfo",
     record({
       message: prim("Text"),
       location: prim("Text"),
-      "episode-id": prim("Text"),
+      "episode-id": app("Option", prim("Text")),
       cause: app("Option", prim("Text")),
       category: prim("Text"),
     }),
@@ -149,8 +162,11 @@ const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
  * Whether `name` is a primitive type name. Separate from the symbol table
  * because the grammar resolves these itself: a primitive is a `TypePrim`, so
  * asking `sym.types` about `Int` answers no.
+ *
+ * Narrows, because a caller that resolves a name to a type has to build the
+ * `TypePrim` afterwards and the `Set` is the only thing that knows the answer.
  */
-export function isPrimTypeName(name: string): boolean {
+export function isPrimTypeName(name: string): name is PrimName {
   return PRIM_TYPE_NAME_SET.has(name);
 }
 

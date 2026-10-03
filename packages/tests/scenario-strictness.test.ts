@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
-import { runScenario, type Scenario } from "@kumikijs/runtime";
+import { type Action, runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
@@ -208,6 +208,276 @@ describe("the browser-tier fixtures in the corpus are refused, not passed", () =
       expect(failures).not.toMatch(/browser-tier|unknown (expect key|action)/);
     });
   }
+});
+
+// A verb aimed at something it cannot drive fails the step. Every action but
+// `fill` already did: `fill` wrote a property the element does not have,
+// dispatched two events nothing listens for, and passed — a step asserting
+// nothing, reported as coverage.
+describe("an action fails on a target it cannot drive", () => {
+  const FILLABLE = `slot note : Text = ""
+tile Box = box(text("not a field")) {id: "box"}
+tile Field = input(bind=note) {id: "field"}
+tile App = column(Box, Field, text("note: " + note))
+app Fillable
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("reports a fill whose selector holds no text, naming the element", async () => {
+    const app = await loadSource(FILLABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { fill: "#box", value: "hello" } }],
+    });
+    expect(report.ok).toBe(false);
+    const fault = report.steps[0]?.actionError ?? "";
+    expect(fault).toContain("#box matched <div>");
+    expect(fault).toContain("holds no text to fill");
+  });
+
+  // The fault is the scenario's, not the app's, and the two are reported on
+  // different channels: an action that could not run never reaches `errors`, so
+  // it can neither be claimed by `errorIncludes` nor be mistaken for something
+  // the app said.
+  it("keeps the fault off the channel the app reports on", async () => {
+    const app = await loadSource(FILLABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { fill: "#box", value: "hello" } }],
+    });
+    expect(report.steps[0]?.errors).toEqual([]);
+    expect(report.steps[0]?.expectedErrors).toEqual([]);
+  });
+
+  it("still fills the control that does hold text", async () => {
+    const app = await loadSource(FILLABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { fill: "#field", value: "hello" }, expect: { state: { note: "hello" } } }],
+    });
+    expect(report.steps.flatMap((st) => st.failures)).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+});
+
+// `errorIncludes` asserts that the *runtime* surfaced something — a reducer
+// batch a refinement rejected, an effect error no `.err` reducer consumes. A
+// step whose action could not run reported nothing about the app, so folding
+// the two together let a fixture assert that its own typo happened:
+// `{do: {key: "#typo", value: "Enter"}, expect: {errorIncludes: ["no element"]}}`
+// passed, having pressed nothing.
+describe("a broken selector cannot satisfy errorIncludes", () => {
+  const APP = `slot n : Int = 0
+reducer bump on=ui.click(Btn) do= n := n + 1
+tile Btn   = button(text="bump", onClick=bump) {id: "btn"}
+tile Field = input(placeholder="x") {id: "field"}
+tile App   = column(Btn, Field, text("n: " + n.show))
+app Selectors
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  const missing: Action[] = [
+    { click: "#typo" },
+    { focus: "#typo" },
+    { blur: "#typo" },
+    { hover: "#typo" },
+    { key: "#typo", value: "Enter" },
+    { fill: "#typo", value: "x" },
+    { choose: "#typo", value: "x" },
+    { submit: "#typo" },
+    { clickText: "no such button" },
+  ];
+
+  for (const action of missing) {
+    const kind = Object.keys(action)[0];
+    it(`fails the step for ${kind}, and refuses to call it a reported error`, async () => {
+      const app = await loadSource(APP);
+      const report = await runScenario(app, freshRoot(), {
+        steps: [{ do: action, expect: { errorIncludes: ["no "] } }],
+      });
+      const step = report.steps[0];
+      expect(report.ok, JSON.stringify(action)).toBe(false);
+      // What went wrong, on its own channel...
+      expect(step?.actionError, JSON.stringify(action)).toBeTruthy();
+      // ...and nowhere else: neither claimable by `errorIncludes` nor countable
+      // as something the app said.
+      expect(step?.errors, JSON.stringify(action)).toEqual([]);
+      expect(step?.expectedErrors, JSON.stringify(action)).toEqual([]);
+      expect(step?.failures.join(" "), JSON.stringify(action)).toContain(
+        'expected an error including "no " but got: none',
+      );
+    });
+  }
+
+  // `noErrors` reads the same pool. A step whose action could not run fails on
+  // `actionError`, so `noErrors` must not be the thing that reports it — it
+  // would read as "the app raised an error", which is exactly backwards.
+  it("keeps a broken selector out of noErrors", async () => {
+    const app = await loadSource(APP);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { click: "#typo" }, expect: { noErrors: true } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toContain("no element matching selector #typo");
+    expect(report.steps[0]?.failures).toEqual([]);
+  });
+});
+
+// `{dispatch}` was the one action verb #334 did not reach: it drives a reducer
+// by name through the `_dispatch` seam rather than through a selector, and that
+// seam returns silently when the name matches nothing. So after a reducer was
+// renamed, a fixture still driving the old name kept passing — the reducer
+// never ran, the slot stayed at its initial value, and an assertion describing
+// that value was green. Nothing in the trace said the dispatch went nowhere.
+describe("a dispatch naming a reducer the app does not have cannot pass", () => {
+  const RENAMED = `slot todos : Text = ""
+reducer addTodoItem on=ui.click(Btn) do= todos := todos + "x"
+tile Btn = button(text="add", onClick=addTodoItem) {id: "btn"}
+tile App = column(Btn, text("todos: " + todos))
+app Todos
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  // The exact fixture from the report: the assertion happens to describe the
+  // initial value, so the step is green precisely because nothing ran.
+  it("fails the step its assertion would otherwise have passed", async () => {
+    const app = await loadSource(RENAMED);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "addTodo" }, expect: { state: { todos: "" } } }],
+    });
+    expect(report.ok).toBe(false);
+    // Quoted, like every other `actionError` that carries text from the
+    // fixture: trailing whitespace or a stray character in the name is the typo
+    // a reader is here to find, and unquoted it is invisible.
+    expect(report.steps[0]?.actionError).toContain('no reducer named "addTodo"');
+  });
+
+  // Same channel discipline as the nine selector verbs: the fault is the
+  // scenario's, so it is neither claimable by `errorIncludes` nor countable as
+  // something the app reported.
+  it("refuses to let errorIncludes claim it", async () => {
+    const app = await loadSource(RENAMED);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "addTodo" }, expect: { errorIncludes: ["no reducer"] } }],
+    });
+    const step = report.steps[0];
+    expect(report.ok).toBe(false);
+    expect(step?.actionError).toBeTruthy();
+    expect(step?.errors).toEqual([]);
+    expect(step?.expectedErrors).toEqual([]);
+    expect(step?.failures.join(" ")).toContain(
+      'expected an error including "no reducer" but got: none',
+    );
+  });
+
+  // A rename usually leaves the new name one edit away, which is the whole
+  // repair: naming it turns a failed run into a one-word fix.
+  it("names the reducer the rename left behind", async () => {
+    const app = await loadSource(RENAMED);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "addTodoIten" } }],
+    });
+    expect(report.steps[0]?.actionError).toContain('did you mean "addTodoItem"');
+  });
+
+  // The other side of the threshold. A suggestion that names an unrelated
+  // reducer reads as authoritative, so over-suggesting is the direction that
+  // misleads — a name nothing is close to gets no clause at all.
+  it("offers no suggestion when nothing is close", async () => {
+    const app = await loadSource(RENAMED);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "purgeEverything" } }],
+    });
+    const fault = report.steps[0]?.actionError ?? "";
+    expect(fault).toContain('no reducer named "purgeEverything"');
+    expect(fault).not.toContain("did you mean");
+  });
+
+  it("still dispatches the reducer that does exist", async () => {
+    const app = await loadSource(RENAMED);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "addTodoItem" }, expect: { state: { todos: "x" } } }],
+    });
+    expect(report.steps.flatMap((s) => [...s.errors, ...s.failures])).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
+  // The seam's id-scoped `return` is deliberate on the CLICK path: a DOM event
+  // reaches the codegen'd handler, which calls `_dispatch` once per same-tile
+  // reducer name, and the id-mismatched ones drop out there — §1.6.2 working.
+  // `performAction`'s `{dispatch}` branch is never on that path. It sees one
+  // explicit step naming one reducer, so a step that cannot reach the reducer it
+  // named did nothing, and leaving it green pins the exact shape #410 reported.
+  it("fails a dispatch that the id scope would drop", async () => {
+    const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "scopedMiss" }, expect: { state: { log: "" } } }],
+    });
+    expect(report.ok).toBe(false);
+    const fault = report.steps[0]?.actionError ?? "";
+    expect(fault).toContain('reducer "scopedMiss" is scoped to #edit');
+    expect(fault).toContain('{"id": "edit"}');
+  });
+
+  it("fires that same reducer when the payload carries its id", async () => {
+    const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
+    const report = await runScenario(app, freshRoot(), {
+      steps: [
+        {
+          do: { dispatch: "scopedMiss", payload: { id: "edit" } },
+          expect: { state: { log: "miss;" } },
+        },
+      ],
+    });
+    expect(report.steps.flatMap((s) => [...s.errors, ...s.failures])).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
+  // ...and the check does not over-report: an unscoped reducer needs no id, so
+  // the common case carries no payload and still fires.
+  it("leaves an unscoped reducer alone", async () => {
+    const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { dispatch: "plain" }, expect: { state: { log: "plain;" } } }],
+    });
+    expect(report.steps[0]?.actionError).toBeUndefined();
+    expect(report.ok).toBe(true);
+  });
+});
+
+// The second layer of the same silence: `app._dispatch?.()` and
+// `app._navigate?.()` do nothing and report nothing on a shape mounted without
+// the seam. `_navigate` is otherwise observable — an unrouted path renders
+// /404 — so this is the narrow half of it.
+describe("an action whose seam is missing fails rather than doing nothing", () => {
+  // Mount installs the seams by assignment, so the shape is given a property
+  // that swallows the write and reads back absent — which is what a shape
+  // mounted without that seam looks like at action time.
+  function withoutSeam(app: AppShape, seam: "_dispatch" | "_navigate"): AppShape {
+    Object.defineProperty(app, seam, {
+      get: () => undefined,
+      set: () => {},
+      configurable: true,
+    });
+    return app;
+  }
+
+  it("fails a dispatch with no _dispatch seam", async () => {
+    const app = withoutSeam(await loadSource(COUNTER), "_dispatch");
+    const report = await runScenario(app, freshRoot(), { steps: [{ do: { dispatch: "bump" } }] });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toMatch(/_dispatch/);
+  });
+
+  it("fails a navigate with no _navigate seam", async () => {
+    const app = withoutSeam(await loadSource(COUNTER), "_navigate");
+    const report = await runScenario(app, freshRoot(), { steps: [{ do: { navigate: "/" } }] });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toMatch(/_navigate/);
+  });
 });
 
 // Everything the runtime reported between `mount` and the first scripted action

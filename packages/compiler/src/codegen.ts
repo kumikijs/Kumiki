@@ -22,6 +22,7 @@ import type {
   TileDef,
   TypeDef,
 } from "./ast.ts";
+import { failsWithText } from "./capabilities.ts";
 import type { GenCtx } from "./codegen/context.ts";
 import { HANDLER_MEMO_PREAMBLE, jsBinding } from "./codegen/context.ts";
 import {
@@ -31,13 +32,15 @@ import {
   httpConfigJs,
   indexedDbConfigJs,
 } from "./codegen/emit-app.ts";
-import { genEffect } from "./codegen/emit-effect.ts";
+import { genEffect, TEXT_FAILURE_HELPER } from "./codegen/emit-effect.ts";
 import { genFn } from "./codegen/emit-fn.ts";
 import { genReducer } from "./codegen/emit-reducer.ts";
 import { emitSlots } from "./codegen/emit-slot.ts";
 import { coverageJs, genTest } from "./codegen/emit-test.ts";
-import { genTile } from "./codegen/emit-tile.ts";
+import { bindReaderDecls, genRouteTile, genTile } from "./codegen/emit-tile.ts";
 import { analyzeRuntimeUsage, emitImportHeader } from "./codegen/imports.ts";
+import { nestedRefinements } from "./codegen/nested-refinements.ts";
+import { STDLIB_TYPES } from "./stdlib-types.ts";
 
 export type CodegenOptions = {
   runtimeSpecifier: string;
@@ -100,9 +103,15 @@ export type CodegenResult = {
 };
 
 export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
-  const types = new Map(
-    program.defs.filter((d): d is TypeDef => d.kind === "TypeDef").map((d) => [d.name, d]),
-  );
+  // The standard library's definitions first, the program's over them — the
+  // order `check` seeds its own table in, so a program that declares its own
+  // `type Route = …` shadows the entry here on both sides. Codegen used to see
+  // the program's alone, which is why `slot e : Email` reached the runtime
+  // with no `refine` at all: `Email` is synthesised, not declared (#352).
+  const types = new Map<string, TypeDef>(STDLIB_TYPES.map((d) => [d.name, d]));
+  for (const d of program.defs) {
+    if (d.kind === "TypeDef") types.set(d.name, d);
+  }
   const slots = program.defs.filter((d): d is SlotDef => d.kind === "SlotDef");
   const effects = program.defs.filter((d): d is EffectDef => d.kind === "EffectDef");
   const reducers = program.defs.filter((d): d is ReducerDef => d.kind === "ReducerDef");
@@ -128,6 +137,8 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     types,
     usedTiles: new Set(),
     usedIcons: new Set(),
+    refinements: nestedRefinements({ types }),
+    usedReaders: new Set(),
   };
 
   // The import header is emitted AFTER the body below — generating the body
@@ -140,11 +151,20 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // data (`_s`) stays outside.
   lines.push("function createApp() {");
   lines.push(HANDLER_MEMO_PREAMBLE);
+  // The bound-input readers go here once the body below has said which it uses.
+  const readersAt = lines.length;
 
   // fn definitions
   for (const fn of fns) {
     lines.push(genFn(fn, ctx));
   }
+
+  // The refinement walks (`_rq0`, …) go here, once the whole body has been
+  // generated and has asked for all of them: the slot table and a
+  // `Decoder.Json(T)` in an effect request, a reducer or an `app.init` entry
+  // all name them. Each is a `const` arrow that calls the others only when it
+  // runs, so ahead of every reader is the one position that is always right.
+  const refinementsAt = lines.length;
 
   // App-wide HTTP config (#78). Emitted unconditionally so the http effect
   // handler's `httpFetch(method, req, _http)` reference never trips TDZ even
@@ -159,6 +179,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("");
 
   // effect handlers (per capability, statically dispatched)
+  if (effects.some((e) => failsWithText(e.cap))) lines.push(TEXT_FAILURE_HELPER);
   lines.push("const _effects = {");
   for (const eff of effects) {
     lines.push(`  ${JSON.stringify(eff.name)}: ${genEffect(eff, ctx)},`);
@@ -185,6 +206,10 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // If the parent tile declares `sub-routes`, attach a nested route table
   // (spec/routing.md §3.6) so the runtime can re-match the path inside the
   // parent's wildcard pattern and inject the matched child into `route-outlet`.
+  // The parent's factory takes the runtime's outlet fill and applies it inside
+  // its own boundary (`genRouteTile`), so the child renders under the parent's
+  // `error-boundary` (lifecycle.md §7.3). Every tile entry also carries `name`,
+  // which is what the runtime attributes a panic raised while building it to.
   lines.push("const _routes = [");
   for (const r of app.routes) {
     if (r.tile.startsWith(">>")) {
@@ -194,11 +219,13 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
       );
     } else {
       const tile = tiles.find((t) => t.name === r.tile);
-      if (!tile) throw new Error(`Route ${r.path} targets undefined tile "${r.tile}"`);
+      const where = `Route ${r.path}`;
+      if (!tile) throw new Error(`${where} targets undefined tile "${r.tile}"`);
       const sr = tile.scrollRestoration === false ? ", scrollRestoration: false" : "";
+      const name = `name: ${JSON.stringify(tile.name)}`;
       if (tile.subRoutes && tile.subRoutes.length > 0) {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr}, subRoutes: [`,
+          `  { pattern: ${JSON.stringify(r.path)}, ${name}, tile: (_fill) => ${genRouteTile(tile, ctx, where, "_fill")}${sr}, subRoutes: [`,
         );
         for (const subR of tile.subRoutes) {
           if (subR.tile.startsWith(">>")) {
@@ -207,20 +234,18 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
             );
           } else {
             const childTile = tiles.find((t) => t.name === subR.tile);
-            if (!childTile)
-              throw new Error(
-                `Sub-route ${subR.path} in tile "${tile.name}" targets undefined tile "${subR.tile}"`,
-              );
+            const childWhere = `Sub-route ${subR.path} in tile "${tile.name}"`;
+            if (!childTile) throw new Error(`${childWhere} targets undefined tile "${subR.tile}"`);
             const csr = childTile.scrollRestoration === false ? ", scrollRestoration: false" : "";
             lines.push(
-              `    { pattern: ${JSON.stringify(subR.path)}, tile: () => ${genTile(childTile, ctx)}${csr} },`,
+              `    { pattern: ${JSON.stringify(subR.path)}, name: ${JSON.stringify(childTile.name)}, tile: () => ${genRouteTile(childTile, ctx, childWhere)}${csr} },`,
             );
           }
         }
         lines.push(`  ] },`);
       } else {
         lines.push(
-          `  { pattern: ${JSON.stringify(r.path)}, tile: () => ${genTile(tile, ctx)}${sr} },`,
+          `  { pattern: ${JSON.stringify(r.path)}, ${name}, tile: () => ${genRouteTile(tile, ctx, where)}${sr} },`,
         );
       }
     }
@@ -267,7 +292,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // Bake-only-what's-used built-in icon registry (#101). The toolchain passes
   // `opts.icons` (from @kumikijs/icons) on the second codegen pass; we emit
   // only the entries whose name appears in a literal `icon(name=...)` call.
-  // The runtime renderer (`tiles-text.ts#icon`) falls back through this map
+  // The runtime renderer (`tiles/text/icon.ts`) falls back through this map
   // when `theme.icons[name]` is unset.
   if (opts.icons && ctx.usedIcons.size > 0) {
     const entries: string[] = [];
@@ -304,6 +329,12 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
   }
 
+  // The two splices are order-dependent: `refinementsAt` is the larger index,
+  // so it goes in first and the readers' splice below, at the smaller
+  // `readersAt`, does not move it. Reversed, the refinement declarations
+  // would land as many lines early as the readers block is long, in the
+  // middle of whatever the body emitted there.
+  lines.splice(refinementsAt, 0, ...ctx.refinements.decls);
   lines.push("  return App;");
   lines.push("}"); // end createApp
   lines.push("");
@@ -327,12 +358,16 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   }
   lines.push("");
 
+  // After the refinements splice above, which sits at a larger index.
+  lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders));
+
   // ----- runtime usage analysis (#71) — the body above is fully generated, so
   // `ctx.usedTiles` is complete. -----
   const usage = analyzeRuntimeUsage(
     app,
     reducers,
     effects,
+    ctx,
     ctx.usedTiles,
     !!opts.includeTests,
     tests.length > 0,
@@ -390,9 +425,9 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
 
 export {
   FIELD_ACCESS_SHORTCUTS,
+  FRAGMENT_ARGUMENTS,
   KNOWN_MEMBERS,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,
-  NUMERIC_MEMBERS,
 } from "./codegen/expr.ts";
 export { RUNTIME_HELPERS } from "./codegen/runtime-helpers.ts";

@@ -11,8 +11,8 @@ import { describe, expect, it } from "vitest";
 import {
   BUILTIN_CALLS,
   type BuiltinArity,
-  CONSTANT_NAMESPACES,
   QUALIFIED_BUILTIN_CALLS,
+  QUALIFIED_CALL_NAMESPACES,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "../src/builtin-calls.ts";
@@ -145,7 +145,7 @@ describe("E0213 call-arity-mismatch", () => {
     // The one variadic builtin: `fmt(template, ...args)`. A minimum is all
     // that can be asked of it, and the message has to say so rather than name
     // a number the call could never satisfy.
-    expect(codes(inReducer('t := fmt("{0}")'))).toEqual([]);
+    expect(codes(inReducer('t := fmt("nothing to fill")'))).toEqual([]);
     expect(codes(inReducer('t := fmt("{0} {1}", a, a)'))).toEqual([]);
     expect(check(parse(lex(inReducer("t := fmt()"))))).toEqual([
       {
@@ -155,6 +155,64 @@ describe("E0213 call-arity-mismatch", () => {
         pos: { line: 4, col: 35 },
       },
     ]);
+  });
+});
+
+// stdlib.md §2.4.5 decides what a disagreeing `fmt` call does at runtime — a
+// placeholder the arguments do not reach stays as written, an argument no
+// placeholder names is dropped — and neither stops the program. The second is
+// the one with no trace: `fmt("{0}", a, a)` renders exactly what the correct
+// call renders, so no tier below this one can see the value that went missing.
+describe("W0214 fmt-placeholder-argument-mismatch", () => {
+  it("reports a placeholder the arguments do not reach", () => {
+    expect(check(parse(lex(inReducer('t := fmt("{0} {1}", a)'))))).toEqual([
+      {
+        code: "W0214",
+        kind: "fmt-placeholder-argument-mismatch",
+        message: "fmt template and arguments disagree: {1} has no argument",
+        pos: { line: 4, col: 35 },
+        severity: "warning",
+      },
+    ]);
+  });
+
+  it("reports an argument no placeholder names", () => {
+    expect(check(parse(lex(inReducer('t := fmt("{0}", a, a)'))))).toEqual([
+      {
+        code: "W0214",
+        kind: "fmt-placeholder-argument-mismatch",
+        message: "fmt template and arguments disagree: argument 3 is named by no placeholder",
+        pos: { line: 4, col: 35 },
+        severity: "warning",
+      },
+    ]);
+  });
+
+  it("says both halves in one warning when a call is wrong in both directions", () => {
+    // `fmt("{1}", a)` names an index it does not have AND ignores the one it
+    // does. Two warnings on one call would read as two mistakes.
+    expect(check(parse(lex(inReducer('t := fmt("{1}", a)')))).map((e) => e.message)).toEqual([
+      "fmt template and arguments disagree: {1} has no argument; argument 2 is named by no placeholder",
+    ]);
+  });
+
+  it("is silent on a call that agrees, in any order and with repeats", () => {
+    expect(codes(inReducer('t := fmt("{1} {0} {1}", a, a)'))).toEqual([]);
+    // `{01}` is index 1 — the digits are one decimal index. Read as literal
+    // text instead, the second argument would be unnamed and this would warn.
+    expect(codes(inReducer('t := fmt("{0}{01}", a, a)'))).toEqual([]);
+  });
+
+  it("says nothing about a template it cannot count", () => {
+    // A slot carries no placeholder set at compile time. Reporting on the
+    // shape of the literal that initialised it would be a guess about a value
+    // any reducer may since have replaced.
+    expect(codes(inReducer("t := fmt(t, a, a)"))).toEqual([]);
+    expect(codes(inReducer('t := fmt(t + "{0}", a, a)'))).toEqual([]);
+  });
+
+  it("leaves a call with no template to E0213, which is fatal", () => {
+    expect(codes(inReducer("t := fmt()"))).toEqual(["E0213"]);
   });
 });
 
@@ -257,13 +315,23 @@ app A caps=[${caps}] routes={"/" -> App, "/404" -> App} init=[${init}]
   it("accepts the built-in effects, which are not in the effect table", () => {
     // `toast` / `navigate` / `log` and the rest are legal at an `emit`, and
     // codegen's installer DCE already assumes an init entry can name one.
-    expect(codes(app('toast("hello")', "storage.read, notification.show"))).toEqual([]);
+    expect(
+      codes(app('toast({kind: "info", text: "hello"})', "storage.read, notification.show")),
+    ).toEqual([]);
   });
 
   it("holds a built-in effect to its capability too", () => {
     // Not having an `effect` declaration to read a `cap=` off is why this was
     // the one emit that never had to declare anything.
-    expect(codes(app('toast("hello")'))).toEqual(["E0301"]);
+    expect(codes(app('toast({kind: "info", text: "hello"})'))).toEqual(["E0301"]);
+  });
+
+  it("holds a built-in effect's argument to its in= too", () => {
+    // stdlib.md §2.6: `navigate` takes a record, and an init entry is no
+    // exception — the router would read `.path` off the string.
+    expect(codes(app('navigate("/x")', "nav.push"))).toEqual(["E0202"]);
+    expect(codes(app("toast()", "notification.show"))).toEqual(["E0213"]);
+    expect(codes(app('navigate({path: "/x"})', "nav.push"))).toEqual([]);
   });
 
   it("reports a capability the app does not declare", () => {
@@ -374,7 +442,7 @@ describe("the checker accepts exactly what codegen lowers", () => {
   });
 });
 
-describe("a stdlib constant means the same thing without its parentheses", () => {
+describe("a qualified stdlib member is read the same way without its parentheses", () => {
   // `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
   // `Decoder.None` with no parentheses, and `stdlib.md` §2.1.1.1 writes
   // `EffectId.none` as a value. Only `EffectId.none` ever parsed that way — the
@@ -386,6 +454,11 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
   // and a body meant to be discarded was parsed. This file pins the emitted
   // sentinel, which is the narrowest place to see it; `packages/tests` pins what
   // it did to a running app, and `kumiki smoke` on the example reports it too.
+  //
+  // Every qualifier is read this way now, `Duration` and `Bytes` included,
+  // which is why this block asserts two different things about the bare form:
+  // a member with no arguments is a value and lowers to its sentinel, and a
+  // member with arguments is a call that was given none.
   const SENTINEL: Record<string, string> = {
     "Decoder.Json": '"json"',
     "Decoder.Text": '"text"',
@@ -394,61 +467,167 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
     "EffectId.none": '""',
   };
 
-  it("names every constant the parser reads without parentheses", () => {
+  it("pins the lowering of every member the parser reads bare, and nothing stale", () => {
     const listed = new Set(Object.keys(SENTINEL));
-    const declared = new Set(
-      [...QUALIFIED_BUILTIN_CALLS.keys()].filter((n) =>
-        CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
-      ),
-    );
-    expect([...listed].sort()).toEqual([...declared].sort());
-  });
-
-  it("gives a member a paren-less spelling exactly when it takes no arguments", () => {
-    // Reading `Q.m` without parentheses is reading it as a zero-argument call,
-    // so the two tables have to agree: a member of a listed namespace is
-    // writable bare exactly when its arity is 0. `Decoder.Json` is the one that
-    // is not, and it is spelled out here rather than skipped, so that adding a
-    // member with an argument to `Decoder` or `EffectId` is a decision and not
-    // an accident.
+    const inNamespace = (n: string) => QUALIFIED_CALL_NAMESPACES.has(n.slice(0, n.indexOf(".")));
+    // Nothing unpinned: a zero-argument member of a listed namespace is exactly
+    // what the parser reads as a value, so each one carries its sentinel here.
+    // The `arity.min` skip is what makes this a containment rather than an
+    // equality — a member that takes an argument is not read bare as a value,
+    // so `Decoder.Json` is in `SENTINEL` (it lowers to one) without being
+    // required by this direction, and is pinned in its parenthesised form
+    // below. What the bare spelling of such a member does is the next test.
     for (const [name, arity] of QUALIFIED_BUILTIN_CALLS) {
-      if (!CONSTANT_NAMESPACES.has(name.slice(0, name.indexOf(".")))) continue;
-      expect(arity.min, name).toBe(name === "Decoder.Json" ? 1 : 0);
+      if (!inNamespace(name) || arity.min > 0) continue;
+      expect(listed.has(name), name).toBe(true);
+    }
+    // Nothing stale: every sentinel names a member of a listed namespace.
+    for (const name of listed) {
+      expect(inNamespace(name) && QUALIFIED_BUILTIN_CALLS.has(name), name).toBe(true);
     }
   });
 
-  it("keeps the namespaces whose members all take one out of the table", () => {
-    // The other direction: `Duration` and `Bytes` are excluded, and every one
-    // of their members takes an argument. What the exclusion costs is the test
-    // two below — the bare spelling is a field read, not a short call.
-    const excluded = [...QUALIFIED_BUILTIN_CALLS].filter(
-      ([n]) => !CONSTANT_NAMESPACES.has(n.slice(0, n.indexOf("."))),
-    );
-    expect(excluded.length).toBeGreaterThan(0);
-    for (const [name, arity] of excluded) {
-      expect(arity.min, name).toBe(1);
+  it("holds the qualifiers of the qualified builtins, and only those", () => {
+    // Not "every qualifier codegen lowers" — `TYPE_MEMBER_CALLS` lowers on any
+    // capitalised name, and `Int` is deliberately absent. The claim is the
+    // narrower one: the set and `QUALIFIED_BUILTIN_CALLS` name the same
+    // qualifiers.
+    //
+    // Leaving one out never made its bare spelling an error — it made it a
+    // field read on a freshly built variant. `Duration.s` was
+    // `{_tag: "Duration"}["s"]`, an `undefined` that nothing reported, and a
+    // `setTimeout(undefined)` is a `setTimeout(0)`: the failure the arity check
+    // exists for, reached by the spelling that skipped the check.
+    const qualifierOf = (n: string) => n.slice(0, n.indexOf("."));
+    const declared = new Set([...QUALIFIED_BUILTIN_CALLS.keys()].map(qualifierOf));
+    expect([...QUALIFIED_CALL_NAMESPACES].sort()).toEqual([...declared].sort());
+    // The second direction is the one with teeth: an entry here that the map
+    // has no member for turns every bare `Foo.x` into an E0116 for a namespace
+    // that declares nothing, and no other assertion in this file notices —
+    // `SENTINEL` covers only the two namespaces with constants, and the
+    // closed-membership test passes for a namespace with no members at all.
+  });
+
+  it("reads a member that takes an argument, written bare, as a call with none", () => {
+    // The cost of listing a namespace whose members are not constants, which is
+    // the point of listing it: `Duration.s` is a zero-argument call to a member
+    // declared with one, so it is the same E0213 as `Duration.s()`. Every such
+    // member is checked rather than one, so `Decoder.Json` — the one member of
+    // an otherwise constant namespace that carries a payload type — is held to
+    // it too.
+    for (const [name, arity] of QUALIFIED_BUILTIN_CALLS) {
+      if (arity.min === 0) continue;
+      expect(codes(inReducer(`t := (${name}).show`)), name).toEqual(["E0213"]);
     }
   });
 
-  it("leaves an excluded namespace where it was, which is a gap and not a guard", () => {
-    // What excluding `Duration` actually buys: the bare form stays a field read
-    // on a variant tag no `type` declares, which nothing reports. Pinned so the
-    // cost of the exclusion is visible rather than implied, and so this turns
-    // red the day an undeclared tag is checked — when the rule can be revisited.
-    expect(codes(inReducer("a := (Duration.s).show"))).toEqual([]);
-    expect(loweringOf("Duration.s")).toContain('_tag: "Duration"');
+  it("gives the bare spelling the sentence and the position of the written one", () => {
+    // The claim both the changeset and `errors.md` make is that the parentheses
+    // change nothing about what is reported, and `codes` cannot see that. The
+    // position is the part that could quietly differ: the parser builds the
+    // call from the *qualifier* token, so the caret has to land on `Duration`
+    // either way rather than on the member.
+    const bare = check(parse(lex(inReducer("t := (Duration.s).show"))));
+    expect(bare).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "Duration.s" expects 1 argument(s) but got 0',
+        pos: { line: 4, col: 36 },
+      },
+    ]);
+    expect(check(parse(lex(inReducer("t := (Duration.s()).show"))))).toEqual(bare);
+    expect(check(parse(lex(inReducer("t := (Duration.nope).show"))))).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-call",
+        message: 'Call to undefined function "Duration.nope"',
+        pos: { line: 4, col: 36 },
+      },
+    ]);
   });
 
-  it("a member of a constant namespace is only what the table lists", () => {
+  it("reports it in a fn body too, where it used to compile", () => {
+    // The successor to the half of the deleted gap test that read the emitted
+    // module: `loweringOf` puts the call site in a `fn` rather than a reducer,
+    // and that is where `(Duration.s).show` used to compile to a field read on
+    // `{_tag: "Duration"}`. It now fails to compile at all, which is the same
+    // answer from the other position.
+    expect(() => loweringOf("Duration.s")).toThrow("compile failed: E0213");
+    expect(() => loweringOf("Duration.nope")).toThrow("compile failed: E0116");
+  });
+
+  it("reads a keyword member the same way, in either spelling", () => {
+    // `parsePrimary` accepts a `kw` token as the member so that the two
+    // spellings agree — otherwise `Decoder.if` is a parse error bare and a
+    // diagnostic written out. Nothing pinned that, and widening the set to four
+    // namespaces widened the path.
+    for (const where of ["Decoder.if", "Duration.if", "Bytes.if"]) {
+      expect(codes(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
+    }
+    expect(codes(inReducer("t := (Decoder.if(a)).show"))).toEqual(["E0116"]);
+  });
+
+  it("claims the qualifier position and not the name", () => {
+    // The parser reads this set without consulting the type table, so listing
+    // `Duration` claims `Duration.<member>` in every position. What it does not
+    // claim is the name: a program that declares its own `type Duration` writes
+    // its tags as bare names, which is a different position, and reads its
+    // values through a lowercase receiver, which is postfix parsing. Pinned
+    // because a set the parser applies by spelling alone is the kind of change
+    // that takes a name away from the programs that already had it.
+    const src = `type Duration = Short | Long
+slot d : Duration = Short
+slot t : Text = ""
+reducer pick on=ui.click(B) do= d := Long
+tile B = button(text="b")
+tile App = column(B, text(t), text(d.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("leaves a listed name usable as a value and as a pattern", () => {
+    // The risk the issue named. `parsePrimary` reaches this set before the
+    // capitalised-bare-identifier fallback that builds a `Variant`, and the
+    // only thing between them is the `matchOp(".")` guard — so a listed name
+    // written on its own, or matched, has to stay the tag it was. Nothing else
+    // in this file would notice if that guard were relaxed, and the set is now
+    // four names wide rather than two.
+    const src = `type Span = Duration | Instant
+slot p : Span = Duration
+slot t : Text = ""
+reducer flip on=ui.click(B) do= t := match p with | Duration -> "d" | Instant -> "i"
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("reports a bare member the namespace does not declare by name", () => {
+    // The other half of the promotion. As a field read this was `undefined`
+    // with no diagnostic at all; as a call it is a name that resolves to
+    // nothing, which is what E0116 says.
+    expect(codes(inReducer("t := (Duration.nope).show"))).toEqual(["E0116"]);
+    expect(codes(inReducer("t := (Bytes.from-json).show"))).toEqual(["E0116"]);
+  });
+
+  it("a member of a listed namespace is only what the table lists", () => {
     // `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
-    // qualifier, and that reached inside these two namespaces: `EffectId.fresh`
+    // qualifier, and that reached inside these namespaces: `EffectId.fresh`
     // passed and lowered to `_s.freshId()`, minting a real id where the author
     // wrote the empty sentinel — and a later `http.cancel` on it cancels
-    // nothing.
-    for (const namespace of CONSTANT_NAMESPACES) {
+    // nothing. `Duration.fresh()` is the same defect on the two names this
+    // carve-out has just grown by: a UUID written into a `Duration` slot.
+    //
+    // The rule is the count and the namespace rather than the parentheses, so
+    // both spellings are checked. `docs/spec/errors.md` E0117 records it.
+    for (const namespace of QUALIFIED_CALL_NAMESPACES) {
       for (const member of TYPE_MEMBER_CALLS.keys()) {
         const where = `${namespace}.${member}`;
         expect(codes(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
+        expect(codes(inReducer(`t := (${where}()).show`)), `${where}()`).toEqual(["E0116"]);
       }
     }
   });
@@ -486,7 +665,7 @@ describe("a stdlib constant means the same thing without its parentheses", () =>
     expect(codes(inReducer("t := (Decoder.Json(Text)).show"))).toEqual([]);
   });
 
-  it("reports a misspelt member of a constant namespace", () => {
+  it("reports a misspelt member of a listed namespace", () => {
     // Without the parser reading these, `Decoder.Nope` was a field read on a
     // variant: accepted by `check`, emitted as `undefined`.
     expect(codes(inReducer("t := (Decoder.Nope).show"))).toEqual(["E0116"]);
@@ -514,17 +693,20 @@ describe("every built-in is held to the count its lowering reads", () => {
   // outcome — what is under test is the count, and a `Duration` assigned to an
   // `Int` slot would otherwise add a second diagnostic to half the cases.
 
-  /** An argument no builtin's lowering objects to. */
-  const FILLER = "1";
+  /**
+   * An argument no builtin's lowering objects to — except `parse`, whose
+   * argument is checked to be the `Text` it reads, so a number there is a
+   * second diagnostic on top of the count.
+   */
+  const fillerOf = (name: string) => (name === "parse" ? `"1"` : "1");
 
   /** `fresh` / `parse` / `show` resolve on any capitalised qualifier. */
   const QUALIFIER = "Probe";
 
-  const args = (n: number) => Array.from({ length: n }, () => FILLER).join(", ");
-
   function callOf(name: string): (n: number) => string {
     const spelling = TYPE_MEMBER_CALLS.has(name) ? `${QUALIFIER}.${name}` : name;
-    return (n) => `${spelling}(${args(n)})`;
+    const filler = fillerOf(name);
+    return (n) => `${spelling}(${Array.from({ length: n }, () => filler).join(", ")})`;
   }
 
   const ALL: [string, BuiltinArity][] = [
@@ -621,9 +803,9 @@ describe("every built-in is held to the count its lowering reads", () => {
 describe("codegen no longer supplies what the call omitted", () => {
   // The lowerings read `args[0]` and substituted `0` / `""` / `[]` / `undefined`
   // when it was absent, which is how a missing argument became a plausible
-  // value. `checkCallee` reports E0213 for those calls wherever `checkExpr`
-  // walks — which is not everywhere, so the throw is what an author actually
-  // meets in the positions the checker skips, and the last case here is one.
+  // value. `checkCallee` reports E0213 wherever `checkExpr` walks, and the
+  // throw is what remains for a caller that reaches codegen without it — every
+  // case below calls `codegen` directly, which is that path.
   //
   // The list is derived rather than written: a builtin that requires an
   // argument gets its check case from the tables above, and would otherwise
@@ -672,22 +854,29 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0213"]);
   });
 
-  it("is what `build` does where `check` never walked the expression", () => {
-    // `app.http`'s fields are not walked by `checkExpr`, so `checkCallee` never
-    // sees this call: `check` reports ok and the throw is the whole of what the
-    // author gets. On the defaulting side it was worse — the app built, with a
-    // request timeout of zero.
-    const unwalked = `slot t : Text = ""
+  it("reaches an app.http field, which the checker used to walk past", () => {
+    // These four expressions went unwalked, so `checkCallee` never saw a call
+    // in one: `check` reported ok and the codegen throw was the whole of what
+    // the author got. On the defaulting side it was worse — the app built,
+    // with a request timeout of zero. They are walked now, so this is a
+    // diagnostic at the field like any other position.
+    const inHttpField = `slot t : Text = ""
 tile App = column(text(t))
 app A caps=[http.get]
     routes={"/" -> App, "/404" -> App}
     http={base-url: "https://x", timeout: Duration.s()}
     init=[]
 `;
-    expect(check(parse(lex(unwalked)))).toEqual([]);
-    expect(() => compile(unwalked, { runtimeSpecifier: "./runtime.js" })).toThrow(
-      /Duration\.s\(\) at 5:43 is missing/,
-    );
+    expect(check(parse(lex(inHttpField)))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "Duration.s" expects 1 argument(s) but got 0',
+        pos: { line: 5, col: 43 },
+      },
+    ]);
+    const result = compile(inHttpField, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0213"]);
   });
 });
 
@@ -757,5 +946,76 @@ describe("the qualifier of a type-member call", () => {
     // the repair path is inherited rather than rebuilt.
     const [err] = check(parse(lex(inReducer('t := Itn.parse(t).get-or("")'))));
     expect(err?.message).toMatch(/^Reference to undefined type "[^"]+"$/);
+  });
+});
+
+describe("the result type of a qualified `show`", () => {
+  // `T.show(v)` is the qualified spelling of `v.show`. Codegen lowers both to
+  // the same `_s.show(v)` for every capitalised `T` — one regex, one helper,
+  // always a `Text` — and `inferType` did not agree for every `T`: its `Call`
+  // case answered `Duration.*` with `Duration` and `Bytes.*` with `Bytes`
+  // before the member was consulted at all, so those two qualifiers returned
+  // the constructor's type for a call that constructs nothing.
+  //
+  //     shown := Duration.show(ms)
+  //     E0201 type-mismatch at 3:40: Expected Text but got Duration
+  //
+  // That is the expensive direction: a program the runtime runs, refused, with
+  // no spelling of it left for the author — `ms.show` is the method, not this.
+  // `fresh` and `parse` are deliberately not here, for two different reasons:
+  // `fresh` produces the qualifier's own type, so the qualifier answering it is
+  // correct; `parse` produces `Option(T)` of the qualifier and is answered with
+  // a bare `T`, which is wrong but is its own defect (#424), not this one
+  // (#344).
+  const QUALIFIERS = [
+    // The primitives, which never reach `sym.types`.
+    "Int",
+    "Float",
+    "Time",
+    "EffectId",
+    // The standard library's types, including the two the qualifier used to
+    // answer for.
+    "Duration",
+    "Bytes",
+    "Url",
+    // A type the program declares.
+    "Probe",
+  ];
+
+  it("is Text for every qualifier, so a Text target accepts it", () => {
+    for (const q of QUALIFIERS) {
+      expect(codes(inReducer(`t := ${q}.show(a)`)), q).toEqual([]);
+    }
+  });
+
+  it("is Text rather than undecidable, so a non-Text target still refuses it", () => {
+    // Without this the first assertion is satisfied by answering `null`, which
+    // is accepted against *every* target — trading a wrong diagnostic for no
+    // diagnostic at all. `a` is the `Int` slot.
+    for (const q of QUALIFIERS) {
+      expect(codes(inReducer(`a := ${q}.show(a)`)), q).toEqual(["E0201"]);
+    }
+  });
+
+  it("names Text in the diagnostic, whichever qualifier was written", () => {
+    for (const q of QUALIFIERS) {
+      const [err] = check(parse(lex(inReducer(`a := ${q}.show(a)`))));
+      expect(err?.message, q).toBe("Expected Int but got Text");
+    }
+  });
+
+  it("lowers to the one helper, whichever qualifier was written", () => {
+    // The checker's answer is only right because the lowering discards the
+    // qualifier. Pinned here so the two cannot drift apart silently.
+    for (const q of QUALIFIERS) {
+      expect(loweringOf(`${q}.show(1)`), q).toContain("_s.show(1)");
+    }
+  });
+
+  it("still answers a Duration / Bytes constructor with its own type", () => {
+    // The branches the fix reorders around: these *do* construct, and their
+    // result is the qualifier's.
+    expect(codes(inReducer("t := Duration.ms(500)"))).toEqual(["E0201"]);
+    expect(codes(inReducer("t := Bytes.from-text(t)"))).toEqual(["E0201"]);
   });
 });

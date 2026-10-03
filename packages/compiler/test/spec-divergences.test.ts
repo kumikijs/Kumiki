@@ -274,9 +274,8 @@ tile InBtn = button(text="in", onClick=open)`;
   it("says nothing about the tiles that do fire it", () => {
     expect(diags('column(button(text="a", onClick=open))')).toEqual([]);
     expect(diags('column(check(label="a", onChange=open))')).toEqual([]);
-    // `editable` dispatches `onInput` from its own renderer. No `ui.input`
-    // selector reaches it, so deriving this entry from the lift table alone
-    // told the reader to delete working code.
+    // `editable` dispatches `onInput` from its own renderer, in both
+    // spellings — this one and the `ui.input(Ed)` selector below.
     expect(diags('column(editable(value="a", onInput=open))')).toEqual([]);
     // The overlay row is the one hand-written entry in the table.
     expect(diags('column(modal(text("a"), onClose=open))')).toEqual([]);
@@ -293,10 +292,12 @@ tile InBtn = button(text="in", onClick=open)`;
     expect(diags('row(text("card")) {onBlur: open}')).toEqual([]);
   });
 
-  it("leaves a handler on a user-defined tile alone", () => {
-    // Only the builtin renderers are known here. `Row {onClick: open}` names a
-    // user tile, whose body decides whether the handler lands — and that body
-    // is checked where it is written.
+  // A user tile is asked the same question now (#329), by walking its render
+  // tree — so this one is quiet because `InBtn` puts a `button` in the tree,
+  // not because user tiles go unexamined. The distinction is the whole subject
+  // of the divergence block below: a firing kind in the tree is not the same
+  // fact as a firing kind at the root.
+  it("says nothing about a user tile whose tree contains a firing kind", () => {
     const src = `${REDUCER}
 tile Row = row(text("x"), InBtn)
 tile App = column(Row {onClick: open}, text(n.show))
@@ -306,5 +307,368 @@ app A
     init   = []
 `;
     expect(codes(src)).toEqual([]);
+  });
+
+  it("reports a user tile whose tree contains none", () => {
+    const src = `${REDUCER}
+tile Row = row(text("x"))
+tile App = column(Row {onClick: open}, text(n.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codes(src)).toEqual(["W0213"]);
+  });
+});
+
+// errors.md W0213: "the prop lands on the tile's ROOT node, so
+// `tile Card = box(button(...))` drops the handler too and is *not* reported,
+// because the walk does not distinguish a root from a descendant."
+//
+// The spec states the gap; this is the half that keeps it honest. Both
+// assertions below are FALSE NEGATIVES — a certain drop the checker stays
+// silent about — so a later narrowing of the walk to the root should fail
+// here and be read as the fix it is, rather than passing unnoticed in
+// `ui-lifts.test.ts` where a bare `toEqual([])` is indistinguishable from
+// legitimate suppression.
+describe("known gap: W0213 does not see a firing kind that is not the root", () => {
+  const REDUCER = `slot n : Int = 0
+reducer open on=app.start do= n := n + 1`;
+
+  const src = (tiles: string) => `${REDUCER}
+${tiles}
+tile App = column(Card {onClick: open}, text(n.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  // The premise, not an assumption: the call site's handler is merged onto the
+  // node `Card` renders as its root, which is the `box` — handed down into
+  // that node's own props, where it joins whatever else the box dispatches.
+  // Nothing puts it on the `button` inside, so the click really is dead — a
+  // scenario clicking the button never runs `open`.
+  it("codegen puts the handler on the root box, not on the button inside", () => {
+    const js = build(src('tile Card = box(button(text="go"))'));
+    // Counted rather than matched literally, because the fixture's two routes
+    // both name `App` and codegen inlines the tree once per route: what has to
+    // hold is that EVERY `onClick` in the output is the box's own, so none of
+    // them is on the button.
+    const onBox =
+      js.match(/\{ kind: "box", children: \[[^\]]*\], props: \{ onClick: _h\("open"\) \}/g) ?? [];
+    const handlers = js.match(/onClick:/g) ?? [];
+    expect(onBox.length).toBeGreaterThan(0);
+    expect(handlers).toHaveLength(onBox.length);
+  });
+
+  it("and says nothing about it, nested or through another tile", () => {
+    expect(codes(src('tile Card = box(button(text="go"))'))).toEqual([]);
+    expect(codes(src('tile Deep = button(text="go")\ntile Card = box(Deep)'))).toEqual([]);
+  });
+});
+
+// The selector half of the same wiring. `editable`'s renderer registers an
+// `input` listener and calls the tile's `onInput`, so `ui.input(Ed)` is a live
+// subscription — but the lift table listed only `input` / `textarea`, so
+// codegen emitted no handler and the checker reported a reason that was not
+// true: that the tile has no descendant which fires "input".
+describe("a ui.input selector reaches an editable", () => {
+  const source = (tile: string) => `slot note : Text = ""
+slot edits : Int = 0
+reducer edited on=ui.input(Ed) do= edits := edits + 1
+tile Ed = ${tile}
+tile App = column(Ed, text(edits.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("says nothing about it", () => {
+    expect(codes(source("editable(bind=note)"))).toEqual([]);
+  });
+
+  it("emits the handler the subscription asked for", () => {
+    expect(build(source("editable(bind=note)"))).toContain('onInput: _h("edited")');
+  });
+
+  it("still reports a tile that fires no input event", () => {
+    // The control: without it, dropping the check entirely would pass the two
+    // above.
+    expect(codes(source("box(text(note))"))).toEqual(["W0212"]);
+  });
+});
+
+// The gap the `ui.input` row had, in three more rows: `key` / `focus` / `blur`
+// listed `input` / `textarea` / `button` (/ `select`) and nothing else.
+//
+// The runtime attaches those three to whatever element a tile produced, so a
+// selector lands wherever that element receives the event. `editable` (#367)
+// was the first kind found missing: a `<div contenteditable="true">` is
+// focusable, which is why writing the handler on the tile already worked.
+// `slider`, `link` and `select` (#456) are the same case — an
+// `<input type="range">`, an `<a href>` and a `<select>` are all focusable —
+// and `check` / `radio` / `switch` are half of it: their listener sits on a
+// `<label>` that a bubbled `keydown` reaches and a `focus` / `blur` never does.
+// W0212 reported every one of these as "no descendant fires the event".
+describe("a ui.key / ui.focus / ui.blur selector reaches every kind that receives it", () => {
+  const PRELUDE = `type Size = S | M
+fn sizes() -> List({label: Text, value: Size})
+   = [{label: "Small", value: S}, {label: "Medium", value: M}]
+slot note : Text = ""
+slot vol  : Int  = 5
+slot size : Size = S
+slot done : Bool = false
+slot hits : Int  = 0`;
+
+  type UiEv = "key" | "focus" | "blur";
+  const HANDLER = { key: "onKeyDown", focus: "onFocus", blur: "onBlur" } as const satisfies Record<
+    UiEv,
+    string
+  >;
+
+  const source = (ev: string, tile: string) => `${PRELUDE}
+reducer hit on=ui.${ev}(Ed) do= hits := hits + 1
+tile Ed = ${tile}
+tile App = column(Ed, text(hits.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  /**
+   * The handler written on the tile AND a selector aimed at it, on the same
+   * tile. `/404` gets a tile of its own here, unlike the fixtures above: a
+   * tile body is inlined once per route that reaches it, so the two-route
+   * shape would make an occurrence count track the route table rather than
+   * the emission.
+   */
+  const explicit = (ev: UiEv, tile: string) => `${PRELUDE}
+reducer hitExplicit on=app.start   do= hits := hits + 1
+reducer hitSelector on=ui.${ev}(Ed) do= hits := hits + 2
+tile Ed       = ${tile.replace(/\)(?=[^)]*$)/, `, ${HANDLER[ev]}=hitExplicit)`)}
+tile App      = column(Ed, text(hits.show))
+tile NotFound = text("nope")
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> NotFound}
+    init   = []
+`;
+
+  /** `tile Card = box(Ed)` — the selector names the container, not the leaf. */
+  const throughAncestor = (ev: string, tile: string) => `${PRELUDE}
+reducer hit on=ui.${ev}(Card) do= hits := hits + 1
+tile Ed   = ${tile}
+tile Card = box(Ed)
+tile App  = column(Card, text(hits.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  // Each kind, and the events that reach the element its renderer returns:
+  // every focusable root takes all three, a label-wrapped control `key` only.
+  const ALL = ["key", "focus", "blur"] as const;
+  const kinds: ReadonlyArray<{ kind: string; tile: string; evs: readonly UiEv[] }> = [
+    { kind: "input", tile: "input(bind=note)", evs: ALL },
+    { kind: "textarea", tile: "textarea(bind=note)", evs: ALL },
+    { kind: "button", tile: 'button(text="b")', evs: ALL },
+    { kind: "editable", tile: "editable(bind=note)", evs: ALL },
+    { kind: "slider", tile: "slider(bind=vol, min=0, max=10)", evs: ALL },
+    { kind: "link", tile: 'link(to="/", text="home")', evs: ALL },
+    { kind: "select", tile: "select(bind=size, options=sizes())", evs: ALL },
+    { kind: "check", tile: "check(value=done)", evs: ["key"] },
+    { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
+    { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
+  ];
+
+  for (const { kind, tile, evs } of kinds) {
+    for (const ev of evs) {
+      const handler = HANDLER[ev];
+
+      it(`says nothing about ui.${ev} on ${kind}`, () => {
+        expect(codes(source(ev, tile))).toEqual([]);
+      });
+
+      it(`emits the ${handler} the ui.${ev} subscription on ${kind} asked for`, () => {
+        expect(build(source(ev, tile))).toContain(`${handler}: _h("hit")`);
+      });
+
+      it(`merges a ${handler} written on ${kind} with a ui.${ev} selector on it, once`, () => {
+        // §1.6.4: an explicit handler and a selector on the same tile chain
+        // into one listener, explicit first. Before the row listed the kind,
+        // the selector half was dropped and this read `_h("hitExplicit")`.
+        // Emitted once: both loops in `propsFor` see the tile, and two
+        // listeners side by side would run each reducer twice.
+        const js = build(explicit(ev, tile));
+        const merged = `${handler}: _h("hitExplicit", "hitSelector")`;
+        expect(js.split(merged)).toHaveLength(2);
+        expect(js).not.toMatch(new RegExp(`${handler}: _h\\("hitExplicit"\\)`));
+      });
+
+      it(`lifts ui.${ev} through a container whose leaf is ${kind}`, () => {
+        // `focus` / `blur` do not bubble, so a handler that landed on the `box`
+        // would be a dead listener both `check` and `build` accept.
+        expect(codes(throughAncestor(ev, tile))).toEqual([]);
+        expect(build(throughAncestor(ev, tile))).toContain(`${handler}: _h("hit")`);
+      });
+    }
+  }
+
+  for (const ev of ALL) {
+    const handler = HANDLER[ev];
+    it(`still reports a tile that fires no ${ev} event, and still drops it`, () => {
+      // The control for each row: without it, dropping the check entirely
+      // would pass the rows above. Both halves, because "silently dropped" is
+      // a claim about the warning AND about the handler.
+      expect(codes(source(ev, "box(text(note))"))).toEqual(["W0212"]);
+      expect(build(source(ev, "box(text(note))"))).not.toContain(`${handler}: _h("hit")`);
+    });
+  }
+
+  for (const kind of ["check", "radio", "switch"]) {
+    for (const ev of ["focus", "blur"] as const) {
+      it(`reports ui.${ev} on ${kind}, whose label never receives it`, () => {
+        // The other half of the label-wrapped case, and the rule rather than
+        // a gap: the listener is on the `<label>`, and `focus` / `blur` from
+        // the inner `<input>` do not bubble to it.
+        const tile = kind === "radio" ? 'radio(group="g", selected=done)' : `${kind}(value=done)`;
+        expect(codes(source(ev, tile))).toEqual(["W0212"]);
+        expect(build(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
+      });
+    }
+  }
+
+  it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {
+    // The row a reader expects to move with these three. It must not: a
+    // `<div contenteditable>` fires no `change` event at all, so there is
+    // nothing for a selector to reach and the warning is true.
+    expect(codes(source("change", "editable(bind=note)"))).toEqual(["W0212"]);
+  });
+
+  it("leaves ui.click on a link alone: the link reserves click for navigation", () => {
+    expect(codes(source("click", 'link(to="/", text="home")'))).toEqual(["W0212"]);
+  });
+});
+
+// language.md §1.6.3: "Going via `.get` is safe: assigning when the Option is
+// `None` is a no-op". The lvalue was flattened into a plain field path, so the
+// write landed on a sibling field named `get` and never reached the payload.
+// The read side lowers `.get` through the polymorphic unwrap, and the write
+// side has to make the same call — including for the case that makes it a
+// call rather than a keyword: a record whose field is literally `get`.
+describe("assignment through .get is an unwrap, not a field named get", () => {
+  const source = (decl: string) => `slot draft : ${decl}
+reducer edit on=app.start do= draft.get.title := "b"
+tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  /**
+   * `check` writes the dispatch decision onto the AST, so anything asking
+   * which way a segment resolved has to run it. `build` alone reaches codegen
+   * with no annotation at all, which is a different question — the last test
+   * here is the one that asks it.
+   */
+  function buildChecked(src: string): string {
+    const program = parse(lex(src));
+    check(program);
+    return codegen(program, { runtimeSpecifier: "./runtime.js" }).js;
+  }
+
+  it("lowers the segment as an unwrap when the receiver is an Option", () => {
+    expect(buildChecked(source("Option({title: Text}) = None"))).toContain(
+      '[{"get":true}, "title"]',
+    );
+  });
+
+  it("lowers it as a field when the receiver is a record that has one", () => {
+    expect(buildChecked(source('{get: {title: Text}} = {get: {title: "a"}}'))).toContain(
+      '["get", "title"]',
+    );
+  });
+
+  it("checks the value being written against the payload's field type", () => {
+    // Walking the type through `.get` is what makes the write's right-hand
+    // side checkable at all: the target used to resolve to nothing, so
+    // `checkAgainst` had no expectation to compare with.
+    const src = `slot draft : Option({title: Text}) = None
+reducer bad on=app.start do= draft.get.title := 3
+tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = check(parse(lex(src)));
+    expect(errors.map((e) => e.code)).toEqual(["E0201"]);
+    expect(errors[0]?.message).toBe("Expected Text but got Int");
+  });
+
+  it("reports a member the record does not have, as the read side does", () => {
+    // `rec.get.title := v` on a record with no `get` field used to be accepted
+    // and to land on `rec.title` — the same sibling-key defect under another
+    // name. The read side has always called it E0108.
+    const src = `slot rec : {title: Text} = {title: "a"}
+reducer bad on=app.start do= rec.get.title := "x"
+tile App = column(text(rec.title))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = check(parse(lex(src)));
+    expect(errors.map((e) => e.code)).toEqual(["E0108"]);
+    expect(errors[0]?.message).toBe(
+      'Record type has no field or method ".get" — it is a member of Map / List / Option / Result',
+    );
+  });
+
+  it("keeps the name-based reading when codegen runs without check", () => {
+    // The same back-compat the read side documents: absent an annotation,
+    // `.get` is the unwrap. Two sides agreeing wrongly still beats them
+    // disagreeing, which is what produced the sibling field.
+    expect(build(source('{get: {title: Text}} = {get: {title: "a"}}'))).toContain(
+      '[{"get":true}, "title"]',
+    );
+  });
+});
+
+// stdlib.md §2.4.5: `fmt(template, ...args)` substitutes `{0}`…`{n}`. The
+// lowering was `_s.fmt ? _s.fmt(…) : template`, written for a runtime helper
+// that was never added — so every call took the else branch and evaluated to
+// its own template. The template is a `Text`, which is what a formatted result
+// is too, so nothing downstream could tell the two apart (#340).
+describe("fmt lowers to the runtime helper, unguarded", () => {
+  const source = `slot greeting : Text = ""
+reducer greet on=app.start do= greeting := fmt("Hello {0}, you have {1}", "Ada", 3)
+tile App = column(text(greeting))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("calls `_s.fmt` with the template and every argument after it", () => {
+    // The negative lookbehind is what makes this stand on its own: the old
+    // lowering `_s.fmt ? _s.fmt(…) : "…"` *contains* the call, so a plain
+    // `toContain` passed before the fix as well as after it and discriminated
+    // nothing without the test below.
+    expect(build(source)).toMatch(/(?<!\?\s)_s\.fmt\("Hello \{0\}, you have \{1\}", "Ada", 3\)/);
+  });
+
+  it("emits no fallback to the template", () => {
+    // The guard is what let the gap hide: with it, a build against a runtime
+    // missing the helper is not a crash but a program that silently formats
+    // nothing. Absent it, the same build fails where it can be seen.
+    const js = build(source);
+    expect(js).not.toContain("_s.fmt ?");
   });
 });

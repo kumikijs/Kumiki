@@ -1,6 +1,8 @@
 # Feature: stdlib constants written without parentheses.
 # `Decoder.Text` / `Decoder.None` (http.md §6.1.4) and `EffectId.none`
-# (stdlib.md §2.1.1.1) are values, not calls, and the spec writes them bare.
+# (stdlib.md §2.1.1.1) read as values, and the spec writes them bare. What the
+# compiler reads is a call given no arguments — the constant is what a member
+# with no arguments to take evaluates to.
 # Written that way they used to parse as a field read on a variant named after
 # the qualifier and emit `undefined` — and the HTTP handler reads
 # `decode ?? "json"`, so a body meant to be discarded was parsed instead.

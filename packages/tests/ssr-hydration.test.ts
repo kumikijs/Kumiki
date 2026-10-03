@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
 import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime";
 import { describe, expect, it, vi } from "vitest";
-import { loadApp } from "./helpers/load.js";
+import { loadApp, loadSource } from "./helpers/load.js";
 
 /**
  * Drops the map the SSR pass filled in, so the client starts from slot
@@ -102,5 +102,46 @@ describe("SSR hydration integration (issue#119)", () => {
 
     handle.dispose();
     target.remove();
+  });
+});
+
+describe("the served page carries what the client paints (#296)", () => {
+  it("serves a markdown body as paragraphs and a closed surface as a hidden host", async () => {
+    // Both were the SSR pass answering a compiled app differently from the
+    // renderer that hydrates over it: `markdown` was served as one text node
+    // holding the whole source, and a closed `modal` as nothing at all. The
+    // node-level table in `packages/runtime/test/ssr-parity.test.ts` is where
+    // every kind is compared; this is the same claim made of markup that came
+    // out of the compiler.
+    const app = await loadSource(`
+slot shown : Bool = false
+
+tile Notes  = markdown("first line\\nsecond line\\n\\nnew paragraph")
+tile Dialog = modal(text("dialog body"), open=shown, title="Details")
+tile App    = column(Notes, Dialog)
+
+app SsrParity
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    const { html } = await renderToString(app);
+    const host = document.createElement("div");
+    host.innerHTML = html;
+
+    const paras = host.querySelectorAll('[data-kumiki-tile="markdown"] p');
+    expect(Array.from(paras).map((p) => p.textContent)).toEqual([
+      "first line\nsecond line",
+      "new paragraph",
+    ]);
+
+    // A crawler and the first paint both see the dialog: present, hidden, and
+    // holding its content — not an empty string that hydration has to build a
+    // subtree from.
+    const dialog = host.querySelector('[data-kumiki-tile="modal"]');
+    expect(dialog?.getAttribute("style")).toContain("display: none");
+    expect(dialog?.getAttribute("role")).toBe("dialog");
+    expect(dialog?.getAttribute("aria-label")).toBe("Details");
+    expect(dialog?.textContent).toContain("dialog body");
   });
 });

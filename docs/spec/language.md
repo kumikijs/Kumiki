@@ -141,6 +141,16 @@ refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
 
+`refinement-type` is recursive, so a type may carry **more than one** `where`, and the predicates **conjoin**: a value is accepted only when every one of them holds.
+
+```kumiki fragment
+type Handle = nominal Text where len-gt(3) where len-lt(7)
+```
+
+A `Handle` is longer than 3 characters **and** shorter than 7. The predicates are read through the chain a type denotes ([§1.3.6](#_1-3-6-invariants), inv. 1), so they accumulate over a name as well as over one expression: on `type Short = Text where len-lt(7)`, `type Handle = nominal Short where len-gt(3)` carries both. A generic that hands its parameter back is a link of the same chain (inv. 2): on `type NonEmpty(T) = T where nonempty`, `NonEmpty(Short)` carries `len-lt(7)` and then `nonempty`.
+
+A value that fails is reported against the **first predicate it fails**, taking them **in the order the chain is read, from the base outward**. Inside one type expression that is the order they are written; across names it is the order the declarations lead through — `Short`'s `len-lt(7)` comes before `Handle`'s own `len-gt(3)` because `Short` is what `Handle` is declared over, wherever in the file either definition sits. That is the predicate the rejection names when a write discards a reducer's batch ([batching](./runtime.md#a-batch-commits-all-or-nothing)) and the one whose message the `error` tile renders ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
 ### 1.3.2 Built-in Generic Types
 
 ```
@@ -163,6 +173,50 @@ email             url               uuid
 regex("pattern")
 one-of(v1, v2, ...)
 ```
+
+Every one of them is a **runtime check**: the value is tested on its way into the slot, and a write that fails it is refused ([Forms §5.6](./forms.md#_5-6-validation-strategy), [Runtime §10.3.3](./runtime.md#_10-3-3-batching)). What each one tests:
+
+| Predicate | Holds when | Arguments |
+|---|---|---|
+| `nonempty` | the value is text with at least one character | — |
+| `len-eq(N)` / `len-lt(N)` / `len-gt(N)` | the text's length is `= N` / `< N` / `> N` | one whole number, zero or more |
+| `between(A, B)` | the value is a number and `A <= v <= B`, both ends included | two numbers, `A` not above `B` |
+| `positive` / `negative` | the value is a number and `v > 0` / `v < 0` — zero is neither | — |
+| `email` | the text is `local@host`, the host carries a dot, and neither part holds whitespace or a second `@` | — |
+| `url` | the text is absolute — a scheme, `://`, then a host: `https://kumiki.dev`, not `kumiki.dev` | — |
+| `uuid` | the text is the 8-4-4-4-12 hexadecimal shape, any version, either case | — |
+| `regex("p")` | `p` matches the value **whole**: the pattern is anchored at both ends, so `regex("[0-9]{4}")` refuses `"AB1234"` | one text literal that compiles as a pattern |
+| `one-of(v1, ...)` | the value is one of the listed literals | at least one literal |
+
+A predicate is checked **wherever in the type it is written**, not only on the type itself: a record field, a union variant's payload, and a container's element (`List` / `Set` members, `Map` keys and values, `Option`'s `Some`, `Result`'s `Ok` / `Err`, a `Tuple`'s members) are positions of the value, and a value is accepted only when every predicate holds at every position it has. On
+
+```kumiki fragment
+type Contact = {email: Text where email, age: Int where between(0, 120)}
+slot form : Contact = {email: "ada@example.com", age: 36}
+```
+
+`form.email := "nope"` is refused exactly as `form := {email: "nope", age: 36}` is, and so is `age := 999` by way of either. The positions nest and recurse — `List(Contact)`, a recursive `type Tree = {label: Text where nonempty, kids: List(Tree)}` — and the check walks the value, which is finite. A refused value is reported against the first predicate it fails, fields in declaration order, with the **path** to where it failed: `(email at .email)`, `(nonempty at .kids[1].label)`, `(nonempty at .Found)` for a variant's payload, `(len-lt(6) at [1])` for a list element. The `error` tile renders that predicate's message ([Forms §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
+A path is the list of steps from the slot's value inward — `RefinementFailure.path` in the runtime — and the report writes each step this way:
+
+| Step | Written | Position |
+|---|---|---|
+| a field | `.email` | a record's field |
+| an index | `[1]` | a `List` element, a `Tuple` member |
+| a variant | `.Found`, `.Pair[1]` | a union / `Option` / `Result` payload, by index when the variant carries several |
+| a key | `.keys["k"]` | a `Map` key itself |
+| an entry | `["k"]` | the `Map` value stored under `k`, as Kumiki's own index reads it |
+| a member | `{"x"}` | a `Set` member |
+
+A key, an entry and a member hold the value as the key type reads it, so an `Int` key is `[3]` rather than `["3"]`. The written form is for reading: the steps are distinct values, so a `Map` key is never mistaken for a field named `keys`, nor an entry under `1` for a list index.
+
+Each position checks the value's shape before its predicates: a record and a `Map` are objects, a `List` and a `Tuple` arrays, a union / `Option` / `Result` value one of its variants. A value of the wrong shape there — a decoded `{}` where a list belongs, a payload missing a field — answers the position's predicates `false`, as the paragraph below says of any predicate, and is reported against the first of them.
+
+Two positions are not walked. A `Set` member whose type does not come back out of the key the runtime stores it under — a type parameter, or `Bytes` — is not checked; a text, number or boolean member does, and so does a record, a variant or a tuple, which is stored as its JSON (`Set({n: Text where nonempty})` is walked). And a generic that applies itself to a growing argument (`type T(A) = {v: A, next: Option(T(List(A)))}`) is a new type to lower at every level, so a slot whose refinement lies along one more than 32 levels deep is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that stops partway. Distinct named types nest to any depth.
+
+A predicate is a question about a value, so a value of the wrong shape answers it with `false` rather than raising: `positive` on text is false, and so is `nonempty` on a number. Written over a base of the wrong shape, then, a predicate refuses every value the slot can hold — `Text where positive` — and that is [E0804](./errors.md#e0804-refinement-args-invalid). The `len-*` family, `nonempty`, `email`, `url`, `uuid` and `regex` need `Text`; `between`, `positive` and `negative` need `Int`, `Float` or `Time`; `one-of` compares strictly, so its literals need a `Text` base when they are text and an `Int`, `Float` or `Time` one when they are numbers. A generic's parameter is judged where the generic is applied: `type NonEmpty(T) = T where nonempty` is fine, and `NonEmpty(Int)` is E0804.
+
+The set is closed, and a name outside it is a parse error. The arguments are checked too — a bound that is text, a fractional or negative length, `len-lt(0)` (shorter than every text), a pattern that does not compile, a range with nothing in it are all [E0804](./errors.md#e0804-refinement-args-invalid), because a refinement no value can satisfy and one every value satisfies are the same defect. A registered predicate the toolchain does not lower is [E0803](./errors.md#e0803-unimplemented-refinement) at build time rather than a check that silently passes.
 
 Arbitrary Boolean predicates are prohibited. Reason: if the AI is forced to write proofs, the debugging loop breaks down.
 
@@ -189,7 +243,9 @@ type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 ```
 
-`Cents` and `Yen` do not accept each other — putting one where the other is required is [E0201](./errors.md#e0201-type-mismatch), and so is `postId := userId` on two `nominal Text where uuid` declarations. An alias to a nominal names the same type (`type Money = Cents`), and a `nominal` written inline at a use site declares no name at all, so it is compared structurally like any other type expression.
+`Cents` and `Yen` do not accept each other — putting one where the other is required is [E0201](./errors.md#e0201-type-mismatch), and so is `postId := userId` on two `nominal Text where uuid` declarations. **Comparing** them is the same mistake and the same error: `postId == userId` and `cents < yen` are both E0201 ([§1.9.4](#_1-9-4-operator-types)). An alias to a nominal names the same type (`type Money = Cents`), and a `nominal` written inline at a use site declares no name at all, so it is compared structurally like any other type expression.
+
+The identity reaches the call that **mints** one too, which is where an id usually comes from: `TypeName.fresh()` is a `TypeName` and `TypeName.parse(t)` an `Option(TypeName)` ([stdlib §2.4.1](./stdlib.md#_2-4-1-id-generation) / [§2.4.3](./stdlib.md#_2-4-3-type-conversion)), so `postId := UserId.fresh()` is E0201 naming both types, and so is `slot found : Option(PostId) = UserId.parse(t)`. `fresh` mints a uuid, so it is read for the `nominal Text` §2.4.1 scopes it to, and on a qualifier no uuid is a value of — a `nominal Int`, a record, a bare `Int` — the call is [E0802](./errors.md#e0802-unimplemented-function) rather than a value of any type. A qualifier that names no type at all is [E0117](./errors.md#e0117-undef-type), and says nothing about the value either.
 
 A type that carries **no nominal name of its own** meets any nominal declared over it, in both directions. That is what makes `slot c : Cents = 1` legal without a construction form, and arithmetic yields the base ([§1.9](#_1-9-expression-language)), so `c := c + 1` stands.
 
@@ -211,6 +267,24 @@ fn toUser(p: PostId) -> UserId       = p + ""
 The arithmetic in the first lands on `Int`; the `+ ""` in the second lands on `Text`. The identity body does not compile — `fn toUser(p: PostId) -> UserId = p` is E0201, because `p` is still a `PostId`. Nothing checks that such a `fn` converts anything; it records the intent, and the type of its body is all that is enforced.
 
 A `where` refinement carries no identity of its own — `type Positive = Int where positive` is `Int` — and remains a runtime check ([Forms §5.6](./forms.md#_5-6-validation-strategy)) rather than a compile-time one: on `type Volume = nominal Int where between(0, 11)`, `volume := 50` is well typed, and the range is what validation decides.
+
+
+### 1.3.6 Invariants
+
+1. **A `type` denotes its body.** An alias (`type A = B`), a `nominal` wrapper and a `where` refinement each stand for the type underneath, so following one has to arrive at a body.
+2. **An alias chain must not return to itself.** Following a definition to the next name — through an alias, a `nominal`, a `where`, or a generic that hands one of its parameters straight back (`type Alias(T) = T`) — must not reach a name already on the chain. `type A = A`, and the pair `type A = B` / `type B = A`, denote nothing: there is no body to reach. [E0009](./errors.md#e0009-type-cycle).
+3. **The chain ends at a structural type.** A record, a union, a container and a primitive are types in their own right, so nothing written inside one continues the chain.
+4. **A recursive type is legal**, and is the accepted form of a type written in terms of itself:
+
+```kumiki fragment
+type Node  = {value: Int, next: Node}
+type Tree  = {children: List(Tree)}
+type Shape = Leaf | Branch(Shape, Shape)
+```
+
+Each reaches a structural type before it reaches itself, by invariant 3. Comparing two of them terminates because the relation is read **co-inductively** over the types *as written*: re-entering a pair already being compared answers yes, which is sound because the finite part of the comparison has been checked on the way down. Termination does not depend on the values being finite — `Node` above has none, its `next` being neither optional nor a container — and it is still a legal type.
+
+5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
 
 ---
 
@@ -239,7 +313,7 @@ The initial value is required. A slot with no `=` would have to hold something b
 1. **All slots are global**
 2. Mutation is **only from a reducer's `do=`**
 3. The initial value is **a pure expression only** (effects cannot be executed)
-4. **Derived slots are prohibited** (use the `fn` layer for derived computation)
+4. **Derived slots are prohibited** (use the `fn` layer for derived computation). This includes the runtime's `route` slot, read directly or through a `fn` call — it is installed by the mount, after every initial value has been evaluated ([E0304](./errors.md#e0304-derived-slot))
 
 ### 1.4.3 Examples
 
@@ -284,6 +358,14 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - Execution is performed by the **runtime's effect dispatcher**
 - A **capability check** is performed before execution (if undeclared, **compile-time error**)
 - The result is delivered to a reducer as `effect-name.ok($value, $key)` or `effect-name.err($error, $key)`
+- `policy=latest-per-key(<expr>)` and `map-request` are the effect's own
+  expressions: both are applied to the effect's input, so `$1` is the only bind,
+  a slot and a `fn` are readable, and `$route` is not a name here
+- Both are checked like any other expression — an undefined name in the key is
+  [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
+- A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
+  sees the reducer body's writes up to that statement and none after it
+  ([http.md §6.4](./http.md#_6-4-cancellation))
 
 ### 1.5.3 Examples
 
@@ -389,9 +471,27 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # only the "edit" form
 
 The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from [§1.6.4](#_1-6-4-invariants) Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
 
+**A selector on a container reaches the descendants that fire the event.** Most container kinds fire nothing themselves — a `box` has no `keydown`, no `focus` and no `submit` of its own — so `ui.<ev>(<Container>)` is wired onto every descendant whose kind is in the allowed set for `<ev>` ([§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) lists them). `ui.hover` is the unrestricted case: it is wired onto the container *and* onto each descendant, because `mouseenter` does not bubble.
+
+**How the descendant is written makes no difference.** A body that names a child tile is walked exactly as an inline one, to any depth, so these two are one program:
+
+```kumiki snippet
+tile Leaf   = input(placeholder="type")
+tile RefBox = box(Leaf)                          # a tile reference
+tile Inline = box(input(placeholder="type"))     # the same tree, spelled out
+
+reducer typed on=ui.key(RefBox) do= ...          # wired onto the input, both ways
+```
+
+The tiles a subscription reaches are decided by the path a descendant is rendered under, not by the descendant alone: a `Leaf` rendered *beside* `RefBox` is not inside it and receives no handler from it. When several enclosing tiles subscribe to one event on one descendant, [§1.6.4](#_1-6-4-invariants) Invariant 3 applies as usual — every match fires, in definition order.
+
+A handler written for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) **joins** the lifted subscriptions rather than replacing them: `r` and every enclosing tile's reducer all fire, in definition order ([§1.7.3](#_1-7-3-event-handler-props)). So a subscription on a container reaches *every* descendant that fires the event, a button with its own handler included: `ui.click(TodoRow)` on a row holding a checkbox and a delete button runs on both. Subscribe to the narrowest tile the event means — `ui.click(TodoCheck)` with `tile TodoCheck = check(...)` — rather than to the row around it.
+
 ### 1.6.3 lvalue Semantics
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
+
+The steps a path may take are a **closed set**: a field (`.name`), an index (`[key]`), and `.get` on an `Option` / `Result`. Nothing else is an lvalue — in particular a stdlib member is not one, and `name.length := 9` is [E0602](./errors.md#e0602-unassignable-member) rather than a write. There is nothing for such a write to mean: a member derives a value from the receiver, so there is no place in the receiver for the assignment to land.
 
 ```kumiki snippet
 # These reducer statements:
@@ -405,7 +505,17 @@ editor := editor.copy(title="New")
 editor := editor.map($1.copy(body="Body"))
 ```
 
-**Going via `.get` is safe**: assigning when the Option is `None` is a no-op (does not panic). If you want to explicitly panic, write `editor := Some(editor.get.copy(body="Body"))`.
+**Going via `.get` is safe**: assigning when the Option is `None` is a no-op (does not panic). If you want to explicitly panic, write `editor := Some(editor.get.copy(body="Body"))`. `.get` is the same polymorphic unwrap it is when read ([Standard Library §2.2.4](./stdlib.md#_2-2-4-option-t)), so a `Result` behaves alike: the write edits an `Ok` payload and skips an `Err`. Note that only the *assignment* is safe — a right-hand side that reads `editor.get` while the Option is `None` still panics.
+
+**An index step names a place in its receiver**, and what it names depends on the receiver:
+
+- **`Map(K, V)`** — the entry at the key. `m[k] := v` inserts or replaces it; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does. A read `m[k]` at an absent `k` is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)), as a List index past the end is: there is no `V` for it to answer. `m.get(k)` is the read that answers `None` there instead. In a tile the read runs during render, so an absent key panics that render, the first one included: the nearest `error-boundary` shows its fallback, and with none the built-in panic display replaces the page ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)). A tile reads a key that may be absent through `m.get(k)` or `m.get-or(k, d)`.
+- **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
+- **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+
+The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
+
+A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached.
 
 **`.copy(field=value, ...)`**: a shortcut for an immutable update of a record. It looks like a method call, but internally the named args are collected and expanded into `recordCopy(rec, {field: value, ...})`. You can update multiple fields at once:
 
@@ -433,6 +543,7 @@ issue.copy(status=Done, priority=High)
 6. **The batch commits all-or-nothing**: if any slot's new value violates its type's refinement, the entire reducer application is discarded — no slot write, no `emit`, no `stop-timer` — and the rejection is reported (see [batching](./runtime.md#a-batch-commits-all-or-nothing)). A reachable bound is the program's business: write the guard.
    - `volume := volume + 1` on `Volume = nominal Int where between(0, 11)` ✗ at 11 (rejected and reported)
    - `if volume < 11 then volume := volume + 1` ✓
+7. **A slot read reads the value the body most recently wrote to that slot**, wherever the read sits: in a `match` arm, in a statement-level `if` / `match`, in the body of a `let … in`, in a method's predicate or element lambda (`names.filter($1 == noteKey)`), or directly in the body. After `noteKey := "b"`, every read of `noteKey` that runs later in that application is `"b"`. A read that runs before any write to that slot in this application reads the value the slot held when the reducer started.
 
 ### 1.6.5 Positional Binding
 
@@ -443,6 +554,14 @@ issue.copy(status=Done, priority=High)
 | `$event` | the event payload |
 | `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
 | `$now` | the current time |
+
+> **An `effect-event` trigger cannot bind these names.** The compiler declares `$el`, `$event` and `$route` in every reducer body, seeded from whatever the trigger's payload carries — so a bind that takes one of them is a second declaration of the same name, and `on=load.ok($el, _)` is **E0121**. The numbered binds stay bindable; nothing else declares one.
+
+> **A bind list's names must be distinct.** A bind list names the payload's positionals in order, so two binds naming one thing leaves the other positional with no name to read it by — `on=load.ok(dup, dup)` is **E0123**. `_` is exempt however often it is written, and occupies a position rather than skipping one: it is the spelling for a positional the reducer does not read.
+
+> **The first bind has the type the effect's `out=` declares.** On `out=Result(T, E)`, `load.ok($v, _)` binds `$v : T`; any other `out=` is the whole value on `.ok`. So `session := $v` into a slot of another type is **E0201**, and a member call on `$v` answers from `T` as it would on a slot of that type. On `.err`, an effect on a storage / session / indexed capability binds `$e : Text`: those effects deliver the failure's message, also when the `map-request` or a host provider throws ([Storage Effects](./http.md#_6-7-storage-effects)), so `problem := $e` stores it and `$e.message` is **E0108**. Their `out=` must say so — `Result(T, Text)`; any other `E` is **E0306**. `.err` on any other capability is not typed from `out=`: an HTTP handler delivers its `{status, message, body}` record and a custom capability's value is its provider's ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), so reads of `$e` there are not checked. The second bind (the request key) and a built-in effect's result have no declared type either.
+
+> **In a `fn`, a positional is a parameter.** `$1` is the first parameter and `$2` the second — the same value, with the type the parameter declares — so `fn plus(a: Int, b: Int) -> Int = $1 + $2` is `a + b`. There is one positional per parameter: `$1` in a `fn` with none, or `$2` in a one-parameter `fn`, is an undefined reference (**E0103**). A fragment inside the body binds its own `$1` / `$2`, which shadow the `fn`'s: in `fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` the receiver is `xs` and the fragment's `$1` is each element.
 
 > **`$1` in a tile requires `in=`.** A tile may reference `$1` (e.g. `todos[$1]`) only if it declares an `in=` argument type — `tile TodoRow in=TodoId = … todos[$1] …`. Using `$1` in a tile with no `in=` is an undefined reference (**E0103**): there is no positional argument to bind. See [Examples](#_1-7-4-examples).
 
@@ -457,7 +576,7 @@ reducer addTodo
         emit persist(todos)
 
 reducer toggle
-    on=ui.click(TodoRow)
+    on=ui.click(TodoCheck)
     do= todos[$el.todoId].done := not todos[$el.todoId].done
         emit persist(todos)
 
@@ -468,6 +587,28 @@ reducer loaded
 reducer editTitle
     on=ui.input(TitleInput)
     do= editor.get.title := $event.value
+```
+
+### 1.6.7 Scoping and Shadowing
+
+A name declared over one already in scope **shadows** it: every read below the declaration is the inner binding, and the outer one is back once the scope that declared the inner one ends. Every declaring form binds this way — a `let` statement, a `for` bind, a match-arm pattern, and the `let … in` expression ([§1.9](#_1-9-expression-language)).
+
+The scopes are the reducer body and every nested statement body inside it: a `for` body, each branch of an `if`, and each match arm including a catch-all `_`. A binding declared in one of those ends with it.
+
+A declaration's own right-hand side is evaluated **before** the name it declares is in scope, so `let n = n + 1` reads the binding it shadows rather than the one being declared.
+
+Binds written **side by side** are peers rather than a shadowing pair, because nothing nests them: two binds of one pattern (`Both(a, a)`) are [E0122](./errors.md#e0122-duplicate-pattern-bind), and an `effect-event` bind list is the same shape ([E0123](./errors.md#e0123-duplicate-effect-bind)). A name repeated there is not a shadow — it is a value the pattern or the trigger has left with no name to read it by.
+
+A `let` may take one of the [positional bindings](#_1-6-5-positional-binding). Those are declarations like any other, so the `let` wins for every read below it — including a `$route` in a reducer whose trigger binds none, which is that `let`'s value and not a payload read ([E0119](./errors.md#e0119-route-bind-out-of-scope)). An `effect-event` bind is the one position that cannot take one of the names ([E0121](./errors.md#e0121-reserved-bind-name)): a bind list names the payload's positionals, so a bind that took `$el` would have nowhere left to put the positional it stands for.
+
+```kumiki fragment
+reducer shadowing
+    on=ui.click(Btn)
+    do= let $el   = "chosen"                # wins over the positional binding
+        let label = "first"
+        let label = label + "+second"       # the right-hand side reads the `let` above
+        for label in tags { hits := hits + 1 }   # binds inside the loop only
+        note := label + "/" + $el           # "first+second/chosen"
 ```
 
 ---
@@ -507,7 +648,8 @@ pattern      ::= identifier
 **`( … )` vs `{ … }` — arguments/children vs props**:
 - `( … )` is the **argument & children list**: positional child tiles (`column(A, B)`), value arguments (`heading("Hi")`), and named arguments (`button(text="Save", onClick=r)`, `input(bind=draft)`). A child tile or another tile call goes **here**.
 - `{ … }` is the **props block**: `key: value` pairs only — style/layout/ARIA props and event-handler bindings (`{pad: "lg", gap: "md"}`, `{todoId: $1}`, `{onClick: r}`). It contains **no tile calls and no children**. Writing a tile call inside `{ … }` (e.g. `link(to="/x") {text("Home")}`) is a parse error.
-- A tile's **label/content** is passed in `( … )`: it is a positional value-arg for the text builtins (`text("Home")`, `heading("Hi")`, `code("…")`) and a **named** arg for the interactive builtins (`button(text="Save")`, `link(to="/x", text="Home")`). The canonical place for a label is the `text=` **argument**, consistent across `button` and `link`. (`link` additionally accepts the older `{text: "…"}` prop form, which most existing examples use; both compile to the same node.)
+- A tile's **label/content** is passed in `( … )`: it is the first **positional** value-arg for the text builtins (`text("Home")`, `heading("Hi")`, `code("…")`) — a named argument is a prop wherever it is written, so `heading(level=2, title)` says `title` and `level` stays a prop — and a **named** arg for `button` (`button(text="Save")`). `link` and `label` take either: their first positional argument (`link("Home", to="/x")`, `label("Name")`), or `text=` when none is written (`link(to="/x", text="Home")`) — so, as for `editable`, `text=` beside a positional argument is never read. (`link` additionally accepts the older `{text: "…"}` prop form, which most existing examples use; all compile to the same node.) An argument written as content that the builtin never reads — a second positional argument, `text=` on a text builtin with no positional one, or `text=` beside a positional one on `link` / `label` / `editable` — is [E0129](./errors.md#e0129-unrendered-arg): `text=` is the label argument of `button` / `link` / `label` / `editable`, and a prop on the text builtins.
+- A positional argument of a builtin other than the value builtins (`text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image`, `icon`) renders only when it is a tile — a `tile-expr` or the name of a defined tile. A value there — `column(text("a"), 42)`, a slot, `column(let x = 42 in Card(x))` — renders nothing and is [E0128](./errors.md#e0128-value-as-child): show it with a tile (`text(n.show)`), write it where it is used, or compute it in a `fn`. Where a value belongs (a value builtin's content, a user tile's input, a named argument) a `let` is a value, and is checked like one. A tile body and a `when` / `if` / `for` / `match` arm are a `tile-expr` themselves, so a `let` there is a parse error.
 
 **Semantics of `when(cond, tile)`**:
 - `cond` is true → render `tile`
@@ -533,13 +675,17 @@ pattern      ::= identifier
 
 ### 1.7.3 Event Handler props
 
-An event handler **takes a reducer name**:
+An event handler **takes a reducer name**, and may be written on a user tile as well as on a builtin. On a user tile it is a prop like any other: it is merged onto the node that tile renders — onto each of them, when the body is a `for` that renders a list — so `Btn(onClick=tap)` and `Btn() {onClick: tap}` are the same wiring, and whether it fires is a question about what `Btn` renders. Merged means **joined**: the handler adds to whatever that node already dispatches for the event — a handler written on the builtin itself, one written on another call site the node is the root of, and every `ui.<ev>(<Tile>)` subscription lifted onto it ([§1.6.2](#_1-6-2-selectors)). Each matching reducer runs once, and all of them run in **definition order**, as [§1.6.4](#_1-6-4-invariants) Invariant 3 says of any reducers matching one event; where a handler happens to be written does not decide what runs first. [W0213](./errors.md#w0213-handler-on-inert-tile-warning) asks that question at both kinds of call site, by walking the tile's render tree: a handler on a user tile that renders no kind able to fire it is reported the same way one written on an inert builtin is. A named argument is never the tile's input — that is the positional one — so a tile declaring `in=` still takes it: `Row(onClick=tap, label)` passes `label` as `$1`.
 
 ```kumiki snippet
 button(text="Save", onClick=saveTodo) {todoId: $1}
 ```
 
 With `onClick=saveTodo`, the reducer `saveTodo` is called on click. `{todoId: $1}` is delivered to the reducer as `$el.todoId`.
+
+The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name is a *tile call* when it is a named argument of a builtin that takes tiles (`box`, `button`, `input`, `modal`, `form`), and a variant tag everywhere else: in a props block, as a named argument of a value-arg builtin such as `link`, and as a named argument of a user tile.
+
+Because those shapes carry no arguments, the bare name and the argument-less call are one and the same after parsing — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are the same node, and all three bind the reducer. A value that carries arguments is not a name and is [E0201](./errors.md#e0201-type-mismatch).
 
 ### 1.7.4 Examples
 
@@ -549,9 +695,11 @@ the argument as `$1`. **`$1` is available only when `in=` is declared** — usin
 argument positionally: `TodoRow(id)`.
 
 ```kumiki fragment
+tile TodoCheck in=TodoId = check(value=todos[$1].done) {todoId: $1}
+
 tile TodoRow  in=TodoId
               = row(
-                  check(value=todos[$1].done, onClick=toggle) {todoId: $1},
+                  TodoCheck($1),
                   text(todos[$1].text) {strike: todos[$1].done},
                   button(text="x", onClick=remove) {todoId: $1})
 
@@ -653,6 +801,8 @@ fn isActiveOnly(t: Todo) -> Bool = matchFilter(t, Active)
 items.filter(isActiveOnly)
 ```
 
+A fn name in a fragment position is the call the method makes with the fragment's positionals: `items.map(double)` is `items.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. It is the **only** position a bare fn name is right — a fn is not a value, so `label` written where a value goes is [E0127](./errors.md#e0127-fn-as-value), and the call is `label()`. The positions, and how many positionals each binds, are listed under E0127.
+
 ---
 
 ## 1.9 Expression Language
@@ -692,6 +842,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
               | '&' | '|'
 unop        ::= '-' | '!'
 ```
+
+An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
 ### 1.9.1 Prohibitions
 
@@ -739,7 +891,7 @@ Every operator's operand and result types, which the compiler checks
 | `/` | both numeric | **`Float`, always** |
 | `<` `>` `<=` `>=` | both numeric, both `Text`, or both `Time` | `Bool` |
 | `&` `\|` | both `Bool` | `Bool` |
-| `==` `!=` | any two values | `Bool` |
+| `==` `!=` | any two values, unless they carry two different nominal identities | `Bool` |
 | unary `-` | numeric | the operand's type |
 | unary `!` | `Bool` | `Bool` |
 
@@ -748,6 +900,40 @@ is `2.5`, not `2` — so an `Int` result type would be a promise the runtime doe
 keep, and `fn half(x: Int) -> Int = x / 2` is rejected. Take `.to-int` (truncating,
 [stdlib §2.2.7](./stdlib.md#_2-2-7-int-float)) where a whole number is wanted, or
 declare the `Float`.
+
+`==` compares **by value**. Kumiki values are immutable
+([§1.6.3](#_1-6-3-lvalue-semantics)), so a program has no reference
+identity it could mean to compare: two Lists, tuples, records, Maps or variants
+are equal when what they hold is equal, all the way down — `xs == []` on an empty
+list, `(0, 0) == (0, 0)` and `Some({x: 1}) == Some({x: 1})` are `true`,
+`[1, 2] == [2, 1]` is `false`. A record's fields and a Map's entries compare
+regardless of the order they were written in. `!=` is the negation. `List.contains`
+and `List.unique` ask the same question ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)),
+and so do the test layer's comparisons. A `Set` compares as the keys it is stored
+under ([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which depends on how the Set was
+built, so equality over Sets is not a rule a program may rely on.
+
+`==` is total over every *shape* — an `Int` and a `Text`, an `Option` and its
+`None` — and `nominal` is the one exception. Two declarations over one base are
+two types ([§1.3.5](#_1-3-5-type-canonicalization)), so comparing them is the
+same mistake as assigning one to the other and is the same error:
+`postId == userId` is [E0201](./errors.md#e0201-type-mismatch), exactly as
+`postId := userId` is. Ordering refuses the pair for that reason as well as for
+the family one — `cents < yen` shares the number family and is still E0201.
+
+The comparison is refused only when **both** sides carry a nominal name and
+neither was declared as the other, which is the assignment rule read
+symmetrically: a value with no identity of its own compares with any nominal
+over it, so `cents == 0` and `postId == ""` stand as the assignments do, and a
+`Deep` declared `nominal Cents` compares with a `Cents` in either order.
+Converting is the same `fn` through the shared base that an assignment needs.
+
+The identity is read at the **top level** of each operand only. A nominal inside
+a type argument, a container or a record field is invisible here, which is where
+the operators and assignment part company: `List(Cents) := List(Yen)` is
+[E0201](./errors.md#e0201-type-mismatch), and `lc == ly` on the same pair is not
+reported. That silence is a missing diagnostic rather than a wrong one, which is
+the reading every rule in the check keeps.
 
 `EffectId` is outside this table: only `==` and `!=` apply to it
 ([E0204](./errors.md#e0204-effect-id-misuse)).
@@ -813,6 +999,8 @@ An `init` entry is an effect call, and its arguments are ordinary expressions �
 
 What a slot reference sees at that moment is its **declared default**. `route` is the exception — it is maintained by the runtime and does not exist yet, so `init = [load(route.path)]` is a compile error ([E0120](./errors.md#e0120-route-in-app-init)), as is `$route`, which the runtime does not bind here either. Take the route from a `route.enter` reducer instead.
 
+The restriction is on what an argument **reaches**, not on how it is written: `init = [load(here())]` where `fn here() -> Text = route.path` is the same error, reported at the call with the chain that gets to the route. A `fn` that reads the route stays legal everywhere else — a tile, a reducer and an effect's `map-request` all run after the mount that installs it.
+
 `now` is available and is captured the same way: it evaluates to the moment the app object was built, not to the moment the effect runs. An entry that needs the time of its own dispatch should take it in the reducer that handles the result.
 
 There is no reducer around these arguments either, so an `emit` expression is not available in one ([E0305](./errors.md#e0305-fn-impurity)): the entry itself is the dispatch.
@@ -823,7 +1011,7 @@ There is no reducer around these arguments either, so an `emit` expression is no
 
 ```kumiki snippet
 # ❌ local state
-tile Foo = let x = 0 in button(text=x.show)   # assignment inside a tile is not allowed (let binds an expression, but is not a substitute for a slot)
+tile Foo = let x = 0 in button(text=x.show)   # a tile body has no `let`: a parse error here, E0128 as a child
 
 # ❌ direct effect call
 reducer r on=ui.click(B) do= http.get("/")   # emit required

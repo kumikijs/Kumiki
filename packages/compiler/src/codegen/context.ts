@@ -1,5 +1,7 @@
 import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "../ast.ts";
-import { TILE_FAMILY, type TileFamily } from "../builtins.ts";
+import { isPerTileFamily, TILE_FAMILY, type TileFamily } from "../builtins.ts";
+import type { ParseReading } from "../parse-reading.ts";
+import type { NestedRefinements } from "./nested-refinements.ts";
 
 export type GenCtx = {
   slots: SlotDef[];
@@ -17,23 +19,131 @@ export type GenCtx = {
    * are not captured — they resolve via `theme.icons` at runtime.
    */
   usedIcons: Set<string>;
+  /**
+   * The walks that answer where a value fails a predicate written anywhere in
+   * its type (language.md §1.3.3). One per program, shared by every reader —
+   * a slot's gate and a `Decoder.Json(T)`'s check — so a type is lowered to one
+   * helper however many places ask about it.
+   */
+  refinements: NestedRefinements;
+  /**
+   * The readings an `input` parses its text by when the bound position's base
+   * is an `Int`, a `Float` or a `Time` (forms.md §5.1.1). Each is declared
+   * once per app instance, so the reader a node carries is the same object on
+   * every render and the node still compares equal to the last one.
+   */
+  usedReaders: Set<ParseReading>;
+  /**
+   * Set while lowering a tile-test's `expect` tree. The `{…}` block of each
+   * node there is styling, which a snapshot does not compare (testing.md
+   * §8.4), so its data stays out of the node's `props`: what is left there is
+   * what the expectation states with named arguments, and the runtime
+   * compares all of it.
+   */
+  expectedTree?: boolean;
 };
+
+/**
+ * The names in scope at one point in the emitted code, each mapped to the JS
+ * identifier a read of it resolves to. A `Set` was enough while one Kumiki name
+ * meant one JS name; it stopped being enough once a name could be declared
+ * twice — see {@link declareBind}.
+ */
+export type BindScope = Map<string, string>;
 
 export type EvalCtx = {
   gen: GenCtx;
-  localBinds: Set<string>;
+  localBinds: BindScope;
   /** When set, Ref(slot) reads from `_next` first, falling back to `_live`. */
   reducerScope?: boolean;
 };
 
-export function makeEvalCtx(gen: GenCtx, locals: Set<string>, reducerScope = false): EvalCtx {
-  return { gen, localBinds: new Set(locals), reducerScope };
+/**
+ * A scope holding `locals`. Pass a {@link BindScope} to continue an enclosing
+ * scope — the identifiers its shadowed names resolve to come along, which is
+ * what keeps a read inside a nested form pointing at the binding that is
+ * actually in scope there. Pass names to open a fresh one, where each is its
+ * own `jsBinding`.
+ */
+export function makeEvalCtx(
+  gen: GenCtx,
+  locals: Iterable<string> | BindScope,
+  reducerScope = false,
+): EvalCtx {
+  const localBinds: BindScope =
+    locals instanceof Map ? new Map(locals) : new Map([...locals].map((n) => [n, jsBinding(n)]));
+  return { gen, localBinds, reducerScope };
 }
 
+/**
+ * A nested scope inside `ctx`: its bindings, and its view of the slots. Every
+ * lowering that opens one — a `match` arm, a `let … in` body, a method's
+ * predicate, a `for` / `if` block — goes through here, so a slot read inside
+ * a reducer body keeps reading `_next` first and sees what the body has
+ * already written. A tile or other render-time context has no `reducerScope`
+ * to hand down, so its nested scopes read `_live`.
+ */
+export function childCtx(ctx: EvalCtx): EvalCtx {
+  return makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
+}
+
+/** A copy of `ctx` with `name` declared in it — see {@link declareBind}. */
 export function addBind(ctx: EvalCtx, name: string): EvalCtx {
-  const out = makeEvalCtx(ctx.gen, ctx.localBinds);
-  out.localBinds.add(name);
+  const out = childCtx(ctx);
+  declareBind(out, name);
   return out;
+}
+
+/**
+ * Bring `name` into `ctx` and return the identifier to declare it under.
+ *
+ * A name declared over one already in scope shadows it (language.md §1.6.7),
+ * and a Kumiki scope is not always a JS one: a reducer's top-level `let` lands
+ * in the same JS block as the trigger's binds and the positional-binding
+ * declarations, so `let $route = …` there used to emit a second `const
+ * _d_route` and the module threw `SyntaxError` at load. The shadow takes an
+ * identifier of its own instead, which is what makes the rule hold in the one
+ * place the language's nesting does not reach.
+ *
+ * The declaration is what changes name; every read goes through
+ * {@link bindRef}, so the two sides cannot drift apart.
+ */
+export function declareBind(ctx: EvalCtx, name: string): string {
+  const js = freshBinding(ctx.localBinds, name);
+  ctx.localBinds.set(name, js);
+  return js;
+}
+
+/** The identifier a read of an in-scope `name` resolves to. */
+export function bindRef(ctx: EvalCtx, name: string): string {
+  return ctx.localBinds.get(name) ?? jsBinding(name);
+}
+
+/**
+ * An identifier for a declaration of `name` in `scope` that no live binding is
+ * already using.
+ *
+ * The `$<n>` suffix cannot be produced by {@link jsBinding} from any other
+ * Kumiki name, which is what keeps two distinct names from converging on one
+ * identifier. A `$` that `jsBinding` emits is either the second character of
+ * the `_$` escape for a user `_` or the marker on an unsafe name; the one here
+ * is followed by a digit, so it is not the marker, so it would have to be the
+ * escape — which needs a `_` before it, i.e. a `jsBinding` output ending in
+ * one. No output ends in `_`: a user `_` becomes `_$`, and the only other
+ * source of one is `-` / `.`, neither of which can end an identifier the lexer
+ * produces (`readIdentBody` continues a `-` only when an identifier character
+ * follows it). `packages/compiler/test/js-identifier-safety.test.ts` brute-forces
+ * the property over the identifiers the lexer accepts, because the argument
+ * rests on that rule and on `jsBinding`'s mapping rather than on anything local.
+ */
+function freshBinding(scope: BindScope, name: string): string {
+  const base = jsBinding(name);
+  if (!scope.has(name)) return base;
+  const taken = new Set(scope.values());
+  for (let n = 1; ; n++) {
+    const candidate = `${base}$${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 /**
@@ -58,6 +168,20 @@ export function jsProperty(name: string): string {
 }
 
 /**
+ * The key a Kumiki field name has on a JS object that the program itself reads
+ * by field: a record, and the `$el` payload a tile hands its handlers. The
+ * source spelling, quoted — `item-name` stays `"item-name"` — because a field
+ * read (`r.item-name`, `$el.item-name`) is lowered with this same key. The
+ * writer and the reader take it from here so they cannot disagree.
+ *
+ * Not {@link jsProperty}: that one rewrites `-` to `_` for names the runtime
+ * defines, which a program's own field is not.
+ */
+export function fieldKey(name: string): string {
+  return JSON.stringify(name);
+}
+
+/**
  * The generated identifier holding one tile family's renderer map. It lives
  * here rather than next to the import header because the reserved-name list
  * below has to enumerate it, and `imports.ts` is downstream of this module.
@@ -78,6 +202,30 @@ export function tilePatcherFamilyVar(f: TileFamily): string {
 }
 
 /**
+ * The generated identifier holding one tile's renderer, for a tile that ships
+ * as its own runtime module (#71). Mirrors the runtime's export name, so the
+ * import needs no alias.
+ */
+export function tileVar(kind: string): string {
+  return `${camelKind(kind)}Tile`;
+}
+
+/** The patcher companion to {@link tileVar}. */
+export function tilePatcherVar(kind: string): string {
+  return `${camelKind(kind)}Patcher`;
+}
+
+/**
+ * A tile kind as a JS identifier stem — `route-outlet` would be `routeOutlet`.
+ * No kind of a per-tile family is hyphenated today, so the conversion never
+ * fires; it is here so that adding one is a table edit rather than a silent
+ * syntax error in generated code.
+ */
+function camelKind(kind: string): string {
+  return kind.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+}
+
+/**
  * Identifiers the emitted module binds at its own top level: the two it
  * declares, plus every name `emitImportHeader` can import. Names starting with
  * `_` are omitted — {@link jsBinding} already keeps user names out of that
@@ -94,14 +242,21 @@ export const EMITTED_MODULE_BINDINGS: readonly string[] = [
   "installConfirm",
   "storageRead",
   "storageWrite",
+  "storageClear",
   "sessionRead",
   "sessionWrite",
+  "sessionClear",
   "indexedRead",
   "indexedWrite",
   "indexedDelete",
   ...new Set(
     Object.values(TILE_FAMILY).flatMap((f) => [tileFamilyVar(f), tilePatcherFamilyVar(f)]),
   ),
+  // The per-tile modules' exports (#71) — one pair per kind of a family on
+  // `PER_TILE_FAMILIES`, which the granular header imports by these names.
+  ...Object.keys(TILE_FAMILY)
+    .filter((k) => isPerTileFamily(TILE_FAMILY[k]))
+    .flatMap((k) => [tileVar(k), tilePatcherVar(k)]),
 ];
 
 /**
@@ -285,3 +440,21 @@ export function jsBinding(name: string): string {
   // cannot be produced by any other input.
   return JS_UNSAFE_BINDINGS.has(mapped) ? `${mapped}$` : mapped;
 }
+
+/**
+ * The user tiles a node is being rendered *under*, outermost first — every
+ * name a `ui.<ev>(<Tile>)` selector can use to reach it.
+ *
+ * A chain rather than the innermost name alone (#333): the enclosing tile used
+ * to be replaced at each user-tile boundary, so `box(Inner)` lifted nothing a
+ * selector on the container asked for while the inline `box(input(...))`
+ * lifted it — the same program written two ways, wired one way. `W0212`
+ * resolves the reference when it looks for a descendant that fires the event
+ * (`collectTileBuiltinKinds` walks through it) and reported nothing, so both
+ * halves were silent about the same dropped handler.
+ *
+ * It is a property of the PATH a tile was reached by, not of the tile: a
+ * `Leaf` written beside its container is not inside it and collects no
+ * listener from it.
+ */
+export type EnclosingTiles = readonly string[];

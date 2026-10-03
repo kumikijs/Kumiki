@@ -365,14 +365,19 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
     }
   });
 
-  it("debounce: a missing capability at launch releases the claimed token instead of stranding the episode", async () => {
+  it("debounce: a missing capability at launch reports on the originating episode and releases its token", async () => {
     // `caps.has(eff.cap)` is checked inside `launch`, so for a debounced
     // effect the cap might already be missing by the time the timer fires.
     // The early-return must release the dispatch-time token so the
-    // originating episode commits with an effect-cancel.
+    // originating episode commits with an effect-cancel — and report the
+    // refusal onto that same episode (§10.4.2). By the time the timer fires
+    // `endTrigger` has balanced out and nothing is in focus, so the token is
+    // the only thing that can name the episode: a refusal that fell back to
+    // "no episode" would leave a start and a cancel and nothing else, which
+    // is exactly what a *replaced* debounce timer looks like.
     const app: AppShape = {
       slots: { q: { value: "" } },
-      // Note: omit "http.get" so the dispatcher's launch path warns + bails.
+      // Note: omit "http.get" so the dispatcher's launch path refuses + bails.
       caps: [],
       effects: {
         search: {
@@ -398,8 +403,13 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
     const logger = createEpisodeLogger({ memoryMax: 10 });
     const root = document.createElement("div");
     document.body.appendChild(root);
-    const origWarn = console.warn;
-    console.warn = () => {};
+    // The refusal reports on `console.error` — the channel the verification
+    // tiers read — so that is the one to capture here.
+    const origError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
     try {
       const { dispose } = mount(app, root, { episodeLogger: logger });
       const dispatch = (
@@ -411,13 +421,32 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
 
       const eps = logger.list();
       expect(eps).toHaveLength(1);
-      expect(eps[0]!.status).toBe("completed");
-      expect(eps[0]!.steps.some((s) => s.kind === "effect-cancel")).toBe(true);
+      // `panic`, not `completed`: the episode carries the refusal, which is
+      // what tells a reader this is not a timer that was merely replaced.
+      expect(eps[0]!.status).toBe("panic");
+      // The dispatch runs to completion first — the debounce timer is what
+      // fires later — so the refusal lands after the signal-update. Panic
+      // before cancel: the cancel settles (and commits) the episode.
+      expect(eps[0]!.steps.map((s) => s.kind)).toEqual([
+        "reducer",
+        "effect-start",
+        "signal-update",
+        "panic",
+        "effect-cancel",
+      ]);
+      expect(eps[0]!.steps.find((s) => s.kind === "panic")).toMatchObject({
+        category: "capability",
+        location: 'effect "search"',
+        message: 'capability "http.get" is not declared in app.caps',
+      });
       // No effect-end — the cap gate stopped the launch before invoke().
       expect(eps[0]!.steps.some((s) => s.kind === "effect-end")).toBe(false);
+      expect(errors).toEqual([
+        '[kumiki] panic in effect "search": capability "http.get" is not declared in app.caps',
+      ]);
       dispose();
     } finally {
-      console.warn = origWarn;
+      console.error = origError;
       root.remove();
     }
   });

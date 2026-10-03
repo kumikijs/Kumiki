@@ -1,0 +1,100 @@
+# Feature (stdlib.md §2.2): the result type of a member is decided by the
+# receiver, and the element type is carried through.
+#
+#   List(T).head     : Option(T)      not T
+#   Map(K, V).keys   : List(K)        not List(V)
+#   Set(T).to-list   : List(T)
+#   Result(T, E).get-err : E          not T
+#
+# This is what makes the empty case impossible to skip: `xs.head` is an
+# `Option(Int)`, so it has to be unwrapped before it is an `Int`, and the
+# checker says so rather than letting the Option land in an `Int` slot where
+# every later reader disagrees with it.
+#
+# Each reducer below writes a member's result into a slot of exactly the type
+# the spec gives it, so the app is the signature table as a running program.
+
+slot nums   : List(Int)          = [3, 1, 2]
+slot names  : Map(Text, Int)     = {"ada": 1, "bea": 2}
+slot tags   : Set(Int)           = [7, 8]
+slot parsed : Result(Int, Text)  = Err("not a number")
+
+slot first  : Option(Int)  = None
+slot keys   : List(Text)   = []
+slot sorted : List(Int)    = []
+slot listed : List(Int)    = []
+slot reason : Text         = ""
+slot count  : Int          = 0
+slot found  : Bool         = false
+slot hit    : Option(Int)  = None
+slot miss   : Option(Int)  = None
+
+# `head` answers an Option of the receiver's own element, so this slot is an
+# `Option(Int)` and not an `Int`.
+reducer take-head on=ui.click(Head)
+    do= first := nums.head
+
+# `keys` answers a List of the receiver's *key* type — `List(Text)` here, which
+# is why it cannot be written into `sorted`.
+reducer take-keys on=ui.click(Keys)
+    do= keys := names.keys
+
+# The receiver's own type back.
+reducer sort-nums on=ui.click(Sort)
+    do= sorted := nums.sort
+
+# Crossing containers: a Set becomes a List of the same element.
+reducer list-tags on=ui.click(Listed)
+    do= listed := tags.to-list
+
+# `get-err` answers the *error* type, which on this receiver is a Text.
+reducer take-err on=ui.click(Err)
+    do= reason := parsed.get-err
+
+# A fixed result, whatever the receiver's arguments are.
+reducer measure on=ui.click(Count)
+    do= count := names.size
+        found := nums.contains(2)
+
+# `find` answers an `Option` the same way `head` does, so a miss is a `None`
+# a reader recognises rather than an absent value, and `is-some` tells the two
+# apart.
+reducer search on=ui.click(Find)
+    do= hit   := nums.find($1 > 2)
+        miss  := nums.find($1 > 99)
+        found := nums.find($1 > 99).is-some
+
+# The unwrap the Option forces: `first` is an `Option(Int)`, so reading an
+# `Int` out of it is written, not assumed.
+reducer unwrap on=ui.click(Unwrap)
+    do= count := first.get-or(-1)
+
+tile Head   = button(text="head")   {id: "head"}
+tile Keys   = button(text="keys")   {id: "keys"}
+tile Sort   = button(text="sort")   {id: "sort"}
+tile Listed = button(text="listed") {id: "listed"}
+tile Err    = button(text="err")    {id: "err"}
+tile Count  = button(text="count")  {id: "count"}
+tile Unwrap = button(text="unwrap") {id: "unwrap"}
+tile Find   = button(text="find")   {id: "find"}
+
+tile App
+    = column(
+        heading("results decided by the receiver"),
+        row(Head, Keys, Sort, Listed) {gap: "sm"},
+        row(Err, Count, Unwrap, Find) {gap: "sm"},
+        text("first: " + first.get-or(0).show),
+        text("keys: " + keys.length.show),
+        text("sorted: " + sorted.length.show),
+        text("listed: " + listed.length.show),
+        text("reason: " + reason),
+        text("count: " + count.show),
+        text("found: " + found.show),
+        text("hit: " + hit.get-or(0).show),
+        text("miss: " + miss.get-or(-1).show))
+      {pad: "lg", gap: "md"}
+
+app ReceiverDecidedResults
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

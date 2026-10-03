@@ -1,0 +1,7 @@
+{
+  "POST /login": { "text": "ok" },
+  "POST /json": { "text": "ok" },
+  "PUT /text": { "text": "ok" },
+  "POST /empty": { "text": "ok" },
+  "POST /orders": { "text": "ok" }
+}

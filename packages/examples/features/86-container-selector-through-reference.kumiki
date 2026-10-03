@@ -1,0 +1,49 @@
+# Feature: `ui.<ev>(Container)` reaches a descendant that fires `<ev>` whether
+# the container's body names that descendant inline or through a tile
+# reference. The two spellings of one tree are one program.
+#
+# A selector on a container is lifted by the compiler onto the descendants that
+# can actually fire the event — `ui.key(Box)` puts `onKeyDown` on the `input`
+# inside `Box`, because a `box` fires no keydown of its own. That lift used to
+# stop at every user-tile boundary: `box(input(...))` was wired and
+# `box(Leaf)` was not, with `kumiki check` reporting `ok` for both. The
+# reducer was dead code and nothing said so.
+#
+# `RefBox` and `InlineBox` below are the same tree written the two ways, and
+# the scenario fires the same four events at each. Every event whose selector
+# lifts through a container is here (`key` / `focus` / `blur` / `hover`) —
+# they share one lift path, so one of them working is not evidence about
+# the others.
+
+slot log : Text = ""
+
+# Subscriptions on the container whose body is a REFERENCE.
+reducer refTyped   on=ui.key(RefBox)   do= log := log + "K"
+reducer refFocused on=ui.focus(RefBox) do= log := log + "F"
+reducer refLeft    on=ui.blur(RefBox)  do= log := log + "B"
+reducer refEntered on=ui.hover(RefBox) do= log := log + "M"
+
+# The same four on the container that spells its body INLINE — the form that
+# has always worked, kept beside the other so a divergence shows up as a
+# difference in one log.
+reducer inTyped   on=ui.key(InlineBox)   do= log := log + "k"
+reducer inFocused on=ui.focus(InlineBox) do= log := log + "f"
+reducer inLeft    on=ui.blur(InlineBox)  do= log := log + "b"
+reducer inEntered on=ui.hover(InlineBox) do= log := log + "m"
+
+tile Leaf = input(placeholder="ref") {id: "ref-field"}
+
+tile RefBox    = box(Leaf) {id: "ref-box"}
+tile InlineBox = box(input(placeholder="inline") {id: "inline-field"}) {id: "inline-box"}
+
+tile App = column(
+             heading("selector on a container, body written two ways"),
+             RefBox,
+             InlineBox,
+             text("log=[" + log + "]"))
+           {pad: "lg", gap: "md"}
+
+app ContainerSelectorViaReference
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

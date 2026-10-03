@@ -1,6 +1,6 @@
-import { type Expr, isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
-import { HANDLER_NAMES, UI_LIFTS } from "../ui-lifts.ts";
-import { type EvalCtx, handlerRef, jsProperty } from "./context.ts";
+import { isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
+import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
+import { type EnclosingTiles, type EvalCtx, fieldKey, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /**
@@ -74,72 +74,118 @@ function mergedAria(parts: AriaParts): string | null {
   return `{ ${fields.join(", ")} }`;
 }
 
+/**
+ * Explicit event-handler wirings, by handler name: `onClick` -> the reducers
+ * written for it.
+ */
+export type HandlerWiring = ReadonlyMap<string, readonly string[]>;
+
+/**
+ * The explicit handlers written on one tile call (`onClick=foo`,
+ * `{onClick: foo}`), joined with `inherited`: the ones written on the user-tile
+ * call sites whose tree this call is the root of. A handler written on
+ * `Btn {onClick: r}` belongs to the node `Btn` renders, so it is handed down to
+ * that node's own `propsFor` and joins what is already wired there.
+ */
+export function explicitHandlers(
+  t: TileExpr & { kind: "TileCall" },
+  inherited?: HandlerWiring,
+): Map<string, string[]> {
+  const byHandler = new Map<string, string[]>();
+  const record = (handlerName: string, reducerName: string | null): void => {
+    if (reducerName === null) return;
+    const list = byHandler.get(handlerName) ?? [];
+    list.push(reducerName);
+    byHandler.set(handlerName, list);
+  };
+  // Whatever shape the parser gave the name — a reference, a variant tag, an
+  // argument-less tile call — `handlerReducerName` reads the reducer out of
+  // it, the same one the checker resolved. Deciding here on `kind === "Ref"`
+  // instead is what left a capitalised reducer name rejected by the checker
+  // and wired by nobody.
+  for (const a of t.args) {
+    if (a.name && HANDLER_NAMES.has(a.name)) record(a.name, handlerReducerName(a.value));
+  }
+  for (const p of t.props) {
+    if (HANDLER_NAMES.has(p.name)) record(p.name, handlerReducerName(p.value));
+  }
+  for (const [handlerName, names] of inherited ?? []) {
+    for (const n of names) record(handlerName, n);
+  }
+  return byHandler;
+}
+
+/**
+ * The reducers one handler dispatches: each once, in DEFINITION order.
+ *
+ * That is §1.6.4 Invariant 3 for every reducer matching one event, however it
+ * was wired — written on the builtin, written on a user-tile call site whose
+ * tree the element roots, or lifted from a `ui.<ev>(<Tile>)` subscription. One
+ * rule, so where a handler happens to be written never decides what runs
+ * first.
+ *
+ * A reducer name counts once, so writing `onClick=inc` beside
+ * `reducer inc on=ui.click(B)` does not run `inc` twice per click.
+ */
+function inDefinitionOrder(names: readonly string[], ctx: EvalCtx): string[] {
+  const rank = new Map<string, number>();
+  ctx.gen.reducers.forEach((r, i) => {
+    if (!rank.has(r.name)) rank.set(r.name, i);
+  });
+  // A name no reducer has is E0102 and never reaches codegen; ranking it last
+  // keeps the sort total rather than asserting that.
+  const at = (n: string): number => rank.get(n) ?? Number.MAX_SAFE_INTEGER;
+  return [...new Set(names)].sort((a, b) => at(a) - at(b));
+}
+
 export function propsFor(
   t: TileExpr & { kind: "TileCall" },
   ctx: EvalCtx,
-  enclosingTile?: string,
+  // Every user tile this call renders under, outermost first — a selector
+  // naming any of them reaches this node. See `EnclosingTiles`.
+  enclosingTiles?: EnclosingTiles,
+  // The explicit handlers this node dispatches. By default the ones written on
+  // this call; `tileCallJs` passes more when user-tile call sites handed theirs
+  // down, and none to a call site that handed its own down, so nothing is
+  // emitted twice.
+  explicitByHandler: HandlerWiring = explicitHandlers(t),
 ): string {
   const entries: string[] = [];
   // `{aria: {...}}` and `{aria-label: "…"}` are one channel by the time they
   // reach the runtime — see `mergedAria`.
   const aria: AriaParts = { map: null, direct: [] };
-  // Capture explicit event-handler wirings (`onClick=foo`, `{onClick: foo}`)
-  // by handler name. They are flushed below alongside implicit (tile, ui-event)
-  // subscribers as one chained dispatch handler, so spec §1.6.4 (every matching
-  // reducer fires in definition order) holds even when explicit and implicit
-  // both target the same handler.
-  const explicitByHandler = new Map<string, string[]>();
-  const recordExplicit = (handlerName: string, value: Expr): void => {
-    if (value.kind !== "Ref") return;
-    const reducerName = (value as Expr & { name: string }).name;
-    const list = explicitByHandler.get(handlerName) ?? [];
-    list.push(reducerName);
-    explicitByHandler.set(handlerName, list);
-  };
 
-  // event handler args (onClick=remove etc) attach as props for that tile.
-  for (const a of t.args) {
-    if (!a.name) continue;
-    if (HANDLER_NAMES.has(a.name)) recordExplicit(a.name, a.value as Expr);
-  }
-  // props block
-  for (const p of t.props) {
-    if (HANDLER_NAMES.has(p.name)) {
-      recordExplicit(p.name, p.value as Expr);
-      continue;
-    }
+  // The `{…}` block's data; none in a tile-test's expected tree, which
+  // states what it compares with named arguments (see `GenCtx.expectedTree`).
+  const block = ctx.gen.expectedTree ? [] : t.props;
+  // props block. A handler is wiring rather than data: it is in
+  // `explicitByHandler`, and is emitted with the lifted ones below.
+  for (const p of block) {
+    if (HANDLER_NAMES.has(p.name)) continue;
     if (isNotPropData(t.name, p.name)) continue;
     if (collectAria(p.name, () => jsOfExpr(p.value, ctx), aria)) continue;
     entries.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
 
-  // Combine explicit wirings with reducers subscribing to (enclosingTile, ev)
-  // into a single chained handler. Explicit first (declared on the tile that
-  // mounts the element), then implicit subscribers in their source order — so
-  // adding a `reducer foo on=ui.click(B)` never silently shadows an existing
-  // `onClick=bar` on `B`, and vice versa. Same-reducer overlap (e.g. both
-  // `onClick=inc` and `reducer inc on=ui.click(B)` naming `inc`) deduplicates
-  // by reducer name so the user's `inc` doesn't fire twice per click.
+  // Join explicit wirings with the reducers subscribing to (an enclosing tile,
+  // ev) into one chained handler per event, in the order `inDefinitionOrder`
+  // gives — so adding a `reducer foo on=ui.click(B)` never silently shadows an
+  // existing `onClick=bar` on `B`, and vice versa.
   const emittedHandlers = new Set<string>();
   const pushHandler = (ev: UiEventKind | null, handlerName: string): void => {
     const explicit = explicitByHandler.get(handlerName) ?? [];
     const implicit: string[] =
-      ev !== null && enclosingTile
+      ev !== null && enclosingTiles !== undefined && enclosingTiles.length > 0
         ? ctx.gen.reducers
             .filter(
               (rr) =>
                 rr.on.kind === "UiEvent" &&
                 rr.on.ev === ev &&
-                rr.on.selector.tile === enclosingTile,
+                enclosingTiles.includes(rr.on.selector.tile),
             )
             .map((r) => r.name)
         : [];
-    const seen = new Set<string>();
-    const names = [...explicit, ...implicit].filter((n) => {
-      if (seen.has(n)) return false;
-      seen.add(n);
-      return true;
-    });
+    const names = inDefinitionOrder([...explicit, ...implicit], ctx);
     if (names.length === 0) return;
     // `_h` memoises one closure per reducer list inside the enclosing
     // `createApp()` scope, so re-rendering the same tile yields the *same*
@@ -163,14 +209,14 @@ export function propsFor(
   // e.g. `onClose` on a dialog, or `onClick=foo` on a non-button tile.
   for (const [handlerName, names] of explicitByHandler) {
     if (emittedHandlers.has(handlerName)) continue;
-    entries.push(`${handlerName}: ${handlerRef(names)}`);
+    entries.push(`${handlerName}: ${handlerRef(inDefinitionOrder(names, ctx))}`);
   }
   // Build `el` from explicit {name: expr} that aren't handlers
   const elProps: string[] = [];
-  for (const p of t.props) {
+  for (const p of block) {
     if (isNotPropData(t.name, p.name, true)) continue;
     if (p.name === "aria" || p.name.startsWith("aria-")) continue;
-    elProps.push(`${jsProperty(p.name)}: ${jsOfExpr(p.value, ctx)}`);
+    elProps.push(`${fieldKey(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
   // A named argument carries the same prop as the block form of the same name.
   // The spec writes the two interchangeably — `button(text="Log in",
@@ -188,7 +234,7 @@ export function propsFor(
   // are folded rather than enumerated away: a list of "what each kind already
   // took" would have to stay in step with forty lowering cases, and the day it
   // fell behind, a prop would go missing exactly the way this fixes.
-  const written = new Set(t.props.map((p) => p.name));
+  const written = new Set(block.map((p) => p.name));
   for (const a of t.args) {
     if (!a.name || written.has(a.name)) continue;
     if (isNotPropData(t.name, a.name, true)) continue;
@@ -198,7 +244,7 @@ export function propsFor(
     const js = jsOfExpr(a.value, ctx);
     if (collectAria(a.name, () => js, aria)) continue;
     entries.push(`${jsProperty(a.name)}: ${js}`);
-    elProps.push(`${jsProperty(a.name)}: ${js}`);
+    elProps.push(`${fieldKey(a.name)}: ${js}`);
   }
   const ariaJs = mergedAria(aria);
   if (ariaJs) {

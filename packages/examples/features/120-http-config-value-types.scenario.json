@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been loaded yet",
+      "expect": { "noErrors": true, "state": { "quote": "" } }
+    },
+    {
+      "label": "the click makes the request, and its answer renders",
+      "do": { "clickText": "Load quote" },
+      "expect": {
+        "noErrors": true,
+        "state": { "quote": "Simplicity is a great virtue." },
+        "domIncludes": ["quote: Simplicity is a great virtue."]
+      }
+    }
+  ],
+  "effects": {
+    "fetchQuote": [{ "outcome": "ok", "value": "Simplicity is a great virtue." }]
+  }
+}

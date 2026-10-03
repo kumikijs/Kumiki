@@ -23,8 +23,10 @@ export {
   plural,
   runFixFromTest,
   type SkipReason,
+  type TestPatchBlock,
 } from "./fix.ts";
 export {
+  clearStorage,
   type HttpFixture,
   type HttpResponseFixture,
   httpRequests,
@@ -34,6 +36,7 @@ export {
 } from "./harness.ts";
 export {
   addDef,
+  type DefSpec,
   describeEdit,
   type EditReport,
   editDef,

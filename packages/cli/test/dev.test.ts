@@ -10,7 +10,7 @@
 //   - POST /__kumiki/episode with --episode-log appends one JSONL line per
 //     posted body, matching the `kumiki run --episode-log` format.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -24,14 +24,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDevServer } from "../src/dev.ts";
-
-const CLI_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "kumiki.ts");
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 function runCli(args: string[]): { out: string; code: number } {
   try {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     return { out, code: 0 };
@@ -239,10 +237,10 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
-// CLI dispatch tests spawn `npx tsx kumiki.ts ...` so the first run pays the
-// tsx cold-start cost. Local runs were ~1s/test; CI cold start pushed the
-// first invocation past vitest's 5s default. Give the whole suite a 30s
-// per-test budget so cold-start drift doesn't flake builds.
+// CLI dispatch tests spawn `node --import tsx kumiki.ts ...` so the first run
+// pays the tsx cold-start cost. CI cold start once pushed the first
+// invocation past vitest's 5s default. Give the whole suite a 30s per-test
+// budget so cold-start drift doesn't flake builds.
 const DISPATCH_TIMEOUT_MS = 30_000;
 
 describe("kumiki dev — CLI dispatch argument parsing", () => {
@@ -292,6 +290,41 @@ describe("kumiki dev — CLI dispatch argument parsing", () => {
       const { code, out } = runCli(["dev", "fake.kumiki", "--episode-log"]);
       expect(code).toBe(2);
       expect(out).toMatch(/Usage: kumiki dev/);
+    },
+    DISPATCH_TIMEOUT_MS,
+  );
+
+  // Every case above exits 2 in argument validation, before the action runs.
+  // This one reaches it: the action loads the server module with a dynamic
+  // `import()`, which in the published build resolves to a separate chunk, so
+  // only a start that gets as far as listening shows the specifier resolves.
+  it(
+    "starts the server when the arguments are valid",
+    async () => {
+      // `--port 0` takes any free port; only a non-zero port is strict.
+      const child = spawn(process.execPath, [...CLI_ARGV, "dev", COUNTER, "--port", "0"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      try {
+        const banner = await new Promise<string>((resolveBanner, reject) => {
+          let out = "";
+          let err = "";
+          child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+            out += chunk;
+            const line = /kumiki dev — http:\/\/\S+/.exec(out);
+            if (line) resolveBanner(line[0]);
+          });
+          child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+            err += chunk;
+          });
+          child.on("exit", (code) => {
+            reject(new Error(`kumiki dev exited ${code} before listening:\n${out}${err}`));
+          });
+        });
+        expect(banner).toMatch(/^kumiki dev — http:\/\//);
+      } finally {
+        child.kill();
+      }
     },
     DISPATCH_TIMEOUT_MS,
   );

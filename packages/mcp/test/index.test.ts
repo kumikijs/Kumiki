@@ -3,6 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lockDef } from "@kumikijs/cli";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -279,6 +280,58 @@ describe("kumiki_auto_patch", () => {
     expect(after).toContain("count := count + 1");
   });
 
+  it("serialises a gate refusal as compile-blocked, naming what the patch would have added", {
+    timeout: 30000,
+  }, async () => {
+    // `cnt` has one close name, `cn`, and `cn` is a `Text` in an `Int` sum —
+    // so the repair resolves the E0103 it was offered for and introduces an
+    // E0201. The gate refuses it; the wire has to say which of its conditions
+    // that was, because a client reading `reason` alone decides from it.
+    const file = join(workdir, "repair-introduces.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot n  : Int  = 0",
+        'slot cn : Text = ""',
+        "reducer bump on=ui.click(Btn) do= n := cnt + 1",
+        'tile Btn  = button(text="go")',
+        "tile Page = column(Btn, text(n))",
+        "test bumps =",
+        "    reducer-test bump",
+        "        given  = {slots: {n: 0}, event: {type: ui.click, target: Btn}}",
+        "        expect = {slots: {n: 9}}",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> Page, "/404" -> Page}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const original = readFileSync(file, "utf8");
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_auto_patch", {
+        path: file,
+        testName: "bumps",
+        apply: true,
+      });
+      const parsed = JSON.parse(out) as {
+        status: string;
+        compileFixes?: number;
+        compileErrors?: { code: string }[];
+        blocked?: { reason: string; introduced?: { code: string }[] };
+      };
+      expect(parsed.status).toBe("compile-blocked");
+      expect(parsed.blocked?.reason).toBe("introduced");
+      expect(parsed.blocked?.introduced?.map((d) => d.code)).toEqual(["E0201"]);
+      // The file's own diagnostics, kept apart from what the refused patch
+      // would have added — a client that merged them would report a
+      // diagnostic that is not in the file.
+      expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+      expect(parsed.compileFixes).toBeUndefined();
+    });
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
   it("dry-run reports 'proposed' (or already-pass) without writing", {
     timeout: 30000,
   }, async () => {
@@ -326,15 +379,16 @@ describe("kumiki_auto_patch", () => {
     expect(after).not.toContain('greeting := "world"');
   });
 
-  it("applied variant reports regressed test names when the patch breaks another test", {
+  it("refuses a patch that would break another test, and leaves the file alone", {
     timeout: 30000,
   }, async () => {
     const file = join(workdir, "regression.kumiki");
     copyFileSync(FIX_REGRESSION, file);
+    const original = readFileSync(file, "utf8");
     await withClient(async (client) => {
-      // Test A wants message="planet", impl says "world" — Tier-2 replaces
-      // "world" with "planet" everywhere outside test bodies. Test B was
-      // asserting on "world" so it now fails: `regressed` must list "B".
+      // Test A wants message="planet", impl says "world" — Tier-2 would
+      // replace "world" with "planet". Test B asserts on "world", so the
+      // patch would make it fail: the gate refuses it and names "B".
       const out = await callTool(client, "kumiki_auto_patch", {
         path: file,
         testName: "A",
@@ -343,16 +397,115 @@ describe("kumiki_auto_patch", () => {
       const parsed = JSON.parse(out) as {
         ok: boolean;
         status: string;
-        pass: boolean;
-        regressed: string[];
+        patch: { code: string };
+        blocked: { reason: string; regressed?: string[] };
       };
-      expect(parsed.status).toBe("applied");
-      expect(parsed.pass).toBe(true);
-      expect(parsed.regressed).toEqual(["B"]);
-      // ok:false because a regression was introduced, even though the
-      // named test now passes.
+      expect(parsed.status).toBe("test-blocked");
       expect(parsed.ok).toBe(false);
+      expect(parsed.patch.code).toBe("TEST");
+      expect(parsed.blocked).toEqual({ reason: "regressed", regressed: ["B"] });
     });
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  const REFUSED_TAIL = [
+    'tile Btn1 = button(text="+")',
+    "tile App = column(Btn1)",
+    "app A",
+    "    caps   = []",
+    '    routes = {"/" -> App, "/404" -> App}',
+    "    init   = []",
+  ];
+
+  it("serialises an `introduced` refusal's errors as diagnostics", {
+    timeout: 30000,
+  }, async () => {
+    // The unique `5` is a refinement bound; replacing it with `1` puts the
+    // lower bound above the upper one (E0804).
+    const file = join(workdir, "introduced.kumiki");
+    writeFileSync(
+      file,
+      [
+        "type Small = nominal Int where between(2, 5)",
+        "slot count : Int = 0",
+        "slot pick : Small = 2",
+        "reducer inc on=ui.click(Btn1) do= count := 2 + 3",
+        ...REFUSED_TAIL,
+        "test sets-one =",
+        "    reducer-test inc",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}",
+        "        expect = {slots: {count: 1}, effects: []}",
+        "",
+      ].join("\n"),
+    );
+    const original = readFileSync(file, "utf8");
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_auto_patch", {
+        path: file,
+        testName: "sets-one",
+        apply: true,
+      });
+      const parsed = JSON.parse(out) as {
+        status: string;
+        blocked: { reason: string; introduced: Array<Record<string, unknown>> };
+      };
+      expect(parsed.status).toBe("test-blocked");
+      expect(parsed.blocked.reason).toBe("introduced");
+      // The wire `Diagnostic` shape — flat `line` / `col`, not the compiler's `pos`.
+      expect(parsed.blocked.introduced).toHaveLength(1);
+      expect(Object.keys(parsed.blocked.introduced[0] ?? {}).sort()).toEqual([
+        "code",
+        "col",
+        "kind",
+        "line",
+        "message",
+      ]);
+      expect(parsed.blocked.introduced[0]).toMatchObject({ code: "E0804", line: 1 });
+    });
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("serialises a `still-fails` refusal with the test's result", {
+    timeout: 30000,
+  }, async () => {
+    // The one token `1` is `other`'s; replacing it leaves the test failing.
+    const file = join(workdir, "still-fails.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot count : Int = 0",
+        "slot other : Int = 1",
+        "fn step() -> Int = 3 - 2",
+        "reducer inc on=ui.click(Btn1) do= count := count + step()",
+        ...REFUSED_TAIL,
+        "test inc-adds-two =",
+        "    reducer-test inc",
+        "        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}",
+        "        expect = {slots: {count: 2}, effects: []}",
+        "",
+      ].join("\n"),
+    );
+    const original = readFileSync(file, "utf8");
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_auto_patch", {
+        path: file,
+        testName: "inc-adds-two",
+        apply: true,
+      });
+      const parsed = JSON.parse(out) as {
+        status: string;
+        blocked: { reason: string; failingTest: Record<string, unknown> };
+      };
+      expect(parsed.status).toBe("test-blocked");
+      expect(parsed.blocked.reason).toBe("still-fails");
+      expect(parsed.blocked.failingTest).toMatchObject({
+        name: "inc-adds-two",
+        pass: false,
+        diffAt: "slots.count",
+        leaf: { expected: 2, actual: 1 },
+      });
+    });
+    expect(readFileSync(file, "utf8")).toBe(original);
   });
 
   it("returns a JSON error envelope for a bad path", async () => {
@@ -672,6 +825,42 @@ describe("failure reporting", () => {
   });
 });
 
+// The editing tools call the CLI's mutators, so an op another agent's lock
+// covers is refused here exactly as at the CLI — including a definition the
+// body creates rather than the one the tool was named with.
+describe("ownership locks", () => {
+  let workdir: string;
+  let prevAuthor: string | undefined;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-lock-"));
+    prevAuthor = process.env.KUMIKI_AUTHOR;
+  });
+  afterEach(() => {
+    if (prevAuthor === undefined) delete process.env.KUMIKI_AUTHOR;
+    else process.env.KUMIKI_AUTHOR = prevAuthor;
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  it("kumiki_replace is refused when its body creates a locked definition", async () => {
+    const file = join(workdir, "c.kumiki");
+    copyFileSync(COUNTER, file);
+    lockDef(file, "agent:a", "slot.todos*,reducer.*");
+    const source = readFileSync(file, "utf8");
+    process.env.KUMIKI_AUTHOR = "agent:b";
+    await withClient(async (client) => {
+      const res = await client.callTool({
+        name: "kumiki_replace",
+        arguments: { path: file, name: "slot.count", body: "N = 0\n\nslot todosX : Int = 0" },
+      });
+      expect(res.isError).toBe(true);
+      const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+      expect(body).toMatch(/lock violation: slot\.todosX is locked by agent:a/);
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(fs.existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+});
+
 // `isError` follows one rule so no tool needs its own: it is set exactly when
 // the matching CLI verb would exit non-zero. These tools report a failed build
 // / smoke / scenario as a sentence with no machine-readable field beside it,
@@ -734,6 +923,23 @@ describe("isError mirrors the CLI's exit code", () => {
     expect(await flag("kumiki_run_scenario", { path: FIX_COUNTER_TESTS, scenario: passing })).toBe(
       false,
     );
+  });
+
+  // As at the CLI (`exit-codes.test.ts`): the marker and the reason line are
+  // what an agent reads, and `isError` alone would stay green if a reporter
+  // forgot the fault channel while the body still said `[ok]`.
+  it("marks a step whose action could not run as FAIL, and says why", async () => {
+    // No `expect`: the failed action is the only thing that can fail this step.
+    const scenario = { steps: [{ do: { click: "#typo" } }] };
+    expect(await flag("kumiki_run_scenario", { path: FIX_COUNTER_TESTS, scenario })).toBe(true);
+    await withClient(async (client) => {
+      const out = await callTool(client, "kumiki_run_scenario", {
+        path: FIX_COUNTER_TESTS,
+        scenario,
+      });
+      expect(out).toContain("[FAIL] step 0: click #typo");
+      expect(out).toContain("action failed: no element matching selector #typo");
+    });
   });
 
   it("flags a fix that leaves the file with errors, in either mode", async () => {

@@ -1,18 +1,33 @@
+import type { TypeEnv } from "../assignable.ts";
 import type { AppDef, EffectDef, ReducerDef } from "../ast.ts";
-import { TILE_FAMILY, type TileFamily } from "../builtins.ts";
-import { tileFamilyVar, tilePatcherFamilyVar } from "./context.ts";
+import {
+  EFFECT_HANDLERS_SHARED,
+  isPerTileFamily,
+  PER_TILE_FAMILY_SHARED,
+  TILE_FAMILY,
+  type TileFamily,
+  tileModule,
+} from "../builtins.ts";
+import { tileFamilyVar, tilePatcherFamilyVar, tilePatcherVar, tileVar } from "./context.ts";
+import { type StorageHandler, storageHandlerOf } from "./emit-effect.ts";
 import { collectEmits } from "./emit-reducer.ts";
 
 type IndexedHandler = "indexedRead" | "indexedWrite" | "indexedDelete";
 
 export type RuntimeUsage = {
-  /** Tile family modules the app renders, in stable order. */
+  /** Tile family modules the app renders whole, in stable order. */
   families: TileFamily[];
+  /**
+   * Tile kinds the app renders that ship one module each (#71), in stable
+   * order. Disjoint from `families`: a kind is in exactly one of the two,
+   * according to `PER_TILE_FAMILIES`.
+   */
+  tiles: string[];
   /** True when the app actually routes — see the rules below. */
   router: boolean;
   /** The storage effect handlers referenced by generated invokes
    * (localStorage + sessionStorage share the `effects-storage` module). */
-  storage: ("storageRead" | "storageWrite" | "sessionRead" | "sessionWrite")[];
+  storage: StorageHandler[];
   /** The IndexedDB effect handlers referenced by generated invokes. */
   indexed: IndexedHandler[];
   http: boolean;
@@ -22,6 +37,16 @@ export type RuntimeUsage = {
   /** Runtime module file basenames the generated imports reference. */
   modules: string[];
 };
+
+/** The order the storage handlers are imported in, so the header is stable. */
+const STORAGE_HANDLER_ORDER: StorageHandler[] = [
+  "storageRead",
+  "storageWrite",
+  "storageClear",
+  "sessionRead",
+  "sessionWrite",
+  "sessionClear",
+];
 
 export const TILE_FAMILY_ORDER: TileFamily[] = [
   "layout",
@@ -48,6 +73,7 @@ export function analyzeRuntimeUsage(
   app: AppDef,
   reducers: ReducerDef[],
   effects: EffectDef[],
+  env: TypeEnv,
   usedTiles: Set<string>,
   includeTests: boolean,
   hasTests: boolean,
@@ -56,9 +82,16 @@ export function analyzeRuntimeUsage(
   for (const r of reducers) for (const e of collectEmits(r.do)) emits.add(e);
   for (const e of app.init) if (e.kind === "Call") emits.add(e.callee);
 
-  const families = TILE_FAMILY_ORDER.filter((f) =>
-    [...usedTiles].some((t) => TILE_FAMILY[t] === f),
+  // A family is shipped whole only when it is not one of the per-tile ones;
+  // its tiles are listed individually otherwise. `usedTiles` can name a tile
+  // the table does not know — a user-defined tile reaches codegen by name — and
+  // what keeps those out of the module list is the `TILE_FAMILY[t]` lookup
+  // returning `undefined`, which no family and no per-tile family matches.
+  // Neither filter may be dropped for being "obviously" total.
+  const families = TILE_FAMILY_ORDER.filter(
+    (f) => !isPerTileFamily(f) && [...usedTiles].some((t) => TILE_FAMILY[t] === f),
   );
+  const tiles = [...usedTiles].filter((t) => isPerTileFamily(TILE_FAMILY[t])).sort();
   const router =
     app.caps.some((c) => c.startsWith("nav.")) ||
     emits.has("navigate") ||
@@ -68,11 +101,8 @@ export function analyzeRuntimeUsage(
     usedTiles.has("link") ||
     usedTiles.has("route-outlet") ||
     app.routes.some((r) => r.tile.startsWith(">>") || (r.path !== "/" && r.path !== "/404"));
-  const storage: ("storageRead" | "storageWrite" | "sessionRead" | "sessionWrite")[] = [];
-  if (effects.some((e) => e.cap === "storage.read")) storage.push("storageRead");
-  if (effects.some((e) => e.cap === "storage.write")) storage.push("storageWrite");
-  if (effects.some((e) => e.cap === "session.read")) storage.push("sessionRead");
-  if (effects.some((e) => e.cap === "session.write")) storage.push("sessionWrite");
+  const handlers = new Set(effects.map((e) => storageHandlerOf(e, env)));
+  const storage = STORAGE_HANDLER_ORDER.filter((h) => handlers.has(h));
   const indexed: IndexedHandler[] = [];
   // `indexed.read` is dispatched at runtime by input shape (point vs range
   // query), so cap → one handler is enough. Spec §6.7.4.
@@ -94,11 +124,22 @@ export function analyzeRuntimeUsage(
     ...(storage.length > 0 ? ["effects-storage"] : []),
     ...(indexed.length > 0 ? ["effects-indexed"] : []),
     ...(http ? ["effects-http"] : []),
+    ...(storage.length > 0 || indexed.length > 0 || http ? [EFFECT_HANDLERS_SHARED] : []),
     ...(toast ? ["effects-toast"] : []),
     ...(confirm ? ["effects-confirm"] : []),
     ...families.map((f) => `tiles-${f}`),
+    ...tiles.map((t) => tileModule(t) as string),
+    // A per-tile family's shared module rides along once, for any of its tiles.
+    ...[...new Set(tiles.map((t) => PER_TILE_FAMILY_SHARED[TILE_FAMILY[t] as TileFamily]))].filter(
+      (m): m is string => m !== undefined,
+    ),
   ];
-  return { families, router, storage, indexed, http, toast, confirm, testkit, modules };
+  return { families, tiles, router, storage, indexed, http, toast, confirm, testkit, modules };
+}
+
+/** A tile kind as an object key: quoted only when it is not an identifier. */
+function tileKey(kind: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(kind) ? kind : JSON.stringify(kind);
 }
 
 /**
@@ -133,16 +174,25 @@ export function emitImportHeader(
         `import { ${tileFamilyVar(f)}, ${tilePatcherFamilyVar(f)} } from "${dir}/tiles-${f}.js";`,
       );
     }
+    for (const t of usage.tiles) {
+      header.push(
+        `import { ${tileVar(t)}, ${tilePatcherVar(t)} } from "${dir}/${tileModule(t)}.js";`,
+      );
+    }
     header.push("");
     header.push(
       usage.testkit ? "const _s = { ..._stdlibCore, ..._stdlibTest };" : "const _s = _stdlibCore;",
     );
-    header.push(
-      `const _tiles = { ${usage.families.map((f) => `...${tileFamilyVar(f)}`).join(", ")} };`,
-    );
-    header.push(
-      `const _patchers = { ${usage.families.map((f) => `...${tilePatcherFamilyVar(f)}`).join(", ")} };`,
-    );
+    const tileEntries = [
+      ...usage.families.map((f) => `...${tileFamilyVar(f)}`),
+      ...usage.tiles.map((t) => `${tileKey(t)}: ${tileVar(t)}`),
+    ];
+    const patcherEntries = [
+      ...usage.families.map((f) => `...${tilePatcherFamilyVar(f)}`),
+      ...usage.tiles.map((t) => `${tileKey(t)}: ${tilePatcherVar(t)}`),
+    ];
+    header.push(`const _tiles = { ${tileEntries.join(", ")} };`);
+    header.push(`const _patchers = { ${patcherEntries.join(", ")} };`);
     header.push("");
   } else {
     // Monolith mode: ONE import line — `inlineRuntime` (bundle: true) strips

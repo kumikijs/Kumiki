@@ -321,6 +321,88 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("makes a text builtin's text= its positional content (E0129)", () => {
+    // `heading(text=title)` renders nothing: `text=` is a prop on a text
+    // builtin. With no positional argument written, dropping `text=` makes the
+    // value the content, and the patched file has to compile.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-content-"));
+    const file = join(dir, "content.kumiki");
+    writeFileSync(
+      file,
+      `slot title : Text = "Hi"
+tile App = column(heading(level=2, text=title), text("A", "B"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.description)).toEqual([
+      "make the text= value the positional content at 2:36",
+    ]);
+    expect(skipped.map((sk) => sk.reason)).toEqual(["e0129-dropped-argument-has-no-single-repair"]);
+    const patched = patches.reduce((t, p) => p.apply(t), readFileSync(file, "utf8"));
+    expect(patched).toContain("heading(level=2, title)");
+    expect(check(parse(lex(patched))).map((e) => e.code)).toEqual(["E0129"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("tells the E0129 shapes apart by the diagnostic's field, not its message", () => {
+    // Which shape a diagnostic is decides repair vs skip. Reworded messages
+    // must plan exactly what the real ones do.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-content-"));
+    const file = join(dir, "content.kumiki");
+    writeFileSync(
+      file,
+      `slot title : Text = "Hi"
+tile App = column(heading(level=2, text=title), text("A", "B"), label(text="X", "Y"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    const plan = (es: typeof errors) => {
+      const { patches, skipped } = planFixesExplained(store, es);
+      return { patches: patches.map((p) => p.description), skipped: skipped.map((s) => s.reason) };
+    };
+    const real = plan(errors);
+    expect(real.patches).toHaveLength(2);
+    expect(real.skipped).toEqual(["e0129-dropped-argument-has-no-single-repair"]);
+    expect(plan(errors.map((e) => ({ ...e, message: "reworded" })))).toEqual(real);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("removes a text= that a positional argument shadows (E0129)", () => {
+    // `label(text="X", "Y")` renders "Y": `text=` is read only when no
+    // positional argument is written. Removing it changes nothing rendered,
+    // wherever in the call it is written.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-shadowed-"));
+    const file = join(dir, "shadowed.kumiki");
+    writeFileSync(
+      file,
+      `tile A = label(text="X", "Y")
+tile B = link(to="/x", "Y", text=("X" + "Z"))
+tile App = column(A(), B())
+app P
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const result = applyFixPlan(file, undefined);
+    expect(result.applied).toBe(2);
+    expect(result.remaining).toEqual([]);
+    expect(readFileSync(file, "utf8")).toContain(
+      `tile A = label("Y")\ntile B = link(to="/x", "Y")\n`,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("rewrites an out-of-scope $route to the slot that holds it (E0119)", () => {
     // The two name the same route. The bind is only filled in for a route
     // lifecycle reducer, and the slot is readable from all of them — so the
@@ -429,40 +511,6 @@ app A
     expect(result.applied).toBe(1);
     expect(result.remaining).toEqual([]);
     expect(readFileSync(file, "utf8")).toContain("on=ui.click(Button)");
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("names what the gate saw when a diagnostic it cannot repair simply moved", () => {
-    // The gate reads a diagnostic as `code@line:col`, so an unrepairable one to
-    // the right of a repair that lands looks introduced. Ordering cannot reach
-    // this — the message must at least say what it saw, because "it would have
-    // introduced new errors" is false here and sends the reader looking for an
-    // error that does not exist.
-    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-moved-"));
-    const file = join(dir, "moved.kumiki");
-    const source = `slot seen : Text = ""
-reducer clicked on=ui.click(B) do= seen := $route.path + qqqqqqqqqq
-tile B = button(text="go")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    writeFileSync(file, source);
-    const result = applyFixPlan(file, undefined);
-    expect(result.applied).toBe(0);
-    expect(readFileSync(file, "utf8")).toBe(source);
-    expect(result.blocked?.reason).toBe("introduced");
-    if (result.blocked?.reason === "introduced") {
-      // The same E0103 the file already had, one column to the left.
-      expect(result.blocked.introduced.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toEqual([
-        "E0103@2:57",
-      ]);
-      expect(result.remaining.map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)).toContain(
-        "E0103@2:58",
-      );
-    }
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -783,12 +831,11 @@ describe("planTestPatch: deterministic literal repair from a failing test", () =
   });
 });
 
-// `iterStringLiterals` is the shared regex helper feeding both
-// `stringLiteralSpans` (numeric-hit rejection) and the partial-string tier.
+// `iterStringLiterals` is the regex helper feeding the partial-string tier.
 // The tiers exercise it indirectly, but a direct microtest guards the tricky
 // shapes (consecutive literals, escaped quotes, empty body) from refactor
 // regressions in the single-source `/"(?:[^"\\]|\\.)*"/g` regex.
-describe("iterStringLiterals: shared string-literal walker", () => {
+describe("iterStringLiterals: string-literal walker", () => {
   it("returns spans and raw bodies for a lone literal", () => {
     const lits = iterStringLiterals('x = "hello"');
     expect(lits).toHaveLength(1);
@@ -983,8 +1030,7 @@ describe("planTestPatch: relaxed repair tiers", () => {
   it("does not match a numeric leaf inside a string literal (I4)", () => {
     // The failing reducer emits actual=-1; a `text="-1"` on a tile
     // dependency contains the same `-1` characters. The exact-literal tier
-    // must NOT rewrite inside the string — that's the very defense the
-    // `stringLiteralSpans` filter provides.
+    // must NOT rewrite inside the string — no token starts there.
     const { source, store } = writeAndLoad(
       [
         "slot count : Int = 0",
@@ -1020,13 +1066,9 @@ describe("planTestPatch: relaxed repair tiers", () => {
     // Sibling of the "does not match a numeric leaf inside a string literal"
     // test above, at the *tightest* possible fit: the string literal `"7"`
     // occupies exactly 3 source chars (`"`, `7`, `"`), so the numeric actual
-    // `7` lands at digit offset `lo+1` and ends at `hi-1` — the smallest
-    // containment case. `combinedExcluded` is only exercised for
-    // non-string leaves (numeric / boolean `actualLit`s never contain `"`),
-    // so `>=`/`<=` and `>`/`<` are behaviorally identical here; the strict
-    // form is a documentation choice, not a behavior change. This test
-    // guards against future refactors that widen `combinedExcluded` to
-    // string leaves or narrow the filter past the body edges.
+    // `7` starts one past the opening quote and ends one before the closing
+    // quote — the smallest containment case: the digit is neither where a
+    // token starts (the string's opening quote is) nor where one ends.
     const { source, store } = writeAndLoad(
       [
         "slot count : Int = 0",
@@ -1934,7 +1976,7 @@ describe("applyFixPlan: regression gate", () => {
   });
 });
 
-// `writeFileSync` at three sites in fix.ts must not leak EACCES / ENOSPC /
+// `writeFileSync` at both sites in fix.ts must not leak EACCES / ENOSPC /
 // EBUSY as raw stacks. Callers of `applyFixPlan` and `runFixFromTest` should
 // observe I/O failure as structured return values — symmetric with the
 // existing `parseError` / `regressionBlocked` / `testRunError` paths — and
@@ -2748,6 +2790,24 @@ describe("planFixesExplained: skip-reason classification", () => {
     expect(skipped[0]?.reason).toBe("e0117-no-close-type");
   });
 
+  it("e0124-type-arguments-unknown: the arguments a constructor wants are the author's to choose", () => {
+    // `List.fresh()` could become `IntList.fresh()` only by picking an element
+    // type, and nothing in the program says which one was meant — so the skip
+    // is named rather than falling through to `no-repair-branch`, which would
+    // read as a branch nobody has written yet.
+    const store = writeAndLoad(
+      ["slot l : List(Int) = List.fresh()", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const { patches, skipped } = planFixesExplained(store, [
+      synth(
+        "E0124",
+        'Type "List" takes 1 type argument, so it is not a type on its own — "List.fresh" needs one that takes none',
+      ),
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped[0]?.reason).toBe("e0124-type-arguments-unknown");
+  });
+
   it("e0216-quoted-name-extract-failed: E0216 message without both quoted names", () => {
     const store = writeAndLoad('tile A = heading("hi")\n');
     const { skipped } = planFixesExplained(store, [synth("E0216", 'Variant "Zork" is unknown')]);
@@ -3304,9 +3364,9 @@ describe("planTestPatchExplained: skip-reason classification", () => {
 
 describe("FixFromTestOutcome.reason propagation and printer", () => {
   it("runFixFromTest: Tier-1 lands both repairs when one line holds two", async () => {
-    // The tier-1 loop composes the same plan `applyFixPlan` does, and writes
-    // without a regression gate — so a repair that moved another's column
-    // failed silently here instead of rolling back.
+    // A repair that moved another's column would leave the second declining
+    // silently. The count is the number that changed the source, so half a
+    // plan cannot be reported as a whole one.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-tier1-two-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(
@@ -3330,7 +3390,7 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
     const outcome = await runFixFromTest(file, "t", true);
     // Both, not one: a plan that lands half its patches leaves the file still
     // holding the diagnostic it reported as repaired.
-    expect(outcome.compileFixes).toBe(2);
+    expect(outcome).toHaveProperty("compileFixes", 2);
     expect(readFileSync(file, "utf8")).toContain("seen := route.path == route.pattern");
     rmSync(dir, { recursive: true, force: true });
   });
@@ -3415,9 +3475,9 @@ describe("FixFromTestOutcome.reason propagation and printer", () => {
     // throws instead of reporting. Reaching it through a *program* means
     // relying on something the checker does not catch — this test used to use
     // an unbound identifier in a test body, which is E0103 now, and the next
-    // candidate (a tile-test that omits the `in` its tile declares) is itself
-    // filed as a gap. So the throw comes from the runner rather than from a
-    // program, and no future check can take it away.
+    // candidate (a tile-test that omits the `in` its tile declares) is E0213
+    // now too. So the throw comes from the runner rather than from a program,
+    // and no future check can take it away.
     const dir = mkdtempSync(join(tmpdir(), "kumiki-runner-throw-"));
     const file = join(dir, "in.kumiki");
     writeFileSync(

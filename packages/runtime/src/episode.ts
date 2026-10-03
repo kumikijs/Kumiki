@@ -28,10 +28,28 @@ export type EpisodeTrigger = {
 export type SlotDiff = { name: string; before: unknown; after: unknown };
 
 /**
- * Where a caught throw originated in the runtime's staging (docs/spec/runtime.md
- * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, and `hydrate`;
- * `effect` / `capability` / `unknown` are reserved values so consumers can
- * exhaustive-switch without a fallthrough case as future callsites are wired in.
+ * The builtins whose answer comes from outside the program: the clock
+ * (`now`, stdlib.md §2.4.2), the random source (`random()`, §2.4.4), the id
+ * generator (`<T>.fresh()`, §2.4.1) and the OS colour-scheme preference
+ * (`prefers-dark()`, style.md §4.6.1). Nothing a slot holds can derive one,
+ * which is why they are the reads an episode has to carry for a replay to be
+ * the same run.
+ */
+export type EnvReadKind = "now" | "random" | "fresh-id" | "prefers-dark";
+
+/** One environment read and what it answered (runtime.md §10.5.1). */
+export type EnvRead = { kind: EnvReadKind; value: unknown };
+
+/**
+ * What the runtime was doing when a panic was reported (docs/spec/runtime.md
+ * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, `hydrate`
+ * and `capability`; `effect` and `unknown` stay reserved values so consumers
+ * can exhaustive-switch without a fallthrough case as future callsites are
+ * wired in.
+ *
+ * `capability` is the one category for something nothing threw: a refused
+ * effect (§10.4.2) is a program that cannot work rather than a caught error,
+ * so its record carries no `stack` and no `cause`.
  */
 export type PanicCategory =
   | "reducer"
@@ -54,6 +72,13 @@ export type EpisodeStep =
       name: string;
       "slot-diffs": SlotDiff[];
       emits: string[];
+      /**
+       * What the reducer body read from the environment while it ran, in the
+       * order it asked. Omitted when the body read nothing — which is most
+       * reducers, and keeps a log written before this field existed identical
+       * to one written now.
+       */
+      "env-reads"?: EnvRead[];
       ts: number;
     }
   | { kind: "effect-start"; name: string; args: unknown; ts: number }
@@ -76,12 +101,26 @@ export type EpisodeStep =
       message: string;
       /** Human-readable source label (`reducer "addTodo"`, `"render"`, ...). */
       location?: string;
+      /**
+       * The reducer whose body threw, when the throw came from one. Present so
+       * a replay can key the step's `env-reads` the same way it keys a
+       * completed `reducer` step's — a panic step's `location` is prose.
+       */
+      name?: string;
+      /**
+       * What that body read from the environment before it threw. Without it,
+       * the episode a user attaches to a bug report — the one that crashed —
+       * is the one a replay re-rolls its way past (§10.5.1).
+       */
+      "env-reads"?: EnvRead[];
       /** `Error.stack` of the caught throw, when available. */
       stack?: string;
       /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
       cause?: PanicCauseLink[];
       /**
-       * Where the runtime caught the throw. Omitted in episode logs written
+       * What the runtime was doing when the panic was reported. For
+       * `capability` that is a refusal rather than a caught throw, so the step
+       * carries no `stack` and no `cause`. Omitted in episode logs written
        * before this field existed; readers should treat absence as
        * {@link PanicCategory} `"unknown"`.
        */
@@ -144,8 +183,17 @@ export type EpisodeLogger = {
    * when its last `recordEffectEnd` fires.
    */
   endTrigger(): void;
-  /** Append a `{kind: "reducer", ...}` step to the open episode. */
-  recordReducer(name: string, slotDiffs: SlotDiff[], emits: string[]): void;
+  /**
+   * Append a `{kind: "reducer", ...}` step to the open episode. `envReads` is
+   * what the body read from the environment (§10.5.1); an empty or absent list
+   * writes no `env-reads` field.
+   */
+  recordReducer(
+    name: string,
+    slotDiffs: SlotDiff[],
+    emits: string[],
+    envReads?: readonly EnvRead[],
+  ): void;
   /**
    * Append a `{kind: "effect-start", ...}` step. The returned token lets the
    * caller hand the matching `effect-end` back to the SAME episode, even after
@@ -196,14 +244,32 @@ export type EpisodeLogger = {
    * object is written as-is to the `panic` step (except for the `ts`, which the
    * logger stamps). `stack` / `cause` / `category` are optional so callers on
    * older paths (or ad-hoc tests) can keep passing only `{message, location?}`.
+   *
+   * `token` names the episode that claimed an `effect-start`, resolved the
+   * same way `recordEffectEnd` resolves it and falling back to the episode in
+   * focus. A deferred-policy launch (debounce, queue) fires from a timer or a
+   * promise tail, long after `endTrigger` balanced out, so the stack is empty
+   * and only the token can say which episode the panic belongs to (§10.5.1).
+   *
+   * Returns the id of the episode the step landed on, or `undefined` when
+   * there was none — which is the id `PanicInfo.episode-id` must carry, by
+   * construction rather than by a second lookup that could name a different
+   * episode.
    */
-  recordPanic(info: {
-    message: string;
-    location?: string | undefined;
-    stack?: string | undefined;
-    cause?: PanicCauseLink[] | undefined;
-    category?: PanicCategory | undefined;
-  }): void;
+  recordPanic(
+    info: {
+      message: string;
+      location?: string | undefined;
+      stack?: string | undefined;
+      cause?: PanicCauseLink[] | undefined;
+      category?: PanicCategory | undefined;
+      /** The reducer that threw, when the throw came from a reducer body. */
+      name?: string | undefined;
+      /** What that body read from the environment before it threw (§10.5.1). */
+      envReads?: readonly EnvRead[] | undefined;
+    },
+    token?: string,
+  ): string | undefined;
   /**
    * Inject an already-completed episode at the tail of the memory ring (and
    * the localStorage mirror, when enabled). Used by SSR hydration to seat
@@ -222,6 +288,14 @@ export type EpisodeLogger = {
    * episode or join the existing one.
    */
   hasOpenEpisode(): boolean;
+  /**
+   * The id of the episode currently in focus, or `undefined` when none is —
+   * the same question `hasOpenEpisode` answers, with the answer a caller can
+   * name. `PanicInfo.episode-id` (lifecycle.md §7.2.3) is what needs it: a
+   * panic is the one event a program is handed while the episode that produced
+   * it is still open, and the id is its join to what `kumiki replay` reads.
+   */
+  currentId(): string | undefined;
 };
 
 /**
@@ -337,7 +411,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         commit(ep);
       }
     },
-    recordReducer(name, slotDiffs, emits) {
+    recordReducer(name, slotDiffs, emits, envReads) {
       const ep = topEpisode();
       if (!ep) return;
       ep.steps.push({
@@ -345,6 +419,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         name,
         "slot-diffs": slotDiffs,
         emits,
+        ...(envReads !== undefined && envReads.length > 0 ? { "env-reads": envReads.slice() } : {}),
         ts: now(),
       });
     },
@@ -412,22 +487,30 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       persistLocalStorage();
       opts.onEpisode?.(ep);
     },
-    recordPanic(info) {
-      const ep = topEpisode();
-      if (!ep) return;
+    recordPanic(info, token) {
+      const ep = (token !== undefined ? inflight.get(token) : undefined) ?? topEpisode();
+      if (!ep) return undefined;
       const step: EpisodeStep = { kind: "panic", message: info.message, ts: now() };
       if (info.location !== undefined) step.location = info.location;
+      if (info.name !== undefined) step.name = info.name;
+      if (info.envReads !== undefined && info.envReads.length > 0) {
+        step["env-reads"] = info.envReads.slice();
+      }
       if (info.stack !== undefined) step.stack = info.stack;
       if (info.cause !== undefined && info.cause.length > 0) step.cause = info.cause;
       if (info.category !== undefined) step.category = info.category;
       ep.steps.push(step);
       ep.status = "panic";
+      return ep.id;
     },
     list() {
       return memory.slice();
     },
     hasOpenEpisode() {
       return stack.length > 0;
+    },
+    currentId() {
+      return topEpisode()?.id;
     },
   };
 }

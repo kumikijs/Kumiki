@@ -614,7 +614,7 @@ describe("in-language test runner helpers", () => {
     ).toBe(true);
   });
 
-  it("runTileTest compares structure, ignoring props and handlers", () => {
+  it("runTileTest compares structure, ignoring handlers", () => {
     const actual = {
       kind: "column",
       children: [{ kind: "button", text: "+1", props: { onClick: () => undefined } }],
@@ -691,7 +691,12 @@ describe("in-language test runner helpers", () => {
   it("resetLive clears, seeds defaults, then applies given", () => {
     const live: Record<string, unknown> = { stale: 1 };
     _stdlib.resetLive(live, { count: { value: 0 }, name: { value: "x" } }, { count: 5 });
-    expect(live).toEqual({ count: 5, name: "x" });
+    // `route` is there whether or not the program declares one — the harness
+    // seeds it the way `mount` does, so a reducer reading it is testable. This
+    // is the key set; what the seed holds is pinned in the route suite beside
+    // this one.
+    expect(live).toEqual({ count: 5, name: "x", route: expect.anything() });
+    expect(live.route).toMatchObject({ path: "/", pattern: "/" });
   });
 
   // M4b: the runner carries the scalar leaf values at the divergence point, so
@@ -1349,7 +1354,7 @@ describe("live panic handling (#24)", () => {
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("app.error $event does NOT expose stack/cause to user code", () => {
+  it("app.error $event carries the declared fields and no dev-only ones", () => {
     // Capture the $event payload the app.error reducer sees.
     let capturedEvent: unknown;
     const app = makePanicApp();
@@ -1376,7 +1381,11 @@ describe("live panic handling (#24)", () => {
     expect(ev.category).toBe("reducer");
     // Dev-only fields must stay in the episode log, not on user reducer input.
     expect(ev).not.toHaveProperty("stack");
-    expect(ev).not.toHaveProperty("cause");
+    // `cause` is a declared field of `PanicInfo` and supplied since #364: what
+    // stays in the episode log is the chain behind the nearest link and the
+    // stack on each. `boom in reducer` was thrown with no cause.
+    expect(ev.cause).toEqual({ _tag: "None" });
+    expect(JSON.stringify(ev)).not.toContain("at ");
   });
 
   it("a render panic with no error-boundary is caught by the top-level boundary", () => {
@@ -1613,12 +1622,23 @@ describe("unhandled effect-error contract (#37)", () => {
       getItem: () => {
         throw new Error("SecurityError");
       },
+      setItem: () => {
+        throw new Error("QuotaExceededError");
+      },
     } as unknown as Storage;
     const orig = globalThis.localStorage;
     Object.defineProperty(globalThis, "localStorage", { value: throwing, configurable: true });
     try {
+      // The err value is the `Text` a storage effect's `out=Result(_, Text)`
+      // declares (http.md §6.7), not a record wrapping it.
       const r = await builtinEffects.storageRead({ key: "x" });
-      expect(r.kind).toBe("err");
+      expect(r).toEqual({ kind: "err", value: "Error: SecurityError" });
+      const w = await builtinEffects.storageWrite({ key: "x", value: 1 });
+      // A failed write names the call and the key (http.md §6.7.2), still as the Text.
+      expect(w).toEqual({
+        kind: "err",
+        value: 'localStorage.setItem("x") failed: Error: QuotaExceededError',
+      });
     } finally {
       Object.defineProperty(globalThis, "localStorage", { value: orig, configurable: true });
     }
@@ -1637,9 +1657,12 @@ describe("unhandled effect-error contract (#37)", () => {
     Object.defineProperty(globalThis, "sessionStorage", { value: throwing, configurable: true });
     try {
       const r = await builtinEffects.sessionRead({ key: "x" });
-      expect(r.kind).toBe("err");
+      expect(r).toEqual({ kind: "err", value: "Error: SecurityError" });
       const w = await builtinEffects.sessionWrite({ key: "x", value: 1 });
-      expect(w.kind).toBe("err");
+      expect(w).toEqual({
+        kind: "err",
+        value: 'sessionStorage.setItem("x") failed: Error: SecurityError',
+      });
     } finally {
       Object.defineProperty(globalThis, "sessionStorage", { value: orig, configurable: true });
     }

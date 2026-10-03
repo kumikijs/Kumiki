@@ -1,0 +1,37 @@
+# Feature: `ui.key` / `ui.focus` / `ui.blur` on an `editable` — the selector
+# form of the three events the runtime attaches to whatever element a tile
+# produced. A `<div contenteditable="true">` is focusable without a
+# `tabindex`, so all three reach it natively; writing the handler on the tile
+# (`editable(onFocus=entered)`) is the other spelling of the same wiring.
+#
+# `ui.change` is deliberately NOT in this set: a `contenteditable` element
+# fires no `change` event at all, so `ui.change(Ed)` is W0212 for a reason
+# that is true.
+
+slot note    : Text = ""
+slot keys    : Int  = 0
+slot focuses : Int  = 0
+slot blurs   : Int  = 0
+
+reducer keyed   on=ui.key(Ed)   do= keys    := keys + 1
+reducer entered on=ui.focus(Ed) do= focuses := focuses + 1
+reducer left    on=ui.blur(Ed)  do= blurs   := blurs + 1
+
+tile Ed   = editable(bind=note) {id: "ed"}
+tile Away = button(text="elsewhere") {id: "away"}
+
+tile App
+    = column(
+        heading("editable + key / focus / blur selectors"),
+        Ed,
+        Away,
+        text("note: " + note),
+        text("keys: " + keys.show),
+        text("focuses: " + focuses.show),
+        text("blurs: " + blurs.show))
+      {pad: "lg", gap: "md"}
+
+app EditableKeyFocusBlurSelectors
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -347,6 +347,13 @@ describe("codegen", () => {
     expect(result.js).toContain("subRoutes:");
     expect(result.js).toContain('pattern: "/settings/account"');
     expect(result.js).toContain('pattern: "/settings"');
+    // Every tile entry names its target — what the runtime attributes a panic
+    // raised while building it to — and the parent alone takes the runtime's
+    // outlet fill, so the child it injects is built inside the parent's
+    // boundary (lifecycle.md §7.3, #363). The child lowers without one.
+    expect(result.js).toContain('name: "Layout", tile: (_fill) =>');
+    expect(result.js).toContain('name: "Account", tile: () =>');
+    expect(result.js).toContain('name: "NotFound", tile: () =>');
   });
 
   it("lowers `@token` refs in a style block to runtime `_s.token(...)` calls (§4.3)", () => {
@@ -505,7 +512,7 @@ describe("codegen", () => {
     const src = `
       slot f : Text = ""
       reducer recordFocus on=ui.focus(Other) do= f := "focused"
-      tile Other = button("noop")
+      tile Other = button(text="noop")
       tile MyInput = input(onFocus=recordFocus)
       tile App = column(MyInput, Other)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -556,7 +563,7 @@ describe("codegen", () => {
     const src = `
       slot b : Text = ""
       reducer markBlur on=ui.blur(Other) do= b := "blurred"
-      tile Other = button("noop")
+      tile Other = button(text="noop")
       tile MyInput = input() {onBlur: markBlur}
       tile App = column(MyInput, Other)
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -626,9 +633,10 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // The let rhs is an IIFE that pushes the emit AND yields `"search:" + key`.
+    // The let rhs is an IIFE that pushes the emit AND yields its id: with no
+    // `latest-per-key` policy the key is `_`.
     expect(result.js).toContain('_emits.push({ effect: "search"');
-    expect(result.js).toContain('"search:"');
+    expect(result.js).toContain('return "search:_";');
     // EffectId.none lowers to the empty-string sentinel.
     expect(result.js).toContain('"stored": { value: "" }');
   });
@@ -653,12 +661,12 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // Each arg is lowered into a __a<i> binding once; both the push and the
-    // EffectId expression reuse that local.
+    // Each arg is lowered into a __a<i> binding once; the push and the key
+    // (which the id is built from) both reuse that local.
     expect(result.js).toMatch(/const __a0 = _s\.now\(\);/);
-    expect(result.js).toContain('_emits.push({ effect: "search", args: [__a0] })');
-    expect(result.js).toContain("(__a0)");
-    expect(result.js).toMatch(/"search:" \+ String/);
+    expect(result.js).toMatch(/const __k = \(\(\w+\) => String\(\w+\)\)\(__a0\);/);
+    expect(result.js).toContain('_emits.push({ effect: "search", args: [__a0], key: __k })');
+    expect(result.js).toContain('return "search:" + __k;');
     // _s.now() must appear exactly once in the generated reducer body —
     // double-eval would surface as two occurrences.
     const occurrences = (result.js.match(/_s\.now\(\)/g) ?? []).length;
@@ -837,7 +845,7 @@ describe("codegen", () => {
 
   // Issue #188 — the compiler lifts author-written `{key: expr}` from tile
   // props to a top-level `key` field on the emitted TileNode, and synthesizes
-  // an implicit key (`_s.show(<loopVar>)`) for tile calls inside `for`
+  // an implicit key (the loop's `_s.loopKeys` entry) for tile calls inside `for`
   // iteration bodies that don't declare their own. The runtime uses these
   // keys for stable child reuse across reorder/insert/remove.
   describe("issue #188 — stable tile identity (key)", () => {
@@ -923,6 +931,18 @@ describe("codegen", () => {
       return results;
     }
 
+    /**
+     * The implicit key a `for` binding `bind` hands its body: that loop's
+     * entry of `_s.loopKeys` for the iteration (runtime.md §10.3.10). Read off
+     * the emitted loop itself, so a case names the loop by its variable.
+     */
+    function implicitKeyOf(js: string, bind: string): string {
+      const m = new RegExp(`\\.map\\(\\(${bind}, (__fi\\w+)\\) =>`).exec(js);
+      if (!m) throw new Error(`no for over ${bind} in the emitted JS`);
+      const index = m[1] as string;
+      return `${index.replace("__fi", "__fk")}[${index}]`;
+    }
+
     it("lifts an explicit {key: expr} on a builtin tile call to a top-level `key` field", () => {
       const src = `
         slot xs : List(Int) = [1, 2, 3]
@@ -955,7 +975,7 @@ describe("codegen", () => {
       if (result.kind !== "ok") return;
       const wraps = findWkForBoundary(result.js, "Row");
       expect(wraps.length).toBeGreaterThan(0);
-      for (const w of wraps) expect(w.key).toBe("_s.show(x)");
+      for (const w of wraps) expect(w.key).toBe(implicitKeyOf(result.js, "x"));
     });
 
     it("does not synthesize an implicit key outside of a for iteration", () => {
@@ -988,10 +1008,10 @@ describe("codegen", () => {
       const wraps = findWkForBoundary(result.js, "Cell");
       expect(wraps.length).toBeGreaterThan(0);
       // The Cell call sits under the inner `for i in inner` — its implicit
-      // key must be `_s.show(i)`, not `_s.show(o)`.
+      // key must be the inner loop's, not the outer one's.
       for (const w of wraps) {
-        expect(w.key).toBe("_s.show(i)");
-        expect(w.key).not.toBe("_s.show(o)");
+        expect(w.key).toBe(implicitKeyOf(result.js, "i"));
+        expect(w.key).not.toBe(implicitKeyOf(result.js, "o"));
       }
     });
 
@@ -1007,7 +1027,7 @@ describe("codegen", () => {
       if (result.kind !== "ok") return;
       const wraps = findWkForBoundary(result.js, "Row");
       expect(wraps.length).toBeGreaterThan(0);
-      for (const w of wraps) expect(w.key).toBe("_s.show(x)");
+      for (const w of wraps) expect(w.key).toBe(implicitKeyOf(result.js, "x"));
     });
 
     it("propagates the implicit key through TileMatch (for id in ids match kind with |A -> Row)", () => {
@@ -1026,7 +1046,7 @@ describe("codegen", () => {
       expect(wraps.length).toBeGreaterThan(0);
       // Both match arms sit under \`for id in ids\` — every Row emission must
       // carry the loop var's key, not undefined.
-      for (const w of wraps) expect(w.key).toBe("_s.show(id)");
+      for (const w of wraps) expect(w.key).toBe(implicitKeyOf(result.js, "id"));
     });
 
     it("resets the implicit key at user-tile boundaries (inner for uses its own loop var)", () => {
@@ -1048,15 +1068,59 @@ describe("codegen", () => {
       // The Outer boundary itself is the target of the outer for → key = o.
       const outerWraps = findWkForBoundary(result.js, "Outer");
       expect(outerWraps.length).toBeGreaterThan(0);
-      for (const w of outerWraps) expect(w.key).toBe("_s.show(o)");
+      for (const w of outerWraps) expect(w.key).toBe(implicitKeyOf(result.js, "o"));
       // Cell sits inside Inner's for-body — its key must derive from the
       // inner loop var i, not the outer o (which would be a scope leak).
       const cellWraps = findWkForBoundary(result.js, "Cell");
       expect(cellWraps.length).toBeGreaterThan(0);
       for (const w of cellWraps) {
-        expect(w.key).toBe("_s.show(i)");
-        expect(w.key).not.toBe("_s.show(o)");
+        expect(w.key).toBe(implicitKeyOf(result.js, "i"));
+        expect(w.key).not.toBe(implicitKeyOf(result.js, "o"));
       }
+    });
+
+    /**
+     * The loop names `_s.loopKeys` is given in `js`, each once, in emitted
+     * order. A tile is lowered once per place that renders it (a route, the
+     * tile table), so one loop can appear more than once.
+     */
+    function loopNamesIn(js: string): string[] {
+      const names = Array.from(js.matchAll(/_s\.loopKeys\(__xs, ("[^"]*")\)/g), (m) =>
+        JSON.parse(m[1] as string),
+      );
+      return [...new Set(names)];
+    }
+
+    it("names a loop by its tile and its ordinal there, so an edit above it keeps every key", () => {
+      const tiles = `
+        tile Row = text("row")
+        tile App = column(for x in xs Row, for y in xs when(y > 1, Row))`;
+      const program = (above: string) => `
+        slot xs : List(Int) = [1, 2, 3]
+        ${above}${tiles}
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const named = (src: string): string[] => {
+        const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+        if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
+        return loopNamesIn(result.js);
+      };
+      const before = named(program(""));
+      expect(before).toEqual(["App_0", "App_1"]);
+      expect(named(program('\n\n\n        tile Other = text("other")\n'))).toEqual(before);
+    });
+
+    it("computes no implicit keys for a loop whose every tile call has its own key", () => {
+      const src = `
+        slot xs : List(Int) = [1, 2, 3]
+        tile App = column(for x in xs text(x.show) {key: x.show}, for y in xs text(y.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const result = compile(src, { runtimeSpecifier: "./runtime.js" });
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") return;
+      // Only the second loop, whose `text` has no key, reads an implicit one.
+      expect(loopNamesIn(result.js)).toEqual(["App_1"]);
     });
   });
 });

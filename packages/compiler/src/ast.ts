@@ -1,5 +1,7 @@
 // AST types for Kumiki.
 
+import type { KeyKind } from "@kumikijs/runtime";
+
 export type Pos = { line: number; col: number };
 
 export type Token =
@@ -312,7 +314,13 @@ export type EventPattern =
       kind: "EffectEvent";
       effect: string;
       outcome: "ok" | "err";
-      binds: string[];
+      /**
+       * The payload positionals this trigger binds, in order. `_` is carried
+       * as a name, the way `PVariant.binds` carries it. The position is what
+       * lets a bind that cannot be honoured be reported where the author wrote
+       * the name rather than at the effect it follows.
+       */
+      binds: NamedRef[];
       /**
        * Where the effect name sits. Always the same token as `pos` here — the
        * pattern starts at the name — and named separately because that is a
@@ -375,9 +383,47 @@ export type Statement =
 export type Lvalue =
   | { kind: "LSlot"; name: string; pos: Pos }
   | { kind: "LIndex"; base: Lvalue; index: Expr; pos: Pos }
-  | { kind: "LField"; base: Lvalue; field: string; pos: Pos };
+  | {
+      kind: "LField";
+      base: Lvalue;
+      field: string;
+      pos: Pos;
+      /**
+       * The same dispatch decision `FieldAccess` carries, for the write side:
+       * `"field"` means the base is a record that has this field, so the
+       * segment is a plain key. Absent means the base type is unknown — also
+       * the case when codegen runs without `check()` — and keeps the
+       * name-based reading, under which `.get` is the unwrap.
+       */
+      accessKind?: "field" | "shortcut";
+    };
 
 // ----- Expressions -----
+
+/**
+ * How a `Set` element or a `Map` key reads back at runtime. Both are stored
+ * under JavaScript object keys, which are strings, so a member that hands keys
+ * back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and the `$1`
+ * of `Map(K, V).filter` — is told what its declared key type is represented
+ * as. Recorded by the type checker on those members when the key type is a
+ * number (`"number"`) or a `Bool` (`"bool"`); absent for a `Text` key, and
+ * wherever the receiver's type is not known — also the case when codegen runs
+ * without `check()` — so the string stands.
+ *
+ * Defined once, by the runtime that restores the keys (`restoreKey` in
+ * `@kumikijs/runtime`'s `stdlib.ts`), and imported here as a type only, so
+ * the compiler core stays free of runtime code.
+ */
+export type { KeyKind };
+
+/**
+ * How a list method's fragment binds its positionals, one value per bullet of
+ * stdlib.md §2.2.3: `"pair"` takes each `Tuple(A, B)` apart into `$1` / `$2`;
+ * `"key-value"` is a `Map`'s filter or map, handed the key and the value; `"value"`
+ * binds the value whole as `$1` and nothing as `$2`; `"undecided"` leaves the
+ * binding to the value's shape at run time, taking apart any 2-element array.
+ */
+export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
 
 export type Expr =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }
@@ -406,13 +452,52 @@ export type Expr =
        * the case when codegen runs without `check()`).
        */
       accessKind?: "field" | "shortcut";
+      /** See {@link KeyKind}. Filled in by the type checker. */
+      keyKind?: KeyKind;
     }
   | { kind: "Index"; base: Expr; index: Expr; pos: Pos }
   | { kind: "Call"; callee: string; args: Expr[]; pos: Pos } // module-level fns and ctors (TodoId.fresh, Duration.ms, ...)
-  | { kind: "MethodCall"; receiver: Expr; method: string; args: Expr[]; pos: Pos }
+  | {
+      kind: "MethodCall";
+      receiver: Expr;
+      method: string;
+      args: Expr[];
+      pos: Pos;
+      /** See {@link KeyKind}. Filled in by the type checker. */
+      keyKind?: KeyKind;
+      /**
+       * How a `filter` / `map` / `find` / `sort-by` fragment binds `$1` / `$2`,
+       * decided by the type checker from the receiver's type (see
+       * {@link FragmentShape}). `"undecided"` when the checker could not
+       * decide the receiver's type, or the type is known but §2.2.3 gives the
+       * method no binding on it (a `Set`, `Map.find`, `Option.find`, …).
+       * Absent only when codegen runs without `check()`, which lowers it as
+       * `"undecided"`.
+       */
+      fragmentShape?: FragmentShape;
+    }
   | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
-  | { kind: "ListLit"; items: Expr[]; pos: Pos }
-  | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos } // also Set if values are unit
+  | {
+      kind: "ListLit";
+      items: Expr[];
+      pos: Pos;
+      /**
+       * The literal is checked against a `Set` type, so codegen builds the Set
+       * a program's `add` would (`_s.setOf`) rather than an array. Filled in
+       * by the type checker (`checkAgainst`).
+       *
+       * Unlike `accessKind` and `keyKind`, a missing mark is not a safe
+       * default: a literal with no mark lowers to an array, which every Set
+       * member misreads — so codegen that runs without `check()` builds a
+       * wrong Set. And the mark is never cleared once set, so `checkAgainst`
+       * must only be called with a type the literal really is: a speculative
+       * probe (trying a variant arm, an overload) would leave it behind.
+       */
+      asSet?: true;
+    }
+  // `{}` is both the empty Map and the empty Set, and the declared type
+  // decides which; every entry is a key and a value, so a non-empty one is a Map.
+  | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   // Test `expect` wildcards (spec/testing.md §8.2.2). Legal only inside a
   // reducer-test `expect`; rejected elsewhere (E0109). `<any-id>` matches any
   // generated id; `<slots.X>` matches slot X's post-execution value.
@@ -474,13 +559,13 @@ export type TileMatchArm = {
   body: TileExpr;
 };
 
-export type TileArg = {
-  kind: "TileArg";
-  name?: string;
-  /** Position of the name, when the argument has one. */
-  namePos?: Pos;
-  value: Expr | TileExpr;
-};
+/**
+ * A tile call's argument: named (`level=2`), which always carries the position
+ * of its name, or positional (`"Hi"`), which has neither.
+ */
+export type TileArg =
+  | { kind: "TileArg"; name: string; namePos: Pos; value: Expr | TileExpr }
+  | { kind: "TileArg"; name?: never; namePos?: never; value: Expr | TileExpr };
 
 export type TileProp = {
   kind: "TileProp";

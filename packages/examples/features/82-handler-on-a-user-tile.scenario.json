@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "the row renders its positional argument, not the handler it was also given",
+      "expect": {
+        "noErrors": true,
+        "state": { "taps": 0 },
+        "domIncludes": ["tap me", "row", "taps: 0"]
+      }
+    },
+    {
+      "label": "the handler on a tile that declares no input fires",
+      "do": { "clickText": "tap me" },
+      "expect": { "noErrors": true, "state": { "taps": 1 } }
+    },
+    {
+      "label": "and so does the one written beside a positional argument",
+      "do": { "clickText": "row" },
+      "expect": { "noErrors": true, "state": { "taps": 2 } }
+    }
+  ]
+}

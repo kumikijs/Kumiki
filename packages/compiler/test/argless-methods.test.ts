@@ -3,25 +3,30 @@ import { describe, expect, it } from "vitest";
 
 // Issue #7: docs/spec/stdlib.md §2.2 argument-less methods. Both call shapes must
 // work — `recv.m` (FieldAccess, the spec-recommended shortcut) and `recv.m()`
-// (MethodCall). The receiver type is irrelevant to these assertions (the checker
-// doesn't type-check method receivers), so a single Int slot is a fine stand-in.
-const ARGLESS = [
-  "head",
-  "tail",
-  "last",
-  "to-list",
-  "get-err",
-  "to-option",
-  "parse-int",
-  "parse-float",
-  "abs",
-  "neg",
-  "to-float",
-  "to-int",
+// (MethodCall). Each is written on a receiver §2.2 lists it for: a member of
+// one receiver is E0108 on another.
+const ARGLESS: [method: string, receiver: string][] = [
+  ["head", "xs"],
+  ["tail", "xs"],
+  ["last", "xs"],
+  ["to-list", "st"],
+  ["get-err", "r"],
+  ["to-option", "r"],
+  ["parse-int", "t"],
+  ["parse-float", "t"],
+  ["abs", "v"],
+  ["neg", "v"],
+  ["to-float", "v"],
+  ["to-int", "f"],
 ];
 
 function appSrc(body: string): string {
   return `slot v : Int = 0
+slot f : Float = 0.0
+slot t : Text = ""
+slot xs : List(Int) = []
+slot st : Set(Int) = []
+slot r : Result(Int, Text) = Ok(0)
 tile App = column(${body})
 app A
     caps   = []
@@ -37,13 +42,13 @@ const compileOk = (src: string): string => {
 
 describe("argument-less stdlib methods (issue #7)", () => {
   it("the parenthesized form no longer trips E0801", () => {
-    const body = ARGLESS.map((m) => `heading((v.${m}()).show)`).join(", ");
+    const body = ARGLESS.map(([m, v]) => `heading((${v}.${m}()).show)`).join(", ");
     const errs = check(parse(lex(appSrc(body))));
     expect(errs.filter((e) => e.code === "E0801")).toEqual([]);
   });
 
   it("the no-paren form lowers to the runtime helper, not a silent `undefined`", () => {
-    const body = ARGLESS.map((m) => `heading((v.${m}).show)`).join(", ");
+    const body = ARGLESS.map(([m, v]) => `heading((${v}.${m}).show)`).join(", ");
     const js = compileOk(appSrc(body));
     expect(js).toContain("_s.listHead(");
     expect(js).toContain("_s.listTail(");
@@ -57,11 +62,11 @@ describe("argument-less stdlib methods (issue #7)", () => {
     expect(js).toContain("Math.trunc(");
     // None of the 12 may fall through to the record-field accessor `(base)["m"]`
     // (the old silent-`undefined` bug). Guards against a future forgotten case.
-    for (const m of ARGLESS) expect(js, m).not.toContain(`["${m}"]`);
+    for (const [m] of ARGLESS) expect(js, m).not.toContain(`["${m}"]`);
   });
 
   it("the parenthesized form lowers identically", () => {
-    const body = ARGLESS.map((m) => `heading((v.${m}()).show)`).join(", ");
+    const body = ARGLESS.map(([m, v]) => `heading((${v}.${m}()).show)`).join(", ");
     const js = compileOk(appSrc(body));
     expect(js).toContain("_s.listHead(");
     expect(js).toContain("_s.toOption(");

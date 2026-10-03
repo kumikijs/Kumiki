@@ -11,20 +11,15 @@
 //      per-verb USAGE constant survived the refactor).
 
 import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = resolve(here, "../src/kumiki.ts");
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 // 60s per case, not 30: every one of these is a process start, and this file
 // runs beside the rest of a suite that is mostly process starts too.
 function runCli(args: string[]): { out: string; code: number } {
   try {
-    const out = execFileSync("npx", ["tsx", CLI_PATH, ...args], {
+    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
       stdio: "pipe",
-      shell: true,
       encoding: "utf8",
     });
     return { out, code: 0 };

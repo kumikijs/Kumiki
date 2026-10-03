@@ -23,6 +23,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { REFINEMENT_PREDS, refinementBases } from "../src/refinements.ts";
+import { UI_LIFTS } from "../src/ui-lifts.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // packages/compiler/test/ → repo root
@@ -138,4 +140,131 @@ describe("spec ⇆ implementation diagnostic code-set drift", () => {
     }
     expect([...new Set(unknown)].sort()).toEqual([]);
   });
+});
+
+// The same guard for §W0212's "allowed root tile kinds" table, which is the
+// published copy of `UI_LIFTS` and was hand-synced on both tracks every time a
+// row moved. Codes had this and the table did not, so a row could drift in
+// either direction — a spec that documents a lift the compiler does not make,
+// or a lift the compiler makes and nobody wrote down — and no tier would say
+// so. The `ev` column also has to agree, so a row added to one side alone
+// fails rather than being skipped as unmatched.
+describe("§W0212's lift table matches UI_LIFTS", () => {
+  /** `### W0212 …` up to the next `### `, on either track. */
+  function w0212Section(file: string): string {
+    const source = readFileSync(file, "utf8");
+    const start = source.search(/^### W0212\b/m);
+    expect(start, `${file} has no §W0212 heading`).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(start + 1);
+    const end = rest.search(/^### /m);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
+
+  /**
+   * The table as `ev -> kinds`, with `null` for a cell that names no kind —
+   * the `hover` row, whose value is prose and differs per track ("any tile" /
+   * "任意の tile"). Keyed off the backticks rather than the prose, so the two
+   * tracks parse identically and a translated cell is not a diff.
+   */
+  function liftTable(file: string): Map<string, ReadonlySet<string> | null> {
+    const out = new Map<string, ReadonlySet<string> | null>();
+    for (const line of w0212Section(file).split("\n")) {
+      if (!line.startsWith("|")) continue;
+      const cells = line.split("|").slice(1, -1);
+      if (cells.length !== 2) continue;
+      const ev = cells[0]?.match(/`([a-z]+)`/)?.[1];
+      // Skips the header (its cell is `ui.<ev>`, which does not match) and the
+      // `|---|---|` separator.
+      if (ev === undefined) continue;
+      const kinds = [...(cells[1] ?? "").matchAll(/`([a-z]+)`/g)].map((m) => m[1] as string);
+      out.set(ev, kinds.length === 0 ? null : new Set(kinds));
+    }
+    return out;
+  }
+
+  const TRACKS = {
+    en: path.join(repoRoot, "docs", "spec", "errors.md"),
+    ja: path.join(repoRoot, "docs", "ja", "spec", "errors.md"),
+  } as const;
+
+  const expected = new Map(UI_LIFTS.map((l) => [l.ev as string, l.tiles]));
+
+  for (const [track, file] of Object.entries(TRACKS)) {
+    it(`extracts one row per lift row on the ${track} track`, () => {
+      // Extraction floor: a broken regex that matched nothing would make every
+      // comparison below vacuous.
+      expect(liftTable(file).size).toBe(UI_LIFTS.length);
+    });
+
+    it(`lists the same ui-kinds as UI_LIFTS on the ${track} track`, () => {
+      expect([...liftTable(file).keys()].sort()).toEqual([...expected.keys()].sort());
+    });
+
+    it(`lists the same tile kinds per ui-kind on the ${track} track`, () => {
+      const table = liftTable(file);
+      for (const [ev, tiles] of expected) {
+        const documented = table.get(ev);
+        if (tiles === null) {
+          expect(documented, `${track} §W0212 row "${ev}"`).toBeNull();
+        } else {
+          expect(documented, `${track} §W0212 row "${ev}"`).toEqual(new Set(tiles));
+        }
+      }
+    });
+  }
+});
+
+// The same guard for §E0804's predicate/base table, the published copy of what
+// each entry of `REFINEMENTS` tests. A row that names a base the predicate
+// cannot test documents a program E0804 refuses, and a base missing from a row
+// hides one it accepts. Keyed off the backticks, so both tracks parse alike.
+describe("§E0804's base table matches the refinement table", () => {
+  function e0804Section(file: string): string {
+    const source = readFileSync(file, "utf8");
+    const start = source.search(/^### E0804\b/m);
+    expect(start, `${file} has no §E0804 heading`).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(start + 1);
+    const end = rest.search(/^### /m);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
+
+  /** The table as `predicate -> bases`, one entry per predicate a row names. */
+  function baseTable(file: string): Map<string, ReadonlySet<string>> {
+    const out = new Map<string, ReadonlySet<string>>();
+    const backticked = (cell: string | undefined): string[] =>
+      [...(cell ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string);
+    for (const line of e0804Section(file).split("\n")) {
+      if (!line.startsWith("|")) continue;
+      const cells = line.split("|").slice(1, -1);
+      if (cells.length !== 3) continue;
+      const preds = backticked(cells[0]);
+      // The header and the separator name no predicate.
+      if (preds.length === 0) continue;
+      for (const pred of preds) {
+        expect(out.has(pred), `${file} lists "${pred}" in two rows`).toBe(false);
+        out.set(pred, new Set(backticked(cells[2])));
+      }
+    }
+    return out;
+  }
+
+  const TRACKS = {
+    en: path.join(repoRoot, "docs", "spec", "errors.md"),
+    ja: path.join(repoRoot, "docs", "ja", "spec", "errors.md"),
+  } as const;
+
+  for (const [track, file] of Object.entries(TRACKS)) {
+    it(`lists every registered predicate once on the ${track} track`, () => {
+      expect([...baseTable(file).keys()].sort()).toEqual([...REFINEMENT_PREDS].sort());
+    });
+
+    it(`lists the bases each predicate tests on the ${track} track`, () => {
+      const table = baseTable(file);
+      for (const pred of REFINEMENT_PREDS) {
+        expect(table.get(pred), `${track} §E0804 row "${pred}"`).toEqual(
+          new Set(refinementBases(pred)),
+        );
+      }
+    });
+  }
 });

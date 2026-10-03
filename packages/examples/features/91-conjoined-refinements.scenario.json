@@ -1,0 +1,69 @@
+{
+  "steps": [
+    {
+      "label": "each pristine field names the predicate ITS value fails, first or second",
+      "expect": {
+        "noErrors": true,
+        "state": { "handle": "kumik", "draft": "", "tag": "kumiki" },
+        "domIncludes": ["handle: kumik", "Required", "Must be less than 5 characters"]
+      }
+    },
+    {
+      "label": "a value both predicates accept clears that field's message, and only it",
+      "do": { "fill": "#draft", "value": "kumi" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": "kumi" },
+        "domExcludes": ["Required"],
+        "domIncludes": ["Must be less than 5 characters"]
+      }
+    },
+    {
+      "label": "the other predicate still holds — a bind refusal is quiet and per field",
+      "do": { "fill": "#draft", "value": "kumikijs" },
+      "expect": { "noErrors": true, "state": { "draft": "kumi" } }
+    },
+    {
+      "label": "growing the handle fits under the upper bound",
+      "do": { "clickText": "longer" },
+      "expect": {
+        "noErrors": true,
+        "state": { "handle": "kumik!" },
+        "domIncludes": ["handle: kumik!"]
+      }
+    },
+    {
+      "label": "the next one reaches it: nothing commits, and len-lt names the refusal",
+      "do": { "clickText": "longer" },
+      "expect": {
+        "noErrors": true,
+        "state": { "handle": "kumik!" },
+        "errorIncludes": ["slot \"handle\" cannot hold \"kumik!!\" (len-lt(7))"]
+      }
+    },
+    {
+      "label": "shrinking works from there, down to the lower bound",
+      "do": { "clickText": "shorter" },
+      "expect": { "noErrors": true, "state": { "handle": "kumik" } }
+    },
+    {
+      "do": { "clickText": "shorter" },
+      "expect": { "noErrors": true, "state": { "handle": "kumi" } }
+    },
+    {
+      "label": "and the inner predicate refuses the write — the one that used to be dropped",
+      "do": { "clickText": "shorter" },
+      "expect": {
+        "noErrors": true,
+        "state": { "handle": "kumi" },
+        "domIncludes": ["handle: kumi"],
+        "errorIncludes": ["slot \"handle\" cannot hold \"kum\" (len-gt(3))"]
+      }
+    },
+    {
+      "label": "the app is still live — a rejection is not a panic",
+      "do": { "clickText": "longer" },
+      "expect": { "noErrors": true, "state": { "handle": "kumi!" } }
+    }
+  ]
+}

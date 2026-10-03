@@ -4,6 +4,7 @@ import {
   elementType,
   isKnownTypeName,
   isOpaque,
+  nominallyComparable,
   paramSubstitution,
   recordFieldType,
   substituteType,
@@ -16,11 +17,15 @@ import type {
   EffectDef,
   Expr,
   FnDef,
+  FragmentShape,
+  KeyKind,
   Lvalue,
+  MatchArm,
   Pattern,
   Pos,
   Program,
   ReducerDef,
+  Refinement,
   SlotDef,
   Statement,
   TestDef,
@@ -33,30 +38,76 @@ import { assertNever, isTileExpr } from "./ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
-  CONSTANT_NAMESPACES,
   isQualifierName,
   QUALIFIED_BUILTIN_CALLS,
+  QUALIFIED_CALL_NAMESPACES,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES } from "./builtins.ts";
-import { BUILTIN_EFFECT_CAPS, STANDARD_CAPABILITIES } from "./capabilities.ts";
+import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./builtins.ts";
+import {
+  BUILTIN_EFFECTS,
+  builtinFieldOmittable,
+  failsWithText,
+  REDUCER_REF,
+  STANDARD_CAPABILITIES,
+} from "./capabilities.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
-  KNOWN_MEMBERS,
+  FRAGMENT_ARGUMENTS,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,
-  NUMERIC_MEMBERS,
 } from "./codegen.ts";
-import { boundaryTarget, expansionTargets, findCycles, type GraphEdge } from "./def-graph.ts";
+import {
+  aliasTarget,
+  boundaryTarget,
+  expansionTargets,
+  findCycles,
+  type GraphEdge,
+} from "./def-graph.ts";
+import { type FnScopeBind, fnScope } from "./fn-scope.ts";
+import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
+import { keyRepresentation } from "./key-representation.ts";
+import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
+import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
+import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
+import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
+import {
+  hasMember,
+  isOwnMember,
+  isReceiver,
+  type Receiver,
+  receiversOf,
+  UNIVERSAL_MEMBERS,
+} from "./stdlib-members.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import {
+  bareNameAt,
+  fitsRecordPosition,
+  type GivenSection,
+  givenSection,
+  isRecordValue,
+  isSectionName,
+  nearestSection,
+  notARecordMessage,
+  type RecordPosition,
+  type SectionName,
+  sectionNames,
+  type TestKind,
+  type TestPart,
+} from "./test-sections.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
 // from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
 // `input(onKeyDown=bump)` compiled to a working listener but was reported as
 // an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
 // this set through the checker, so a second copy cannot drift unnoticed again.
-import { HANDLER_NAMES, HANDLER_PROP_TILES, UI_EVENT_TILE_KINDS } from "./ui-lifts.ts";
+import {
+  HANDLER_NAMES,
+  HANDLER_PROP_TILES,
+  handlerReducerName,
+  UI_EVENT_TILE_KINDS,
+} from "./ui-lifts.ts";
 import {
   describeDuplicate,
   duplicateSubRoutes,
@@ -76,6 +127,18 @@ export type KumikiError = {
    * `docs/spec/errors.md` for the W02xx band.
    */
   severity?: "error" | "warning";
+  /**
+   * E0129 only: which argument is never rendered, so a reader (`kumiki fix`)
+   * tells the shapes apart without matching the message.
+   *
+   * - `positional`: a positional argument past the one the builtin reads, or
+   *   any on `image` / `icon` — `text("A", "B")`.
+   * - `text-prop`: `text=` on a builtin that reads only a positional argument
+   *   and has none written — `heading(text=title)`.
+   * - `text-shadowed`: `text=` on `label` / `link` / `editable` beside a
+   *   positional argument, which is the one rendered — `label(text="A", "B")`.
+   */
+  unrendered?: "positional" | "text-prop" | "text-shadowed";
 };
 
 /**
@@ -296,14 +359,15 @@ function checkAll(
   }
 
   const index = buildDefIndex(program);
+  const routeChain = routeChainResolver(sym);
   for (const def of program.defs) {
     if (def.kind === "TypeDef") checkTypeDef(def, sym, errors);
-    if (def.kind === "SlotDef") checkSlot(def, sym, errors, index);
+    if (def.kind === "SlotDef") checkSlot(def, sym, errors, index, routeChain);
     if (def.kind === "TileDef") checkTile(def, sym, errors);
     if (def.kind === "ReducerDef") checkReducer(def, sym, errors);
     if (def.kind === "FnDef") checkFn(def, sym, errors);
     if (def.kind === "EffectDef") checkEffect(def, sym, errors);
-    if (def.kind === "AppDef") checkApp(def, sym, errors, registeredCaps);
+    if (def.kind === "AppDef") checkApp(def, sym, errors, registeredCaps, routeChain);
     if (def.kind === "MotionDef") checkMotion(def, errors);
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
@@ -328,12 +392,13 @@ function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
 }
 
 /**
- * A tile that expands into itself and a `fn` that calls itself.
+ * A tile that expands into itself, a `fn` that calls itself, and a `type` whose
+ * alias chain returns to itself.
  *
- * The two are checked together because the question is the same one — does the
- * definition graph close a loop — and only the edges differ. Slots are absent:
- * an initializer may not read another slot at all (`E0304`), which leaves a
- * slot loop unreachable.
+ * The three are checked together because the question is the same one — does
+ * the definition graph close a loop — and only the edges differ. Slots are
+ * absent: an initializer may not read another slot at all (`E0304`), which
+ * leaves a slot loop unreachable.
  */
 function checkCycles(
   program: Program,
@@ -381,6 +446,33 @@ function checkCycles(
       code: "E0006",
       kind: "fn-cycle",
       message: `fn "${cycle.path[0]}" calls itself (${cycle.path.join(" → ")})`,
+      pos: cycle.pos,
+    });
+  }
+
+  const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
+  const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const typeEdges = (name: string): readonly GraphEdge[] => {
+    const def = typeOf(name);
+    if (!def) return [];
+    const target = aliasTarget(def, typeOf);
+    // `sym.types` holds the program's definitions over the standard library's
+    // (`STDLIB_TYPES`), so a stdlib *domain* type — `Route`, `HttpError` — is
+    // followed like any other definition, and a program that redeclares one
+    // closes a loop through its own. What is not in the table is a generic
+    // constructor (`List`, `Option`, `Map`), which has no body to come back
+    // along, and a name that denotes nothing at all, which is E0117's to
+    // report rather than a second name for one mistake.
+    return target && sym.types.has(target.to) ? [target] : [];
+  };
+  for (const cycle of findCycles(
+    types.map((t) => t.name),
+    typeEdges,
+  )) {
+    errors.push({
+      code: "E0009",
+      kind: "type-cycle",
+      message: `type "${cycle.path[0]}" resolves to itself (${cycle.path.join(" → ")})`,
       pos: cycle.pos,
     });
   }
@@ -520,7 +612,67 @@ const RESERVED_SLOT_NAMES: ReadonlyMap<string, string> = new Map([
   ["route", "the router-maintained route slot"],
 ]);
 
-function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index: DefIndex): void {
+/**
+ * A name a test's `given.slots` / `expect.slots` may carry: one the program
+ * declared, or a reserved one the runtime maintains and the harness seeds with
+ * the same empty route `mount` uses, completing a partial one. No program can
+ * declare a reserved name, so without this a test naming `route` is an
+ * undefined slot — and the reducer reading it has no writable test at all.
+ */
+function isTestSlot(name: string, sym: SymbolTable): boolean {
+  return sym.slots.has(name) || RESERVED_SLOT_NAMES.has(name);
+}
+
+/**
+ * The fields of the `route` slot (routing.md §3.2). A test may name any subset
+ * of them; anything else is a typo the harness would drop silently, leaving a
+ * green test that exercised the branch it meant to avoid. Checked here rather
+ * than at runtime so the report names the source position.
+ *
+ * Kept in step with the runtime's `emptyRoute` by a test in `@kumikijs/tests`.
+ */
+export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set([
+  "path",
+  "pattern",
+  "params",
+  "query",
+  "hash",
+]);
+
+/** Report a `route` seed that is not a record of route fields. */
+function checkRouteSeed(value: Expr, errors: KumikiError[]): void {
+  if (value.kind !== "RecordLit") {
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message:
+        `The "route" slot takes a record of ` +
+        `${[...ROUTE_SLOT_FIELDS].map((f) => `"${f}"`).join(" / ")}, ` +
+        "naming as many of them as the test needs",
+      pos: value.pos,
+    });
+    return;
+  }
+  for (const f of value.fields) {
+    if (ROUTE_SLOT_FIELDS.has(f.name)) continue;
+    errors.push({
+      code: "E0108",
+      kind: "undef-member",
+      message:
+        `The "route" slot has no field "${f.name}" ` +
+        `(${[...ROUTE_SLOT_FIELDS].map((x) => `"${x}"`).join(" / ")})`,
+      pos: f.pos,
+    });
+  }
+}
+
+function checkSlot(
+  slot: SlotDef,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  index: DefIndex,
+  routeChain: RouteChainResolver,
+): void {
   const reserved = RESERVED_SLOT_NAMES.get(slot.name);
   if (reserved !== undefined) {
     errors.push({
@@ -531,10 +683,12 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index
     });
   }
   resolveType(slot.type, sym, errors);
+  checkNestedLowering(slot, sym, errors);
   // Derived slots are prohibited (language.md §1.4.2 inv. 4), and the lowering
   // agrees: a slot read is emitted as a lookup in the live-value table, which
-  // is built after the slot table — so an initializer that reads a slot throws
-  // on mount whichever order the two are declared in.
+  // is declared after the slot table in the module body — so an initializer
+  // that reads a slot throws while the module is imported, whichever order the
+  // two are declared in.
   for (const ref of referencesIn(slot, index)) {
     if (ref.layer !== "slot") continue;
     errors.push({
@@ -542,6 +696,36 @@ function checkSlot(slot: SlotDef, sym: SymbolTable, errors: KumikiError[], index
       kind: "derived-slot",
       message: `Slot "${slot.name}" reads slot "${ref.name}" in its initial value; derived slots are prohibited — compute it in a fn instead`,
       pos: ref.pos ?? slot.pos,
+    });
+  }
+  // `route` is a slot too, and the same lowering answers for it: the read is
+  // the same live-value lookup, so it throws while the module is imported.
+  // What differs is that no initializer can compute it, not even through a
+  // `fn`: the runtime installs it during the mount. `referencesIn` skips the
+  // name, so the loop above never sees it. Which `route` is the runtime's (a
+  // local bind of that name is not) is decided by the E0120 gate in
+  // `checkExpr`; `routeReadsIn` runs the initializer through that gate and
+  // collects the reads it matches. `$route` is left to the
+  // undefined-name report `checkExpr` gives it below at the same position: an
+  // initializer has no payload, so there it is a name that does not exist.
+  for (const read of routeReadsIn(slot.init, sym)) {
+    if (read.name !== "route") continue;
+    errors.push({
+      code: "E0304",
+      kind: "derived-slot",
+      message: routeInSlotInitMessage(slot.name, read.name),
+      pos: read.pos,
+    });
+  }
+  // Neither loop above looks inside a `fn` the initializer calls. The call is
+  // emitted into the slot table, so the `fn` body also runs while the module
+  // is imported, and its read of the route throws the same way.
+  for (const hop of routeReachedThroughCalls(slot.init, sym, routeChain)) {
+    errors.push({
+      code: "E0304",
+      kind: "derived-slot",
+      message: routeInSlotInitMessage(slot.name, hop.name, hop.chain),
+      pos: hop.pos,
     });
   }
   const ctx: Ctx = {
@@ -567,23 +751,141 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     ctx.localTypes.set("$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
+  // `error-boundary` is a tile reference like any other, and was the only one
+  // nothing resolved: the lowering skipped a name it could not find and
+  // produced an unprotected tile with no diagnostic, so a misspelling cost the
+  // boundary and said nothing until something panicked.
+  if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
+    errors.push({
+      code: "E0105",
+      kind: "undef-tile",
+      message: `Tile "${tile.name}" declares error-boundary "${tile.errorBoundary}", which is not a tile`,
+      pos: tile.errorBoundaryPos ?? tile.pos,
+    });
+  }
+  checkBoundaryFallback(tile, sym, errors);
   if (tile.subRoutes) checkSubRoutes(tile, sym, errors);
+}
+
+/**
+ * An `error-boundary` fallback is applied to the panic, whatever it declares:
+ * codegen binds its `$1` to the `PanicInfo` the runtime builds (lifecycle.md
+ * §7.3). So the fallback's `in=` is not the author's to choose — one that
+ * declares another type has a `$1` that is not the value the checker reasons
+ * about, and one that declares none but reads `$1` cannot name the panic it
+ * reads.
+ *
+ * A fallback that declares no `in=` and never reads `$1` is not reported: the
+ * value it is applied to goes unread, and it stays a tile that renders with
+ * nothing — which a route or `sub-routes` target has to be (E0213).
+ *
+ * `PanicInfo` has to be assignable to what the fallback declares, which is the
+ * condition the checker's reading of `$1` rests on — one-sided, like every
+ * `assignable` call, and unless a program shadows `PanicInfo` with a type of
+ * its own. The report is attached to the clause, not to the tile: two clauses
+ * naming the same fallback are two reports.
+ */
+function checkBoundaryFallback(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
+  if (tile.errorBoundary === undefined) return;
+  const fallback = sym.tiles.get(tile.errorBoundary);
+  if (fallback === undefined) return; // E0105
+  let declared: string;
+  if (fallback.in === undefined) {
+    if (!readsUndeclaredInput(fallback, sym)) return;
+    declared = "declares no in= but reads $1";
+  } else {
+    const panicInfo: TypeExpr = { kind: "TypeRef", name: "PanicInfo", pos: fallback.pos };
+    if (assignable(panicInfo, fallback.in, sym)) return;
+    declared = `declares in=${typeToString(fallback.in)}`;
+  }
+  errors.push({
+    code: "E0220",
+    kind: "boundary-fallback-input",
+    message:
+      `Tile "${tile.name}" uses "${fallback.name}" as its error-boundary, which ${declared} — ` +
+      `a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare ` +
+      `in=PanicInfo`,
+    pos: tile.errorBoundaryPos ?? tile.pos,
+  });
+}
+
+/**
+ * Whether a tile that declares no `in=` reads `$1` — asked of E0103's own tile
+ * branch, so that a `$1` a method call's implicit argument binds does not
+ * count, and which `$1` counts is decided in one place.
+ *
+ * Running the check over the body a second time is safe for the reason
+ * `routeReadsIn` gives: the scope built here is the one `checkTile` builds for
+ * a tile without `in=`, so every write the check makes onto the tree is the
+ * write it already makes.
+ */
+function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
+  const seen: Pos[] = [];
+  const ctx: Ctx = {
+    kind: "tile",
+    localBinds: new Set(),
+    localTypes: new Map(),
+    routeBind: "no-payload",
+    undeclaredInputReads: seen,
+  };
+  checkTileExpr(tile.body, sym, [], ctx);
+  return seen.length > 0;
+}
+
+/**
+ * A route entry applies the tile it names, and is the only application that
+ * cannot pass anything: the route table lowers to `tile: () => …` — a
+ * `sub-routes` parent to `tile: (_fill) => …`, whose parameter is the runtime's
+ * outlet fill and nothing the target can read (`codegen.ts`) — so a target that
+ * declares `in=` leaves `$1` unbound and the
+ * mount dies with `_d_1 is not defined` — `check` and `build` both say ok and
+ * the app renders nothing at all.
+ *
+ * There is no argument to give it. The route state a target would want needs
+ * none: every tile reads the standard `route` slot (routing.md §3.2).
+ *
+ * `where` names the entry — a route or a sub-route, which is what
+ * `route-outlet` renders — so the two positions read as one rule. A redirect
+ * is not an entry either caller brings here: it names a path, and both skip it
+ * before the target is looked up.
+ */
+function checkRouteTargetArity(
+  entry: { path: string; tile: string; tilePos?: Pos; pathPos: Pos },
+  where: string,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  // An undefined target has no `in=` to disagree with, and its report is
+  // E0105's — one mistake named twice reads as two.
+  const target = sym.tiles.get(entry.tile);
+  if (!target?.in) return;
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `${where} targets tile "${entry.tile}", which expects 1 argument(s) — a route target is rendered with none`,
+    pos: entry.tilePos ?? entry.pathPos,
+  });
 }
 
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
-  // Each sub-route's target tile must exist (redirects skip).
+  // What a sub-route entry has to answer for: that its target exists, and that
+  // it takes no argument. One loop, so the redirect skip that guards the first
+  // question is the one that guards the second — two loops over the same array
+  // invite a merge that puts the second question behind the wrong guard.
   for (const sr of subRoutes) {
-    if (sr.tile.startsWith(">>")) continue;
+    if (sr.tile.startsWith(">>")) continue; // a redirect names a path, not a tile
+    const where = `Sub-route "${sr.path}" in tile "${tile.name}"`;
     if (!sym.tiles.has(sr.tile)) {
       errors.push({
         code: "E0105",
         kind: "undef-tile",
-        message: `Sub-route "${sr.path}" in tile "${tile.name}" targets undefined tile "${sr.tile}"`,
+        message: `${where} targets undefined tile "${sr.tile}"`,
         pos: tile.pos,
       });
     }
+    checkRouteTargetArity(sr, where, sym, errors);
   }
   // Duplicate sub-route paths within the same tile. `E0112` rather than
   // `E0008` because it came first and a code's meaning is permanent — but the
@@ -674,9 +976,11 @@ type Ctx = {
    * (`reducer`), and whether the runtime has installed `route` yet
    * (`app-init` — it has not).
    *
-   * These name a position, not a definition: an `effect`'s `map-request` is
-   * checked as `slot-init`, because what it needs is the same pure, payloadless
-   * treatment. A new check conditioned on one of these values inherits every
+   * These name a position, not a definition. Three positions besides a slot's
+   * own initializer borrow `slot-init` — an `effect`'s `map-request` and its
+   * `latest-per-key` key, and `app.http`'s fields — because what each needs is
+   * the same pure, payloadless treatment; all three build it through
+   * `pureScope`. A new check conditioned on one of these values inherits every
    * position that borrows it, so widen the value's meaning here before adding
    * one rather than assuming the name is the whole story.
    *
@@ -731,6 +1035,43 @@ type Ctx = {
    * (E0103) rather than a bind read out of its scope (E0119).
    */
   routeBind: "bound" | "unbound" | "no-payload";
+  /**
+   * Where the E0120 gate records the reads it matched, for a caller that wants
+   * the answer rather than the diagnostic. Set only by `routeReadsIn`, the
+   * probe that asks whether an expression evaluated before the mount — a `fn`
+   * body reached from one, a slot initializer — reads the route; a scope that
+   * leaves it unset is unaffected.
+   *
+   * A read nested inside a `let`, a `for` or a match arm reaches this array
+   * because every narrower scope is built by spreading the parent (`innerScope`
+   * and the `LetIn` branch), so the child holds the same array. Construct one
+   * of those explicitly and nested reads stop being found — silently, since
+   * every diagnostic the gate produces here is discarded.
+   */
+  routeReadsSeen?: { name: string; pos: Pos }[];
+  /**
+   * Where the `MethodCall` case records each bare `fn` name it lowers as a
+   * call in a fragment position, for `fnCallsIn`. Shared with every narrower
+   * scope the same way `routeReadsSeen` is, and set only by that probe.
+   */
+  fragmentFnCallsSeen?: { name: string; pos: Pos }[];
+  /**
+   * Where the tile branch of E0103 records each `$1` it finds unbound, for a
+   * caller that wants the answer rather than the diagnostic. Set only by
+   * `readsUndeclaredInput`, the probe that asks whether a fallback declaring
+   * no `in=` reads the panic; a scope that leaves it unset is unaffected.
+   * Nested reads reach it the way they reach `routeReadsSeen`, and for the
+   * same reason.
+   */
+  undeclaredInputReads?: Pos[];
+  /**
+   * Set inside the fragment of a list method handed one value per call
+   * (`fragmentShape` answered `"value"`): that method's name, and whether the
+   * fragment hides a `$2` the enclosing scope binds (a `fn`'s second
+   * parameter, an outer pair's value), so an unbound `$2` there says why it is
+   * unbound rather than only that it is.
+   */
+  oneValueFragment?: { method: string; hides: boolean };
 };
 
 /**
@@ -781,6 +1122,221 @@ function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
 }
 
+/** The controls `bind` writes back from (forms.md §5.1.1, plus `editable`). */
+const BIND_CONTROLS = new Set([
+  "input",
+  "textarea",
+  "select",
+  "slider",
+  "check",
+  "switch",
+  "radio",
+  "editable",
+]);
+
+/**
+ * E0602 on a `bind=` target: a step written as a call. A bind target is the
+ * place the control writes to — a path (language.md §1.6.3, forms.md §5.1),
+ * whose steps are written without parentheses. `bind=d.get().title` names the
+ * value `.get()` answers, not a place in `d`, and the lowering, which reads
+ * only paren-free steps, dropped the whole bind without a word: the input
+ * rendered empty and wrote nowhere. The unwrap step is `.get`.
+ */
+function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const bind = t.args.find((a) => a.name === "bind");
+  let cur = bind?.value as Expr | undefined;
+  while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
+    if (cur.kind === "MethodCall") {
+      const hint =
+        cur.method === "get" && cur.args.length === 0
+          ? ' — the unwrap step is written ".get"'
+          : " — a member derives a value, so there is no place in the receiver for the control to write";
+      errors.push({
+        code: "E0602",
+        kind: "unassignable-member",
+        message: `Cannot bind through ".${cur.method}(${cur.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
+        pos: cur.pos,
+      });
+    }
+    cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
+  }
+}
+
+/**
+ * E0219: `strict` on a bind control kind (`BIND_CONTROLS`), with or without a
+ * `bind` — it is not a prop of these tiles at all. forms.md §5.1.2 used to specify
+ * `strict=false` — take a value the refinement refuses and turn a form-level
+ * `valid` flag false — and nothing ever implemented it: the flag has no reader
+ * in the language, so the prop passed `check` and did nothing (#443). The
+ * chapter now has one mode, and the prop an author carries over from the old
+ * text is reported where it is written, as an argument or in the props block.
+ */
+function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  if (!BIND_CONTROLS.has(t.name)) return;
+  const written = [
+    ...t.args.flatMap((a) => (a.name === "strict" ? [{ pos: a.namePos }] : [])),
+    ...t.props.flatMap((p) => (p.name === "strict" ? [{ pos: p.pos }] : [])),
+  ];
+  for (const { pos } of written) {
+    errors.push({
+      code: "E0219",
+      kind: "bind-strict-prop",
+      message: `"strict" is not a prop of ${t.name}: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`,
+      pos,
+    });
+  }
+}
+
+/**
+ * The `BIND_CONTROLS` whose bind is a selection rather than a text: the bound
+ * value alone decides whether a box is ticked or a radio chosen (forms.md
+ * §5.1.1), so `check` / `switch` write a `Bool` and a `radio` writes its own
+ * `value=`.
+ */
+const TOGGLE_BIND_CONTROLS = new Set(["check", "switch", "radio"]);
+
+/** The argument each toggle reads for its selection when it has no `bind=`. */
+const TOGGLE_UNBOUND_SELECTION: Readonly<Record<string, string>> = {
+  check: "value",
+  switch: "value",
+  radio: "selected",
+};
+
+/**
+ * A `check` / `switch` / `radio` bind (forms.md §5.1.1), checked for what it
+ * writes when the control is chosen:
+ *
+ * - a `check` or `switch` writes the box's `Bool`, so the bound value has to
+ *   take one (E0201);
+ * - a `radio` writes its own `value=`, so it needs one (E0225 — without it the
+ *   runtime would write `undefined` into the slot, and `undefined == undefined`
+ *   would then show the radio chosen while every `match` on the slot fell
+ *   through), and that value has to be one the bound slot takes (E0201, or
+ *   E0216 for a variant of another union).
+ *
+ * The argument that selects the control when it is unbound — `value=` on a box,
+ * `selected=` on a radio — is not read beside a `bind=`, which is W0216. A bind
+ * whose type cannot be read is not type-checked; the other two still apply.
+ */
+function checkToggleBind(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!TOGGLE_BIND_CONTROLS.has(t.name)) return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const bindExpr = bindArg.value;
+  const unread = TOGGLE_UNBOUND_SELECTION[t.name];
+  for (const arg of t.args) {
+    if (arg.name !== unread) continue;
+    errors.push({
+      code: "W0216",
+      kind: "selection-beside-bind",
+      severity: "warning",
+      message: `"${unread}" on ${t.name}() is not read beside bind= — the bound value decides whether it is ${t.name === "radio" ? "chosen" : "ticked"}. Remove it (see docs/spec/forms.md §5.1.1)`,
+      pos: arg.namePos ?? (arg.value as Expr).pos,
+    });
+  }
+  const valueArg = t.name === "radio" ? t.args.find((a) => a.name === "value") : undefined;
+  if (t.name === "radio" && !valueArg) {
+    errors.push({
+      code: "E0225",
+      kind: "radio-bind-without-value",
+      message: `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`,
+      pos: bindArg.namePos ?? bindExpr.pos,
+    });
+  }
+  const bound = inferType(bindExpr, sym, ctx);
+  if (bound === null) return;
+  if (t.name === "radio") {
+    if (valueArg && !isTileExpr(valueArg.value)) {
+      checkAgainst(valueArg.value, bound, sym, errors, ctx);
+    }
+    return;
+  }
+  if (assignable(bound, prim("Bool", bindExpr.pos), sym)) return;
+  pushMismatch(
+    errors,
+    "E0201",
+    `${t.name}(bind=…) writes a Bool, but the bound value is ${typeToString(bound)} (see docs/spec/forms.md §5.1.1)`,
+    bindExpr.pos,
+  );
+}
+
+/**
+ * E0226: an `input` bind whose field kind and bound type do not go together
+ * (forms.md §5.1.1). The field's text is read as the bound position's type, and
+ * the field shows that type's value, so each type has the field kinds that
+ * text round-trips through: a `Time` bound to a `type="time"` field was shown
+ * its millisecond count, which `Time.parse` then refused on every edit — the
+ * field could never write and never said why. A type with no row at all (a
+ * `Bool`, an `Option` bound without `.get`, a record) was written the field's
+ * string. Only a literal `type=` is judged; an expression's value is unknown
+ * here, and the bound type alone is still checked against it. A bind whose
+ * type cannot be read is not judged, and `type="file"` is E0205's.
+ */
+function checkInputBindType(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (t.name !== "input") return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const typeArg = t.args.find((a) => a.name === "type")?.value;
+  const literal =
+    typeArg === undefined
+      ? "text"
+      : !isTileExpr(typeArg) && typeArg.kind === "Str"
+        ? typeArg.value
+        : null;
+  if (literal === "file") return;
+  const bound = inferType(bindArg.value, sym, ctx);
+  const u = unaliasType(bound, sym);
+  if (!u || u.kind === "TypeRef") return;
+  const base = u.kind === "TypePrim" ? inputBindBase(u.name) : null;
+  if (base !== null && (literal === null || INPUT_BIND_TYPES[base].includes(literal))) return;
+  const typeName = bound ? typeToString(bound) : "?";
+  const see = "(see docs/spec/forms.md §5.1.1)";
+  if (base === null) {
+    const payload =
+      u.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
+        ? ` — bind its payload with ".get"`
+        : "";
+    errors.push({
+      code: "E0226",
+      kind: "input-bind-type",
+      message: `input(bind=…) cannot bind a value of type ${typeName}: an input binds a Text, Int, Float or Time${payload} ${see}`,
+      pos: bindArg.value.pos,
+    });
+    return;
+  }
+  const field = typeArg === undefined ? `no type= (a "text" field)` : `type="${literal}"`;
+  const kinds = INPUT_BIND_TYPES[base].map((v) => `type="${v}"`).join(" / ");
+  errors.push({
+    code: "E0226",
+    kind: "input-bind-type",
+    message: `input(bind=…) with ${field} cannot bind a value of type ${typeName}: ${base === "Int" ? "an" : "a"} ${base} binds with ${kinds} ${see}`,
+    pos: typeArg !== undefined && !isTileExpr(typeArg) ? typeArg.pos : bindArg.value.pos,
+  });
+}
+
+/**
+ * The scope one `match` arm's body is read in: `ctx` plus the arm's binds,
+ * typed from the scrutinee. For the positions that only *read* an arm — a
+ * value's type, a destination's check — so a pattern's own mistakes are
+ * dropped here: `checkExpr`'s `MatchExpr` case walks the same pattern with the
+ * real list, and reporting it twice would double every E0207/E0208/E0209.
+ */
+function armScope(arm: MatchArm, scrutType: TypeExpr | null, sym: SymbolTable, ctx: Ctx): Ctx {
+  const inner = innerScope(ctx);
+  checkPatternAgainstType(arm.pattern, scrutType, sym, [], inner);
+  return inner;
+}
+
 /**
  * `button(type=…)` takes one of the three HTML values. A literal outside them
  * is worth reporting because of which way it fails: an invalid `type`
@@ -818,7 +1374,7 @@ function checkIconName(
   errors: KumikiError[],
 ): void {
   if (t.name !== "icon") return;
-  const nameArg = t.args.find((a) => a.name === "name");
+  const nameArg = contentArg(t);
   if (!nameArg) return;
   const v = nameArg.value as Expr;
   if (v.kind !== "Str") return;
@@ -879,7 +1435,7 @@ function checkA11y(
     }
   }
   if (t.name === "link") {
-    const hasText = t.args.some((a) => a.name === "text") || t.props.some((p) => p.name === "text");
+    const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
     const hasAria = t.props.some((p) => p.name === "aria-label");
     if (!hasText && !hasAria) {
       errors.push({
@@ -918,6 +1474,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       const scrutType = inferType(t.scrutinee, sym, ctx);
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
+        checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
       }
@@ -942,8 +1499,13 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
  * from the output with nothing said. The grammar has no children form; that
  * lowering is unspecified and now unreachable.
  *
- * Props (`{key: …}`) are not arguments and named args belong to the built-in
- * tiles, so only positional args count.
+ * On a user-tile call, only positional arguments count: a named one is a prop
+ * wherever it is written — `Btn(onClick=tap)` and `Btn() {onClick: tap}` reach
+ * the tile's root node alike — and `tileCallJs` takes the input from the same
+ * set, so what is counted here is what is read there. A prop's value is not a
+ * tile, which is the one shape that has no consumer on either side and is
+ * reported below. A builtin's content is read by the same rule: its first
+ * positional argument, never `args[0]` whatever its name.
  */
 function checkTileInput(
   t: TileExpr & { kind: "TileCall" },
@@ -963,6 +1525,18 @@ function checkTileInput(
     });
     return;
   }
+  for (const named of t.args) {
+    if (named.name === undefined || !isTileExpr(named.value)) continue;
+    errors.push({
+      code: "E0201",
+      kind: "type-mismatch",
+      message:
+        `Named argument "${named.name}" on tile "${t.name}" is a prop, and a prop's value ` +
+        `cannot be a tile — nothing renders it. Pass the tile as the positional argument of ` +
+        `a tile that declares "in=", or write it as a child`,
+      pos: named.value.pos,
+    });
+  }
   const arg = positional[0];
   if (!def.in || !arg) return;
   const value = arg.value;
@@ -976,6 +1550,69 @@ function checkTileInput(
     return;
   }
   checkAgainst(value, def.in, sym, errors, ctx);
+}
+
+/**
+ * E0129 at every argument a value builtin is written with as content and
+ * never renders, read off the same table the lowering reads its content from
+ * (`VALUE_BUILTIN_CONTENT`), so the two cannot disagree about which one shows.
+ *
+ * Three shapes, each named in the diagnostic's `unrendered` field. A
+ * positional argument past the one the builtin reads — the second of
+ * `text("A", "B")`, or any on `image` / `icon`, which read `src=` / `name=`.
+ * Content written as `text=` on a builtin that reads only a positional
+ * argument (`heading(text=title)`): `text=` is the label argument of `button`
+ * / `link` / `label` / `editable`, and a prop anywhere else, so the call
+ * rendered "" while every tier said ok. With a positional argument also
+ * written there, `text=` is just a prop and the call renders its content. And
+ * `text=` beside a positional argument on `label` / `link` / `editable`,
+ * which read `text=` only when no positional one is written.
+ */
+function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const reading = contentReading(t.name);
+  if (!reading) return;
+  const positional = t.args.filter((a) => a.name === undefined);
+  const read = reading.positional ? 1 : 0;
+  positional.slice(read).forEach((a, i) => {
+    errors.push({
+      code: "E0129",
+      kind: "unrendered-arg",
+      message: reading.positional
+        ? `${t.name} renders its first positional argument only — positional argument ` +
+          `${i + read + 1} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
+          `each its own ${t.name}`
+        : `${t.name} takes its ${reading.named} as \`${reading.named}=\` — a positional ` +
+          `argument is never rendered. Write \`${t.name}(${reading.named}=…)\``,
+      pos: a.value.pos,
+      unrendered: "positional",
+    });
+  });
+  if (!reading.positional) return;
+  const named = t.args.find((a) => a.name === "text");
+  if (!named?.name) return;
+  if (reading.named === "text" && positional.length > 0) {
+    errors.push({
+      code: "E0129",
+      kind: "unrendered-arg",
+      message:
+        `${t.name} renders its positional argument, so \`text=\` is never rendered — it is ` +
+        `read only when no positional argument is written. Remove \`text=\` or the ` +
+        `positional argument`,
+      pos: named.namePos,
+      unrendered: "text-shadowed",
+    });
+    return;
+  }
+  if (reading.named !== undefined || positional.length > 0) return;
+  errors.push({
+    code: "E0129",
+    kind: "unrendered-arg",
+    message:
+      `content is positional: write \`${t.name}("…")\` — \`text=\` is a prop on ${t.name} ` +
+      `and never renders (it is the label argument of button, link, label and editable)`,
+    pos: named.namePos,
+    unrendered: "text-prop",
+  });
 }
 
 function checkTileCall(
@@ -995,8 +1632,13 @@ function checkTileCall(
   }
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
+  checkContentArgs(t, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
+  checkBindStrictProp(t, errors);
+  checkBindTargetSteps(t, errors);
+  checkToggleBind(t, sym, errors, ctx);
+  checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
     const typeArg = t.args.find((a) => a.name === "type");
@@ -1038,15 +1680,41 @@ function checkTileCall(
     // the nested-tile branch below, because a capitalised name written as a
     // named argument of a builtin that takes tiles parses as a tile call.
     // Checked as one, `box(text("x"), onClick=Card)` drew no diagnostic and
-    // codegen captured no handler: the tile rendered and the click did nothing.
-    // The other positions parse it as a variant tag, which the shape check
-    // below rejects either way — this branch is what makes them agree.
+    // codegen captured no handler: the tile rendered and the click did
+    // nothing. The other positions — a props block, a value-arg builtin such
+    // as `link`, a user tile — parse the same name as a variant tag;
+    // `checkHandlerBinding` reads the name out of either, which is what makes
+    // them agree.
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
     if (isTileExpr(v)) {
       checkTileExpr(v, sym, errors, ctx);
+      continue;
+    }
+    // A positional argument of a builtin that is not a value builtin renders
+    // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
+    // program defines, and drops anything else — so a value there rendered
+    // nothing, and a slot named there lowered to a `null` child. It is
+    // reported at the value, and nothing inside it is checked: a `let` is the
+    // one value that can hold a tile call, which reads as a `fn` call there
+    // and would be reported wrongly, so a correct diagnostic under it (an
+    // undefined name, say) waits until the value is moved too.
+    if (
+      arg.name === undefined &&
+      positionalIsTile(t.name) &&
+      !(v.kind === "Ref" && sym.tiles.has(v.name))
+    ) {
+      errors.push({
+        code: "E0128",
+        kind: "value-as-child",
+        message:
+          `A value is not a tile: ${t.name} renders a positional argument only when it is a ` +
+          "tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, " +
+          "for a `let`, write the value where it is used or compute it in a `fn`",
+        pos: v.pos,
+      });
       continue;
     }
     checkExpr(v, sym, errors, ctx);
@@ -1095,16 +1763,19 @@ function checkTileCall(
  * Check one handler binding, in either form: `f(onX=r)` and `f() {onX: r}`.
  *
  * A handler names a reducer: this is the one argument position resolved in the
- * reducer namespace. What arrives is not always shaped like a reference —
- * a capitalised name is a tile call as a named argument of a tile-taking
- * builtin and a variant tag everywhere else — and neither form has anything
- * more to say about that than the other, so both ask here rather than each
- * deciding for itself.
+ * reducer namespace. What arrives is not always shaped like a reference — a
+ * capitalised name is a tile call as a named argument of a builtin that takes
+ * tiles, and a variant tag everywhere else (a props block, a value-arg builtin
+ * such as `link`, a user tile) — and neither binding form has anything more to
+ * say about that than the other, so both ask here rather than each deciding
+ * for itself.
  *
- * Every non-reference is rejected, including a name that resolves to a
- * reducer: a capitalised reducer name cannot be bound to a handler at all,
- * because it never reaches here as a reference. The message says what the
- * position requires rather than what this value is.
+ * The shape is not the question: `handlerReducerName` reads the name out of
+ * whichever of the three the parser produced, so a reducer whose own name is
+ * capitalised binds like any other. What is left to report is what was always
+ * being reported — a value that is no name at all, and a name that names no
+ * reducer — and a capitalised name now answers each exactly as a lowercase one
+ * does.
  */
 function checkHandlerBinding(
   tileName: string,
@@ -1114,8 +1785,9 @@ function checkHandlerBinding(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  checkHandlerTarget(tileName, handler, value.pos, errors);
-  if (value.kind !== "Ref") {
+  checkHandlerTarget(tileName, handler, value.pos, sym, errors);
+  const name = handlerReducerName(value);
+  if (name === null) {
     errors.push({
       code: "E0201",
       kind: "type-mismatch",
@@ -1124,11 +1796,11 @@ function checkHandlerBinding(
     });
     return;
   }
-  if (!sym.reducers.has(value.name)) {
+  if (!sym.reducers.has(name)) {
     errors.push({
       code: "E0102",
       kind: "undef-reducer",
-      message: `Reference to undefined reducer "${value.name}"`,
+      message: `Reference to undefined reducer "${name}"`,
       pos: value.pos,
     });
   }
@@ -1144,33 +1816,88 @@ function checkHandlerBinding(
  * situation, and the same reason to report it rather than break the build.
  * `W0212` cannot see this one — it asks about `ui.<ev>(Tile)` selectors, and a
  * container with any clickable descendant satisfies it.
+ *
+ * A user tile is the same failure, and is asked with `collectTileBuiltinKinds`
+ * — the walk W0212 already uses. Finding no kind that fires the handler
+ * anywhere in the render tree is the answer that reports.
+ *
+ * That under-reports rather than over-reports, deliberately: codegen merges
+ * these props onto the node the tile renders as its ROOT (`tileCallJs`), so
+ * `Card = box(button(…))` drops the handler too and is not reported here,
+ * because the walk does not tell a root from a descendant. Every case it does
+ * report is a certain drop — a tree with no firing kind in it has no firing
+ * kind at its root — which is what keeps the warning off the working shapes.
+ * `spec-divergences.test.ts` pins the gap, so narrowing this to the root
+ * later is a visible change rather than a surprise.
  */
 function checkHandlerTarget(
   tileName: string,
   handler: string,
   pos: Pos,
+  sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  if (!BUILTIN_TILES.has(tileName)) return;
   const allowed = HANDLER_PROP_TILES[handler];
-  if (allowed == null || allowed.has(tileName)) return;
-  errors.push({
+  if (allowed == null) return;
+  if (BUILTIN_TILES.has(tileName)) {
+    if (allowed.has(tileName)) return;
+    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+    return;
+  }
+  // An undeclared name is E0105's to report; guessing at what it renders would
+  // add a second diagnostic saying the same thing less precisely.
+  if (!sym.tiles.has(tileName)) return;
+  const kinds = collectTileBuiltinKinds(tileName, sym);
+  // Nothing was learned, so there is nothing to say: exactly how W0212 treats
+  // the same empty answer. Reached only when the unresolvable thing is the
+  // tile's own root (`tile Inner = Nope()`, `tile Inner = Inner()`) — one
+  // nested inside a resolvable body still leaves the kinds around it, and
+  // those are a true answer about the root, so the warning stands beside the
+  // E0105 / E0005 that names the unresolvable part.
+  if (kinds.size === 0) return;
+  if ([...kinds].some((k) => allowed.has(k))) return;
+  errors.push(
+    inertHandler(
+      tileName,
+      handler,
+      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
+      allowed,
+      pos,
+    ),
+  );
+}
+
+/** One W0213, whichever side — builtin or user tile — asked for it. */
+function inertHandler(
+  tileName: string,
+  handler: string,
+  because: string,
+  allowed: ReadonlySet<string>,
+  pos: Pos,
+): KumikiError {
+  return {
     code: "W0213",
     kind: "handler-on-inert-tile",
     severity: "warning",
-    message: `"${handler}" on ${tileName}() is dropped — ${tileName} does not fire it. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+    message: `"${handler}" on ${tileName}() is dropped — ${because}. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
     pos,
-  });
+  };
 }
 
 /**
  * Collect every BUILTIN_TILES kind that may appear as a (descendant) part of
  * a named tile's render tree. Returns an empty set when nothing can be
  * statically inferred (cycle, undeclared name, or only dynamic bodies
- * without resolvable children). Used by the `W0212` check to suppress
- * cascade false positives — codegen propagates `ui.click(TodoRow)` down to
- * the `check` descendant of `TodoRow = row(check(...), …)`, so finding any
- * descendant in the allowed kind set means the subscription is wired.
+ * without resolvable children).
+ *
+ * Two checks read it, and a descendant match means opposite things to them —
+ * worth knowing before either is narrowed. For `W0212` a descendant is the
+ * true answer: codegen propagates `ui.click(TodoRow)` down to the `check` of
+ * `TodoRow = row(check(...), …)`, so finding one means the subscription is
+ * wired. For `W0213` it is deliberate under-reporting: an explicit handler
+ * prop lands on the ROOT node and nowhere else (`tileCallJs`), so a firing
+ * descendant does NOT mean the handler is wired — only that this walk cannot
+ * prove it is dropped.
  */
 function collectTileBuiltinKinds(
   tileName: string,
@@ -1376,6 +2103,58 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
   }
 }
 
+/**
+ * The type `$1` holds in an `effect-name.ok(…)` / `.err(…)` trigger — the
+ * value the effect delivers (language.md §1.6.5). On `.ok`: the Ok payload of
+ * an `out=Result(T, E)`, or the whole value of any other `out=`.
+ *
+ * On `.err`: `Text`, for an effect on a capability whose failures the runtime
+ * delivers as `Text` ({@link failsWithText}) and whose `out=` is a
+ * `Result(T, E)`. It is `Text` rather than the declared `E` because `Text` is
+ * what arrives: an `E` that says otherwise is E0306 at the declaration, and
+ * typing `$e` from it as well would add a second, wrong report at every read.
+ * Any other `.err` stays undecided — an HTTP handler's record and a custom
+ * provider's value are not what the runtime fixes to `E`, so typing `$e` from
+ * `out=` there would claim a type nothing guarantees. A built-in effect has no
+ * `out=` to read, and a `Result` of the wrong arity is already reported where
+ * it is written, so neither is guessed at.
+ */
+function effectPayloadType(
+  effect: string,
+  outcome: "ok" | "err",
+  sym: SymbolTable,
+): TypeExpr | null {
+  const eff = sym.effects.get(effect);
+  const out = eff?.outType;
+  if (!eff || !out) return null;
+  const u = unaliasType(out, sym);
+  const result = u?.kind === "TypeApp" && u.name === "Result" ? u : null;
+  if (outcome === "err") {
+    if (!result || result.args.length !== 2 || !failsWithText(eff.cap)) return null;
+    return { kind: "TypePrim", name: "Text", pos: eff.pos };
+  }
+  if (result) return result.args.length === 2 ? (result.args[0] ?? null) : null;
+  return out;
+}
+
+/**
+ * The type of the value an effect answers with on `outcome`: the halves of a
+ * `Result` `out=`, or the whole `out=` for success when it is not a `Result`.
+ * Unlike `effectPayloadType` this answers the failure half too, for a mock
+ * that supplies it.
+ */
+function effectOutcomeType(
+  effect: string,
+  outcome: "ok" | "err",
+  sym: SymbolTable,
+): TypeExpr | null {
+  if (outcome === "ok") return effectPayloadType(effect, "ok", sym);
+  const out = unaliasType(sym.effects.get(effect)?.outType ?? null, sym);
+  return out?.kind === "TypeApp" && out.name === "Result" && out.args.length === 2
+    ? (out.args[1] ?? null)
+    : null;
+}
+
 function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
@@ -1386,10 +2165,62 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
-    for (const b of r.on.binds) if (b !== "_") ctx.localBinds.add(b);
+    // Both checks a bind is subject to today are asked here, in the walk that
+    // puts the names into scope, so the answer to one cannot drift from the
+    // answer to the other. Whichever of them fires, the name still enters the
+    // scope — that is what `bindLocal` below the branch is for, and
+    // why it sits outside it: the body's reads are then that binding, so a
+    // `$route` bind does not also collect an E0119 apiece for every read.
+    //
+    // Which positional each name already holds. A bind list names the payload's
+    // positionals in order, so a bind's index *is* its position — `_` included,
+    // since it stands for a positional rather than skipping one, which is the
+    // index `emit-reducer.ts` reads the payload at.
+    const boundAt = new Map<string, number>();
+    const trigger = r.on;
+    trigger.binds.forEach((b, i) => {
+      if (b.name === "_") return;
+      if (RESERVED_BIND_NAMES.has(b.name)) {
+        // §1.6.5 — codegen declares these three in every reducer body, whatever
+        // the trigger, so a bind that takes one is a second declaration of the
+        // same name. Reported per bind, and never as a duplicate as well: this
+        // already says to rename the bind, and renaming it settles both.
+        errors.push({
+          code: "E0121",
+          kind: "reserved-bind-name",
+          message:
+            `"${b.name}" is a positional binding the compiler declares in every reducer ` +
+            `body, so an effect-event bind cannot also take the name — the two declarations ` +
+            `collide and the module does not load. Rename the bind`,
+          pos: b.pos,
+        });
+      } else {
+        const first = boundAt.get(b.name);
+        if (first === undefined) boundAt.set(b.name, i + 1);
+        else
+          errors.push({
+            code: "E0123",
+            kind: "duplicate-effect-bind",
+            message:
+              `"${b.name}" is bound twice in this trigger: it names $${first} and then ` +
+              `$${i + 1}, so the two binds are peers — nothing nests them, the second does ` +
+              `not shadow the first, and $${first} has no name left to read it by. Rename ` +
+              `one, or write "_" for a positional the reducer does not read`,
+            pos: b.pos,
+          });
+      }
+      // `$1` is the effect's result; the positionals after it (the request key)
+      // stay untyped. A reserved name is not this bind's to type — the body
+      // reads the compiler's own declaration of it.
+      const type =
+        i === 0 && !RESERVED_BIND_NAMES.has(b.name)
+          ? effectPayloadType(trigger.effect, trigger.outcome, sym)
+          : null;
+      bindLocal(ctx, b.name, type);
+    });
     // The name before `.ok` / `.err` is the effect whose result this reducer
     // waits for. A misspelling leaves it waiting for a result nothing produces.
-    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECT_CAPS.has(r.on.effect)) {
+    if (!sym.effects.has(r.on.effect) && !BUILTIN_EFFECTS.has(r.on.effect)) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -1484,6 +2315,10 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       }
     }
   }
+  // Not derived from `RESERVED_BIND_NAMES`: `$route` is deliberately absent,
+  // because the E0119 gate reads `localBinds` to tell a payload field from a
+  // name something in the body bound. Seeding it here would answer that
+  // question "bound" for every reducer and retire the diagnostic.
   ctx.localBinds.add("$el");
   ctx.localBinds.add("$event");
 
@@ -1514,13 +2349,17 @@ function checkStmt(
   if (s.kind === "IfStmt") {
     checkExpr(s.cond, sym, errors, ctx);
     checkCondition(s.cond, inferType(s.cond, sym, ctx), sym, errors, '"if"');
-    // then/else are exclusive — each branch starts from the parent write set.
-    // A slot written in only one branch (or both) counts as "written" for the
-    // parent, so subsequent code can't re-write it.
+    // Each branch is a scope of its own (language.md §1.6.7): a `let` in one
+    // is not in the other, nor after the `if`, which is also how codegen emits
+    // them. then/else are exclusive — each branch starts from the parent write
+    // set. A slot written in only one branch (or both) counts as "written" for
+    // the parent, so subsequent code can't re-write it.
     const thenWrites = new Set<string>(writtenRoots);
-    for (const st of s.consequent) checkStmt(st, sym, errors, ctx, thenWrites);
+    const thenScope = innerScope(ctx);
+    for (const st of s.consequent) checkStmt(st, sym, errors, thenScope, thenWrites);
     const elseWrites = new Set<string>(writtenRoots);
-    for (const st of s.alternate) checkStmt(st, sym, errors, ctx, elseWrites);
+    const elseScope = innerScope(ctx);
+    for (const st of s.alternate) checkStmt(st, sym, errors, elseScope, elseWrites);
     for (const r of thenWrites) writtenRoots.add(r);
     for (const r of elseWrites) writtenRoots.add(r);
     return;
@@ -1532,6 +2371,7 @@ function checkStmt(
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
       const inner = innerScope(ctx);
+      checkPatternBindsAreDistinct(arm.pattern, errors);
       checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
       const armWrites = new Set<string>(writtenRoots);
       for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
@@ -1642,8 +2482,120 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
-  if (lv.kind === "LIndex") checkExpr(lv.index, sym, errors, ctx);
+  if (lv.kind === "LIndex") {
+    checkExpr(lv.index, sym, errors, ctx);
+    checkIndexLvalue(lv, sym, errors, ctx);
+  } else {
+    // Record the same decision `classifyFieldAccess` records for a read, so
+    // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
+    // the base type is unknown, as it is there — the name-based reading then
+    // stands, on both sides alike.
+    const raw = lvalueType(lv.base, sym);
+    const base = unaliasType(raw, sym);
+    if (base) {
+      lv.accessKind = "shortcut";
+      checkMemberLvalue(lv, raw, base, sym, errors);
+    }
+  }
   checkLvalue(lv.base, sym, errors, ctx);
+}
+
+/**
+ * An index step on the left of `:=`. A `List` index names a position, so it is
+ * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
+ * membership and nothing else, so `s[x] := v` has no place to write — the same
+ * refusal §1.6.3 gives a member, and reported by the same code. Membership is
+ * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ */
+function checkIndexLvalue(
+  lv: Lvalue & { kind: "LIndex" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  checkListIndex(base, lv.index, sym, errors, ctx);
+  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
+  errors.push({
+    code: "E0602",
+    kind: "unassignable-member",
+    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    pos: lv.pos,
+  });
+}
+
+/**
+ * A `List` index is an `Int`, on either side of `:=` — the read and the write
+ * name the same element (language.md §1.6.3). `base` is the receiver's type,
+ * already unaliased; any other receiver is left alone.
+ */
+function checkListIndex(
+  base: TypeExpr | null,
+  index: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (base?.kind !== "TypeApp" || base.name !== "List") return;
+  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
+}
+
+/**
+ * `classifyMember`'s answer, asked for a write. The read side asks whether
+ * `.member` names something on this receiver; the write side asks that and
+ * then one thing more — whether what it names can be written *through*.
+ * §1.6.3's step set is closed: a field, an index, and `.get`. A member is none
+ * of those, and lowering it anyway made the segment a literal key, so
+ * `name.length := 9` on a `Text` left the slot holding `{"length": 9}` — not a
+ * `Text`, and reported by nothing until a render tripped over it.
+ *
+ * Everything but that last question is the classifier's, so the two sides
+ * cannot disagree about what a name *is*. They differ only in what they do
+ * with the answer, which is the difference the two sides actually have.
+ */
+function checkMemberLvalue(
+  lv: Lvalue & { kind: "LField" },
+  raw: TypeExpr | null,
+  base: TypeExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  switch (classifyMember(raw, lv.field, sym)) {
+    case "field":
+      // A record's own field, or a prim's structural field (`File.name`).
+      // Recorded rather than left as "shortcut" so the annotation says what
+      // the segment is; both spellings lower to the same key.
+      lv.accessKind = "field";
+      return;
+
+    case "member":
+      // The one member §1.6.3 makes an lvalue — and only where it defines it,
+      // on a receiver that unwraps. On anything else `.get` is the same
+      // corruption as any other member: the runtime's setter falls through an
+      // unwrap segment when the value carries no `_tag`, so the write lands on
+      // the whole slot.
+      if (lv.field === "get" && unwrappedType(base) !== null) return;
+      errors.push({
+        code: "E0602",
+        kind: "unassignable-member",
+        message: `Cannot assign through ".${lv.field}": it is a member of "${receiverName(raw, base, sym)}", not a field`,
+        pos: lv.pos,
+      });
+      return;
+
+    // Not a member of *this* receiver, so there is nothing to refuse writing
+    // through — the name is undefined here, which is the read side's answer
+    // and now the write side's too. Calling it E0602 would have put a false
+    // sentence in the message: `.abs` is not "a member of Text".
+    case "unknown":
+      errors.push(undefMemberError(raw, base, lv.field, lv.pos, sym));
+      return;
+
+    case "undecidable":
+      // A receiver we do not fully understand. Silent, exactly as on the read
+      // side: a false error on a dynamic receiver is worse than the silence.
+      return;
+  }
 }
 
 /**
@@ -1676,18 +2628,30 @@ function checkCallee(
     });
     return;
   }
-  // A constant namespace has exactly the members `QUALIFIED_BUILTIN_CALLS`
-  // lists. Without this, `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show`
-  // on *any* capitalised qualifier, so `EffectId.fresh` passed and lowered to
-  // `_s.freshId()` — a real id minted where the author wrote the empty
-  // sentinel, which a later `http.cancel` then aims at nothing. Only the
-  // zero-argument form is refused: `EffectId.show(h)` is the qualified spelling
-  // of `h.show` and means what it says.
+  // A `QUALIFIED_CALL_NAMESPACES` qualifier has exactly the members
+  // `QUALIFIED_BUILTIN_CALLS` lists. Without this, `TYPE_MEMBER_CALLS` resolves
+  // `fresh` / `parse` / `show` on *any* capitalised qualifier, so
+  // `EffectId.fresh` passed and lowered to `_s.freshId()` — a real id minted
+  // where the author wrote the empty sentinel, which a later `http.cancel` then
+  // aims at nothing. It is also what answers a bare `Duration.nope`, which the
+  // parser now hands over as a zero-argument call rather than leaving as a
+  // field read.
+  //
+  // The test is the count and the namespace, not the parentheses, so it closes
+  // those three members inside a listed namespace in *both* spellings:
+  // `Duration.fresh()` lowered to `_s.freshId()` and put a UUID in a `Duration`
+  // slot, which is the same defect as `EffectId.fresh` and is refused the same
+  // way. E0116 is the sentence for all of them, `Duration.parse()` included —
+  // within these namespaces the member does not exist, so a count for it would
+  // be describing something that is not there. `docs/spec/errors.md` E0117
+  // records the carve-out. Given an argument the member is not zero-argument
+  // and this branch is not reached: `EffectId.show(h)` is the qualified
+  // spelling of `h.show` and means what it says.
   const dot = callee.indexOf(".");
   if (
     dot > 0 &&
     argCount === 0 &&
-    CONSTANT_NAMESPACES.has(callee.slice(0, dot)) &&
+    QUALIFIED_CALL_NAMESPACES.has(callee.slice(0, dot)) &&
     !QUALIFIED_BUILTIN_CALLS.has(callee)
   ) {
     errors.push({
@@ -1698,11 +2662,12 @@ function checkCallee(
     });
     return;
   }
-  // `<Type>.fresh|parse|show` is lowered on any capitalised qualifier — codegen
-  // matches it by regex — so a misspelt qualifier did not fail, it changed what
-  // the call does: `Int.parse` has a numeric branch and `Itn.parse` misses it,
-  // so an `Int` slot ends up holding `"12"` and every later sum concatenates.
-  // Reported as E0117 with the sentence `resolveType` uses, so the repair path
+  // `<Type>.fresh|parse|show` is matched on any capitalised qualifier — codegen
+  // matches it by regex — so a qualifier that names no type has to be refused
+  // here. When `parse` branched on the qualifier's name, a misspelt one did not
+  // fail, it changed what the call did: `Itn.parse("12")` was `Some("12")` and
+  // every later sum concatenated. It now reads by the base the qualifier
+  // resolves to, and a name that resolves to none has no base. Reported as E0117 with the sentence `resolveType` uses, so the repair path
   // for an unknown type name covers this one without knowing about it.
   if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
     const qualifier = callee.slice(0, dot);
@@ -1723,6 +2688,83 @@ function checkCallee(
       });
       return;
     }
+    // A name can be a type's and still not be a type: `List`, `Map`, `Tuple`
+    // and a `type Box(T) = …` want their arguments first. The call has no type
+    // to mint (`fresh`) or read into (`parse`), and each check above declines
+    // it on its own terms — the name resolves, the callee resolves, and the
+    // inference answers nothing — so `slot n : Int = Box.fresh()` stored a uuid
+    // string in an `Int` slot with no report at all.
+    // `constructorArity` answers `null` for variadic `Tuple` and for a name that
+    // is no type at all, so it is asked only of a name `isKnownTypeName` holds.
+    const typeArity =
+      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
+        ? constructorArity(qualifier, sym)
+        : 0;
+    if (typeArity !== 0) {
+      const wanted =
+        typeArity === null
+          ? "type arguments"
+          : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
+      // A `parse` or `fresh` repaired to any applied type can still land on
+      // E0802 below — `type IntList = List(Int)` has no reading of a text, and
+      // no uuid `Text` goes into it — so the message names both halves of the
+      // repair in the one round.
+      const member = callee.slice(dot + 1);
+      const readable =
+        member === "parse"
+          ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
+          : member === "fresh"
+            ? " and that a Text goes into"
+            : "";
+      errors.push({
+        code: "E0124",
+        kind: "type-constructor-qualifier",
+        message: `Type "${qualifier}" takes ${wanted}, so it is not a type on its own — "${callee}" needs one that takes none${readable}`,
+        pos,
+      });
+      return;
+    }
+    // `parse` lowers by the base the qualifier unaliases to, and a record, a
+    // union, `File`, `EffectId` or `Unit` has no reading of a text — codegen
+    // has nothing of the call's type to produce. `parseQualifier` is the one
+    // answer both sides read, so every qualifier that passed E0117 and E0124
+    // above and has no reading is reported here, and none reaches the
+    // lowering. A qualifier whose definition resolves to nothing is left to
+    // the report at that definition.
+    if (
+      callee.slice(dot + 1) === "parse" &&
+      isQualifierName(qualifier) &&
+      parseQualifier(qualifier, sym).kind === "none"
+    ) {
+      errors.push({
+        code: "E0802",
+        kind: "unimplemented-function",
+        message: `"${qualifier}" has no reading of a text — parse into ${PARSE_READINGS_PHRASE} and build it in a fn`,
+        pos,
+      });
+      return;
+    }
+    // `fresh` is the same refusal from the other side: it lowers to one uuid
+    // `Text` whatever the qualifier says, so a type no `Text` goes into has no
+    // value it can mint. Accepted, a `TaskId = nominal Int` id was a string in
+    // an `Int`'s clothing, and a `Set(TaskId)` read back through its declared
+    // key type turned it into `NaN`. `freshResultType` is the one answer to
+    // which qualifiers `fresh` produces; a qualifier that resolves to nothing
+    // is left to the report at its definition, as for `parse`.
+    if (
+      callee.slice(dot + 1) === "fresh" &&
+      isQualifierName(qualifier) &&
+      qualifierType(qualifier, pos, sym) !== null &&
+      freshResultType(qualifier, pos, sym) === null
+    ) {
+      errors.push({
+        code: "E0802",
+        kind: "unimplemented-function",
+        message: `"${qualifier}" is not a Text, and fresh mints a uuid Text — declare the id nominal Text`,
+        pos,
+      });
+      return;
+    }
   }
   const arity = builtinArity(callee);
   if (arity !== undefined) {
@@ -1733,6 +2775,15 @@ function checkCallee(
         message: `Function "${callee}" expects ${wantedArguments(arity)} but got ${argCount}`,
         pos,
       });
+      return;
+    }
+    if (callee === "fmt") reportFmtPlaceholders(args, pos, errors);
+    // What `parse` reads is a text (stdlib §2.4.3). Given anything else the
+    // call is not a parse of anything: `Bool.parse(flag)` is `None` whatever
+    // `flag` holds.
+    const text = args[0];
+    if (dot > 0 && callee.slice(dot + 1) === "parse" && text) {
+      checkAgainst(text, prim("Text", pos), sym, errors, ctx);
     }
     return;
   }
@@ -1773,6 +2824,52 @@ function reportRunReducerPosition(ctx: Ctx, pos: Pos, errors: KumikiError[]): vo
     kind: "undef-call",
     message: 'Call to "run-reducer" outside a property-test invariant',
     pos,
+  });
+}
+
+/**
+ * `fmt`'s placeholders against its arguments (stdlib.md §2.4.5), when the
+ * template is a literal and there is therefore a count to check.
+ *
+ * Neither direction stops the program: an index the arguments do not reach
+ * keeps its placeholder, and an argument no placeholder names is dropped. That
+ * is what makes this worth a warning rather than nothing — the second one has
+ * no trace anywhere. `fmt("Hello {0}", name, count)` renders exactly what a
+ * correct call renders, and the value the author added is gone.
+ *
+ * Only a literal template is checked. `fmt(tpl, x)` over a slot has no
+ * placeholder set at compile time, and reporting on the shape of whatever
+ * literal happened to initialise the slot would be a guess.
+ */
+function reportFmtPlaceholders(args: Expr[], pos: Pos, errors: KumikiError[]): void {
+  const template = args[0];
+  if (template?.kind !== "Str") return;
+  const supplied = args.length - 1;
+  const indices = new Set<number>();
+  for (const m of template.value.matchAll(/\{(\d+)\}/g)) indices.add(Number(m[1]));
+  const missing = [...indices].filter((i) => i >= supplied).sort((a, b) => a - b);
+  const unused = [...Array(supplied).keys()].filter((i) => !indices.has(i));
+  if (missing.length === 0 && unused.length === 0) return;
+  // Both halves in one message: a call can be wrong in both directions at once
+  // (`fmt("{1}", "a")` names an index it does not have AND ignores the one it
+  // does), and two warnings on one call would read as two mistakes.
+  const parts: string[] = [];
+  if (missing.length > 0) {
+    parts.push(
+      `${missing.map((i) => `{${i}}`).join(", ")} ${missing.length === 1 ? "has" : "have"} no argument`,
+    );
+  }
+  if (unused.length > 0) {
+    parts.push(
+      `argument${unused.length === 1 ? "" : "s"} ${unused.map((i) => i + 2).join(", ")} ${unused.length === 1 ? "is" : "are"} named by no placeholder`,
+    );
+  }
+  errors.push({
+    code: "W0214",
+    kind: "fmt-placeholder-argument-mismatch",
+    message: `fmt template and arguments disagree: ${parts.join("; ")}`,
+    pos,
+    severity: "warning",
   });
 }
 
@@ -1854,7 +2951,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Bool":
     case "Unit":
       return;
-    case "Ref":
+    case "Ref": {
       // An `app.init` argument is evaluated while `createApp()` builds the app
       // object; the route is installed later, by whichever mount follows. Both
       // spellings therefore read nothing here, and both get the same answer —
@@ -1872,14 +2969,16 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         ctx.kind === "app-init" &&
         !ctx.localBinds.has(e.name)
       ) {
+        // The one place that decides whether a `route` here is the runtime's,
+        // so the passes that ask about another position — a `fn` body reached
+        // from one, a slot initializer — probe this branch rather than
+        // matching the spelling themselves: `routeReadsSeen` is how they learn
+        // which name it found, and where.
+        ctx.routeReadsSeen?.push({ name: e.name, pos: e.pos });
         errors.push({
           code: "E0120",
           kind: "route-in-app-init",
-          message:
-            `"${e.name}" is not available in an app.init argument: these arguments are ` +
-            `evaluated once, while the app object is being built, and the runtime installs ` +
-            `the route during the mount that follows. Take the route from a route.enter ` +
-            `reducer, which runs with the route the app landed on`,
+          message: routeInAppInitMessage(e.name),
           pos: e.pos,
         });
         return;
@@ -1892,8 +2991,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // below is the right one.
       //
       // An enclosing bind of the same name wins, for the reason the E0120 gate
-      // above gives: `let $route = … in $route` lowers to that binding, so the
-      // payload it does or does not carry decides nothing.
+      // above gives: `let $route = … in $route` lowers to that binding — codegen
+      // gives a declaration over a name already in scope an identifier of its
+      // own (`declareBind`), so the shadow is a shadow and not a collision — and
+      // the payload it does or does not carry decides nothing.
       if (e.name === "$route" && ctx.routeBind !== "no-payload" && !ctx.localBinds.has(e.name)) {
         if (ctx.routeBind === "unbound") {
           errors.push({
@@ -1921,16 +3022,44 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         }
         return;
       }
-      if (sym.fns.has(e.name)) return;
+      const fn = sym.fns.get(e.name);
+      if (fn) {
+        // A `fn` is not a value (§1.9.1: no lambdas), so its bare name here is
+        // always the same mistake — the call's parentheses are missing. The
+        // name lowers to the generated function itself, which reaches whatever
+        // reads it, a capability boundary included, as a function. The
+        // fragment argument of a higher-order method is the one position a
+        // name is right, and the `MethodCall` case keeps it from reaching here.
+        errors.push({
+          code: "E0127",
+          kind: "fn-as-value",
+          message: `"${e.name}" is a fn, and a fn is not a value — write the call: ${e.name}(${fn.params.map((p) => p.name).join(", ")})`,
+          pos: e.pos,
+        });
+        return;
+      }
       // Could be a built-in like `route`
       if (e.name === "route" || e.name === "now" || e.name === "self") return;
       // `$1` in a tile is bound only when the tile declares `in=`; reaching here
       // means it didn't (in= adds `$1` to localBinds). Point at the real fix.
       if (e.name === "$1" && ctx.kind === "tile") {
+        ctx.undeclaredInputReads?.push(e.pos);
         errors.push({
           code: "E0103",
           kind: "undef-ref",
           message: `"$1" is undefined here — a tile can only use "$1" if it declares an "in=" argument (e.g. \`tile X in=SomeType = …\`)`,
+          pos: e.pos,
+        });
+        return;
+      }
+      if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
+        const { method, hides } = ctx.oneValueFragment;
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: hides
+            ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
+            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
           pos: e.pos,
         });
         return;
@@ -1942,6 +3071,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         pos: e.pos,
       });
       return;
+    }
     case "Variant":
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
@@ -1995,6 +3125,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Index":
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
+      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
       return;
     case "Call":
       // `run-reducer(name)` takes a reducer, not a value, and lowers only
@@ -2009,7 +3140,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       return;
-    case "MethodCall":
+    case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === "run-reducer") {
         checkExpr(e.receiver, sym, errors, ctx);
@@ -2024,19 +3155,18 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           pos: e.pos,
         });
       }
-      // `Math.round("hello")` is `NaN`, and the method-call branch asked only
-      // whether the runtime knows the *name*. Same rule as the field-access
-      // branch below, and it has to be in both: the two spellings of one
-      // member cannot disagree about whose member it is.
-      if (NUMERIC_MEMBERS.has(e.method)) {
-        const rt = inferType(e.receiver, sym, ctx);
-        if (isKnown(rt, sym) && !isNumeric(rt, sym)) {
-          errors.push({
-            code: "E0108",
-            kind: "undef-member",
-            message: `Type "${typeName(rt, sym)}" has no member ".${e.method}" — it is a method of Int / Float`,
-            pos: e.pos,
-          });
+      // Whose member the name is, asked of the same classifier the
+      // field-access branch asks: the two spellings of one member cannot
+      // disagree about it. A name the runtime does not know at all is E0801
+      // above, and saying E0108 as well would be the same mistake twice.
+      else {
+        const raw = inferType(e.receiver, sym, ctx);
+        const rt = unaliasType(raw, sym);
+        // A record's `copy` is the record-update form (language.md §1.6.3),
+        // which names the record's fields rather than a member.
+        const recordUpdate = e.method === "copy" && rt?.kind === "TypeRecord";
+        if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
+          errors.push(undefMemberError(raw, rt, e.method, e.pos, sym));
         }
       }
       {
@@ -2044,30 +3174,112 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         // codegen with a bare `TypeError` and no position — so `check` says ok
         // and `build` dies. Reported here, where the position is.
         const min = METHOD_MIN_ARGS.get(e.method);
-        if (min !== undefined && e.args.length < min) {
+        if (e.method === "get") {
+          // The minimum in the table is the `Map` / `List` reading's. Asking it
+          // first would report `o.get()` — which takes none — so this one name
+          // is judged by its receiver instead.
+          checkGetArity(e, sym, errors, ctx);
+        } else if (min !== undefined && e.args.length < min) {
           errors.push({
             code: "E0213",
             kind: "call-arity-mismatch",
             message: `Method ".${e.method}" expects ${min} argument(s) but got ${e.args.length}`,
             pos: e.pos,
           });
+        } else if (e.method === "get-or") {
+          // Clearing the minimum is not the whole rule for this one name, and
+          // the check has to come after it so one mistake is one diagnostic.
+          checkGetOrArity(e, sym, errors, ctx);
         }
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
-      for (const a of e.args) {
-        // Inside a method-call argument `$1` / `$2` are the implicit lambda's
-        // parameters, and they SHADOW any outer ones — a tile that declares
-        // `in=TaskId` binds `$1` to it, and `dueDate.map(formatDate($1))`
-        // inside that tile is a different `$1`. The element type is left
-        // undecided: which argument a method binds is per-method, and guessing
-        // wrong costs a diagnostic on a working program.
-        const inner = innerScope(ctx);
-        bindLocal(inner, "$1", null);
-        bindLocal(inner, "$2", null);
-        checkExpr(a, sym, errors, inner);
+      {
+        // Only a key reader or a call with a fragment to bind needs the
+        // receiver's type; an argument-less member that reads no keys skips
+        // the inference.
+        const recvType =
+          e.args.length > 0 || KEY_READER_NAMES.has(e.method)
+            ? inferType(e.receiver, sym, ctx)
+            : null;
+        const kind = keyKindOfReader(recvType, e.method, sym);
+        if (kind) e.keyKind = kind;
+        const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+        // How a `filter` / `map` / `find` / `sort-by` fragment binds its
+        // positionals, recorded for codegen whatever the fragment is spelled
+        // as — `xs.map(len)` is `xs.map(len($1))` and binds the same way.
+        const shape =
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+        if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
+        for (const [i, a] of e.args.entries()) {
+          if (fragment?.index !== i) {
+            // Only the fragment argument is lowered into a lambda; every other
+            // argument is evaluated where the call is, so it reads the
+            // enclosing scope's `$1` / `$2`, as codegen emits it.
+            checkExpr(a, sym, errors, ctx);
+            const declared = memberArgType(recvType, e.method, i, sym);
+            if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
+            continue;
+          }
+          if (isFragmentFnName(a, sym, ctx)) {
+            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
+            ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
+            // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
+            // value), so the key it computes is what the fn declares it
+            // returns. A fn already refused for its arity is not checked again.
+            if (fits && e.method === "sort-by" && i === 0) {
+              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+            }
+            continue;
+          }
+          // Inside the fragment `$1` (and `$2`, where the lambda binds one) are
+          // the implicit lambda's parameters, and they SHADOW any outer ones —
+          // a tile that declares `in=TaskId` binds `$1` to it, and
+          // `dueDate.map(formatDate($1))` inside that tile is a different
+          // `$1`. What they are bound to is per method and per receiver, and
+          // `fragmentBindings` answers only where the lowering's own reading
+          // is certain: a wrong guess costs a diagnostic on a working program.
+          const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
+          const inner = innerScope(ctx);
+          bindLocal(inner, "$1", p1);
+          if (shape === "value") {
+            // A fragment handed one value binds `$1` alone, and codegen
+            // declares no `$2` in it: a `$2` anywhere inside — nested method
+            // arguments included — is an error here, not the index or a
+            // second copy of `$1` there. An enclosing `$2` is hidden too,
+            // since the lambda's positionals shadow the enclosing ones.
+            inner.localBinds.delete("$2");
+            inner.localTypes.delete("$2");
+            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
+          } else if (fragment.binds === 2) {
+            bindLocal(inner, "$2", p2);
+          }
+          checkExpr(a, sym, errors, inner);
+          if (e.method === "sort-by" && i === 0) {
+            checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
+          }
+          // An argument whose type the receiver's fixes is checked against it
+          // like any declared position — which is also what builds a list
+          // literal there as the Set it is declared to be (stdlib.md §2.2.2).
+          const declared = memberArgType(recvType, e.method, i, sym);
+          if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
+        }
+      }
+      if (e.method === "get-or") {
+        // The fallback is the value the call produces on the empty case, so it
+        // is checked against what the call answers. Reported under E0201
+        // whatever position the call sits in — including inside an `emit`
+        // argument, where the mismatch is against the method's own signature
+        // and not against the effect's `in=` type.
+        const want = getOrResultType(
+          unaliasType(inferType(e.receiver, sym, ctx), sym),
+          e.args.length,
+        );
+        const fallback = e.args.at(-1);
+        if (want !== null && fallback !== undefined) checkAgainst(fallback, want, sym, errors, ctx);
       }
       return;
+    }
     case "Wildcard":
       // In the two positions `checkTest`'s dedicated passes walk — anywhere in
       // a `given`, and a reducer-test `expect` — reporting here as well would
@@ -2101,6 +3313,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       const scrutType = inferType(e.scrutinee, sym, ctx);
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
+        checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkExpr(arm.body, sym, errors, inner);
       }
@@ -2114,13 +3327,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      const inner: Ctx = {
-        ...ctx,
-        localBinds: new Set(ctx.localBinds),
-        localTypes: new Map(ctx.localTypes),
-      };
-      bindLocal(inner, e.name, inferType(e.value, sym, inner));
-      checkExpr(e.body, sym, errors, inner);
+      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
       return;
     }
     case "TokenRef":
@@ -2154,6 +3361,69 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
   }
 }
 
+/**
+ * Whether `a` is a bare `fn` name — the one thing a fragment argument may be
+ * besides an expression (§1.8.6). Resolved the way a `Ref` is: a local bind or
+ * a slot of the same name shadows the `fn`, and is then an ordinary value.
+ */
+function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
+  return (
+    a.kind === "Ref" && !ctx.localBinds.has(a.name) && !sym.slots.has(a.name) && sym.fns.has(a.name)
+  );
+}
+
+/**
+ * A `fn` named as a fragment is applied to the positionals the fragment binds
+ * (`FRAGMENT_ARGUMENTS`), as many as it declares, so the count it declares has
+ * to be one the method means:
+ *
+ * - none drops the element, and more than the method binds leaves a
+ *   parameter unbound;
+ * - `fold`'s `fn` takes both, because the element is the second;
+ * - a `filter` / `map` / `find` / `sort-by` fragment binds a second
+ *   positional only where `shape` says the value handed over is taken apart —
+ *   a pair, or a Map's filter or map entry. Where it binds one value (`"value"`), or
+ *   the receiver is known but §2.2.3 gives the method no binding on it
+ *   (`null`), a second parameter would be handed nothing the `fn` means. Only
+ *   a receiver whose type cannot be decided (`"undecided"`) is given the
+ *   benefit of the doubt.
+ *
+ * Answers whether the count fits, so a caller checks nothing further about a
+ * `fn` already reported here.
+ */
+function checkFragmentFnArity(
+  a: Expr & { kind: "Ref" },
+  method: string,
+  fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
+  receiver: TypeExpr | null,
+  shape: FragmentShape | null | undefined,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): boolean {
+  const n = sym.fns.get(a.name)?.params.length ?? 0;
+  const report = (why: string): false => {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Function "${a.name}" expects ${n} argument(s) but ${why}`,
+      pos: a.pos,
+    });
+    return false;
+  };
+  if (fragment.second === "element") {
+    return n === 2 || report(`.${method} supplies exactly 2 — the accumulator and the element`);
+  }
+  if (n === 0) return report(`.${method} needs at least 1`);
+  if (n > fragment.binds) return report(`.${method} supplies at most ${fragment.binds}`);
+  if (n === 2 && (shape === "value" || shape === null)) {
+    const on = receiver ? ` on "${typeToString(receiver)}"` : "";
+    return report(
+      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
+    );
+  }
+  return true;
+}
+
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
 const BOOLEAN_OPS: ReadonlySet<string> = new Set(["&", "|"]);
 const EQUALITY_OPS: ReadonlySet<string> = new Set(["==", "!="]);
@@ -2168,6 +3438,35 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
   if (isPrimNamed(t, sym, "Text")) return "text";
   if (isPrimNamed(t, sym, "Time")) return "time";
   return null;
+}
+
+/**
+ * `List(T).sort-by(key)` orders the list by its key the way `<` orders two
+ * values (stdlib.md §2.2.3), so the key has to be one `<` accepts: numeric,
+ * `Text` or `Time` (language.md §1.9.4). A record, a variant, a `Bool`, an
+ * `Option` or a container has no such order, and the runtime would leave the
+ * list as it found it; that is reported here as the comparison it stands for
+ * would be. `t` is the key's type: the fragment's inferred type, or the
+ * declared return type of a `fn` passed by name. A key whose type is unknown —
+ * one the checker cannot infer, or a `fn` with no declared return type — is
+ * left alone, as is any receiver not known to be a `List`.
+ */
+function checkSortKey(
+  t: TypeExpr | null,
+  pos: Pos,
+  recv: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const r = unaliasType(recv, sym);
+  if (r?.kind !== "TypeApp" || r.name !== "List") return;
+  if (!isKnown(t, sym) || orderingFamily(t, sym) !== null) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${typeToString(t as TypeExpr)}`,
+    pos,
+  });
 }
 
 function binOpResult(e: Expr & { kind: "BinOp" }, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -2236,19 +3535,39 @@ function checkBinOpOperands(
     }
     return;
   }
-  if (COMPARISON_OPS.has(e.op)) {
-    if (!isKnown(lt, sym) || !isKnown(rt, sym)) return;
-    const lf = orderingFamily(lt, sym);
-    if (lf !== null && lf === orderingFamily(rt, sym)) return;
+  // Neither operand is the wrong one — the pair is — so this reports once,
+  // naming both types, where `requireNumeric` reports once per offending side.
+  // An ordering whose sides share no family *and* carries two identities is
+  // still one thing to repair. The position is the `BinOp`'s, which the parser
+  // builds as its left operand's (`parser.ts`), so what is new here is the
+  // count and the message, not the column.
+  const incomparable = (): void => {
     errors.push({
       code: "E0201",
       kind: "type-mismatch",
       message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}`,
       pos: e.pos,
     });
+  };
+
+  if (COMPARISON_OPS.has(e.op)) {
+    if (!isKnown(lt, sym) || !isKnown(rt, sym)) return;
+    const lf = orderingFamily(lt, sym);
+    // `orderingFamily` unaliases, so two nominals over one base land in one
+    // family and agree; the identity is the question it cannot ask.
+    if (lf !== null && lf === orderingFamily(rt, sym) && nominallyComparable(lt, rt, sym)) return;
+    incomparable();
+    return;
   }
-  // `==` / `!=` are defined on every type, including across an Option and its
-  // None, so there is nothing here to reject.
+  if (EQUALITY_OPS.has(e.op)) {
+    // `==` / `!=` are defined on every *shape*, including across an Option and
+    // its None, and that is left alone. A nominal identity is not a shape
+    // question: `p == u` is the same mistake as `p := u`, and it is the
+    // spelling a router or a lookup is written in, so the totality in
+    // language.md §1.9.4 excepts it rather than the rule excepting the
+    // operators.
+    if (!nominallyComparable(lt, rt, sym)) incomparable();
+  }
 }
 
 /** A condition — `if`, `when`, `!` — must be a `Bool` when its type is known. */
@@ -2285,6 +3604,49 @@ function pushMismatch(errors: KumikiError[], code: MismatchCode, message: string
   errors.push({ code, kind: MISMATCH_KIND[code], message, pos });
 }
 
+/** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
+function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
+  const inner: Ctx = {
+    ...ctx,
+    localBinds: new Set(ctx.localBinds),
+    localTypes: new Map(ctx.localTypes),
+  };
+  bindLocal(inner, e.name, inferType(e.value, sym, ctx));
+  return inner;
+}
+
+/**
+ * The type a member's `index`th argument is declared as by the receiver's
+ * type (stdlib.md §2.2), or `null` where the receiver does not fix one: a
+ * `List`'s element for `contains` / `push` / `prepend`, a `Map`'s value for
+ * `insert` / `update` (whose fragment answers the new value), and the
+ * receiver itself for a `Set`'s `union` / `intersect` / `diff`.
+ */
+function memberArgType(
+  recv: TypeExpr | null,
+  member: string,
+  index: number,
+  sym: SymbolTable,
+): TypeExpr | null {
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp") return null;
+  const [a, b] = t.args;
+  switch (t.name) {
+    case "List":
+      return index === 0 && LIST_ELEMENT_ARGS.has(member) ? (a ?? null) : null;
+    case "Map":
+      return index === 1 && MAP_VALUE_ARGS.has(member) ? (b ?? null) : null;
+    case "Set":
+      return index === 0 && SET_OPERANDS.has(member) ? recv : null;
+    default:
+      return null;
+  }
+}
+
+const LIST_ELEMENT_ARGS: ReadonlySet<string> = new Set(["contains", "push", "prepend"]);
+const MAP_VALUE_ARGS: ReadonlySet<string> = new Set(["insert", "update"]);
+const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);
+
 /**
  * Check `e` against the type the site declares, reporting at the innermost
  * expression that is wrong.
@@ -2306,8 +3668,13 @@ function checkAgainst(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode = "E0201",
+  omittable?: Omittable,
 ): void {
   if (declared === null) return;
+  if (declared === REDUCER_REF) {
+    checkReducerRef(e, sym, errors, ctx, code);
+    return;
+  }
   const d = unaliasType(declared, sym);
   if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
 
@@ -2321,6 +3688,7 @@ function checkAgainst(
   };
 
   if (d.kind === "TypeApp" && (d.name === "List" || d.name === "Set") && e.kind === "ListLit") {
+    if (d.name === "Set") e.asSet = true;
     for (const item of e.items) checkAgainst(item, d.args[0] ?? null, sym, errors, ctx, code);
     return;
   }
@@ -2348,10 +3716,9 @@ function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
-    // A `Set` is written `{}` and nothing else: the grammar has no non-empty
-    // set literal (`{"a", "b"}` does not parse, and `{a, b}` is a record), so
-    // an entry can only come from a `Map`. Both are the same node kind, which
-    // is why the declared type decides.
+    // `{}` is both the empty Map and the empty Set, so the declared type
+    // decides. A non-empty Set is written as a list literal (the branch
+    // above); every entry here is a key and a value, which only a `Map` has.
     if (d.name === "Set") return;
     if (d.name === "Map") {
       for (const ent of e.entries) {
@@ -2362,7 +3729,7 @@ function checkAgainst(
     }
   }
   if (d.kind === "TypeRecord" && e.kind === "RecordLit") {
-    checkRecordLit(e, d, sym, errors, ctx, code);
+    checkRecordLit(e, d, sym, errors, ctx, code, omittable);
     return;
   }
   if (e.kind === "Variant") {
@@ -2372,8 +3739,27 @@ function checkAgainst(
   if (e.kind === "IfExpr") {
     // Both branches land in this position, and reporting at the branch beats
     // reporting at the `if`.
-    checkAgainst(e.consequent, declared, sym, errors, ctx, code);
-    checkAgainst(e.alternate, declared, sym, errors, ctx, code);
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable);
+    return;
+  }
+  if (e.kind === "LetIn") {
+    // The body is the value that lands here, read with the name bound.
+    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code, omittable);
+    return;
+  }
+  if (e.kind === "MatchExpr") {
+    // Every arm lands here too, for the same reason as `if` — and each arm is
+    // read in its own scope, so `Some(id) -> id` is checked as the payload type
+    // the scrutinee gives `id`. Arm by arm rather than through `inferType`:
+    // a `UserId` arm beside a `PostId` arm gives the whole `match` the base
+    // they share, `Text`, and a `PostId` destination accepts `Text` — so a
+    // whole-match comparison would pass the wrong arm without a word.
+    const scrutType = inferType(e.scrutinee, sym, ctx);
+    for (const arm of e.arms) {
+      const scope = armScope(arm, scrutType, sym, ctx);
+      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
+    }
     return;
   }
   if (
@@ -2397,7 +3783,51 @@ function checkAgainst(
 
   const actual = inferType(e, sym, ctx);
   if (actual === null || !isKnown(actual, sym)) return;
-  if (!assignable(actual, declared, sym)) mismatch(e, actual);
+  // A value of a record type may leave out what a literal may, so the
+  // comparison drops those fields when its type does — the message still
+  // names the whole `in=`.
+  const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
+  if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
+}
+
+/**
+ * `d` without the fields `omittable` allows `actual` to leave out and that it
+ * does leave out, or `null` when either side is not a record.
+ */
+function withoutOmitted(
+  d: TypeExpr,
+  actual: TypeExpr,
+  sym: SymbolTable,
+  omittable: Omittable,
+): TypeExpr | null {
+  const a = unaliasType(actual, sym);
+  if (d.kind !== "TypeRecord" || a?.kind !== "TypeRecord") return null;
+  const has = new Set(a.fields.map((f) => f.name));
+  return { ...d, fields: d.fields.filter((f) => has.has(f.name) || !omittable(f)) };
+}
+
+/**
+ * A `ReducerRef` (`confirm`'s `onYes` / `onNo`) is a reducer's name written
+ * bare: codegen lowers exactly that to the name the runtime dispatches, and
+ * anything else to a value the runtime cannot dispatch. A bare name is judged
+ * where the emit resolves it as a reducer (E0103), so only the other forms are
+ * reported here.
+ */
+function checkReducerRef(
+  e: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  code: MismatchCode,
+): void {
+  if (e.kind === "Ref") return;
+  const actual = inferType(e, sym, ctx);
+  pushMismatch(
+    errors,
+    code,
+    `Expected ${typeToString(REDUCER_REF)} but got ${actual ? typeToString(actual) : "an expression that is not a reducer name"}`,
+    e.pos,
+  );
 }
 
 /**
@@ -2439,10 +3869,11 @@ function checkRecordLit(
   errors: KumikiError[],
   ctx: Ctx,
   code: MismatchCode,
+  omittable?: Omittable,
 ): void {
   const given = new Set(e.fields.map((f) => f.name));
   for (const declaredField of d.fields) {
-    if (given.has(declaredField.name)) continue;
+    if (given.has(declaredField.name) || omittable?.(declaredField)) continue;
     errors.push({
       code: "E0214",
       kind: "missing-record-field",
@@ -2532,6 +3963,173 @@ function checkVariantAgainst(
 }
 
 /**
+ * What `.get` unwraps a type to — `Option(T)` / `Result(T, E)` to `T`, and
+ * `null` for anything else. One resolver, read by the lvalue path and by
+ * `receiverMemberResult` on the rvalue side, so the two cannot come to disagree
+ * about what it reaches.
+ */
+function unwrappedType(t: TypeExpr): TypeExpr | null {
+  if (t.kind !== "TypeApp") return null;
+  if (t.name !== "Option" && t.name !== "Result") return null;
+  return t.args[0] ?? null;
+}
+
+/**
+ * `.get-or` is one name with two readings, and the argument count is what
+ * *selects* between them rather than a minimum to clear — `Option(T).get-or(d)`
+ * and `Map(K, V).get-or(k, d)` (stdlib.md §2.2.1 / §2.2.4). So the receiver is
+ * what decides how many arguments the call must have, and a count that does
+ * not fit it is an arity error even though both counts are legal for the name.
+ *
+ * Unreported, such a call lowered to the *other* reading. `m.get-or("k")`
+ * became `_s.getOr(m, "k")`, whose last line is `return v ?? fallback` for a
+ * value carrying no `_tag`, so the slot received the whole map; and
+ * `opt.get-or("k", 0)` became `_s.mapGetOr(opt, "k", 0)`, which indexes the
+ * Option object by a key it does not have and answers the fallback on a `Some`
+ * too — a wrong value of the right type, which nothing downstream trips over.
+ *
+ * `getOrResultType` already knows this rule and returns `null` when the two
+ * disagree. That is the right answer for an inference table, because a wrong
+ * result type rejects working programs, but it means inference is silent here
+ * by construction. The report belongs in the arity check, which is why this is
+ * a check rather than a change to that resolver.
+ *
+ * A receiver the checker cannot decide raises nothing *about which reading was
+ * meant*: the count selects one but decides nothing about whether it is the
+ * right one, and `.get-or` is called widely across the corpus, so a false
+ * error here is the expensive direction.
+ *
+ * A count past both readings is the exception, and needs no receiver at all —
+ * no receiver has a reading that takes more than two. The lowering emits
+ * `_s.mapGetOr(recv, a0, a1)` for every count but one and reads no further, so
+ * an unreported third argument is this same defect under another name: it is
+ * dropped, silently.
+ */
+function checkGetOrArity(
+  e: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
+  const isMap = recv?.kind === "TypeApp" && recv.name === "Map";
+  const unwraps = recv?.kind === "TypeApp" && (recv.name === "Option" || recv.name === "Result");
+
+  // A receiver that decides the reading gets the message that names it. This
+  // comes first so the better sentence wins wherever it can be written: a
+  // count-only message on a `Map` would leave out the one fact the author
+  // needs.
+  if (recv?.kind === "TypeApp" && (isMap || unwraps)) {
+    const want = isMap ? 2 : 1;
+    if (e.args.length === want) return;
+
+    // Naming the other reading is the point of the message: both counts are
+    // legal for this name, so "expects 2" alone leaves the author wondering
+    // why this call differs from the one two lines up.
+    const taken = isMap ? "(key, default)" : "(default)";
+    const other = isMap
+      ? '".get-or(default)" is the "Option" / "Result" reading'
+      : '".get-or(key, default)" is the "Map" reading';
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Method ".get-or" on "${recv.name}" expects ${want} argument(s) ${taken} but got ${e.args.length} — ${other}`,
+      pos: e.pos,
+    });
+    return;
+  }
+
+  // The receiver decided nothing, so which of the two readings was meant is
+  // not ours to say. The count still is, past two: neither reading takes more,
+  // whatever the receiver turns out to be, and the lowering drops the extras
+  // rather than failing on them.
+  if (e.args.length > 2) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Method ".get-or" expects 1 argument(s) (default) or 2 (key, default) but got ${e.args.length} — no receiver has a reading that takes more`,
+      pos: e.pos,
+    });
+  }
+}
+
+/**
+ * `.get` is the same shape as `.get-or`: one name whose argument count the
+ * receiver decides. `Map(K, V).get(k)` and `List(T).get(i)` take an index or a
+ * key; `Option(T).get` and `Result(T, E).get` take nothing and unwrap
+ * (stdlib.md §2.2.1 / §2.2.3 / §2.2.4 / §2.2.5).
+ *
+ * `METHOD_MIN_ARGS` states one minimum for the name, so it cannot tell those
+ * apart. It says `.get` takes one, which makes `o.get()` "expects 1 argument(s)
+ * but got 0" — false, and the reverse mistake, `o.get(1)`, clears the minimum
+ * and was reported by nothing at all: `receiverMemberResult` answers `null` for
+ * a count its receiver does not take, which is right for an inference table and
+ * silent by construction. So the receiver is asked here, where a count is what
+ * is being judged.
+ */
+function checkGetArity(
+  e: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
+  const keyed = recv?.kind === "TypeApp" && (recv.name === "Map" || recv.name === "List");
+  const unwraps = recv?.kind === "TypeApp" && (recv.name === "Option" || recv.name === "Result");
+
+  // A receiver that decides the reading gets the message that names it, the
+  // way `.get-or` does: both counts are legal for the name, so a bare number
+  // leaves the author wondering why this call differs from one two lines up.
+  if (recv?.kind === "TypeApp" && (keyed || unwraps)) {
+    if (e.args.length === (keyed ? 1 : 0)) return;
+    const message = keyed
+      ? `Method ".get" on "${recv.name}" expects 1 argument (${
+          recv.name === "Map" ? "key" : "index"
+        }) but got ${e.args.length} — ".get" with no arguments is the "Option" / "Result" reading`
+      : `Method ".get" on "${recv.name}" takes no arguments and unwraps, but got ${e.args.length} — ".get(key)" is the "Map" reading and ".get(index)" the "List" one`;
+    errors.push({ code: "E0213", kind: "call-arity-mismatch", message, pos: e.pos });
+    return;
+  }
+
+  // The receiver decided nothing, so which reading was meant is not ours to
+  // say. The count still is, past one: no reading takes more.
+  if (e.args.length > 1) {
+    errors.push({
+      code: "E0213",
+      kind: "call-arity-mismatch",
+      message: `Method ".get" takes no arguments or one, but got ${e.args.length} — no receiver has a reading that takes more`,
+      pos: e.pos,
+    });
+  }
+}
+
+/**
+ * What `.get-or(…)` answers — `Option(T)` / `Result(T, E)` to `T`, `Map(K, V)`
+ * to `V` (stdlib.md §2.2.4 / §2.2.5 / §2.2.1), and `null` for a receiver that
+ * decides nothing. Separate from `unwrappedType` because a Map is not unwrapped
+ * by either member: `.get` on one *wraps*, into `Option(V)`.
+ *
+ * It is also the type the fallback must have, which is why one resolver serves
+ * both readers: the fallback is what the call evaluates to when there is
+ * nothing to unwrap, so a fallback of another type *is* the value the program
+ * gets on the empty case. Two tables could disagree about that.
+ *
+ * The argument count is part of the question rather than a check beside it: the
+ * lowering tells the Map reading from the unwrapping one by counting arguments
+ * (`codegen/expr.ts`, `case "get-or"`), so a call whose count does not fit its
+ * receiver has no result type to speak of and stays undecidable here. It no
+ * longer reaches that lowering either: `checkGetOrArity` reports the count
+ * wherever the receiver decides one, and reports a count past both readings on
+ * any receiver — so this resolver's silence is a missing result type rather
+ * than a missing diagnostic.
+ */
+function getOrResultType(recv: TypeExpr | null, argCount: number): TypeExpr | null {
+  if (recv?.kind !== "TypeApp") return null;
+  if (recv.name === "Map") return argCount === 2 ? (recv.args[1] ?? null) : null;
+  return argCount === 1 ? unwrappedType(recv) : null;
+}
+
+/**
  * The declared type of an assignment target, walking `.field` and `[k]` through
  * the slot's type. `null` wherever the path leaves what the type system knows.
  */
@@ -2540,10 +4138,16 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
   const base = unaliasType(lvalueType(lv.base, sym), sym);
   if (!base) return null;
   if (lv.kind === "LField") {
-    return base.kind === "TypeRecord" ? recordFieldType(base, lv.field) : null;
+    // A record's own field wins over the shortcut name (stdlib.md §2.2), which
+    // is what keeps `get` writable as a field on a record that declares one.
+    if (base.kind === "TypeRecord") return recordFieldType(base, lv.field);
+    if (lv.field === "get") return unwrappedType(base);
+    return null;
   }
   if (base.kind === "TypeApp") {
-    if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
+    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
+    // a right-hand side to be checked against.
+    if (base.name === "List") return base.args[0] ?? null;
     if (base.name === "Map") return base.args[1] ?? null;
   }
   return null;
@@ -2564,8 +4168,8 @@ function checkEmitTarget(
   ctx: Ctx,
   pos: Pos,
 ): void {
-  const eff = sym.effects.get(effect);
-  if (!eff && !BUILTIN_EFFECT_CAPS.has(effect)) {
+  const input = effectInput(effect, sym);
+  if (!input) {
     errors.push({
       code: "E0104",
       kind: "undef-effect",
@@ -2574,11 +4178,11 @@ function checkEmitTarget(
     });
     return;
   }
-  // A built-in effect has no `effect` declaration to read a `cap=` off, so the
-  // requirement comes from the table instead — the DOM runtime gates it either
+  // A built-in effect has no `effect` declaration to read a `cap=` or an `in=`
+  // off, so both come from the table instead — the DOM runtime gates it either
   // way. `null` is the one entry that asks for nothing; an empty `cap=` on a
   // declared effect is not that, and stays reportable.
-  const cap = eff ? eff.cap : (BUILTIN_EFFECT_CAPS.get(effect) ?? null);
+  const { cap, inType, omittable } = input;
   if (cap !== null && ctx.capsAvailable && !ctx.capsAvailable.has(cap)) {
     errors.push({
       code: "E0301",
@@ -2587,12 +4191,11 @@ function checkEmitTarget(
       pos,
     });
   }
-  if (!eff) return;
   // `in=Unit` is the "no input" declaration, so the effect takes no argument;
   // every other `in=` takes exactly one. Codegen destructures the argument, so
   // a missing one is `Cannot destructure property 'key' of 'input'` at the
   // first dispatch rather than a diagnostic.
-  const wants = isPrimNamed(eff.inType, sym, "Unit") ? 0 : 1;
+  const wants = isPrimNamed(inType, sym, "Unit") ? 0 : 1;
   if (args.length !== wants) {
     errors.push({
       code: "E0213",
@@ -2606,7 +4209,7 @@ function checkEmitTarget(
   if (!arg) return;
   // The EffectId case keeps its own wording: the fix is never "convert the
   // value" but "pass the handle an earlier emit returned".
-  if (isPrimNamed(eff.inType, sym, "EffectId")) {
+  if (isPrimNamed(inType, sym, "EffectId")) {
     const actual = inferType(arg, sym, ctx);
     if (actual && !isPrimNamed(actual, sym, "EffectId")) {
       errors.push({
@@ -2618,7 +4221,37 @@ function checkEmitTarget(
     }
     return;
   }
-  checkAgainst(arg, eff.inType, sym, errors, ctx, "E0202");
+  checkAgainst(arg, inType, sym, errors, ctx, "E0202", omittable);
+}
+
+/**
+ * Which fields of a record `in=` an argument may leave out. A predicate rather
+ * than a narrowed type, because which ones a value leaves out is known only at
+ * each leaf `checkAgainst` reaches — an `if` whose branches write different
+ * fields has no single answer — and because the message names the whole `in=`.
+ */
+type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;
+
+/**
+ * The effect a name dispatches: its capability, its `in=`, and the fields a
+ * call may leave out of it. A declaration wins over a standard effect of the
+ * same name and leaves nothing out; a standard effect (stdlib.md §2.6) may
+ * leave out what `builtinFieldOmittable` says. `undefined` when the name is
+ * neither.
+ */
+function effectInput(
+  name: string,
+  sym: SymbolTable,
+): { cap: string | null; inType: TypeExpr; omittable: Omittable | undefined } | undefined {
+  const eff = sym.effects.get(name);
+  if (eff) return { cap: eff.cap, inType: eff.inType, omittable: undefined };
+  const builtin = BUILTIN_EFFECTS.get(name);
+  if (!builtin) return undefined;
+  return {
+    cap: builtin.cap,
+    inType: builtin.inType,
+    omittable: (f) => builtinFieldOmittable(builtin, f),
+  };
 }
 
 // Closed set of theme token namespaces (spec/style.md §4.2). The token name
@@ -2640,9 +4273,6 @@ const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
 // receiver type (E0108). It returns `null` whenever the type can't be decided —
 // inference never guesses, so an untyped receiver keeps the historical
 // name-based shortcut dispatch with no diagnostic.
-
-const SCALAR_PRIMS = new Set(["Int", "Float", "Text", "Bool", "Time", "Bytes", "File"]);
-const STDLIB_CONTAINERS = new Set(["List", "Map", "Set", "Option", "Result"]);
 
 /**
  * Structural fields exposed by built-in prim types. `File` is treated as a
@@ -2700,10 +4330,10 @@ function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName): bool
 
 /**
  * Result types of the methods whose answer is fixed regardless of the receiver
- * (docs/spec/stdlib.md §2.2). Deliberately short: a method whose result depends
- * on the receiver's type argument (`.head`, `.map`, `.filter`) stays undecidable
- * rather than being guessed, because a wrong answer here becomes a wrong
- * diagnostic on a working program.
+ * (docs/spec/stdlib.md §2.2). Deliberately short: a method the receiver decides
+ * is resolved by `receiverMemberResult` instead, and one a *lambda body* decides
+ * (`.map`, `.fold`) stays undecidable rather than being guessed, because a wrong
+ * answer here becomes a wrong diagnostic on a working program.
  */
 const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["show", "Text"],
@@ -2723,7 +4353,8 @@ const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
 
 /**
  * Result types of the built-in calls that have one. `panic` never returns and
- * `Decoder.*` produce an opaque sentinel, so both stay undecidable.
+ * `Decoder.*` produce an opaque decoder (a sentinel, or `Decoder.Json(T)`'s
+ * check), so both stay undecidable.
  */
 const CALL_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["now", "Time"],
@@ -2754,6 +4385,272 @@ function arithmeticResult(
   return prim(float ? "Float" : "Int", pos);
 }
 
+/**
+ * The type `T.fresh()` produces, or `null` when the qualifier is not one it can
+ * produce a value of.
+ *
+ * Codegen lowers every `T.fresh()` to the same `_s.freshId()` — a uuid `Text`,
+ * whatever `T` says (`codegen/expr.ts`). So the qualifier answers only for a
+ * type that `Text` inhabits, which is exactly what `stdlib.md` §2.4.1 scopes
+ * `fresh` to: `PostId` and the standard library's `Url` / `Email` / `Uuid` are
+ * `nominal Text`, and a `Text` goes into any nominal over it.
+ *
+ * Reading the qualifier without that test asserted types the lowering never
+ * produces: `Point.fresh()` was believed a record (so `p.x` resolved and
+ * `p.nope` was E0108) on a string, and a `nominal Int` id answered its own base
+ * for a uuid. Those calls are E0802 at the call (`checkCallee`), which asks this
+ * function which qualifiers it answers for; the `null` here keeps the one
+ * report from cascading into an E0201 at every position the call lands in.
+ */
+function freshResultType(qualifier: string, pos: Pos, sym: SymbolTable): TypeExpr | null {
+  const named = qualifierType(qualifier, pos, sym);
+  if (named === null) return null;
+  return assignable(prim("Text", pos), named, sym) ? named : null;
+}
+
+/**
+ * The type `recv.member` produces, for the members whose result the receiver
+ * decides (stdlib.md §2.2). `null` for anything else, which is the answer that
+ * costs nothing: an undecidable result is checked against nothing, while a
+ * *wrong* one reports a program that works.
+ *
+ * The alternative is `METHOD_RESULT`, a flat name → prim table, which cannot
+ * say "a `List` of the receiver's own element" — so `xs.head` on a `List(Int)`
+ * has no type there, and `n := xs.head` puts an `Option(Int)` into a slot
+ * declared `Int` with nothing to report it. From there the readers disagree
+ * with the slot: `is-some` is false on a value that is present, and `match`
+ * finds no arm.
+ *
+ * Both spellings ask this one function. `xs.head` parses as a `FieldAccess`
+ * and `xs.head()` as a `MethodCall` (§2.2.3's parenthesis-free shortcut), and
+ * resolving them in two places is how the two readings of one member come to
+ * disagree. `argCount` is what tells them apart where a member has two
+ * readings — `.get` is `Option(V)` on a `Map` given a key and `T` on an
+ * `Option` given nothing.
+ *
+ * Each `switch` below lists its receiver's whole row, and `unlisted` makes
+ * that a compile-time fact: a member the table gains without a case here is a
+ * `tsc` error, and a case for a name the row does not list is one too. The
+ * members that answer `null` on purpose are cases of their own, so the reason
+ * sits next to the name: `map` / `flat-map` / `fold` / `map-err` / `zip`,
+ * whose result a lambda body or an argument decides rather than the receiver.
+ *
+ * Not here at all: the `Time` / `Duration` members (§2.2.8 / §2.2.9). Those
+ * two are a family of their own — they answer in each other's types rather
+ * than in a type argument, and `Duration` is a nominal over `Int` rather than
+ * a prim, so neither the `TypePrim` branch below nor the `TypeApp` one
+ * reaches them.
+ */
+function receiverMemberResult(
+  recv: TypeExpr | null,
+  member: string,
+  argCount: number,
+  sym: SymbolTable,
+  pos: Pos,
+): TypeExpr | null {
+  const t = unaliasType(recv, sym);
+  if (!t) return null;
+  // The table decides whether this is a member at all, so a result is never
+  // answered for a name the receiver does not have.
+  const receivers = memberReceivers(recv, t, sym);
+  if (receivers === null || !receivers.some((r) => hasMember(r, member))) return null;
+
+  const int = () => prim("Int", pos);
+  const bool = () => prim("Bool", pos);
+  const text = () => prim("Text", pos);
+  const list = (of: TypeExpr) => container("List", [of], pos);
+  const option = (of: TypeExpr) => container("Option", [of], pos);
+
+  if (t.kind === "TypePrim" && t.name === "Text") {
+    if (!isOwnMember("Text", member)) return null;
+    switch (member) {
+      case "length":
+        return int();
+      case "is-empty":
+      case "starts-with":
+      case "ends-with":
+      case "contains":
+        return bool();
+      case "upper":
+      case "lower":
+      case "trim":
+      case "replace":
+      case "slice":
+        return text();
+      case "split":
+        return list(text());
+      case "parse-int":
+        return option(int());
+      case "parse-float":
+        return option(prim("Float", pos));
+      default:
+        return unlisted(member);
+    }
+  }
+
+  if (t.kind !== "TypeApp") return null;
+
+  // A member that builds its result out of an element answers `null` when the
+  // receiver was written without that argument, rather than a `List` of
+  // nothing. (A bare `List` is E0210 in its own right, so this is a floor
+  // under the resolver rather than a shape a program can reach.) The members
+  // that hand the receiver straight back need no element to do it.
+  const a0 = t.args[0] ?? null;
+  const a1 = t.args[1] ?? null;
+
+  switch (t.name) {
+    case "Map":
+      if (!isOwnMember("Map", member)) return null;
+      switch (member) {
+        case "size":
+          return int();
+        case "is-empty":
+        case "has":
+          return bool();
+        case "keys":
+          return a0 && list(a0);
+        case "values":
+          return a1 && list(a1);
+        case "entries":
+          return a0 && a1 ? list(container("Tuple", [a0, a1], pos)) : null;
+        // A key that is absent is `None` (§2.2.1), which is what makes the
+        // common `m.get(k).get-or(d)` shape type at all.
+        case "get":
+          return argCount === 1 && a1 ? option(a1) : null;
+        // One name, two readings, told apart by the count — and already
+        // resolved by a function that takes both, so it is asked rather than
+        // copied.
+        case "get-or":
+          return getOrResultType(t, argCount);
+        case "insert":
+        case "remove":
+        case "update":
+        case "merge":
+        case "filter":
+          return t;
+        case "map":
+          return null;
+        default:
+          return unlisted(member);
+      }
+    case "Set":
+      if (!isOwnMember("Set", member)) return null;
+      switch (member) {
+        case "size":
+          return int();
+        case "has":
+          return bool();
+        case "add":
+        case "remove":
+        case "toggle":
+        case "union":
+        case "intersect":
+        case "diff":
+        case "filter":
+          return t;
+        case "to-list":
+          return a0 && list(a0);
+        default:
+          return unlisted(member);
+      }
+    case "List":
+      if (!isOwnMember("List", member)) return null;
+      switch (member) {
+        case "length":
+          return int();
+        case "is-empty":
+        case "contains":
+          return bool();
+        case "get":
+          return argCount === 1 && a0 ? option(a0) : null;
+        case "head":
+        case "last":
+        case "find":
+          return a0 && option(a0);
+        case "tail":
+        case "push":
+        case "prepend":
+        case "concat":
+        case "slice":
+        case "reverse":
+        case "sort":
+        case "sort-by":
+        case "unique":
+        case "filter":
+          return t;
+        case "join":
+          return text();
+        case "chunk":
+          return list(t);
+        // A lambda body decides `map` / `fold`, and `zip` pairs with the
+        // argument's element type, which this function is not given.
+        case "map":
+        case "fold":
+        case "zip":
+          return null;
+        default:
+          return unlisted(member);
+      }
+    case "Option":
+      if (!isOwnMember("Option", member)) return null;
+      switch (member) {
+        case "is-some":
+        case "is-none":
+          return bool();
+        // The unwrap, and only written without arguments — `.get(k)` on an
+        // Option is the Map reading, which `checkGetArity` reports.
+        case "get":
+          return argCount === 0 ? unwrappedType(t) : null;
+        case "get-or":
+          return getOrResultType(t, argCount);
+        case "filter":
+        case "or":
+          return t;
+        case "to-list":
+          return a0 && list(a0);
+        case "map":
+        case "flat-map":
+          return null;
+        default:
+          return unlisted(member);
+      }
+    case "Result":
+      if (!isOwnMember("Result", member)) return null;
+      switch (member) {
+        case "is-ok":
+        case "is-err":
+          return bool();
+        case "get":
+          return argCount === 0 ? unwrappedType(t) : null;
+        case "get-err":
+          return argCount === 0 ? a1 : null;
+        case "get-or":
+          return getOrResultType(t, argCount);
+        case "or":
+          return t;
+        case "to-option":
+          return a0 && option(a0);
+        case "map":
+        case "map-err":
+        case "flat-map":
+          return null;
+        default:
+          return unlisted(member);
+      }
+    default:
+      return null;
+  }
+}
+
+/**
+ * The `default` of a `switch` that lists a receiver's whole row: `member` is
+ * `never` there exactly when every member has a case, so a row that gains a
+ * name without one fails `tsc` at the call.
+ */
+function unlisted(_member: never): null {
+  return null;
+}
+
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
@@ -2765,6 +4662,11 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       return { kind: "TypePrim", name: "Text", pos: e.pos };
     case "Bool":
       return { kind: "TypePrim", name: "Bool", pos: e.pos };
+    case "Unit":
+      // `()` is the one value of `Unit`, and a known type like any other
+      // literal's. Answering `null` here would accept it against every
+      // declared type, and `()` runs as `null`.
+      return prim("Unit", e.pos);
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
@@ -2778,16 +4680,14 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         const t = primFieldType(base.name, e.field, e.pos);
         if (t) return t;
       }
-      // `.get` unwraps Option(T) / Result(T,E) → T
-      if (
-        e.field === "get" &&
-        base.kind === "TypeApp" &&
-        (base.name === "Option" || base.name === "Result")
-      )
-        return base.args[0] ?? null;
-      // Paren-less method shortcut (`n.show`, `f.to-int`) — same table as the
-      // called form, reached here because the parser produces a FieldAccess
-      // for a member with no argument list.
+      // The parenthesis-free spelling (§2.2.3) is the same member written with
+      // no argument list, so it asks the same resolver the called form does —
+      // which is what keeps `xs.head` and `xs.head()` from answering
+      // differently.
+      const decided = receiverMemberResult(base, e.field, 0, sym, e.pos);
+      if (decided) return decided;
+      // A member whose result is the same whatever the receiver (`n.show`,
+      // `f.to-int`).
       const fixed = METHOD_RESULT.get(e.field);
       return fixed ? prim(fixed, e.pos) : null;
     }
@@ -2800,19 +4700,19 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       return null;
     }
     case "MethodCall": {
-      // `.get(k)` on a Map → Option(V) (spec: a missing key is None — the common
-      // `m.get(k).get` / `.get-or(d)` shape relies on this). `.get()` on
-      // Option/Result → inner. Anything else stays dynamic (conservative).
-      if (e.method === "get") {
-        const recv = unaliasType(inferType(e.receiver, sym, ctx), sym);
-        if (recv?.kind === "TypeApp") {
-          if (recv.name === "Map")
-            return recv.args[1] ? container("Option", [recv.args[1]], e.pos) : null;
-          if (recv.name === "Option" || recv.name === "Result") return recv.args[0] ?? null;
-        }
-      }
-      // `r.copy(f=v)` is record update — same type in, same type out.
+      // `r.copy(f=v)` is record update — same type in, same type out. Not a
+      // collection member, so it is answered here rather than in the table of
+      // §2.2 members below.
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
+      if (e.method === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
+      const decided = receiverMemberResult(
+        inferType(e.receiver, sym, ctx),
+        e.method,
+        e.args.length,
+        sym,
+        e.pos,
+      );
+      if (decided) return decided;
       const fixed = METHOD_RESULT.get(e.method);
       return fixed ? prim(fixed, e.pos) : null;
     }
@@ -2849,8 +4749,8 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         e.pos,
       );
     case "MapLit": {
-      // `{}` is both the empty map and the only set literal the grammar has,
-      // so an entry-less literal says nothing about which it is.
+      // `{}` is both the empty Map and the empty Set, so an entry-less literal
+      // says nothing about which it is.
       if (e.entries.length === 0) return null;
       const k = commonType(
         e.entries.map((ent) => inferType(ent.key, sym, ctx)),
@@ -2886,23 +4786,92 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     case "IfExpr": {
       return commonType([inferType(e.consequent, sym, ctx), inferType(e.alternate, sym, ctx)], sym);
     }
+    case "MatchExpr": {
+      // The arm values are what the `match` evaluates to, whatever the
+      // scrutinee is — an `Option`, a `Result` or a user union alike. Arms
+      // that disagree give the base they share, nominal dropped; one
+      // undecidable arm leaves the whole `match` undecidable (`commonType`).
+      const scrutType = inferType(e.scrutinee, sym, ctx);
+      return commonType(
+        e.arms.map((arm) => inferType(arm.body, sym, armScope(arm, scrutType, sym, ctx))),
+        sym,
+      );
+    }
     case "EmitExpr":
       // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
       // yields the dispatched effect's EffectId.
       return prim("EffectId", e.pos);
     case "Call": {
+      if (e.callee === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
       const fixed = CALL_RESULT.get(e.callee);
       if (fixed) return prim(fixed, e.pos);
+      const dot = e.callee.indexOf(".");
+      const qualifier = dot > 0 ? e.callee.slice(0, dot) : null;
+      // `T.show(v)` is the qualified spelling of `v.show`, and codegen lowers
+      // every capitalised `T` to the same `_s.show(v)` — one regex, one helper,
+      // always a `Text`. So the member decides this one and the qualifier does
+      // not enter into it. Answered by the qualifier below, `Duration.show(ms)`
+      // was a `Duration` and a `Text` slot refused it: E0201 on a program the
+      // runtime runs, with no other spelling left for the author to write, the
+      // method `ms.show` being a different expression (#344). The read is
+      // ordered the way the lowering is, which is what keeps the two agreeing.
+      //
+      // The other two members of `TYPE_MEMBER_CALLS` are answered by the
+      // qualifier, below — `parse` an `Option` of it and `fresh` the qualifier.
+      // All three are read through the one spelling rule codegen and
+      // `builtinArity` apply, so a name a hyphen disqualifies as a qualifier
+      // (`Othe-Id.fresh()`) is not a type-member call here either.
+      const member =
+        qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
+      if (member === "show") return prim("Text", e.pos);
+      // `TypeName.parse(t)` is an `Option(T)` (stdlib §2.4.3) — for `Duration`
+      // and `Bytes` too, which is why it is read ahead of their namespaces
+      // below. Caught by those instead, it answered the bare qualifier, so the
+      // documented `o : Option(Duration) := Duration.parse(t)` was E0201 and
+      // `d : Duration := Duration.parse(t)` was clean.
+      //
+      // The qualifier is resolved rather than matched, so a name that is no
+      // type answers nothing and E0117 keeps that report to itself (#276).
+      if (qualifier !== null && member === "parse") {
+        const named = qualifierType(qualifier, e.pos, sym);
+        return named === null ? null : container("Option", [named], e.pos);
+      }
       // `Duration.ms(500)` and friends build the standard library's `Duration`;
-      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10).
-      const qualifier = e.callee.includes(".") ? e.callee.slice(0, e.callee.indexOf(".")) : null;
+      // `Bytes.from-text(t)` builds `Bytes` (stdlib §2.2.10). Both keep the
+      // whole qualifier for every other member: those are constructors.
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
+      // `TypeName.fresh()` is a `T` (stdlib §2.4.1). Without this the call that
+      // *mints* an id was the one expression the nominal rule could not judge:
+      // `slot p : PostId` took a `UserId.fresh()` in silence, which is the
+      // mistake `nominal` exists to catch (#348). What `fresh` can claim is
+      // narrower than the qualifier, because its lowering discards it —
+      // `freshResultType` is where that is read.
+      if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
       return sym.fns.get(e.callee)?.ret ?? null;
     }
     default:
       return null;
   }
+}
+
+/**
+ * What `run-reducer(r)` answers in a property-test invariant (testing.md
+ * §8.3): the state after the reducer ran, `{slots: {<slot>: <its type>, …}}`,
+ * which the runner builds from the program's own slots. Typed, a read through
+ * it (`run-reducer(add).slots.tags.to-list`) is decided like a read of the
+ * slot itself — a key reader on it restores its keys, and a slot name the
+ * program does not declare is the E0108 it is anywhere else.
+ */
+function runReducerState(sym: SymbolTable, pos: Pos): TypeExpr {
+  const declared = [...sym.slots.values()].map((s) => ({ name: s.name, type: s.type, pos: s.pos }));
+  // The runtime's own slots (`route`) are in the state too, with a type the
+  // program does not declare — present, and undecided.
+  const reserved = [...RESERVED_SLOT_NAMES.keys()]
+    .filter((name) => !sym.slots.has(name))
+    .map((name) => ({ name, type: unknownType(pos), pos }));
+  const slots: TypeExpr = { kind: "TypeRecord", fields: [...declared, ...reserved], pos };
+  return { kind: "TypeRecord", fields: [{ name: "slots", type: slots, pos }], pos };
 }
 
 /**
@@ -2949,10 +4918,311 @@ function sharedBase(
 }
 
 /**
- * Decide whether `recv.field` is a record field read or a method shortcut, and
- * annotate the node so codegen lowers the right thing (ADR-002). Emits E0108
- * when the receiver type is KNOWN and `field` is neither a member nor a record
- * field; stays silent (shortcut) when the type is undecidable.
+ * What `recv.field` names on a receiver of type `raw`, for a read, a call, and
+ * the left of `:=`.
+ *
+ * ADR-002 makes `recv.member` a dispatch rather than a keyword — a record's
+ * own field wins, and otherwise the name is looked up in the stdlib — so
+ * "field or member?" is one question with one answer, whichever spelling asks
+ * it. It used to be asked twice, by two ladders that had
+ * drifted: the write side knew only how to answer it for a record, and treated
+ * every member of a number as a member of whatever receiver it was written
+ * on. Now the ladder is here and the callers only decide what to do with the
+ * verdict.
+ *
+ * - `field`       — a real field, and therefore a real lvalue step.
+ * - `member`      — a stdlib member of this receiver (stdlib.md §2.2).
+ * - `unknown`     — the receiver is understood and has no such name, even if
+ *                   another receiver does: `Result` has no `filter` even
+ *                   though `Map` has one.
+ * - `undecidable` — a union, an opaque type parameter, or no type at all. We
+ *                   only speak about types we fully understand, because a
+ *                   false error on a dynamic receiver is worse than silence.
+ *                   Codegen lowers these by the member's name alone, which
+ *                   is the name-based dispatch §2.2.3 keeps for them.
+ *
+ * `raw` is the receiver's type as written, before aliases and `nominal`s are
+ * followed, because one of the receivers is a `nominal`: a `Duration` is an
+ * `Int` with `to-ms` besides.
+ */
+type MemberClass = "field" | "member" | "unknown" | "undecidable";
+
+function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolTable): MemberClass {
+  const t = unaliasType(raw, sym);
+  if (!t) return "undecidable";
+
+  if (t.kind === "TypeRecord") {
+    if (recordFieldType(t, field) !== null) return "field";
+    // The one member every value has, including a record — the dispatch falls
+    // through to the stdlib for any name the record does not declare, and
+    // `.show` is the name that resolves there.
+    return UNIVERSAL_MEMBERS.has(field) ? "member" : "unknown";
+  }
+
+  const receivers = memberReceivers(raw, t, sym);
+  if (receivers === null) return "undecidable";
+
+  // A prim's structural field (`File.name`) — a field the type system does not
+  // see in the type, because `File` is a scalar to it and a record to the
+  // runtime (stdlib.md §2.1).
+  if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[field]) return "field";
+
+  return receivers.some((r) => hasMember(r, field)) ? "member" : "unknown";
+}
+
+/**
+ * The rows of the member table a receiver reads, or `null` for a type the
+ * table does not speak for. Only the standard library's own `Duration` adds
+ * its row: a program's own `type Duration` shadows it and may be anything.
+ */
+function memberReceivers(raw: TypeExpr | null, t: TypeExpr, sym: SymbolTable): Receiver[] | null {
+  const name = t.kind === "TypePrim" || t.kind === "TypeApp" ? t.name : null;
+  if (name === null || !isReceiver(name)) return null;
+  return isStdlibDuration(raw, sym) ? [name, "Duration"] : [name];
+}
+
+/**
+ * The receiver's name in a diagnostic: the row it reads (`List`, `Int`), except
+ * that a `Duration` is called a `Duration` rather than the `Int` it is
+ * underneath — its own row is the one a reader is looking for.
+ */
+function receiverName(raw: TypeExpr | null, t: TypeExpr, sym: SymbolTable): string {
+  return isStdlibDuration(raw, sym) ? "Duration" : typeName(t, sym);
+}
+
+const STDLIB_DURATION = STDLIB_TYPES.find((d) => d.name === "Duration");
+
+/**
+ * True when `t` is the standard library's `Duration`, seen through everything
+ * that keeps a type what it is (stdlib.md §2.2.2): an alias, a `where`
+ * refinement, a `nominal` over it. The walk stops on reaching `Duration`
+ * itself, before its own body (`nominal Int`) — past that point every `Int`
+ * would look like a `Duration`.
+ */
+function isStdlibDuration(t: TypeExpr | null, sym: SymbolTable): boolean {
+  const seen = new Set<string>();
+  let cur = t;
+  while (cur !== null) {
+    if (cur.kind === "TypeRefinement" || cur.kind === "TypeNominal") {
+      cur = cur.inner;
+      continue;
+    }
+    if (cur.kind !== "TypeRef" || seen.has(cur.name)) return false;
+    const def = sym.types.get(cur.name);
+    if (def === undefined) return false;
+    if (def === STDLIB_DURATION) return true;
+    seen.add(cur.name);
+    cur = def.body;
+  }
+  return false;
+}
+
+/**
+ * The one wording for "this receiver has no such member", so the two sides
+ * cannot report the same expression differently depending on which side of
+ * `:=` it landed on. A record says "record type" because naming its shape adds
+ * nothing a reader of the line does not already have. `raw` is the receiver as
+ * written and `t` the same type unaliased.
+ */
+function undefMemberError(
+  raw: TypeExpr | null,
+  t: TypeExpr,
+  field: string,
+  pos: Pos,
+  sym: SymbolTable,
+): KumikiError {
+  const head =
+    t.kind === "TypeRecord"
+      ? `Record type has no field or method ".${field}"`
+      : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
+  const owners = receiversOf(field);
+  return {
+    code: "E0108",
+    kind: "undef-member",
+    message: owners.length > 0 ? `${head} — it is a member of ${owners.join(" / ")}` : head,
+    pos,
+  };
+}
+
+/**
+ * The members that hand a `Set`'s elements or a `Map`'s keys back — as a list
+ * (`to-list`, `keys`, `entries`) or, for `Map.filter` and `Map.map`, as the
+ * `$1` their fragment is given for each entry.
+ */
+const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
+  Set: new Set(["to-list"]),
+  Map: new Set(["keys", "entries", "filter", "map"]),
+};
+
+const KEY_READER_NAMES: ReadonlySet<string> = new Set(
+  Object.values(KEY_READERS).flatMap((names) => [...names]),
+);
+
+/**
+ * The `KeyKind` a key reader lowers with, or `undefined` when `member` does not
+ * read keys on this receiver or the key is already a string. One answer for
+ * both spellings — `st.to-list` and `st.to-list()` ask it alike.
+ */
+function keyKindOfReader(
+  recv: TypeExpr | null,
+  member: string,
+  sym: SymbolTable,
+): KeyKind | undefined {
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp" || !KEY_READERS[t.name]?.has(member)) return undefined;
+  const rep = keyRepresentation(t.args[0] ?? null, sym);
+  return rep === "text" || rep === null ? undefined : rep;
+}
+
+/**
+ * What the fragment argument at `argIndex` of `recv.method(…)` binds as `$1`
+ * and `$2` (stdlib.md §2.2), read off the receiver's type the way the lowering
+ * hands them over (`methodCallJs`):
+ *
+ * - `List(T)` — `filter` / `map` / `find` / `sort-by`: `$1` is the element. An
+ *   element that is a `Tuple(A, B)` — what `.entries` produces — is taken
+ *   apart, `$1 = A` and `$2 = B`.
+ * - `List(T).fold(init, expr)`: `$2` is the element. `$1` is the accumulator,
+ *   whose type the init only approximates (`[]`, `{}`), so it stays open.
+ * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E).map`: `$1`
+ *   is `T`, taken apart like a `List`'s element except under `flat-map`,
+ *   whose lowering does not; `Result.map-err`: `$1` is `E`.
+ * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value — the key
+ *   only when it reads back as a value of `K` (`keyRepresentation`);
+ *   `Map.update(k, expr)`: `$1` is the current `V`.
+ *
+ * Everything else is `null`, which binds the name with no type — as every
+ * fragment was bound before. That includes an element the checker cannot
+ * decide (a type parameter), which the lowering's fallback may take apart.
+ * Which of `$1` / `$2` a fragment binds at all is {@link fragmentShape}'s
+ * answer; this one only types them.
+ */
+function fragmentBindings(
+  recv: TypeExpr | null,
+  method: string,
+  argIndex: number,
+  sym: SymbolTable,
+): [TypeExpr | null, TypeExpr | null] {
+  const none: [null, null] = [null, null];
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp") return none;
+  const [a, b] = t.args;
+  switch (t.name) {
+    case "List": {
+      if (!a) return none;
+      if (method === "fold") return argIndex === 1 ? [null, a] : none;
+      if (argIndex !== 0 || !ELEMENT_FRAGMENTS.has(method)) return none;
+      return pairOrElement(a, sym);
+    }
+    case "Option":
+      if (argIndex !== 0 || !a) return none;
+      if (method === "flat-map") return [a, null];
+      return method === "map" || method === "filter" ? pairOrElement(a, sym) : none;
+    case "Result":
+      if (argIndex !== 0) return none;
+      if (method === "map") return a ? pairOrElement(a, sym) : none;
+      return method === "map-err" ? [b ?? null, null] : none;
+    case "Map":
+      if (method === "update") return argIndex === 1 ? [b ?? null, null] : none;
+      if ((method !== "filter" && method !== "map") || argIndex !== 0) return none;
+      return [keyRepresentation(a ?? null, sym) === null ? null : (a ?? null), b ?? null];
+    default:
+      return none;
+  }
+}
+
+/**
+ * The `List` members whose fragment is handed each element (`argFnList`) —
+ * read off `FRAGMENT_ARGUMENTS`, whose `pair-value` entries are exactly those,
+ * so the two tables cannot drift.
+ */
+const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
+  [...FRAGMENT_ARGUMENTS].filter(([, f]) => f.second === "pair-value").map(([m]) => m),
+);
+
+/**
+ * How the fragment of `recv.method(…)` — a `filter` / `map` / `find` /
+ * `sort-by`, lowered through `argFnList` — binds `$1` and `$2` (stdlib.md
+ * §2.2.3), decided from the receiver's static type:
+ *
+ * - `"pair"`: each value handed over is a `Tuple(A, B)` — a `List` of pairs
+ *   from `.entries`, or an `Option` / `Result` holding one — and is taken
+ *   apart, `$1 = A`, `$2 = B`.
+ * - `"key-value"`: `Map(K, V).filter` / `map`, handed each entry as the key
+ *   and the value, `$1` and `$2`.
+ * - `"value"`: any other element of a `List`, or the value of an `Option`
+ *   (`map` / `filter`) or a `Result` (`map`) — `$1` is that value whole,
+ *   whatever it is (a 2-element `List` included), and `$2` is not bound.
+ * - `"undecided"`: the receiver's type, or its element's, cannot be decided
+ *   here (a type parameter, an untyped payload).
+ * - `null`: the receiver's type is known, but §2.2.3 gives this method no
+ *   binding on it — a `Set`, whose `_s.filter` hands each element as an
+ *   `[element, true]` entry; `Map.find` / `sort-by`; `Option.find` /
+ *   `sort-by`; `Result.filter` / `find` / `sort-by`; any receiver that is not
+ *   a container.
+ *
+ * Under `"undecided"` and `null` alike the lowering falls back to the value's
+ * shape at run time, taking apart any 2-element array (`MethodCall` records
+ * both as `"undecided"`). They differ for a `fn` named as the fragment: only
+ * an undecidable receiver lets a `fn` of two through (`checkFragmentFnArity`).
+ *
+ * The one classifier codegen (through `MethodCall.fragmentShape`), the
+ * positional scope and the arity of a bare `fn` fragment all read.
+ */
+function fragmentShape(
+  recv: TypeExpr | null,
+  method: string,
+  sym: SymbolTable,
+): FragmentShape | null {
+  if (isOpaque(recv, sym)) return "undecided";
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp" || !ELEMENT_FRAGMENTS.has(method)) return null;
+  const [a] = t.args;
+  switch (t.name) {
+    case "List":
+      return elementShape(a ?? null, sym).shape;
+    case "Option":
+      return method === "map" || method === "filter" ? elementShape(a ?? null, sym).shape : null;
+    case "Result":
+      return method === "map" ? elementShape(a ?? null, sym).shape : null;
+    case "Map":
+      return method === "filter" || method === "map" ? "key-value" : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether one element is a pair the lowering takes apart (see
+ * {@link fragmentShape}), with the pair's halves when it is — read off the
+ * normalised type, so the halves are the ones the answer was made from.
+ */
+function elementShape(
+  elem: TypeExpr | null,
+  sym: SymbolTable,
+):
+  | { shape: "pair"; halves: [TypeExpr | null, TypeExpr | null] }
+  | { shape: "value" | "undecided" } {
+  const u = unaliasType(elem, sym);
+  if (u === null || u.kind === "TypeRef") return { shape: "undecided" };
+  if (u.kind === "TypeApp" && u.name === "Tuple" && u.args.length === 2) {
+    return { shape: "pair", halves: [u.args[0] ?? null, u.args[1] ?? null] };
+  }
+  return { shape: "value" };
+}
+
+/** `$1` / `$2` for a fragment handed `elem`, typed the way {@link elementShape} binds them. */
+function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+  const el = elementShape(elem, sym);
+  if (el.shape === "pair") return el.halves;
+  return el.shape === "value" ? [elem, null] : [null, null];
+}
+
+/**
+ * Annotate a `FieldAccess` with the decision codegen needs (ADR-002), and
+ * report what `classifyMember` refuses. The arity check below is the read
+ * side's alone: it is about an expression producing a value, and the write
+ * side's answer for the same name is E0602 either way.
  */
 function classifyFieldAccess(
   e: Expr & { kind: "FieldAccess" },
@@ -2960,43 +5230,16 @@ function classifyFieldAccess(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const t = unaliasType(inferType(e.base, sym, ctx), sym);
+  const raw = inferType(e.base, sym, ctx);
+  const t = unaliasType(raw, sym);
   if (!t) return; // dynamic — keep name-based shortcut dispatch, no diagnostic
-  if (t.kind === "TypeRecord") {
-    if (recordFieldType(t, e.field)) {
+
+  switch (classifyMember(raw, e.field, sym)) {
+    case "field":
       e.accessKind = "field";
       return;
-    }
-    if (e.field === "show") {
-      e.accessKind = "shortcut";
-      return;
-    }
-    errors.push({
-      code: "E0108",
-      kind: "undef-member",
-      message: `Record type has no field or method ".${e.field}"`,
-      pos: e.pos,
-    });
-    return;
-  }
-  const isKnownReceiver =
-    (t.kind === "TypePrim" && SCALAR_PRIMS.has(t.name)) ||
-    (t.kind === "TypeApp" && STDLIB_CONTAINERS.has(t.name));
-  if (isKnownReceiver) {
-    if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[e.field]) {
-      e.accessKind = "field";
-      return;
-    }
-    if (KNOWN_MEMBERS.has(e.field)) {
-      if (NUMERIC_MEMBERS.has(e.field) && !isNumeric(t, sym)) {
-        errors.push({
-          code: "E0108",
-          kind: "undef-member",
-          message: `Type "${typeName(t, sym)}" has no member ".${e.field}" — it is a method of Int / Float`,
-          pos: e.pos,
-        });
-        return;
-      }
+
+    case "member": {
       // Written without the arguments it needs. The parser produces a field
       // access when there is no argument list, so the arity check on the
       // method-call branch never saw this shape: `f.pow` reached codegen's
@@ -3014,18 +5257,19 @@ function classifyFieldAccess(
         return;
       }
       e.accessKind = "shortcut";
+      const kind = keyKindOfReader(t, e.field, sym);
+      if (kind) e.keyKind = kind;
       return;
     }
-    const tn = t.kind === "TypeApp" ? t.name : (t as { name: string }).name;
-    errors.push({
-      code: "E0108",
-      kind: "undef-member",
-      message: `Type "${tn}" has no member ".${e.field}"`,
-      pos: e.pos,
-    });
+
+    case "unknown":
+      errors.push(undefMemberError(raw, t, e.field, e.pos, sym));
+      return;
+
+    case "undecidable":
+      // A union or an opaque type param → leave as shortcut, no diagnostic.
+      return;
   }
-  // Any other resolved type (union, opaque type param) → leave as shortcut, no
-  // diagnostic (we only flag members of types we fully understand).
 }
 
 function currentFnName(ctx: Ctx): string {
@@ -3033,17 +5277,14 @@ function currentFnName(ctx: Ctx): string {
 }
 
 function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const scope = fnScope(fn);
   const ctx: Ctx = {
     kind: "fn",
-    localBinds: new Set(),
-    localTypes: new Map(fn.params.map((p) => [p.name, p.type])),
+    localBinds: new Set(scope.map((b) => b.name)),
+    localTypes: new Map(scope.map((b) => [b.name, b.type])),
     routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
-  for (const p of fn.params) ctx.localBinds.add(p.name);
-  // also bind $1, $2 used in expression-fragment style
-  ctx.localBinds.add("$1");
-  ctx.localBinds.add("$2");
   for (const p of fn.params) resolveType(p.type, sym, errors);
   if (fn.ret) resolveType(fn.ret, sym, errors);
   checkExpr(fn.body, sym, errors, ctx);
@@ -3094,17 +5335,124 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
       });
     }
   }
-  if (eff.mapRequest)
-    checkExpr(eff.mapRequest, sym, errors, {
-      kind: "slot-init", // treat as pure context (no slots, no fns)
-      localBinds: new Set(["$1"]),
-      routeBind: "no-payload",
-      localTypes: new Map(),
-    });
+  checkTextFailure(eff, sym, errors);
+  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+  // The key runs at dispatch time, so a name unchecked here fails on the first
+  // dispatch rather than at check time.
+  if (eff.policy?.kind === "PolLatestKey")
+    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+}
+
+/**
+ * E0306: an effect on a capability whose failures the runtime delivers as
+ * `Text` ({@link failsWithText}) declares `out=Result(T, E)` with an `E` that
+ * is not `Text`. `.err` receives the failure's message whatever `E` says
+ * (http.md §6.7), so the declaration would promise a value — a record to read
+ * `.message` from, an `Int` to store — that never arrives. An `out=` that is
+ * not a two-argument `Result` makes no claim about the failure and is left to
+ * the checks that read it.
+ */
+function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
+  if (!failsWithText(eff.cap)) return;
+  const out = unaliasType(eff.outType, sym);
+  if (out?.kind !== "TypeApp" || out.name !== "Result" || out.args.length !== 2) return;
+  const [ok, declared] = out.args;
+  const e = declared ? unaliasType(declared, sym) : null;
+  if (!ok || !declared || (e?.kind === "TypePrim" && e.name === "Text")) return;
+  errors.push({
+    code: "E0306",
+    kind: "err-type-not-text",
+    message: `effect "${eff.name}" with cap=${eff.cap} declares its error as ${typeToString(declared)}, but ${eff.cap} delivers a failure as its message, a Text — declare out=Result(${typeToString(ok)}, Text)`,
+    pos: eff.pos,
+  });
+}
+
+/**
+ * The scope for an expression evaluated with no payload and nothing in scope
+ * but `binds`: an `effect`'s `map-request` and its `latest-per-key` key
+ * (`["$1"]`, the effect's input), and `app.http`'s fields (nothing).
+ *
+ * `slot-init` is the position, not the definition — what these need is its
+ * pure, payloadless treatment. `map-request` carried this inline under the
+ * note "treat as pure context (no slots, no fns)", which was never what it
+ * did: a slot is readable here, because E0305 `fn-impurity` fires only for
+ * `kind === "fn"` and `slot-init` does not enter that branch. (A slot's own
+ * initializer may not read one either, but that is E0304 `derived-slot` from a
+ * separate pass over slot definitions — not a rule `Ctx.kind` carries.)
+ *
+ * Shared rather than repeated so the three positions cannot drift apart.
+ */
+function pureScope(binds: string[]): Ctx {
+  return {
+    kind: "slot-init",
+    localBinds: new Set(binds),
+    routeBind: "no-payload",
+    localTypes: new Map(),
+  };
 }
 
 function wildcardText(e: Expr & { kind: "Wildcard" }): string {
   return e.wild === "any-id" ? "<any-id>" : `<slots.${e.slot}>`;
+}
+
+/**
+ * Report a name that one pattern binds twice.
+ *
+ * The binds of a pattern are peers: nothing nests them, so there is no scope
+ * between them for the second to shadow the first — the same reason an
+ * `effect-event` bind list cannot take a positional binding's name
+ * ([E0121](../../../docs/spec/errors.md#e0121-reserved-bind-name)). Left to
+ * codegen's shadowing rule the repeat takes an identifier of its own and every
+ * read in the arm silently resolves to the *later* positional, with `check`
+ * and `smoke` both clean. Before that rule reached patterns it was a module
+ * that did not load, which is louder but no more useful: either way one of the
+ * two positionals the pattern names is unreadable.
+ *
+ * The whole pattern is one namespace, so a tuple's items are checked against
+ * each other too. `_` is exempt — it names nothing, and a pattern is expected
+ * to carry several.
+ */
+function checkPatternBindsAreDistinct(pat: Pattern, errors: KumikiError[]): void {
+  const seen = new Set<string>();
+  const walk = (p: Pattern): void => {
+    switch (p.kind) {
+      case "PWildcard":
+        return;
+      case "PBind":
+        report(p.name, p.pos);
+        return;
+      case "PVariant":
+        // `PVariant.binds` are bare names with no position of their own, so the
+        // report lands on the pattern that wrote them and names the bind.
+        for (const b of p.binds) report(b, p.pos);
+        return;
+      case "PTuple":
+        for (const it of p.items) walk(it);
+        return;
+      default: {
+        const exhaustive: never = p;
+        void exhaustive;
+        return;
+      }
+    }
+  };
+  const report = (name: string, pos: Pos): void => {
+    if (name === "_") return;
+    if (seen.has(name)) {
+      errors.push({
+        code: "E0122",
+        kind: "duplicate-pattern-bind",
+        message:
+          `"${name}" is bound twice in this pattern. The two binds are peers — nothing ` +
+          `nests them, so the second does not shadow the first — and one of the two ` +
+          `values the pattern names would be unreadable. Rename one`,
+        pos,
+      });
+      return;
+    }
+    seen.add(name);
+  };
+  walk(pat);
 }
 
 /**
@@ -3136,7 +5484,10 @@ function checkPatternAgainstType(
   if (pat.kind === "PWildcard") return;
 
   if (pat.kind === "PBind") {
-    bindLocal(scope, pat.name, t);
+    // Normalising strips `nominal`, so bind the type as written (language.md
+    // §1.9: each arm is read with the types its pattern binds). A type with no
+    // normal form binds as unknown.
+    bindLocal(scope, pat.name, t === null ? null : scrutType);
     return;
   }
 
@@ -3495,7 +5846,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
   if (t.testKind === "reducer-test") {
     // A reducer-test `expect` is always an Expr (a tile-test's is a TileExpr).
     walkExpr(t.expect as Expr, (n) => {
-      if (n.kind === "Wildcard" && n.wild === "slot" && !sym.slots.has(n.slot)) {
+      if (n.kind === "Wildcard" && n.wild === "slot" && !isTestSlot(n.slot, sym)) {
         errors.push({
           code: "E0103",
           kind: "undef-slot",
@@ -3514,34 +5865,45 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     }
     // §8.5: each `given.mocks` key must name a declared effect — a typo would
     // otherwise silently never match an emit (the M1-review no-silent-typo rule).
-    const given = t.given;
-    if (given.kind === "RecordLit") {
-      const mocks = given.fields.find((f) => f.name === "mocks")?.value;
-      if (mocks?.kind === "RecordLit") {
-        for (const m of mocks.fields) {
-          if (!sym.effects.has(m.name)) {
-            errors.push({
-              code: "E0104",
-              kind: "undef-effect",
-              message: `Mock targets undefined effect "${m.name}"`,
-              pos: mocks.pos,
-            });
-          }
+    // The section is read through the shared table for the same reason codegen
+    // is: a second spelling of "mocks" in this file is a second vocabulary. The
+    // guard is there because `givenSection` throws on a `given` that is not a
+    // record, which has no sections and is E0713's (`checkTestNames`).
+    const mocks = isRecordValue(t.given) ? givenSection(t, "reducer-test", "mocks") : undefined;
+    if (mocks?.kind === "RecordLit") {
+      for (const m of mocks.fields) {
+        if (!sym.effects.has(m.name)) {
+          errors.push({
+            code: "E0104",
+            kind: "undef-effect",
+            message: `Mock targets undefined effect "${m.name}"`,
+            pos: mocks.pos,
+          });
         }
       }
     }
     return;
   }
   // tile-test
+  //
+  // The target is a tile the program defines. A built-in was exempted here as
+  // it is everywhere a tile is named — but `_tilesById` (`codegen.ts`) is built
+  // from the user tiles alone, so `tile-test text` was the one naming that
+  // could not work whatever it was given: `check` said ok and the generated
+  // module died with `App._tilesById.text is not a function`, taking every
+  // other test in the file with it (`cli/src/smoke.ts` runs them unguarded).
   const tileTarget = t.target ?? "";
-  if (!BUILTIN_TILES.has(tileTarget) && !sym.tiles.has(tileTarget)) {
+  if (!sym.tiles.has(tileTarget)) {
     errors.push({
       code: "E0105",
       kind: "undef-tile",
-      message: `Reference to undefined tile "${t.target}"`,
+      message: BUILTIN_TILES.has(tileTarget)
+        ? `Tile-test target "${tileTarget}" is a built-in tile — a tile-test can only name a tile the program defines`
+        : `Reference to undefined tile "${t.target}"`,
       pos: t.pos,
     });
   }
+  checkTileTestInput(t, sym, errors);
   // The `expect` is a tile expression — validate its tile references.
   checkTileExpr(t.expect as TileExpr, sym, errors, {
     kind: "tile",
@@ -3549,6 +5911,99 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     localTypes: new Map(),
     routeBind: "no-payload",
   });
+}
+
+/**
+ * A `tile-test` applies its target: the lowering applies
+ * `App._tilesById["<target>"]` to `given.in` (`codegen/emit-test.ts`), so
+ * `given.in` is the tile's single positional argument written as a section and
+ * the tile-call rule is its rule — the count (E0213, in the sentence that form
+ * already uses) and the comparison against `in=` (E0201) alike. A route entry
+ * and a sub-route entry are the other two appliers that are not tile
+ * expressions; this is the third.
+ *
+ * Both directions of the count went unreported. A target declaring `in=` and a
+ * `given` without one was applied to `undefined`, and the first read of it threw
+ * a bare `TypeError: Cannot read properties of undefined` — no test name, no
+ * position, no code. Nothing catches it: `cli/src/smoke.ts` calls `t.run()`
+ * unguarded, so the throw reaches the CLI, prints as `String(e)`, and every
+ * other test in the file loses its result with it (#428). The mirror case dropped the
+ * value, so the test asserted a render that never saw the input it was written
+ * for.
+ *
+ * The type is what separates a loud failure from a silent one, which is why the
+ * count alone was not enough. `show` renders an absent or wrongly typed value
+ * as the empty string (`runtime/src/stdlib.ts`), so an `in=Text` given nothing
+ * — or an `in=Int` given `"7"` — compares against something indistinguishable
+ * from an empty label and *passes*, asserting a shape no tile call can produce.
+ */
+function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
+  // A target that resolves to no definition has no `in=` to disagree with: an
+  // undefined one is E0105's — one mistake named twice reads as two — and a
+  // built-in declares nothing for a `given` to match.
+  const def = sym.tiles.get(t.target ?? "");
+  if (!def) return;
+  const written = givenField(t, "in");
+  const wants = def.in ? 1 : 0;
+  const got = written ? 1 : 0;
+  if (wants === got) {
+    // The counts agree, so there is an argument to compare — against the same
+    // `in=` a tile call's is compared with, through the same `checkAgainst`.
+    // The context is the one `checkTestNames` resolved the section's names in:
+    // a tile-test body has no local binds, and `checkTest` has already walked
+    // the whole `given` for wildcards.
+    if (written && def.in) {
+      checkAgainst(written.value, def.in, sym, errors, {
+        kind: "test",
+        localBinds: new Set(),
+        localTypes: new Map(),
+        routeBind: "no-payload",
+        wildcardsReportedElsewhere: true,
+      });
+    }
+    return;
+  }
+  // A section the vocabulary does not list is already an E0714 (and a `given`
+  // that is no record at all an E0713), and it is where the missing argument
+  // went: `given = {slots: {}, input: "Ada"}` wrote the input under a name
+  // nothing reads. Counting it as absent as well is one mistake named twice, at
+  // a position that stops existing as soon as the first is fixed — so the count
+  // waits for a `given` every section of which was read. An `in` that *is* read
+  // is a written argument whatever else the given misspells, so the other
+  // direction is reported either way.
+  if (got === 0 && hasUnreadGiven(t)) return;
+  errors.push({
+    code: "E0213",
+    kind: "call-arity-mismatch",
+    message: `Tile "${def.name}" expects ${wants} argument(s) but got ${got}`,
+    // An `in` the target does not declare has a position of its own, and it is
+    // the text to delete. A missing one has none, so it is asked for at the
+    // test — where E0105 reports the target for the same reason.
+    pos: written?.pos ?? t.pos,
+  });
+}
+
+/**
+ * Whether some of `t`'s `given` is read by nothing: a section that names none
+ * of a tile-test's (E0714), or a `given` that is not a record at all (E0713).
+ */
+function hasUnreadGiven(t: TestDef): boolean {
+  if (!isRecordValue(t.given)) return true;
+  return recordFieldsOf(t.given).some((f) => !isSectionName("tile-test", "given", f.name));
+}
+
+/**
+ * One section of a `tile-test`'s `given`, with the position the author wrote it
+ * at — `givenSection` answers the value alone, which is the whole of what the
+ * lowering needs and one field short of what a diagnostic about the section
+ * itself needs. The `name` type comes from the shared table, so a section a
+ * tile-test does not have cannot be asked for here.
+ */
+function givenField(
+  t: TestDef,
+  name: GivenSection<"tile-test">,
+): { name: string; value: Expr; pos: Pos } | undefined {
+  return recordFieldsOf(t.given).find((f) => f.name === name);
 }
 
 /**
@@ -3586,32 +6041,181 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
   // reported. Nothing walks an invariant or an `episode-test` expect.
   const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };
 
-  for (const f of recordFieldsOf(t.given)) {
-    if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, owned);
-    else if (f.name === "event") checkTestEvent(f.value, sym, errors, owned);
-    else if (f.name === "mocks") checkTestMockValues(f.value, sym, errors, owned);
-    // `in` (tile-test), and any key other than the three above.
-    else checkExpr(f.value, sym, errors, owned);
+  // A clause that is not a record has no sections to read, and the loops below
+  // would read it as an empty one; E0713 says so instead, once, at the clause,
+  // and no name inside it is resolved — it is not a value anything evaluates.
+  // A wildcard there is still E0109 (and an undefined `<slots.X>` in a
+  // reducer-test `expect` still E0103): `checkTest` walks the whole clause for
+  // those whatever its shape, because they are wrong wherever they are written.
+  requireRecord(t.given, "given", errors);
+  if (t.testKind === "reducer-test" || t.testKind === "episode-test") {
+    requireRecord(t.expect, "expect", errors);
+  }
+  if (t.testKind === "episode-test") requireRecord(t.mocks, "mocks", errors);
+
+  // Every arm below is a section name the table lists, and the `default`s are
+  // `never` — so a section added to the table is a compile error here until it
+  // is given a rule, which is the half of "one vocabulary" the accessors in
+  // `codegen/emit-test.ts` cannot state.
+  for (const f of sectionsOf(t, t.testKind, "given", errors)) {
+    switch (f.section) {
+      case "slots":
+        if (requireRecord(f.value, "given.slots", errors)) {
+          checkTestSlotMap(f.value, sym, errors, owned);
+        }
+        break;
+      case "event":
+        if (requireRecord(f.value, "given.event", errors)) {
+          checkTestEvent(f.value, sym, errors, owned);
+        }
+        break;
+      case "mocks":
+        if (requireRecord(f.value, "given.mocks", errors)) {
+          checkTestMockValues(f.value, sym, errors, owned);
+        }
+        break;
+      case "in":
+        checkExpr(f.value, sym, errors, owned);
+        break;
+      default:
+        assertNever(f.section);
+    }
   }
   if (t.invariant) checkExpr(t.invariant, sym, errors, { ...base, runReducerScope: true });
   if (t.testKind === "reducer-test") {
-    for (const f of recordFieldsOf(t.expect)) {
-      if (f.name === "slots") checkTestSlotMap(f.value, sym, errors, owned);
-      else if (f.name === "effects") checkTestEffects(f.value, sym, errors, owned);
-      else checkExpr(f.value, sym, errors, owned); // `panic`
+    for (const f of sectionsOf(t, "reducer-test", "expect", errors)) {
+      switch (f.section) {
+        case "slots":
+          if (requireRecord(f.value, "expect.slots", errors)) {
+            checkTestSlotMap(f.value, sym, errors, owned);
+          }
+          break;
+        case "effects":
+          checkTestEffects(f.value, sym, errors, owned);
+          break;
+        case "panic":
+          checkExpr(f.value, sym, errors, owned);
+          break;
+        default:
+          assertNever(f.section);
+      }
     }
   }
   if (t.testKind === "episode-test") {
-    for (const f of recordFieldsOf(t.expect)) {
-      if (f.name === "slots-equal" || f.name === "slotsEqual") {
-        // `from-log` is the literal that means "take the log's own values".
-        if (f.value.kind === "Ref" && f.value.name === "from-log") continue;
-        checkTestSlotMap(f.value, sym, errors, base);
-      } else checkExpr(f.value, sym, errors, base);
+    for (const f of sectionsOf(t, "episode-test", "expect", errors)) {
+      switch (f.section) {
+        case "slots-equal":
+          // The position's bare name (`from-log`: the log's own values) has no
+          // slots of its own to check, so it stops here; anything past this
+          // line is a record or E0713.
+          if (bareNameAt(f.value, "expect.slots-equal") !== undefined) break;
+          if (requireRecord(f.value, "expect.slots-equal", errors)) {
+            checkTestSlotMap(f.value, sym, errors, base);
+          }
+          break;
+        case "no-panics":
+        case "no-errors":
+          checkExpr(f.value, sym, errors, base);
+          break;
+        default:
+          assertNever(f.section);
+      }
     }
     checkTestMockValues(t.mocks, sym, errors, base, true);
   }
   // A tile-test's `expect` is a tile expression, checked by `checkTileExpr`.
+}
+
+/**
+ * The sections of a test's `given` / `expect`, each under the name the lowering
+ * reads it by — and an E0714 for every key that names none of them
+ * ([test-sections.ts](./test-sections.ts) is the table both sides share).
+ *
+ * A dropped section is not a weaker test, it is a different one: the setup the
+ * author wrote never happens, so the assertion runs against the slots'
+ * declared defaults and passes. `given = {slot: {count: 41}}` is the whole bug
+ * — `slots` is never seen, `count` stays 0, and `inc` makes the 1 the `expect`
+ * asks for.
+ *
+ * No name *inside* the unknown key is resolved: a name belonging to a section
+ * that does not exist would be a second diagnostic at a position that stops
+ * existing as soon as the first is fixed. What still reports there is what is
+ * wrong wherever it is written — a wildcard in a `given` is E0109 in any
+ * section, and survives fixing the section name.
+ *
+ * `kind` is passed rather than read off `t` so the returned names are the ones
+ * that kind actually has: the caller's `switch` is then exhaustive over the
+ * table rather than over `string`.
+ */
+function sectionsOf<K extends TestKind, P extends TestPart>(
+  t: TestDef,
+  kind: K,
+  part: P,
+  errors: KumikiError[],
+): { section: SectionName<K, P>; value: Expr }[] {
+  const out: { section: SectionName<K, P>; value: Expr }[] = [];
+  for (const f of recordFieldsOf(part === "given" ? t.given : t.expect)) {
+    if (isSectionName(kind, part, f.name)) {
+      out.push({ section: f.name, value: f.value });
+      continue;
+    }
+    errors.push({
+      code: "E0714",
+      kind: "test-section-unknown",
+      message: unknownSectionMessage(kind, part, f.name),
+      pos: f.pos,
+    });
+  }
+  return out;
+}
+
+/**
+ * What an E0714 says. The accepted set is always named, because it is the
+ * answer whenever the nearest name is not one: the vocabulary is three words
+ * long, so printing it costs less than a guess.
+ *
+ * The other clause is worth naming on its own. Writing `effects` in a `given`
+ * is not a misspelling of anything in that clause's set — the name is right and
+ * the place is wrong — so a distance rule has nothing to offer and the position
+ * is the whole of the mistake.
+ */
+function unknownSectionMessage(kind: TestKind, part: TestPart, written: string): string {
+  const other: TestPart = part === "given" ? "expect" : "given";
+  const article = /^[aeiou]/.test(kind) ? "an" : "a";
+  const hint = isSectionName(kind, other, written)
+    ? ` — "${written}" is ${other === "expect" ? "an" : "a"} \`${other}\` section`
+    : nearestSectionHint(kind, part, written);
+  return (
+    `Unknown section "${written}" in ${article} ${kind} \`${part}\`${hint}` +
+    ` (accepted: ${sectionNames(kind, part).join(", ")})`
+  );
+}
+
+function nearestSectionHint(kind: TestKind, part: TestPart, written: string): string {
+  const nearest = nearestSection(kind, part, written);
+  return nearest === undefined ? "" : ` — did you mean "${nearest}"?`;
+}
+
+/**
+ * E0713 when `value` — written at a test-body `position` the lowering reads
+ * as a record — is something the position does not accept; whether it fits (a
+ * record, the position's bare name, or absent) to go on reading. A caller at a
+ * position with a bare name steps past it (`bareNameAt`) before reading fields.
+ * The sentence is the one the lowering throws, from the shared table.
+ */
+function requireRecord(
+  value: Expr | TileExpr | undefined,
+  position: RecordPosition,
+  errors: KumikiError[],
+): boolean {
+  if (value === undefined || fitsRecordPosition(value, position)) return true;
+  errors.push({
+    code: "E0713",
+    kind: "test-shape-invalid",
+    message: notARecordMessage(position),
+    pos: value.pos,
+  });
+  return false;
 }
 
 /** The fields of `e` when it is a record literal, and none when it is not. */
@@ -3620,22 +6224,32 @@ function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: 
   return e.fields;
 }
 
-/** `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots`. */
+/**
+ * `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots` /
+ * `slots-equal`, once `requireRecord` has said it fits and the caller has
+ * stepped past a bare name, so `rec` is a record.
+ */
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (rec.kind !== "RecordLit") {
-    checkExpr(rec, sym, errors, ctx);
-    return;
-  }
-  for (const f of rec.fields) {
-    if (!sym.slots.has(f.name)) {
+  for (const f of recordFieldsOf(rec)) {
+    if (!isTestSlot(f.name, sym)) {
       errors.push({
         code: "E0103",
         kind: "undef-slot",
         message: `Reference to undefined slot "${f.name}"`,
         pos: f.pos,
       });
+    } else if (!sym.slots.has(f.name)) {
+      checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
+    // A test's slot value is the slot's value — seeded by a `given`, compared
+    // whole by an `expect` — so it is checked against the slot's type the way
+    // the slot's own initializer is: a `Text` seeded into an `Int` is the same
+    // mistake in either place. The walk also leaves the annotations lowering
+    // reads: a list literal where the slot holds a `Set` is built as one
+    // (`asSet`). An `expect` wildcard has no type, so it is never reported.
+    const slot = sym.slots.get(f.name);
+    if (slot) checkAgainst(f.value, slot.type, sym, errors, ctx);
   }
 }
 
@@ -3703,8 +6317,9 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
     const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
     if (name === undefined) continue;
     // The standard effects (`navigate`, `toast`, `log`, …) are declared by no
-    // program, so the table they live in is the capability one.
-    if (!sym.effects.has(name) && !BUILTIN_EFFECT_CAPS.has(name)) {
+    // program, so they live in a table of their own.
+    const input = effectInput(name, sym);
+    if (!input) {
       errors.push({
         code: "E0104",
         kind: "undef-effect",
@@ -3712,7 +6327,16 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
         pos: item.pos,
       });
     }
-    if (item.kind === "Call") for (const a of item.args) checkExpr(a, sym, errors, ctx);
+    if (item.kind !== "Call") continue;
+    for (const a of item.args) checkExpr(a, sym, errors, ctx);
+    // The expected argument stands for the one the reducer emits, which is
+    // checked, and lowered, against the effect's `in=` type — so this one is
+    // too, with the same fields left out, or a Set the reducer emits is
+    // compared with the array the literal would otherwise be.
+    const arg = item.args[0];
+    if (input && arg && item.args.length === 1) {
+      checkAgainst(arg, input.inType, sym, errors, ctx, "E0201", input.omittable);
+    }
   }
 }
 
@@ -3736,19 +6360,28 @@ function checkTestMockValues(
   ctx: Ctx,
   episode = false,
 ): void {
+  // The payload stands for the value the effect answers, which the reducer
+  // waiting on it reads as the effect's `out=` type — so it is checked, and
+  // lowered, against that type the way a slot's value is.
+  const checkOutcome = (effect: string, call: Expr & { kind: "Call" }): void => {
+    for (const a of call.args) checkExpr(a, sym, errors, ctx);
+    const payload = call.args[0];
+    const outcome = call.callee === "ok" ? "ok" : "err";
+    if (payload) checkAgainst(payload, effectOutcomeType(effect, outcome, sym), sym, errors, ctx);
+  };
   for (const f of recordFieldsOf(rec)) {
     const v = f.value;
     if (episode && v.kind === "Ref" && (v.name === "from-log" || v.name === "ignore")) continue;
     const outcome = v.kind === "Call" && (v.callee === "ok" || v.callee === "err") ? v : undefined;
     if (outcome) {
-      for (const a of outcome.args) checkExpr(a, sym, errors, ctx);
+      checkOutcome(f.name, outcome);
       continue;
     }
     if (v.kind === "Call" && v.callee === "delay" && !episode) {
       const [ms, inner] = v.args;
       if (ms) checkExpr(ms, sym, errors, ctx);
       if (inner?.kind === "Call" && (inner.callee === "ok" || inner.callee === "err")) {
-        for (const a of inner.args) checkExpr(a, sym, errors, ctx);
+        checkOutcome(f.name, inner);
         continue;
       }
     }
@@ -3763,11 +6396,213 @@ function checkTestMockValues(
   }
 }
 
+/**
+ * `through "here" (here → route)` — the chain from the called `fn` to the read,
+ * or nothing for a read written in place. Naming only the first `fn` would send
+ * the author to a definition that is not itself wrong.
+ */
+function routeChainText(name: string, chain?: readonly string[]): string {
+  return chain === undefined ? "" : ` through "${chain[0]}" (${[...chain, name].join(" → ")})`;
+}
+
+/** What every E0120 says, whether the read is written in the argument or sits behind a `fn` call. */
+function routeInAppInitMessage(name: string, chain?: readonly string[]): string {
+  return (
+    `"${name}" is not available in an app.init argument${routeChainText(name, chain)}: these ` +
+    `arguments are evaluated once, while the app object is being built, and the runtime ` +
+    `installs the route during the mount that follows. Take the route from a route.enter ` +
+    `reducer, which runs with the route the app landed on`
+  );
+}
+
+/**
+ * What E0304 says for a slot initializer that reaches the route — the same
+ * shape as E0120's, because it is the same hole one position over. E0304's own
+ * advice for a derived slot ("compute it in a fn") is left out: a `fn` called
+ * from here is exactly the hop this reports.
+ */
+function routeInSlotInitMessage(slot: string, name: string, chain?: readonly string[]): string {
+  return (
+    `Slot "${slot}" reads "${name}"${routeChainText(name, chain)} in its initial value; ` +
+    `derived slots are prohibited, and this one cannot be computed at all: initial values ` +
+    `are evaluated while the module loads, and the runtime installs the route during the ` +
+    `mount that follows. Take the route from a route.enter reducer, which runs with the ` +
+    `route the app landed on`
+  );
+}
+
+/**
+ * The route reads in `e`, if it were evaluated before the mount installs the
+ * route — each with the spelling that matched and where it is written.
+ *
+ * Asked of the E0120 gate itself, in the `app-init` position, so that which
+ * `route` counts (a local bind or a `fn` parameter of that name does not) is
+ * decided in one place. `params` are the binds in scope: a `fn`'s
+ * (`fnScope` — its parameters and their positionals), or nothing for a slot
+ * initializer. `routeBind` is the `no-payload` both really have, and says
+ * nothing either way here — the gate returns before the branch that reads it,
+ * so a `$route` in a `fn` collects a read from this probe and E0103 from
+ * `checkFn`, which is right: the call site is wrong even once the body is.
+ *
+ * Running `checkExpr` twice over one expression is safe because `inferType`
+ * reads no field of the scope but `localTypes`, which this builds the way the
+ * real check does. That matters beyond the diagnostics, which are discarded:
+ * `checkExpr` also writes `accessKind` onto field accesses for codegen, and
+ * definitions are checked in source order, so a decision that depended on
+ * anything else here would make the emitted module depend on where the
+ * definition was written.
+ */
+function routeReadsIn(
+  e: Expr,
+  sym: SymbolTable,
+  params: readonly FnScopeBind[] = [],
+): { name: string; pos: Pos }[] {
+  return preMountProbe(e, sym, params).routeReads;
+}
+
+/**
+ * One `checkExpr` run over `e` in the `app-init` position, with its
+ * diagnostics discarded, for the two answers the pre-mount checks need from
+ * the checker's own scoping: the route reads (`routeReadsIn`) and the bare
+ * `fn` names lowered as calls in a fragment position (`fnCallsIn`). A name a
+ * parameter, a local bind or a slot shadows is neither, and the walk that
+ * builds the scopes is the one place that knows.
+ */
+function preMountProbe(
+  e: Expr,
+  sym: SymbolTable,
+  params: readonly FnScopeBind[],
+): { routeReads: { name: string; pos: Pos }[]; fragmentFnCalls: { name: string; pos: Pos }[] } {
+  const routeReads: { name: string; pos: Pos }[] = [];
+  const fragmentFnCalls: { name: string; pos: Pos }[] = [];
+  const ctx: Ctx = {
+    kind: "app-init",
+    localBinds: new Set(params.map((p) => p.name)),
+    localTypes: new Map(params.map((p) => [p.name, p.type])),
+    routeBind: "no-payload",
+    routeReadsSeen: routeReads,
+    fragmentFnCallsSeen: fragmentFnCalls,
+  };
+  checkExpr(e, sym, [], ctx);
+  return { routeReads, fragmentFnCalls };
+}
+
+/**
+ * The `fn` definitions an expression calls, in the order they are written, each
+ * positioned at the call rather than at the expression that contains it — two
+ * calls in one argument are two things to fix.
+ *
+ * A call is a `Call` node, or a bare `fn` name in the fragment argument of a
+ * higher-order method: `xs.map(here)` lowers to `xs.map(here($1))`, so `here`
+ * runs wherever the method does (`FRAGMENT_ARGUMENTS`). A bare name anywhere
+ * else is a value, E0127, and is never applied, so nothing it mentions is
+ * evaluated — which is why this is narrower than `referencesIn`, whose edges
+ * the cycle check follows. `params` are the binds in scope, as for
+ * `routeReadsIn`: a parameter named like a `fn` shadows it.
+ */
+function fnCallsIn(
+  e: Expr,
+  sym: SymbolTable,
+  params: readonly FnScopeBind[] = [],
+): { name: string; pos: Pos }[] {
+  const out: { name: string; pos: Pos }[] = [];
+  walkExpr(e, (n) => {
+    if (n.kind === "Call" && sym.fns.has(n.callee)) out.push({ name: n.callee, pos: n.pos });
+  });
+  out.push(...preMountProbe(e, sym, params).fragmentFnCalls);
+  return out.sort((a, b) => a.pos.line - b.pos.line || a.pos.col - b.pos.col);
+}
+
+type RouteChainResolver = (start: string) => { chain: string[]; name: string } | null;
+
+/**
+ * Every `fn` call in `e` that reaches the route, at the call, with the chain
+ * that gets there. The one walk both pre-mount positions share: an `app.init`
+ * argument reports each as E0120, a slot initializer as E0304.
+ */
+function routeReachedThroughCalls(
+  e: Expr,
+  sym: SymbolTable,
+  routeChain: RouteChainResolver,
+): { pos: Pos; chain: string[]; name: string }[] {
+  const out: { pos: Pos; chain: string[]; name: string }[] = [];
+  for (const call of fnCallsIn(e, sym)) {
+    const reached = routeChain(call.name);
+    if (reached !== null) out.push({ pos: call.pos, ...reached });
+  }
+  return out;
+}
+
+/**
+ * Resolve, for a `fn` name, the shortest chain of calls from it to a body that
+ * reads the route, and the name that body read.
+ *
+ * Breadth-first and iterative. A `fn` graph is a program's to declare, so a
+ * chain may be longer than the call stack and a cycle may exist — E0006
+ * reports one, but this pass runs whether or not that report is there, so it
+ * has to terminate on its own. Re-entering a name cannot add reachability,
+ * which is what makes the visited set safe to prune with.
+ *
+ * The per-`fn` answers — the route read its body makes, and the `fn`s it
+ * calls — are memoised across every position that asks: each `app.init`
+ * argument and each slot initializer. The search is not: it is a
+ * walk over a graph the memo already answers for, and each call site is
+ * reported by the caller either way.
+ */
+function routeChainResolver(sym: SymbolTable): RouteChainResolver {
+  const direct = new Map<string, string | null>();
+  const readsRoute = (name: string): string | null => {
+    const cached = direct.get(name);
+    if (cached !== undefined) return cached;
+    const fn = sym.fns.get(name);
+    const answer = fn ? (routeReadsIn(fn.body, sym, fnScope(fn))[0]?.name ?? null) : null;
+    direct.set(name, answer);
+    return answer;
+  };
+  const calls = new Map<string, readonly { name: string }[]>();
+  const callsOf = (fn: FnDef): readonly { name: string }[] => {
+    const cached = calls.get(fn.name);
+    if (cached !== undefined) return cached;
+    const answer = fnCallsIn(fn.body, sym, fnScope(fn));
+    calls.set(fn.name, answer);
+    return answer;
+  };
+
+  return (start: string) => {
+    const parent = new Map<string, string | null>([[start, null]]);
+    const queue: string[] = [start];
+    for (let i = 0; i < queue.length; i++) {
+      const name = queue[i];
+      // Unreachable — `i` is bounded by the queue's own length — and present
+      // for the index type. `continue` rather than `break` so that if it ever
+      // does fire it costs one entry rather than every chain left to find.
+      if (name === undefined) continue;
+      const read = readsRoute(name);
+      if (read !== null) {
+        const chain: string[] = [];
+        for (let at: string | null | undefined = name; at != null; at = parent.get(at)) {
+          chain.unshift(at);
+        }
+        return { chain, name: read };
+      }
+      const fn = sym.fns.get(name);
+      if (!fn) continue;
+      for (const callee of callsOf(fn)) {
+        if (parent.has(callee.name)) continue;
+        parent.set(callee.name, name);
+        queue.push(callee.name);
+      }
+    }
+    return null;
+  };
+}
+
 function checkApp(
   app: AppDef,
   sym: SymbolTable,
   errors: KumikiError[],
   registeredCaps: Set<string>,
+  routeChain: RouteChainResolver,
 ): void {
   // Each declared capability must be standard or registered via a manifest.
   for (const cap of app.caps) {
@@ -3791,6 +6626,7 @@ function checkApp(
         pos: app.pos,
       });
     }
+    checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
     if (r.path === "/404") saw404 = true;
   }
   if (!saw404) {
@@ -3834,21 +6670,49 @@ function checkApp(
       continue;
     }
     checkEmitTarget(e.callee, e.args, sym, errors, initCtx, e.pos);
-    for (const a of e.args) checkExpr(a, sym, errors, initCtx);
+    for (const a of e.args) {
+      checkExpr(a, sym, errors, initCtx);
+      // A `fn` hop walks past the gate above: the spelling in the argument is
+      // a call, and what it reads is in another definition. The `fn` itself is
+      // right — a tile, a reducer and an effect's `map-request` all run after
+      // the mount that installs the route — so the report belongs here, at the
+      // call.
+      for (const hop of routeReachedThroughCalls(a, sym, routeChain)) {
+        errors.push({
+          code: "E0120",
+          kind: "route-in-app-init",
+          message: routeInAppInitMessage(hop.name, hop.chain),
+          pos: hop.pos,
+        });
+      }
+    }
   }
-  checkAppHttpHandlers(app, sym, errors);
+  checkAppHttp(app, sym, errors);
   checkAppTheme(app, sym, errors);
 }
 
 /**
- * The reducers `app.http` routes a 401 / 403 / 5xx response to.
+ * `app.http` has two kinds of field: three reducer names, resolved here, and
+ * four expressions, walked here.
  *
- * They are named the same way a `button(onClick=…)` names one, and were the
- * one such site with nothing resolving the name — a misspelling left the
- * response with no handler, which looks exactly like a response the app chose
- * not to handle.
+ * The reducer names are the ones a 401 / 403 / 5xx response is routed to. They
+ * are named the same way a `button(onClick=…)` names one, and were the one such
+ * site with nothing resolving the name — a misspelling left the response with
+ * no handler, which looks exactly like a response the app chose not to handle.
+ *
+ * The expressions are checked in the position `slot-init` names — pure and
+ * payloadless, so `$route` is a name that does not exist rather than a bind
+ * read out of scope, and `emit` has no dispatch to reach. Nothing else looks
+ * at them, and codegen lowers each into a getter or a thunk read at request
+ * time, so a name that resolves to nothing would otherwise reach the runtime:
+ * the read throws inside the request, the dispatcher turns the throw into an
+ * `err` result, and an app with an `.err` reducer absorbs it. A misspelt slot
+ * would pass check, build and smoke alike.
+ *
+ * All four also have a type (http.md §6.3.1), checked after the walk: a value
+ * of the wrong one runs and does the wrong thing rather than failing.
  */
-function checkAppHttpHandlers(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
+function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
   if (!http) return;
   for (const handler of [http.on401, http.on403, http.on5xx]) {
@@ -3860,6 +6724,59 @@ function checkAppHttpHandlers(app: AppDef, sym: SymbolTable, errors: KumikiError
       pos: handler.pos,
     });
   }
+  const fieldCtx = pureScope([]);
+  for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
+    if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
+  }
+  // In the order of the walk above and of the field table in §6.3.1.
+  if (http.baseUrl !== undefined)
+    checkAgainst(http.baseUrl, prim("Text", http.baseUrl.pos), sym, errors, fieldCtx);
+  // `headers` is the `Map(Text, Text)` a request's own `headers` is (§6.1.2).
+  // The runtime spreads it into each request's headers: a number spreads to
+  // nothing and a string to headers named `0`, `1`, … — either way not one
+  // intended header reaches the request.
+  if (http.headers !== undefined) {
+    const pos = http.headers.pos;
+    const text = prim("Text", pos);
+    checkAgainst(http.headers, container("Map", [text, text], pos), sym, errors, fieldCtx);
+  }
+  // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
+  // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
+  // `Duration`", because a program's own `type Duration` shadows the stdlib one
+  // and may be anything.
+  if (http.timeout !== undefined)
+    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
+  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+}
+
+/** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */
+const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
+
+/**
+ * `app.http.credentials` is a `Text`, so a slot can select the mode per
+ * request, and every literal that reaches the field — the field's own value, or
+ * a literal branch of an `if`, at any depth — is also compared with the three
+ * Fetch modes: a browser refuses a request whose init names any other, so a
+ * misspelt mode is as wrong as an `Int`. Anything else (a slot, a call, a
+ * concatenation) is held to `Text` alone; its value is decided at run time.
+ */
+function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "IfExpr") {
+    checkHttpCredentials(e.consequent, sym, errors, ctx);
+    checkHttpCredentials(e.alternate, sym, errors, ctx);
+    return;
+  }
+  if (e.kind === "Str") {
+    if (HTTP_CREDENTIALS.includes(e.value)) return;
+    pushMismatch(
+      errors,
+      "E0201",
+      `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`,
+      e.pos,
+    );
+    return;
+  }
+  checkAgainst(e, prim("Text", e.pos), sym, errors, ctx);
 }
 
 /**
@@ -3936,6 +6853,7 @@ function resolveType(
           });
         } else {
           checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+          checkApplication(t, sym, typeParams, errors);
         }
       }
       for (const a of t.args) resolveType(a, sym, errors, typeParams);
@@ -3949,12 +6867,220 @@ function resolveType(
         for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
       return;
     case "TypeNominal":
-      resolveType(t.inner, sym, errors, typeParams);
-      return;
     case "TypeRefinement":
+      checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
       resolveType(t.inner, sym, errors, typeParams);
       return;
   }
+}
+
+/**
+ * E0803 for a slot whose type has a refinement the gate cannot reach. A
+ * predicate written inside a type is checked by a walk of the value
+ * (language.md §1.3.3), lowered one helper per named type; a program generic
+ * that applies itself to a growing argument needs a new helper at every level,
+ * and past {@link GENERIC_SELF_NESTING_LIMIT} levels the lowering stops. What
+ * lies beyond would be a check that silently passes, which is what E0803
+ * exists to rule out.
+ */
+function checkNestedLowering(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const { cut } = scanPositions(slot.type, sym);
+  if (cut === undefined) return;
+  errors.push({
+    code: "E0803",
+    kind: "unimplemented-refinement",
+    message: `Refinement inside slot "${slot.name}" is not enforced by the runtime: "${cut}" applies itself to a growing argument more than ${GENERIC_SELF_NESTING_LIMIT} levels deep`,
+    pos: slot.pos,
+  });
+}
+
+/**
+ * Report a refinement that cannot become a runtime check.
+ *
+ * The documents present a refinement as a check the value passes on its way
+ * into the slot ([forms.md §5.6], [runtime.md §10.3.3]), so the two ways of
+ * failing to build one are reported here rather than lowered to something that
+ * looks like a check and is not (#352):
+ *
+ *  - E0803, a registered predicate the toolchain does not lower. Unreachable
+ *    from source today — the parser accepts exactly the names the table holds,
+ *    and every one of them lowers — and kept because the alternative for the
+ *    next predicate added to §1.3.3 is `refinementToJs` answering `true` to
+ *    every value, which is a promise the runtime does not keep and nothing
+ *    reports.
+ *  - E0804, arguments no check can be built from: a bound that is text, a
+ *    fractional or negative length, a pattern that does not compile, a range
+ *    with nothing in it. These are reachable, and each used to reach the
+ *    runtime — as a check that refuses every value, one that accepts every
+ *    value (`len-gt(-1)`), or a `ReferenceError` on the first write, from the
+ *    `v <= x` half of what `between(0, "x")` lowered to. A legal count that is
+ *    still below every length, `len-lt(0)`, refuses every value the same way.
+ *    Also E0804, a predicate over a base it cannot test (`Text where
+ *    positive`, `Text where one-of(1)`): every body is guarded by the shape it
+ *    tests, and `one-of` compares strictly, so that slot refuses every write.
+ *    The base is `inner` read through the chain the refinement is, with the
+ *    definition's type parameters left opaque — they say nothing about the
+ *    shape until the generic is applied, which {@link checkApplication}
+ *    judges.
+ */
+function checkRefinement(
+  r: Refinement | undefined,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
+  if (!r) return;
+  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
+  if (!problem) return;
+  // Written out rather than looked up: `spec-drift.test.ts` reads the codes
+  // this file emits off `code: "E…"`, so a code assembled anywhere but at the
+  // push site is one errors.md is never required to document.
+  if (problem.kind === "unimplemented-refinement") {
+    errors.push({
+      code: "E0803",
+      kind: "unimplemented-refinement",
+      message: problem.message,
+      pos: r.pos,
+    });
+    return;
+  }
+  errors.push({
+    code: "E0804",
+    kind: "refinement-args-invalid",
+    message: problem.message,
+    pos: r.pos,
+  });
+}
+
+/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
+function baseProblem(
+  r: Refinement,
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+): RefinementProblem | undefined {
+  const base = judgedBase(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const message = base ? refinementBaseProblem(r, base) : undefined;
+  return message ? { kind: "refinement-args-invalid", message } : undefined;
+}
+
+/** Each of `params` mapped to the opaque type, so that nothing is concluded from it. */
+function opaqueParams(params: Iterable<string>, pos: Pos): Map<string, TypeExpr> {
+  return new Map([...params].map((p) => [p, unknownType(pos)]));
+}
+
+/**
+ * `t` in the form a refinement's base is judged against, or `undefined` when
+ * nothing can be concluded from it: a chain that closes on itself (E0009's to
+ * report), or an application of a name that resolves to nothing (E0117's) —
+ * as opaque as the bare unresolved name `refinementBaseProblem` passes.
+ */
+function judgedBase(t: TypeExpr, sym: SymbolTable): TypeExpr | undefined {
+  const base = unaliasType(t, sym);
+  if (base === null) return undefined;
+  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return undefined;
+  return base;
+}
+
+/**
+ * E0804 for the refinements a generic's application puts over a base they
+ * cannot test.
+ *
+ * A generic's definition is checked with its parameters opaque, so
+ * `type NonEmpty(T) = T where nonempty` is silent there: `T` may be `Text`.
+ * The application is where the argument arrives, and `NonEmpty(Int)` is a
+ * type whose check refuses every value. So the body is walked here with the
+ * arguments substituted — into nested applications, record fields and union
+ * payloads alike — and each refinement is judged over the base the
+ * application gives it, reported at the application, which is what the
+ * author wrote wrong.
+ *
+ * `app`'s own arguments may name the parameters of a definition around it;
+ * those are opaque for the same reason, and are judged where that definition
+ * is applied in turn.
+ */
+function checkApplication(
+  app: TypeExpr & { kind: "TypeApp" },
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
+  const def = sym.types.get(app.name);
+  if (!def) return;
+  const opaque = opaqueParams(typeParams, app.pos);
+  const args = app.args.map((a) => substituteType(a, opaque));
+  const unapplied = def.params.map(() => unknownType(app.pos));
+  for (const message of appliedBaseProblems(app.name, args, unapplied, typeToString(app), sym)) {
+    errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
+  }
+}
+
+/**
+ * The messages for {@link checkApplication}: `name` applied to `args`, set
+ * against `judged`, the same application as the definitions around it were
+ * already checked with — every parameter still opaque there, opaque. A
+ * refinement whose base already had a problem under `judged` was reported
+ * where that definition was checked, and one whose base is no different is
+ * not the application's to report; only a problem the arguments bring is.
+ */
+function appliedBaseProblems(
+  name: string,
+  args: TypeExpr[],
+  judged: TypeExpr[],
+  shown: string,
+  sym: SymbolTable,
+  seen: ReadonlySet<string> = new Set(),
+): string[] {
+  const def = sym.types.get(name);
+  // A mismatched arity is E0210's, and a parameter with no argument would be
+  // read as whatever top-level type shares its name. Re-entering a name is a
+  // chain E0009 reports, and the walk has to end on the way there.
+  if (!def || seen.has(name) || def.params.length !== args.length) return [];
+  const applied = paramSubstitution(def.params, args);
+  const before = paramSubstitution(def.params, judged);
+  const inside = new Set([...seen, name]);
+  const out: string[] = [];
+  const walk = (t: TypeExpr): void => {
+    switch (t.kind) {
+      case "TypePrim":
+      case "TypeRef":
+        return;
+      case "TypeApp": {
+        const nested = t.args.map((a) => substituteType(a, applied));
+        const nestedBefore = t.args.map((a) => substituteType(a, before));
+        out.push(...appliedBaseProblems(t.name, nested, nestedBefore, shown, sym, inside));
+        for (const a of t.args) walk(a);
+        return;
+      }
+      case "TypeRecord":
+        for (const f of t.fields) walk(f.type);
+        return;
+      case "TypeUnion":
+        for (const v of t.variants) for (const p of v.payloads) walk(p);
+        return;
+      case "TypeNominal":
+      case "TypeRefinement": {
+        const r = t.refinement;
+        // A problem with the arguments is the definition's, reported there.
+        if (r && !refinementProblem(r)) {
+          const was = judgedBase(substituteType(t.inner, before), sym);
+          const now = judgedBase(substituteType(t.inner, applied), sym);
+          if (now && !(was && refinementBaseProblem(r, was))) {
+            const over = `${shown} applies it over ${typeToString(now)}`;
+            const message = refinementBaseProblem(r, now, over);
+            if (message) out.push(message);
+          }
+        }
+        walk(t.inner);
+        return;
+      }
+      default:
+        assertNever(t);
+    }
+  };
+  walk(def.body);
+  return out;
 }
 
 /**

@@ -6,9 +6,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppShape, mountCore } from "../src/core.ts";
 import { httpFetch } from "../src/effects-http.ts";
-import { sessionRead, sessionWrite, storageRead, storageWrite } from "../src/effects-storage.ts";
+import {
+  sessionClear,
+  sessionRead,
+  sessionWrite,
+  storageClear,
+  storageRead,
+  storageWrite,
+} from "../src/effects-storage.ts";
 import { installToast } from "../src/effects-toast.ts";
-import { _stdlib, builtinEffects, mount } from "../src/index.ts";
+import {
+  _stdlib,
+  builtinEffects,
+  sessionClear as indexSessionClear,
+  storageClear as indexStorageClear,
+  mount,
+} from "../src/index.ts";
 import { routing } from "../src/router.ts";
 import { _stdlibCore } from "../src/stdlib.ts";
 import { _stdlibTest } from "../src/testkit.ts";
@@ -197,11 +210,37 @@ describe("builtin effect modules", () => {
     });
   });
 
+  it("a read whose Decoder.Json check refuses the value is an err naming where (§6.7.2)", async () => {
+    // What codegen passes for `Decoder.Json(T)` when `T` carries a predicate.
+    const check = (v: unknown) =>
+      (v as { id?: unknown }).id === "ok"
+        ? undefined
+        : { kind: "len-lt", args: [3], path: ["id"] as const };
+    await storageWrite({ key: "dec", value: { id: "nope" } });
+    await sessionWrite({ key: "dec", value: { id: "ok" } });
+    expect(await storageRead({ key: "dec", decode: check })).toEqual({
+      kind: "err",
+      value: "decode failed: len-lt(3) at .id",
+    });
+    expect(await sessionRead({ key: "dec", decode: check })).toEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: { id: "ok" } },
+    });
+  });
+
   it("builtinEffects (index) aliases the granular effect exports", () => {
     expect(builtinEffects.storageRead).toBe(storageRead);
     expect(builtinEffects.storageWrite).toBe(storageWrite);
     expect(builtinEffects.sessionRead).toBe(sessionRead);
     expect(builtinEffects.sessionWrite).toBe(sessionWrite);
+    expect(storageClear).toBeTypeOf("function");
+    expect(sessionClear).toBeTypeOf("function");
+    expect(builtinEffects.storageClear).toBe(storageClear);
+    expect(builtinEffects.sessionClear).toBe(sessionClear);
+    // The monolith path resolves codegen's bare handler names against the
+    // index's top-level exports, so the clears must be there too.
+    expect(indexStorageClear).toBe(storageClear);
+    expect(indexSessionClear).toBe(sessionClear);
     expect(builtinEffects.httpFetch).toBe(httpFetch);
   });
 });

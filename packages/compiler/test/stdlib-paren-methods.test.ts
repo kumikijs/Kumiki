@@ -45,6 +45,14 @@ const METHODS: ReadonlyArray<{
   { recv: "t", no: ".lower", paren: ".lower()", expect: ".toLowerCase()", spec: "§2.2.6" },
   { recv: "t", no: ".upper", paren: ".upper()", expect: ".toUpperCase()", spec: "§2.2.6" },
   { recv: "xs", no: ".sort", paren: ".sort()", expect: "_s.listSort(", spec: "§2.2.3" },
+  // One helper for every receiver: the lowering cannot tell a Map from a Text
+  // statically, and each spelling used to guess differently. The lowering is
+  // the same for all three, so as codegen assertions these rows state one
+  // fact; what the three receivers buy is the type-check below, which checks
+  // `is-empty()` against a Map, a List and a Text separately.
+  { recv: "m", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.1" },
+  { recv: "xs", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.3" },
+  { recv: "t", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.6" },
 ];
 
 describe("Issue #92: paren-form stdlib methods do not fall through to native JS", () => {
@@ -63,28 +71,32 @@ describe("Issue #92: paren-form stdlib methods do not fall through to native JS"
     });
   }
 
-  // `.ms` / `.ms()` are identity passthrough (Duration is stored as raw ms),
-  // so there is no `_s.*` helper to look for. Verify symmetry by isolating the
-  // single differing line — comparing whole files would also flip on any other
-  // change to the generated scaffolding (slot map, header, etc.).
-  it("§2.2.9 du.ms and du.ms() lower identically (Duration → ms identity)", () => {
-    const jsNoParen = compileOk(appWith(`heading((du.ms).show)`));
-    const jsParen = compileOk(appWith(`heading((du.ms()).show)`));
+  // `.to-ms` / `.to-ms()` are identity passthrough (Duration is stored as raw
+  // ms), so there is no `_s.*` helper to look for. Verify symmetry by isolating
+  // the single differing line — comparing whole files would also flip on any
+  // other change to the generated scaffolding (slot map, header, etc.).
+  it("§2.2.9 du.to-ms and du.to-ms() lower identically (Duration → ms identity)", () => {
+    const jsNoParen = compileOk(appWith(`heading((du.to-ms).show)`));
+    const jsParen = compileOk(appWith(`heading((du.to-ms()).show)`));
     const onlyDuLines = (js: string): string[] =>
       js.split("\n").filter((line) => line.includes('"du"'));
     expect(onlyDuLines(jsParen)).toEqual(onlyDuLines(jsNoParen));
-    // Belt-and-braces: neither form may fall through to native `).ms(`.
-    expect(jsParen).not.toMatch(/\)\.ms\(/);
-    expect(jsNoParen).not.toMatch(/\)\.ms\(/);
+    // Belt-and-braces: neither form may fall through to a native call, in
+    // either shape the fallback writes a hyphenated name — `).to_ms(` or
+    // `)["to-ms"](`.
+    expect(jsParen).not.toMatch(/\)(\.to_ms|\["to-ms"\])\(/);
+    expect(jsNoParen).not.toMatch(/\)(\.to_ms|\["to-ms"\])\(/);
   });
 
   it("no listed method falls through to the native-JS fallback shape", () => {
     const body = METHODS.map((m) => `heading((${m.recv}${m.paren}).show)`).join(", ");
     const js = compileOk(appWith(body));
-    // Dash-named methods would be wrapped in bracket access by the fallback:
-    //   `(_live["r"])["is-ok"]()`
-    expect(js, "is-ok must not fall through").not.toMatch(/\)\["is-ok"\]\(/);
-    expect(js, "is-err must not fall through").not.toMatch(/\)\["is-err"\]\(/);
+    // Dash-named methods reach the fallback as a property with `-` turned into
+    // `_` (jsProperty): `(_live["r"]).is_ok()`. Bracket access is the older
+    // shape; both are pinned, so neither spelling of a fall-through passes.
+    expect(js, "is-ok must not fall through").not.toMatch(/\)(\.is_ok|\["is-ok"\])\(/);
+    expect(js, "is-err must not fall through").not.toMatch(/\)(\.is_err|\["is-err"\])\(/);
+    expect(js, "is-empty must not fall through").not.toMatch(/\)(\.is_empty|\["is-empty"\])\(/);
     // Plain-named methods would appear as `).values(` / `).entries(` /
     // `).lower(` / `).upper(`. The runtime helpers never produce that shape.
     expect(js, "values must not fall through").not.toMatch(/\)\.values\(/);

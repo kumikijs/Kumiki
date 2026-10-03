@@ -17,7 +17,14 @@ import {
 import { installConfirm } from "./effects-confirm.ts";
 import { httpFetch } from "./effects-http.ts";
 import { indexedDelete, indexedQuery, indexedRead, indexedWrite } from "./effects-indexed.ts";
-import { sessionRead, sessionWrite, storageRead, storageWrite } from "./effects-storage.ts";
+import {
+  sessionClear,
+  sessionRead,
+  sessionWrite,
+  storageClear,
+  storageRead,
+  storageWrite,
+} from "./effects-storage.ts";
 import { installToast } from "./effects-toast.ts";
 import { routing } from "./router.ts";
 import type { RenderToStringResult } from "./ssr.ts";
@@ -31,11 +38,35 @@ import { overlayPatchers, overlayTiles } from "./tiles-overlay.ts";
 import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
+// The preconditions a driver asks before a step runs, so §8.10's promise that
+// the tiers agree is structural rather than hand-maintained. This one: a verb
+// that drives a control must not drive one the platform refuses — asked by both
+// scenario tiers and, as `refusesControl`, by `kumiki smoke`. The other is
+// `dispatchFault` below, kept apart here only by the export order.
 export {
+  CONTROL_DEMANDS,
+  type ControlDemand,
+  ControlRefusal,
+  type ControlRefusalReason,
+  type ControlState,
+  type ControlVerb,
+  controlFault,
+  judgeRefusal,
+  type RefusalVerdict,
+  readControl,
+  refusesControl,
+  type StepFault,
+} from "./control-check.ts";
+export {
+  _setPathHelper,
   type AppShape,
   applyContainerProps,
   applyTextProps,
+  type BindSegment,
   type BuiltinInstaller,
+  beginEnvRecord,
+  beginEnvReplay,
+  bindLabel,
   type CapabilityProvider,
   type CapabilityRegistry,
   currentTheme,
@@ -43,7 +74,13 @@ export {
   type EffectResult,
   type EffectSpec,
   type EmitSpec,
+  type EnvRead,
+  type EnvReadKind,
+  type EnvScopeOutcome,
+  type EnvScopeReport,
   type EventHandler,
+  emptyRoute,
+  endEnvScope,
   KumikiPanic,
   type LocationLike,
   type MountedApp,
@@ -51,17 +88,22 @@ export {
   mountCore,
   type NavContext,
   type NeverEqualCause,
+  type OutletFill,
   overridableInvoke,
   type PanicCategory,
   type PanicCauseLink,
   type PanicRecord,
   type ParsedRoute,
+  type PathSegment,
   panicInfo,
   type ReconcileFallback,
   type ReconcileFallbackReason,
   type RedirectEntry,
   type ReducerSpec,
   type RefinementCheck,
+  type RefinementFailure,
+  type RefinementPart,
+  type RefinementStep,
   type RouteEntry,
   type Router,
   type RoutingImpl,
@@ -69,6 +111,8 @@ export {
   resolveApp,
   type SlotMeta,
   type SsrSnapshot,
+  showRefinementPath,
+  slotAccepts,
   type Theme,
   type ThemeValue,
   type TileCtx,
@@ -79,7 +123,12 @@ export {
   type TileRenderer,
   type TileRenderers,
   tokenRef,
+  userPanicInfo,
+  withEnvRecord,
+  withEnvReplay,
 } from "./core.ts";
+// The second of them: a `{dispatch}` must name a reducer it can reach.
+export { type DispatchTarget, dispatchFault } from "./dispatch-check.ts";
 export { installConfirm } from "./effects-confirm.ts";
 export { httpFetch } from "./effects-http.ts";
 export {
@@ -92,8 +141,10 @@ export {
   indexedWrite,
 } from "./effects-indexed.ts";
 export {
+  sessionClear,
   sessionRead,
   sessionWrite,
+  storageClear,
   storageRead,
   storageWrite,
 } from "./effects-storage.ts";
@@ -120,6 +171,7 @@ export {
   type EffectScript,
   type Expect,
   HEADLESS_ACTION_KEYS,
+  HEADLESS_EXPECT_KEYS,
   runScenario,
   type Scenario,
   type ScenarioReport,
@@ -143,9 +195,10 @@ export {
   renderToString,
 } from "./ssr.ts";
 export { renderTileToString } from "./ssr-render.ts";
-export { _stdlibCore } from "./stdlib.ts";
+export { _stdlibCore, type KeyKind } from "./stdlib.ts";
 export {
   _stdlibTest,
+  type EnvDrift,
   type EpisodeLogEntry,
   type EpisodeMockPolicy,
   type GenDesc,
@@ -156,6 +209,13 @@ export {
   replayEpisodes,
   type TestResult,
 } from "./testkit.ts";
+// The did-you-mean metric and the ranking built on it. They live in this
+// package because this is the one below all the others: `@kumikijs/compiler`
+// re-exports them for `kumiki fix`, and the verification tiers here rank
+// reducer names with them without the runtime depending on the compiler. The
+// `@kumikijs/runtime/text-distance` subpath is the cheap door for a consumer
+// that wants only these — this barrel evaluates the whole runtime.
+export { levenshtein, nearestName } from "./text-distance.ts";
 export { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
 export { inputPatchers, inputTiles } from "./tiles-input.ts";
 export { layoutPatchers, layoutTiles } from "./tiles-layout.ts";
@@ -267,8 +327,10 @@ export const _stdlib = { ..._stdlibCore, ..._stdlibTest };
 export const builtinEffects = {
   storageRead,
   storageWrite,
+  storageClear,
   sessionRead,
   sessionWrite,
+  sessionClear,
   httpFetch,
   indexedRead,
   indexedWrite,

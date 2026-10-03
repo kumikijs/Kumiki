@@ -12,6 +12,9 @@
 |---|---|
 | [01-slot-and-reducer](./01-slot-and-reducer.kumiki) | slot（状態）+ reducer（更新）+ tile（描画）の基本サイクル |
 | [02-nominal-type](./02-nominal-type.kumiki) | nominal 型と `between` リファインメント |
+| [91-conjoined-refinements](./91-conjoined-refinements.kumiki) | 1 つの型に複数の `where` 述語、拒否が名指すのはどれか |
+| [103-generic-alias-refinement](./103-generic-alias-refinement.kumiki) | ジェネリックな別名（`type NonEmpty(T) = T where nonempty`）の `where` がスロットを守り、引数の述語が先に来ること |
+| [104-nested-refinements](./104-nested-refinements.kumiki) | レコードのフィールド・union のペイロード・コンテナの要素に書いた `where` がスロットを守り、拒否がパスを名指すこと |
 | [03-union-and-match](./03-union-and-match.kumiki) | union 型と `match` 式 |
 | [04-record-and-copy](./04-record-and-copy.kumiki) | レコード型と `.copy(field=value)` 不変更新 |
 | [05-pure-fn](./05-pure-fn.kumiki) | 純粋関数 `fn`（slot を読まない） |
@@ -50,13 +53,25 @@
 | [39-effect-session](./39-effect-session.kumiki) | sessionStorage 永続化（タブ単位・`storage-*` と同じ形） |
 | [21-timer](./21-timer.kumiki) | `timer(1s)` による定期実行 |
 | [23-lifecycle-route-enter](./23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
+| [92-outlet-error-boundary](./92-outlet-error-boundary.kumiki) | `sub-routes` のシェルに置いた `error-boundary` が `route-outlet` 内の子を覆うこと、子自身の境界が優先されること |
+| [93-panic-info](./93-panic-info.kumiki) | `PanicInfo` の全フィールドを `error-boundary` の fallback と `app.error` reducer の双方から読むこと |
 | [46-stdlib-paren-methods](./46-stdlib-paren-methods.kumiki) | stdlib メソッドの括弧付き形（`is-ok()` / `values()` / `lower()` / `sort()` 等）と `Bytes.from-text/base64/bytes` 構築子 |
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | JS の予約語（`new` / `class` / `var`）やランタイム内部名（`_live` / `_s`）と衝突する識別子 |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | ハンドラだけが異なる 2 つのインラインタイルを条件分岐で入れ替える |
 | [76-conditional-adds-a-universal-handler](./76-conditional-adds-a-universal-handler.kumiki) | 後から分岐が `onFocus` / `onBlur` を*足す*ケース（renderer ではなく runtime が持ち上げる 4 種） |
+| [86-container-selector-through-reference](./86-container-selector-through-reference.kumiki) | 本体が tile 参照のコンテナに対する `ui.key` / `ui.focus` / `ui.blur` / `ui.hover`（同じ木のインライン形と並記） |
 | [63-reducer-batch-atomicity](./63-reducer-batch-atomicity.kumiki) | refinement が reducer のバッチを丸ごと拒否する挙動と、代わりに書くべきガード |
+| [90-refinement-validation](./90-refinement-validation.kumiki) | 登録済み述語がすべて実行時チェックであること — `positive` / `negative` / `email` / `url` / `uuid` / `regex` / `one-of`、および標準ライブラリの refinement 付き nominal |
+| [105-refused-bind](./105-refused-bind.kumiki) | refinement に拒否された bind フィールドは入力を表示し続け、`error(field=…)` がその理由を示す |
+| [132-toggle-bind](./132-toggle-bind.kumiki) | `check` / `switch` は `Bool` を、`radio` は union の 1 バリアントを bind し、スロットを表示して書き戻す |
+| [133-typed-input-bind](./133-typed-input-bind.kumiki) | `Int` / `Float` / `Time` の slot に bind した `input` はテキストをその型として読み、読めないテキストは拒否する |
+| [134-record-field-bind](./134-record-field-bind.kumiki) | レコード slot の 1 フィールドへの `bind` はそのフィールドで判定され、失敗している兄弟フィールドに拒否されない |
+| [135-form-submit-gate](./135-form-submit-gate.kumiki) | form は中で bind したフィールドがすべて妥当な値を表示しているときだけ送信する — 失敗する初期値や拒否された編集は送信を止める |
+| [136-submit-button-click](./136-submit-button-click.kumiki) | クリック reducer を持つ submit ボタンはそれを実行しつつ form を送信する。ボタンに送信させないのは `type="button"` |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | slot 参照を引数にして `app.init` から effect を発火する |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | `prefers-dark()` で OS のカラースキームに追従する |
 | [66-value-types](./66-value-types.kumiki) | 値レベルの型検査が受理する形と、それぞれが以前隠していた誤り |
+| [87-replayed-environment-read](./87-replayed-environment-read.kumiki) | `random()` / `now` が返した値を episode が記録し、replay が同じ実行を再現する |
+| [88-string-formatting](./88-string-formatting.kumiki) | `fmt("{0}", …)` の埋め込み——番号の再利用、引数が届かない番号、プレースホルダを開かない `{` |
 
 新しい質問・バグには、まずここへ最小再現例を足すことで答える。

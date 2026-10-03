@@ -1,0 +1,66 @@
+{
+  "steps": [
+    {
+      "label": "both containers render, nothing fired yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "" },
+        "domIncludes": ["log=[]"]
+      }
+    },
+    {
+      "label": "a key on the descendant behind the reference runs the container's reducer",
+      "do": { "key": "#ref-field", "value": "a" },
+      "expect": { "noErrors": true, "state": { "log": "K" }, "domIncludes": ["log=[K]"] }
+    },
+    {
+      "label": "the inline form answers the same — the reference is not a second language",
+      "do": { "key": "#inline-field", "value": "a" },
+      "expect": { "noErrors": true, "state": { "log": "Kk" } }
+    },
+    {
+      "label": "focus lifts through the reference too, and it is a separate lift row",
+      "do": { "focus": "#ref-field" },
+      "expect": { "noErrors": true, "state": { "log": "KkF" } }
+    },
+    {
+      "label": "as it does inline",
+      "do": { "focus": "#inline-field" },
+      "expect": { "noErrors": true, "state": { "log": "KkFf" } }
+    },
+    {
+      "label": "blur, the third of the four that share the path",
+      "do": { "blur": "#ref-field" },
+      "expect": { "noErrors": true, "state": { "log": "KkFfB" } }
+    },
+    {
+      "label": "and inline",
+      "do": { "blur": "#inline-field" },
+      "expect": { "noErrors": true, "state": { "log": "KkFfBb" } }
+    },
+    {
+      "label": "hover is the unrestricted row — it lands on the container element itself",
+      "do": { "hover": "#ref-box" },
+      "expect": { "noErrors": true, "state": { "log": "KkFfBbM" } }
+    },
+    {
+      "label": "and on the descendant behind the reference, exactly as the inline form does",
+      "do": { "hover": "#ref-field" },
+      "expect": { "noErrors": true, "state": { "log": "KkFfBbMM" } }
+    },
+    {
+      "label": "the inline container, both elements, closes the parity",
+      "do": { "hover": "#inline-box" },
+      "expect": { "noErrors": true, "state": { "log": "KkFfBbMMm" } }
+    },
+    {
+      "label": "including its own descendant",
+      "do": { "hover": "#inline-field" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "KkFfBbMMmm" },
+        "domIncludes": ["log=[KkFfBbMMmm]"]
+      }
+    }
+  ]
+}

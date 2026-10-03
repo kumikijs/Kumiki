@@ -17,12 +17,9 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = resolve(here, "../src/kumiki.ts");
+import { CLI_ARGV } from "./helpers/cli.ts";
 
 // Each case pays for a node + tsx module load, not for compiler work, and the
 // whole file is spawns — so the limits are generous enough to survive a
@@ -43,9 +40,7 @@ function write(name: string, source: string): string {
 }
 
 function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-  // `node --import tsx` rather than `npx tsx`: same interpreter, without npm's
-  // per-call resolution — which this file would pay for ~35 times.
-  const res = spawnSync(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
+  const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
     stdio: "pipe",
     encoding: "utf8",
     timeout: CHILD_TIMEOUT_MS,
@@ -464,6 +459,24 @@ app Demo
     expect(code).toBe(1);
   });
 
+  // The marker and the reason line are the whole point of the fault channel: an
+  // agent reads them, and nothing else pins them. Drop the `actionError` term
+  // from any reporter's verdict and this is what catches it — the step prints
+  // `[ok] step 0: click #typo` above `scenario FAILED`, which is the exact
+  // misreading the channel exists to prevent.
+  it("run marks a step whose action could not run as FAIL, and says why", SPAWN, () => {
+    // No `expect`: the failed action is the only thing that can fail this step.
+    const scenario = write(
+      "action-fault.json",
+      JSON.stringify({ steps: [{ do: { click: "#typo" } }] }),
+    );
+    const { stdout, code } = runCli(["run", write("run-fault.kumiki", CLEAN), scenario]);
+    expect(stdout).toContain("[FAIL] step 0: click #typo");
+    expect(stdout).toContain("action failed: no element matching selector #typo");
+    expect(stdout).toContain("scenario FAILED");
+    expect(code).toBe(1);
+  });
+
   it("test exits 1 when a test fails", SPAWN, () => {
     // Same file as the passing case with the expectation moved off by one, so
     // the difference between the two runs is the test result and nothing else.
@@ -484,6 +497,31 @@ app Demo
       "--auto-patch",
       "no-such-test",
     ]);
+    expect(code).toBe(1);
+  });
+
+  it("fix --auto-patch --apply exits 1 when the gate refuses the patch", SPAWN, () => {
+    // The one token `1` is `other`'s; replacing it leaves `inc-adds-two`
+    // failing, so the patch is refused and nothing is written.
+    const src = `slot count : Int = 0
+slot other : Int = 1
+fn step() -> Int = 3 - 2
+reducer inc on=ui.click(Btn1) do= count := count + step()
+tile Btn1 = button(text="+")
+tile App = column(Btn1)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test inc-adds-two =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}
+        expect = {slots: {count: 2}, effects: []}
+`;
+    const file = write("auto-refused.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--auto-patch", "inc-adds-two", "--apply"]);
+    expect(stdout).toContain('refused fix for "inc-adds-two"');
+    expect(readFileSync(file, "utf8")).toBe(src);
     expect(code).toBe(1);
   });
 });

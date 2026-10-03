@@ -1,8 +1,9 @@
 // A decoder written without parentheses has to reach the runtime as a decoder.
 //
-// `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` are values in the spec
-// (http.md §6.1.4) and are written bare there, but only the parenthesised form
-// was ever lowered — the bare one became a field read on a variant named after
+// `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` read as values in the spec
+// (http.md §6.1.4) and are written bare there — the compiler reads the bare
+// form as a call given no arguments, which for these members is that value.
+// Only the parenthesised form was ever lowered — the bare one became a field read on a variant named after
 // the qualifier and emitted `undefined`. Nothing objected: `check` had no
 // reason to, and the emitted module was valid JavaScript.
 //

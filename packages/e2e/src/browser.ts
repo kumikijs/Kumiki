@@ -5,8 +5,17 @@
 
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
-import type { Action as ScenarioAction } from "@kumikijs/runtime";
-import { type ConsoleMessage, chromium, type Page, type Route } from "playwright";
+import {
+  ControlRefusal,
+  type ControlVerb,
+  controlFault,
+  type DispatchTarget,
+  dispatchFault,
+  judgeRefusal,
+  readControl,
+  type Action as ScenarioAction,
+} from "@kumikijs/runtime";
+import { type ConsoleMessage, chromium, type Locator, type Page, type Route } from "playwright";
 
 export type Action =
   | { dispatch: string; payload?: Record<string, unknown> }
@@ -30,6 +39,15 @@ export type Action =
 
 export type Expect = {
   noErrors?: boolean;
+  /**
+   * Substrings that must each appear in this step's `actionError`. The scenario
+   * tier's key, and supported here rather than owned there, because the refusal
+   * it asserts comes from a rule both tiers ask, off one `judgeRefusal` — a
+   * fixture that asserts one
+   * must be runnable at both, or §8.10's promise that they agree is untestable
+   * for exactly the case it was added for.
+   */
+  actionErrorIncludes?: string[];
   state?: Record<string, unknown>;
   domIncludes?: string[];
   domExcludes?: string[];
@@ -67,6 +85,7 @@ export type Scenario = { steps: ScenarioStep[] };
  */
 const EXPECT_KEYS = [
   "noErrors",
+  "actionErrorIncludes",
   "state",
   "domIncludes",
   "domExcludes",
@@ -110,6 +129,14 @@ type ScenarioActionKind = ScenarioAction extends infer A
   : never;
 type ScenarioOnly = Exclude<ScenarioActionKind, ActionKind | (typeof ACTION_MODIFIERS)[number]>;
 type _ScenarioOnlyCovered = Covers<ScenarioOnly, (typeof SCENARIO_ACTION_KEYS)[number]>;
+/**
+ * And this tier's own action kinds are pinned to `CONTROL_DEMANDS`, which the
+ * scenario tier cannot do for `setProperty` — that verb exists only here.
+ */
+type _ControlVerbsTotal = Covers<
+  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
+  ControlVerb
+>;
 
 const ACTION_KEYS = [
   "dispatch",
@@ -197,6 +224,25 @@ export function validateScenario(scenario: Scenario): string[] {
 export type StepResult = {
   label?: string;
   action?: string;
+  /**
+   * Whether this step passed. A field rather than a predicate every consumer
+   * rebuilds — see the scenario tier's `StepResult.ok`.
+   */
+  ok: boolean;
+  /**
+   * Why the step's action could not run — a selector matching nothing, a `fill`
+   * aimed at an element that holds no text, a control the platform refuses to
+   * drive. Kept off `errors` because every
+   * entry in that list is fatal *as a defect in the app* here (see the `ok`
+   * computation below), and a fixture's own broken selector is not one. It
+   * fails the step all the same, through this field.
+   */
+  actionError?: string;
+  /**
+   * The action error this step's `actionErrorIncludes` matched — see the
+   * scenario tier's field of the same name.
+   */
+  expectedActionError?: string;
   errors: string[];
   state: Record<string, unknown>;
   visibleText: string;
@@ -363,7 +409,9 @@ export async function runMultiOnPage(
 function compileFailure(action: string, errors: string[]): BrowserReport {
   return {
     ok: false,
-    steps: [{ action, errors, state: {}, visibleText: "", failures: ["did not compile"] }],
+    steps: [
+      { ok: false, action, errors, state: {}, visibleText: "", failures: ["did not compile"] },
+    ],
   };
 }
 
@@ -412,6 +460,7 @@ async function serveScenario(
       ok: false,
       steps: [
         {
+          ok: false,
           label: "scenario document",
           errors: [],
           state: {},
@@ -430,11 +479,16 @@ async function serveScenario(
     for (const step of scenario.steps) {
       errorBuf = [];
       const actionDesc = step.do ? describeAction(step.do) : undefined;
+      let fault: { message: string; refusal?: ControlRefusal } | undefined;
       if (step.do) {
         try {
           await performAction(page, step.do);
         } catch (e) {
-          errorBuf.push(`action failed: ${e instanceof Error ? e.message : String(e)}`);
+          // Carried rather than flattened, as at the scenario tier: `refuse`
+          // throws in this process (only `readControl` crosses into the page),
+          // so the class survives.
+          const message = e instanceof Error ? e.message : String(e);
+          fault = e instanceof ControlRefusal ? { message, refusal: e } : { message };
         }
         await page.waitForTimeout(settleMs);
       }
@@ -443,8 +497,24 @@ async function serveScenario(
         .locator("body")
         .innerText()
         .catch(() => "");
-      const failures = await evaluateExpect(page, step.expect, errorBuf, state, visibleText);
-      const r: StepResult = { errors: [...errorBuf], state, visibleText, failures };
+      // The same verdict the scenario tier takes, from the same function — the
+      // two used to be a verbatim copy of each other that had already drifted
+      // into different `ok` shapes.
+      const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
+      const failures = [
+        ...verdict.failures,
+        ...(await evaluateExpect(page, step.expect, errorBuf, state, visibleText)),
+      ];
+      const actionError = verdict.claimed === undefined ? fault?.message : undefined;
+      const r: StepResult = {
+        ok: errorBuf.length === 0 && failures.length === 0 && actionError === undefined,
+        errors: [...errorBuf],
+        state,
+        visibleText,
+        failures,
+      };
+      if (actionError !== undefined) r.actionError = actionError;
+      if (verdict.claimed !== undefined) r.expectedActionError = verdict.claimed;
       if (step.label !== undefined) r.label = step.label;
       if (actionDesc !== undefined) r.action = actionDesc;
       steps.push(r);
@@ -460,8 +530,7 @@ async function serveScenario(
   // "green with warnings". `expect.noErrors` in a fixture is therefore
   // redundant here — accepted for scenario-format compatibility, but not
   // load-bearing.
-  const ok = steps.every((s) => s.errors.length === 0 && s.failures.length === 0);
-  return { ok, steps };
+  return { ok: steps.every((s) => s.ok), steps };
 }
 
 // Serialized into the page to read sanitized slot state.
@@ -561,6 +630,28 @@ function describeAction(a: Action): string {
   return `navigate ${a.navigate}`;
 }
 
+/**
+ * What the platform would refuse, asked before the verb runs. The same rule the
+ * scenario tier asks (`controlFault`) off the same reader (`readControl`), so
+ * §8.10's promise that the tiers agree holds by construction rather than by two
+ * hand-written tables — one drift less than `dispatchFault` has, where each tier
+ * reads the fields itself.
+ *
+ * `readControl` crosses `page.evaluate` because it closes over nothing: what
+ * Playwright serialises is the function's own source. The budget is `fill`'s: a
+ * selector matching nothing must not spend the suite's default 30s to say so.
+ *
+ * Playwright refuses most of these on its own, by timing out on actionability,
+ * but in its words and three seconds later — and not all of them. `focus()` on
+ * a `disabled` <input> moves nothing and reports nothing (measured), so the
+ * silent pass this rule ends exists at this tier too.
+ */
+async function refuse(loc: Locator, verb: ControlVerb, where: string): Promise<void> {
+  const state = await loc.evaluate(readControl, undefined, { timeout: 3000 });
+  const fault = controlFault(verb, where, state);
+  if (fault) throw fault;
+}
+
 async function performAction(page: Page, a: Action): Promise<void> {
   if ("wait" in a) {
     await page.waitForTimeout(a.wait);
@@ -582,39 +673,113 @@ async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("dispatch" in a) {
-    await page.evaluate(
-      (arg: { n: string; p: Record<string, unknown> }) =>
-        window.__kumikiApp?._dispatch?.(arg.n, arg.p),
-      { n: a.dispatch, p: (a.payload ?? {}) as Record<string, unknown> },
+    // The same precondition the scenario tier asks, on the same rule — §8.10
+    // promises an action that could not run fails the step "exactly as at the
+    // scenario tier", and `{dispatch}` is the verb where the two could most
+    // easily drift: it names a reducer instead of matching a selector, and the
+    // seam returns silently when the name matches nothing.
+    //
+    // Read out of the page rather than judged in it: a `ReducerSpec` carries
+    // `apply`, a function, so it cannot cross `page.evaluate`'s structured
+    // clone — but the two fields the rule needs are plain strings.
+    const payload = (a.payload ?? {}) as Record<string, unknown>;
+    const targets = await page.evaluate(
+      () =>
+        window.__kumikiApp?.reducers?.map((r) => ({ name: r.name, id: r.selector?.id ?? null })) ??
+        null,
     );
+    if (targets === null) throw new Error("dispatch: the page exposes no reducers to drive");
+    const fault = dispatchFault(a.dispatch, payload, targets as DispatchTarget[]);
+    if (fault) throw new Error(fault);
+    const drove = await page.evaluate(
+      (arg: { n: string; p: Record<string, unknown> }) => {
+        if (typeof window.__kumikiApp?._dispatch !== "function") return false;
+        window.__kumikiApp._dispatch(arg.n, arg.p);
+        return true;
+      },
+      { n: a.dispatch, p: payload },
+    );
+    if (!drove) throw new Error("dispatch: the page carries no `_dispatch` seam to drive");
     return;
   }
   if ("navigate" in a) {
-    await page.evaluate((path: string) => window.__kumikiApp?._navigate?.(path), a.navigate);
+    // Only the missing seam, as at the scenario tier: an unrouted path renders
+    // /404, which `domIncludes` can see.
+    const navigated = await page.evaluate((path: string) => {
+      if (typeof window.__kumikiApp?._navigate !== "function") return false;
+      window.__kumikiApp._navigate(path);
+      return true;
+    }, a.navigate);
+    if (!navigated) throw new Error("navigate: the page carries no `_navigate` seam to drive");
     return;
   }
   if ("clickText" in a) {
-    await page
+    const target = page
       .locator("button, a, [role=button]")
       .filter({ hasText: a.clickText })
-      .first()
-      .click({ timeout: 3000 });
+      .first();
+    await refuse(target, "clickText", describeAction(a));
+    await target.click({ timeout: 3000 });
     return;
   }
   if ("click" in a) {
-    await page.locator(a.click).first().click({ timeout: 3000 });
+    const target = page.locator(a.click).first();
+    await refuse(target, "click", describeAction(a));
+    await target.click({ timeout: 3000 });
     return;
   }
   if ("focus" in a) {
-    await page.locator(a.focus).first().focus({ timeout: 3000 });
+    const target = page.locator(a.focus).first();
+    await refuse(target, "focus", describeAction(a));
+    await target.focus({ timeout: 3000 });
     return;
   }
   if ("blur" in a) {
-    await page.locator(a.blur).first().blur({ timeout: 3000 });
+    const target = page.locator(a.blur).first();
+    await refuse(target, "blur", describeAction(a));
+    await target.blur({ timeout: 3000 });
     return;
   }
   if ("fill" in a) {
-    await page.locator(a.fill).first().fill(a.value, { timeout: 3000 });
+    // Playwright refuses a non-fillable element too, but says only that it was
+    // not an <input>, <textarea> or [contenteditable] — never what it did
+    // match. Probing first names the tag, so a selector that drifted onto its
+    // wrapper reads here the way it reads at the scenario tier. Only that case:
+    // what the probe accepts still goes to Playwright, which judges by
+    // `isContentEditable` and actionability — which the `refuse` below has
+    // already answered, in Kumiki's words and in the same words the scenario
+    // tier uses.
+    //
+    // One locator for every call: re-resolving would check one element and fill
+    // whatever a re-render put there afterwards.
+    const target = page.locator(a.fill).first();
+    // Before the shape check, and its own probe rather than a field folded into
+    // the one below: a disabled control is refused whatever its shape, and the
+    // scenario tier asks the same question in the same place. Deriving
+    // `fillable` from `ControlState` would save a round trip and cost the
+    // agreement — that reader looks through a <label> wrapper, which `fill`
+    // deliberately does not.
+    await refuse(target, "fill", describeAction(a));
+    const found = await target.evaluate(
+      (el: Element) => ({
+        tag: el.tagName.toLowerCase(),
+        fillable:
+          el instanceof HTMLInputElement ||
+          el instanceof HTMLTextAreaElement ||
+          el.getAttribute("contenteditable") !== null,
+      }),
+      undefined,
+      // The budget `fill` would have carried: a selector matching nothing must
+      // not spend the suite's default 30s to say so.
+      { timeout: 3000 },
+    );
+    if (!found.fillable) {
+      throw new Error(
+        `${a.fill} matched <${found.tag}>, which holds no text to fill — ` +
+          "fill targets input / textarea / editable",
+      );
+    }
+    await target.fill(a.value, { timeout: 3000 });
     return;
   }
   if ("setProperty" in a) {
@@ -641,6 +806,7 @@ async function performAction(page: Page, a: Action): Promise<void> {
   }
   // choose
   const loc = page.locator(a.choose).first();
+  await refuse(loc, "choose", describeAction(a));
   await loc
     .selectOption({ label: a.value }, { timeout: 3000 })
     .catch(() => loc.selectOption(a.value));
@@ -658,6 +824,8 @@ async function evaluateExpect(
   if (expect.noErrors && errors.length > 0) {
     failures.push(`expected no errors but got: ${errors.join("; ")}`);
   }
+  // `actionErrorIncludes` is judged by `judgeRefusal` in the step loop, as at
+  // the scenario tier: it reads the fault rather than the page.
   for (const [key, want] of Object.entries(expect.state ?? {})) {
     const got = readPath(state, key);
     if (!matches(want, got)) failures.push(`state ${key}: expected ${j(want)}, got ${j(got)}`);
@@ -759,6 +927,8 @@ declare global {
   interface Window {
     __kumikiApp?: {
       live?: Record<string, unknown>;
+      /** Only what a `{dispatch}` precondition reads; the real shape carries far more. */
+      reducers?: Array<{ name: string; selector?: { tile: string; id?: string } }>;
       _dispatch?: (n: string, p: Record<string, unknown>) => void;
       _navigate?: (path: string) => void;
     };

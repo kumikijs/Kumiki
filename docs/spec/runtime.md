@@ -129,7 +129,7 @@ All slot changes within a single reducer execution are treated as **one batch**.
 
 #### A batch commits all-or-nothing
 
-**Every write** is checked against the target slot's refinement ([Registered Refinement Predicates](./language.md#_1-3-3-registered-refinement-predicates)) — not just the value the slot ends the batch on. If **any** write is rejected, the whole reducer application is discarded: no slot is written, no `emit` is dispatched, no `stop-timer` runs, and no re-render is triggered.
+**Every write** is checked against the target slot's refinement ([Registered Refinement Predicates](./language.md#_1-3-3-registered-refinement-predicates)) — not just the value the slot ends the batch on. The refinements are the ones the slot's *type* carries along the chain it denotes — an alias, a `nominal` wrapper, a `where`, a generic that hands a parameter back (`NonEmpty(Text)` on `type NonEmpty(T) = T where nonempty`) — the standard library's own declarations included: `slot e : Email` is checked by `email` exactly as `slot e : Text where email` is, because `Email` is a refined nominal the standard library declares ([Domain Types](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). A refinement written **inside** the type is checked too, at the path it is written at ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)): on `slot form : {email: Text where email}`, `form.email := "nope"` and `form := {email: "nope"}` are both rejected, and so is a union payload or a container element that fails its own predicate. A type carrying several predicates is checked against all of them, and the rejection names the first one the value fails, in the order §1.3.1 gives them ([§1.3.1](./language.md#_1-3-1-syntax)). If **any** write is rejected, the whole reducer application is discarded: no slot is written, no `emit` is dispatched, no `stop-timer` runs, and no re-render is triggered.
 
 Per-write rather than per-batch, because a batch is a map and only remembers the last value assigned to each slot. A `for` loop that leaves the slot's range and comes back would end on a legal value, and the illegal one it passed through — readable by every later statement, as below — would never be seen:
 
@@ -145,7 +145,7 @@ This is **not** a panic — the app stays interactive, slots are untouched, and 
 [kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3)). No slot was written and no effect was emitted.
 ```
 
-via `console.error`, the same channel and contract as an unhandled effect error ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), so the verification tiers (`smoke` / `runScenario` / e2e) all flag it.
+— or, for a predicate written inside the slot's type, with the path to where it failed, `slot "form" cannot hold {"email":"nope"} (email at .email)` — via `console.error`, the same channel and contract as an unhandled effect error ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), so the verification tiers (`smoke` / `runScenario` / e2e) all flag it.
 
 The rule exists because the alternative — skipping only the rejected slot and writing the rest — half-applies the reducer, and lets a value the slot never took escape into a sibling slot, since statements later in the body read the batch under construction:
 
@@ -166,10 +166,12 @@ reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
 
+A value from outside the program is checked before it reaches a reducer. A response or a stored value that `Decoder.Json(T)` decodes to a value `T`'s predicates refuse is the effect's `.err` ([§6.1.4](./http.md#_6-1-4-the-decoder-type), [§6.7.2](./http.md#_6-7-2-the-declarations-localstorage)), so the program's `.err` reducer handles it. Otherwise it would be an `.ok` whose writes this rule discards, together with everything else the reducer did, such as ending a loading state.
+
 Two things a refinement does **not** gate:
 
 - **The declared default.** `slot email : Text where email = ""` starts out holding a value its own refinement rejects — that is what makes `error(field=email)` show a message on a pristine form ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
-- **Two-way `bind`.** Input rejection is per field and never reports ([Handling of refinement](./forms.md#_5-1-2-handling-of-refinement)) — a half-typed value is expected, not a defect. By default the slot keeps its previous value; under `strict=false` it takes the new one and the form's `valid` flag goes false instead.
+- **Two-way `bind`.** Input rejection is per field and never reports ([Handling of refinement](./forms.md#_5-1-2-handling-of-refinement)) — a half-typed value is expected, not a defect. The slot keeps its previous value, the field keeps what was typed, and `error(field=…)` renders the message for what the field shows.
 
 **The two combine into a trap.** A slot whose declared default violates its own refinement cannot be *reset* to that default from a reducer: `name := ""` on a `Text where nonempty` slot is a write like any other, so it discards the batch. Either widen the slot's type and refine at the boundary, or model the empty case with `Option`:
 
@@ -197,7 +199,8 @@ You can bind to a **nested lvalue path** like `bind=draft.title`. The runtime:
 
 You can **specify the theme by slot name**, like `app theme = themeName`. The runtime:
 - If `app.themeName` does not exist in `app.themes`, reads `_live[app.themeName]` to resolve the theme name
-- Re-runs `applyThemeDefaults` at the beginning of each `render()` → changes to the slot value are reflected in the body style
+- Re-runs `applyThemeDefaults` at the beginning of each `render()` → changes to the slot value are reflected in the body style and the injected base stylesheet
+- Repaints the page when the resolved theme differs from the one the mounted tree was painted under. Token props (`bg`, `color`, `pad`, `gap`, `radius`, `shadow`, typography, …) are resolved to literal values when a tile renders, so a tile whose own props did not change would otherwise keep the old theme's values; that pass builds the tree afresh instead of diffing it. Element identity is not kept across a switch: a focused control gets its focus and selection back the way it does after any rebuild, and DOM state no slot holds starts over: a scroll offset, an uncontrolled `<details>`, the text of an unbound input, a file input's selection, playing media, and text a `bind` refused (the rebuilt control shows the value its slot kept, and the field's `error(field=…)` message goes with the refused text). A switch does not replay enter animations: an element it rebuilds that carries `transition` or `motion` shows a one-shot animation's final frame at once, and a repeating one keeps running. Every view of the app, hydrated or not, does the same
 
 ```kumiki snippet
 slot themeName : Text = "Light"
@@ -210,11 +213,11 @@ app App ... theme = themeName    # ← pass the slot name
 ### 10.3.7 polymorphic collection methods
 
 `.filter` / `.map` / `.get-or`, etc., are type-dispatched at runtime:
-- `.filter(pred)`: `Array.prototype.filter` for an Array, `mapFilter` for an Object
+- `.filter(pred)`: `Array.prototype.filter` for an Array, the value of a `Some` for an Option, and each entry as one `[key, value]` pair for any other object — a Map, or a Set, whose value is `true` (`_s.filter`)
 - `.map(fn)`: element map for an Array; for Option/Result, map over the contents of Some/Ok (`mapOver`)
 - `.flat-map(fn)`: passes the Some/Ok of Option/Result to f, while None/Err passes through (`flatMapOption`)
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): distinguished by the argument count
-- `m.entries` returns `[[k, v], ...]`, and the lambda of a subsequent list op is automatically destructured to `$1=k, $2=v`
+- `m.entries` returns `[[k, v], ...]`; how a subsequent list op's lambda binds `$1` / `$2` is decided by the checker from the receiver's type, not here ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)) — a `Tuple(K, V)` element is taken apart into `$1=k, $2=v`
 
 ### 10.3.8 Value Matching of select
 
@@ -255,8 +258,10 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 
 - The field is **additive and optional**. A tile without `key` is a legal
   `TileNode`; old compiled output (no keys anywhere) still mounts on a new
-  runtime, and a new compiler's keyed output still mounts on the old runtime
-  (which simply ignores the field).
+  runtime, and an old runtime ignores the field. That is a statement about the
+  field only: the stdlib helpers the compiler calls to compute a key (the
+  implicit key's `_s.loopKeys`, below) are not forward-compatible, so a new
+  compiler's output needs a runtime at least as new as it (see **Migration**).
 - The reconciler uses **all-or-nothing keyed matching per parent**: when every
   child at a given level carries a `key`, the runtime pairs children across
   renders by key (survives reorder, insert, and remove without rebuilding the
@@ -357,15 +362,83 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 1. **Author-supplied `{key: <expr>}`** on a tile-call's props block is lifted
    to the emitted `TileNode`'s top-level `key` field. The value is coerced to
    a string via `_s.show(...)`. It does **not** also flow into `props.el`.
+   The author promises it is unique among its siblings: within one loop, and
+   across loops and other keyed children under one parent. When every child at
+   that level carries a key (the all-or-nothing rule above), two siblings with
+   one key are a `location: "reconcile"` panic on the next render, because the
+   runtime cannot tell which of them the key meant. A loop whose `{key: …}`
+   values collide (`for s in [7, 3, 7] text(s.show) {key: s.show}`) is then a
+   program error: the runtime does not fall back to position, it reports
+   `[kumiki] error in reconcile: reconcile: duplicate TileNode.key "7" among sibling tiles — keys must be unique within a parent's children list`
+   and rebuilds the whole tree, replacing every element on the page
+   ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). When a
+   sibling at that level has no key, the keyed pass does not run, so the
+   colliding keys go unused and the parent takes the structural walk.
 2. **Inside `for` iteration**, tile calls that do not declare their own
-   `{key: ...}` receive an implicit key derived from the loop variable —
-   `_s.show(<loopVar>)`. Explicit keys always win. Nested `for` loops
-   overwrite the enclosing implicit key with the inner loop's binding, so a
-   tile call under `for i in inner` gets `_s.show(i)` regardless of any
-   outer `for o in outer`.
+   `{key: ...}` receive an implicit key with three parts, in this order:
+   - the **loop**: an identifier that is stable across renders and distinct
+     per loop in the source;
+   - the **occurrence**: how many elements up to and including this one have
+     the same shown value (1 for the first `7`, 2 for the second);
+   - the **shown value**, `_s.show(<loopVar>)`.
+
+   *Informative:* the implementation names a loop by the tile definition it is
+   written in and its ordinal among that definition's loops in source order
+   (`App_0`, `App_1`, …), so a blank line or an edit outside that definition
+   leaves every key as it was. It joins the parts as `<loop>|<occurrence>|<shown>`
+   with `_s.loopKeys(<list>, "<loop>")`, called once per evaluation of the
+   loop, and hands iteration *i* the *i*-th entry. The loop name and the
+   occurrence hold no `|` and the occurrence is a run of digits, so the three
+   parts read back unambiguously and no shown value can spell another
+   element's key. A loop whose every tile call carries its own `{key: …}` reads
+   no implicit key, and the implementation does not compute them.
+
+   So a list does not have to hold distinct values: `[7, 3, 7]`, and two loops
+   under one parent that share a value, key every child apart. A list of
+   `None`s and an element whose shown value is empty key apart the same way;
+   before the occurrence was part of the key, the first was a duplicate-key
+   panic and the second an empty key that `_wk` refused. The one exception is
+   a single loop in the source that contributes to one parent's children more
+   than once: `tile Items = for x in xs text(x.show)` used as
+   `column(Items, Items)` expands one loop twice, both expansions carry the
+   same keys, and the parent is the duplicate-key panic of item 1. Give each
+   use its own container (`column(row(Items), row(Items))`).
+
+   A reorder of elements with **distinct shown values** keeps every key, since
+   each is the first occurrence of its shown value, so the reuse guarantees
+   above hold as before. Two qualifications follow from the occurrence:
+   - An insert or remove before a repeated value renumbers its later
+     occurrences, so the elements of equal values may trade places, and the
+     moves that makes can take a neighbouring row with them.
+   - Where `show` is not injective for the element type, the implicit key
+     **degenerates to position**. Every record shows alike
+     (`[object Object]`), and a variant shows only its tag, so `Done(1)` and
+     `Done(2)` share one shown value. The occurrence is then the element's
+     position, and a reorder, insert or remove patches rows in place instead
+     of moving them: the guarantees above (minimum moves, `<input>` focus and
+     caret, an open `<select>`, IME composition) do not hold for such a list.
+     A reorderable list of records wants an explicit key, `{key: t.id}`.
+
+   Explicit keys always win. Nested `for` loops overwrite the enclosing
+   implicit key with the inner loop's, so a tile call under `for i in inner` is
+   keyed by `i` regardless of any outer `for o in outer`.
+   The inner `for` — the outer one's body, or an arm of a branch there —
+   renders a list per outer iteration, so each of its nodes is then keyed as a
+   list under the outer key, the way item 3 keys a list-bodied call: siblings
+   from different outer iterations that share an inner key stay distinct.
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.
+   When the body renders a **list** (its body is a `for`), the call site's key
+   — explicit or implicit — names the list, not one node, and one key on every
+   node would collapse them onto a single identity. Each node takes the pair
+   of the call site's key and its own key — the one its own `for` gave it,
+   however deeply that `for` nests — or, when it has none, its position in
+   the flattened list, encoded as the JSON array `[callKey, nodeKey]`, so the
+   nodes stay distinct and two pairs never spell the same string. A reorder of
+   the outer list moves each node's element; a reorder inside the list moves
+   them by their own keys. The list's nodes are children of the container the
+   call sits in, however deeply the `for`s that produced them nest.
 4. **`TileWhen` / `TileIf` / `TileMatch`** are transparent: the implicit key
    flows through the branch that emits the tile.
 
@@ -375,9 +448,15 @@ included in `TILE_SKIP_TOP` so a key change alone does not trigger
 `replaceWithFreshTile` on the parent — key drives which old child pairs with
 which new child, not whether the tile itself is rebuilt.
 
-**Migration.** Runtime and compiler ship the key contract as a matched pair
-(both in the same minor version bump). Each side degrades gracefully alone,
-but the reorder-stable-reuse guarantees (survives `<select>` value, `<input>`
+**Migration.** Runtime and compiler ship the key contract as a matched pair:
+a change to it bumps both packages in one release, at whatever level its
+changeset names. `@kumikijs/compiler` depends on `@kumikijs/runtime`, and a
+runtime release raises the compiler's range on it, so a compiler installed
+from the registry brings a runtime at least as new.
+An old compiler's output runs on a new runtime. A new compiler's output needs
+a runtime at least as new: it calls `_s.loopKeys`, which an older runtime does
+not have, and fails at the first render with `_s.loopKeys is not a function`.
+The reorder-stable-reuse guarantees (survives `<select>` value, `<input>`
 focus and caret, and event listeners across insert/remove/reorder) require
 both.
 
@@ -668,6 +747,16 @@ When a reducer completes, the set of emitted effects is passed to the dispatcher
 
 Checks whether each effect's `cap` is included in `app.caps`. A violation is not executed and is notified to `app.error`.
 
+An effect with an empty `cap` is a standard presentation effect and passes ungated.
+
+The notification is the `PanicInfo` of [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer), under `category: "capability"`, with `location` naming the refused effect. It also goes to `console.error`, the channel the verification tiers read, and — where an episode is open around the emit — to that episode as a `panic` step. Nothing was thrown, so it carries no `stack` and no `cause`.
+
+Both passes report, in the same words. What differs is what they can report *to*: `renderToString` has no `app.error` to fire, the same way a reducer panic on that pass is a `panic` step and nothing more ([§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)), so on the server the console and the episode are the whole of it.
+
+The episode a refusal attaches to is the one that **owns the emit**, which is not always the one in focus. Under the default policy the dispatcher refuses while the triggering episode is still open, and the step lands there. Under a deferred policy ([§10.4.3](#_10-4-3-policy-handling)) the launch fires from a timer or a queue tail, long after that episode closed; the step MUST still land on the episode that claimed the `effect-start`, and `episode-id` MUST name it — a refusal that fell back to "no episode" would leave that episode holding an `effect-start` and an `effect-cancel` and nothing else, which is what a replaced `debounce` timer looks like. Where a refusal produces both a `panic` step and an `effect-cancel`, the `panic` step comes **first**: the cancel settles the episode, and a reader meets the reason before the consequence.
+
+The one emit with no episode to name is one from `app.init`, dispatched before the first episode opens: it reports to the console and to `app.error`, carrying `episode-id: None`.
+
 ### 10.4.3 policy Handling
 
 | policy | Implementation |
@@ -719,7 +808,8 @@ The causal sequence derived from a single trigger is recorded as one **episode**
   "id": "ep_01JC...",
   "trigger": {"kind": "ui.click", "target": "AddBtn", "payload": {...}, "ts": ...},
   "steps": [
-    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"], "ts": ...},
+    {"kind": "reducer", "name": "addTodo", "slot-diffs": [...], "emits": ["persist"],
+     "env-reads": [{"kind": "now", "value": 1717900000000}], "ts": ...},
     {"kind": "effect-start", "name": "persist", "args": {...}, "ts": ...},
     {"kind": "effect-end", "name": "persist", "result": "ok", "value": "()", "ts": ...},
     {"kind": "signal-update", "dirty-slots": ["todos"], "binds-updated": ["TodoList.row.0", ...], "ts": ...},
@@ -737,13 +827,28 @@ The causal sequence derived from a single trigger is recorded as one **episode**
 }
 ```
 
+A `reducer` step additionally carries:
+
+- `env-reads`: what the reducer body read from the **environment** while it ran, in the order it asked. An entry is `{kind, value}`; `kind` is one of `now` / `random` / `fresh-id` / `prefers-dark` — the builtins whose answer comes from outside the program, so that nothing in the slots determines it. The field is **omitted** when the body read nothing, which is most reducers. A reducer whose batch a refinement rejected ([§10.3.3](#_10-3-3-batching)) still records its reads: the body ran, and a replay that re-runs it has to see the same answers or it may not reject at all.
+
+  The recorded scope is the **reducer body**, and only that. The same builtins are callable anywhere an expression is ([§10.10](#_10-10-implementation-responsibilities-of-the-standard-library)) — `now` in a tile expression, `prefers-dark()` during a render — and a read outside a reducer body is **not** recorded and not reproduced. Nothing replays a render, so there is nothing for such a read to be reproduced against.
+
+  What a read answers is journalled; what a value is later *formatted with* is not. `now.format(...)` and `Time.parse("yyyy-MM-dd")` resolve in the host's **local time zone** ([stdlib.md §2.4.2](./stdlib.md#_2-4-2-time)), which is not an `env-reads` kind, so an episode recorded in one zone and replayed in another reproduces the recorded instant and formats it differently. The guarantee below is over the four kinds, not over every value derived from them.
+
+  `env-reads` is why a replay is the *same run*. An episode that recorded only what a reducer wrote could not be replayed: `replay` re-executes the body, and a body that reads the environment reads it again — a new die roll, a later instant — so the replayed `slot-diffs` belong to a different run than the recorded ones. `env-reads` is the recorded run's environment, kept so it can be handed back ([§10.5.3](#_10-5-3-replay)).
+
+  Like `stack` / `cause` / `category` below, it is **optional** for forward compatibility: an episode log written by an older runtime carries no `env-reads` and MUST continue to parse and replay unchanged.
+
 A `panic` step additionally carries:
+
+- `name`: the reducer whose body threw, when the throw came from one (`location` is prose, and a replay needs a key). Absent for a `render` / `hydrate` panic.
+- `env-reads`: what that body read before it threw, in the same shape as a `reducer` step's. A reducer that threw wrote **no** `reducer` step, so without these two fields the episode a user attaches to a bug report — the one that crashed — is the one a replay cannot reproduce: it re-reads the environment, takes a different branch, and completes.
 
 - `stack`: the `Error.stack` of the caught throw, when available.
 - `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
-- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the throw was caught. Emitted by the reducer / tile-render / hydrate catch sites today; `effect` / `capability` / `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw currently surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step.
+- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the failure was caught, or for `capability` refused. Emitted by the reducer / tile-render / hydrate / capability sites today; `effect` and `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step, which is a different thing from the refusal `capability` names.
 
-`stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. `stack` / `cause` are dev-tooling — the runtime never splats them into user reducer `$event` payloads; only `message`, `location`, and `category` reach `app.error` / `route.error(<pattern>)`.
+`stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. The `stack` and the cause **chain** are dev-tooling and stay here: the runtime never splats the `PanicRecord` into a user reducer `$event`. What a program is handed is the `PanicInfo` [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) declares — `message`, `location`, `category`, the id of this episode as `episode-id`, and `cause` as the **nearest** link's message alone, with no stack on it.
 
 Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see [§10.6.2](#_10-6-2-hydration)). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
 
@@ -755,6 +860,7 @@ The server-side `renderToString` pass collapses the entire `app.init` causal cha
 
 - `trigger.kind = "ssr.hydrate"`, `trigger.target = <initial-route-path>`.
 - `steps` mirror the real server-side execution: each `app.init` emit produces a paired `effect-start` / `effect-end`, the matching `{effect, outcome}` reducer adds a `reducer` step (with `volatile`-filtered `slot-diffs`), and a final `signal-update` lists the non-`volatile` slots that changed. There is no synthesised `ssr.bootstrap` step — the chain stays in the canonical episode grammar so replay tooling works unchanged.
+- The one emit that produces no pair is one the capability check refuses ([§10.4.2](#_10-4-2-capability-check)): the pass records `effect-start`, then a `panic` step carrying the refusal, then `effect-cancel` (`targetId = <effect-name>`), and runs nothing. A reader MUST NOT take that unpaired start as truncation or as an effect still in flight — the episode is complete, and the emit did not run; the `panic` step says why, and makes the episode `status: "panic"`. The live dispatcher writes the same three steps in the same order for a refusal under a deferred policy, which is the case where it too claimed a token; under the default policy it returns before claiming one, so only the `panic` step lands. Either way both sides report the refusal, and `status` is `"panic"` wherever the step is.
 
 Example:
 
@@ -795,6 +901,15 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
 - An effect with no `--mock` entry is dropped (matches `episode-test`'s default).
 - `--until-step N` counts each observed step (reducer / effect-start / effect-end / signal-update / panic) as one, globally across all replayed episodes, 1-indexed. The slots at the moment of interruption are printed.
 - Replay synthesises a `signal-update` event per episode from the slots a reducer actually changed; recorded `signal-update` entries in the input log are not re-played verbatim (they're advisory provenance, not driving input).
+- **The entry reducer runs on the payload it ran on when recorded.** An episode's `trigger.payload` is the payload the live runtime handed its first reducer — `{$el, $event}` for a UI event, `{$1, $2}` for an effect result — and replay hands it over unchanged, so `$el.idx` and `$event.value` read what they read live. A trigger with no payload whose first reducer is an `.ok` / `.err` reducer — an `ssr.hydrate` bootstrap ([§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)), which the SSR pass opens rather than a reducer — ran on the last `effect-end` of that effect and outcome recorded before that reducer, so its value is the reducer's `$1`; that recorded result is then consumed, and a `from-log` mock of the same effect continues after it.
+  - If the log carries no such step — a trimmed or hand-edited log — the reducer runs with no `$1`, and that is **reported rather than inferred**: the episode's trace line carries `(no recorded result for <reducer>)` and the run ends with an `entry results missing:` summary, so the panic that follows does not read as a bug in the reducer.
+  - Replay has one entry reducer per episode, so a bootstrap whose SSR pass ran several `app.init` effects replays only the first entry reducer's chain. An `episode-test` with `slots-equal: from-log` over such a log fails on a slot mismatch rather than a panic, and when two `init` chains emit the same effect, the `from-log` cursor the entry advanced can hand a re-emit the other chain's result. That failure is silent — crossed-over values, not a fallback.
+- **An environment read is answered from the log, not from the environment.** Before a reducer body runs, replay installs that reducer's recorded `env-reads` ([§10.5.1](#_10-5-1-structure-of-an-episode)); `now`, `random()`, `<T>.fresh()` and `prefers-dark()` then return what they returned during the recording instead of reading the clock / the random source / the id generator / the OS preference again. Replaying an episode whose reducer read the environment therefore reproduces its recorded `slot-diffs` exactly, every time.
+  - Reads are matched to recorded answers **by kind**, in recorded order within a kind, so an extra read of one builtin cannot shift another's answers.
+  - A read with no recorded answer left — an older log, or a body that read more this time than it did when recorded — falls through to the live source rather than failing the replay. That read is the one thing a replay cannot reproduce, so it is **reported rather than inferred**: the step's trace line carries `(env: N read live)` and the run ends with an `environment reads:` summary. The same line reports recorded answers the replayed body never asked for (`N recorded unused`) and entries the log carried that were not well-formed (`N malformed`); a step with none of the three says nothing.
+  - An entry whose `value` is missing or is not the type its `kind` calls for (`now` / `random` are numbers, `fresh-id` a string, `prefers-dark` a boolean) is **rejected** when the scope opens rather than handed to the body. Consuming a malformed entry would return `undefined` — `now.show` renders `"undefined"`, arithmetic goes `NaN` — and nothing would throw to say why. A rejected entry is counted `malformed` and its read falls through to the live source.
+  - A recorded `panic` step replays like a `reducer` step: its `name` names the entry reducer and its `env-reads` are installed the same way, so a recorded crash crashes again.
+  - Recorded `env-reads` are matched to the replayed reducer **by name**: replay derives the chain by re-executing reducers rather than walking the log's steps, so the *n*th run of reducer `foo` takes the *n*th recorded `foo` step's reads. That is an ordering assumption, not an alignment guarantee — replay walks a reducer's emits in declaration order while the recording appended `.ok` / `.err` steps in effect-**completion** order, so one reducer reached twice by two effects that completed out of declaration order takes the two recorded read sets **swapped**. That failure is silent: the values are crossed over rather than absent, so it raises no `live` count.
 - A `panic` step ([§10.5.1](#_10-5-1-structure-of-an-episode)) is rendered as a multi-line block: header `[panic:<category>] <message>  <location>` followed by indented `.stack` lines and, for each `cause` link, a `Caused by: <message>` line with the link's own indented stack. The replay executor derives `category` for every observed panic (an older episode log missing the field still gets a category assigned when its reducer re-throws during replay), so the multi-line form is what the CLI normally shows. The formatter also accepts a minimal `{kind, message}` panic event and prints it as the single-line `[panic] <message>` fallback — this only surfaces if a caller feeds `formatEvent` a hand-authored event outside the normal replay pipeline.
 - Exit code is `0` on a clean run, `1` if any episode panicked or surfaced an unhandled effect error.
 
@@ -805,10 +920,18 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
 ### 10.6.1 SSR
 
 - HTML generation renders the tile of the initial route once on the **server-side** via `renderToString(app, options)` from `@kumikijs/runtime`.
+  - The initial route is where the requested path **lands**: a static redirect ([Routing §3.10](./routing.md#_3-10-redirects-static)), top-level or inside the matched parent's `sub-routes`, is resolved first, through the same lookup `mount` uses, and the target is rendered. `route` reads the target while the tiles render, and the snapshot's `route` and the bootstrap episode's `trigger.target` ([§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)) name it.
+  - The requested path may carry a query and a hash (a request's URL passed through as is). It is split the way the client's router reads a location, and its pathname is matched **as written**: `//foo` and `/a/../b` are not normalized, because a browser's `location.pathname` keeps them, and the server has to land where the client would.
 - The slot initial values may include the results of the effects emitted in `app.init` (not re-executed at hydration).
 - **The served HTML carries the same inline style the client would paint**: a tile's element, its kind's own layout (a `column`'s flex axis, a `card`'s box metrics, a `grid`'s tracks), and the declarations its props map to (`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`, and a text tile's `color` / `size` / `weight` / `strike`). Without them the first paint lays every container out as a block and the page reflows the moment hydration finishes, which is the shift SSR exists to remove.
   - A **responsive** value (`{base, sm, md, …}`) collapses to its `base`: a breakpoint is a question about the viewport and the server has none.
   - What is **not** served is what an inline declaration cannot carry: `transition`, the `hover:` / `focus:` / `active:` blocks and the `motion` layer are classes backed by injected CSS, and the client adds them on hydration. Nor are event handlers, focus state, or the resolved `icon` SVG — the placeholder is the same element the renderer writes, under the same attribute, but it is empty and unsized until the client resolves the path, so the icon's arrival does move what follows it. Nor, for the same reason, is anything the theme stylesheet paints: a `card`'s surface, border and shadow, and the `button` / `input` / `link` rings, are rules the client injects at mount, and the server serves the box without them.
+- **The served element tree is the one the client builds**, not only the same outer element: a tile whose renderer nests elements of its own is served nested the same way. The first paint is what the element tree decides — a flat one lays out differently from a nested one — and it is also what a crawler reads.
+  - `markdown` is served as the paragraphs the renderer parses (one per blank line, `white-space: pre-wrap`), not as its raw source in one text node.
+  - `overlay` wraps every child after the first in the same absolutely-positioned layer the renderer builds, placed by `align`.
+  - A **closed** `modal` / `drawer` / `popover` is served as the present-but-hidden host the renderer mounts — `display: none` around the content box — rather than as an empty string. Opening a surface is a style flip on both paths, and the content of a closed one stays readable to a crawler. (Hydration is not the reason: it replaces the served DOM wholesale either way — [§10.6.2](#_10-6-2-hydration).)
+  - `check` / `switch` / `radio` are served as the `<label>` that wraps their control, and `error` as the `<span>` its message will arrive in.
+- Form state is the one thing a served attribute carries that the mounted element does not — but only where the property does not reflect: `value`, `checked` and `selected` are set as DOM properties on the client and leave the markup untouched, while an attribute is the only way a served page can carry them. `disabled`, `readonly` and `<details open>` DO reflect, so they are attributes on both paths and must agree.
 - Response bundle composition:
   - HTML (the result of initial tile rendering)
   - JSON (the snapshot envelope, structured as below)
@@ -829,7 +952,8 @@ The snapshot envelope is versioned and self-describing:
 - `kumiki` is the snapshot schema version (current = `1`). A client whose runtime expects a different version MUST discard the snapshot and fall back to a full CSR boot — this keeps server / client out-of-sync deploys safe.
 - `slots` excludes every slot whose declaration carries the `volatile` modifier ([§1.4.1](./language.md#_1-4-1-syntax) modifiers table): the runtime treats SSR snapshotting as the same serialisation boundary as persistence, so `volatile` slots are never written to the wire.
 - `bootstrap.steps[].slot-diffs` use the same `volatile` filter, so a volatile slot never appears in either the `slots` map or the bootstrap diff.
-- `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
+- `bootstrap.steps[0..]` carry the real `app.init` causal chain (effect-start / effect-end / reducer / signal-update, plus `panic` and effect-cancel for an emit the capability check refused, in that order — see [§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)). `before` values inside `slot-diffs` are the slot's declared default at the start of the SSR pass; `after` is the post-init value mirrored in `slots`.
+- `bootstrap.status` is `"completed"` for a chain that ran, and `"panic"` for one carrying a `panic` step — a refused emit is the case where an otherwise successful init pass ships a `"panic"` bootstrap. A client MUST hydrate either one; the status describes the recorded run, not the snapshot's usability.
 
 ### 10.6.2 Hydration
 
@@ -880,7 +1004,31 @@ kumiki build --target=ssr           # Node.js SSR
 kumiki build --target=edge          # Edge runtime
 kumiki build --target=static        # static site
 kumiki build --analyze              # bundle analysis
+kumiki build --minify               # minify the generated app module
+kumiki build --bundle               # link app + runtime into one file
 ```
+
+`--bundle` links the generated module and the runtime modules it imports
+into a single minified `app.js`, and emits no `runtime/`. It is worth its own
+flag rather than being implied by `--minify` because the two optimise opposite
+things. The modular layout gives `runtime/core.js` a URL that does not change
+when the app does, so a returning visitor re-downloads only `app.js`. Bundling
+gives a first visitor one request and one compression stream over the whole
+payload — gzip and brotli build their dictionary per response, so twenty small
+modules compress markedly worse than the same bytes linked together — and it
+tree-shakes across the seam a module boundary hides. On the example apps it is
+19–28% off the compressed payload.
+
+It is not the default for the same reason `--minify` is not: it implies
+minification, and a readable `app.js` is what the debug loop (§10.5) reads a
+stack trace out of. The `runtime/` layout it removes is a caching concern only
+— nothing else reads it.
+
+`--minify` is opt-in, and the readable default is the deliberate one: the
+generated module is what a stack trace points into, so a build that minified
+it unasked would cost the debug loop (§10.5) its most direct evidence. The
+runtime modules the build copies alongside it are minified either way — they
+ship that way from the runtime's own build.
 
 Output composition:
 
@@ -950,6 +1098,19 @@ app.episodes                          // recent episodes
 app.unmount()
 ```
 
+A host that runs reducer bodies itself — a custom test harness, a replayer of its own — can bracket their environment reads with the same journal the runtime uses ([§10.5.1](#_10-5-1-structure-of-an-episode)):
+
+```ts
+import { withEnvRecord, withEnvReplay } from "@kumikijs/runtime";
+
+const run = withEnvRecord(() => reducer.apply(live, payload));
+run.env.reads;                                  // the `env-reads` to log
+const again = withEnvReplay(run.env.reads, () => reducer.apply(live, payload));
+again.env.live;                                 // reads the list could not answer
+```
+
+Both take the body as a callback because the scope is process-wide while it is open: a frame left behind captures every later read in the process, so the only balanced way to open one is to hand it the body. The raw `beginEnvRecord` / `beginEnvReplay` / `endEnvScope` are exported for a host that has to bracket across a boundary a callback cannot span, and balancing them is then the caller's job.
+
 ### 10.9.1 Web Component embedding (`defineKumikiElement`)
 
 The **outbound ecosystem seam**: wrap a compiled app as a standard custom element so it drops into any host page or framework (React/Vue/Svelte/plain HTML) without a Kumiki-specific integration. It bridges the host both ways and owns the mount lifecycle (mount on connect, dispose on disconnect).
@@ -995,8 +1156,8 @@ For the built-ins enumerated in [Standard Library](./stdlib.md), the runtime imp
 |---|---|
 | `Map`, `Set`, `List` | pure (no in-place mutation) |
 | `Option`, `Result` | exhaustiveness check for pattern matching |
-| `now`, `random()` | callable wherever an expression is; the values they read are **not** recorded, so a replay of an episode that read one draws a new value |
-| `*.fresh()` | generates UUIDv7 |
+| `now`, `random()` | callable wherever an expression is. A read **inside a reducer body** has the value it returned recorded on that episode's step as `env-reads` ([§10.5.1](#_10-5-1-structure-of-an-episode)), so a replay reproduces it rather than drawing a new value; a read anywhere else (a tile expression, a render) is not recorded, and nothing replays those |
+| `*.fresh()` | generates UUIDv7; recorded as an `env-reads` entry like `now` / `random()` under the same reducer-body scope, so a replayed episode stamps the ids the run actually stamped |
 | `panic(message)` | puts the episode into the `panic` state and rolls back slots |
 
 ---

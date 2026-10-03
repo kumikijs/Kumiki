@@ -1,0 +1,187 @@
+{
+  "steps": [
+    {
+      "label": "nothing written yet",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ruler": {
+            "length": 0,
+            "size": 0,
+            "head": "start",
+            "keys": 0,
+            "get": "held"
+          }
+        },
+        "domIncludes": ["length: 0", "head: start", "get: held"]
+      }
+    },
+    {
+      "label": "a field named length is written as a field, not derived from a Text",
+      "do": {
+        "click": "#measure"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ruler": {
+            "length": 1
+          }
+        },
+        "domIncludes": ["length: 1"]
+      }
+    },
+    {
+      "label": "and one named size",
+      "do": {
+        "click": "#resize"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ruler": {
+            "size": 2
+          }
+        },
+        "domIncludes": ["size: 2"]
+      }
+    },
+    {
+      "label": "and one named head",
+      "do": {
+        "click": "#rename"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ruler": {
+            "head": "moved"
+          }
+        },
+        "domIncludes": ["head: moved"]
+      }
+    },
+    {
+      "label": "and one named keys",
+      "do": {
+        "click": "#rekey"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ruler": {
+            "keys": 3
+          }
+        },
+        "domIncludes": ["keys: 3"]
+      }
+    },
+    {
+      "label": "the field literally named get is a field, because the record declares one",
+      "do": {
+        "click": "#hold"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ruler": {
+            "get": "taken"
+          }
+        },
+        "domIncludes": ["get: taken"]
+      }
+    },
+    {
+      "label": "the other fields are untouched — each write landed on its own key",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ruler": {
+            "length": 1,
+            "size": 2,
+            "head": "moved",
+            "keys": 3,
+            "get": "taken"
+          }
+        }
+      }
+    },
+    {
+      "label": "the same spelling on an Option is the unwrap, and a None makes it a no-op",
+      "do": {
+        "click": "#stretch"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "draft": {
+            "_tag": "None"
+          }
+        }
+      }
+    },
+    {
+      "label": "with a Some it reaches the payload",
+      "do": {
+        "click": "#start"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "draft": {
+            "_tag": "Some",
+            "_0": {
+              "length": 10
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "and writes through it",
+      "do": {
+        "click": "#stretch"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "draft": {
+            "_tag": "Some",
+            "_0": {
+              "length": 99
+            }
+          }
+        }
+      }
+    },
+    {
+      "label": "an index step, the third member of the closed set",
+      "do": {
+        "click": "#mark"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "marks": {
+            "a": 1
+          }
+        },
+        "domIncludes": ["marks: 1"]
+      }
+    },
+    {
+      "label": "written through",
+      "do": {
+        "click": "#bump"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "marks": {
+            "a": 7
+          }
+        }
+      }
+    }
+  ]
+}

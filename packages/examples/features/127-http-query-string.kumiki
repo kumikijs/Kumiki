@@ -1,0 +1,34 @@
+# Feature (http.md §6.1.2): an HTTP effect's `query` is sent as the URL's query
+# string.
+#
+# Each entry is URL-encoded and appended to `url`, after any query string the
+# url already carries. The value below has a space and an `&` in it, so the
+# request only reaches the fixture key when both are escaped:
+#
+#   GET /search?x=1&q=a+b%26c&page=2
+#
+# `smoke` makes that request through the real HTTP path against
+# `127-http-query-string.http.json`, which answers nothing else — a request
+# whose `query` was dropped (`GET /search?x=1`) has no fixture and fails the run.
+
+type Item = {name: Text}
+
+slot term   : Text = "a b&c"
+slot status : Text = "idle"
+
+effect search cap=http.get
+              in=Text
+              out=Result(List(Item), HttpError)
+              map-request={url: "/search?x=1", query: {"q": $1, "page": "2"}, decode: Decoder.Json(List(Item))}
+
+reducer go    on=ui.click(SearchBtn)  do= emit search(term)
+reducer found on=search.ok($items, _) do= status := "found " + $items.length.show
+
+tile SearchBtn = button(text="Search") {id: "search"}
+
+tile App = column(SearchBtn, text("status: " + status)) {pad: "lg", gap: "md"}
+
+app HttpQueryString
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

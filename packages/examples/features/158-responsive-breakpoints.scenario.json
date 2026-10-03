@@ -1,0 +1,8 @@
+{
+  "steps": [
+    {
+      "label": "the responsive grid and column mount with every child (the widths themselves are checked in a browser)",
+      "expect": { "noErrors": true, "domIncludes": ["a", "f", "spaced"] }
+    }
+  ]
+}

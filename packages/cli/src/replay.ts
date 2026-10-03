@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { parseEpisodeLogText } from "@kumikijs/compiler/node";
 import {
+  type EnvDrift,
   type EpisodeLogEntry,
   type EpisodeMockPolicy,
   type ReplayEvent,
@@ -63,6 +64,19 @@ export function parseMockArg(arg: string): { effect: string; policy: EpisodeMock
   return { effect: name, policy: { policy: "fixed", outcome, value } };
 }
 
+/**
+ * The non-zero halves of one step's environment-read drift, as a trailing
+ * `(env: ...)` note. Every count is a way the replayed body and the recorded
+ * one disagreed about what the environment said.
+ */
+function formatEnvDrift(env: EnvDrift): string {
+  const parts: string[] = [];
+  if (env.live > 0) parts.push(`${env.live} read live`);
+  if (env.unused > 0) parts.push(`${env.unused} recorded unused`);
+  if (env.malformed > 0) parts.push(`${env.malformed} malformed`);
+  return parts.join(", ");
+}
+
 function jsonOrNull(v: unknown): string {
   try {
     return JSON.stringify(v);
@@ -93,13 +107,23 @@ export function formatEvent(ev: ReplayEvent): string | null {
   switch (ev.kind) {
     case "episode-start": {
       const target = ev.trigger.target ? ` on ${ev.trigger.target}` : "";
-      return `episode ${ev.episodeId} — ${ev.trigger.kind}${target}`;
+      // The log lost the entry reducer's value (§10.5.3); said here so the
+      // panic that follows does not read as a bug in the reducer.
+      const missing = ev.entryResultMissing
+        ? `  (no recorded result for ${ev.entryResultMissing})`
+        : "";
+      return `episode ${ev.episodeId} — ${ev.trigger.kind}${target}${missing}`;
     }
     case "reducer": {
       const diffs = ev.slotDiffs
         .map((d) => `${d.name}: ${jsonOrNull(d.before)} -> ${jsonOrNull(d.after)}`)
         .join(", ");
-      return `  [reducer] ${ev.name}${diffs ? `  ${diffs}` : ""}`;
+      // Provenance for the environment reads, on the steps that had any drift
+      // (§10.5.3). Without it the trace shows a value and says nothing about
+      // whether it came from the log or from this machine's clock — and a
+      // reducer that read live is exactly the one the replay did not reproduce.
+      const env = ev.env ? `  (env: ${formatEnvDrift(ev.env)})` : "";
+      return `  [reducer] ${ev.name}${diffs ? `  ${diffs}` : ""}${env}`;
     }
     case "effect-start":
       return `  [effect-start] ${ev.name}(${jsonOrNull(ev.args)})`;
@@ -149,7 +173,7 @@ export async function replayCmd(
   capabilities: string[],
   opts: ReplayCmdOptions,
 ): Promise<void> {
-  ensureDom();
+  await ensureDom();
   const source = readFileSync(kumikiPath, "utf8");
   const app = await loadApp(source, capabilities, { sourcePath: kumikiPath });
 
@@ -186,6 +210,18 @@ export async function replayCmd(
   });
 
   console.log(`final slots: ${jsonOrNull(report.finalSlots)}`);
+  const drift = report.envDrift;
+  if (drift.live > 0 || drift.unused > 0 || drift.malformed > 0) {
+    // Named at the end as well as per-step, because the summary is what says
+    // whether this run reproduced the recorded one at all.
+    console.log(`environment reads: ${formatEnvDrift(drift)}`);
+  }
+  if (report.entryResultsMissing.length > 0) {
+    const formatted = report.entryResultsMissing
+      .map((m) => `${m.episodeId}: ${m.reducer}`)
+      .join(", ");
+    console.log(`entry results missing: ${formatted}`);
+  }
   if (report.stoppedAt !== null) {
     console.log(`(stopped at step ${report.stoppedAt})`);
   }

@@ -20,19 +20,19 @@ const cfg: IndexedDbCfg = {
 describe("indexed-* without config (#79)", () => {
   it("indexedRead returns a clean error when cfg is absent", async () => {
     const r = await indexedRead({ store: "notes", key: "a" }, undefined);
-    expect(r.kind).toBe("err");
-    if (r.kind !== "err") return;
-    expect((r.value as { message: string }).message).toMatch(/indexed-db is not declared/);
+    // The err value is the `Text` an `indexed-*` effect's `out=Result(_, Text)`
+    // declares (http.md §6.7), not a record wrapping it.
+    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 
   it("indexedWrite returns a clean error when cfg is absent", async () => {
     const r = await indexedWrite({ store: "notes", key: "a", value: { id: "a" } }, undefined);
-    expect(r.kind).toBe("err");
+    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 
   it("indexedDelete returns a clean error when cfg is absent", async () => {
     const r = await indexedDelete({ store: "notes", key: "a" }, undefined);
-    expect(r.kind).toBe("err");
+    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 });
 
@@ -49,9 +49,7 @@ describe("indexed-* unavailable backend (#79)", () => {
     // A fresh cfg avoids hitting the cached open() promise from earlier tests.
     const localCfg: IndexedDbCfg = { ...cfg, name: "missing-db" };
     const r = await indexedRead({ store: "notes", key: "a" }, localCfg);
-    expect(r.kind).toBe("err");
-    if (r.kind !== "err") return;
-    expect((r.value as { message: string }).message).toMatch(/IndexedDB is not available/);
+    expect(r).toEqual({ kind: "err", value: expect.stringMatching(/IndexedDB is not available/) });
   });
 });
 
@@ -63,6 +61,16 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
   });
   afterEach(() => {
     (globalThis as { indexedDB?: unknown }).indexedDB = original;
+  });
+
+  it("a request that is missing (in=Unit, no map-request) is a Text err, not a rejection", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-no-request" };
+    for (const run of [indexedRead, indexedWrite, indexedDelete]) {
+      expect(await run(undefined, localCfg)).toEqual({
+        kind: "err",
+        value: expect.stringMatching(/^TypeError: /),
+      });
+    }
   });
 
   it("write then read returns Some(value); missing key returns None", async () => {
@@ -79,6 +87,19 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
     expect(miss.kind).toBe("ok");
     if (miss.kind !== "ok") return;
     expect(miss.value).toMatchObject({ _tag: "None" });
+  });
+
+  it("a point read whose Decoder.Json check refuses the record is an err", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-decode" };
+    await indexedWrite({ store: "notes", key: "a", value: { body: "" } }, localCfg);
+    const check = (v: unknown) =>
+      (v as { body: string }).body.length > 0
+        ? undefined
+        : { kind: "nonempty", args: [], path: ["body"] };
+    expect(await indexedRead({ store: "notes", key: "a", decode: check }, localCfg)).toEqual({
+      kind: "err",
+      value: "decode failed: nonempty at .body",
+    });
   });
 
   it("delete removes a previously written value", async () => {

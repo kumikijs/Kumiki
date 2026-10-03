@@ -1,0 +1,43 @@
+# Feature (stdlib.md §2.2.1): `Map(K, V).map(expr)` maps each entry's value.
+#
+#   Map(K, V).map(expr) : Map(K, V')   ; within expr, $1 = key : K, $2 = value
+#
+# The result has the same keys; each value is `expr` evaluated for that
+# entry. `$1` is the key read back as its declared type, as `keys` reads it,
+# so `$1 * 10` on a `Map(Int, Int)` is arithmetic, not text.
+#
+# The fragment is handed each entry as one `[key, value]` pair, as `filter`
+# hands its predicate, so a key that is itself a pair — a `Tuple(Int, Int)` —
+# is still all of `$1`, and `$2` is still the value.
+
+slot names   : Map(Int, Text) = {}
+slot scores  : Map(Int, Int)  = {}
+slot loud    : Map(Int, Text) = {}
+slot scaled  : Map(Int, Int)  = {}
+slot pairs   : Map(Tuple(Int, Int), Text) = {}
+slot shout   : Map(Tuple(Int, Int), Text) = {}
+
+reducer fill on=ui.click(Fill)
+    do= names := names.insert(3, "c").insert(4, "d")
+        scores := scores.insert(3, 1).insert(4, 2)
+        pairs := pairs.insert((1, 2), "a")
+
+reducer apply on=ui.click(Apply)
+    do= loud := names.map($2 + "!")
+        scaled := scores.map($1 * 10 + $2)
+        shout := pairs.map($2 + "!")
+
+tile Fill  = button(text="fill", id="fill")
+tile Apply = button(text="apply", id="apply")
+
+tile App = column(
+  Fill,
+  Apply,
+  text("loud: " + loud.values.join(",")),
+  text("scaled: " + scaled.values.map($1.show).join(",")),
+  text("shout: " + shout.values.join(",")))
+
+app MapMap
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

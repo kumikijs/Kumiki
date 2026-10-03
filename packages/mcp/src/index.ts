@@ -150,8 +150,7 @@ function errText(e: unknown) {
  * `apply` closure from every `AutoPatch`, convert `KumikiError[]` →
  * `Diagnostic[]`, and preserve the discriminated union so the client can
  * `switch (r.status)` on the response. The `applied` variant always carries
- * `regressed: string[]` (may be empty) — the client never has to fall back to
- * `?? []`.
+ * `regressed: []`: a patch that would regress a test is `test-blocked`.
  */
 function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
@@ -172,12 +171,26 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
         compileFixes: o.compileFixes,
         compilePatches: o.compilePatches.map(patchWire),
       };
+    case "compile-blocked":
+      // `compileErrors` is the author's own set; `blocked` is what the refused
+      // patch would have done. A client that merged the two would report a
+      // diagnostic that is not in the file. Each `reason` keeps its own
+      // payload, so reading `reason` alone is never misleading.
+      return {
+        ...base,
+        compileErrors: toDiagnostics(o.compileErrors),
+        blocked:
+          o.blocked.reason === "introduced"
+            ? { reason: o.blocked.reason, introduced: toDiagnostics(o.blocked.introduced) }
+            : o.blocked.reason === "parse-error"
+              ? { reason: o.blocked.reason, message: o.blocked.message }
+              : { reason: o.blocked.reason },
+      };
     case "compile-remaining":
       return {
         ...base,
         compileFixes: o.compileFixes,
         ...(o.compileErrors ? { compileErrors: toDiagnostics(o.compileErrors) } : {}),
-        ...(o.parseError ? { parseError: o.parseError } : {}),
       };
     case "not-found":
       return {
@@ -205,6 +218,18 @@ function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
         regressed: o.regressed,
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
       };
+    case "test-blocked": {
+      const b = o.blocked;
+      return {
+        ...base,
+        patch: patchWire(o.patch),
+        blocked:
+          b.reason === "introduced"
+            ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
+            : b,
+        ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
+      };
+    }
     case "write-failed":
       // I/O failure surfaces on the wire so MCP callers see it as a
       // structured outcome rather than a transport-level error. `phase`
@@ -487,7 +512,7 @@ export function createServer(): McpServer {
     "kumiki_run_scenario",
     {
       title: "Run a scenario",
-      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something).`,
+      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. A step whose action could not run — a selector matching nothing, a \`fill\` aimed at an element that holds no text, a control the platform refuses to drive (\`disabled\` refuses any verb that drives a control; \`readonly\` and an editable's \`contenteditable="false"\` refuse the typing alone, so \`fill\` only; \`hover\` is never refused) — reports \`action failed:\` instead of an error, and fails: the action never ran, so that step's state is not a state the app reached through it, and \`errorIncludes\` cannot claim it. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], actionErrorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something; \`actionErrorIncludes\` asserts the step was REFUSED, for a control the platform will not drive; it matches the refusal alone, so a step that ran, or that failed for another reason such as a selector matching nothing, fails rather than claiming one).`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -513,14 +538,25 @@ export function createServer(): McpServer {
         capsForInput(input),
       );
       const lines = report.steps.map((s, i) => {
-        const status = s.errors.length === 0 && s.failures.length === 0 ? "ok" : "FAIL";
+        const status = s.ok ? "ok" : "FAIL";
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const sub = [
+          // The action never ran: an agent reading this must not diagnose the
+          // app from a state it never reached — including the `final state:`
+          // line below, when this is the last step.
+          ...(s.actionError !== undefined ? [`    action failed: ${s.actionError}`] : []),
           ...s.errors.map((e) => `    error: ${e}`),
           // An error the step's `errorIncludes` asked for is out of `errors`,
           // so without this line the agent driving the fix loop reads a step
           // that reported something as one that reported nothing.
           ...s.expectedErrors.map((e) => `    expected error: ${e}`),
+          // The same, for the other channel: a refusal the step's
+          // `actionErrorIncludes` claimed is out of `actionError`, and without
+          // this line a step whose whole point is that the platform turned it
+          // away reads as a step where nothing happened.
+          ...(s.expectedActionError !== undefined
+            ? [`    expected refusal: ${s.expectedActionError}`]
+            : []),
           ...s.failures.map((f) => `    assert: ${f}`),
         ];
         const emits = s.emits.length ? `    emits: ${s.emits.map((e) => e.effect).join(", ")}` : "";
@@ -881,7 +917,7 @@ export function createServer(): McpServer {
     {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
-        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the outcome ALWAYS includes `regressed` (names of other tests that regressed after the write). Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `compile-proposed` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; nothing landed on disk.",
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes and no test that passed before fails; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result) or `regressed` (with the test names). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay).",
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),

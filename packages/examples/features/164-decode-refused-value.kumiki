@@ -1,0 +1,54 @@
+# Feature (http.md §6.1.4 / §6.7.2): a decoded value that `Decoder.Json(T)`'s
+# `T` refuses is the read's `.err`, so a restore of data the type refuses is a
+# failure the program handles.
+#
+# `NoteId` is a uuid, and the storage below holds a note under "legacy-1" — as
+# an older build, a hand edit or a drifted server could leave it. The read used
+# to answer `.ok` with that map, `loaded` wrote it into `notes`, the reducer's
+# batch was refused whole (runtime.md §10.3.3), and `status` stayed "loading"
+# with nothing on the page able to get past it. Now `refused` runs, and the
+# app starts empty and usable.
+#
+# `boot` writes the legacy map first, so `smoke` reads it back through the
+# real storage handler; the scenario scripts the two answers that gives.
+
+type NoteId = nominal Text where uuid
+type Note   = {id: NoteId, text: Text where nonempty}
+
+slot notes  : Map(NoteId, Note) = {}
+slot status : Text              = "loading"
+
+effect seedLegacy cap=storage.write
+                  in=Map(Text, {id: Text, text: Text})
+                  out=Result(Unit, Text)
+                  map-request={key: "notes", value: $1}
+
+effect loadNotes cap=storage.read
+                 in=Unit
+                 out=Result(Option(Map(NoteId, Note)), Text)
+                 policy=once
+                 map-request={key: "notes", decode: Decoder.Json(Map(NoteId, Note))}
+
+reducer boot    on=app.start            do= emit seedLegacy({"legacy-1": {id: "legacy-1", text: "old"}})
+reducer seeded  on=seedLegacy.ok(_, _)  do= emit loadNotes()
+reducer loaded  on=loadNotes.ok($m, _)  do= notes  := $m.get-or({})
+                                           status := "restored"
+reducer refused on=loadNotes.err(_, _)  do= status := "started empty"
+
+reducer add
+    on=ui.click(AddBtn)
+    do= let id = NoteId.fresh()
+        notes[id] := {id, text="new note"}
+
+tile AddBtn = button(text="Add note") {id: "add"}
+
+tile App = column(
+    text("status: " + status),
+    text("notes: " + notes.size.show),
+    AddBtn
+) {pad: "lg", gap: "md"}
+
+app DecodeRefusedValue
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -120,10 +120,11 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 
 `Result(T, E)` 型で表現する。effect の戻り値が `Result.Err` の場合は `effect-name.err($e, $k)` reducer に届く。
 
-### 7.2.2 想定外のエラー（panic）
+### 7.2.2 想定外のエラー（panic） {#_7-2-2-unexpected-errors-panic}
 
 - reducer 内での `Option.get` で None を取った
-- `List.get(i)` で範囲外
+- インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
+- 読み取り `m[k]` が `Map` の持たないキーを指した
 - `Result.get` で Err
 - `panic(msg)` の明示呼び出し
 
@@ -146,11 +147,22 @@ reducer onPanic
 ```kumiki fragment
 type PanicInfo = {
     message: Text,
-    location: Text,         # "reducer:foo:line:42"
-    episode-id: Text,
-    cause: Option(Text)
+    location: Text,         # 例: `reducer "foo"` / `render`
+    episode-id: Option(Text),
+    cause: Option(Text),
+    category: Text          # "reducer" / "effect" / "capability" / "tile-render" / "hydrate" / "unknown"
 }
 ```
+
+`category` は、runtime 側のどこでその失敗を捕捉したかを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路と、capability チェックが拒否した effect を指す `capability`（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）である —— `capability` だけは、何も throw されていない出来事を報告する値である。`effect` と `unknown` は予約値であり、今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするためにある。
+
+`episode-id` は panic が起きた episode を名指す（[runtime.md §10.5](./runtime.md#_10-5-episode-loop)）—— ユーザーが見た panic と、`kumiki replay` / `kumiki_episode_tail` が読み戻すものとを繋ぐ結合キーである。`Option(Text)` なのは、episode が常に開いているとは限らないからだ：episode logger を接続していないホストには名指すべき episode が無く、それに対する答えが `None` である。どの dispatch にも属さない場所で発生した panic —— 例えば初回描画で捕捉された描画 panic —— も同じである。
+
+`cause` は、throw が `Error.cause` を伴っていた場合のその**最も近い**リンクの message であり、そうでなければ `None` である。message が空の cause も `None` として扱う：`.get-or` を通すと `Some("")` は理由が入るべき場所を空白にしてしまい、「理由が無い」ではなく「理由が空である」と読めてしまうからだ。その背後のチェーンと、それに付随するスタックは episode log に留まる —— そこへ辿り着く手段が `episode-id` である。
+
+panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。`route.error` だけはその上に、マッチした `pattern` が乗る。`episode-id` は、名指すべき開いた episode が無い箇所ではすべて `None` である —— 境界経路ではどの dispatch の内側でもない描画が、サーバー側ではすべての描画がそれに当たる（`renderToString` は描画より前に bootstrap episode を commit する）。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
+
+開発ツール向けのフィールドである `stack`（JS の `Error.stack`）と機械可読な `Error.cause` チェーンは episode log（`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）に記録されるが、ユーザー向けの `$event` には意図的に**公開しない** —— 生のスタックを本番 UI に漏らすのは footgun だからである。参照するには `kumiki replay` / `kumiki_episode_tail` を使う。
 
 ---
 
@@ -176,7 +188,15 @@ tile ErrorFallback
 
 `error-boundary = X` を tile 定義に書くと、その tile 配下の描画中 panic は X tile を `in=PanicInfo` で呼び出して fallback 表示する。
 
-> **実装ステータス.** live runtime は [エラー処理](#_7-2-error-handling) の panic モデルを実装する：reducer ディスパッチ中の panic はその episode の `slot` 変更を rollback し（部分書き込みなし）、検証 tier（`smoke` / scenario）へ surface し、`app.error` reducer（[app.error reducer](#_7-2-3-the-app-error-reducer)）を `PanicInfo` を `$event` として発火する。描画中の panic は最も近い `error-boundary` tile が捕捉する；囲う境界が**ない**描画 panic（例：ルート配下）は、イベントハンドラを未捕捉で突き抜ける代わりに組み込みのトップレベル panic 表示にフォールバックする。`panic(message)` と多相な `.get`（`None` / `Err` で panic、`.get-err` と整合）はこの同じ制御されたシグナルを送出する。
+したがって `$1` を読む fallback は `in=PanicInfo`（または `PanicInfo` が代入可能な型、たとえばその別名）を宣言しなければならない。何を宣言していても `$1` は panic なので、別の `in=` を宣言した fallback、あるいは `in=` を宣言せずに `$1` を読む fallback は [E0220](./errors.md#e0220-boundary-fallback-input) であり、`error-boundary` 句の位置に報告される。`$1` を読まない fallback は `in=` を宣言しなくてよく、そうすれば同じ tile を route や `sub-routes` のターゲットにもできる。
+
+境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
+
+境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
+
+境界が受け取るのは **panic** —— [§7.2.2](#_7-2-2-unexpected-errors-panic) が定義する制御されたシグナル —— である。fallback が受け取るのは `PanicInfo` の全体であり、[§7.2.3](#_7-2-3-the-app-error-reducer) の `app.error` reducer が受け取るものと同じ payload である —— 同じコードが組み立てるので、両者が食い違うことはない。それ以外のものが境界に到達した場合、それはプログラムのエラーではなく生成コードまたは runtime の欠陥であり、トップレベル表示のために再送出される：fallback がそれを吸収すると失敗が描画済みページに置き換わり、`smoke` / `scenario` はエラーチャネルで検証するため、見るべきものが何も残らなくなる。
+
+> **実装ステータス.** live runtime は [エラー処理](#_7-2-error-handling) の panic モデルを実装する：reducer ディスパッチ中の panic はその episode の `slot` 変更を rollback し（部分書き込みなし）、検証 tier（`smoke` / scenario）へ surface し、`app.error` reducer（[app.error reducer](#_7-2-3-the-app-error-reducer)）を `PanicInfo` を `$event` として発火する。描画中の panic は、それを囲む最も近い `error-boundary` が捕捉する。これには route ターゲットの境界も、`sub-routes` を持つ親の `route-outlet` 内の子に対する親の境界も含まれる。上に境界が**ない**描画 panic は、イベントハンドラを未捕捉で突き抜ける代わりに組み込みのトップレベル panic 表示にフォールバックする。`panic(message)` と多相な `.get`（`None` / `Err` で panic、`.get-err` と整合）はこの同じ制御されたシグナルを送出する。
 
 ---
 
@@ -234,6 +254,8 @@ reducer onRouteErr
     do= toastError := Some("Failed to load todo")
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
+
+boundary に捕まらない render の panic は、対応する `route.error` reducer を 1 回だけ発火する。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。
 
 ---
 

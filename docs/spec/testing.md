@@ -31,6 +31,29 @@ what it is:
 | an `expect.effects` entry | an effect, declared or standard | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
+| a `given.slots` / `expect.slots` value, an `expect.effects` argument, a `given.mocks` payload | a value of the slot's type, the effect's `in=` type, the effect's `out=` half | [E0201](./errors.md#e0201-type-mismatch), [E0214](./errors.md#e0214-missing-record-field), [E0215](./errors.md#e0215-unknown-record-field) |
+| a `given` / `expect` **section** key | one of the closed set that kind accepts | [E0714](./errors.md#e0714-test-section-unknown) |
+
+The sections themselves are a vocabulary rather than names to resolve, one
+closed set per kind and per clause:
+
+| Test kind | `given` | `expect` |
+|---|---|---|
+| `reducer-test` | `slots`, `event`, `mocks` | `slots`, `effects`, `panic` |
+| `tile-test` | `slots`, `in` | a tile expression — no sections |
+| `property-test` | `slots`, `event` | none; the assertion is the `invariant` clause |
+| `episode-test` | none; the loaded log is the given | `slots-equal`, `no-panics`, `no-errors` |
+
+A key outside its kind's set is **E0714**, at the key's own position, with the
+accepted set named and the nearest of them offered when one is close enough.
+The section is what the lowering reads the test's setup out of, so a dropped
+one does not weaken the test — it replaces it: `given = {slot: {count: 41}}`
+never sets anything, and the reducer runs against the slot's declared default.
+
+No name *inside* the dropped key is resolved, because it belongs to a section
+that does not exist. What still reports there is what is wrong wherever it is
+written: a wildcard in a `given` is **E0109** in any section, and survives
+fixing the section name.
 
 `given.event.type` names an event, whose vocabulary belongs to the trigger
 grammar rather than to the expression layer. `target` is only a tile when that
@@ -47,12 +70,19 @@ value, and only a property-test invariant may call it
 ([§8.3](#_8-3-property-tests)): it lowers to a read of the trial's bindings, so
 anywhere else the generated module dies before a single test reports.
 
-Two positions are checked for *shape* rather than for names, because what the
+Some positions are checked for *shape* rather than for names, because what the
 lowering does with an unrecognised one is assert something else
 ([E0713](./errors.md#e0713-test-shape-invalid)): a `reducer-test` mock that is
-not `ok(...)` / `err(...)` / `delay(...)` became a success mock, and an
+not `ok(...)` / `err(...)` / `delay(...)` became a success mock, an
 `expect.effects` that is not a list became the assertion that no effect was
-emitted.
+emitted, and a `given` / `expect` / `mocks` (or a `given`'s `mocks` / `event`)
+that is not a record was read as an empty one, so the setup, the assertion or
+the script it was written for did not happen. The slot → value sections one
+level down — a `given`'s `slots`, a `reducer-test` `expect`'s `slots` and an
+`episode-test` `expect`'s `slots-equal` — are records the same way: one that is
+not seeded no slot, or asserted none. `slots-equal` alone also takes the bare
+name `from-log` (the log's own final values) in place of a record; it is a name
+like any other at every other position.
 
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
@@ -92,7 +122,7 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 `<any-id>` means "any generated ID," and `<slots.todos>` means "a reference to the slot value after execution."
 
-A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
+A wildcard is legal only inside a `reducer-test` `expect` (anywhere else is **E0109**). Matching is otherwise **exact**: records are compared by their full key set, with wildcards filling the holes a deterministic test cannot predict. As a **value**, `<any-id>` matches any present value (e.g. a freshly generated id) and `<slots.X>` matches slot `X`'s post-execution value. As a **map key**, `<any-id>` pairs with exactly one otherwise-unmatched entry — zero or more than one is a failure. As a **member of a Set literal**, each `<any-id>` pairs with one otherwise-unmatched member, so `[<any-id>, <any-id>]` asks for exactly two generated members and `["a", <any-id>]` for `"a"` and one more. Use a value wildcard to blank out other non-deterministic fields (e.g. `createdAt: <any-id>`) rather than relying on partial-record matching.
 
 ### 8.2.3 The batch rule applies here too
 
@@ -106,6 +136,33 @@ test addTodo-empty =
         given = {slots: {todos: {}, draft: ""}, event: {type: ui.submit, target: NewTodoForm}}
         expect = {panic: "draft cannot be empty"}
 ```
+
+### 8.2.5 The route slot
+
+`route` is maintained by the runtime rather than declared by a program ([§3.2](./routing.md#_3-2-current-route-state)), so there is no `slot route` for `given.slots` to override — and the harness would otherwise build its slot table without one, leaving a reducer that reads `route.path` to panic on an absent slot.
+
+The harness seeds it from the same empty route `mount` starts from, in every tier — `reducer-test` and its multi-step form, `tile-test`, `run-reducer` inside a `property-test`, and the `episode-test` / `kumiki replay` path. A test naming no route runs against that route (`{path: "/", pattern: "/", params: {}, query: {}, hash: None}`), so a reducer reading the current route is testable without ceremony:
+
+```kumiki fragment
+test route-defaults-to-empty =
+    reducer-test noticed
+        given  = {slots: {seen: ""}, event: {type: ui.click, target: Go}}
+        expect = {slots: {seen: "/"}}
+```
+
+`given.slots` may name `route` to drive a reducer that branches on the current one. This is the one place the harness does *more* than `mount`: a route named in part takes the empty route's values for the fields it leaves out, so an abbreviation cannot hand the reducer an undefined field.
+
+```kumiki fragment
+test route-seeded-in-part =
+    reducer-test patterned
+        given  = {slots: {at: "", route: {pattern: "/posts/:id", params: {"id": "7"}}},
+                  event: {type: ui.click, target: Go}}
+        expect = {slots: {at: "/posts/:id#7"}}
+```
+
+A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid.
+
+`expect.slots` names the slots it compares; a slot it leaves out is not compared, so the seeded route never has to be repeated — and may be asserted like any other slot when it is what the test is about. A named slot's value is still matched exactly ([§8.2.2](#_8-2-2-wildcards)), so an `expect` naming `route` spells the whole record.
 
 ## 8.3 Property Tests
 
@@ -122,11 +179,15 @@ test toggle-is-involution =
 ```
 property-test ::= 'property-test'
                   'for-all'    '=' record-lit       ; variables to generate
-                  'given'      '=' record-lit
+                  'given'      '=' '{' (property-given (',' property-given)*)? '}'
                   'invariant'  '=' expr
                   ('count'     '=' int)?            ; number of trials (default 100)
                   ('shrink'    '=' bool)?           ; minimize on failure (default true)
+
+property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
+
+`run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
 
 ### 8.3.2 Generators
 
@@ -157,7 +218,7 @@ test foo =
         ...
 ```
 
-> **Implementation note.** A refinement folds into its base generator as a bound rather than reject-sampling: `between(a, b)` constrains the numeric range, `nonempty` / `len-*` the string length, `positive` the lower bound. Refinements with no generator constraint (`uuid` / `email` / `url`) generate the unconstrained base type (the runtime does not enforce them either, so the value is an opaque token). Generation is **seeded** (default: a hash of the test name), so a failing case reproduces exactly across runs; on failure the counterexample is **shrunk** (unless `shrink = false`) toward a minimal value (numbers → 0, strings → "", collections → fewer elements). `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state, so steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`).
+> **Implementation note.** A refinement folds into its base generator as a bound rather than reject-sampling: `between(a, b)` constrains the numeric range, `nonempty` / `len-*` the string length, `positive` / `negative` the sign. `email` / `url` / `uuid` fold in as a **shape**: the generator builds an instance of the form, so a generated value passes the same check the runtime applies to a write ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)) — a generator that ignored them would drive the property over states the app refuses to be in. `one-of` generates from the listed literals. `regex` is the one predicate with no constraint to fold, because generating from an arbitrary pattern is a different problem from checking against one: a `for-all` over a `regex`-refined type generates unconstrained base values, so give it a custom generator or write the case by hand. Generation is **seeded** (default: a hash of the test name), so a failing case reproduces exactly across runs; on failure the counterexample is **shrunk** (unless `shrink = false`) toward a minimal value (numbers → 0, strings → "", collections → fewer elements). `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state, so steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`).
 
 ## 8.4 Tile snapshot Tests
 
@@ -166,13 +227,63 @@ Compare a tile's structure against an expected value:
 ```kumiki fragment
 test counter-display =
     tile-test App
-        given = {slots: {count: 5}, in: ()}
+        given = {slots: {count: 5}}
         expect = column(
                    heading("Count: 5"),
                    row(DecBtn, ResetBtn, IncBtn))
 ```
 
 The snapshot is a deep structural comparison. Class names and styles are out of scope for comparison (only those explicitly specified).
+
+What is compared is the expected node's `kind`, its `children` in order, and **every content field it carries**: the fields its builtin puts on the node — its `text`, an `image`'s `src`, a `link`'s `to`, an `input`'s `value`, a `check`'s checked state, a `select`'s `options` — and every other named argument it is written with, such as an `image`'s `alt`, a `button`'s `disabled` or `variant`, an `aria-*` label or an `id`. A field the expected node does not carry (an `input(value="x")` states no `placeholder`) is not compared, so a snapshot can assert one field of a tile that renders several.
+
+Some things are never compared, whatever the expected node says:
+
+- the `{…}` block: styles, classes and any other prop written there. `column(…) {pad: "sm"}` asserts no padding; to compare a prop, write it as a named argument;
+- handlers (`onClick=…`, and the reducers a `ui.*` subscription wires);
+- the identity and wiring a node carries: its `key` (written as `{key: …}`, or implicit in a `for`), a control's `bind`, and a link's `prefetch`.
+
+A builtin fills in some fields when their argument is left out, and the expected node carries those like any other field. So `check()` is an unchecked check, and `details(text("x"))` asserts an empty summary. To assert another value, write the argument:
+
+| Builtin | Carried when the argument is left out |
+|---|---|
+| `text`, `heading`, `button`, `label`, `link`, `markdown`, `code`, `editable` | `text: ""` |
+| `link` | `to: ""` |
+| `image` | `src: ""` |
+| `icon` | `name: ""` |
+| `check`, `switch` | unchecked |
+| `select` | `options: []` |
+| `list` | `ordered: false` |
+| `details` | `summary: ""` |
+| `error` | `field: ""` |
+| `modal`, `drawer`, `popover` | `open: true` |
+
+Each `aria-*` attribute is a field of its own, however it was written (as `aria-label="…"`, in the `aria` map, or in the actual tile's `{…}` block): `button(text="x", aria-label="Close")` asserts the label and says nothing about an `aria-describedby` the tile also renders. Its path is `button.aria-label`, and a `check`'s or `switch`'s checked state is reported as `value`, the argument that sets it.
+
+A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
+
+```
+tile-test ::= 'tile-test' identifier
+              'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
+              'expect' '=' tile-expr
+
+tile-given ::= 'slots' ':' record-lit | 'in' ':' expr
+```
+
+`given.in` is the target's argument, and the target is a tile the program defines — a built-in cannot be one, because the generated test reaches its target through `App._tilesById`, which holds the user tiles alone ([E0105](./errors.md#e0105-undef-tile)). A `tile-test` applies that target the way a tile body does — `App._tilesById["<T>"]` called with `given.in` — so a target that declares `in=` needs one, a target that declares none must not be given one, and the value is compared with the declared type either way:
+
+```kumiki fragment
+tile Greeting in=Text = heading("Hi, " + $1)
+
+test greeting-renders-input =
+    tile-test Greeting
+        given  = {slots: {}, in: "Ada"}
+        expect = heading("Hi, Ada")
+```
+
+A disagreement in the count is [E0213](./errors.md#e0213-call-arity-mismatch) — the same code, and the same sentence, a tile called with the wrong number of arguments gets, because this is one such call — and a value the declared type does not accept is [E0201](./errors.md#e0201-type-mismatch), at the value's own position, as it is at any other call site.
+
+Without them, a `tile-test` omitting the `in` its target declares applied the tile to `undefined`, and the first read of it threw a bare `TypeError` with no test name, no position and no code; nothing catches that, so the rest of the file's tests lost their results with it. An `in` given to a target declaring none was dropped, so the snapshot compared against a render that never saw it. A *mistyped* one was quieter still and is why the count alone was not enough: `show` renders it as the empty string, exactly as it renders an absent one, so the snapshot compared against something indistinguishable from an empty label and passed — asserting a shape no tile call can produce.
 
 ## 8.5 Effect mock
 
@@ -216,6 +327,20 @@ test bug-2026-05-21 =
         }
 ```
 
+```
+episode-test ::= 'episode-test'
+                 'load'   '=' string
+                 'mocks'  '=' '{' (identifier ':' mock-policy (',' identifier ':' mock-policy)*)? '}'
+                 'expect' '=' '{' (episode-expect (',' episode-expect)*)? '}'
+
+mock-policy    ::= 'from-log' | 'ignore' | 'ok' '(' expr ')' | 'err' '(' expr ')'
+episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
+                 | 'no-panics' ':' bool
+                 | 'no-errors' ':' bool
+```
+
+`slots-equal: from-log` compares the final slots with the values the log recorded; a record names the slots to compare and their expected values instead.
+
 ### 8.6.1 The Format of the episode log
 
 → Detailed in [Runtime](./runtime.md).
@@ -249,12 +374,18 @@ FAIL  counter-display
 
 ### 8.7.2 Fixing from a failing test
 
-`kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it and re-run (reporting whether the test now passes and whether any other test regressed). It repairs only what it can prove deterministically:
+`kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it once it is known to make the test pass without breaking another. It repairs only what it can prove deterministically:
 
-- If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run.
-- If a tile-test or reducer-test fails on a **string leaf** whose actual value is a *unique* source literal, it replaces that literal with the expected value (the [Output](#_8-7-1-output) snapshot case).
+- If the file does not compile, the test can't run — it reuses the [`fix`](./ai-edit.md) typecheck repairs (did-you-mean name fixes, missing `/404`) so the test can run. **Through the same regression gate**: the composed source is re-parsed and re-typechecked, and the write is rolled back unless it resolves a reported diagnostic and introduces none — or does not parse at all, which is reported as what it is rather than as a pointless repair. A repair refused this way leaves the file byte-identical and says so — it is not "no patch available", and the diagnostics it then reports are the file's own, never the ones the refused patch would have added. The count it reports for a write is the number of patches that changed the source; a dry run reports what it proposes.
+- If a tile-test or reducer-test fails on a scalar leaf, it looks for the one source literal the actual value came from, outside every `test` body — preferring the tested definition, then what it references — and proposes replacing it with the expected value:
+  - a **string, number or boolean leaf** whose actual value is written as a *unique* literal (the [Output](#_8-7-1-output) snapshot case, and a constant such as `fn step() -> Int = 1`). A candidate is a **whole token**: the `1` inside `Btn1`, inside `10`, inside a string or inside a comment is never one;
+  - a **string leaf** whose actual and expected values differ in one middle stretch that a single string literal contains, which is rewritten in place;
+  - a **numeric slot** written by exactly one reducer, in the shape `slot := slot + N`, `- N` or `* N`, whose operand is solved from the two values.
+- `--apply` writes that patch **through a gate**: the patched source is re-parsed, re-typechecked and tested before anything reaches disk, and the write happens only if it compiles, the named test passes, and every test that passed before still passes. A patch refused this way is not written — the file stays as the compile repair above left it, byte-identical to before the call when there was none — and the refusal says why: it does not parse, it introduces a diagnostic (listed), the test runner throws on it, the named test does not run, the named test still fails, or it would make a test that passed before fail or stop running (named). A refusal is reported as such, never as an applied fix and never as a raw compile error. A dry run (no `--apply`) proposes the patch without running the gate.
 
-Non-literal divergences (numeric slots, wrong operators, effect-list mismatches) are reported as a diff rather than guessed.
+Every other divergence (wrong operators, effect-list mismatches, a value no single literal accounts for) is reported as a diff rather than guessed.
+
+A **warning is not a compile error** here. A file whose only diagnostic is a `W02xx` compiles, so the test runs and the behavioural repair is proposed with the warning listed under it.
 
 ## 8.8 Integration Tests (browser-driven)
 
@@ -307,8 +438,8 @@ Because it is heavy (browser binaries), it is not included in the default CI tes
 **Fixture shape (`.browser.json`).** A `.browser.json` is the same JSON as a `scenario.json` — `{ "steps": [{ "label"?, "do"?, "expect"? }, ...] }` — with these intentional differences from the scenario tier:
 
 - `expect` may additionally use the browser-only assertions `focused` / `visible` / `hidden` / `animating` described above, and `elementState`.
-- Uncaught JS exceptions and `console.error` output are **always fatal** at this tier — a real defect must not slip through as "green with warnings". `expect.noErrors` is accepted for scenario-format compatibility but is redundant here.
-- `effects: { ... }` (the scenario tier's capability-boundary mock) is **not supported**, and a fixture carrying one is refused rather than run — the browser tier drives a real Chromium against the real DOM/CSS on purpose, and silently ignoring the block would leave a fixture believing its requests were stubbed while they left the machine. The `expect` keys and action kinds are a closed set here too — the scenario tier's, minus `errorIncludes` and minus the `key` / `hover` actions, plus the browser-only names above and `setProperty` — checked before the page is opened, values as well as kinds. `errorIncludes` asks the runner to *require* an error, which this tier treats as fatal, so a fixture using it is refused rather than left unevaluated. `{submit}` calls `requestSubmit()` rather than dispatching an event, because running the real thing — constraint validation included — is what this tier is for.
+- Uncaught JS exceptions and `console.error` output are **always fatal** at this tier — a real defect must not slip through as "green with warnings". `expect.noErrors` is accepted for scenario-format compatibility but is redundant here. A step whose action could not run is reported as `actionError` and fails the step, exactly as at the scenario tier — kept off the always-fatal error list because a fixture's own broken selector is not a defect in the app. `{fill}` names the element it matched, which Playwright's own refusal does not, so **a selector that drifted onto a wrapper** reads the same message in both tiers. A control the platform refuses is likewise refused here in the same words, by the same rule — asked before Playwright's own actionability, which would otherwise answer three seconds later and, for `{focus}`, not at all.
+- `effects: { ... }` (the scenario tier's capability-boundary mock) is **not supported**, and a fixture carrying one is refused rather than run — the browser tier drives a real Chromium against the real DOM/CSS on purpose, and silently ignoring the block would leave a fixture believing its requests were stubbed while they left the machine. The `expect` keys and action kinds are a closed set here too — the scenario tier's, minus `errorIncludes` and minus the `key` / `hover` actions, plus the browser-only names above and `setProperty` — checked before the page is opened, values as well as kinds. `actionErrorIncludes` is **not** among the ones removed: the refusal it asserts comes from a rule both tiers ask, so a fixture asserting one has to be runnable at both. `errorIncludes` asks the runner to *require* an error, which this tier treats as fatal, so a fixture using it is refused rather than left unevaluated. `{submit}` calls `requestSubmit()` rather than dispatching an event, because running the real thing — constraint validation included — is what this tier is for.
 - The runner serves the compiled app on a fixed intercepted origin (`http://kumiki.local/`), so the default history-based router runs as it would in production — `navigate` actions round-trip through real `history.pushState`. There is no per-fixture router-mode switch.
 
 Drop a fixture at `packages/examples/features/<name>.browser.json` (paired with the sibling `<name>.kumiki`) or `packages/examples/apps/<app>/<any>.browser.json` (paired with `app.kumiki` in the same directory) and `pnpm test:e2e` picks it up automatically — one Playwright test per fixture. `kumiki-e2e <file> <scenario.json> [--headed]` remains the single-fixture CLI wrapper (same runner, own Chromium).
@@ -328,10 +459,42 @@ These run in default CI (no browser binaries), so a re-introduced dropped-expres
 
 `kumiki run <file> <scenario.json>` (MCP: `kumiki_run_scenario`) drives the app with a **scenario** and returns a structured trace for each step. This becomes the foundation for a "generate → execute → observe → fix loop without a human in the loop."
 
-- **Action**: `{dispatch, payload?}` (fire a reducer by name) / `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`. `{focus}`, `{blur}`, `{key}` and `{hover}` dispatch a real DOM event on a selector match — `FocusEvent`, a `KeyboardEvent` carrying `value` as its `key`, and a `mouseenter` — so the scenario tier alone verifies the `addEventListener` wiring that feeds `ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducers. Each is dispatched on the element the selector matches, which is where the runtime attaches its listener. `keydown` bubbles from there, which is what lets `ui.key(Container)` be driven from a focusable descendant; `focus`, `blur` and `mouseenter` do not bubble, and a browser fires a separate `mouseenter` on each ancestor rather than propagating one. A `ui.key` reducer's payload carries `key` and `code`: only `key` is set from this tier, since a `code` names a physical key that a scenario asking for `"Enter"` has not chosen. `{submit}` dispatches the form event a `ui.submit` reducer listens for; its selector may name the form or anything inside it, since a `form` tile carries no id unless its author gave it one. `{wait}` settles for that many milliseconds on top of the step's own settle, which is how a debounce window, a retry backoff or a timer is observed — a step with no action does not settle at all.
-- **Observation**: after each step, record `state` (a slot snapshot), `domText`, `errors`, and `emits` (the fired effects).
-- **Assertion (expect)**: `{ noErrors?, errorIncludes?, state?, domIncludes?, domExcludes? }` — a **closed set**, as the action list above is. A key outside it fails the run rather than being skipped, and the browser-only names (`focused` / `visible` / `hidden` / `animating` / `elementState`, and the `setProperty` action) fail with a message naming the tier that owns them, so a `.browser.json` **whose assertions are browser-tier** is refused instead of passing having checked nothing. A fixture that happens to assert only what a headless DOM can answer runs here unchanged, and one in the corpus does. The document itself is closed the same way — `steps` (required, and non-empty: a scenario that asserts nothing must not report success) plus `effects` / `defaultEffect` — so a misspelled `steps` is named rather than read as absent. A scenario is validated before the app is mounted, and every problem in it is reported at once. `state` is a **partial match against slot state** (dot-separated paths allowed). `errorIncludes` is the counterpart to `noErrors` — each substring must appear in some error reported during that step — for contracts whose whole point is that the runtime *surfaces* something, such as a reducer batch a refinement rejected ([batching](./runtime.md#a-batch-commits-all-or-nothing)) or an effect error no `.err` reducer consumes. It is scenario-tier only: the browser tier treats any reported error as fatal. Because you can verify state rather than DOM text, it can mechanically detect **non-exception behavior bugs** (the class a human notices by clicking), such as "a select always ending up at the last option." This is equivalent to making the acceptance criteria (AC) of TDD executable.
+- **Action**: `{dispatch, payload?}` (fire a reducer by name) / `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`. `{focus}`, `{blur}`, `{key}` and `{hover}` dispatch a real DOM event on a selector match — `FocusEvent`, a `KeyboardEvent` carrying `value` as its `key`, and a `mouseenter` — so the scenario tier alone verifies the `addEventListener` wiring that feeds `ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducers. Each is dispatched on the element the selector matches, which is where the runtime attaches its listener. `keydown` bubbles from there, which is what lets `ui.key(Container)` be driven from a focusable descendant; `focus`, `blur` and `mouseenter` do not bubble, and a browser fires a separate `mouseenter` on each ancestor rather than propagating one. A `ui.key` reducer's payload carries `key` and `code`: only `key` is set from this tier, since a `code` names a physical key that a scenario asking for `"Enter"` has not chosen. `{submit}` dispatches the form event a `ui.submit` reducer listens for; its selector may name the form or anything inside it, since a `form` tile carries no id unless its author gave it one. The step runs whether or not the form submits: a form whose bound fields fail validation does not call its reducer ([forms.md §5.2.2](./forms.md#_5-2-2-submit-behavior)), which is the platform's answer rather than a fault in the step, so a step asserting a submit — or its absence — says so with a `state` expectation. `{fill, value}` writes to an `input`, a `textarea` or an `editable`, and is refused — naming the element it did match — on anything else, so a selector that drifts onto a wrapper fails rather than assigning a property nothing reads. `{wait}` settles for that many milliseconds on top of the step's own settle, which is how a debounce window, a retry backoff or a timer is observed — a step with no action does not settle at all.
+- **Observation**: after each step, record `state` (a slot snapshot), `domText`, `errors`, and `emits` (the fired effects). An action that could **not run** — a selector matching nothing, a `fill` aimed at an element that holds no text, a `{dispatch}` naming a reducer the app does not have or one whose `#id` scope the payload does not carry, or **a control the platform would refuse to drive** (see [below](#a-step-cannot-drive-a-control-the-platform-refuses)) — is recorded separately, as `actionError`, and fails the step. It is not an `error`: nothing was observed about the app, so neither `noErrors` nor `errorIncludes` sees it. Folding the two together let a fixture assert that its own mistake happened (`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` passed, having pressed nothing).
+- **Assertion (expect)**: `{ noErrors?, errorIncludes?, actionErrorIncludes?, state?, domIncludes?, domExcludes? }` — a **closed set**, as the action list above is. A key outside it fails the run rather than being skipped, and the browser-only names (`focused` / `visible` / `hidden` / `animating` / `elementState`, and the `setProperty` action) fail with a message naming the tier that owns them, so a `.browser.json` **whose assertions are browser-tier** is refused instead of passing having checked nothing. A fixture that happens to assert only what a headless DOM can answer runs here unchanged, and one in the corpus does. The document itself is closed the same way — `steps` (required, and non-empty: a scenario that asserts nothing must not report success) plus `effects` / `defaultEffect` — so a misspelled `steps` is named rather than read as absent. A scenario is validated before the app is mounted, and every problem in it is reported at once. `state` is a **partial match against slot state** (dot-separated paths allowed). `errorIncludes` is the counterpart to `noErrors` — each substring must appear in some error reported during that step — for contracts whose whole point is that the runtime *surfaces* something, such as a reducer batch a refinement rejected ([batching](./runtime.md#a-batch-commits-all-or-nothing)) or an effect error no `.err` reducer consumes. It is scenario-tier only: the browser tier treats any reported error as fatal. It can only be satisfied by an error the app reported — a step whose action could not run reports `actionError` instead, and fails. `actionErrorIncludes` is that other channel's counterpart: each substring must appear in the step's `actionError`, and a matched one moves to `expectedActionError` and stops failing the step. It exists because a refusal is often the behaviour a fixture means to assert — "the save button is disabled while the save is in flight, so clicking it does nothing" had no spelling before it, and the step that drove the disabled control passed whether the guard held or the reducer simply did not exist. It is one-directional in the other sense too: a step that asks to be refused and is **not** refused fails, so the day the rule stops refusing, every fixture asserting a refusal goes red rather than green. Because you can verify state rather than DOM text, it can mechanically detect **non-exception behavior bugs** (the class a human notices by clicking), such as "a select always ending up at the last option." This is equivalent to making the acceptance criteria (AC) of TDD executable.
 - **effect script**: `effects: { <name>: [{outcome, value}, ...] }` replaces HTTP / Storage results in order, keeping the loop deterministic and network-independent.
+- **Teardown**: the run disposes its mount before it returns, so nothing outlives the report — a `timer` reducer's interval stops, the host lifecycle listeners come off, and the shape is free to be mounted again. The rendered DOM goes with it, so a caller that needs to inspect elements rather than `domText` mounts the app itself.
+
+#### A step cannot drive a control the platform refuses
+
+A scenario exists to answer "does this app work when a user drives it". Writing the value and dispatching the event bypasses the platform, so a `fill` on a `disabled` field used to move the slot and run the `ui.input` reducer — green, and asserting behaviour the product cannot produce. That is the expensive direction: an app disables a field for a reason (a pending save, an unauthorized user), the scenario types into it anyway, and the tier reports that the guard holds when nothing was tested.
+
+Before a verb drives a control, one rule decides. What each verb asks of the control:
+
+| asks | verbs |
+|---|---|
+| a gesture | `{click}`, `{clickText}`, `{choose}`, `{focus}`, `{blur}`, `{key}` |
+| typing | `{fill}` |
+
+and what a control refuses:
+
+| state | refuses | reported as |
+|---|---|---|
+| `disabled` | both | `disabled` |
+| `readonly` | typing | `readonly` |
+| `contenteditable="false"` | typing | `not editable` |
+
+A refused step reports `actionError` and fails, naming the control and the reason; `expect.actionErrorIncludes` is how a fixture asserts the refusal instead. It matches the refusal alone rather than the whole `actionError` channel, so a step cannot claim one on a selector that matched nothing — `no element matching selector #save-disabled` contains `disabled`, and claiming it would be the same "passed having tested nothing" one level up.
+
+All three drivers ask it: both scenario tiers, and `kumiki smoke`, which exercises whatever controls it finds. Smoke *skips* a refused control rather than reporting it — it runs no written script, so a control it cannot drive is nobody's mistake — but firing at one lied in both directions, reporting a reducer behind an unreachable button as a defect and hiding a guard that stopped working.
+
+Three consequences are deliberate, and each is measured against Chromium rather than read off the HTML spec ([`disabled-controls.spec.ts`](https://github.com/kumikijs/Kumiki/blob/main/packages/e2e/tests/disabled-controls.spec.ts) is that measurement kept as a test):
+
+- **`{hover}` is not a control verb.** Chromium fires `mouseenter` on a `disabled` `<input>` and on a `disabled` `<button>`, so a `ui.hover` reducer on one does run. Refusing the step would invent a rule the platform does not have — which is the opposite bug, and the worse one, because it reports a working program broken.
+- **`readonly` refuses the typing alone.** A readonly `<input>` is focusable and does receive `keydown`, so `{focus}` and `{key}` still drive one.
+- **An `editable` reports `not editable`, not `disabled`.** `disabled` and `readonly` both render `contenteditable="false"` on it and nothing in the DOM distinguishes them, so the reason given is the one that is true.
+
+`{submit}` targets a form rather than a control, and `{dispatch}` / `{navigate}` drive a seam rather than the DOM, so none of them asks this. A verb aimed at the `<label>` that `check` / `radio` / `switch` put the tile's id on is judged by the `<input>` inside it, because a browser judges the control rather than the label. A verb aimed at something *inside* a disabled control — the spinner a `loading` button renders, say — is judged by that control, because the event a driver dispatches reaches it.
 
 Why this works cleanly in Kumiki: because state is explicit (slots), the oracle is trustworthy; because events are declarative (reducer names), it can be driven precisely; and because effects can be mocked at the capability boundary, it is reproducible. The agent generates "app + scenario (AC)" from requirements and self-corrects by reading the trace, so the human only needs to state the requirements once. The loop procedure is described in `.claude/skills/kumiki-iterate`.
 

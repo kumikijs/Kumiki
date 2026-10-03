@@ -37,8 +37,9 @@ import type {
   TypeExpr,
   UiEventKind,
 } from "./ast.ts";
-import { CONSTANT_NAMESPACES } from "./builtin-calls.ts";
+import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
+import { REFINEMENT_PREDS } from "./refinements.ts";
 
 export class ParseError extends Error {
   constructor(
@@ -71,7 +72,8 @@ type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
  */
 const MAX_NESTING_DEPTH = 256;
 
-const PRIM_TYPES = new Set([
+/** The primitive type names, which a type position reads as `TypePrim`. */
+export const PRIM_TYPES: ReadonlySet<string> = new Set([
   "Int",
   "Text",
   "Bool",
@@ -135,20 +137,6 @@ const VALUE_NAMED_ARGS = new Set([
   "rows",
   "cols",
   "aspect",
-]);
-const REFINE_PREDS = new Set([
-  "between",
-  "nonempty",
-  "len-eq",
-  "len-lt",
-  "len-gt",
-  "positive",
-  "negative",
-  "email",
-  "url",
-  "uuid",
-  "regex",
-  "one-of",
 ]);
 
 class Parser {
@@ -391,13 +379,20 @@ class Parser {
       }
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
-    // Refinement
-    if (this.matchKw("where")) {
+    // Refinement. `refinement-type ::= type-expr 'where' pred-expr` is recursive
+    // (§1.3.1), so the `where`s chain without a bound and every predicate the
+    // type collects has to hold. Read as a loop rather than by recursing:
+    // `parseTypeUnionAtom` above has already taken the first one — folded onto
+    // the `nominal` node as a property, or wrapping a bare atom — and a second
+    // `if` here is what used to cap the form at two, with a third reported as a
+    // parse error while the grammar said otherwise.
+    let refined = first;
+    while (this.matchKw("where")) {
       this.next();
       const ref = this.parseRefinement();
-      return { kind: "TypeRefinement", inner: first, refinement: ref, pos: first.pos };
+      refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
     }
-    return first;
+    return refined;
   }
 
   private typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
@@ -477,7 +472,7 @@ class Parser {
   private parseRefinement(): Refinement {
     const t = this.eat("ident");
     const name = t.value;
-    if (!REFINE_PREDS.has(name)) {
+    if (!REFINEMENT_PREDS.has(name)) {
       throw new ParseError(`Unknown refinement predicate "${name}"`, t.pos);
     }
     const args: (number | string)[] = [];
@@ -684,7 +679,7 @@ class Parser {
       // effect-name.ok / .err
       if (sub === "ok" || sub === "err") {
         this.eat("op", "(");
-        const binds: string[] = [];
+        const binds: NamedRef[] = [];
         if (!this.matchOp(")")) {
           binds.push(this.readBind());
           while (this.matchOp(",")) {
@@ -708,21 +703,19 @@ class Parser {
     throw new ParseError("Expected event pattern", t.pos);
   }
 
-  private readBind(): string {
+  private readBind(): NamedRef {
     if (this.matchOp("_")) {
-      this.next();
-      return "_";
-    }
-    const t = this.peek();
-    if (t.kind === "op" && t.value === "$") {
-      // not actually used; binds in event are bare identifiers per spec
+      const tok = this.next();
+      return { name: "_", pos: tok.pos };
     }
     if (this.matchT("ident", "_")) {
-      this.next();
-      return "_";
+      const tok = this.next();
+      return { name: "_", pos: tok.pos };
     }
+    // `$el` and friends lex as one ident, so a positional name arrives here
+    // whole — the checker decides which of them a bind may take.
     const tok = this.eat("ident");
-    return tok.value;
+    return { name: tok.value, pos: tok.pos };
   }
 
   // ----- statements -----
@@ -1234,7 +1227,8 @@ class Parser {
       // capital-cased identifier; otherwise this is a method call on a value and
       // should be parsed by parsePostfix.
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
-      // A member of a constant namespace, written without parentheses:
+      // A member of a `QUALIFIED_CALL_NAMESPACES` qualifier, written without
+      // parentheses:
       // `EffectId.none` (stdlib §2.1.1.1), `Decoder.Text` / `Decoder.Bytes` /
       // `Decoder.None` (http §6.1.4). Read as a 0-arg Call so typecheck and
       // codegen handle it through the same builtin-call channel as
@@ -1243,13 +1237,20 @@ class Parser {
       // the qualifier's name, which emits `undefined` and which nothing objects
       // to; the member being wrong is then an E0116 rather than silence.
       //
+      // `Duration` and `Bytes` are in that set too, though neither has a
+      // constant member. Reading `Duration.s` as a call is how the missing
+      // argument gets reported at all: as a field read it was `undefined`, and
+      // a `setTimeout(undefined)` is a `setTimeout(0)` — so the spelling
+      // without parentheses reached the failure the arity check exists for,
+      // past the arity check. It is now the same E0213 as `Duration.s()`.
+      //
       // `kw` is accepted alongside `ident` to mirror the parenthesised branch
       // below, which needs it — none of the constants named above lex as a
       // keyword. Matching the two shapes keeps `Decoder.if` a resolvable callee
       // that `checkCallee` names, rather than a parse error in one form and a
       // diagnostic in the other.
       if (
-        CONSTANT_NAMESPACES.has(name) &&
+        QUALIFIED_CALL_NAMESPACES.has(name) &&
         this.matchOp(".") &&
         (this.matchTAt(1, "ident") || this.matchTAt(1, "kw")) &&
         !this.matchTAt(2, "op", "(")

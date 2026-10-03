@@ -5,9 +5,208 @@
 // modules a compiled app actually uses. The assembled full API (classic
 // `mount` with every tile/effect/router wired in) lives in `index.ts`.
 
-import type { Episode, EpisodeLogger, PanicCategory, PanicCauseLink, SlotDiff } from "./episode.ts";
+import type {
+  EnvRead,
+  EnvReadKind,
+  Episode,
+  EpisodeLogger,
+  PanicCategory,
+  PanicCauseLink,
+  SlotDiff,
+} from "./episode.ts";
 
-export type { PanicCategory, PanicCauseLink } from "./episode.ts";
+export type { EnvRead, EnvReadKind, PanicCategory, PanicCauseLink } from "./episode.ts";
+
+// ----- The environment journal (#337, docs/spec/runtime.md §10.5.1) -----
+//
+// `now`, `random()`, `<T>.fresh()` and `prefers-dark()` are the builtins whose
+// answer comes from outside the program. An episode that only records what a
+// reducer WROTE cannot be replayed: the body runs again and reads the
+// environment again, so the replayed `slot-diffs` are a different run's. The
+// journal is the missing half — a scope the runtime opens around a reducer
+// body, recording what each read answered so a replay can hand the same
+// answers back.
+//
+// It is module state rather than a parameter because the reads happen inside
+// `_s.*` calls that codegen emits deep inside an expression; threading a
+// journal to them would mean giving every stdlib helper a context argument.
+//
+// The scope is therefore process-wide while it is open, which makes an
+// unbalanced OPEN the failure that matters: a frame left behind captures every
+// later read, in every runtime copy, and the episode it silently drains
+// records nothing. Nothing in the module prevents that by inspection, so the
+// only way to open one is `withEnvRecord` / `withEnvReplay` below, which close
+// on both exits of the body they take. The raw `beginEnv*` / `endEnvScope`
+// pair stays exported for a host that has to bracket across a boundary a
+// callback cannot span — it is on that caller to balance it.
+//
+// A stack rather than a single slot is not what keeps the balance; what it
+// buys is nesting: a replay scope opened inside a record scope restores the
+// recorder when it closes instead of clearing the journal.
+
+type EnvFrame =
+  | { mode: "record"; reads: EnvRead[] }
+  | { mode: "replay"; remaining: EnvRead[]; live: number; malformed: number };
+
+/**
+ * The stack is hung off `globalThis` rather than kept as a module-local,
+ * because the two halves of a journalled read do not always come from the same
+ * copy of the runtime. `kumiki run` / `kumiki replay` / the test suites drive
+ * an app compiled with `bundle: true` — which carries its own inlined runtime,
+ * and whose reducers therefore call THAT copy's `_s.random()` — using the
+ * tool's own `mount` / `replayEpisodes`. A module-local stack would leave the
+ * recorder opening a scope no read can see. There is one environment per
+ * process, so one journal per process is what describes it.
+ *
+ * A copy old enough not to know a kind simply finds no answer for it and reads
+ * live, which is the same degradation as an under-recorded episode.
+ */
+type EnvJournalHost = { __kumikiEnvJournal__?: EnvFrame[] };
+
+const envStack: EnvFrame[] = ((): EnvFrame[] => {
+  const host = globalThis as EnvJournalHost;
+  const existing = host.__kumikiEnvJournal__;
+  if (existing) return existing;
+  const created: EnvFrame[] = [];
+  host.__kumikiEnvJournal__ = created;
+  return created;
+})();
+
+/**
+ * What each kind's `value` has to be. A `--from-log` file is user-supplied, so
+ * an entry that passes the kind test but carries no usable value would be
+ * consumed and hand the reducer `undefined` — `now.show` renders "undefined"
+ * and the arithmetic goes NaN, without anything throwing. Entries that do not
+ * match are rejected at the scope boundary and counted as `malformed` instead.
+ */
+const ENV_VALUE_TYPE: Record<EnvReadKind, "number" | "string" | "boolean"> = {
+  now: "number",
+  random: "number",
+  "fresh-id": "string",
+  "prefers-dark": "boolean",
+};
+
+/**
+ * What a closed scope observed. `live` and `unused` are the drift between the
+ * recorded run and the replayed one — a read the log could not answer, and a
+ * recorded answer the body never asked for. Both are reported rather than
+ * inferred, because otherwise "returned the recorded value" and "read the
+ * clock again" are indistinguishable after the fact ([§10.5.3]).
+ */
+export type EnvScopeReport = {
+  /** What a record scope journalled, in the order the body asked. Empty for a replay scope. */
+  reads: EnvRead[];
+  /** Reads a replay scope had no recorded answer for, and took from the live source. */
+  live: number;
+  /** Recorded answers the replayed body never asked for. */
+  unused: number;
+  /** Entries rejected as malformed when the scope opened. */
+  malformed: number;
+};
+
+export type EnvScopeOutcome<T> =
+  | { ok: true; value: T; env: EnvScopeReport }
+  | { ok: false; error: unknown; env: EnvScopeReport };
+
+/** Open a scope that records every environment read until `endEnvScope`. */
+export function beginEnvRecord(): void {
+  envStack.push({ mode: "record", reads: [] });
+}
+
+/**
+ * Open a scope that answers environment reads from `reads` (an episode's
+ * recorded `env-reads`) instead of the live source. Takes `unknown` because
+ * the list comes straight out of a log file: anything that is not a
+ * well-formed entry is dropped here rather than reaching a reducer body.
+ */
+export function beginEnvReplay(reads: unknown): void {
+  const list = Array.isArray(reads) ? (reads as unknown[]) : [];
+  // A non-array that is not simply absent is itself one malformed input.
+  let malformed = Array.isArray(reads) || reads == null ? 0 : 1;
+  const remaining: EnvRead[] = [];
+  for (const entry of list) {
+    const read =
+      entry && typeof entry === "object"
+        ? (entry as { kind?: unknown; value?: unknown })
+        : { kind: undefined, value: undefined };
+    const want = ENV_VALUE_TYPE[read.kind as EnvReadKind];
+    if (want !== undefined && typeof read.value === want) {
+      remaining.push({ kind: read.kind as EnvReadKind, value: read.value });
+    } else {
+      malformed++;
+    }
+  }
+  envStack.push({ mode: "replay", remaining, live: 0, malformed });
+}
+
+/**
+ * Close the innermost scope and report what it observed. Safe to call with no
+ * scope open — it answers an empty report.
+ */
+export function endEnvScope(): EnvScopeReport {
+  const frame = envStack.pop();
+  if (!frame) return { reads: [], live: 0, unused: 0, malformed: 0 };
+  if (frame.mode === "record") return { reads: frame.reads, live: 0, unused: 0, malformed: 0 };
+  return {
+    reads: [],
+    live: frame.live,
+    unused: frame.remaining.length,
+    malformed: frame.malformed,
+  };
+}
+
+function withEnvScope<T>(body: () => T): EnvScopeOutcome<T> {
+  let value: T;
+  try {
+    value = body();
+  } catch (error) {
+    // The scope closes on the throwing path too — a reducer that panicked read
+    // the environment before it did, and that is the episode most worth
+    // replaying.
+    return { ok: false, error, env: endEnvScope() };
+  }
+  return { ok: true, value, env: endEnvScope() };
+}
+
+/** Run `body` inside a recording scope. The scope closes on both exits. */
+export function withEnvRecord<T>(body: () => T): EnvScopeOutcome<T> {
+  beginEnvRecord();
+  return withEnvScope(body);
+}
+
+/** Run `body` inside a replay scope seeded with `reads`. Closes on both exits. */
+export function withEnvReplay<T>(reads: unknown, body: () => T): EnvScopeOutcome<T> {
+  beginEnvReplay(reads);
+  return withEnvScope(body);
+}
+
+/**
+ * Read the environment through the journal. `live` is the real source, called
+ * when nothing is recording and when a replay has no unspent answer of this
+ * kind left — an episode that under-records degrades to today's behaviour
+ * (a fresh value) rather than to a throw, and the scope's report says how
+ * often that happened.
+ *
+ * A replay matches by kind rather than by position so an extra read of one
+ * builtin cannot shift another's answers; within one kind the recorded order
+ * is the order they are handed back.
+ */
+export function readEnv<T>(kind: EnvReadKind, live: () => T): T {
+  const frame = envStack[envStack.length - 1];
+  if (!frame) return live();
+  if (frame.mode === "record") {
+    const value = live();
+    frame.reads.push({ kind, value });
+    return value;
+  }
+  for (let i = 0; i < frame.remaining.length; i++) {
+    if (frame.remaining[i]?.kind !== kind) continue;
+    const [read] = frame.remaining.splice(i, 1);
+    return (read as EnvRead).value as T;
+  }
+  frame.live++;
+  return live();
+}
 
 /**
  * SSR slot snapshot — the non-`volatile` slot values an SSR pass produces.
@@ -31,7 +230,17 @@ export type EventHandler = (el: Record<string, unknown>) => void;
  */
 export class KumikiPanic extends Error {
   readonly isKumikiPanic = true as const;
-  readonly location: string | undefined;
+  /**
+   * The tile — or, when a caller supplies one directly, the site — a panic is
+   * attributed to. Raised without one (`panic(message)`, `.get` on `None`) and
+   * filled in by the nearest frame that knows which route target it was
+   * building (`routeTree`), so a boundary or the top-level display can name
+   * that target rather than the tile that caught the panic (lifecycle.md
+   * §7.3). Mutable for that reason alone: `routeTree` writes it only while it
+   * is still empty, so the innermost attribution stands and nothing else
+   * should write it.
+   */
+  location: string | undefined;
   constructor(message: string, location?: string, options?: { cause?: unknown }) {
     // Forward `cause` to the native Error(message, options) so root-cause
     // information survives on the standard `.cause` field. Older callsites
@@ -43,7 +252,7 @@ export class KumikiPanic extends Error {
 }
 
 /** True for a KumikiPanic — also matches across realms where `instanceof` fails. */
-function isPanic(e: unknown): e is KumikiPanic {
+export function isPanic(e: unknown): e is KumikiPanic {
   return (
     e instanceof KumikiPanic ||
     (typeof e === "object" &&
@@ -70,7 +279,13 @@ export type TileNode = (
       kind: "input";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
+      /**
+       * How the field's text reads as a value of the bound position's type,
+       * for a position whose base is `Int`, `Float` or `Time` (forms.md
+       * §5.1.1). Absent for `Text`, which is written as typed.
+       */
+      parse?: BindReader;
       value?: string;
       type?: string;
       placeholder?: string;
@@ -84,13 +299,26 @@ export type TileNode = (
       kind: "textarea";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: string;
       rows?: number;
       placeholder?: string;
       id?: string;
     }
-  | { kind: "check"; checked: boolean; props?: TileProps }
+  | {
+      kind: "check";
+      checked: boolean;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
+  | {
+      kind: "switch";
+      checked: boolean;
+      props?: TileProps;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
   | { kind: "spinner"; props?: TileProps }
   | { kind: "skeleton"; props?: TileProps }
   | { kind: "form"; children: TileNode[]; props?: TileProps }
@@ -112,12 +340,20 @@ export type TileNode = (
       kind: "select";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: unknown;
       options?: Array<{ label: unknown; value: unknown }>;
       placeholder?: string;
     }
-  | { kind: "radio"; props?: TileProps; group?: string; value?: unknown; selected?: boolean }
+  | {
+      kind: "radio";
+      props?: TileProps;
+      group?: string;
+      value?: unknown;
+      selected?: boolean;
+      bind?: string;
+      bindPath?: BindSegment[];
+    }
   | {
       kind: "grid" | "stack" | "region" | "scroll" | "panel" | "fieldset" | "overlay";
       children: TileNode[];
@@ -155,13 +391,12 @@ export type TileNode = (
       kind: "slider";
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       value?: number;
       min?: number;
       max?: number;
       step?: number;
     }
-  | { kind: "switch"; checked: boolean; props?: TileProps }
   | { kind: "error"; field: string; props?: TileProps }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
   | {
@@ -194,7 +429,7 @@ export type TileNode = (
       text: string;
       props?: TileProps;
       bind?: string;
-      bindPath?: string[];
+      bindPath?: BindSegment[];
       id?: string;
     }
 ) & {
@@ -222,6 +457,16 @@ export type TileProps = Record<string, unknown> & {
   el?: Record<string, unknown>;
 };
 
+/**
+ * One predicate of a slot's type, kept apart from the others so a report can
+ * name the one that refused a value.
+ */
+export type RefinementPart = {
+  kind: string;
+  args?: (number | string)[];
+  refine: RefinementCheck;
+};
+
 export type SlotMeta = {
   value: unknown;
   refine?: RefinementCheck;
@@ -229,7 +474,166 @@ export type SlotMeta = {
   /** Refinement predicate name + args — drives the `error` tile's message. */
   refineKind?: string;
   refineArgs?: (number | string)[];
+  /**
+   * Every predicate the slot's type carries, when it carries more than one
+   * (`Text where nonempty where len-lt(9)`), ordered as the chain the type
+   * denotes is read — from the base outward, which inside one type expression
+   * is the order they are written. `refine` above stays the single authority on
+   * whether a value is accepted — it is the conjunction of these — and this
+   * only decides *which* predicate a rejected value is reported against. Absent
+   * for a type with one predicate, where `refineKind`/`refineArgs` name it.
+   */
+  refineAll?: RefinementPart[];
+  /**
+   * The first predicate a value fails **anywhere inside it** — a record field,
+   * a union payload, a container element — with the path to where, or
+   * `undefined` when it passes (language.md §1.3.3). When present it is the
+   * whole gate: {@link slotAccepts} reads it in place of `refine`, and a value
+   * is accepted exactly when it answers `undefined`. Codegen emits it, alone,
+   * for a type that carries a refinement below its own chain — the walk checks
+   * the chain's predicates too — and emits the three fields above only for a
+   * type whose predicates all sit on the type itself.
+   *
+   * Given a `bind` path as `at`, it answers only a failure on that path —
+   * along it, or below where it ends — so a write to one field of a record is
+   * not refused for a sibling the user has not reached yet (forms.md §5.6).
+   */
+  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
 };
+
+/**
+ * One step from a slot's value towards the part of it a predicate refused
+ * (language.md §1.3.3). A string and a number mean what they mean in a
+ * {@link PathSegment} — a record field, a `List` / `Tuple` index — and the
+ * objects name the steps a write path never takes: which variant's payload,
+ * and whether a `Map` step is the key itself or the value stored under it.
+ */
+export type RefinementStep =
+  | string
+  | number
+  | { readonly variant: string; readonly payload?: number }
+  | { readonly key: string | number }
+  | { readonly entry: string | number }
+  | { readonly member: string | number };
+
+/**
+ * Where a value fails a predicate written inside its type: the predicate, and
+ * the steps from the slot's value to the part that fails it, outermost first.
+ * `[]` is the value itself.
+ */
+export type RefinementFailure = {
+  kind: string;
+  args: (number | string)[];
+  path: readonly RefinementStep[];
+};
+
+/**
+ * A path as the rejection report and the spec write it: `.email` for a
+ * field, `[2]` for an index, `.Some` / `.Pair[1]` for a variant's payload,
+ * `.keys["k"]` for a `Map` key, `["k"]` for the value under it, `{"x"}` for a
+ * `Set` member — joined outward-in (`.rows[2].email`).
+ */
+export function showRefinementPath(path: readonly RefinementStep[]): string {
+  return path
+    .map((step) => {
+      if (typeof step === "string") return `.${step}`;
+      if (typeof step === "number") return `[${step}]`;
+      if ("variant" in step)
+        return step.payload === undefined
+          ? `.${step.variant}`
+          : `.${step.variant}[${step.payload}]`;
+      if ("key" in step) return `.keys[${JSON.stringify(step.key)}]`;
+      if ("entry" in step) return `[${JSON.stringify(step.entry)}]`;
+      return `{${JSON.stringify(step.member)}}`;
+    })
+    .join("");
+}
+
+/**
+ * A failed predicate as every report spells it: `between(0, 3)`, `uuid at
+ * .keys["k1"]`, or `its refinement` when the predicate is unnamed. The one
+ * formatter for a refused slot write (runtime.md §10.3.3) and a refused
+ * `Decoder.Json(T)` (effects-decode.ts), since both are the same check.
+ */
+export function showRefinementFailure(f: {
+  kind?: string;
+  args?: readonly (number | string)[];
+  path?: readonly RefinementStep[];
+}): string {
+  const pred =
+    f.kind === undefined
+      ? "its refinement"
+      : f.args && f.args.length > 0
+        ? `${f.kind}(${f.args.join(", ")})`
+        : f.kind;
+  const at = f.path && f.path.length > 0 ? ` at ${showRefinementPath(f.path)}` : "";
+  return `${pred}${at}`;
+}
+
+/** The slot fields that decide whether a value is let in. */
+export type SlotGate = {
+  refine?: RefinementCheck;
+  refineFailure?: RefinementNaming["refineFailure"];
+};
+
+/**
+ * Does the slot's type let `value` in? The one reading of the gate fields
+ * that every check shares — a reducer's write, the batch backstop, a `bind`
+ * write-back, the `error` tile — so a slot built with `refineFailure` alone is
+ * gated as fully as one codegen emitted.
+ *
+ * `at` is the path a `bind` wrote through: only a failure on it refuses the
+ * write. A predicate on the slot's own type is on every path, so a type whose
+ * predicates all sit there (`refine`) is judged whole either way.
+ */
+export function slotAccepts(
+  meta: SlotGate | undefined,
+  value: unknown,
+  at?: readonly BindSegment[],
+): boolean {
+  if (meta?.refineFailure) return meta.refineFailure(value, at) === undefined;
+  return meta?.refine ? meta.refine(value) : true;
+}
+
+/**
+ * The slot fields that name a refusal, as every reader of them takes them.
+ * Package-internal, like the rejection helpers that read it: `index.ts` exports
+ * `SlotMeta` (and the `RefinementPart` it is written in terms of), which is the
+ * shape a host outside this package builds.
+ */
+export type RefinementNaming = {
+  refineKind?: string;
+  refineArgs?: (number | string)[];
+  refineAll?: RefinementPart[];
+  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
+};
+
+/**
+ * The predicate a value fails, out of the ones its slot's type carries: the
+ * first the chain reaches that refuses it, falling back to the slot's single
+ * named predicate. A conjunction's own test cannot answer this — it is one
+ * function that returns false — so a message built from `refineKind` alone
+ * names whichever predicate that field happens to hold, right only while a type
+ * carries exactly one.
+ */
+export function failedRefinement(
+  value: unknown,
+  meta: RefinementNaming | undefined,
+): { kind?: string; args?: (number | string)[]; path?: readonly RefinementStep[] } {
+  // A type with predicates below its own chain answers with the failure
+  // itself, which is the only reader that can say *where* inside the value.
+  if (meta?.refineFailure) {
+    const deep = meta.refineFailure(value);
+    if (!deep) return {};
+    return deep.path.length === 0 ? { kind: deep.kind, args: deep.args } : deep;
+  }
+  const part = meta?.refineAll?.find((p) => !p.refine(value));
+  if (part) return { kind: part.kind, args: part.args ?? [] };
+  const named: { kind?: string; args?: (number | string)[] } = {};
+  if (meta?.refineKind !== undefined) named.kind = meta.refineKind;
+  if (meta?.refineArgs) named.args = meta.refineArgs;
+  return named;
+}
 
 export type ReducerSpec = {
   name: string;
@@ -255,7 +659,14 @@ export type ReducerSpec = {
   };
 };
 
-export type EmitSpec = { effect: string; args: unknown[] };
+/**
+ * One queued `emit`. `key` is the `policy=latest-per-key(...)` key, evaluated
+ * where the emit ran (http.md §6.4): codegen fills it for a reducer's emit of a
+ * keyed effect, and the dispatcher runs the request under it. Absent — an
+ * `app.init` entry, a hand-written `apply`, an effect with no key — the
+ * dispatcher evaluates the effect's own `keyOf` against the live slots.
+ */
+export type EmitSpec = { effect: string; args: unknown[]; key?: string };
 
 export type EffectSpec = {
   name: string;
@@ -278,7 +689,14 @@ export type EffectSpec = {
   invoke: (input: unknown, caps: CapabilityRegistry, signal?: AbortSignal) => Promise<EffectResult>;
 };
 
-export type EffectResult = { kind: "ok"; value: unknown } | { kind: "err"; value: unknown };
+/**
+ * What an invoke resolves to. `final` marks an `err` the retry policy must not
+ * retry: compiled code sets it on a throw it caught inside an invoke, which
+ * would have made one attempt had it reached the dispatcher uncaught.
+ */
+export type EffectResult =
+  | { kind: "ok"; value: unknown }
+  | { kind: "err"; value: unknown; final?: boolean };
 
 /**
  * A host-supplied implementation for a custom capability (one registered via
@@ -531,6 +949,8 @@ export type RoutingImpl = {
    * rendered.
    */
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
+  /** The URL a parsed route was read from: its path, query and hash. */
+  href(route: ParsedRoute): string;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -635,10 +1055,34 @@ export type MountOptions = {
   hydrate?: boolean;
 };
 
+/**
+ * Fills the `route-outlet` of a tree a route target's factory just built, and
+ * hands the tree back. `pickRootTile` passes one to every route-entry factory
+ * (the routeless `app.root` gets none); a parent that declares `sub-routes`
+ * calls it around its own tree from inside its `error-boundary`, so the child
+ * it injects is built under the parent's `try` / `catch` (lifecycle.md §7.3).
+ * A factory that has no outlet may ignore it, and so may one built before the
+ * fill existed: a parent that declares no parameter has its outlet filled
+ * after it returns — outside its boundary, which is the behaviour it was
+ * written for.
+ */
+export type OutletFill = (tree: TileNode) => TileNode;
+
 export type RouteEntry = {
   pattern: string;
-  /** Returns the TileNode for this route given the current state. */
-  tile: () => TileNode;
+  /**
+   * The name of the tile this entry targets. A panic raised while building it
+   * is attributed to this name when it carries none yet; one a nearer frame
+   * already named keeps that name (see `KumikiPanic.location`).
+   */
+  name?: string;
+  /**
+   * Returns the TileNode for this route given the current state. `fill` is
+   * always passed; a factory that declares no parameter (`tile.length === 0`)
+   * is the pre-fill shape `OutletFill` describes, and is filled after it
+   * returns.
+   */
+  tile: (fill?: OutletFill) => TileNode;
   /**
    * Nested route table for parent routes that delegate to a `route-outlet`
    * (spec/routing.md §3.6). When the parent's wildcard pattern matches, the
@@ -761,7 +1205,13 @@ export interface Router {
   subscribe(cb: () => void): () => void;
 }
 
-function emptyRoute(): ParsedRoute {
+/**
+ * The placeholder a mount holds until the router's first sync replaces it from
+ * `parseLocation`, and the route a routeless app keeps for good. Since the
+ * slot is the runtime's rather than the program's, it is also what the test
+ * harness seeds (testing.md §8.2.5).
+ */
+export function emptyRoute(): ParsedRoute {
   return { path: "/", pattern: "/", params: {}, query: {}, hash: NONE };
 }
 
@@ -803,23 +1253,80 @@ export function pickRootTile(app: AppShape, slotValues: Record<string, unknown>)
     const cur = slotValues.route as ParsedRoute;
     for (const r of app.routes) {
       if (r.pattern === cur.pattern && "tile" in r) {
-        const root = r.tile();
-        // §3.6: parent route delegates child rendering to `route-outlet`.
-        if (cur.childPattern && r.subRoutes) {
-          const childEntry = r.subRoutes.find(
-            (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
-          );
-          if (childEntry) injectRouteOutlet(root, childEntry.tile());
-        }
-        return root;
+        // §3.6: parent route delegates child rendering to `route-outlet`. The
+        // child is built inside the parent's factory — through the fill the
+        // factory calls around its own tree — rather than after it returns, so
+        // a boundary the parent declares covers the child (lifecycle.md §7.3).
+        const childEntry =
+          cur.childPattern && r.subRoutes
+            ? r.subRoutes.find(
+                (sr): sr is RouteEntry => "tile" in sr && sr.pattern === cur.childPattern,
+              )
+            : undefined;
+        if (!childEntry) return routeTree(r, keepTree);
+        const fill: OutletFill = (tree) => {
+          if (!injectRouteOutlet(tree, routeTree(childEntry, keepTree))) {
+            // E0113 refuses a `sub-routes` tile whose body never calls
+            // `route-outlet`, but one under `when` / `if` / `match` passes it
+            // and can be absent at runtime. The child was built for nothing,
+            // and a panic in it was the parent's boundary's to catch — loud,
+            // so the smoke / scenario tiers see the outlet that was not there.
+            console.error(
+              `[kumiki] route "${r.pattern}" matched sub-route "${childEntry.pattern}" but tile "${r.name ?? r.pattern}" rendered no route-outlet — the child was discarded`,
+            );
+          }
+          return tree;
+        };
+        // A factory from before the fill existed (or a hand-built one) declares
+        // no parameter and so cannot call it: fill the outlet after the fact,
+        // as the runtime always did. Decided by the declared arity rather than
+        // by whether the fill ran, because a factory that takes it and whose
+        // boundary caught its own body's panic never reached it either — and
+        // there the fallback has replaced the section, child included.
+        const root = routeTree(r, fill);
+        return r.tile.length === 0 ? fill(root) : root;
       }
     }
     // 404 fallback tile
     for (const r of app.routes) {
-      if (r.pattern === "/404" && "tile" in r) return r.tile();
+      if (r.pattern === "/404" && "tile" in r) return routeTree(r, keepTree);
     }
   }
   return app.root ? app.root() : { kind: "text", text: "(no root)" };
+}
+
+/** The fill for a factory whose outlet has nothing to show (or that has none). */
+const keepTree: OutletFill = (tree) => tree;
+
+/**
+ * Build a route target's tree, attributing a panic raised while building it to
+ * the tile the entry names when nothing nearer has. A `sub-routes` child is the
+ * case that needs this: its panic is caught by the parent's boundary, and the
+ * fallback's `PanicInfo.location` should name the child that panicked, not the
+ * parent that declared the boundary (#363). A panic already attributed — by a
+ * frame further in — keeps its attribution.
+ *
+ * `isPanic` accepts a duck-typed panic from another realm or a second copy of
+ * the runtime, so the object written to here is not always one this runtime
+ * built. A frozen one, or a `location` with no setter, would turn the write
+ * into a `TypeError` that replaced the panic — and a boundary re-throws what
+ * is not a panic. Attribution is best-effort for the same reason
+ * `safeErrorField` exists: nothing thrown from inside a panic catch may
+ * displace the panic.
+ */
+function routeTree(entry: RouteEntry, fill: OutletFill): TileNode {
+  try {
+    return entry.tile(fill);
+  } catch (e) {
+    if (isPanic(e) && entry.name !== undefined) {
+      try {
+        if (e.location === undefined) e.location = entry.name;
+      } catch {
+        // host-frozen panic: attribution is best-effort
+      }
+    }
+    throw e;
+  }
 }
 
 /** One slot in a reducer batch whose new value its refinement refuses. */
@@ -829,17 +1336,28 @@ export type RefinementRejection = {
   /** The predicate name + args, when the slot carries them (`between`, [0, 3]). */
   kind?: string;
   args?: (number | string)[];
+  /**
+   * Where inside the value the predicate failed, when that is not the value
+   * itself — see {@link RefinementFailure}.
+   */
+  path?: readonly RefinementStep[];
 };
 
-/** Describe one rejected write, carrying the predicate when the slot names it. */
+/**
+ * Describe one rejected write, carrying the predicate when the slot names it —
+ * the one the value actually fails, where the type carries several
+ * ({@link failedRefinement}).
+ */
 export function refinementRejectionOf(
   slot: string,
   value: unknown,
-  meta: { refineKind?: string; refineArgs?: unknown },
+  meta: RefinementNaming,
 ): RefinementRejection {
   const rejection: RefinementRejection = { slot, value };
-  if (meta.refineKind !== undefined) rejection.kind = meta.refineKind;
-  if (Array.isArray(meta.refineArgs)) rejection.args = meta.refineArgs as (number | string)[];
+  const { kind, args, path } = failedRefinement(value, meta);
+  if (kind !== undefined) rejection.kind = kind;
+  if (args !== undefined) rejection.args = args;
+  if (path !== undefined) rejection.path = path;
   return rejection;
 }
 
@@ -859,15 +1377,12 @@ export function refinementRejectionOf(
  */
 export function refinementRejections(
   next: Record<string, unknown>,
-  slotMetas: Record<
-    string,
-    { refine?: RefinementCheck; refineKind?: string; refineArgs?: unknown }
-  >,
+  slotMetas: Record<string, { refine?: RefinementCheck } & RefinementNaming>,
 ): RefinementRejection[] {
   const out: RefinementRejection[] = [];
   for (const [k, v] of Object.entries(next)) {
     const meta = slotMetas[k];
-    if (!meta?.refine || meta.refine(v)) continue;
+    if (!meta || slotAccepts(meta, v)) continue;
     out.push(refinementRejectionOf(k, v, meta));
   }
   return out;
@@ -887,10 +1402,7 @@ export function refinementRejections(
  */
 export function batchRejections(
   result: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | null | undefined,
-  slotMetas: Record<
-    string,
-    { refine?: RefinementCheck; refineKind?: string; refineArgs?: unknown }
-  >,
+  slotMetas: Record<string, { refine?: RefinementCheck } & RefinementNaming>,
 ): RefinementRejection[] {
   const out: RefinementRejection[] = [];
   const seen = new Set<string>();
@@ -905,15 +1417,13 @@ export function batchRejections(
   return out;
 }
 
-/** `slot "count" cannot hold 4 (between(0, 3))`. */
+/**
+ * `slot "count" cannot hold 4 (between(0, 3))`, and for a predicate written
+ * inside the slot's type, where it failed:
+ * `slot "form" cannot hold {"email":"nope"} (email at .email)`.
+ */
 function describeRejection(r: RefinementRejection): string {
-  const pred =
-    r.kind === undefined
-      ? "its refinement"
-      : r.args && r.args.length > 0
-        ? `${r.kind}(${r.args.join(", ")})`
-        : r.kind;
-  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${pred})`;
+  return `slot ${JSON.stringify(r.slot)} cannot hold ${showRejectedValue(r.value)} (${showRefinementFailure(r)})`;
 }
 
 /**
@@ -1009,16 +1519,193 @@ const ROOT_ATTR = "data-kumiki-root";
  */
 export type MountedApp = AppShape & {
   _dispatch: (name: string, el: Record<string, unknown>) => void;
-  _setSlot: (name: string, value: unknown) => void;
+  /**
+   * Write a slot through its refinement: `true` when the value was taken,
+   * `false` when the refinement refused it and nothing changed.
+   */
+  _setSlot: (name: string, value: unknown, at?: readonly BindSegment[]) => boolean;
   _navigate: (path: string, replace?: boolean) => void;
   _prefetch: (name: string, args: Record<string, string>, to: string) => void;
   _rerender: () => void;
   /** Prefetch dedupe set (§3.8), lazily created on first link prefetch. */
   _prefetched?: Set<string>;
+  /**
+   * The open episode's id, for a caller that is inside this app's render pass
+   * and has no other way to reach its logger — `_s.boundaryPanic` is the one
+   * ({@link currentEpisodeId}). Absent when the host attached no logger.
+   */
+  _episodeId?: () => string | undefined;
   live: Record<string, unknown>;
 };
 
 const appByRoot = new WeakMap<Element, MountedApp>();
+
+/**
+ * How a bound `input`'s text reads as the base of the position it binds
+ * (forms.md §5.1.1): `read` answers `Some(value)` to write, or `None` for text
+ * that spells no value of the base, which is refused. `as` names the base, so
+ * `error(field=…)` can say which reading the text failed (forms.md §5.7.2).
+ */
+export type BindReader = {
+  as: "Int" | "Float" | "Time";
+  read: (text: string) => { _tag: string; _0?: unknown };
+};
+
+/**
+ * A value a `bind` wrote and its slot refused (forms.md §5.1.2): the value
+ * written, the path inside the slot it was written to (`[]` for the slot
+ * itself), what the control was showing when it was refused, and — when the
+ * refusal was the text not reading as the bound base at all rather than a
+ * refinement — which base it failed to read as.
+ *
+ * The field's value and not the slot value the write would have produced: a
+ * bind into one field of a record is judged at that field (§5.6), so its
+ * siblings go on being written, and what the field shows has to be laid over
+ * the record as it is now rather than as it was when the refusal happened.
+ */
+type RefusedBind = {
+  slot: string;
+  path: readonly BindSegment[];
+  value: unknown;
+  shown: string;
+  unread: BindReader["as"] | undefined;
+};
+
+/**
+ * Per app, the controls whose shown value their slot refused. A refused bind
+ * leaves the slot as it was and the control as the user left it, so the two
+ * disagree; this is what lets `error(field=…)` speak for what the field shows
+ * rather than for the value the slot kept.
+ *
+ * Keyed by the app, not the view: every view of a shape (runtime.md §10.9.1)
+ * shares this map, so a lookup is scoped to the view being rendered — a value
+ * refused in one view is not what another view's field shows.
+ */
+const refusedBinds = new WeakMap<object, Map<HTMLElement, RefusedBind>>();
+
+/** What a bound control shows: a box's tick, its value, or an editable's text. */
+function shownValue(el: HTMLElement): string {
+  const inp = el as HTMLInputElement;
+  if (inp.type === "checkbox" || inp.type === "radio") return String(inp.checked);
+  return "value" in el ? String(inp.value) : (el.textContent ?? "");
+}
+
+/**
+ * Record the outcome of a `bind` write from `el`: a refused one is remembered
+ * against the control, an accepted one clears whatever was. Entries whose
+ * control has left the page are dropped on the way past, so a refused write on
+ * a control nothing ever asks about (no `error(field=…)` for its slot) does not
+ * keep the detached element alive for the app's lifetime.
+ */
+export function noteBindWrite(
+  app: object,
+  el: HTMLElement,
+  slot: string,
+  value: unknown,
+  accepted: boolean,
+  path: readonly BindSegment[] = [],
+  unread?: BindReader["as"],
+): void {
+  let byEl = refusedBinds.get(app);
+  if (byEl) {
+    for (const other of byEl.keys()) if (!other.isConnected) byEl.delete(other);
+  }
+  if (accepted) {
+    byEl?.delete(el);
+    return;
+  }
+  if (!byEl) {
+    byEl = new Map();
+    refusedBinds.set(app, byEl);
+  }
+  byEl.set(el, { slot, path, value, shown: shownValue(el), unread });
+}
+
+/** Where a refused value counts as shown: a view's root, or any set of controls. */
+export type BindView = Pick<Node, "contains">;
+
+/**
+ * The value `slot` shows inside `view`: `held` — the slot's own value — with
+ * every refused value a control bound into it is still showing laid over it at
+ * the path that control writes, or `undefined` when no control there shows a
+ * refused one. Two controls showing refused values at the same path are one
+ * field shown twice, and the first speaks for it. A shallower path is laid
+ * before a deeper one — a control bound to the whole slot shows the value its
+ * fields sit in — whichever of them was refused first.
+ *
+ * An entry whose control has left the page, or no longer shows what was
+ * refused — a reducer rewrote the slot and the control followed it — is
+ * stale, and every stale entry for the slot is dropped here rather than by
+ * every path that can move a control. A live entry in another view is kept
+ * and not used.
+ */
+export function refusedBindShown(
+  app: object,
+  slot: string,
+  view: BindView | undefined,
+  held?: unknown,
+): Pick<RefusedBind, "value" | "unread"> | undefined {
+  const byEl = refusedBinds.get(app);
+  if (!byEl) return undefined;
+  const shown: RefusedBind[] = [];
+  for (const [el, r] of byEl) {
+    if (r.slot !== slot) continue;
+    if (!el.isConnected || shownValue(el) !== r.shown) {
+      byEl.delete(el);
+      continue;
+    }
+    if (view?.contains(el)) shown.push(r);
+  }
+  if (shown.length === 0) return undefined;
+  shown.sort((a, b) => a.path.length - b.path.length);
+  const laid = new Set<string>();
+  let value = held;
+  let unread: BindReader["as"] | undefined;
+  for (const r of shown) {
+    const at = JSON.stringify(r.path);
+    if (laid.has(at)) continue;
+    laid.add(at);
+    value = r.path.length > 0 ? _setPathHelper(value ?? {}, r.path, r.value) : r.value;
+    unread ??= r.unread;
+  }
+  return { value, unread };
+}
+
+/** A field as it shows, judged: valid, or why not (see `judgeShownField`). */
+export type ShownField =
+  | { valid: true }
+  | { valid: false; unread: BindReader["as"] }
+  | { valid: false; unread?: undefined; value: unknown };
+
+/**
+ * Whether the field bound to `slot` is valid as it shows inside `view`
+ * (forms.md §5.1.2), and if not, what is wrong with it. Text a control shows
+ * that reads as no value of the bound base (`"1.5"` into an `Int`) is judged
+ * first, whatever the refinement; then a refused value a control there still
+ * shows, else the slot's own value, against the slot's refinement.
+ *
+ * `error(field=…)` renders its message from this and a form's submit is gated
+ * on it (§5.2.2), so given the same view the two cannot disagree. They are
+ * not always handed the same view: the tile asks about the view being
+ * rendered, the form about its own controls.
+ */
+export function judgeShownField(
+  app: AppShape,
+  slot: string,
+  view: BindView | undefined,
+): ShownField {
+  const meta = app.slots?.[slot];
+  const held = app.live?.[slot] ?? meta?.value;
+  const refused = refusedBindShown(app, slot, view, held);
+  if (refused?.unread) return { valid: false, unread: refused.unread };
+  const value = refused ? refused.value : held;
+  return slotAccepts(meta, value) ? { valid: true } : { valid: false, value };
+}
+
+/** The controls a refused bind is remembered against, for `app`. */
+export function refusedBindControls(app: object): HTMLElement[] {
+  return [...(refusedBinds.get(app)?.keys() ?? [])];
+}
 
 /**
  * The live mount of an `AppShape`, if it has one. A shape carries the app's
@@ -1173,6 +1860,73 @@ export function getRenderingApp(): MountedApp | undefined {
   return renderingApp ?? undefined;
 }
 
+/** Non-null only while one view's render pass is running: that view's host. */
+let renderingView: Element | null = null;
+
+/**
+ * The host of the view whose render pass is executing, if any. A shape
+ * mounted twice renders each view in turn under one `withRenderingApp`, so
+ * this — not the app — is what tells render-time state that belongs to one
+ * view (a refused bind, forms.md §5.1.2) which view is asking.
+ */
+export function getRenderingView(): Element | undefined {
+  return renderingView ?? undefined;
+}
+
+/** Bracket one view's render pass; saved/restored like {@link withRenderingApp}. */
+function withRenderingView<T>(view: Element, fn: () => T): T {
+  const prev = renderingView;
+  renderingView = view;
+  try {
+    return fn();
+  } finally {
+    renderingView = prev;
+  }
+}
+
+/**
+ * Where {@link currentEpisodeId} reads its answer from.
+ *
+ * Hung off `globalThis` for the same reason the environment journal above is,
+ * and it is the same failure when it is not: an app compiled with
+ * `bundle: true` carries its own inlined runtime, so the `_s.boundaryPanic`
+ * that asks belongs to THAT copy while the `mount` that renders belongs to the
+ * tool's. A module-local leaves the asking copy looking at a pass nothing ever
+ * opened, and the answer is a silent `None` — which is exactly what the first
+ * cut of this did. `kumiki run` / the test suites drive apps that way, so it
+ * is the normal case, not the exotic one.
+ *
+ * `undefined` is in the type, not just implied by `?`: under
+ * `exactOptionalPropertyTypes` the restore in {@link withRenderingApp}'s
+ * `finally` writes back whatever it saved, and outside any render that is
+ * `undefined`.
+ */
+type RenderEpisodeHost = {
+  __kumikiRenderEpisode__?: (() => string | undefined) | null | undefined;
+};
+
+/**
+ * The episode open around the render pass now executing, for `PanicInfo`'s
+ * `episode-id` on the boundary path.
+ *
+ * `_s.boundaryPanic` is called from generated code deep inside a tile
+ * expression and has no mount in hand, so it asks the render pass instead.
+ * A render from `applyReducer`'s tail runs before that dispatch's
+ * `endTrigger`, so there the answer is the episode the panic belongs to.
+ * Other renders have no episode open around them — `updateRoute` renders after
+ * each `route.enter` reducer has opened and closed its own, and the
+ * leave-confirm paths and the `_setSlot` host seam render outside any dispatch
+ * — and a boundary panic in one of those is `None` even with a logger
+ * attached. So is the first paint, and so is a host that attached no logger.
+ *
+ * {@link withRenderingApp} is the only writer and restores the previous value
+ * on both exits, so a nested mount inside a render (a custom element that
+ * mounts its own app) leaves the outer pass's answer intact.
+ */
+export function currentEpisodeId(): string | undefined {
+  return (globalThis as RenderEpisodeHost).__kumikiRenderEpisode__?.();
+}
+
 /**
  * Bracket a render pass. Saved/restored (not just cleared) because a custom
  * element inside the tree can synchronously mount a nested Kumiki app while
@@ -1185,12 +1939,16 @@ export function getRenderingApp(): MountedApp | undefined {
  */
 export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
   const prev = renderingApp;
+  const host = globalThis as RenderEpisodeHost;
+  const prevEpisode = host.__kumikiRenderEpisode__;
   // Renders only run from mountCore, after the imperative seams are attached.
   renderingApp = app as MountedApp;
+  host.__kumikiRenderEpisode__ = (app as MountedApp)._episodeId;
   try {
     return fn();
   } finally {
     renderingApp = prev;
+    host.__kumikiRenderEpisode__ = prevEpisode;
   }
 }
 
@@ -1305,6 +2063,7 @@ export function mountCore(
     (effect, outcome, value, key, token) => {
       handleEffectResult(effect, outcome, value, key, token);
     },
+    handleCapabilityRefusal,
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
     episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
     episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
@@ -1352,6 +2111,13 @@ export function mountCore(
      */
     tree: TileNode | null;
     map: TileElementMap;
+    /**
+     * The theme `tree` was painted under. Token props are resolved to literal
+     * values when a tile renders, so a node that compares equal across a theme
+     * switch still carries the old theme's values; a pass that finds the theme
+     * changed repaints instead of diffing (style.md §4.6).
+     */
+    theme: string | null;
   };
   /** What one pass produced: the tree it painted, and what it freshly built. */
   type PassResult = { tree: TileNode | null; touched: string[] };
@@ -1361,6 +2127,7 @@ export function mountCore(
     root: null,
     tree: null,
     map: new WeakMap(),
+    theme: null,
   });
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
@@ -1374,7 +2141,7 @@ export function mountCore(
     views.push(view);
     registerAppRoot(into, app);
     withRenderingApp(app, () => {
-      renderPass(view);
+      withRenderingView(view.target, () => renderPass(view));
     });
     return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
   };
@@ -1394,16 +2161,25 @@ export function mountCore(
   // tree walk. The diff with the new render's set drives the
   // `tile.mount(X) / tile.unmount(X)` lifecycle reducers (§7.1.6).
   let prevMountedTiles = new Set<string>();
+  // True while `route.error` handlers run from inside a render pass's catch.
+  // Their writes must not start a render of their own: the page they would
+  // render is the one that just panicked, so it panics again and fires the
+  // handlers again, one level deeper each time, until the stack overflows —
+  // and then whichever frame the overflow lands in decides what the handlers
+  // last saw. The catch re-renders once after they return; that is the render
+  // their writes (a navigation included) reach.
+  let inRouteErrorHandlers = false;
   const render = (): void => {
     // Late effect results (e.g. an in-flight fetch that resolves after the app
     // was disposed) must not touch the DOM — each view's root has already been
     // detached by dispose()'s `replaceChildren()`, so replaceChild would throw.
-    if (disposed) return;
+    if (disposed || inRouteErrorHandlers) return;
     withRenderingApp(app, () => {
       const touched: string[] = [];
       let tree: TileNode | null = null;
       for (let i = 0; i < views.length; i++) {
-        const pass = renderPass(views[i]!);
+        const view = views[i]!;
+        const pass = withRenderingView(view.target, () => renderPass(view));
         if (i === 0) tree = pass.tree;
         touched.push(...pass.touched);
       }
@@ -1470,6 +2246,18 @@ export function mountCore(
     }
 
     maybeReapplyTheme(app);
+    const theme = resolvedThemeName(app) ?? null;
+    const themeChanged = theme !== view.theme;
+    // A switch that rebuilds a painted tree: what it inserts already played its
+    // enter animation on the element it replaces, and a refused bind's text
+    // goes with that element (§10.3.6), so its field error goes too.
+    const repaint = themeChanged && view.tree !== null;
+    view.theme = theme;
+    settling = repaint;
+    const refused = refusedBinds.get(app);
+    if (repaint && refused) {
+      for (const el of refused.keys()) if (target.contains(el)) refused.delete(el);
+    }
     // Per-pass mapping ctx: `tileCtx.render(n)` records `n → element` into
     // `newMap` (and recursively for its children). Reconcile also writes into
     // `newMap` when it decides to *reuse* an old element (bypassing render).
@@ -1494,7 +2282,7 @@ export function mountCore(
     touched = [];
     try {
       renderedTree = pickRootTile(app, slotValues);
-      if (view.tree && view.root) {
+      if (view.tree && view.root && !themeChanged) {
         // Diff path: reuse unchanged tile DOM in place, rebuild only changed
         // subtrees. `reconcileTree` returns the (possibly new) root — it can
         // differ from `view.root` if the root tile itself was rebuilt.
@@ -1527,8 +2315,9 @@ export function mountCore(
           target.replaceChild(dom, view.root);
         }
       } else {
-        // Initial mount, or first render after a panic reset — no old tree
-        // to diff against.
+        // Initial mount, first render after a panic reset, or a theme switch —
+        // no old tree to diff against, or one whose resolved token values are
+        // all stale.
         dom = tileCtx.render(renderedTree);
         if (view.root) {
           target.replaceChild(dom, view.root);
@@ -1585,6 +2374,7 @@ export function mountCore(
         target.appendChild(dom);
       }
     }
+    settling = false;
     view.root = dom;
     // On panic (either the primary render threw and no route.error recovered
     // it, or the recovery render also threw), abandon the diff baseline so the
@@ -1610,13 +2400,24 @@ export function mountCore(
       // ", ], or backslash — so it does not need attribute-value escaping
       // here. `snap.id` may be user-authored (`{id: "..."}`) and IS routed
       // through `CSS.escape` below.
-      let sel: Element | null = snap.bind
-        ? target.querySelector(`[data-kumiki-bind="${snap.bind}"]`)
-        : snap.id
-          ? target.querySelector(`#${CSS.escape(snap.id)}`)
-          : null;
-      // Fall back to DOM-path restore for inputs without bind/id (e.g.
-      // `value=`-only search boxes). Identifies the element by its position.
+      //
+      // A marker names the control only when one control carries it. Every
+      // radio of a bound group carries the same one, as do two controls bound
+      // to the same slot, and the first match is then a sibling of the
+      // focused control — so a shared marker falls through to the id and the
+      // DOM path, which tell the siblings apart.
+      const byBind = snap.bind
+        ? target.querySelectorAll(`[data-kumiki-bind="${snap.bind}"]`)
+        : null;
+      let sel: Element | null =
+        byBind?.length === 1
+          ? (byBind[0] ?? null)
+          : snap.id
+            ? target.querySelector(`#${CSS.escape(snap.id)}`)
+            : null;
+      // Fall back to DOM-path restore for inputs without a unique bind or an
+      // id (e.g. `value=`-only search boxes, a bound radio group). Identifies
+      // the element by its position.
       if (!sel && snap.path) sel = elementAtPath(snap.path, target);
       if (
         sel &&
@@ -1692,24 +2493,28 @@ export function mountCore(
       (r) => r.event.kind === "lifecycle" && r.event.name === eventName,
     );
     if (handlers.length === 0) return false;
-    // User-facing $event stays limited to the fields the Kumiki PanicInfo
-    // type documents (message / location + category). `stack` and `cause`
-    // are intentionally NOT splatted — a raw devtools stack in production UI
-    // is a footgun; those fields live in the episode-log only.
-    const info: {
-      message: string;
-      location?: string;
-      category: PanicCategory;
-      pattern: string;
-    } = { message: rec.message, category: rec.category, pattern };
-    if (rec.location !== undefined) info.location = rec.location;
-    for (const h of handlers) {
-      try {
-        applyReducer(h, { $event: info, $route: cur });
-      } catch {
-        // a panic inside route.error itself is logged via the inner applyReducer
-        // path; we just keep iterating other handlers.
+    // The same `PanicInfo` the other two paths hand a program, plus the
+    // `pattern` that is this event's own. It used to be built by hand here,
+    // which is how `location` came to be absent rather than `undefined` on
+    // this one path — a field the type declares, read off an object that does
+    // not carry it. The caller records `"render"` against the episode for the
+    // same panic, so that is what an unattributed one is called here too.
+    const info = {
+      ...userPanicInfo(rec, rec.location ?? "render", safeEpisodeId()),
+      pattern,
+    };
+    inRouteErrorHandlers = true;
+    try {
+      for (const h of handlers) {
+        try {
+          applyReducer(h, { $event: info, $route: cur });
+        } catch {
+          // a panic inside route.error itself is logged via the inner applyReducer
+          // path; we just keep iterating other handlers.
+        }
       }
+    } finally {
+      inRouteErrorHandlers = false;
     }
     return true;
   }
@@ -1718,30 +2523,114 @@ export function mountCore(
   // recurse — it is just logged.
   let inPanicHandler = false;
 
+  let warnedEpisodeSeam = false;
+
+  /**
+   * `episode.currentId()` without letting the logger displace the panic being
+   * reported. `episodeLogger` is a host-supplied seam: the optional chain
+   * covers a logger that is absent, not one written against an older
+   * `EpisodeLogger` that has no `currentId`. A throw there would take the
+   * panic's own report with it — the contract `safeErrorField` /
+   * `safeCauseOf` exist to hold — whether or not the caller sits inside a
+   * catch, which since the capability refusal not every caller does.
+   *
+   * Degrading to `None` is the right answer (it is what "no episode to name"
+   * already means) but a silent one would look like a host that simply
+   * attached no logger, so it warns once per mount.
+   */
+  function safeEpisodeId(): string | undefined {
+    try {
+      return episode?.currentId();
+    } catch (e) {
+      if (!warnedEpisodeSeam) {
+        warnedEpisodeSeam = true;
+        console.warn(`kumiki: episode logger has no currentId(); episode-id will be None`, e);
+      }
+      return undefined;
+    }
+  }
+
   /**
    * Handle a caught live panic per docs/spec/lifecycle.md §7.2: the dispatch episode
    * is already rolled back (the caller never applied the failed result), so we
    * surface it (console.error → smoke/scenario see it) and fire the `app.error`
    * reducer(s) with `$event = PanicInfo`, exactly as §7.2.3 specifies.
    */
-  function handleLivePanic(location: string, e: unknown): void {
+  /**
+   * `reducer` / `envReads` are passed when the throw came out of a reducer
+   * body: the panic step then carries which reducer it was and what that body
+   * read from the environment, so a replay can reproduce the crash rather than
+   * re-rolling its way past it (§10.5.1).
+   */
+  function handleLivePanic(
+    location: string,
+    e: unknown,
+    reducer?: string,
+    envReads?: readonly EnvRead[],
+  ): void {
     reportPanic(location, e);
-    const rec = panicInfo(e, "reducer");
-    episode?.recordPanic({ ...rec, location });
+    fireAppError(panicInfo(e, "reducer"), location, {
+      ...(reducer !== undefined ? { name: reducer } : {}),
+      ...(envReads !== undefined && envReads.length > 0 ? { envReads } : {}),
+    });
+  }
+
+  /**
+   * The two channels a reported failure takes once its record exists: the
+   * episode, so `kumiki replay` can read it, and the `app.error` reducers,
+   * which take it as `PanicInfo`. The console is the caller's, because what it
+   * prints depends on whether anything was thrown.
+   *
+   * The two are not symmetric, and deliberately so. The episode gets the step
+   * unconditionally; `app.error` does not run when the app declares no handler
+   * for it, and does not run re-entrantly — a panic raised while an `app.error`
+   * reducer is on the stack is recorded and logged but not fed back in, which
+   * is the only thing standing between a handler that panics and an unbounded
+   * recursion.
+   *
+   * Split out of {@link handleLivePanic} for the capability refusal, which has
+   * a record but no throw, so that both reach `app.error` down one path.
+   *
+   * `token` names a deferred-policy claim; see `EpisodeLogger.recordPanic`.
+   */
+  function fireAppError(
+    rec: PanicRecord,
+    location: string,
+    extra: { name?: string; envReads?: readonly EnvRead[] } = {},
+    token?: string,
+  ): void {
+    // The id the `$event` carries is the one the step actually landed on,
+    // rather than a second lookup that could answer differently: a reducer
+    // panic is raised while its episode is still open (`applyReducer` calls
+    // this before its `endTrigger`), but a deferred-policy refusal arrives
+    // with the stack already empty and only the token to go on.
+    const episodeId = episode?.recordPanic({ ...rec, location, ...extra }, token);
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
     );
     if (handlers.length === 0) return;
-    // User-facing $event is limited to fields the spec's PanicInfo type
-    // documents; `stack` / `cause` stay in the episode-log only.
-    const info = { message: rec.message, location, category: rec.category };
+    const info = userPanicInfo(rec, location, episodeId ?? safeEpisodeId());
     inPanicHandler = true;
     try {
       for (const h of handlers) applyReducer(h, { $event: info });
     } finally {
       inPanicHandler = false;
     }
+  }
+
+  /**
+   * §10.4.2's second clause on the live path: an emit whose capability
+   * `app.caps` does not declare is refused, and the refusal is reported — to
+   * the console the tiers watch, to the episode, and to `app.error`.
+   *
+   * The dispatcher calls this through a seam rather than reporting itself,
+   * because it is built before `app.error` can be dispatched to and has no
+   * reducer machinery of its own.
+   */
+  function handleCapabilityRefusal(effect: string, cap: string, token?: string): void {
+    const rec = reportCapabilityRefusal(effect, cap);
+    fireAppError(rec, rec.location, {}, token);
   }
 
   /**
@@ -1773,20 +2662,38 @@ export function mountCore(
       const t = triggerOfReducer(r);
       episode.beginTrigger({ kind: t.kind, target: t.target, payload });
     }
-    let result: ReturnType<ReducerSpec["apply"]>;
+    // In a `finally` rather than on each exit: the body runs user reducers
+    // (through `handleLivePanic`) and host effects (through
+    // `dispatcher.dispatch`), and a throw from either would leave the episode
+    // open for the rest of the process — every later dispatch joining one
+    // trigger that never commits. A nested call did not open it and must not
+    // close it, which `opened` already says.
     try {
-      result = r.apply(slotValues, payload);
-    } catch (e) {
+      applyReducerBody(r, payload);
+    } finally {
+      if (opened) episode?.endTrigger();
+    }
+  }
+
+  /** {@link applyReducer}'s body, minus the episode bracket it runs inside. */
+  function applyReducerBody(r: ReducerSpec, payload: Record<string, unknown>): void {
+    // Journalled unconditionally rather than only when a logger is attached:
+    // the guard would be a second way for the scope to be open or not, and the
+    // balance of this one is what keeps every later read in the process
+    // attributed correctly. One frame per apply is what it costs.
+    const outcome = withEnvRecord(() => r.apply(slotValues, payload));
+    const envReads = outcome.env.reads;
+    if (!outcome.ok) {
       // A panic (or any throw) inside a reducer is caught here so it does not
       // escape the DOM event handler. The dispatch episode is rolled back —
       // `apply` returns the new slots and we only write them on success, so a
       // throw applies NO partial state. The app stays interactive (a later
       // dispatch still runs); the `app.error` reducer (if any) is fired with
       // PanicInfo. The reducer-test harness catches panics separately (#24).
-      handleLivePanic(`reducer "${r.name}"`, e);
-      if (opened) episode?.endTrigger();
+      handleLivePanic(`reducer "${r.name}"`, outcome.error, r.name, envReads);
       return;
     }
+    const result = outcome.value;
     // Compute slot diffs (excluding `volatile` slots per language.md §1.4.1):
     // shared with the SSR pseudo-reducer pipeline so volatile semantics never
     // drift across the hydration boundary.
@@ -1798,14 +2705,16 @@ export function mountCore(
       // real. The reducer is still logged (it did run, and changed nothing) so
       // a replay does not show a trigger with no reducer under it.
       reportRejectedBatch(r.name, rejected);
-      episode?.recordReducer(r.name, [], []);
-      if (opened) episode?.endTrigger();
+      // The body still ran, and still read the environment. A replay that
+      // re-runs it has to see the same answers or it may not reject at all.
+      episode?.recordReducer(r.name, [], [], envReads);
       return;
     }
     episode?.recordReducer(
       r.name,
       diffs,
       result.emits.map((e) => e.effect),
+      envReads,
     );
     for (const emit of result.emits) {
       if (observeLeaveConfirm && emit.effect === "confirm") leaveAskedConfirm = true;
@@ -1828,7 +2737,6 @@ export function mountCore(
     if (dirty.length > 0) {
       episode?.recordSignalUpdate(dirty, Array.from(new Set(lastRenderTouched)));
     }
-    if (opened) episode?.endTrigger();
   }
 
   function handleEffectResult(
@@ -1914,10 +2822,15 @@ export function mountCore(
       scrollSaved.set(oldRoute.path, { x: sx, y: sy });
     }
     // Fire route.leave reducers BEFORE committing the new route so a guard can
-    // gate the transition. We observe whether any leave reducer emitted
-    // `confirm` — if so, we hold off updating slotValues.route and firing
-    // route.enter until the confirm modal resolves via `_resolveLeave`.
-    if (oldRoute && oldRoute.pattern !== newRoute.pattern) {
+    // gate the transition. A move to another path leaves the old route
+    // (routing.md §3.4), even within one pattern (new params, a sibling
+    // sub-route); a query-only, hash-only or same-path move stays on it, and
+    // the initial mount has nothing to leave. The path alone decides: one path
+    // always parses to one pattern, so a pattern change is a path change. We
+    // observe whether any leave reducer emitted `confirm` — if so, we hold off
+    // updating slotValues.route and firing route.enter until the confirm modal
+    // resolves via `_resolveLeave`.
+    if (oldRoute && oldRoute.path !== newRoute.path) {
       observeLeaveConfirm = true;
       leaveAskedConfirm = false;
       try {
@@ -2006,8 +2919,9 @@ export function mountCore(
       // Revert: rewrite the URL back to the old path without re-firing the
       // leave guard (pendingLeave is already null, but the recursion guard at
       // the top of syncRouteFromLocation also short-circuits if this somehow
-      // re-enters before the new state is observed).
-      if (router) router.replace(p.oldRoute.path);
+      // re-enters before the new state is observed). The URL is rebuilt whole,
+      // so the old route's query and hash come back with its path.
+      if (routing) router?.replace(routing.href(p.oldRoute));
       slotValues.route = p.oldRoute;
       render();
     }
@@ -2051,6 +2965,10 @@ export function mountCore(
   }
 
   app._rerender = render;
+  // Published on the shape so `currentEpisodeId()` can answer for whichever app
+  // is mid-render — `_s.boundaryPanic` runs inside a tile expression and has no
+  // other way to reach this mount's logger.
+  (app as AppShape & { _episodeId?: () => string | undefined })._episodeId = safeEpisodeId;
   (
     app as AppShape & { _dispatch?: (name: string, el: Record<string, unknown>) => void }
   )._dispatch = (reducerName: string, el: Record<string, unknown>) => {
@@ -2087,14 +3005,15 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  (app as AppShape & { _setSlot?: (name: string, value: unknown) => void })._setSlot = (
-    name: string,
-    value: unknown,
-  ) => {
-    const meta = app.slots[name];
-    if (meta?.refine && !meta.refine(value)) return;
+  (
+    app as AppShape & {
+      _setSlot?: (name: string, value: unknown, at?: readonly BindSegment[]) => boolean;
+    }
+  )._setSlot = (name: string, value: unknown, at?: readonly BindSegment[]) => {
+    if (!slotAccepts(app.slots[name], value, at)) return false;
     slotValues[name] = value;
     render();
+    return true;
   };
   (app as AppShape & { _navigate?: (path: string, replace?: boolean) => void })._navigate = (
     path: string,
@@ -2339,6 +3258,36 @@ type Dispatcher = {
   dispose(): void;
 };
 
+/**
+ * Print a refused effect (§10.4.2's second clause) and hand the caller the
+ * record to route onward — the `panic` step and the `app.error` `$event`. The
+ * live path and the server render pass share it, so the wording and the
+ * channel are one thing rather than two that agree today.
+ *
+ * It reports as well as builds, and is named for the reporting half: the
+ * console line is the part a second copy would break, since `smoke` and
+ * `scenario` read that channel whole.
+ *
+ * Built as a record rather than run through {@link panicInfo}, because nothing
+ * was thrown: there is no stack that would point at the program, and no cause.
+ * `location` is assembled once, here, and travels on the record.
+ */
+export function reportCapabilityRefusal(
+  effect: string,
+  cap: string,
+): PanicRecord & { location: string } {
+  const location = `effect "${effect}"`;
+  const rec: PanicRecord & { location: string } = {
+    message: `capability "${cap}" is not declared in app.caps`,
+    location,
+    stack: undefined,
+    cause: undefined,
+    category: "capability",
+  };
+  reportPanicRecord(location, rec, "panic");
+  return rec;
+}
+
 function makeEffectDispatcher(
   app: AppShape,
   caps: CapabilityRegistry,
@@ -2349,6 +3298,15 @@ function makeEffectDispatcher(
     key: unknown,
     token: string,
   ) => void,
+  // §10.4.2's second clause. The dispatcher refuses the emit; reporting the
+  // refusal needs `app.error` and the episode, neither of which it has.
+  // Required, unlike the episode seams below: those are absent when the mount
+  // attached no logger, this one has no such case, and a construction path
+  // that forgot it would be #366 again — no console line, no episode step, no
+  // `app.error`, and nothing in any tier that could see it.
+  // `token` is the deferred-policy claim (debounce, queue), so the panic can
+  // name the episode that owns the `effect-start` rather than the empty stack.
+  onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   // Policy-induced cancel of a pending effect-start that was already claimed
@@ -2402,13 +3360,27 @@ function makeEffectDispatcher(
   ): Promise<void> => {
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
-      console.warn(`Capability "${eff.cap}" not declared in app.caps`);
-      // Deferred-policy dispatch (debounce) already recorded an effect-start
-      // on the originating episode before the timer fired. Bailing out here
-      // without releasing the token would strand that episode in
-      // `closedAwaiting` forever — drain it via the cancel seam so the
-      // trace shows WHY no effect-end ever lands.
-      if (presetToken) onPolicyCancel?.(presetToken, eff.name);
+      try {
+        // The token first: a deferred-policy launch (debounce, queue) fires
+        // from a timer or a promise tail, so by now `endTrigger` has balanced
+        // out and there is no episode in focus to record against — only the
+        // token still names the episode that claimed the `effect-start`.
+        onCapabilityRefusal(eff.name, eff.cap, presetToken);
+      } finally {
+        // Deferred-policy dispatch already recorded an effect-start on the
+        // originating episode before the timer fired. Bailing out here without
+        // releasing the token would strand that episode in `closedAwaiting`
+        // forever — drain it via the cancel seam so the trace shows WHY no
+        // effect-end ever lands. In a `finally`, because the report above runs
+        // a host-supplied logger and then user reducers, and a throw out of
+        // either would otherwise take the release with it.
+        //
+        // After the report, not before: `cancelPendingEffect` settles the
+        // episode, which commits it, and a panic step appended to a committed
+        // episode is one `onEpisode` and the localStorage mirror have
+        // already been handed without it.
+        if (presetToken) onPolicyCancel?.(presetToken, eff.name);
+      }
       return;
     }
     // Episode logger seam (§10.5): the moment the dispatcher commits to
@@ -2487,11 +3459,10 @@ function makeEffectDispatcher(
       }
       const input = emit.args[0];
       const policy = eff.policy ?? { kind: "default" as const };
-      const keyOf = (input: unknown): string => {
-        if (policy.kind === "latest-per-key") return policy.keyOf(input);
-        return "_";
-      };
-      const key = keyOf(input);
+      // A key evaluated at the emit wins: the reducer may have written the
+      // slot it reads after emitting, and the id `emit` yielded was built
+      // from the value before that write (http.md §6.4).
+      const key = policy.kind === "latest-per-key" ? (emit.key ?? policy.keyOf(input)) : "_";
       const id = `${eff.name}:${key}`;
       if (policy.kind === "once") {
         const seen = state.onceSeen.get(eff.name) ?? new Set<string>();
@@ -2663,12 +3634,171 @@ function elementAtPath(path: number[], root: Element): Element | null {
   return cur;
 }
 
-/** Immutably set a (possibly nested) field path on a record — used by `bind=`. */
-export function _setPathHelper(obj: unknown, path: string[], value: unknown): unknown {
+/**
+ * One segment of a write path. A string or number is a record field or a
+ * container key; `{get: true}` is `.get`, the polymorphic unwrap — encoded as
+ * data rather than as a closure because a `bind=` path travels to the client
+ * as JSON inside the TileNode.
+ *
+ * A reducer's assignment can index by an arbitrary expression, so the numeric
+ * (and, at runtime, any) case is reachable there. `bind=` resolves only static
+ * field chains, which is why its own alphabet is narrower.
+ */
+export type PathSegment = string | number | { get: true } | { at: unknown };
+
+/** The segments a `bind=` path can hold — what `TileNode.bindPath` carries. */
+export type BindSegment = Extract<PathSegment, string | { get: true }>;
+
+/** `{get: true}` and nothing else. Asked only of a step that is not an index:
+ * an index key that happens to have that shape (`Map({get: Bool}, V)`) is a
+ * key, not an unwrap. */
+function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
+  return typeof seg === "object" && seg !== null && (seg as { get?: unknown }).get === true;
+}
+
+/**
+ * `{at: key}`: an index step (`xs[i]`, `m[k]`), which a reducer's assignment
+ * emits for every `[…]` in its path. A field step and a key are both a string
+ * once evaluated, and they part company where the place is absent: a missing
+ * record field is a level to build, and a missing Map entry is one there is
+ * nothing to write through (language.md §1.6.3).
+ */
+function isIndexSegment(seg: PathSegment): seg is { at: unknown } {
+  return typeof seg === "object" && seg !== null && Object.hasOwn(seg, "at");
+}
+
+/**
+ * The object key a `Set` element or a `Map` key is stored under. A Set is
+ * `{ [key]: true }` and a Map a plain object, so every member that writes,
+ * finds or removes an entry — `add` / `toggle` / `has` / `remove`, `get` /
+ * `get-or` / `insert` / `update`, the index read `m[k]` and the index write
+ * `m[k] := v` — asks this one function, and two keys are one entry exactly
+ * when they encode alike.
+ *
+ * A primitive is `String(x)`, as it always was. A structured value — a
+ * variant, a record, a tuple — is its JSON with each object's fields in
+ * sorted order, so equal values (stdlib.md §2.2.1: by `==`) are one key
+ * whatever order their fields were written in, and distinct ones never share
+ * the `"[object Object]"` that `String` gives them all. The key types of one
+ * container are all one type, so the two encodings never meet in it. The
+ * readers turn a key back into a value through `restoreKey` in stdlib.ts,
+ * which parses this JSON for a key the checker recorded as `"value"`.
+ */
+export function entryKey(x: unknown): string {
+  return x !== null && typeof x === "object" ? sortedJson(x) : String(x);
+}
+
+function sortedJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(sortedJson).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const fields = Object.keys(o)
+      .filter((k) => o[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${sortedJson(o[k])}`);
+    return `{${fields.join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/**
+ * The element of `list` an index names, or a panic when it names none
+ * (lifecycle.md §7.2.2). One rule for `xs[i]` on both sides of `:=`: the read
+ * (`_stdlibCore.index`) and the write (`_setPathHelper`) ask it the same way,
+ * so they cannot disagree about which indices are in range.
+ */
+export function listPosition(list: readonly unknown[], index: unknown): number {
+  if (typeof index === "number" && Number.isInteger(index) && index >= 0 && index < list.length) {
+    return index;
+  }
+  const shown = typeof index === "string" ? JSON.stringify(index) : String(index);
+  throw new KumikiPanic(`Index ${shown} is out of range for a List of length ${list.length}`);
+}
+
+/**
+ * Immutably set a (possibly nested) path on a value. Shared by `bind=`
+ * write-back and by the assignment a reducer lowers to, so the two ways to
+ * write a slot cannot disagree about what a path means.
+ *
+ * A `.get` segment mirrors `_stdlibCore.unwrap` (stdlib.md §2.2) — `Some` /
+ * `Ok` reach the payload, any other variant and any plain value pass straight
+ * through — with the one difference language.md §1.6.3 states: writing through
+ * an empty value (`None` / `Err`) is a no-op rather than a panic.
+ */
+export function _setPathHelper(
+  obj: unknown,
+  path: readonly PathSegment[],
+  value: unknown,
+): unknown {
+  // On `path.length`, not on the head: an index segment is whatever its
+  // expression evaluated to, and an `undefined` one read as "path exhausted"
+  // would put `value` where the whole slot was.
   if (path.length === 0) return value;
-  const [head, ...rest] = path;
+  const step = path[0] as PathSegment;
+  const rest = path.slice(1);
+  const indexed = isIndexSegment(step);
+  const head = (indexed ? step.at : step) as PathSegment;
+  if (!indexed && isUnwrapSegment(head)) {
+    if (obj && typeof obj === "object" && "_tag" in obj) {
+      const o = obj as { _tag: string; _0?: unknown };
+      if (o._tag === "None" || o._tag === "Err") return obj;
+      if (o._tag === "Some" || o._tag === "Ok") {
+        return { ...o, _0: _setPathHelper(o._0, rest, value) };
+      }
+    }
+    return _setPathHelper(obj, rest, value);
+  }
+  // A List stays a List: the element at the index is replaced in a copy
+  // (language.md §1.6.3). An index that names no element panics, as does an
+  // element that is not there to write through — the object spread below
+  // would turn the array into an object keyed by its indices, and a missing
+  // element into a record with one field.
+  if (Array.isArray(obj)) {
+    const at = listPosition(obj, head);
+    const element = obj[at];
+    if (rest.length > 0 && (element === undefined || element === null)) {
+      throw new KumikiPanic(`Index ${at} of a List holds no value to write through`);
+    }
+    const out = [...obj];
+    out[at] = _setPathHelper(element, rest, value);
+    return out;
+  }
+  // A number is a List index or a `Map(Int, V)` key. Where the value is neither
+  // an array nor an object — absent after a restore or a decode — there is no
+  // List to index and no Map to insert into, and building an object would
+  // leave `{"0": v}` where a List was declared.
+  if (typeof head === "number" && (obj === null || typeof obj !== "object")) {
+    throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
+  }
+  // `m[k].f := v` is `m.update(k, …)` (language.md §1.6.3), which writes
+  // nothing when `k` is absent — building the entry would leave a value
+  // holding only `f`, one its declared type does not describe.
+  if (indexed && rest.length > 0 && !isEntryOf(obj, head)) return obj;
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
-  return { ...cur, [head!]: _setPathHelper(cur[head!], rest, value) };
+  const key = entryKey(head);
+  return { ...cur, [key]: _setPathHelper(cur[key], rest, value) };
+}
+
+/**
+ * Whether `key` names an entry of the Map `m` — its own key under `entryKey`,
+ * so a key that happens to name an `Object.prototype` member (`"toString"`) is
+ * not one. One answer for the index read (`_stdlibCore.index`) and the index
+ * write (`_setPathHelper`), so the two sides of `:=` agree about which keys are
+ * there.
+ */
+export function isEntryOf(m: unknown, key: unknown): boolean {
+  return m !== null && typeof m === "object" && Object.hasOwn(m, entryKey(key));
+}
+
+/**
+ * The source spelling of a `bind=` target — `draft.get.title`. Written into
+ * the `data-kumiki-bind` marker by both renderers, and used as the id
+ * `tileTouchedId` reports on an episode's `signal-update.binds-updated`. One
+ * formatter, so none of those has to know how a segment is encoded.
+ */
+export function bindLabel(bind: string, path?: readonly BindSegment[]): string {
+  if (!path || path.length === 0) return bind;
+  return [bind, ...path.map((seg) => (typeof seg === "string" ? seg : "get"))].join(".");
 }
 
 /**
@@ -2686,6 +3816,50 @@ export type PanicRecord = {
   cause: PanicCauseLink[] | undefined;
   category: PanicCategory;
 };
+
+/**
+ * The user-facing `PanicInfo` (lifecycle.md §7.2.3) — what an `app.error`
+ * reducer, a `route.error` reducer and an `error-boundary` fallback are each
+ * handed. One builder for all three: #362 aligned two of them by hand and both
+ * were then missing the same two fields in the same way, which is the drift
+ * this closes by construction.
+ *
+ * What it does NOT carry is as deliberate as what it does. `stack` is a raw
+ * devtools trace and a footgun on a production page; `cause` here is the
+ * NEAREST link's message, not the chain `collectCauseChain` walks — the chain,
+ * and the stacks on it, stay in the episode log where `kumiki replay` reads
+ * them (runtime.md §10.5.1).
+ *
+ * `episode-id` and `cause` are `Option(Text)`, so "there was none" is a value
+ * the language can say. Neither was supplied by anything, and `episode-id` was
+ * declared `Text`, which made §7.2.3's own instruction — reducers "MUST treat
+ * both as `None`-equivalent" — inexpressible on that one: a `Text` has no
+ * `None`, and what arrived was JavaScript's `undefined` rendered through `+`
+ * (#364). `cause` was `Option(Text)` already, so there the gap was only that
+ * nothing wrote it.
+ */
+export function userPanicInfo(
+  rec: PanicRecord,
+  location: string,
+  episodeId: string | undefined,
+): {
+  message: string;
+  location: string;
+  "episode-id": OptionOf<string>;
+  cause: OptionOf<string>;
+  category: PanicCategory;
+} {
+  const nearest = rec.cause?.[0]?.message;
+  return {
+    message: rec.message,
+    location,
+    "episode-id": episodeId === undefined ? NONE : someOf(episodeId),
+    // An empty cause message is no cause: a link that says nothing answers
+    // nothing, and `Some("")` reads on the page as a reason that is blank.
+    cause: nearest ? someOf(nearest) : NONE,
+    category: rec.category,
+  };
+}
 
 /**
  * Safety cap for `Error.cause` chain traversal — pathological or intentionally
@@ -2813,19 +3987,27 @@ export function panicInfo(e: unknown, category: PanicCategory = "unknown"): Pani
  * Surface a caught live panic so the verification tiers still see it: smoke()
  * and runScenario() both patch console.error into their issue/error buffers, so
  * a controlled panic is reported as a failure rather than silently swallowed.
+ */
+function reportPanic(where: string, e: unknown): void {
+  reportPanicRecord(where, panicInfo(e), isPanic(e) ? "panic" : "error");
+}
+
+/**
+ * The one place the runtime's console report is formatted — {@link reportPanic}
+ * for a caught throw, {@link reportCapabilityRefusal} for a record that was
+ * built rather than caught. One header shape for everything, because `smoke`
+ * and `scenario` read this channel whole and a second format would be a second
+ * thing for a reader to recognise.
  *
- * The first line format (`[kumiki] panic in <where>: <message>`) is stable —
+ * The first line format (`[kumiki] <kind> in <where>: <message>`) is stable —
  * `packages/tests/scenario.test.ts` greps for it (via the console.error buffer
  * that `runScenario` collects) to distinguish a controlled panic from a
  * generic console.error. Stack trace + Error.cause chain are appended as
  * indented continuation lines so devtools show a full root-cause trail without
  * breaking that grep.
  */
-function reportPanic(where: string, e: unknown): void {
-  const rec = panicInfo(e);
-  const lines: string[] = [
-    `[kumiki] ${isPanic(e) ? "panic" : "error"} in ${where}: ${rec.message}`,
-  ];
+function reportPanicRecord(where: string, rec: PanicRecord, kind: "panic" | "error"): void {
+  const lines: string[] = [`[kumiki] ${kind} in ${where}: ${rec.message}`];
   if (rec.stack !== undefined) {
     for (const line of formatStackForConsole(rec.stack, rec.message)) lines.push(line);
   }
@@ -2905,7 +4087,7 @@ async function runWithRetry(
   if (!policy) return eff.invoke(input, caps, signal);
   let last: EffectResult = await eff.invoke(input, caps, signal);
   for (let attempt = 1; attempt < policy.n; attempt++) {
-    if (last.kind !== "err") return last;
+    if (last.kind !== "err" || last.final) return last;
     // §6.4.1: abort short-circuits retries — re-issuing a cancelled request
     // would defeat the cancel intent.
     if (signal?.aborted) return last;
@@ -3237,7 +4419,7 @@ function reconcileNode(
       }
       // Reused elements must dispatch through their handler-slot lookups with
       // the *current* render's closures, not the create-time ones. INPUT_STATE
-      // (`tiles-input.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
+      // (`tiles/input/_shared.ts`) / SURFACE_STATE (`tiles-overlay.ts`) / LINK_STATE
       // (`tiles-text.ts`) are refreshed by their per-kind patchers; the
       // universal onKeyDown / onFocus / onBlur / onMouseEnter handlers, which
       // `applyUiEventHandlers` lifts onto every tile kind via the create ctx,
@@ -3267,8 +4449,32 @@ function reconcileNode(
       diag?.fallback({ reason: "no-patcher" }, newNode);
       return replaceWithFreshTile(oldEl, newNode, ctx, touched);
     }
+  } else if (newNode.kind === "error") {
+    // Every own field compared equal, which leaves the element mounted
+    // untouched — except for a tile whose output reads state its node does
+    // not carry. `error(field=…)` renders the message for what its field
+    // *shows*, and a `bind` its refinement refused changes that without
+    // changing the slot the node is built from (forms.md §5.1.2), so its
+    // patcher re-derives the message on every pass, equal node or not.
+    //
+    // It is also what makes the tile follow its slot at all. A compiled app
+    // gets that today by accident: codegen emits `error(field=contact)` with
+    // `props: { field: _live["contact"], … }`, so the node is never equal
+    // across a change of the slot and the patcher above runs. This branch is
+    // what keeps the message right if that argument stopped leaking into
+    // `props`.
+    //
+    // Guarded like the patcher call above, so the two exits cannot drift.
+    try {
+      patchers.error?.(oldEl, oldNode as never, newNode as never, ctx);
+    } catch (e) {
+      if (e instanceof PatchRequiresRebuild) {
+        return replaceWithFreshTile(oldEl, newNode, ctx, touched);
+      }
+      throw e;
+    }
   }
-  // No `else`: when every own field compares equal the element stays mounted
+  // Otherwise, when every own field compares equal the element stays mounted
   // untouched, and that is unconditionally safe — handlers compare by identity
   // (§10.3.13), so reaching here means the mounted element already holds the
   // handlers this render produced.
@@ -3916,7 +5122,7 @@ function replaceWithFreshTile(
  * Identifier for a tile the reconcile diff freshly built (subtree rebuild or
  * keyed-diff insert). Consumed by episode `signal-update.binds-updated` (#189).
  * Priority: `bind` (with `bindPath` joined) → `key` → `kind`. The bind form
- * matches `data-kumiki-bind` in `tiles-input.ts` (`bindDataset`) so an authored
+ * matches `data-kumiki-bind` in `tiles/input/_shared.ts` (`bindDataset`) so an authored
  * `bind=todo.title` shows up as the same `"todo.title"` string in the log.
  */
 function tileTouchedId(node: TileNode): string {
@@ -3924,7 +5130,7 @@ function tileTouchedId(node: TileNode): string {
   if (typeof asBindable.bind === "string") {
     const bind = asBindable.bind;
     if (Array.isArray(asBindable.bindPath) && asBindable.bindPath.length > 0) {
-      return `${bind}.${(asBindable.bindPath as string[]).join(".")}`;
+      return bindLabel(bind, asBindable.bindPath as BindSegment[]);
     }
     return bind;
   }
@@ -4013,7 +5219,7 @@ function tileValueEqual(a: unknown, b: unknown): boolean {
  * is the safe direction and deliberately not "fixed" with a `toString` tag
  * check, which would let a genuinely exotic cross-realm value back through.
  */
-function isPlainDataBag(v: object): boolean {
+export function isPlainDataBag(v: object): boolean {
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
 }
@@ -4054,7 +5260,7 @@ function neverEqualCause(a: unknown, b: unknown): NeverEqualCause | undefined {
 
 // Per-element slot for the universally-lifted UI handlers (onKeyDown /
 // onMouseEnter / onFocus / onBlur). Same slot-dispatch shape as
-// tiles-input.ts INPUT_STATE and tiles-text.ts LINK_STATE: the native listener
+// tiles/input/_shared.ts INPUT_STATE and tiles/text/link.ts LINK_STATE: the native listener
 // reads the slot instead of closing over the create-time `props`, and
 // `refreshUiHandlerSlot` overwrites the slot when a patch runs so the new
 // node's handler + `el` payload reach subsequent events. Without it the patch
@@ -4214,21 +5420,75 @@ export const pickBaseValue: ResponsivePick = (raw) => {
   return asScalar((raw as Record<string, unknown>).base);
 };
 
-/** The largest matching breakpoint, falling back to the base. */
-const pickForViewport: ResponsivePick = (raw) => {
+/** style.md §4.2's breakpoints, for a theme that declares none of its own. */
+const DEFAULT_BREAKPOINTS: Record<string, ThemeValue> = {
+  sm: "640px",
+  md: "768px",
+  lg: "1024px",
+  xl: "1280px",
+};
+
+/**
+ * A breakpoint's width as `[min-width query value, px]`, or undefined for a
+ * value that is not one (a nested theme value, `"wide"`, `"40ch"`). A number
+ * and a bare numeric string are px; rem and em count 16px each, the initial
+ * font size a media query resolves them against (style.md §4.5). The px is
+ * only for ordering — the query keeps the unit the theme wrote.
+ */
+function breakpointWidth(w: ThemeValue): [string, number] | undefined {
+  if (typeof w === "object") return undefined;
+  const m = /^(\d+(?:\.\d+)?|\.\d+)(px|rem|em)?$/.exec(String(w).trim());
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return m[2] ? [`${m[1]}${m[2]}`, m[2] === "px" ? n : n * 16] : [`${n}px`, n];
+}
+
+/**
+ * The largest matching breakpoint, falling back to the base. The breakpoints
+ * are the active theme's (style.md §4.5), over the §4.2 defaults for any key
+ * it leaves out, so a theme can move `md` or add a key of its own. They are
+ * tried widest first by their px size, so a theme may mix px, rem and em.
+ */
+export const pickForViewport: ResponsivePick = (raw) => {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return asScalar(raw);
   const m = raw as Record<string, unknown>;
-  const order: Array<["xl" | "lg" | "md" | "sm", string]> = [
-    ["xl", "(min-width: 1280px)"],
-    ["lg", "(min-width: 1024px)"],
-    ["md", "(min-width: 768px)"],
-    ["sm", "(min-width: 640px)"],
-  ];
-  for (const [bp, q] of order) {
-    if (m[bp] !== undefined && window.matchMedia(q).matches) return asScalar(m[bp]);
+  const declared = currentTheme()?.breakpoints;
+  const bps = {
+    ...DEFAULT_BREAKPOINTS,
+    ...(declared && typeof declared === "object" ? declared : {}),
+  };
+  const widest: [string, string, number][] = [];
+  for (const [k, w] of Object.entries(bps)) {
+    const width = breakpointWidth(w);
+    if (width) widest.push([k, ...width]);
+  }
+  widest.sort((a, b) => b[2] - a[2]);
+  for (const [bp, w] of widest) {
+    if (m[bp] !== undefined && window.matchMedia(`(min-width: ${w})`).matches) {
+      return asScalar(m[bp]);
+    }
   }
   return asScalar(m.base);
 };
+
+/**
+ * A grid's tracks (style.md §4.4.2). `cols` and `rows` take the same shapes: a
+ * count, which divides the axis equally, a CSS track list, or a responsive map
+ * of either (§4.5), which `pick` collapses — to the viewport's breakpoint on
+ * the client (`tiles-layout.ts`), to `base` in SSR (`ssr-render.ts`). Only
+ * `cols` has a default — a grid with no `rows` grows one row per line of
+ * content, which is what a grid does.
+ */
+export function gridTracks(
+  props: TileProps | undefined,
+  pick: ResponsivePick,
+): { cols: string; rows: string | undefined } {
+  return { cols: track(pick(props?.cols)) ?? "repeat(3, 1fr)", rows: track(pick(props?.rows)) };
+}
+
+function track(v: string | number | undefined): string | undefined {
+  return typeof v === "number" ? `repeat(${v}, 1fr)` : v;
+}
 
 /**
  * The declarations a `style: { ... }` block contributes (spec/style.md §4.3) —
@@ -4541,11 +5801,25 @@ export function ensureAnimationStyles(): void {
   appendStyleNode(style);
 }
 
+/**
+ * True while a theme switch rebuilds a painted tree (runtime.md §10.3.6). An
+ * element inserted then is marked settled, and the motion stylesheet moves a
+ * settled element's animation past its end: a one-shot enter animation shows
+ * its final frame instead of playing again, and a repeating one keeps going.
+ * The mark stays, because taking it off would restart the animation.
+ */
+let settling = false;
+
+function settle(el: HTMLElement): void {
+  if (settling) el.setAttribute("data-kumiki-settled", "");
+}
+
 function applyTransition(el: HTMLElement, props?: TileProps): void {
   if (!props) return;
   const t = props.transition;
   if (typeof t !== "string") return;
   ensureAnimationStyles();
+  settle(el);
   el.classList.add("kumiki-anim", `kumiki-anim-${t}`);
   const d = props.transition_duration;
   if (typeof d === "string") el.classList.add(`kumiki-anim-${d}`);
@@ -4637,6 +5911,7 @@ function ensureMotionStyles(app: AppShape): void {
   // a11y (M5 AC5): disable motion AND the transitions when the user asks.
   rules.push(
     `@media (prefers-reduced-motion: reduce) { .kumiki-motion, .kumiki-anim { animation: none !important } }`,
+    "[data-kumiki-settled] { animation-delay: -99999s !important }",
   );
   let style = findStyleNode("kumiki-motions");
   if (!style) {
@@ -4653,6 +5928,7 @@ function applyMotion(el: HTMLElement, props?: TileProps): void {
   const m = props.motion;
   if (typeof m !== "string") return;
   el.classList.add("kumiki-motion", `kumiki-motion-${m}`);
+  settle(el);
 }
 
 let stateStyleSeq = 0;

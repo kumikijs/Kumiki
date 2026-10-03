@@ -25,25 +25,29 @@ tile Compose = column(
 
 | Element | Acceptable types |
 |---|---|
-| `input` | `Text` (`type=text/email/password/url/search/tel`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime`) |
+| `input` | `Text` (`type=text/email/password/url/search/tel`, or any other field whose value is the text typed: `number/date/datetime-local/time/month/week/color`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime-local`) |
 | `textarea` | `Text` |
 | `select` | Any (same type as the `value` of `options`) |
 | `slider` | `Int` / `Float` |
 | `check` / `switch` | `Bool` |
 | `radio` | One of a union type |
 
+An `input` bound to an `Int`, `Float` or `Time` reads its text the way `Int.parse` / `Float.parse` / `Time.parse` do ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)) and writes the value it reads. The type is the bound position's base: the slot's type followed through a record field, or through an `Option`'s or a `Result`'s payload with `.get`, and unaliased, so `type Qty = Int where positive` and a `nominal Int` read as an `Int`. The reading is `T.parse`'s exactly — `".5"`, which a number field can hold, is no `Float`, and `"1e3"` is a `Float` and no `Int`. Text that spells no value of the base (`""`, or `"1.5"` for an `Int`) is refused as a refinement violation is ([§5.1.2](#_5-1-2-handling-of-refinement)): the slot keeps the last value it accepted, the field keeps what was typed, and `error(field=…)` names the reading it failed ([§5.7.2](#_5-7-2-standard-messages)). A `Time` is shown to a `type="date"` field as `yyyy-MM-dd`, and to a `type="datetime-local"` one as `yyyy-MM-ddTHH:mm`, on the local clock `Time.parse` reads a zone-less string on, so what the field shows reads back as the same day, or the same minute. A `Text` is written as typed, so it goes with any field whose value is the text typed; an `Int`, `Float` or `Time` goes only with the field kinds in the table, whose text it round-trips through. Any other pairing — a `Time` in a `type="time"` field, an `Int` in a text field, a `Bool`, or an `Option` bound whole rather than through `.get` — is reported by `kumiki check` ([E0226](./errors.md#e0226-input-bind-type)). (`type="datetime"` is obsolete in HTML and renders as a text field.)
+
+`check` / `switch` show the bound `Bool` and write the box's new state back when it is ticked; `radio(group=…, bind=b, value=V)` is selected exactly when `b == V` and writes `V` when it is chosen. All three go through the same write-back as `input` — the refinement refusal of [§5.1.2](#_5-1-2-handling-of-refinement) included — and it runs before the control's own `onClick` / `onChange`, so a handler reads the slot already written: moving `check(value=b, onClick=toggle)` to `check(bind=b, onClick=toggle)` inverts `b` twice, and the `onClick` has to go. With a `bind=`, the argument that decides the selection of an unbound control — `value=` on `check` / `switch`, `selected=` on `radio` — is not read ([W0216](./errors.md#w0216-selection-beside-bind-warning)); a radio's own `value=` is still what it writes. A `bind` of another type on `check` / `switch`, or a radio `value` that is not a value of the bound type, is reported by `kumiki check` ([E0201](./errors.md#e0201-type-mismatch), or [E0216](./errors.md#e0216-unknown-variant) for a variant of another union), and so is a bound radio with no `value=` to write ([E0225](./errors.md#e0225-radio-bind-without-value)).
+
 ### 5.1.2 Handling of refinement
 
-For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters:
+For `slot draft : Text where len-lt(280)`, when the input exceeds 280 characters the value is **refused**: the slot keeps the last value it accepted. There is one mode, and it is deliberately quiet — a half-typed value is expected, not a defect, so nothing is reported. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
 
-- **Default**: the input is rejected (the slot is not updated)
-- **`strict=false`**: the slot is updated, but the form's `valid` flag becomes false
+The control keeps what was typed, so the field and the slot disagree until the field is edited to a value the slot accepts. `error(field=draft)` speaks for **what the field shows** ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)): while the field shows a value the refinement refused, the message is that value's. A reducer that rewrites the slot moves the field with it, and the message then follows the slot again. The same holds for text a bound `Int`, `Float` or `Time` cannot read at all ([§5.1.1](#_5-1-1-elements-that-support-bind)), on a slot with a refinement or without one: its message is the reading's, and comes before any refinement's. So the field shows a value the slot does not hold only together with the message saying why. Two refinements of that rule: the field in question is the one in the same view — with one app mounted into several hosts ([runtime.md §10.9](./runtime.md#_10-9-runtime-api-for-embedding)), each view's `error(field=…)` speaks for its own view's field, which in every other view still shows the slot's value; and during an IME composition the message is settled once, when the composition ends, not re-derived for every intermediate value the composition passes through.
 
 ```kumiki snippet
-input(bind=draft, strict=false)
+input(bind=draft)
+error(field=draft)
 ```
 
-Both shapes are specific to `bind`, and both are deliberately quiet: a half-typed value is expected, not a defect. A refinement violation on the **assignment** path (`draft := …` inside a reducer) is the opposite case — it discards the whole reducer batch and is reported, see [batching](./runtime.md#a-batch-commits-all-or-nothing).
+A `strict` prop, which an earlier revision of this section specified as a second mode (take the refused value and turn a form-level `valid` flag false), is [E0219](./errors.md#e0219-bind-strict-prop). Nothing ever read that flag, and a slot that holds a value its own type refuses is what every other path to it is built to prevent.
 
 ---
 
@@ -95,11 +99,14 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 ### 5.2.2 Submit Behavior
 
-- If all `bind`ed slots pass validation, the `ui.submit(WrapperTile)` reducer is called
+- If every slot a control inside the form binds passes validation, the `ui.submit(WrapperTile)` reducer is called
 - If even one fails, it is not called (individual error displays do appear)
-- If strict-mode switching is needed, apply `strict=false` to the relevant input
+- What is judged is what each control **shows** — the judgement `error(field=…)` makes ([§5.1.2](#_5-1-2-handling-of-refinement)), in its order: text an `Int` / `Float` / `Time` field shows that reads as no value of that type at all; else a value the refinement refused that a control inside the form still shows; else the slot's own value. So a pristine field whose declared default fails its refinement holds the form back ([§5.6](#_5-6-validation-strategy)) — with or without an `error(field=…)` tile to say why, so a form holding such a field should carry one — and so does a field showing a refused edit or unreadable text: the reducer would otherwise read the slot's last accepted value, which is not what the field shows
+- Only slots bound inside the form count, and only the form's own controls speak for them. A slot the form's controls do not bind is not asked about, and a refused value shown by a control **outside** the form does not hold it back: the form's own control shows the slot's value, which is what the reducer reads. `error(field=…)` speaks for the whole view being rendered, so an `error` tile inside the form can show a message for that outside edit while the form submits
 - Fires by clicking `button(type="submit")`, or by pressing the Enter key in an `input`
+- A click reducer on that button — `ui.click` on it, one lifted onto it from a tile that wraps it, or an `onClick=` argument — is independent of the submit: clicking the button runs the click reducer **and** submits the form. Nothing a click reducer is bound to cancels the click, so `type` is the one thing here a click reducer can't replace: a click reducer never keeps a button inside a form from submitting it, and `type="button"` does. (A `disabled` or `loading` button does not submit either: it is disabled, so it is never activated.)
 - `type` is one of `submit` / `button` / `reset`, written through to the DOM verbatim, and is only meaningful inside a form. A button that does **not** write one keeps the HTML default, which is `submit` — so a button inside a form that is not meant to submit it must say `type="button"`. A literal outside the three is [E0201](./errors.md#e0201-type-mismatch): an invalid `type` attribute resolves to `submit`, so the typo submits
+- A `type="reset"` button with a click reducer runs the reducer **and** resets the form, which puts the fields' DOM values back to their defaults but leaves the `bind`ed slots as they were — nothing listens for `reset`. To clear a form, write the slots in a reducer on a `type="button"` button
 
 ---
 
@@ -117,7 +124,6 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 | `required` | `Bool` | Required |
 | `auto-focus` | `Bool` | Focus on mount |
 | `auto-complete` | `Text` | `email` / `current-password` / `new-password` / `off`, etc. |
-| `strict` | `Bool` | Whether to reject input on a refinement violation (default true) |
 | `id` | `Text` | HTML id (referenced by a label's `for`) |
 
 ### 5.3.1 By input type
@@ -238,6 +244,17 @@ Kumiki validation has **three layers**:
 | refinement | Runtime | `age : Int where between(0, 120)` |
 | Cross-form | reducer / fn | "password and password-confirm match" |
 
+The refinement layer covers **every** predicate [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates) registers, including the ones the standard library's domain types are declared with — `Email`, `Url`, `Uuid` and `HttpStatus` are refined nominals ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot declared with one is checked exactly as a slot written `Text where email` is. A predicate the toolchain cannot lower to a check is a build error ([E0803](./errors.md#e0803-unimplemented-refinement)), never a check that passes.
+
+The two write paths differ in how loud they are, and a `bind` is further judged only at the path it writes (below). An assignment is judged on the whole value, even one that writes a single field (`signup.name := …`):
+
+- **Assignment** (`age := …` in a reducer) discards the whole batch and reports it — no slot written, no effect emitted ([Runtime §10.3.3](./runtime.md#_10-3-3-batching)).
+- **`bind`** refuses the value for that field alone and reports nothing, because a half-typed value is expected rather than a defect. The field keeps showing it, and `error(field=…)` renders its message ([§5.1.2](#_5-1-2-handling-of-refinement)).
+
+Neither gates the **declared default**: `slot email : Email = ""` starts out holding a value its own refinement rejects, which is what puts a message on a pristine form ([§5.7.1](#_5-7-1-refinement-violation-of-an-individual-field)).
+
+A `bind` into part of a slot — `input(bind=form.age)`, `input(bind=draft.nick.get)` — is judged **at the path it writes**: the predicates along that path, on the slot's own type included, and every one below where it ends. A predicate on a sibling is not on that path, so a sibling that fails does not refuse the write. That is what lets a record whose default fails several fields be filled in any order. The field that shows a refused value is laid over the slot as it is now when `error(field=…)` judges it, so a sibling written afterwards does not bring back a message that field no longer deserves. A control bound to the whole slot shows the value the fields bound into it sit in, so when both show refused values the slot's is laid first and the fields' over it.
+
 ### 5.6.1 Cross-Form Example
 
 ```kumiki snippet
@@ -279,7 +296,9 @@ input(bind=email, type="email")
 error(field=email)
 ```
 
-`error(field=...)` is a built-in tile that renders the target slot's current validation error.
+`error(field=...)` is a built-in tile that renders the target field's current validation error: it reads the predicate off the slot and renders the message for it whenever the value the field **shows** fails, and nothing otherwise. That is the slot's current value, except while a bound control shows a value the refinement refused ([§5.1.2](#_5-1-2-handling-of-refinement)), which is judged instead. A slot whose type carries no refinement therefore has no message for any value — which is a statement about the slot, not about the value in it. What it can still show is the one message that is not about a value: while a bound `input` shows text that does not read as the slot's `Int`, `Float` or `Time` at all ([§5.1.1](#_5-1-1-elements-that-support-bind)), the message is that reading's (`int` / `float` / `time` below), on any slot and before any refinement — `"1.5"` into an `Int where between(0, 120)` is not a whole number, not a number out of range.
+
+A type carrying several predicates ([§1.3.1](./language.md#_1-3-1-syntax)) renders the message of the **first one the current value fails**, in the order §1.3.1 gives them. On `slot draft : Text where nonempty where len-lt(7) = ""` a pristine field reads "Required", not a bound the empty value is well inside.
 
 ### 5.7.2 Standard Messages
 
@@ -287,14 +306,19 @@ error(field=email)
 |---|---|
 | `email` | "Invalid email format" |
 | `url` | "Invalid URL" |
+| `uuid` | "Invalid identifier" |
 | `nonempty` | "Required" |
 | `len-eq(N)` | "Must be exactly N characters" |
 | `len-lt(N)` / `len-gt(N)` | "Must be less than / more than N characters" |
 | `between(A, B)` | "Must be between A and B" |
+| `positive` / `negative` | "Must be positive" / "Must be negative" |
 | `regex(P)` | "Does not match pattern" |
 | `one-of(...)` | "Must be one of: ..." |
+| `int` (text that is no `Int`, [§5.1.1](#_5-1-1-elements-that-support-bind)) | "Must be a whole number" |
+| `float` (text that is no `Float`) | "Must be a number" |
+| `time` (text that is no `Time`) | "Must be a date" |
 
-Override custom messages via `theme.errors`:
+Override custom messages via `theme.errors`, keyed by the table's first column — `int` / `float` / `time` included:
 
 ```kumiki snippet
 theme MyTheme = {

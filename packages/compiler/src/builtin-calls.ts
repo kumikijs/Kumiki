@@ -15,8 +15,9 @@
 //
 // Each name also carries the number of arguments a call to it must supply —
 // which is not the same as the number its lowering reads, and `Decoder.Json` is
-// the case that separates them: the lowering reads nothing and returns a
-// sentinel, while a call has to name the payload type. Without a count at all,
+// the case that separates them: a call has to name the payload type, while the
+// lowering reads it only for the predicates it carries and is the `"json"`
+// sentinel when it carries none. Without a count at all,
 // a builtin's argument list was whatever its lowering happened to find:
 // `Duration.s()` lowered to `((0) * 1000)`, a timer written with an empty
 // duration fired immediately and forever, and nothing said the argument was
@@ -67,11 +68,11 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Ma
   ["Bytes.from-text", exactly(1)],
   ["Bytes.from-base64", exactly(1)],
   ["Bytes.from-bytes", exactly(1)],
-  // The decoder's payload type. It is not read by the lowering — every
-  // `Decoder.*` becomes a sentinel string — but it is what makes the decode
-  // type-safe in `docs/spec/http.md` §6.1.4, and a decoder written without it
-  // was indistinguishable from one that had it, in the source and in the
-  // output alike.
+  // The decoder's payload type, which is what makes the decode type-safe in
+  // `docs/spec/http.md` §6.1.4: the lowering is the check of the predicates it
+  // carries, or the `"json"` sentinel when it carries none. A decoder written
+  // without it was indistinguishable from one that had it, in the source and
+  // in the output alike.
   ["Decoder.Json", exactly(1)],
   ["Decoder.Text", exactly(0)],
   ["Decoder.Bytes", exactly(0)],
@@ -79,29 +80,36 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Ma
 ]);
 
 /**
- * Qualifiers whose members are constants, so the parser reads
- * `Qualifier.member` as a zero-argument call even without parentheses — which
- * is how `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
- * `Decoder.None` and how `stdlib.md` §2.1.1.1 writes `EffectId.none`. Without
- * that, the paren-less form was a field read on a freshly built variant and
- * emitted `undefined`, which `check` had no reason to object to.
+ * The qualifiers of `QUALIFIED_BUILTIN_CALLS`, which is what the parser reads
+ * `Qualifier.member` by as the head of a call rather than as a value — so the
+ * member is a zero-argument call even written without parentheses. That is how
+ * `docs/spec/http.md` §6.1.4 writes `Decoder.Text` / `Decoder.Bytes` /
+ * `Decoder.None` and how `stdlib.md` §2.1.1.1 writes `EffectId.none`.
  *
- * Deliberately not every qualifier in `QUALIFIED_BUILTIN_CALLS`. What excluding
- * one costs is that its bare spelling is not read as a call at all: `Duration.s`
- * is a field read on a freshly built variant, which emits `undefined` and draws
- * no diagnostic. The reason it was excluded — that a zero-argument
- * `Duration.s()` would be defaulted to `0`, so the choice was between two
- * silences — no longer holds, because the count is checked and the default is
- * gone. `Decoder.Json` is the other way round: it is a member of a namespace
- * listed here that takes an argument, so it is the one with no paren-less
- * spelling.
+ * Left out, a qualifier's bare spelling is not an error but a field read on a
+ * freshly built variant: `Duration.s` was `{_tag: "Duration"}["s"]`, an
+ * `undefined` nothing reported, and a `setTimeout(undefined)` is a
+ * `setTimeout(0)`. So the list holds every qualifier the map names, and a
+ * member of one is answered by name (E0116) and by count (E0213) in either
+ * spelling. It is written out rather than derived from the map because listing
+ * a qualifier claims `Q.<member>` in every expression position — a decision
+ * about the language surface, not a consequence of adding a lowering.
  *
- * The membership rule is enforced by `checkCallee`, not by this table alone:
- * `TYPE_MEMBER_CALLS` resolves `fresh` / `parse` / `show` on any capitalised
- * qualifier, and without that check `EffectId.fresh` passed and minted an id
- * where the author wrote the empty sentinel.
+ * Not every qualifier codegen lowers: `TYPE_MEMBER_CALLS` resolves `fresh` /
+ * `parse` / `show` on any capitalised name, and those are deliberately absent,
+ * which is why a bare `Int.parse` is still that field read.
+ *
+ * Membership is closed, and `checkCallee` is what closes it: without that,
+ * `TYPE_MEMBER_CALLS` reached inside these namespaces and `EffectId.fresh`
+ * minted an id where the author wrote the empty sentinel — so within a listed
+ * namespace those three members resolve to nothing, in either spelling.
  */
-export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "EffectId"]);
+export const QUALIFIED_CALL_NAMESPACES: ReadonlySet<string> = new Set([
+  "Decoder",
+  "EffectId",
+  "Duration",
+  "Bytes",
+]);
 
 /**
  * Members codegen lowers on *any* capitalised qualifier — `TodoId.fresh()`,
@@ -109,9 +117,10 @@ export const CONSTANT_NAMESPACES: ReadonlySet<string> = new Set(["Decoder", "Eff
  * rather than resolved used to be the argument for the checker not resolving it
  * either, and the two members answer it differently:
  *
- * - `parse` branches on the qualifier (`Int` / `Float` / `Time` have numeric
- *   and millisecond readings), so a misspelt one silently produces a different
- *   value: `Itn.parse("12")` is `Some("12")` where `Int.parse` is `Some(12)`.
+ * - `parse` reads its text by the base the qualifier resolves to
+ *   (`parse-reading.ts`), so a misspelt one names no reading at all — where it
+ *   used to branch on the name and silently produce a different value:
+ *   `Itn.parse("12")` was `Some("12")` where `Int.parse` is `Some(12)`.
  * - `fresh` and `show` discard it. A misspelling there produces the same value,
  *   and the name is checked because a qualifier that resolves to no type is
  *   wrong on its own terms — which makes the checker deliberately stricter
