@@ -6,7 +6,6 @@
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
-  ControlRefusal,
   type ControlVerb,
   controlFault,
   type DispatchTarget,
@@ -14,6 +13,8 @@ import {
   judgeRefusal,
   readControl,
   type Action as ScenarioAction,
+  StepRefusal,
+  submitFault,
 } from "@kumikijs/runtime";
 import { type ConsoleMessage, chromium, type Locator, type Page, type Route } from "playwright";
 
@@ -479,7 +480,7 @@ async function serveScenario(
     for (const step of scenario.steps) {
       errorBuf = [];
       const actionDesc = step.do ? describeAction(step.do) : undefined;
-      let fault: { message: string; refusal?: ControlRefusal } | undefined;
+      let fault: { message: string; refusal?: StepRefusal } | undefined;
       if (step.do) {
         try {
           await performAction(page, step.do);
@@ -488,7 +489,7 @@ async function serveScenario(
           // throws in this process (only `readControl` crosses into the page),
           // so the class survives.
           const message = e instanceof Error ? e.message : String(e);
-          fault = e instanceof ControlRefusal ? { message, refusal: e } : { message };
+          fault = e instanceof StepRefusal ? { message, refusal: e } : { message };
         }
         await page.waitForTimeout(settleMs);
       }
@@ -662,14 +663,36 @@ async function performAction(page: Page, a: Action): Promise<void> {
     // the real thing, so constraint validation and the browser's own submit
     // sequence are part of what it verifies. The selector may name the form or
     // anything inside it, as at the scenario tier.
-    await page
+    //
+    // `requestSubmit()` dispatches the event synchronously, and a listener
+    // added now runs after the form tile's own, so it sees the event once the
+    // gate has judged it. The record is read in the page and the rule asked
+    // here — `submitFault`, the one the scenario tier asks.
+    const outcome = await page
       .locator(a.submit)
       .first()
       .evaluate((el: Element) => {
         const form = el instanceof HTMLFormElement ? el : el.closest("form");
         if (!form) throw new Error("no form at or above the selector");
-        form.requestSubmit();
+        const apps = window.__kumikiApps ?? (window.__kumikiApp ? [window.__kumikiApp] : []);
+        const askers = apps.flatMap((app) => (app._submitHeldBy ? [app._submitHeldBy] : []));
+        if (askers.length === 0) return null;
+        let held: readonly string[] | undefined;
+        const ask = (e: Event): void => {
+          for (const asker of askers) held ??= asker(e);
+        };
+        form.addEventListener("submit", ask);
+        try {
+          form.requestSubmit();
+        } finally {
+          form.removeEventListener("submit", ask);
+        }
+        return { held: held ? [...held] : [] };
       });
+    if (outcome === null)
+      throw new Error("submit: the page carries no `_submitHeldBy` seam to ask");
+    const fault = submitFault(describeAction(a), outcome.held);
+    if (fault) throw fault;
     return;
   }
   if ("dispatch" in a) {
@@ -931,8 +954,12 @@ declare global {
       reducers?: Array<{ name: string; selector?: { tile: string; id?: string } }>;
       _dispatch?: (n: string, p: Record<string, unknown>) => void;
       _navigate?: (path: string) => void;
+      _submitHeldBy?: (e: Event) => readonly string[] | undefined;
     };
     /** Co-mounted instances, in document order (multi-mount runner). */
-    __kumikiApps?: Array<{ live?: Record<string, unknown> }>;
+    __kumikiApps?: Array<{
+      live?: Record<string, unknown>;
+      _submitHeldBy?: (e: Event) => readonly string[] | undefined;
+    }>;
   }
 }

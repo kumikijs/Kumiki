@@ -73,7 +73,9 @@ are deterministic and hermetic.
   `expectedActionError` field behind it, is how you tell a claimed refusal from a step where
   nothing happened. Assert the whole phrase the message suggests (`["<button> is disabled"]`), not
   the bare reason. A step that asks to be refused and either runs or fails for some other reason
-  fails.
+  fails. A `{submit}` whose form holds the submit back — a bound field fails its validation, so no
+  `ui.submit` reducer runs — is refused the same way, naming the field
+  (`["the field bound to email fails its validation"]`).
   `state` is a **partial** match; keys may be dotted paths (`issues.id-1.status`).
 - `effects`: per-effect queues of `{outcome, value}` returned in order — script HTTP/storage
   so the loop is deterministic and never hits the network.

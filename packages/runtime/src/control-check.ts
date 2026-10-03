@@ -182,16 +182,18 @@ export function readControl(el: Element): ControlState | null {
 }
 
 /**
- * A step turned away because the platform would not deliver the gesture — as
- * opposed to a step that could not resolve its target at all. Its own class,
- * not a plain `Error`, because that difference is the whole of what
- * `actionErrorIncludes` may claim: both land on `actionError`, and a substring
- * match alone cannot tell "the button is disabled" from "no element matching
- * selector #save-disabled", which also contains `disabled`.
+ * A step that reached its target and was turned away — as opposed to a step
+ * that could not resolve its target at all. Its own class, not a plain `Error`,
+ * because that difference is the whole of what `actionErrorIncludes` may claim:
+ * both land on `actionError`, and a substring match alone cannot tell "the
+ * button is disabled" from "no element matching selector #save-disabled",
+ * which also contains `disabled`.
+ *
+ * Two things refuse a step: a control the platform will not drive
+ * ({@link ControlRefusal}), and a form whose submit gate held the submit back
+ * (`SubmitRefusal`, in `submit-check.ts`).
  */
-export class ControlRefusal extends Error {
-  /** Which state refused, out of a closed set. */
-  readonly reason: ControlRefusalReason;
+export class StepRefusal extends Error {
   /**
    * The part a fixture matches on: `click #off: <button> is disabled, so no
    * user gesture reaches it`. The explanation and the hint that follow it in
@@ -204,12 +206,23 @@ export class ControlRefusal extends Error {
   /** What the fixture should write to assert this refusal, quoted in `message`. */
   readonly suggestion: string;
 
-  constructor(headline: string, message: string, reason: ControlRefusalReason, suggestion: string) {
+  constructor(headline: string, message: string, suggestion: string) {
     super(message);
-    this.name = "ControlRefusal";
+    this.name = "StepRefusal";
     this.headline = headline;
-    this.reason = reason;
     this.suggestion = suggestion;
+  }
+}
+
+/** A step turned away because the platform would not deliver the gesture. */
+export class ControlRefusal extends StepRefusal {
+  /** Which state refused, out of a closed set. */
+  readonly reason: ControlRefusalReason;
+
+  constructor(headline: string, message: string, reason: ControlRefusalReason, suggestion: string) {
+    super(headline, message, suggestion);
+    this.name = "ControlRefusal";
+    this.reason = reason;
   }
 }
 
@@ -296,7 +309,7 @@ const CONSEQUENCE: Record<ControlDemand, string> = {
   none: "so nothing is asked of it",
 };
 
-/** Prose kept out of `headline`, for the reason `ControlRefusal.headline` gives. */
+/** Prose kept out of `headline`, for the reason `StepRefusal.headline` gives. */
 const EXPLANATION: Record<ControlRefusalReason, string> = {
   disabled: "",
   readonly: "",
@@ -309,11 +322,11 @@ export type StepFault = {
   /** The message that lands on `actionError`. */
   message: string;
   /**
-   * The refusal, when the platform turned the step away — absent when the step
-   * could not resolve its target at all, which is a different thing and must
-   * not be claimable as a refusal.
+   * The refusal, when the step was turned away — absent when the step could
+   * not resolve its target at all, which is a different thing and must not be
+   * claimable as a refusal.
    */
-  refusal?: ControlRefusal | undefined;
+  refusal?: StepRefusal | undefined;
 };
 
 /** What a step's `actionErrorIncludes` did with the fault its action raised. */

@@ -9,16 +9,17 @@
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
 import {
-  ControlRefusal,
   type ControlVerb,
   controlFault,
   judgeRefusal,
   readControl,
+  StepRefusal,
 } from "./control-check.ts";
 import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
+import { submitFault } from "./submit-check.ts";
 
 /** One thing to do to the app. Exactly one field should be set. */
 export type Action =
@@ -65,7 +66,8 @@ export type Expect = {
    * often the behaviour a fixture means to assert. "The save button is disabled
    * while the save is in flight, so clicking it does nothing" had no spelling
    * before this — the step that drove the disabled control passed, and passed
-   * whether the guard held or the reducer simply did not exist.
+   * whether the guard held or the reducer simply did not exist. A `{submit}`
+   * whose form held the submit back is refused the same way (`submitFault`).
    *
    * A matched `actionError` moves to `expectedActionError` and stops failing
    * the step, exactly as a matched error moves to `expectedErrors`. A step that
@@ -322,6 +324,7 @@ const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, m
 type Dispatchable = AppShape & {
   _dispatch?: (name: string, el: Record<string, unknown>) => void;
   _navigate?: (path: string, replace?: boolean) => void;
+  _submitHeldBy?: (e: Event) => readonly string[] | undefined;
 };
 
 export async function runScenario(
@@ -443,7 +446,7 @@ export async function runScenario(
       // Kept out of `errorBuf`, which is what the app reported. An action that
       // could not run is the scenario's fault, and folding the two together let
       // `errorIncludes` claim it — see `StepResult.actionError`.
-      let fault: { message: string; refusal?: ControlRefusal } | undefined;
+      let fault: { message: string; refusal?: StepRefusal } | undefined;
       if (step.do) {
         try {
           performAction(step.do, root, dispatchable);
@@ -451,9 +454,7 @@ export async function runScenario(
           // The refusal is carried, not flattened to its message: a substring
           // match alone cannot tell it from a selector that matched nothing.
           fault =
-            e instanceof ControlRefusal
-              ? { message: e.message, refusal: e }
-              : { message: errStr(e) };
+            e instanceof StepRefusal ? { message: e.message, refusal: e } : { message: errStr(e) };
         }
         // `wait` is the whole action: it adds its duration to the settle this
         // step would have had anyway, so a debounce window or a retry backoff
@@ -568,9 +569,11 @@ function describeAction(a: Action): string {
  * The seam named, or a fault. Both `_dispatch` and `_navigate` used to be
  * called through `?.`, so a shape mounted without one did nothing and reported
  * nothing — the same silence a missing selector had before #334, one layer
- * further in.
+ * further in. `_submitHeldBy` is asked rather than driven, but a `{submit}`
+ * step with no way to learn whether its form held the submit back would pass
+ * either way, which is the same silence.
  */
-function requireSeam<K extends "_dispatch" | "_navigate">(
+function requireSeam<K extends "_dispatch" | "_navigate" | "_submitHeldBy">(
   app: Dispatchable,
   seam: K,
   action: string,
@@ -617,7 +620,14 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     const el = root.querySelector<HTMLElement>(a.submit);
     const form = el?.closest("form");
     if (!form) throw new Error(`no form at or above selector ${a.submit}`);
-    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const heldBy = requireSeam(app, "_submitHeldBy", describeAction(a));
+    const submitted = new Event("submit", { bubbles: true, cancelable: true });
+    form.dispatchEvent(submitted);
+    // A held-back submit leaves nothing behind to assert on, so the form's own
+    // record of it is asked — through the seam the browser tier asks too, and
+    // judged by the same `submitFault`.
+    const fault = submitFault(describeAction(a), heldBy(submitted));
+    if (fault) throw fault;
     return;
   }
   if ("dispatch" in a) {
