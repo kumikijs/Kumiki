@@ -33,7 +33,7 @@ reducer find on=ui.click(FindBtn)
                    | Found(_) -> Found("")
 
 reducer addTag on=ui.click(TagBtn)
-    do= tags := tags.push(if tags.size == 0 then "kumi" else "kumiki")
+    do= tags := tags.push(if tags.length == 0 then "kumi" else "kumiki")
 
 tile EmailBtn = button(text="email", onClick=editEmail)
 tile AgeBtn   = button(text="age",   onClick=editAge)
@@ -43,7 +43,7 @@ tile TagBtn   = button(text="tag",   onClick=addTag)
 tile App = column(
              text("email: " + form.email),
              text("age: " + form.age.show),
-             text("tags: " + tags.size.show),
+             text("tags: " + tags.length.show),
              row(EmailBtn, AgeBtn, FindBtn, TagBtn) {gap: "sm"})
            {pad: "lg", gap: "md"}
 

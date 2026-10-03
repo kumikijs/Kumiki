@@ -8,8 +8,8 @@
 // one asked for a Map's size, which is 0 for anything that is not an object,
 // so every non-object — `"abc"`, and any Int, too — was empty. Each answer is
 // asserted here for both spellings, on an empty and a non-empty value of every
-// receiver that declares the member, plus an Int: the checker lets a scalar
-// through, and both spellings must agree that it is not empty.
+// receiver that declares the member. An Int does not declare it, so the checker
+// refuses `v.is-empty` on one (E0108, stdlib.md §2.2.3's dispatch rule).
 //
 // `bare` and `paren` start at the opposite of the expected answer, so a row
 // passes only if the reducer actually overwrote them.
@@ -31,8 +31,6 @@ const CASES: ReadonlyArray<[label: string, type: string, value: string, empty: b
   ["a non-empty List", "List(Int)", "[1]", false],
   ["an empty Text", "Text", '""', true],
   ["a non-empty Text", "Text", '"abc"', false],
-  ["a zero Int", "Int", "0", false],
-  ["a non-zero Int", "Int", "7", false],
 ];
 
 const SPELLINGS = ["v.is-empty", "v.is-empty()"] as const;

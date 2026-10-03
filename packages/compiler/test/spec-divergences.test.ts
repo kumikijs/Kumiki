@@ -626,7 +626,9 @@ app A
 `;
     const errors = check(parse(lex(src)));
     expect(errors.map((e) => e.code)).toEqual(["E0108"]);
-    expect(errors[0]?.message).toBe('Record type has no field or method ".get"');
+    expect(errors[0]?.message).toBe(
+      'Record type has no field or method ".get" — it is a member of Map / List / Option / Result',
+    );
   });
 
   it("keeps the name-based reading when codegen runs without check", () => {

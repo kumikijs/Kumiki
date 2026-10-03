@@ -8,7 +8,7 @@ A slot read inside a reducer body sees what the body has already written, in eve
 reducer go on=ui.click(B) do= noteKey := "b"
                               out1 := match 1 with | n -> noteKey
                               out2 := let k = "x" in noteKey
-                              hits := names.filter($1 == noteKey).size
+                              hits := names.filter($1 == noteKey).length
 ```
 
 Before this fix, each of those reads saw `noteKey` as it was before the click: in a `match` binding, variant or tuple arm, in a `let … in` body, and in a method's predicate or element lambda. Each of those lowerings rebuilt its scope without the reducer's view of the slots, so the read lowered to `_live[...]`; a wildcard arm and a top-level read already saw the write.

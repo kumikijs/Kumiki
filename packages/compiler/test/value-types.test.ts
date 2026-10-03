@@ -1098,10 +1098,6 @@ tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
     ).toEqual([]);
   });
 
-  it("says nothing about .copy on a receiver that is not a record", () => {
-    expect(inReducer(`slot n : Int = 0`, `n := n.copy(z=1)`)).toEqual([]);
-  });
-
   it("says nothing about an operator with one unresolved side", () => {
     expect(inReducer(`slot t : Text = ""`, `t := $event.head + "x"`)).toEqual([]);
   });

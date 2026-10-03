@@ -275,9 +275,11 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0108 `undef-member`
 
-`recv.member` アクセスで、`recv` の**推論型**が既知なのに `member` がその型のフィールドでも stdlib のメソッド/ショートカットでもない（ADR-002）。タイポ（`list.frist`）や形状違いのメンバー使用（`head` フィールドの無い record への `record.head`）を捕捉する。受け手型が推論できないときはエラーにならず、名前ベースのショートカット dispatch が使われる。
+`recv.member` アクセスで、`recv` の**推論型**が既知なのに `member` がその型のフィールドでも stdlib のメソッド/ショートカットでもない（ADR-002）。タイポ（`list.frist`）、形状違いのメンバー使用（`head` フィールドの無い record への `record.head`）、別の受け手のメンバー（`Result` への `res.filter(…)`、`List` への `xs.size`）を捕捉する。受け手が持つメンバーは標準ライブラリ §2.2 のその受け手自身の一覧であり、いずれかの受け手が持つ名前すべてではない（[§2.2.3 の dispatch 規則](./stdlib.md#_2-2-3-list-t)）。`recv.m` と `recv.m(…)` のどちらの書き方でも同じである。受け手型が推論できないときはエラーにならず、名前ベースのショートカット dispatch が使われる。
 
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
+
+その名前が他の受け手のメンバーであるとき、メッセージの末尾はそれらを挙げる `— it is a member of <receivers>` になる（`Type "Result" has no member ".filter" — it is a member of Map / Set / List / Option`）。`<T>` はメンバー表が読む受け手で、別名・`where`・`nominal` を通した先の型。`Duration` は、その下の `Int` ではなく `Duration` と書かれる（`Type "Duration" has no member ".ms"`）。
 
 **修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
 

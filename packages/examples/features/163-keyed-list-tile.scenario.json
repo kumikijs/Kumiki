@@ -32,7 +32,7 @@
       "expect": {
         "noErrors": true,
         "state": {
-          "groups": [{ "name": "y", "tags": ["y1"] }, { "name": "x", "tags": ["x1", "x2"] }]
+          "groups": ["y", "x"]
         },
         "domIncludes": ["x/x1", "x/x2", "y/y1"]
       }

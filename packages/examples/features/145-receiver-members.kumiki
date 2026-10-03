@@ -1,0 +1,49 @@
+# Feature: a member belongs to the receivers stdlib.md §2.2 lists it for, not
+# to every receiver some container has it on (§2.2.3's dispatch rule).
+#
+# `res.filter($1 > 2)` on a `Result` used to pass `check`, because `filter` is
+# a member of a `Map`, a `List` and an `Option` — and the runtime read the
+# `Result` as a `Map` and answered `{}`. `opt.keys` handed back the Option's
+# own `_tag` / `_0` as data. Each is E0108 now, naming the receiver and the
+# receivers that do have the member. What this program writes instead is the
+# spelling §2.2 gives each receiver: a `Result` becomes an `Option` before it
+# is filtered, a `Set` becomes a `List` before it is mapped, and a `List` is
+# measured by `length` (a `Map` / `Set` by `size`).
+#
+# A `Duration` is a `nominal Int` with `to-ms` besides, and stays one under a
+# `where`: `delay.to-ms` on a `Duration where between(…)` reads the Duration
+# row, not only the Int one underneath it.
+
+slot res  : Result(Int, Text) = Ok(3)
+slot opt  : Option(Int)       = Some(3)
+slot st   : Set(Int)          = [1, 2, 3]
+slot kept : Option(Int)       = None
+slot big  : List(Int)         = []
+
+type Delay = Duration where between(0, 60000)
+slot delay : Delay = Duration.s(2)
+
+reducer run on=ui.click(Run)
+    do= kept := res.to-option.filter($1 > 2)
+        big := st.to-list.filter($1 > 1).map($1 * 2)
+
+tile Run = button(text="run")
+
+tile App = column(
+    Run,
+    text("kept: " + kept.get-or(0).show),
+    text("opt: " + opt.to-list.length.show),
+    text("big: " + big.length.show),
+    text("set: " + st.size.show),
+    text("delay: " + delay.to-ms.show)
+)
+
+app ReceiverMembers
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test filtered-as-an-option =
+    reducer-test run
+        given  = {slots: {res: Ok(3), st: [1, 2, 3], kept: None, big: []}, event: {type: ui.click, target: Run}}
+        expect = {slots: {kept: Some(3), big: [4, 6]}, effects: []}

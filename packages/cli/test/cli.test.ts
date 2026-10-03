@@ -330,7 +330,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // the budget moves up one step, as it did to 63,000, rather than holding
     // the change at the old line.
     //
-    // Still 64,000 (63,340 measured, from 63,331 on dev at 29aa08e): an err a
+    // Still 64,000 (63,448 measured, from 63,331 on dev at 29aa08e): a `for`
+    // keys each tile it renders apart from its siblings, a repeated value
+    // included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which
+    // writes the loop and the occurrence before the value's `show`. A counter
+    // has no `for` and still ships it, because it sits in the stdlib module
+    // every app loads.
+    //
+    // Still 64,000 (63,457 measured, from 63,448 on dev at 2adec5b): an err a
     // storage-family invoke caught from a throw is `final` (http.md §6.7), and
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter

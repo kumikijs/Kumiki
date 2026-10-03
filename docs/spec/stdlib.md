@@ -115,6 +115,7 @@ toggle(x)                   : Set(T)
 union(other)                : Set(T)
 intersect(other)            : Set(T)
 diff(other)                 : Set(T)
+filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
@@ -169,13 +170,13 @@ fn empty() -> Bool = todos.is-empty           # same as above
 fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
-> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
+> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
 
 **The lambda arguments of `map` / `filter` / `find` / `sort-by`** are decided by the receiver's **type**, not by the value at run time:
 - An element that is a `Tuple(A, B)` — the `[k, v]` pair `.entries` produces — is taken apart: `$1` is its first half, `$2` its second. Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`. An `Option` / `Result` holding a `Tuple(A, B)` is taken apart the same way.
 - A `Map(K, V).filter` predicate and a `Map(K, V).map` expression are handed each entry: `$1=key`, `$2=value` ([§2.2.1](#_2-2-1-map-k-v)).
 - Any other element of a `List`, and the value of an `Option` (`map` / `filter`) or of a `Result` (`map`), is `$1` **whole** — a `List` element with two items included: `[[1, 2], [3, 4, 5]].map($1.length)` is `[2, 3]`, and `Some([1, 2]).filter($1.length > 1)` is `Some([1, 2])`. Such a fragment binds no `$2`: writing one is [E0103](./errors.md#e0103-undef-ref-undef-slot) (`"$2" is not bound here — …`), rather than the index or a second copy of `$1`. That holds anywhere inside the fragment, a `$2` in another method's argument included: `nums.map($1.min($2))` is E0103 too, since only a fragment binds positionals and that argument reads the fragment's.
-- Everywhere else the lowering falls back to reading the value: a 2-element array is taken apart into `$1` / `$2`; anything else is `$1`, with `$2` the index (`map` / `find`) or `$1` again (`filter` / `sort-by`). That is where the checker cannot decide the element type (a type parameter, an untyped payload — `nums.fold([], $1.push([$2, $2])).map(…)`), and where the receiver's type is known but this section gives the method no binding on it: a `Set`, whose `filter` is handed each element as an `[element, true]` entry; `Map.find` / `sort-by`; `Option.find` / `sort-by`; `Result.filter` / `find` / `sort-by`; and any receiver that is not a collection. A `fn` named as the fragment there takes a second parameter only over a receiver the checker cannot decide; over a known one it is [E0213](./errors.md#e0213-call-arity-mismatch). These are gaps, not rules a program may rely on, and they close as the types become decidable and the members get bindings of their own.
+- Everywhere else the lowering falls back to reading the value: a 2-element array is taken apart into `$1` / `$2`; anything else is `$1`, with `$2` the index (`map` / `find`) or `$1` again (`filter` / `sort-by`). That is where the checker cannot decide the element type (a type parameter, an untyped payload — `nums.fold([], $1.push([$2, $2])).map(…)`), and where the receiver's type is known but this section gives the method no binding on it: a `Set`, whose `filter` is handed each element as an `[element, true]` entry. A method the receiver does not have at all — `Map.find` / `sort-by`, `Option.find` / `sort-by`, `Result.filter` / `find` / `sort-by`, any of them on a receiver that is not a collection — is [E0108](./errors.md#e0108-undef-member) instead, by the dispatch rule above. A `fn` named as the fragment there takes a second parameter only over a receiver the checker cannot decide; over a known one it is [E0213](./errors.md#e0213-call-arity-mismatch). These are gaps, not rules a program may rely on, and they close as the types become decidable and the members get bindings of their own.
 
 **`sort-by(expr)` orders by the key the way `<` orders two values** ([language §1.9.4](./language.md#_1-9-4-operator-types)): a number or a `Time` numerically, a `Text` as `<` compares two `Text`s. Elements whose keys are equal keep the order they had. A key with no order — a record, a variant, a `Bool`, an `Option`, a container — is [E0201](./errors.md#e0201-type-mismatch), as `a < b` on the same two values would be. The key may also be a `fn` passed by name (`xs.sort-by(keyOf)`); its declared return type is the key's type.
 
@@ -258,6 +259,7 @@ plus(duration)              : Time
 minus(duration)             : Time
 diff(other)                 : Duration
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
+to-ms                       : Int             ; milliseconds since the Unix epoch
 ```
 
 `format` replaces each of these tokens with that field of the instant and copies the rest of the pattern through verbatim, so `"dd/MM/yyyy"` and `"[on] dd"` are both patterns:

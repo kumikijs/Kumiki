@@ -29,7 +29,7 @@ slot solo   : List(Text) = ["base"]
 reducer flip on=ui.click(FlipBtn) do= layers := layers.reverse
 
 reducer toggleBadge on=ui.click(BadgeBtn)
-    do= solo := if solo.size == 1 then ["base", "badge"] else ["base"]
+    do= solo := if solo.length == 1 then ["base", "badge"] else ["base"]
 
 tile FlipBtn  = button(text="flip stacking order", onClick=flip)
 tile BadgeBtn = button(text="add or drop the second layer", onClick=toggleBadge)
