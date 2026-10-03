@@ -106,14 +106,17 @@ type Racer = { name: string; pid: number; saw: number[]; opId?: string; error?: 
 
 /**
  * A writer for `race`: waits for the start instant, then adds one slot. It
- * also reports the pid named by every lock it found in its way — each `wx`
- * create of the lock that failed with EEXIST — by wrapping `fs.openSync`,
- * which the write lock calls through the `node:fs` namespace
- * (`syncBuiltinESMExports` carries the wrapper into that namespace).
+ * also reports the pid named by every lock it found in its way — each open of
+ * the lock path that failed with EEXIST, which only an exclusive create can —
+ * by wrapping `fs.openSync`, which the write lock calls through the `node:fs`
+ * namespace (`syncBuiltinESMExports` carries the wrapper into that namespace).
+ * The path is compared resolved and the flags not at all, so the check does
+ * not depend on how the lock spells either.
  */
 const RACER = [
   'import fs from "node:fs";',
   'import { syncBuiltinESMExports } from "node:module";',
+  'import { resolve } from "node:path";',
   "const [file, lock, name, atArg] = process.argv.slice(2);",
   "const at = Number(atArg);",
   'if (!Number.isFinite(at)) throw new Error("no start instant: " + atArg);',
@@ -123,7 +126,7 @@ const RACER = [
   "  try {",
   "    return open(path, flags, ...rest);",
   "  } catch (e) {",
-  '    if (path === lock && flags === "wx" && e.code === "EEXIST") {',
+  '    if (e.code === "EEXIST" && resolve(String(path)) === resolve(lock)) {',
   "      try {",
   '        const { pid } = JSON.parse(fs.readFileSync(lock, "utf8"));',
   "        if (!saw.includes(pid)) saw.push(pid);",
@@ -158,10 +161,12 @@ const RACE_ATTEMPTS = 3;
  *
  * Writers that never meet prove nothing about the lock: they ran one after
  * another. A writer's one `addDef` — the first in its process — takes about
- * 15-20 ms on an idle machine (3-5 ms for later calls), so a writer the
+ * 15-20 ms on an idle machine (2-5 ms for later calls), so a writer the
  * scheduler wakes that much late can miss the others entirely. That is a
  * missed start, not a lost add, so the writers are started again, up to
- * `RACE_ATTEMPTS` times.
+ * `RACE_ATTEMPTS` times. Writers that never meet in any attempt are reported
+ * as such, and that has a second cause the test cannot tell apart: a lock
+ * that is no longer created exclusively, so no writer ever finds one.
  */
 async function race(setup: () => void = () => {}): Promise<Racer[]> {
   const racer = join(dir, "racer.mts");
@@ -187,7 +192,7 @@ async function race(setup: () => void = () => {}): Promise<Racer[]> {
     if (contended) return results;
     expect(
       attempt,
-      `in ${RACE_ATTEMPTS} attempts no writer found the lock held by another: they missed the start instant and ran one after another, so the race proved nothing (this is not a lost add)`,
+      `in ${RACE_ATTEMPTS} attempts no writer found the lock held by another: either they missed the start instant and ran one after another, or the lock is no longer created exclusively (no EEXIST was ever observed)`,
     ).toBeLessThan(RACE_ATTEMPTS);
   }
 }
