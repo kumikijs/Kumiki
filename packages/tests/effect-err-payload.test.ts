@@ -266,7 +266,7 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 });
 
-// The scenario tier (#715). A scripted outcome takes the place of a provider's
+// The scenario tier. A scripted outcome takes the place of a provider's
 // result (stdlib.md §2.5), so it is read as one: each row runs the same value
 // through a real mount, as a host provider's err, and through `runScenario`, as
 // a scripted err, and the slot must hold the same `Text` both ways. The runner
