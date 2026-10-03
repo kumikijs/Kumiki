@@ -1536,6 +1536,14 @@ export type MountedApp = AppShape & {
   _navigate: (path: string, replace?: boolean) => void;
   _prefetch: (name: string, args: Record<string, string>, to: string) => void;
   _rerender: () => void;
+  /**
+   * The slots whose fields held this submit event back, or `undefined` when
+   * none did — the reader ({@link submitHeldBy}) of the record the form tile
+   * writes ({@link noteHeldSubmit}). A seam rather than an import because the
+   * browser tier asks from outside the bundle, and the scenario tier asks the
+   * same way so the two read one record.
+   */
+  _submitHeldBy: (e: Event) => readonly string[] | undefined;
   /** Prefetch dedupe set (§3.8), lazily created on first link prefetch. */
   _prefetched?: Set<string>;
   /**
@@ -1709,6 +1717,28 @@ export function judgeShownField(
   if (refused?.unread) return { valid: false, unread: refused.unread };
   const value = refused ? refused.value : held;
   return slotAccepts(meta, value) ? { valid: true } : { valid: false, value };
+}
+
+/**
+ * Submit events a form held back (forms.md §5.2.2), each with the slots whose
+ * fields failed, in the order the form's controls bind them. Keyed by the event
+ * rather than the form or the app: a driver asks about the submit it caused,
+ * and a record that outlived it could answer for a later one.
+ */
+const heldSubmits = new WeakMap<Event, readonly string[]>();
+
+/** Record that a form's gate held `e` back, and which bound slots did it. */
+export function noteHeldSubmit(e: Event, slots: readonly string[]): void {
+  heldSubmits.set(e, slots);
+}
+
+/**
+ * The slots that held this submit back, or `undefined` when no form held it
+ * back — it ran its `ui.submit` reducer, or reached no form that has one. What
+ * a driver asks through a mount's `_submitHeldBy` seam.
+ */
+export function submitHeldBy(e: Event): readonly string[] | undefined {
+  return heldSubmits.get(e);
 }
 
 /** The controls a refused bind is remembered against, for `app`. */
@@ -3032,6 +3062,9 @@ export function mountCore(
   };
   (app as AppShape & { _resolveLeave?: (outcome: "yes" | "no") => void })._resolveLeave =
     resolveLeave;
+  (
+    app as AppShape & { _submitHeldBy?: (e: Event) => readonly string[] | undefined }
+  )._submitHeldBy = submitHeldBy;
 
   // SSR hydration (§10.6.2 step 3): inject the server-side bootstrap episode
   // into the logger BEFORE any client-side episode is opened, so

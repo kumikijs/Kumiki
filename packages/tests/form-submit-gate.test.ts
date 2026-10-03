@@ -4,7 +4,7 @@
 // value has left its slot on the last value it accepted; were the form to
 // submit, the reducer would read that value, not what the field shows.
 
-import { type AppShape, mount } from "@kumikijs/runtime";
+import { type AppShape, mount, runScenario, type ScenarioStep } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
 
@@ -254,5 +254,153 @@ tile App = column(FormA, FormB)`,
     }
     expect(app.live?.a).toBe(0);
     expect(app.live?.b).toBe(1);
+  });
+});
+
+// A `{submit}` step dispatches the event and the form decides; the step used to
+// pass either way, so a fixture expecting a submit read green while the gate
+// held it back. The scenario tier reports a held-back submit as a refusal, from
+// the rule the browser tier asks too (`submitFault`).
+describe("a {submit} step the form holds back is refused", () => {
+  async function run(source: string, steps: ScenarioStep[]) {
+    const app = await loadSource(source);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    roots.push(root);
+    return runScenario(app, root, { steps });
+  }
+
+  it("fails the step, naming the field that held it back", async () => {
+    const report = await run(SOURCE, [
+      { do: { fill: "#c", value: "ada@examplecom" } },
+      { do: { submit: "#c" }, expect: { state: { sends: 0 } } },
+    ]);
+    expect(report.ok).toBe(false);
+    expect(report.steps[1]?.actionError).toContain(
+      "submit #c: the form held the submit back — the field bound to contact fails its validation",
+    );
+    expect(report.steps[1]?.state.sends).toBe(0);
+  });
+
+  it("actionErrorIncludes claims it", async () => {
+    const report = await run(SOURCE, [
+      { do: { fill: "#c", value: "ada@examplecom" } },
+      {
+        do: { submit: "#c" },
+        expect: {
+          noErrors: true,
+          actionErrorIncludes: ["the field bound to contact fails its validation"],
+          state: { sends: 0 },
+        },
+      },
+    ]);
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[1]?.actionError).toBeUndefined();
+    expect(report.steps[1]?.expectedActionError).toContain("held the submit back");
+  });
+
+  it("names every field that holds it back", async () => {
+    const report = await run(
+      program(
+        `slot email : Text where email = ""
+slot code  : Text where nonempty = ""
+slot sends : Int = 0
+reducer send on=ui.submit(Signup) do= sends := sends + 1`,
+        `tile Signup = form(column(input(bind=email, id="e"), input(bind=code, id="k")))`,
+      ),
+      [{ do: { submit: "#e" } }],
+    );
+    expect(report.steps[0]?.actionError).toContain(
+      "the fields bound to email, code fail their validation",
+    );
+  });
+
+  it("passes a submit that goes through", async () => {
+    const report = await run(SOURCE, [
+      { do: { submit: "#c" }, expect: { noErrors: true, state: { sends: 1 } } },
+    ]);
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[0]?.actionError).toBeUndefined();
+  });
+
+  it("passes a submit to a form with no ui.submit reducer, which has nothing to hold back", async () => {
+    const report = await run(
+      program(
+        `slot email : Text where email = ""`,
+        `tile Signup = form(column(input(bind=email, id="e")))`,
+      ),
+      [{ do: { submit: "#e" }, expect: { noErrors: true } }],
+    );
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[0]?.actionError).toBeUndefined();
+  });
+
+  it("asking for a refusal on a submit that goes through fails", async () => {
+    const report = await run(SOURCE, [
+      { do: { submit: "#c" }, expect: { actionErrorIncludes: ["held the submit back"] } },
+    ]);
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.failures[0]).toContain("but it ran");
+  });
+
+  // The browser tier runs `requestSubmit()`, whose constraint validation can
+  // stop a submit before any event fires; this tier dispatches the event, which
+  // skips it. testing.md §8.10 says so, and this is what it says: an empty
+  // `required` field and a malformed `type="email"` one do not stop the submit
+  // here, and with no refinement on either slot the gate lets it through.
+  it("dispatches past the browser's constraint validation, which only the browser tier runs", async () => {
+    const report = await run(
+      program(
+        `slot name  : Text = ""
+slot mail  : Text = ""
+slot sends : Int = 0
+reducer send on=ui.submit(Signup) do= sends := sends + 1`,
+        `tile Signup = form(column(input(bind=name, id="nm", required=true), input(bind=mail, id="m", type="email")))`,
+      ),
+      [
+        { do: { fill: "#m", value: "ada" } },
+        { do: { submit: "#nm" }, expect: { noErrors: true, state: { sends: 1 } } },
+      ],
+    );
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[1]?.actionError).toBeUndefined();
+  });
+
+  // Enter in a field is how a browser submits implicitly; this tier's `{key}`
+  // dispatches a `keydown`, which the DOM here does not turn into a submit at
+  // all — even one the gate would let through. A step that means to submit
+  // says `{submit}`.
+  it("{key: Enter} in a field submits nothing at this tier", async () => {
+    const report = await run(SOURCE, [
+      { do: { key: "#c", value: "Enter" }, expect: { noErrors: true, state: { sends: 0 } } },
+    ]);
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[0]?.actionError).toBeUndefined();
+  });
+
+  it("judges the form the step submitted, not another one", async () => {
+    const report = await run(
+      program(
+        `slot contact : Text where email = "ada@example.com"
+slot a       : Int = 0
+slot b       : Int = 0
+reducer sendA on=ui.submit(FormA) do= a := a + 1
+reducer sendB on=ui.submit(FormB) do= b := b + 1`,
+        `tile FormA = form(input(bind=contact, id="ca"))
+tile FormB = form(input(bind=contact, id="cb"))
+tile App = column(FormA, FormB)`,
+        "App",
+      ),
+      [
+        { do: { fill: "#ca", value: "ada@examplecom" } },
+        {
+          do: { submit: "#ca" },
+          expect: { actionErrorIncludes: ["held the submit back"], state: { a: 0 } },
+        },
+        { do: { submit: "#cb" }, expect: { state: { b: 1 } } },
+      ],
+    );
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[2]?.actionError).toBeUndefined();
   });
 });

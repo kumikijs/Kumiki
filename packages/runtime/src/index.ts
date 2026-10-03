@@ -38,11 +38,13 @@ import { overlayPatchers, overlayTiles } from "./tiles-overlay.ts";
 import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
-// The preconditions a driver asks before a step runs, so §8.10's promise that
-// the tiers agree is structural rather than hand-maintained. This one: a verb
-// that drives a control must not drive one the platform refuses — asked by both
-// scenario tiers and, as `refusesControl`, by `kumiki smoke`. The other is
-// `dispatchFault` below, kept apart here only by the export order.
+// The rules a driver judges a step by, so §8.10's promise that the tiers agree
+// is structural rather than hand-maintained. Two are asked before the step
+// runs: this one — a verb that drives a control must not drive one the platform
+// refuses, asked by both scenario tiers and, as `refusesControl`, by `kumiki
+// smoke` — and `dispatchFault` below. The rest, from `submit-check.ts` below,
+// are asked after a `{submit}` has run, of what it did. They are kept apart
+// here only by the export order.
 export {
   CONTROL_DEMANDS,
   type ControlDemand,
@@ -56,6 +58,7 @@ export {
   readControl,
   refusesControl,
   type StepFault,
+  StepRefusal,
 } from "./control-check.ts";
 export {
   _setPathHelper,
@@ -196,6 +199,16 @@ export {
 } from "./ssr.ts";
 export { renderTileToString } from "./ssr-render.ts";
 export { _stdlibCore, type KeyKind } from "./stdlib.ts";
+// Asked after the step: a `{submit}` the form held back is refused, not passed,
+// and so is one the browser's constraint validation stopped (browser tier only).
+export {
+  ConstraintRefusal,
+  constraintFault,
+  type InvalidControl,
+  readInvalidControls,
+  SubmitRefusal,
+  submitFault,
+} from "./submit-check.ts";
 export {
   _stdlibTest,
   type EnvDrift,

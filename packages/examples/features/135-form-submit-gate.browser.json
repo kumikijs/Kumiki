@@ -5,6 +5,7 @@
       "do": { "submit": "#email" },
       "expect": {
         "noErrors": true,
+        "actionErrorIncludes": ["the field bound to email fails its validation"],
         "state": { "sent": "(nothing)" },
         "visible": ["Invalid email format"]
       }
@@ -40,7 +41,11 @@
     {
       "label": "and neither does a real form submit",
       "do": { "submit": "#email" },
-      "expect": { "noErrors": true, "state": { "sent": " <ada@example.com>" } }
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["the field bound to email fails its validation"],
+        "state": { "sent": " <ada@example.com>" }
+      }
     },
     {
       "label": "once the address is fixed, Send submits it",
