@@ -6,7 +6,7 @@ import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { compile } from "@kumikijs/compiler";
+import { compile, type KumikiError } from "@kumikijs/compiler";
 import {
   nodeEpisodeLogReader,
   nodeRuntimeBundleReader,
@@ -24,6 +24,7 @@ import {
   smoke,
   type TestResult,
 } from "@kumikijs/runtime";
+import { formatDiagnostic } from "./diagnostic.ts";
 import {
   clearStorage,
   type HttpFixture,
@@ -31,6 +32,7 @@ import {
   readHttpFixture,
   useHttpFixture,
 } from "./harness.ts";
+import { loadSource } from "./store.ts";
 
 // The registration in flight or done, shared by every caller. A promise rather
 // than a flag: the import makes this async, so two overlapping calls would both
@@ -81,9 +83,7 @@ export async function loadApp(
   } as const;
   const first = compile(source, baseOpts);
   if (first.kind !== "ok") {
-    throw new Error(
-      `compile failed:\n${first.errors.map((e) => `${e.code} ${e.message}`).join("\n")}`,
-    );
+    throw new Error(compileFailure(source, first.errors, opts.sourcePath));
   }
 
   // Two-pass when the source uses `icon(name="...")` literals AND we have a
@@ -117,6 +117,23 @@ export async function loadApp(
   const app = (globalThis as unknown as { __kumikiApp?: LoadedApp }).__kumikiApp;
   if (!app) throw new Error("compiled module did not expose __kumikiApp");
   return app;
+}
+
+/**
+ * What `loadApp` throws for a program that does not compile: the file, then
+ * each diagnostic as `kumiki check` prints it. One inside a `test` definition
+ * also names that test.
+ */
+function compileFailure(source: string, errors: KumikiError[], sourcePath?: string): string {
+  // `compile` returned diagnostics rather than throwing, so the source parsed.
+  const tests = loadSource(source).defs.filter((e) => e.layer === "test");
+  const lines = errors.map((d) => {
+    const test = tests.find(
+      ({ range }) => d.pos.line >= range.startLine && d.pos.line <= range.endLine,
+    );
+    return `${formatDiagnostic(d)}${test ? ` (in test "${test.name}")` : ""}`;
+  });
+  return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
 }
 
 /** Compile + mount + exercise a Kumiki source string; return the smoke report. */

@@ -372,6 +372,13 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
+A file that does not compile runs no test. The runner names the file and prints each diagnostic as `kumiki check` does — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
+
+```
+compile failed (app.kumiki):
+E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
+```
+
 ### 8.7.2 Fixing from a failing test
 
 `kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it once it is known to make the test pass without breaking another. It repairs only what it can prove deterministically:

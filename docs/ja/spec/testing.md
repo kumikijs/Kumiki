@@ -331,6 +331,13 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
+コンパイルできないファイルではテストはひとつも走らない。ランナーはファイル名を示し、各診断を `kumiki check` と同じ形 — `<code> <kind> at <line>:<col>: <message>` — で出力し、診断が `test` の中にあればその名前を添える：
+
+```
+compile failed (app.kumiki):
+E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
+```
+
 ### 8.7.2 失敗テストからの修正 {#_8-7-2-fixing-from-a-failing-test}
 
 `kumiki fix <file> --auto-patch <test-name>` は名前付きテストを実行し、失敗から**修正パッチを提案**する。`--apply` を付けると、テストを通し他のテストを壊さないと確かめたうえで書き込む。決定論的に証明できるものだけを修復する：
