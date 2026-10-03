@@ -568,12 +568,13 @@ function describeAction(a: Action): string {
 /**
  * The seam named, or a fault. Both `_dispatch` and `_navigate` used to be
  * called through `?.`, so a shape mounted without one did nothing and reported
- * nothing — the same silence a missing selector had before #334, one layer
- * further in. `_submitHeldBy` is asked rather than driven, but a `{submit}`
- * step with no way to learn whether its form held the submit back would pass
- * either way, which is the same silence.
+ * nothing — the same silence a selector matching nothing once had, when the
+ * step that named it passed having done nothing, one layer further in.
+ * `_submitHeldBy` is asked rather than driven, but a `{submit}` step with no
+ * way to learn whether its form held the submit back would pass either way,
+ * which is the same silence.
  */
-function requireSeam<K extends "_dispatch" | "_navigate" | "_submitHeldBy">(
+function requireSeam<K extends keyof typeof WITHOUT_SEAM>(
   app: Dispatchable,
   seam: K,
   action: string,
@@ -581,11 +582,18 @@ function requireSeam<K extends "_dispatch" | "_navigate" | "_submitHeldBy">(
   const fn = app[seam];
   if (!fn) {
     throw new Error(
-      `${action}: this app shape carries no \`${seam}\` seam, so there is nothing to drive`,
+      `${action}: this app shape carries no \`${seam}\` seam, so ${WITHOUT_SEAM[seam]}`,
     );
   }
   return fn as NonNullable<Dispatchable[K]>;
 }
+
+/** What a step cannot do without each seam: two are driven, one is asked. */
+const WITHOUT_SEAM = {
+  _dispatch: "there is nothing to drive",
+  _navigate: "there is nothing to drive",
+  _submitHeldBy: "nothing can say whether the form held the submit back",
+} as const satisfies Record<"_dispatch" | "_navigate" | "_submitHeldBy", string>;
 
 function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   /**

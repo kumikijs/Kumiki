@@ -75,7 +75,11 @@ are deterministic and hermetic.
   the bare reason. A step that asks to be refused and either runs or fails for some other reason
   fails. A `{submit}` whose form holds the submit back — a bound field fails its validation, so no
   `ui.submit` reducer runs — is refused the same way, naming the field
-  (`["the field bound to email fails its validation"]`).
+  (`["the field bound to email fails its validation"]`); two or more read in the plural, in binding
+  order (`["the fields bound to email, code fail their validation"]`). The browser tier also
+  refuses a `{submit}` the browser's constraint validation (`required`, `type="email"`, …) stopped,
+  naming each control (`["<input type=text id=name> reports valueMissing"]`); the scenario tier
+  skips constraint validation, so assert that one in the `.browser.json` only.
   `state` is a **partial** match; keys may be dotted paths (`issues.id-1.status`).
 - `effects`: per-effect queues of `{outcome, value}` returned in order — script HTTP/storage
   so the loop is deterministic and never hits the network.

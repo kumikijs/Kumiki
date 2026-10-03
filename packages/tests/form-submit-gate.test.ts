@@ -343,6 +343,41 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
     expect(report.steps[0]?.failures[0]).toContain("but it ran");
   });
 
+  // The browser tier runs `requestSubmit()`, whose constraint validation can
+  // stop a submit before any event fires; this tier dispatches the event, which
+  // skips it. testing.md §8.10 says so, and this is what it says: an empty
+  // `required` field and a malformed `type="email"` one do not stop the submit
+  // here, and with no refinement on either slot the gate lets it through.
+  it("dispatches past the browser's constraint validation, which only the browser tier runs", async () => {
+    const report = await run(
+      program(
+        `slot name  : Text = ""
+slot mail  : Text = ""
+slot sends : Int = 0
+reducer send on=ui.submit(Signup) do= sends := sends + 1`,
+        `tile Signup = form(column(input(bind=name, id="nm", required=true), input(bind=mail, id="m", type="email")))`,
+      ),
+      [
+        { do: { fill: "#m", value: "ada" } },
+        { do: { submit: "#nm" }, expect: { noErrors: true, state: { sends: 1 } } },
+      ],
+    );
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[1]?.actionError).toBeUndefined();
+  });
+
+  // Enter in a field is how a browser submits implicitly; this tier's `{key}`
+  // dispatches a `keydown`, which the DOM here does not turn into a submit at
+  // all — even one the gate would let through. A step that means to submit
+  // says `{submit}`.
+  it("{key: Enter} in a field submits nothing at this tier", async () => {
+    const report = await run(SOURCE, [
+      { do: { key: "#c", value: "Enter" }, expect: { noErrors: true, state: { sends: 0 } } },
+    ]);
+    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.steps[0]?.actionError).toBeUndefined();
+  });
+
   it("judges the form the step submitted, not another one", async () => {
     const report = await run(
       program(

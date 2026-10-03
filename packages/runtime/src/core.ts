@@ -1529,7 +1529,8 @@ export type MountedApp = AppShape & {
   _rerender: () => void;
   /**
    * The slots whose fields held this submit event back, or `undefined` when
-   * none did ({@link submitHeldBy}). A seam rather than an import because the
+   * none did — the reader ({@link submitHeldBy}) of the record the form tile
+   * writes ({@link noteHeldSubmit}). A seam rather than an import because the
    * browser tier asks from outside the bundle, and the scenario tier asks the
    * same way so the two read one record.
    */

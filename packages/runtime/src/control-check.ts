@@ -189,11 +189,13 @@ export function readControl(el: Element): ControlState | null {
  * button is disabled" from "no element matching selector #save-disabled",
  * which also contains `disabled`.
  *
- * Two things refuse a step: a control the platform will not drive
- * ({@link ControlRefusal}), and a form whose submit gate held the submit back
- * (`SubmitRefusal`, in `submit-check.ts`).
+ * Abstract: a step is turned away by something in particular, and each
+ * subclass names it — a control the platform will not drive
+ * ({@link ControlRefusal}), a form whose submit gate held the submit back, and
+ * a submit the browser's constraint validation stopped (`SubmitRefusal` and
+ * `ConstraintRefusal`, in `submit-check.ts`).
  */
-export class StepRefusal extends Error {
+export abstract class StepRefusal extends Error {
   /**
    * The part a fixture matches on: `click #off: <button> is disabled, so no
    * user gesture reaches it`. The explanation and the hint that follow it in
@@ -206,9 +208,16 @@ export class StepRefusal extends Error {
   /** What the fixture should write to assert this refusal, quoted in `message`. */
   readonly suggestion: string;
 
-  constructor(headline: string, message: string, suggestion: string) {
-    super(message);
-    this.name = "StepRefusal";
+  /**
+   * `message` is built here rather than handed in, so it opens with `headline`
+   * and closes on the assertion that claims it by construction, for every
+   * subclass. `detail` is the prose between the two, kept out of `headline`.
+   */
+  protected constructor(headline: string, detail: string, suggestion: string) {
+    super(
+      `${headline}${detail} — a step that means to assert the refusal says` +
+        ` {"expect": {"actionErrorIncludes": [${JSON.stringify(suggestion)}]}}`,
+    );
     this.headline = headline;
     this.suggestion = suggestion;
   }
@@ -219,8 +228,9 @@ export class ControlRefusal extends StepRefusal {
   /** Which state refused, out of a closed set. */
   readonly reason: ControlRefusalReason;
 
-  constructor(headline: string, message: string, reason: ControlRefusalReason, suggestion: string) {
-    super(headline, message, suggestion);
+  constructor(headline: string, reason: ControlRefusalReason, suggestion: string) {
+    const explanation = EXPLANATION[reason];
+    super(headline, explanation ? ` (${explanation})` : "", suggestion);
     this.name = "ControlRefusal";
     this.reason = reason;
   }
@@ -288,14 +298,7 @@ export function controlFault(
   // selector #save-disabled", and a hint that teaches a fragile assertion is
   // worse than none.
   const suggestion = `${what} is ${reason}`;
-  const explanation = EXPLANATION[reason];
-  return new ControlRefusal(
-    headline,
-    `${headline}${explanation ? ` (${explanation})` : ""} — a step that means to` +
-      ` assert the refusal says {"expect": {"actionErrorIncludes": ["${suggestion}"]}}`,
-    reason,
-    suggestion,
-  );
+  return new ControlRefusal(headline, reason, suggestion);
 }
 
 /**
@@ -352,14 +355,14 @@ export type RefusalVerdict = {
  * Three answers, and the middle one is the point:
  *
  * - the action ran → every substring fails, since the assertion is that the
- *   platform turned the step away;
+ *   step was turned away — by the platform, or by a form's submit gate;
  * - the action failed for some *other* reason → every substring fails, loudly
  *   and naming that reason. A bare substring match would have let
  *   `{"click": "#save-disabled"}` with `["disabled"]` pass on `no element
  *   matching selector #save-disabled`, reporting a refusal that never
  *   happened — the same "passed having tested nothing" this module exists to
  *   kill, re-entered through the assertion instead of the action;
- *   a refusal → matched against its `headline`, so the prose explaining one
+ * - a refusal → matched against its `headline`, so the prose explaining one
  *   reason cannot satisfy an assertion naming another.
  */
 export function judgeRefusal(
