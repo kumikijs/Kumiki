@@ -102,41 +102,94 @@ const exitedPid = (): number => {
 const slotsInFile = (): string[] =>
   [...readFileSync(file, "utf8").matchAll(/^slot (extra\d+)\b/gm)].map((m) => m[1]!).sort();
 
-/** Four writers released at one instant; resolves with what each reported. */
-async function race(): Promise<Array<{ name: string; started: number; opId?: string }>> {
+type Racer = { name: string; pid: number; saw: number[]; opId?: string; error?: string };
+
+/**
+ * A writer for `race`: waits for the start instant, then adds one slot. It
+ * also reports the pid named by every lock it found in its way — each `wx`
+ * create of the lock that failed with EEXIST — by wrapping `fs.openSync`,
+ * which the write lock calls through the `node:fs` namespace
+ * (`syncBuiltinESMExports` carries the wrapper into that namespace).
+ */
+const RACER = [
+  'import fs from "node:fs";',
+  'import { syncBuiltinESMExports } from "node:module";',
+  "const [file, lock, name, atArg] = process.argv.slice(2);",
+  "const at = Number(atArg);",
+  'if (!Number.isFinite(at)) throw new Error("no start instant: " + atArg);',
+  "const saw = [];",
+  "const open = fs.openSync;",
+  "fs.openSync = (path, flags, ...rest) => {",
+  "  try {",
+  "    return open(path, flags, ...rest);",
+  "  } catch (e) {",
+  '    if (path === lock && flags === "wx" && e.code === "EEXIST") {',
+  "      try {",
+  '        const { pid } = JSON.parse(fs.readFileSync(lock, "utf8"));',
+  "        if (!saw.includes(pid)) saw.push(pid);",
+  "      } catch {",
+  "        // Released, or not filled in yet, before it could be read.",
+  "      }",
+  "    }",
+  "    throw e;",
+  "  }",
+  "};",
+  "syncBuiltinESMExports();",
+  `const { addDef } = await import(${JSON.stringify(MUTATE)});`,
+  // Sleep until just before the start instant, and spin only the last 50 ms.
+  "const nap = new Int32Array(new SharedArrayBuffer(4));",
+  "if (at - Date.now() > 50) Atomics.wait(nap, 0, 0, at - Date.now() - 50);",
+  "while (Date.now() < at) {}",
+  "const pid = process.pid;",
+  "try {",
+  '  console.log(JSON.stringify({ name, pid, saw, opId: addDef(file, "slot", name, "Int = 0") }));',
+  "} catch (e) {",
+  "  console.log(JSON.stringify({ name, pid, saw, error: String(e) }));",
+  "}",
+].join("\n");
+
+/** How many times `race` starts the writers before it gives up on their meeting. */
+const RACE_ATTEMPTS = 3;
+
+/**
+ * Four writers released at one instant on a fresh copy of the counter (after
+ * `setup`); resolves with what each reported once they have contended, that
+ * is, once one of them found the write lock held by another.
+ *
+ * Writers that never meet prove nothing about the lock: they ran one after
+ * another. A writer's one `addDef` — the first in its process — takes about
+ * 15-20 ms on an idle machine (3-5 ms for later calls), so a writer the
+ * scheduler wakes that much late can miss the others entirely. That is a
+ * missed start, not a lost add, so the writers are started again, up to
+ * `RACE_ATTEMPTS` times.
+ */
+async function race(setup: () => void = () => {}): Promise<Racer[]> {
   const racer = join(dir, "racer.mts");
-  writeFileSync(
-    racer,
-    [
-      `import { addDef } from ${JSON.stringify(MUTATE)};`,
-      "const [file, name, atArg] = process.argv.slice(2);",
-      "const at = Number(atArg);",
-      'if (!Number.isFinite(at)) throw new Error("no start instant: " + atArg);',
-      // Sleep until just before the start instant, and spin only the last 50 ms.
-      "const nap = new Int32Array(new SharedArrayBuffer(4));",
-      "if (at - Date.now() > 50) Atomics.wait(nap, 0, 0, at - Date.now() - 50);",
-      "while (Date.now() < at) {}",
-      "const started = Date.now();",
-      "try {",
-      '  console.log(JSON.stringify({ name, started, opId: addDef(file, "slot", name, "Int = 0") }));',
-      "} catch (e) {",
-      "  console.log(JSON.stringify({ name, started, error: String(e) }));",
-      "}",
-    ].join("\n"),
-  );
+  writeFileSync(racer, RACER);
   const names = Array.from({ length: 4 }, (_, i) => `extra${i + 1}`);
-  // Far enough ahead that every child has started, so their read-modify-writes
-  // overlap rather than queue behind process start-up.
-  const at = String(Date.now() + 8_000);
-  const results = (await Promise.all(names.map((n) => runChild(racer, [file, n, at])))).map(
-    (line) => JSON.parse(line) as { name: string; started: number; opId?: string; error?: string },
-  );
-  expect(results.filter((r) => r.error !== undefined)).toEqual([]);
-  // The barrier held: the writers really did start together. Were they spread
-  // out, the OS would have serialized them and the race would prove nothing.
-  const starts = results.map((r) => r.started);
-  expect(Math.max(...starts) - Math.min(...starts)).toBeLessThanOrEqual(100);
-  return results;
+  for (let attempt = 1; ; attempt++) {
+    copyFileSync(COUNTER, file);
+    rmSync(`${file}.kumiki-ops.jsonl`, { force: true });
+    rmSync(lock, { force: true });
+    setup();
+    // Far enough ahead that every child has started, so their read-modify-writes
+    // overlap rather than queue behind process start-up.
+    const at = String(Date.now() + 8_000);
+    const results = (await Promise.all(names.map((n) => runChild(racer, [file, lock, n, at])))).map(
+      (line) => JSON.parse(line) as Racer,
+    );
+    expect(results.filter((r) => r.error !== undefined)).toEqual([]);
+    // Contended: a writer found a lock naming another racer. The exited
+    // writer's lock that the takeover race starts from does not count: the
+    // first writer finds it even when the writers run one after another.
+    const pids = new Set(results.map((r) => r.pid));
+    const contended = results.some((r) => r.saw.some((p) => pids.has(p)));
+    if (contended) return results;
+    expect(
+      attempt,
+      `in ${RACE_ATTEMPTS} attempts no writer found the lock held by another: they missed the start instant and ran one after another, so the race proved nothing (this is not a lost add)`,
+    ).toBeLessThan(RACE_ATTEMPTS);
+  }
 }
 
 /** Every op follows the one before it: one linear chain, no forks. */
@@ -163,8 +216,10 @@ describe("concurrent write verbs", () => {
   }, async () => {
     // Every waiter decides at once that the holder is gone; only one of them
     // may take its place.
-    writeFileSync(lock, JSON.stringify({ pid: exitedPid(), host: hostname() }));
-    const results = await race();
+    const gone = exitedPid();
+    const results = await race(() =>
+      writeFileSync(lock, JSON.stringify({ pid: gone, host: hostname() })),
+    );
     expect(slotsInFile()).toEqual(results.map((r) => r.name).sort());
     expectLinearChain(results.map((r) => r.opId));
   });
