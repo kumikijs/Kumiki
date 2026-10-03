@@ -22,7 +22,7 @@ effect search cap=http.get
               map-request={url: "/search?x=1", query: {"q": $1, "page": "2"}, decode: Decoder.Json(List(Item))}
 
 reducer go    on=ui.click(SearchBtn)  do= emit search(term)
-reducer found on=search.ok($items, _) do= status := "found " + $items.size.show
+reducer found on=search.ok($items, _) do= status := "found " + $items.length.show
 
 tile SearchBtn = button(text="Search") {id: "search"}
 

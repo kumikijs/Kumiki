@@ -277,6 +277,7 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `142-tile-body-own-scope.kumiki` | type, slot, reducer, tile | core | [§1.7.2](./language.md#_1-7-2-invariants) inv. 1 |
 | `143-fn-positional-arguments.kumiki` | slot, reducer, fn, tile | core | [§1.6.5](./language.md#_1-6-5-positional-binding) |
 | `144-builtin-effect-input.kumiki` | slot, reducer, tile | stdlib | [§2.6](./stdlib.md#_2-6-standard-effects) |
+| `145-receiver-members.kumiki` | slot, reducer, tile | stdlib | [§2.2.3](./stdlib.md#_2-2-3-list-t) |
 | `153-route-specificity.kumiki` | slot, reducer, tile, app | routing | [§3.1.2](./routing.md#_3-1-2-match-order) |
 | `154-ssr-redirect.kumiki` | tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
 | `155-leave-on-param-change.kumiki` | slot, reducer, tile, app | routing | [§3.4](./routing.md#_3-4-route-lifecycle) |
