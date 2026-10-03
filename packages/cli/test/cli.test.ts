@@ -336,6 +336,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // writes the loop and the occurrence before the value's `show`. A counter
     // has no `for` and still ships it, because it sits in the stdlib module
     // every app loads.
+    //
+    // Still 64,000 (63,457 measured, from 63,448 on dev at 2adec5b): an err a
+    // storage-family invoke caught from a throw is `final` (http.md §6.7), and
+    // `runWithRetry` returns it without another attempt. The 9 bytes are that
+    // check in the retry loop, which sits in core every app loads; a counter
+    // retries nothing and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

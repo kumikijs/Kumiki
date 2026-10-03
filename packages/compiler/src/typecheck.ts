@@ -2105,16 +2105,19 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
 
 /**
  * The type `$1` holds in an `effect-name.ok(…)` / `.err(…)` trigger — the
- * value the effect's `out=` says it delivers (language.md §1.6.5). On `.ok`:
- * the Ok payload of a `Result(T, E)`, or the whole value of any other `out=`.
+ * value the effect delivers (language.md §1.6.5). On `.ok`: the Ok payload of
+ * an `out=Result(T, E)`, or the whole value of any other `out=`.
  *
- * On `.err`: the `E` of a `Result(T, E)`, for an effect on a capability whose
- * handlers deliver that `E` ({@link failsWithText}). Any other `.err` stays
- * undecided — an HTTP handler's record and a host provider's value are not
- * what the runtime fixes to `E`, so typing `$e` from `out=` there would claim
- * a type nothing guarantees. A built-in effect has no `out=` to read, and a
- * `Result` of the wrong arity is already reported where it is written, so
- * neither is guessed at.
+ * On `.err`: `Text`, for an effect on a capability whose failures the runtime
+ * delivers as `Text` ({@link failsWithText}) and whose `out=` is a
+ * `Result(T, E)`. It is `Text` rather than the declared `E` because `Text` is
+ * what arrives: an `E` that says otherwise is E0306 at the declaration, and
+ * typing `$e` from it as well would add a second, wrong report at every read.
+ * Any other `.err` stays undecided — an HTTP handler's record and a custom
+ * provider's value are not what the runtime fixes to `E`, so typing `$e` from
+ * `out=` there would claim a type nothing guarantees. A built-in effect has no
+ * `out=` to read, and a `Result` of the wrong arity is already reported where
+ * it is written, so neither is guessed at.
  */
 function effectPayloadType(
   effect: string,
@@ -2128,7 +2131,7 @@ function effectPayloadType(
   const result = u?.kind === "TypeApp" && u.name === "Result" ? u : null;
   if (outcome === "err") {
     if (!result || result.args.length !== 2 || !failsWithText(eff.cap)) return null;
-    return result.args[1] ?? null;
+    return { kind: "TypePrim", name: "Text", pos: eff.pos };
   }
   if (result) return result.args.length === 2 ? (result.args[0] ?? null) : null;
   return out;
@@ -5332,11 +5335,36 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
       });
     }
   }
+  checkTextFailure(eff, sym, errors);
   if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey")
     checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+}
+
+/**
+ * E0306: an effect on a capability whose failures the runtime delivers as
+ * `Text` ({@link failsWithText}) declares `out=Result(T, E)` with an `E` that
+ * is not `Text`. `.err` receives the failure's message whatever `E` says
+ * (http.md §6.7), so the declaration would promise a value — a record to read
+ * `.message` from, an `Int` to store — that never arrives. An `out=` that is
+ * not a two-argument `Result` makes no claim about the failure and is left to
+ * the checks that read it.
+ */
+function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
+  if (!failsWithText(eff.cap)) return;
+  const out = unaliasType(eff.outType, sym);
+  if (out?.kind !== "TypeApp" || out.name !== "Result" || out.args.length !== 2) return;
+  const [ok, declared] = out.args;
+  const e = declared ? unaliasType(declared, sym) : null;
+  if (!ok || !declared || (e?.kind === "TypePrim" && e.name === "Text")) return;
+  errors.push({
+    code: "E0306",
+    kind: "err-type-not-text",
+    message: `effect "${eff.name}" with cap=${eff.cap} declares its error as ${typeToString(declared)}, but ${eff.cap} delivers a failure as its message, a Text — declare out=Result(${typeToString(ok)}, Text)`,
+    pos: eff.pos,
+  });
 }
 
 /**

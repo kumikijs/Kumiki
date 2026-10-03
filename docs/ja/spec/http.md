@@ -317,6 +317,8 @@ effect loadUser cap=http.get
 
 ## 6.7 Storage Effects
 
+**err 値は宣言どおりの `Text`。** 以下の capability の effect はすべて `out=Result(T, Text)` を宣言する。別の `E` を宣言すると **E0306** になる。失敗した effect は失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら呼び出しとキーを示すメッセージ（§6.7.2）、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、その capability に登録されたホストの provider、または組み込みハンドラが例外を投げた場合も同じ `Text` が渡り、渡るのは1度である：`retry=`（[6.5](#_6-5-リトライ)）はそれを再試行しない。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。ホストの provider の err 値が何になるかは [標準 capability](./stdlib.md#_2-5-standard-capabilities) にある。
+
 ### 6.7.1 capability
 
 | capability | 対応 |

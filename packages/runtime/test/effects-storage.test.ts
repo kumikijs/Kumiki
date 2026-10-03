@@ -6,11 +6,18 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EffectResult } from "../src/core.ts";
-import { sessionClear, sessionWrite, storageClear, storageWrite } from "../src/effects-storage.ts";
+import {
+  sessionClear,
+  sessionRead,
+  sessionWrite,
+  storageClear,
+  storageRead,
+  storageWrite,
+} from "../src/effects-storage.ts";
 
 function message(r: EffectResult): string {
   expect(r.kind).toBe("err");
-  // The declared `Text`, not a record wrapping it (http.md §6.7.2).
+  // The declared `Text`, not a record wrapping it (http.md §6.7).
   expect(typeof r.value).toBe("string");
   return r.value as string;
 }
@@ -131,5 +138,43 @@ describe("storageClear / sessionClear", () => {
     expect(snapshot(sessionStorage)).toEqual(SEEDED);
     expect(await sessionClear()).toEqual({ kind: "ok", value: null });
     expect(snapshot(sessionStorage)).toEqual({});
+  });
+});
+
+describe("a handler resolves to its Text err; it never rejects", () => {
+  // A rejection skips the err contract: it reaches the dispatcher, which
+  // delivers a `{message}` record where `.err` expects the `Text`.
+  it("when the storage getter itself throws, as in an opaque-origin sandbox", async () => {
+    const names = ["localStorage", "sessionStorage"] as const;
+    const saved = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+    for (const name of names) {
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        get() {
+          throw new DOMException("denied", "SecurityError");
+        },
+      });
+    }
+    try {
+      expect(message(await storageRead({ key: "k" }))).toBe("SecurityError: denied");
+      expect(message(await sessionRead({ key: "k" }))).toBe("SecurityError: denied");
+      expect(message(await storageWrite({ key: "k", value: 1 }))).toBe(
+        'localStorage.setItem("k") failed: SecurityError: denied',
+      );
+      expect(message(await sessionClear())).toBe(
+        "sessionStorage.clear() failed: SecurityError: denied",
+      );
+    } finally {
+      names.forEach((name, i) => {
+        const original = saved[i];
+        if (original) Object.defineProperty(globalThis, name, original);
+        else Reflect.deleteProperty(globalThis, name);
+      });
+    }
+  });
+
+  it("when a read has no request (in=Unit, no map-request)", async () => {
+    expect(message(await storageRead(undefined))).toMatch(/^TypeError: /);
+    expect(message(await sessionRead(undefined))).toMatch(/^TypeError: /);
   });
 });

@@ -88,6 +88,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0008` | no | Same: which occurrence to keep is user intent, and for `caps` the choice is a capability decision. |
 | `E0009` | no | Which name on the chain should have been a record, a union or a primitive — and what its body should be — is user intent. |
 | `E0304` | no | Where the derived value should be computed — a `fn`, or a reducer that runs once on entry — is user intent. |
+| `E0306` | no | Rewriting `E` to `Text` is mechanical, but every `.err` read written to the old `E` (`$e.message`, `$e.code`) then needs rewriting to the message, and what the program wanted from those fields is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
 Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
@@ -1006,6 +1007,14 @@ The same code covers the other side of purity: an `emit` written as an *expressi
 > `emit "<name>" used as an expression is only allowed inside a reducer body`
 
 **Fix**: Move the `emit` into a reducer. An `app.init` entry is already a dispatch — write the effect as the entry itself rather than as an argument to one.
+
+### E0306 `err-type-not-text`
+
+An effect on a storage / session / indexed capability declares `out=Result(T, E)` with an `E` that is not `Text`. These effects fail with the failure's message, a `Text`, whatever `E` says ([Storage Effects](./http.md#_6-7-storage-effects)), and `.err($e, _)` binds `$e : Text` ([Positional Binding](./language.md#_1-6-5-positional-binding)). An `E` of `{message: Text}` would promise a `$e.message` that reads `undefined`, and an `E` of `Int` an `n := $e` that stores a string into an `Int` slot. An `E` that names `Text` through an alias is `Text`. An `out=` that is not a two-argument `Result` makes no claim about the failure and is not this check's.
+
+> `effect "<name>" with cap=<cap> declares its error as <E>, but <cap> delivers a failure as its message, a Text — declare out=Result(<T>, Text)`
+
+**Fix**: Declare the error as `Text` — `out=Result(T, Text)` — and read `$e` as that message. A program that needs a structured failure builds it in the `.err` reducer from the message.
 
 ## E04xx — Motion
 

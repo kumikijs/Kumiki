@@ -47,10 +47,11 @@ const navigation: TypeExpr = recordType({ path: text, params: textMap, query: te
  * The capabilities whose effects declare their failure as `Text`
  * (`out=Result(T, Text)`, docs/spec/http.md §6.7) — localStorage,
  * sessionStorage and IndexedDB. Their built-in handlers deliver that `Text` to
- * `.err`, so the checker types an `.err` bind on one of them from `out=`, and
- * codegen turns a throw inside one of their invokes (a `map-request` that
- * throws, a host provider that throws) into the same `Text` rather than
- * leaving it to the dispatcher, which cannot know the effect's `E`.
+ * `.err`, so the checker binds `$e : Text` on one of them and reports an `out=`
+ * that declares another `E` (E0306), and codegen reads every err value inside
+ * one of their invokes — returned or thrown, from the `map-request`, a host
+ * provider or the handler — as that `Text`, rather than leaving a throw to the
+ * dispatcher, which cannot know the effect's `E`.
  */
 const TEXT_FAILURE_CAPABILITIES: ReadonlySet<string> = new Set([
   "storage.read",

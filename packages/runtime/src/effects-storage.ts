@@ -1,11 +1,11 @@
 // storage.* / session.* built-in capability handlers (#71, #84):
 // shipped only when an app declares a matching storage-backed effect.
 // `storage-*` uses localStorage; `session-*` is the same shape over
-// sessionStorage (spec §6.7.4). Both treat backend unavailability
+// sessionStorage (http.md §6.7.4). Both treat backend unavailability
 // (opaque-origin sandbox, private mode, SecurityError) as a clean
 // `err` result so reducers can opt into a `.err` branch (#37). The err value
 // is the failure's message as a plain string: the `Text` these effects
-// declare as `E` in `out=Result(T, Text)` (spec §6.7.2).
+// declare as `E` in `out=Result(T, Text)` (http.md §6.7).
 
 import type { EffectResult } from "./core.ts";
 import { type Decode, decodeRefusal } from "./effects-decode.ts";
@@ -14,13 +14,18 @@ import { _stdlibCore } from "./stdlib.ts";
 type Backend = "localStorage" | "sessionStorage";
 
 /**
- * A stored value is JSON, so it is always parsed; a `Decoder.Json(T)` whose
- * `T` refuses what it parsed to makes the read an `err` (http.md §6.7.2), the
- * same way a value that does not parse does.
+ * The read of http.md §6.7.2. Everything that can throw is inside the `try`:
+ * the backend's getter (it throws `SecurityError` in an opaque-origin
+ * sandbox) and the request itself (an `in=Unit` read with no `map-request` has
+ * none), so a failure is always the `Text` err and never a rejection. A stored
+ * value is JSON, so it is always parsed; a `Decoder.Json(T)` whose `T` refuses
+ * what it parsed to makes the read an `err`, the same way a value that does not
+ * parse does.
  */
-async function readFrom(storage: Storage, key: string, decode?: Decode): Promise<EffectResult> {
+async function readFrom(backend: Backend, input: unknown): Promise<EffectResult> {
   try {
-    const raw = storage.getItem(key);
+    const { key, decode } = input as { key: string; decode?: Decode };
+    const raw = globalThis[backend].getItem(key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
     const value = JSON.parse(raw);
     const refused = decodeRefusal(decode, value);
@@ -31,7 +36,7 @@ async function readFrom(storage: Storage, key: string, decode?: Decode): Promise
   }
 }
 
-/** An `err` whose value is the message itself, the declared `Text` (http.md §6.7.2). */
+/** An `err` whose value is the message itself, the declared `Text` (http.md §6.7). */
 function failed(message: string): EffectResult {
   return { kind: "err", value: message };
 }
@@ -82,8 +87,7 @@ function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
 }
 
 export async function storageRead(input: unknown): Promise<EffectResult> {
-  const { key, decode } = input as { key: string; decode?: Decode };
-  return readFrom(localStorage, key, decode);
+  return readFrom("localStorage", input);
 }
 
 export async function storageWrite(input: unknown): Promise<EffectResult> {
@@ -96,8 +100,7 @@ export async function storageClear(): Promise<EffectResult> {
 }
 
 export async function sessionRead(input: unknown): Promise<EffectResult> {
-  const { key, decode } = input as { key: string; decode?: Decode };
-  return readFrom(sessionStorage, key, decode);
+  return readFrom("sessionStorage", input);
 }
 
 export async function sessionWrite(input: unknown): Promise<EffectResult> {

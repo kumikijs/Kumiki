@@ -21,7 +21,7 @@ describe("indexed-* without config (#79)", () => {
   it("indexedRead returns a clean error when cfg is absent", async () => {
     const r = await indexedRead({ store: "notes", key: "a" }, undefined);
     // The err value is the `Text` an `indexed-*` effect's `out=Result(_, Text)`
-    // declares (http.md §6.7.4), not a record wrapping it.
+    // declares (http.md §6.7), not a record wrapping it.
     expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 
@@ -61,6 +61,16 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
   });
   afterEach(() => {
     (globalThis as { indexedDB?: unknown }).indexedDB = original;
+  });
+
+  it("a request that is missing (in=Unit, no map-request) is a Text err, not a rejection", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-no-request" };
+    for (const run of [indexedRead, indexedWrite, indexedDelete]) {
+      expect(await run(undefined, localCfg)).toEqual({
+        kind: "err",
+        value: expect.stringMatching(/^TypeError: /),
+      });
+    }
   });
 
   it("write then read returns Some(value); missing key returns None", async () => {

@@ -116,6 +116,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
 | [E0304](./errors.md#e0304-derived-slot) | `derived-slot` | slot | core |
 | [E0305](./errors.md#e0305-fn-impurity) | `fn-impurity` | fn | core |
+| [E0306](./errors.md#e0306-err-type-not-text) | `err-type-not-text` | effect | http |
 | [E0401](./errors.md#e0401-motion-unknown-property) | `motion-unknown-property` | tile | style |
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | style |

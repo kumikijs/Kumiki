@@ -22,6 +22,7 @@ import type {
   TileDef,
   TypeDef,
 } from "./ast.ts";
+import { failsWithText } from "./capabilities.ts";
 import type { GenCtx } from "./codegen/context.ts";
 import { HANDLER_MEMO_PREAMBLE, jsBinding } from "./codegen/context.ts";
 import {
@@ -31,7 +32,7 @@ import {
   httpConfigJs,
   indexedDbConfigJs,
 } from "./codegen/emit-app.ts";
-import { genEffect } from "./codegen/emit-effect.ts";
+import { genEffect, TEXT_FAILURE_HELPER } from "./codegen/emit-effect.ts";
 import { genFn } from "./codegen/emit-fn.ts";
 import { genReducer } from "./codegen/emit-reducer.ts";
 import { emitSlots } from "./codegen/emit-slot.ts";
@@ -178,6 +179,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("");
 
   // effect handlers (per capability, statically dispatched)
+  if (effects.some((e) => failsWithText(e.cap))) lines.push(TEXT_FAILURE_HELPER);
   lines.push("const _effects = {");
   for (const eff of effects) {
     lines.push(`  ${JSON.stringify(eff.name)}: ${genEffect(eff, ctx)},`);

@@ -323,6 +323,8 @@ effect loadUser cap=http.get
 
 ## 6.7 Storage Effects
 
+**The err value is the declared `Text`.** Every effect on the capabilities below declares `out=Result(T, Text)`; one that declares another `E` is **E0306**. A failed effect delivers the failure's message as a plain `Text` — `"SecurityError: …"` when a read finds the backend blocked, the message naming the call and the key when a write does (§6.7.2), `"app.indexed-db is not declared"` when an `indexed-*` effect runs without one — not a record wrapping it. A throw from the effect's `map-request`, from a host provider registered for the capability, or from the built-in handler is delivered as the same `Text`, and is delivered once: `retry=` ([6.5](#_6-5-retry)) does not retry it. So `.err($e, _)` binds `$e : Text` ([Positional Binding](./language.md#_1-6-5-positional-binding)): `problem := $e` stores the message, and `$e.message` is E0108. What a host provider's err value becomes is in [Standard Capabilities](./stdlib.md#_2-5-standard-capabilities).
+
 ### 6.7.1 capability
 
 | capability | Corresponds to |
