@@ -304,6 +304,23 @@ ${APP}${TAIL}`,
     // And a negated literal is still a literal: `-1` parses as a unary minus
     // over a number, which a `kind === "Num"` filter does not match.
     expect(codes(`slot s : Map(Int, Int) = {-1: 1, -1: 2}\n${APP}${TAIL}`)).toContain("E0008");
+    // `true` beside `"true"` is a Bool key beside a Text key, not one key.
+    expect(codes(`slot s : Map(Bool, Int) = {true: 1, "true": 2}\n${APP}${TAIL}`)).not.toContain(
+      "E0008",
+    );
+  });
+
+  // A Bool key is a literal key like a string or a number, whether or not it
+  // is written in parentheses: both spellings parse to the same `Bool` node.
+  it.each([
+    ["{true: 1, true: 2}", "1:37", "true"],
+    ["{(true): 1, true: 2}", "1:39", "true"],
+    ["{false: 1, (false): 2}", "1:39", "false"],
+  ])("reports the Bool key written twice in %s", (literal, at, key) => {
+    const found = diags(`slot s : Map(Bool, Int) = ${literal}\n${APP}${TAIL}`);
+    expect(found.map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`)).toEqual([
+      `E0008 ${at} Map key "${key}" is written more than once`,
+    ]);
   });
 
   it("says nothing about two computed keys", () => {

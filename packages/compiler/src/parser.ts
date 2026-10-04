@@ -89,11 +89,11 @@ export const PRIM_TYPES: ReadonlySet<string> = new Set([
  * The reserved words that are a whole value on their own (language.md §1.2.2),
  * each with the node `parsePrimary` reads it as.
  *
- * Being a value is also what keeps one from naming a record field: `{ … }` is
- * a record when its first key is a field name (§1.9), and `{true: "on"}` has
- * to be the `Map(Bool, Text)` it reads as — no record type can declare a field
- * called `true`. Every other reserved word before a `:` can only be a field
- * name (`{type: …}`, `{for: …}`): none of them is a whole expression.
+ * Being a value is also what keeps one from naming a record field (§1.9): the
+ * `true` in `{true: "on"}` is a whole expression, so it is a Map key, and the
+ * literal is the `Map(Bool, Text)` it reads as. No other reserved word is an
+ * expression on its own, so before a `:` one can only be a field name
+ * (`{type: …}`, `{for: …}`).
  */
 const VALUE_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
   ["true", (pos: Pos): Expr => ({ kind: "Bool", value: true, pos })],
@@ -1438,28 +1438,30 @@ class Parser {
       this.next();
       return { kind: "MapLit", entries: [], pos: start.pos };
     }
-    // A first key that is a field name (`fieldNameOf`: an identifier, or a
-    // reserved word such as `type` / `in` that is not a value) followed by `=`,
-    // `:`, `,` or `}` makes the whole literal a record. Any other first key —
-    // `true`, a string, `(k)`, `Some(1)` — makes it a Map.
-    let isRecord = false;
-    if (fieldNameOf(this.peek()) !== undefined) {
-      const peek1 = this.peek(1);
-      if (
-        peek1.kind === "op" &&
-        (peek1.value === "=" || peek1.value === ":" || peek1.value === "," || peek1.value === "}")
-      ) {
-        isRecord = true;
-      }
-    }
+    // The first key decides for the whole literal. A field name
+    // (`fieldNameOf`: an identifier, or a reserved word such as `type` / `in`
+    // that is not a value) followed by `:` makes it a record; any other key
+    // before a `:` — `true`, a string, `(k)`, `Some(1)` — makes it a Map. A
+    // word followed by `=`, `,` or `}` starts no Map entry, so it is a
+    // record's first field, and the field loop below decides whether the word
+    // can name one.
+    const k0 = this.peek();
+    const k1 = this.peek(1);
+    const isRecord =
+      (k0.kind === "ident" || k0.kind === "kw") &&
+      k1.kind === "op" &&
+      (k1.value === "=" ||
+        k1.value === "," ||
+        k1.value === "}" ||
+        (k1.value === ":" && fieldNameOf(k0) !== undefined));
     if (isRecord) {
       const fields: { name: string; value: Expr; pos: Pos }[] = [];
       while (true) {
         const keyTok = this.peek();
         const fieldName = fieldNameOf(keyTok);
         if (fieldName === undefined) {
-          // The first key made this a record, so a `true` here stands where a
-          // field name goes, and a value cannot be one.
+          // A value keyword here stands where a field name goes, and a value
+          // cannot be one.
           if (keyTok.kind === "kw") {
             throw new ParseError(
               `\`${keyTok.value}\` is a value, not a record field name`,

@@ -3,9 +3,10 @@
 // `=`, `,` or `}` makes the literal a record. A field name is an identifier
 // or a reserved word, except the reserved words that are a whole value on
 // their own — `true`, `false` and `now`. Those are keys, so
-// `{true: "on", false: "off"}` is a `Map(Bool, Text)`, not a record with a
-// field named `true` that no record type can declare. Rendering each form is
-// pinned in `packages/tests/record-or-map-literal.test.ts`.
+// `{true: "on", false: "off"}` is a `Map(Bool, Text)`, and one written where
+// a field name goes (`{a, now}`, `{true}`) is a parse error that says it is a
+// value. Rendering each form is pinned in
+// `packages/tests/record-or-map-literal.test.ts`.
 
 import type { Expr } from "@kumikijs/compiler";
 import { check, lex, parse } from "@kumikijs/compiler";
@@ -50,7 +51,18 @@ describe("a value keyword as the first key", () => {
     });
   });
 
-  it("is the same Map the parenthesised key already wrote", () => {
+  it("of one entry is a Map too", () => {
+    expect(parsed("{true: 1}")).toMatchObject({
+      kind: "MapLit",
+      entries: [{ key: { kind: "Bool", value: true }, value: { kind: "Num", value: 1 } }],
+    });
+    expect(parsed("{now: x}")).toMatchObject({
+      kind: "MapLit",
+      entries: [{ key: { kind: "Call", callee: "now" }, value: { kind: "Ref", name: "x" } }],
+    });
+  });
+
+  it("is the same Map the parenthesised key writes", () => {
     const strip = (e: Expr): string => JSON.stringify(e, (k, v) => (k === "pos" ? undefined : v));
     expect(strip(parsed('{true: "on", false: "off"}'))).toBe(
       strip(parsed('{(true): "on", false: "off"}')),
@@ -58,7 +70,7 @@ describe("a value keyword as the first key", () => {
   });
 });
 
-describe("a reserved word that is not a value stays a record field name", () => {
+describe("a reserved word that is not a value is a record field name", () => {
   it.each([
     ["type", "{type: ui.click, target: Go}", ["type", "target"]],
     ["for", '{for: "name"}', ["for"]],
@@ -70,7 +82,7 @@ describe("a reserved word that is not a value stays a record field name", () => 
   });
 });
 
-describe("a value keyword after a record's first field", () => {
+describe("a value keyword where a record field name goes", () => {
   it("is not a field name, by the same rule as the first key", () => {
     expect(() => parsed("{a: 1, true: 2}")).toThrow(
       "Parse error at 1:23: `true` is a value, not a record field name",
@@ -80,6 +92,22 @@ describe("a value keyword after a record's first field", () => {
   it("is refused in the shorthand form too", () => {
     expect(() => parsed("{a, now}")).toThrow(
       "Parse error at 1:20: `now` is a value, not a record field name",
+    );
+  });
+
+  // No Map entry is a key without a `:` after it, so a first key followed by
+  // `=`, `,` or `}` is a record's first field, and the field rule refuses a
+  // value keyword there with the same message it gives after the first field.
+  it.each([
+    ["{true}", "true"],
+    ["{false}", "false"],
+    ["{now}", "now"],
+    ["{true, false}", "true"],
+    ["{true = 1}", "true"],
+    ["{now = x}", "now"],
+  ])("is refused as the first key of %s", (literal, keyword) => {
+    expect(() => parsed(literal)).toThrow(
+      `Parse error at 1:17: \`${keyword}\` is a value, not a record field name`,
     );
   });
 });
@@ -103,11 +131,20 @@ reducer fill on=ui.click(Go) do= stamps := {now: "start"}`),
     ).toEqual([]);
   });
 
-  // Read as a record, the whole literal was the mismatch; read as a Map, each
-  // entry is checked against `V`, so the report lands on the value itself.
+  // Each entry is checked against the Map's `K` and `V`, so a report lands on
+  // the key or the value that does not fit, not on the whole literal.
   it("and a value of the wrong type is E0201 at that value", () => {
     expect(diagnostics('slot labels : Map(Bool, Text) = {true: 1, false: "off"}')).toEqual([
       "E0201 1:40 Expected Text but got Int",
+    ]);
+  });
+
+  it.each([
+    ["true", "Bool"],
+    ["now", "Time"],
+  ])("and a `%s` key against an Int key type is E0201 at that key", (key, type) => {
+    expect(diagnostics(`slot labels : Map(Int, Text) = {${key}: "a"}`)).toEqual([
+      `E0201 1:33 Expected Int but got ${type}`,
     ]);
   });
 });

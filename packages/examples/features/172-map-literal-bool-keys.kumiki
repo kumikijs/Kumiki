@@ -5,8 +5,8 @@
 # `{ … }` is a record when its first key is a field name, and a Map
 # otherwise. `true` and `false` are values, not field names, so this literal
 # is a `Map(Bool, Text)`: the same Map `{(true): "on", false: "off"}` writes.
-# A reserved word that is not a value still names a field, so the test's
-# `{type: ui.click, target: Rename}` stays a record, beside a Bool-keyed Map.
+# A reserved word that is not a value names a field, so the test's
+# `{type: ui.click, target: Rename}` is a record, beside a Bool-keyed Map.
 
 slot labels : Map(Bool, Text) = {true: "on", false: "off"}
 slot lit    : Bool            = false
