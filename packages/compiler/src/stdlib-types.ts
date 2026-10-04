@@ -27,7 +27,9 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
   args,
   pos: NO_POS,
 });
-const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
+type RecordType = Extract<TypeExpr, { kind: "TypeRecord" }>;
+
+const record = (fields: Record<string, TypeExpr>): RecordType => ({
   kind: "TypeRecord",
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
@@ -54,6 +56,47 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
 });
 
 /**
+ * The standard `Route`: the five fields routing.md §3.2 documents, which is
+ * what a program reads, and the type of the `route` slot the runtime
+ * maintains. (`parseLocation` also carries `childPattern` for `route-outlet`;
+ * that one is runtime bookkeeping and is deliberately not part of the type.)
+ */
+export const ROUTE_TYPE: RecordType = record({
+  path: prim("Text"),
+  pattern: prim("Text"),
+  params: app("Map", prim("Text"), prim("Text")),
+  query: app("Map", prim("Text"), prim("Text")),
+  hash: app("Option", prim("Text")),
+});
+
+/**
+ * The fields of the standard `PanicInfo` (lifecycle.md §7.2.3): what an
+ * `app.error` reducer is handed as `$event` and an `error-boundary` fallback as
+ * `$1`. `episode-id` is `Option(Text)` because an episode is not always open —
+ * a host that attached no episode logger has none to name, and `None` says so.
+ */
+const PANIC_INFO_FIELDS = {
+  message: prim("Text"),
+  location: prim("Text"),
+  "episode-id": app("Option", prim("Text")),
+  cause: app("Option", prim("Text")),
+  category: prim("Text"),
+};
+
+export const PANIC_INFO_TYPE: RecordType = record(PANIC_INFO_FIELDS);
+
+/**
+ * What a `route.error(<pattern>)` reducer is handed as `$event`: the same
+ * `PanicInfo`, with the matched `pattern` on top (stdlib.md §2.1.3). No program
+ * names this type, and it is not a `PanicInfo` — a record type matches only
+ * its own field set.
+ */
+export const ROUTE_ERROR_EVENT_TYPE: RecordType = record({
+  ...PANIC_INFO_FIELDS,
+  pattern: prim("Text"),
+});
+
+/**
  * Domain types provided by the standard library (docs/spec/stdlib.md §2.1.3).
  *
  * `File` is absent on purpose: the grammar makes it a primitive type name, so a
@@ -61,7 +104,9 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
  * checker's `PRIM_FIELDS` instead.
  *
  * A program that declares its own `type Route = …` shadows the entry here —
- * these are seeded before the program's definitions, not after.
+ * these are seeded before the program's definitions, not after. A value the
+ * runtime builds — the `route` slot, a panic's `$event` — is typed from the
+ * exports above instead, which no program shadows.
  */
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
@@ -77,41 +122,12 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
-  // The five fields routing.md §3.2 documents, which is what a program reads.
-  // (`parseLocation` also carries `childPattern` for `route-outlet`; that one
-  // is runtime bookkeeping and is deliberately not part of the type.)
-  // `pattern` and `hash` were missing here, so a provider signature generated
-  // for a `Route` typed them as `unknown`.
-  def(
-    "Route",
-    record({
-      path: prim("Text"),
-      pattern: prim("Text"),
-      params: app("Map", prim("Text"), prim("Text")),
-      query: app("Map", prim("Text"), prim("Text")),
-      hash: app("Option", prim("Text")),
-    }),
-  ),
+  def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
   // The payload of `app.error` and of an `error-boundary` tile's `in=`
   // (docs/spec/lifecycle.md §7.2.3). Filed with the domain types rather than
   // with lifecycle because a program names it exactly the way it names `Route`.
-  //
-  // `episode-id` is `Option(Text)` because an episode is not always open: a
-  // host that attached no episode logger has none to name. It was declared
-  // `Text` and supplied by nothing, which made §7.2.3's own instruction —
-  // treat it as `None`-equivalent — inexpressible, since a `Text` has no
-  // `None` and what arrived was `undefined` (#364).
-  def(
-    "PanicInfo",
-    record({
-      message: prim("Text"),
-      location: prim("Text"),
-      "episode-id": app("Option", prim("Text")),
-      cause: app("Option", prim("Text")),
-      category: prim("Text"),
-    }),
-  ),
+  def("PanicInfo", PANIC_INFO_TYPE),
   def("FormValue", {
     kind: "TypeUnion",
     variants: [

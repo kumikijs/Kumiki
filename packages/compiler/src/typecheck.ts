@@ -82,7 +82,13 @@ import {
   receiversOf,
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
-import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import {
+  isPrimTypeName,
+  PANIC_INFO_TYPE,
+  ROUTE_ERROR_EVENT_TYPE,
+  ROUTE_TYPE,
+  STDLIB_TYPES,
+} from "./stdlib-types.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -2321,10 +2327,28 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   // name something in the body bound. Seeding it here would answer that
   // question "bound" for every reducer and retire the diagnostic.
   ctx.localBinds.add("$el");
-  ctx.localBinds.add("$event");
+  bindLocal(ctx, "$event", eventPayloadType(r.on));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+/**
+ * The type of `$event` on a trigger whose payload the runtime builds from a
+ * standard-library type: the `PanicInfo` an `app.error` reducer is handed, and
+ * the same plus the matched `pattern` for `route.error(<pattern>)`
+ * (lifecycle.md §7.2.3, stdlib.md §2.1.3). Every other trigger's payload is
+ * untyped.
+ *
+ * Taken from the standard library's definition rather than looked up by name,
+ * because the runtime builds the value whatever a program's own
+ * `type PanicInfo` says.
+ */
+function eventPayloadType(on: ReducerDef["on"]): TypeExpr | null {
+  if (on.kind !== "LifecycleEvent") return null;
+  if (on.name === "app.error") return PANIC_INFO_TYPE;
+  if (on.name.startsWith("route.error(")) return ROUTE_ERROR_EVENT_TYPE;
+  return null;
 }
 
 function checkStmt(
@@ -4663,6 +4687,24 @@ function unlisted(_member: never): null {
   return null;
 }
 
+/**
+ * The type of a read of the route the runtime maintains: the `route` slot, and
+ * `$route` in a reducer whose trigger binds one — both the standard `Route`
+ * (routing.md §3.2, language.md §1.6.5). A bind of either name is the
+ * program's own, typed or not, and a `$route` nothing binds has no value to
+ * type: that read is E0119's.
+ *
+ * Taken from the standard library's definition rather than looked up by name,
+ * because the runtime builds the value whatever a program's own `type Route`
+ * says.
+ */
+function routeType(name: string, ctx: Ctx): TypeExpr | null {
+  if (ctx.localBinds.has(name)) return null;
+  if (name === "route") return ROUTE_TYPE;
+  if (name === "$route" && ctx.routeBind === "bound") return ROUTE_TYPE;
+  return null;
+}
+
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
@@ -4682,7 +4724,9 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
-      return sym.slots.get(e.name)?.type ?? null;
+      // The slot table first: a program's own `slot route` is E0115, and its
+      // reads keep the slot's type rather than drawing a second report.
+      return sym.slots.get(e.name)?.type ?? routeType(e.name, ctx) ?? null;
     }
     case "FieldAccess": {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
