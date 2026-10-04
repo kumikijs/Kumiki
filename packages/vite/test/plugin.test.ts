@@ -85,12 +85,47 @@ describe("vite-plugin-kumiki", () => {
     expect(out).toBeNull();
   });
 
-  it("strips a query suffix from the id before matching", async () => {
+  it("compiles an id carrying the dev server's `?import` suffix", async () => {
     const src = readFileSync(COUNTER, "utf8");
     const out = (await transformOf().call(ctx as never, src, `${COUNTER}?import`)) as {
       code: string;
     };
     expect(out.code).toContain("export default App;");
+  });
+
+  it("compiles ids whose query still names the module itself", async () => {
+    const src = readFileSync(COUNTER, "utf8");
+    for (const query of [
+      "t=1700000000000",
+      "worker_file&type=module",
+      "import&v=abc123",
+      // Vite acts on a valueless flag only, and on `inline` only for CSS.
+      "inline",
+      "no-inline",
+      "raw=1",
+      "url=x",
+    ]) {
+      const out = (await transformOf().call(ctx as never, src, `${COUNTER}?${query}`)) as {
+        code: string;
+      } | null;
+      expect(out?.code, query).toContain("export default App;");
+    }
+  });
+
+  it("leaves Vite's own query imports to Vite", async () => {
+    const asJs = `export default ${JSON.stringify("text")}`;
+    for (const query of [
+      "raw",
+      "url",
+      "url&inline",
+      "url&no-inline",
+      "import&raw",
+      "worker",
+      "sharedworker",
+    ]) {
+      const out = await transformOf().call(ctx as never, asJs, `${COUNTER}?${query}`);
+      expect(out, query).toBeNull();
+    }
   });
 
   it("resolves project capabilities from a sibling kumiki.caps.json", async () => {
