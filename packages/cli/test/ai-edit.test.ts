@@ -321,6 +321,31 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("declines a target no accessor repairs, such as an Option (E0218)", () => {
+    // The message offers `.get-or([])`, which decides what `None` iterates —
+    // the author's call. Appending the name the message mentions would leave
+    // `loaded.get-or`, a call with no default.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-for3-"));
+    const file = join(dir, "foroption.kumiki");
+    writeFileSync(
+      file,
+      `slot loaded : Option(List(Text)) = Some(["a"])
+tile App = column(for x in loaded text(x))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.code)).not.toContain("E0218");
+    expect(skipped.filter((sk) => sk.code === "E0218").map((sk) => sk.reason)).toEqual([
+      "e0218-no-accessor",
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("makes a text builtin's text= its positional content (E0129)", () => {
     // `heading(text=title)` renders nothing: `text=` is a prop on a text
     // builtin. With no positional argument written, dropping `text=` makes the

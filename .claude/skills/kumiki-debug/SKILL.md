@@ -43,7 +43,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0215` | a record literal / `.copy(f=v)` names a field the type does not have | fix the name, or declare it on the type |
 | `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
 | `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
-| `E0218` | a `for` iterates a `Map` or a `Set` directly | iterate `m.keys` / `s.to-list`; `kumiki fix` appends it |
+| `E0218` | a `for` iterates something whose type is not a `List` — a `Map`, a `Set`, an `Option` / `Result` not yet unwrapped, a `Text`, an `Int`, a record | `m.keys` / `s.to-list` (`kumiki fix` appends it); unwrap with `.get-or([])` or a `match`; `t.split(sep)`; otherwise iterate the List you meant |
 | `E0219` | `strict` on a bind control kind — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`, `editable` — with or without `bind=` (`input(bind=s, strict=false)`) — a prop an earlier forms spec described and nothing implemented | remove it; a refused bind is always refused, and `error(field=s)` beside the control shows why |
 | `E0220` | an `error-boundary` fallback declares an `in=` `PanicInfo` does not fit, or reads `$1` with no `in=` | declare `in=PanicInfo` on the fallback and read `$1.message` etc.; a fallback that never reads `$1` may keep no `in=` (and so stay a route target) |
 | `E0225` | a `radio` has `bind=` but no `value=` — it would write `undefined` into the slot when chosen | give it the value it stands for, one radio per value the slot holds |

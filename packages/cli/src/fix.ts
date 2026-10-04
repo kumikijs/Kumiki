@@ -745,17 +745,20 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0218") {
-      // Message shape: `"for" iterates a List, but this is a <T> — iterate its
-      // .<remedy>`. The repair is a suffix on the iterated expression, and the
-      // diagnostic's position is where that expression starts — so this only
-      // fires when the expression is a plain name whose end is unambiguous.
-      // `for t in issues[$1].tags` reports at `issues`, and appending there
-      // would produce `issues.keys[$1].tags`.
-      const remedy = /iterate its (\.[a-z-]+)/.exec(err.message)?.[1];
-      if (!remedy) {
-        skip(err.code, "e0218-remedy-extract-failed", err.message);
+      // The repair is the accessor the diagnostic carries, appended to the
+      // iterated expression — and the diagnostic's position is where that
+      // expression starts, so this only fires when the expression is a plain
+      // name whose end is unambiguous. `for t in issues[$1].tags` reports at
+      // `issues`, and appending there would produce `issues.keys[$1].tags`.
+      // A target with no accessor has no suffix that repairs it on its own: an
+      // `Option`'s `.get-or([])` decides what `None` iterates, a `Text`'s
+      // `.split(sep)` needs a separator, and an `Int` holds nothing to iterate
+      // — none of which the program says.
+      if (!err.accessor) {
+        skip(err.code, "e0218-no-accessor", err.message);
         continue;
       }
+      const remedy = `.${err.accessor}`;
       const name = identifierAt(store, err.pos);
       if (!name) {
         skip(err.code, "e0218-target-not-a-plain-name", err.message);

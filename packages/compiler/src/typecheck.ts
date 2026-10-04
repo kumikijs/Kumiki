@@ -140,6 +140,14 @@ export type KumikiError = {
    *   positional argument, which is the one rendered — `label(text="A", "B")`.
    */
   unrendered?: "positional" | "text-prop" | "text-shadowed";
+  /**
+   * E0218 only: the member that makes the iterated value the List the loop
+   * needs when appending it is the whole repair — `keys` on a `Map`, `to-list`
+   * on a `Set` — so a reader (`kumiki fix`) appends it without matching the
+   * message. Absent for every other target: what an `Option`'s `None` should
+   * iterate, say, is the author's call.
+   */
+  accessor?: "keys" | "to-list";
 };
 
 /**
@@ -1093,29 +1101,100 @@ function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
 }
 
 /**
- * `for` iterates a list (language.md §1.7.2 inv. 5). A `Map` and a `Set` are
- * both plain objects at runtime — keyed by field, not indexed — so iterating
- * one compiles and then throws where it is used: `.map is not a function` in a
- * tile, `object is not iterable` in a reducer. The spec's answer is to name the
- * list you meant, and both types have one.
+ * The iterated expression of a `for`, in either form: a tile's and a
+ * reducer's are different nodes, and both are checked here. `for` iterates a
+ * List (language.md §1.7.2 inv. 5). Anything else goes wrong where the loop
+ * runs: a tile's loop calls `.map` on the value and a reducer's walks it with
+ * `for … of`, so an `Option` or a record throws (`.map is not a function`,
+ * `object is not iterable`) and a `Text` in a reducer is walked character by
+ * character.
  *
- * Silent when the type is unknown: `null` from `inferType` means "cannot tell",
- * never "not a collection".
+ * Silent on a target whose type cannot be decided (`nonListTarget`), and on
+ * one that already has a diagnostic: the type read off a broken expression is
+ * not one to judge, and the mistake is reported once.
  */
 function checkIterationTarget(iter: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  const t = unaliasType(inferType(iter, sym, ctx), sym);
-  if (t?.kind !== "TypeApp") return;
-  const remedy = t.name === "Map" ? "keys" : t.name === "Set" ? "to-list" : null;
-  if (!remedy) return;
-  // A `Map` has two lists in it and they bind different things, so the message
-  // names both: `.keys` was not necessarily what the loop wanted.
-  const alternative = t.name === "Map" ? " (or .values, which binds the value)" : "";
+  const before = errors.length;
+  checkExpr(iter, sym, errors, ctx);
+  if (errors.slice(before).some((e) => e.severity !== "warning")) return;
+  const written = inferType(iter, sym, ctx);
+  const target = written && nonListTarget(written, sym);
+  if (!target) return;
   errors.push({
     code: "E0218",
     kind: "for-over-non-list",
-    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}${alternative}`,
+    message: `"for" iterates a List, but this is ${target.shown}${target.remedy ? ` — ${target.remedy}` : ""}`,
     pos: iter.pos,
+    ...(target.accessor ? { accessor: target.accessor } : {}),
   });
+}
+
+type NonListTarget = {
+  /** The target as the message names it. */
+  shown: string;
+  /** What to iterate instead, when the type has an answer. */
+  remedy: string | null;
+  accessor?: "keys" | "to-list";
+};
+
+/**
+ * What E0218 says about a `for` over a value of type `written`, or `null` when
+ * the loop may iterate it — a List, after aliases, generics and `nominal` are
+ * followed — or its type cannot be decided: a type parameter, `?`, or a name
+ * or constructor that resolves to nothing (E0117 names that one).
+ *
+ * The message names the type as written, so an alias reads as the author's
+ * name for it; the remedy is chosen from what the alias stands for. A remedy
+ * is given only where the language has one for that type — a member that
+ * yields a List, or the `match` that takes an `Option` or a `Result` apart —
+ * and an `Int`, a record or a union is named with none.
+ */
+function nonListTarget(written: TypeExpr, sym: SymbolTable): NonListTarget | null {
+  const t = unaliasType(written, sym);
+  if (t === null || t.kind === "TypeRef") return null;
+  const shown = typeToString(written);
+  if (t.kind === "TypeApp") {
+    switch (t.name) {
+      case "List":
+        return null;
+      // A `Map` and a `Set` are keyed objects at runtime, and each has a member
+      // that is the list. A `Map` has two and they bind different things, so
+      // the message names both: `.keys` was not necessarily what the loop
+      // wanted.
+      case "Map":
+        return {
+          shown: "a Map",
+          remedy: "iterate its .keys (or .values, which binds the value)",
+          accessor: "keys",
+        };
+      case "Set":
+        return { shown: "a Set", remedy: "iterate its .to-list", accessor: "to-list" };
+      case "Option":
+        return { shown, remedy: unwrapRemedy(t, "Some / None", sym) };
+      case "Result":
+        return { shown, remedy: unwrapRemedy(t, "Ok / Err", sym) };
+      case "Tuple":
+        return { shown, remedy: null };
+      default:
+        return null;
+    }
+  }
+  if (t.kind === "TypePrim" && t.name === "Text") {
+    return { shown, remedy: ".split(sep) breaks it into a List(Text)" };
+  }
+  return { shown, remedy: null };
+}
+
+/**
+ * How to reach what an `Option` or a `Result` holds. `.get-or([])` is offered
+ * only when that is a List, since only then is its answer one to iterate; a
+ * `match` reaches any payload.
+ */
+function unwrapRemedy(t: TypeExpr & { kind: "TypeApp" }, tags: string, sym: SymbolTable): string {
+  const payload = unaliasType(t.args[0] ?? null, sym);
+  return payload?.kind === "TypeApp" && payload.name === "List"
+    ? `iterate its .get-or([]), or match on ${tags}`
+    : `match on ${tags} to take out its value`;
 }
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
@@ -1452,7 +1531,6 @@ function checkA11y(
 function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   switch (t.kind) {
     case "TileFor": {
-      checkExpr(t.iter, sym, errors, ctx);
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
@@ -2335,7 +2413,6 @@ function checkStmt(
   writtenRoots: Set<string>,
 ): void {
   if (s.kind === "ForStmt") {
-    checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
     const inner = innerScope(ctx);
     bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));

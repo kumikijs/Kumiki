@@ -1,0 +1,43 @@
+# Feature (language.md §1.7.2 inv. 5): a `for` iterates a List, so an
+# `Option(List(T))` is unwrapped before it is iterated — in a tile and in a
+# reducer alike.
+#
+#   for x in loaded.get-or([]) …                          # None iterates nothing
+#   match loaded with | Some(xs) -> for x in xs … | None -> …
+#
+# `for x in loaded` is E0218: the loop needs the List inside, and which of
+# the two the program means — nothing for `None`, or another branch — is the
+# author's to say. A `Result(List(T), E)` is unwrapped the same way, with
+# `.get-or([])` or a match on `Ok` / `Err`.
+
+slot loaded  : Option(List(Text)) = Some(["a", "b"])
+slot counted : Int                = 0
+slot matched : Int                = 0
+slot missing : Int                = 0
+
+reducer count on=ui.click(Count) do=
+    for x in loaded.get-or([]) { counted := counted + 1 }
+
+reducer countMatched on=ui.click(CountMatched) do=
+    match loaded with
+      | Some(xs) -> for x in xs { matched := matched + 1 }
+      | None -> missing := missing + 1
+
+reducer clear on=ui.click(Clear) do= loaded := None
+
+tile Count        = button(text="count") {id: "count"}
+tile CountMatched = button(text="count matched") {id: "count-matched"}
+tile Clear        = button(text="clear") {id: "clear"}
+
+tile App = column(
+  Count, CountMatched, Clear,
+  text("counted: " + counted.show + ", matched: " + matched.show + ", missing: " + missing.show),
+  column(for x in loaded.get-or([]) text("row " + x)),
+  match loaded with
+    | Some(xs) -> column(for x in xs text("item " + x))
+    | None -> text("nothing loaded"))
+
+app ForOverNonList
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
