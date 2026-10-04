@@ -12,7 +12,10 @@ export function registerReplace(program: Command): void {
     .description("Replace an existing definition's body")
     .argument("[file]", "target .kumiki file")
     .argument("[qname]", "qualified name (layer.name)")
-    .argument("[body...]", "body tokens (joined by spaces; prefer --body-file for multi-line)")
+    .argument(
+      "[body...]",
+      "body tokens: a body without a tile's clauses or a type's parameters keeps the definition's, and one starting with `=` drops them (joined by spaces; prefer --body-file for multi-line)",
+    )
     .option(
       "--body-file <path>",
       "read body from a file (use '-' for stdin); preserves whitespace",
@@ -32,8 +35,8 @@ export function registerReplace(program: Command): void {
         }
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         try {
-          const opId = replaceDef(resolve(process.cwd(), file), qname, body);
-          console.log(describeEdit({ op: "replace", qname, opId }));
+          const result = replaceDef(resolve(process.cwd(), file), qname, body);
+          console.log(describeEdit({ op: "replace", qname, ...result }));
         } catch (e) {
           console.error(String(e));
           process.exit(1);

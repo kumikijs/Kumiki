@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import {
   addDef,
   applyFixPlan,
+  CASCADE_HELP,
   describeEdit,
   editDef,
   episodeLogPathFor,
@@ -151,8 +152,11 @@ function errText(e: unknown) {
  * `Diagnostic[]`, and preserve the discriminated union so the client can
  * `switch (r.status)` on the response. The `applied` variant always carries
  * `regressed: []`: a patch that would regress a test is `test-blocked`.
+ *
+ * Exported so a test can serialise an outcome no file reaches today, such as a
+ * refusal over composed source that does not parse.
  */
-function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
+export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
   const base = { ok: o.ok, status: o.status };
   switch (o.status) {
@@ -638,9 +642,15 @@ export function createServer(): McpServer {
       description: "Append a new definition to a .kumiki file. Returns the new op-id.",
       inputSchema: {
         path: z.string(),
-        layer: z.enum(["type", "slot", "effect", "reducer", "tile", "fn", "app", "theme"]),
+        // The labels `kumiki_list` filters by, so a kind of definition it
+        // lists is one this tool writes.
+        layer: z.enum(LAYERS),
         name: z.string(),
-        body: z.string().describe("The definition body (without the `<layer> <name>` prefix)"),
+        body: z
+          .string()
+          .describe(
+            "The definition body (without the `<layer> <name>` prefix). A tile's clauses or a type's parameters, if any, go first: `in=Text = heading($1)`, `(T) = {v: T}`",
+          ),
       },
     },
     async ({ path, layer, name, body }) => {
@@ -653,12 +663,13 @@ export function createServer(): McpServer {
     "kumiki_replace",
     {
       title: "Replace a definition",
-      description: "Replace the body of an existing definition. Returns the new op-id.",
+      description:
+        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has; one that starts with `=` drops them. Returns the new op-id, and a `dropped` line for each clause or parameter the definition no longer has.",
       inputSchema: { path: z.string(), name: z.string(), body: z.string() },
     },
     async ({ path, name, body }) => {
-      const opId = replaceDef(resolve(process.cwd(), path), name, body);
-      return text(describeEdit({ op: "replace", qname: name, opId }));
+      const result = replaceDef(resolve(process.cwd(), path), name, body);
+      return text(describeEdit({ op: "replace", qname: name, ...result }));
     },
   );
 
@@ -667,7 +678,8 @@ export function createServer(): McpServer {
     {
       title: "Remove a definition",
       description:
-        "Remove a definition. Set cascade=true to also remove definitions that only it referenced. " +
+        `Remove a definition. Set cascade=true to ${CASCADE_HELP}. ` +
+        "Without it, removing a definition that something references is refused. " +
         "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
         "line for each further definition the cascade took.",
       inputSchema: { path: z.string(), name: z.string(), cascade: z.boolean().optional() },

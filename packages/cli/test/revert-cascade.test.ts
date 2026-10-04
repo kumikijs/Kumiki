@@ -221,12 +221,25 @@ describe("patch revert of a cascade", () => {
 
   it("refuses to revert the restore when a member is no longer in the file", () => {
     const { file, restoreId } = restoredFixture();
-    renameDef(file, "tile.Page", "Home");
+    const { opId: removedId } = removeDef(file, "tile.Page", false);
     const before = snapshot(file);
 
-    expect(() => patchRevert(file, restoreId)).toThrowError(/tile\.Page is no longer in the file/);
+    expect(() => patchRevert(file, restoreId)).toThrowError(
+      `patch revert: ${restoreId} added tile.Page, which is no longer in the file: ${removedId} removed tile.Page; nothing was written`,
+    );
 
     expect(snapshot(file)).toEqual(before);
+  });
+
+  it("reverting the restore removes a member renamed since under its new name", () => {
+    const { file, restoreId } = restoredFixture();
+    renameDef(file, "tile.Page", "Home");
+
+    const revertId = patchRevert(file, restoreId);
+
+    expect(qnames(file)).toEqual(["slot.a"]);
+    const op = readOpLog(file).find((e) => e["op-id"] === revertId)!;
+    expect(op.removed).toEqual(["slot.b", "tile.Home", "tile.Show"]);
   });
 
   it("refuses to revert the restore when a member is locked by another agent", () => {
@@ -241,11 +254,16 @@ describe("patch revert of a cascade", () => {
 
   it("reads a prior body from a restore's `with` list", () => {
     // `tile.Show` predates the log, so the only op that ever recorded its body
-    // is the restore, in `with`. Reverting a later replace must find it there.
+    // is the restore, in `with`. Reverting a later replace that records no
+    // replaced body of its own, as one logged before `prev` was, must find it
+    // there.
     const file = seed("slot a : Int = 0\nslot b : Int = 1\ntile Show = text(b.show)\n");
     const { opId } = removeDef(file, "slot.b", true);
     patchRevert(file, opId);
-    const replaceId = replaceDef(file, "tile.Show", 'text("replaced")');
+    const replaceId = replaceDef(file, "tile.Show", 'text("replaced")').opId;
+    rewriteLogEntry(file, replaceId, (e) => {
+      delete e.prev;
+    });
 
     patchRevert(file, replaceId);
 
