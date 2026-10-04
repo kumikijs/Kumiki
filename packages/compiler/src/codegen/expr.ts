@@ -872,8 +872,13 @@ export function methodCallJs(
       // Result(T,E).map-err(expr) — within expr, $1 is the current Err payload.
       return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
     case "replace":
-      // Text.replace(from, to) — replaces every occurrence.
-      return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;
+      // Text.replace(from, to) — every occurrence of `from`, matched as plain
+      // text, becomes `to` as written. `replaceAll` reads a string replacement
+      // as a pattern (`$$`, `$&`, `` $` ``, `$'`) and inserts what a replacer
+      // returns as it is, so `to` goes in through one: evaluated after `from`,
+      // made a string once, and handed back at each match. Inline rather than
+      // a stdlib helper, so only an app that calls `replace` ships it.
+      return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ((__to) => () => __to)(String(${argRaw(args[1]!)})))`;
     case "min":
       return `Math.min((${recvJs}), (${argRaw(args[0]!)}))`;
     case "max":
