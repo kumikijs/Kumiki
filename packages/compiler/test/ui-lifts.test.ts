@@ -266,7 +266,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       // `Some(1)` as a reducer called `Some` and wire a listener for it.
       for (const [what, value] of [
         ["a variant tag with a payload", "Some(1)"],
-        ["a tile call with arguments", 'box(text("z"))'],
+        ["a call with arguments", 'box(text("z"))'],
       ] as const) {
         it(`${handler} (${form}) = ${what} reports exactly E0201`, () => {
           const errors = errorsForNeighbour(bind(handler, value));
@@ -305,12 +305,12 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(codesForNeighbour("Other(onClick=Other)")).toEqual(["W0213", "E0102"]);
   });
 
-  // The matrix above binds through `box` throughout, and a named argument of a
-  // tile-taking builtin is the `TileCall` shape. `parseArgValue` branches on the
-  // PARENT tile, not on argument-vs-prop, so a named argument of a value-arg
-  // builtin or of a user tile is a `Variant` — the same shape the props block
-  // produces, reached by a path the matrix never walks. Both sit here so the
-  // arg form is not silently `TileCall`-only.
+  // The matrix above binds through `box` throughout, and a capitalised name
+  // written as a named argument of `box` is the `TileCall` shape (§1.7.3).
+  // `parseTileArg` decides that by the PARENT tile, not by argument-vs-prop, so
+  // a named argument of any other builtin or of a user tile is a `Variant` —
+  // the same shape the props block produces, reached by a path the matrix
+  // never walks. Both sit here so the arg form is not silently `TileCall`-only.
   describe("the Variant-in-argument shape", () => {
     const withTile = (tile: string) => `slot n : Int = 0
 reducer Bump on=app.start do= n := 1

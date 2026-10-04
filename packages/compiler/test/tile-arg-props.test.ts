@@ -73,9 +73,11 @@ describe("a named argument reaches props (#251)", () => {
   });
 
   it("does not lower a tile-valued argument as if it were prop data", () => {
+    // A named argument parses as a value, so the tile written there is a
+    // `when` or a `for`: neither has a value form.
     // One route's worth of output: the tile is inlined once per route, and
     // `/404` is mandatory, so counting over the whole module counts twice.
-    const js = emit('card(header=text("inner"), text("body"))');
+    const js = emit('box(header=when(n > 0, text("inner")), text("body"))', "slot n : Int = 1");
     const route = js.slice(js.indexOf('pattern: "/"'), js.indexOf('pattern: "/404"'));
     // Only the positional child is a node. A tile under a name no kind lifts
     // is dropped, as it was before — but it must not reappear inside `props`,
@@ -173,8 +175,15 @@ describe("which argument a user tile takes as its input", () => {
     // visible. Taking the positional argument makes it invisible instead: a
     // builtin container skips named arguments, the builtins that read one by
     // name all want a value, and `propsFor` drops a tile-valued one — so the
-    // checker reports the shape rather than letting it disappear.
-    expect(codesFor('column(Btn(header=text("inner")), text(n.show))', HOST)).toEqual(["E0201"]);
+    // checker reports the shape rather than letting it disappear. A named
+    // argument parses as a value, so the tile written there is a `when` or a
+    // `for`: neither has a value form.
+    expect(codesFor('column(Btn(header=when(n > 0, text("inner"))), text(n.show))', HOST)).toEqual([
+      "E0201",
+    ]);
+    expect(codesFor('column(Btn(header=for x in [1] text("inner")), text(n.show))', HOST)).toEqual([
+      "E0201",
+    ]);
   });
 
   it("reads the outer call's input when the tile renders another user tile", () => {

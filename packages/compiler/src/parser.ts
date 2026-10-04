@@ -38,8 +38,9 @@ import type {
   UiEventKind,
 } from "./ast.ts";
 import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
-import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
+import { BUILTIN_TILES, positionalIsTile } from "./builtins.ts";
 import { REFINEMENT_PREDS } from "./refinements.ts";
+import { HANDLER_NAMES } from "./ui-lifts.ts";
 
 export class ParseError extends Error {
   constructor(
@@ -100,44 +101,12 @@ const APP_LIFECYCLE_EVENTS = new Set([
   "http-5xx",
 ]);
 const _GENERIC_TYPES = new Set(["Map", "Set", "List", "Option", "Result", "Tuple"]);
-// Builtins whose positional argument is a value expression (Text/Number), not a tile.
-// Named args whose value is always a value expression (Text / Number / etc.),
-// independent of the enclosing builtin. This lets `button(text=if c then "A" else "B")`
-// parse the `if` as a value-level `IfExpr` instead of a `TileIf`.
-const VALUE_NAMED_ARGS = new Set([
-  "text",
-  "value",
-  "placeholder",
-  "to",
-  "src",
-  "id",
-  "key",
-  "name",
-  "label",
-  "title",
-  "type",
-  "color",
-  "bg",
-  "size",
-  "weight",
-  "variant",
-  "pad",
-  "gap",
-  "align",
-  "justify",
-  "wrap",
-  "w",
-  "h",
-  "min-w",
-  "min-h",
-  "max-w",
-  "max-h",
-  "radius",
-  "shadow",
-  "rows",
-  "cols",
-  "aspect",
-]);
+
+/** Whether `name` starts with an ASCII capital, as a variant tag or a user tile's name does. */
+function isCapitalised(name: string): boolean {
+  const first = name[0];
+  return first !== undefined && first >= "A" && first <= "Z";
+}
 
 class Parser {
   private i = 0;
@@ -1619,19 +1588,14 @@ class Parser {
   private parseTileCallNested(): TileExpr {
     const nameTok = this.eat("ident");
     const name = nameTok.value;
-    const isBuiltin = BUILTIN_TILES.has(name);
-    // value-arg builtins take a text/number expression as their positional arg,
-    // not a tile. `match` inside them is a value match (`MatchExpr`), not a
-    // tile match (`TileMatch`).
-    const takesValueArg = VALUE_ARG_BUILTINS.has(name);
     const args: TileArg[] = [];
     if (this.matchOp("(")) {
       this.next();
       if (!this.matchOp(")")) {
-        args.push(this.parseTileArg(isBuiltin, takesValueArg));
+        args.push(this.parseTileArg(name));
         while (this.matchOp(",")) {
           this.next();
-          args.push(this.parseTileArg(isBuiltin, takesValueArg));
+          args.push(this.parseTileArg(name));
         }
       }
       this.eat("op", ")");
@@ -1651,62 +1615,50 @@ class Parser {
     return { kind: "TileCall", name, args, props, pos: nameTok.pos };
   }
 
-  private parseTileArg(parentIsBuiltin: boolean, parentTakesValueArg = false): TileArg {
-    // named arg: (ident|kw) = (expr | tile)
+  /**
+   * One argument of a call to `callee`, which §1.7.1 writes
+   * `(identifier '=')? expr`: an argument is a value wherever a value belongs —
+   * every named argument, a value builtin's content, a user tile's input — and
+   * a tile only as a positional argument of a builtin that renders it as a
+   * child (`positionalIsTile`, the rule E0128 checks). The one other shape is
+   * §1.7.3's: a capitalised name written as an event handler of such a builtin
+   * is a tile call, which is what lets `onClick=Bump {}` parse.
+   */
+  private parseTileArg(callee: string): TileArg {
     const first = this.peek();
     if ((first.kind === "ident" || first.kind === "kw") && this.matchTAt(1, "op", "=")) {
-      const name = first.value;
       this.next();
       this.eat("op", "=");
-      // Named args with a well-known value-typed name (text/value/placeholder
-      // /to/src/id/key/...) are always parsed in value context, regardless of
-      // whether the parent tile is itself a value-arg builtin.
-      const argTakesValue = parentTakesValueArg || VALUE_NAMED_ARGS.has(name);
-      const value = this.parseArgValue(parentIsBuiltin, argTakesValue);
-      return { kind: "TileArg", name, namePos: first.pos, value };
+      const head = this.peek();
+      const value =
+        HANDLER_NAMES.has(first.value) &&
+        positionalIsTile(callee) &&
+        head.kind === "ident" &&
+        isCapitalised(head.value)
+          ? this.parseTileCall()
+          : this.parseArgValue(false);
+      return { kind: "TileArg", name: first.value, namePos: first.pos, value };
     }
-    return { kind: "TileArg", value: this.parseArgValue(parentIsBuiltin, parentTakesValueArg) };
+    return { kind: "TileArg", value: this.parseArgValue(positionalIsTile(callee)) };
   }
 
-  private parseArgValue(parentIsBuiltin = true, parentTakesValueArg = false): Expr | TileExpr {
-    if (this.matchKw("for") || this.matchKw("when")) {
-      return this.parseTileExpr();
-    }
-    if (this.matchKw("match")) {
-      // value-arg builtins (text / heading / markdown / label / link) take an
-      // expression positional arg, so a `match` inside them is a value match.
-      // Other tile-arg builtins (column / row / card / page / ...) take tiles,
-      // so `match` produces a `TileMatch`.
-      if (parentTakesValueArg) return this.parseExpr();
-      return this.parseTileExpr();
-    }
-    if (this.matchKw("if")) {
-      // Same dispatch as `match`: value-arg builtins take an expression-level if,
-      // tile-arg builtins take a tile-level if.
-      if (parentTakesValueArg) return this.parseExpr();
-      return this.parseTileExpr();
-    }
-    const tok0 = this.peek();
-    if (tok0.kind === "ident") {
-      // Value-arg builtins (heading/text/markdown/label/link/image/icon) take a
-      // value expression, never a nested tile. An identifier here is always a
-      // value — even one that shadows a builtin tile name (e.g. a user
-      // `fn label`) or is capital-cased — so parse it as an expression. Without
-      // this guard `heading(label(x))` mis-parses `label(x)` as a builtin tile.
-      if (parentTakesValueArg) return this.parseExpr();
-      const name = tok0.value;
-      const p1 = this.peek(1);
-      const looksLikeTileCall = p1.kind === "op" && (p1.value === "(" || p1.value === "{");
-      const isBuiltin = BUILTIN_TILES.has(name);
-      const isCapital = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
-      // builtins are always treated as tile calls.
-      if (isBuiltin && looksLikeTileCall) return this.parseTileCall();
-      // Inside a user tile call, positional args lean towards expressions
-      // (so `FilterTab(All)` reads `All` as a variant payload, not a tile reference).
-      if (!parentIsBuiltin) return this.parseExpr();
-      // Inside a builtin tile, capital-cased identifiers refer to user tiles.
-      if (isCapital && looksLikeTileCall) return this.parseTileCall();
-      if (isCapital && !looksLikeTileCall) return this.parseTileCall();
+  /**
+   * An argument's value: a tile when `isTile`, else an expression. `for` and
+   * `when` have no expression form, so they are tiles wherever they are
+   * written.
+   */
+  private parseArgValue(isTile: boolean): Expr | TileExpr {
+    if (this.matchKw("for") || this.matchKw("when")) return this.parseTileExpr();
+    if (!isTile) return this.parseExpr();
+    if (this.matchKw("if") || this.matchKw("match")) return this.parseTileExpr();
+    const head = this.peek();
+    if (head.kind === "ident") {
+      const next = this.peek(1);
+      const opensCall = next.kind === "op" && (next.value === "(" || next.value === "{");
+      // A builtin's name opening an argument list or a props block calls that
+      // builtin; a capitalised name is a user tile, with or without one.
+      if (BUILTIN_TILES.has(head.value) && opensCall) return this.parseTileCall();
+      if (isCapitalised(head.value)) return this.parseTileCall();
     }
     return this.parseExpr();
   }

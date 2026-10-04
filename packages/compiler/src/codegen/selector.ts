@@ -238,7 +238,7 @@ export function propsFor(
   for (const a of t.args) {
     if (!a.name || written.has(a.name)) continue;
     if (isNotPropData(t.name, a.name, true)) continue;
-    // Children arrive as arguments too (`card(header=Some(…))`). A tile is not
+    // Children arrive as arguments too (`card(header=when(…))`). A tile is not
     // prop data, and lowering one here would build a second copy of its node.
     if (isTileExpr(a.value)) continue;
     const js = jsOfExpr(a.value, ctx);
