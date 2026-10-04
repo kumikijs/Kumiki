@@ -181,22 +181,13 @@ describe("vite-plugin-kumiki", () => {
     };
     expect(out.code).toContain("export default App;");
     expect(warnings).toHaveLength(1);
+    // The selector `ui.focus(Card)` is on the 3rd source line (the template
+    // literal opens with a newline), 29 characters in; Rollup counts the
+    // column from 0. Pinned so a regression in `pos` threading is caught.
     expect(warnings[0]).toMatchObject({
       message: expect.stringContaining("W0212") as string,
-      loc: {
-        file,
-        // The selector `ui.focus(Card)` sits on the `reducer recordFocus`
-        // line — 3rd source line counting the leading newline in the
-        // template literal. Pin both fields so a regression in `pos`
-        // threading (e.g. dropping `loc.column`) is caught.
-        line: expect.any(Number) as number,
-        column: expect.any(Number) as number,
-      },
+      loc: { file, line: 3, column: 29 },
     });
-    const loc = (warnings[0] as { loc?: { file: string; line: number; column: number } }).loc;
-    expect(loc?.file).toBe(file);
-    expect(loc?.line).toBeGreaterThan(0);
-    expect(loc?.column).toBeGreaterThan(0);
   });
 
   it("emits W0212 via this.warn BEFORE this.error when a compile fail co-occurs (#143)", async () => {
