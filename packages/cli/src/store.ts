@@ -106,7 +106,15 @@ export function viewDef(store: Store, qname: string): string | null {
   return store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
 }
 
-export function viewWithDeps(store: Store, qname: string): string {
+/**
+ * The definition at `qname` preceded by everything it depends on, directly or
+ * not: each once, a dependency before what reads it. `null` when `qname` names
+ * no definition, the answer `viewDef` gives, so a caller asks one question of
+ * either. Without the check the walk below still starts from the undefined
+ * name, finds nothing to print, and returns an empty string.
+ */
+export function viewWithDeps(store: Store, qname: string): string | null {
+  if (!store.byQName.has(qname)) return null;
   const seen = new Set<string>();
   const order: string[] = [];
   const visit = (q: string): void => {
