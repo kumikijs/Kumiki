@@ -1,0 +1,46 @@
+# Feature (stdlib.md §2.1.3 / http.md §6.4.1): an `HttpError`'s `body` is an
+# `Option(Text)`. It is `Some` of the body the server sent with its status —
+# `Some("")` when that body is empty — and `None` when no response arrived: an
+# abort, a timeout, a network failure.
+#
+# Load asks for a report the server no longer has. The 404 carries the
+# server's reason, and `.err` shows it. Cancel aborts a request that is still
+# in flight; no response arrived, so there is no body and `.err` says so.
+#
+# `smoke` makes the request through the real HTTP path against
+# `229-http-error-body.http.json`, which answers the 404 with its reason. A
+# scenario scripts each `.err` value, so the body the real path delivers — on
+# that 404, an empty one, an abort and a network failure — is pinned in
+# `packages/tests`.
+
+slot report  : Text     = "none"
+slot problem : Text     = ""
+slot loadId  : EffectId = EffectId.none
+
+effect loadReport cap=http.get
+                  in=Text
+                  out=Result(Text, HttpError)
+                  map-request={url: "/reports/" + $1, decode: Decoder.Text}
+
+effect cancelLoad cap=http.cancel in=EffectId out=Unit
+
+reducer load   on=ui.click(LoadBtn)    do= loadId := emit loadReport("7")
+reducer cancel on=ui.click(CancelBtn)  do= emit cancelLoad(loadId)
+reducer loaded on=loadReport.ok($t, _) do= report := $t
+reducer failed on=loadReport.err($e, _)
+    do= problem := match $e.body with
+          | Some(reason) -> "the server answered " + $e.status.show + ": " + reason
+          | None         -> "no response (" + $e.message + ")"
+
+tile LoadBtn   = button(text="Load", onClick=load)     {id: "load"}
+tile CancelBtn = button(text="Cancel", onClick=cancel) {id: "cancel"}
+tile App = column(
+             row(LoadBtn, CancelBtn) {gap: "sm"},
+             text("report: " + report),
+             text("problem: " + problem))
+           {pad: "lg", gap: "md"}
+
+app HttpErrorBody
+    caps   = [http.get, http.cancel]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

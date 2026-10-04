@@ -111,7 +111,7 @@ describe("a 2xx whose body does not decode", () => {
     const err = defined(live.err, "the err slot") as { _tag: string; _0: Record<string, unknown> };
     expect(err._tag).toBe("Some");
     expect(err._0.status).toBe(201);
-    expect(err._0.body).toBe("<html>Created</html>");
+    expect(err._0.body).toEqual({ _tag: "Some", _0: "<html>Created</html>" });
     expect(String(err._0.message)).toMatch(/^decode failed: /);
   });
 

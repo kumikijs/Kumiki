@@ -2,7 +2,7 @@
 // precedence (auto < global < input), credentials, and timeout via
 // AbortController. Each test stubs `globalThis.fetch` so no network is touched.
 
-import { httpFetch } from "@kumikijs/runtime";
+import { type EffectResult, httpFetch } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type FetchCall = { url: string; init: RequestInit };
@@ -109,10 +109,10 @@ describe("httpFetch (#78)", () => {
     );
     expect(res.kind).toBe("err");
     if (res.kind !== "err") return;
-    const v = res.value as { status: number; message: string; body: string };
+    const v = res.value as { status: number; message: string; body: unknown };
     expect(v.status).toBe(0);
     expect(v.message).toBe("aborted");
-    expect(v.body).toBe("");
+    expect(v.body).toEqual({ _tag: "None" });
   });
 
   it("returns immediately with aborted when external signal is already aborted (#102)", async () => {
@@ -249,5 +249,105 @@ describe("httpFetch request body", () => {
     await httpFetch(method, { url: "/q", body: { _tag: "Json", _0: { a: 1 } } });
     expect(calls[0]?.init.body).toBeUndefined();
     expect(calls[0]?.init.headers).toEqual({});
+  });
+});
+
+// `HttpError.body` is `Option(Text)` (stdlib.md §2.1.3): `Some` of the body a
+// response carried, `None` when there is no body to give (http.md §6.4.1).
+// One row per way `httpFetch` fails.
+describe("the HttpError's body", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const some = (text: string) => ({ _tag: "Some", _0: text });
+  const none = { _tag: "None" };
+
+  /** The `status` and `body` of the HttpError `run` fails with. */
+  async function failure(run: Promise<EffectResult>): Promise<{ status: number; body: unknown }> {
+    const res = await run;
+    if (res.kind !== "err") throw new Error(`expected an err, got ${JSON.stringify(res)}`);
+    const { status, body } = res.value as { status: number; body: unknown };
+    return { status, body };
+  }
+
+  /** A response whose body stream fails as soon as it is read. */
+  const unreadable = (status: number) =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.error(new TypeError("stream reset"));
+        },
+      }),
+      { status },
+    );
+
+  it.each([
+    ["a 404 with a body", 404, "report 7 was archived"],
+    ["a 404 with an empty body", 404, ""],
+    ["a 401", 401, "sign in first"],
+    ["a 503", 503, "busy"],
+  ])("is Some of what %s sent", async (_, status, text) => {
+    stubFetch(() => new Response(text, { status }));
+    expect(await failure(httpFetch("GET", { url: "/r" }))).toEqual({ status, body: some(text) });
+  });
+
+  it("is Some of the text of a 2xx that does not parse", async () => {
+    stubFetch(() => new Response("<html>Created</html>", { status: 201 }));
+    expect(await failure(httpFetch("POST", { url: "/orders" }))).toEqual({
+      status: 201,
+      body: some("<html>Created</html>"),
+    });
+  });
+
+  it("is Some of the text of a 2xx whose value the declared type refuses", async () => {
+    stubFetch(() => new Response('{"name":""}', { status: 200 }));
+    const refuseAll = () => ({ kind: "nonempty", args: [], path: [] });
+    expect(await failure(httpFetch("GET", { url: "/me", decode: refuseAll }))).toEqual({
+      status: 200,
+      body: some('{"name":""}'),
+    });
+  });
+
+  it("is None when a non-2xx's body cannot be read, which keeps its status", async () => {
+    stubFetch(() => unreadable(500));
+    expect(await failure(httpFetch("GET", { url: "/r" }))).toEqual({ status: 500, body: none });
+  });
+
+  it("is None when a 2xx's body cannot be read", async () => {
+    stubFetch(() => unreadable(200));
+    expect(await failure(httpFetch("GET", { url: "/r" }))).toEqual({ status: 0, body: none });
+  });
+
+  it("is None for a network failure", async () => {
+    stubFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+    expect(await failure(httpFetch("GET", { url: "/r" }))).toEqual({ status: 0, body: none });
+  });
+
+  it("is None for a timeout", async () => {
+    globalThis.fetch = vi.fn(
+      async (_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    ) as unknown as typeof fetch;
+    expect(await failure(httpFetch("GET", { url: "/slow" }, { timeout: 5 }))).toEqual({
+      status: 0,
+      body: none,
+    });
+  });
+
+  it("is None for a request body that cannot be sent", async () => {
+    stubFetch(() => new Response("ok"));
+    const body = {
+      _tag: "Multipart",
+      _0: { doc: { _tag: "FileV", _0: { name: "a.txt", size: 1, type: "text/plain", _file: {} } } },
+    };
+    expect(await failure(httpFetch("POST", { url: "/up", body }))).toEqual({
+      status: 0,
+      body: none,
+    });
   });
 });

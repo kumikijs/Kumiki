@@ -8,6 +8,7 @@
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { httpError } from "../src/effects-http.ts";
 
 const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -37,13 +38,13 @@ function makeCancelApp(): {
           new Promise<EffectResult>((resolve) => {
             log.signal = signal;
             resolveFetch = resolve;
-            // §6.4.1: when the dispatcher aborts the signal we mirror what
-            // `httpFetch` would actually return — `{status:0, message:"aborted"}` —
+            // §6.4.1: when the dispatcher aborts the signal we return what
+            // `httpFetch` returns — the HttpError it builds for an abort —
             // so the rest of the pipeline (.err reducer, no-silent-failure
             // contract) sees the production shape.
             signal?.addEventListener("abort", () => {
               log.aborted = true;
-              resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+              resolve({ kind: "err", value: httpError(0, "aborted") });
             });
           }),
       },
@@ -115,7 +116,7 @@ describe("dispatcher http.cancel (#102)", () => {
       dispatch("kill", {});
       await tick(20);
       expect(log.aborted).toBe(true);
-      expect(lastErr?.value).toMatchObject({ status: 0, message: "aborted", body: "" });
+      expect(lastErr?.value).toEqual({ status: 0, message: "aborted", body: { _tag: "None" } });
       dispose();
     } finally {
       root.remove();
@@ -258,7 +259,7 @@ describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
               log.signal = signal;
               signal?.addEventListener("abort", () => {
                 log.aborted = true;
-                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+                resolve({ kind: "err", value: httpError(0, "aborted") });
               });
             }),
         },

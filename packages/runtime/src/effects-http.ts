@@ -1,7 +1,7 @@
 // http.* built-in capability handler (#71): shipped only when an app declares
 // an HTTP-backed effect.
 
-import type { EffectResult } from "./core.ts";
+import { type EffectResult, NONE, type OptionOf, someOf } from "./core.ts";
 import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
@@ -56,7 +56,7 @@ export async function httpFetch(
       encoded = encodeBody(x.body);
     } catch (e) {
       // A body that cannot be sent as written fails the effect, before any request.
-      return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
+      return { kind: "err", value: httpError(0, errorText(e)) };
     }
     const { body, contentType } = encoded;
     if (body !== undefined) init.body = body;
@@ -88,25 +88,12 @@ export async function httpFetch(
 
   try {
     const res = await fetch(url, init);
-    if (res.status === 401 || res.status === 403 || res.status >= 500) {
-      return {
-        kind: "err",
-        value: {
-          status: res.status,
-          message: res.statusText,
-          body: await res.text().catch(() => ""),
-        },
-      };
-    }
+    // Every status outside 2xx, 401 / 403 / 5xx included: the dispatcher
+    // routes those to `app.http`'s handlers by the status (§6.3). A body that
+    // cannot be read leaves the response its status and no body.
     if (!res.ok) {
-      return {
-        kind: "err",
-        value: {
-          status: res.status,
-          message: res.statusText,
-          body: await res.text().catch(() => ""),
-        },
-      };
+      const body = await res.text().catch(() => undefined);
+      return { kind: "err", value: httpError(res.status, res.statusText, body) };
     }
     const decode = x.decode ?? "json";
     if (decode === "none") return { kind: "ok", value: null };
@@ -120,28 +107,38 @@ export async function httpFetch(
     try {
       value = JSON.parse(text);
     } catch (e) {
-      return {
-        kind: "err",
-        value: { status: res.status, message: `decode failed: ${String(e)}`, body: text },
-      };
+      return { kind: "err", value: httpError(res.status, `decode failed: ${String(e)}`, text) };
     }
     const refused = decodeRefusal(decode, value);
-    if (refused)
-      return { kind: "err", value: { status: res.status, message: refused, body: text } };
+    if (refused) return { kind: "err", value: httpError(res.status, refused, text) };
     return { kind: "ok", value };
   } catch (e) {
     // spec http.md §6.4.1: cancelled / aborted requests normalize to
-    // `{status:0, message:"aborted"}` so reducers see the same HttpError
-    // shape for manual cancel, `policy=latest` auto-cancel, and timeout.
+    // `{status: 0, message: "aborted", body: None}` so reducers see the same
+    // HttpError shape for manual cancel, `policy=latest` auto-cancel, and
+    // timeout.
     const aborted = externallyAborted || isAbortError(e);
-    if (aborted) {
-      return { kind: "err", value: { status: 0, message: "aborted", body: "" } };
-    }
-    return { kind: "err", value: { status: 0, message: String(e), body: "" } };
+    if (aborted) return { kind: "err", value: httpError(0, "aborted") };
+    return { kind: "err", value: httpError(0, String(e)) };
   } finally {
     clearTimeout(timer);
     if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
+}
+
+/** `HttpError` (stdlib.md §2.1.3) as `.err` receives it. */
+export type HttpError = { status: number; message: string; body: OptionOf<string> };
+
+/**
+ * The `HttpError` an `http.*` effect fails with; every one `httpFetch`
+ * delivers is built here. `body` is the text of the response that arrived, as
+ * `Some` (`Some("")` for an empty one), when that text could be read. Without
+ * it `body` is `None`: no response arrived (`status` 0 — an abort, a timeout, a
+ * network failure, a request body that cannot be sent), or the response's body
+ * could not be read (http.md §6.4.1).
+ */
+export function httpError(status: number, message: string, body?: string): HttpError {
+  return { status, message, body: body === undefined ? NONE : someOf(body) };
 }
 
 type Tagged = { _tag: string; _0?: unknown };

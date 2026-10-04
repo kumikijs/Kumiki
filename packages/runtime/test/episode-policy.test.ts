@@ -11,6 +11,7 @@
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { httpError } from "../src/effects-http.ts";
 
 const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -201,7 +202,7 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
               if (me === 1) resolveOld = resolve;
               else resolveNew = resolve;
               signal?.addEventListener("abort", () => {
-                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+                resolve({ kind: "err", value: httpError(0, "aborted") });
               });
             }),
         },
