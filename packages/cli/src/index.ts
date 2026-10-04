@@ -14,6 +14,8 @@ export {
   type FixPlan,
   fixCmd,
   fixFromTest,
+  type GateVerdict,
+  gateComposed,
   iterStringLiterals,
   planFix,
   planFixes,

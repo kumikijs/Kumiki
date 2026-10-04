@@ -59,7 +59,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
-| `E0001` | yes | Inject a `NotFound` tile and add `"/404" -> NotFound` to `app.routes`. |
+| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
 | `E0103` | yes | Close-name suggestion against known slot / binding names. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
@@ -67,7 +67,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0107` | yes | Close-name suggestion against declared motion names. |
 | `E0116` | yes | Close-name suggestion against declared `fn` names plus the built-in calls (scoped — a slot or tile whose name is close is not a candidate). |
 | `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
-| `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
+| `E0301` | yes | Append the required capability to the app's `caps = [...]` array, right after its last entry, so a comment after that entry stays a comment. |
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
 | `E0209` | yes | Close-name suggestion against variant tags of the scrutinee union (built-in `Option` / `Result` plus user `TypeDef` bodies, resolved through aliases). |
 | `E0117` | yes | Close-name suggestion against type names — the program's own `type` definitions first, then the primitives, the standard library's domain types, and the generic constructors (scoped — a slot or fn whose name is close is not a candidate). |
