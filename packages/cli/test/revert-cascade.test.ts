@@ -221,12 +221,25 @@ describe("patch revert of a cascade", () => {
 
   it("refuses to revert the restore when a member is no longer in the file", () => {
     const { file, restoreId } = restoredFixture();
-    renameDef(file, "tile.Page", "Home");
+    const { opId: removedId } = removeDef(file, "tile.Page", false);
     const before = snapshot(file);
 
-    expect(() => patchRevert(file, restoreId)).toThrowError(/tile\.Page is no longer in the file/);
+    expect(() => patchRevert(file, restoreId)).toThrowError(
+      `patch revert: ${restoreId} added tile.Page, which is no longer in the file: ${removedId} removed tile.Page; nothing was written`,
+    );
 
     expect(snapshot(file)).toEqual(before);
+  });
+
+  it("reverting the restore removes a member renamed since under its new name", () => {
+    const { file, restoreId } = restoredFixture();
+    renameDef(file, "tile.Page", "Home");
+
+    const revertId = patchRevert(file, restoreId);
+
+    expect(qnames(file)).toEqual(["slot.a"]);
+    const op = readOpLog(file).find((e) => e["op-id"] === revertId)!;
+    expect(op.removed).toEqual(["slot.b", "tile.Home", "tile.Show"]);
   });
 
   it("refuses to revert the restore when a member is locked by another agent", () => {
