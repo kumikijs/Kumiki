@@ -17,6 +17,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "@kumikijs/mcp";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,43 +26,19 @@ const cliDir = join(here, "..", "cli");
 const CLI = join(cliDir, "src", "kumiki.ts");
 const TSX = pathToFileURL(createRequire(join(cliDir, "package.json")).resolve("tsx")).href;
 
-type Transport = Parameters<ReturnType<typeof createServer>["connect"]>[0];
-type Message = Parameters<Transport["send"]>[0];
-
-/**
- * A JSON-RPC session with the server, over a transport that hands messages
- * across in memory: the exchange an agent has, without the SDK client.
- */
-async function connect(): Promise<{
-  request: (method: string, params: Record<string, unknown>) => Promise<unknown>;
-  close: () => Promise<void>;
-}> {
+/** A client session with the server, over the SDK's in-memory transport: the exchange an agent has. */
+async function connect(): Promise<{ client: Client; close: () => Promise<void> }> {
   const server = createServer();
-  const answers = new Map<string | number, (reply: Message) => void>();
-  const transport: Transport = {
-    start: async () => {},
-    close: async () => {},
-    send: async (reply) => {
-      if ("id" in reply && reply.id !== undefined) answers.get(reply.id)?.(reply);
+  const [serverT, clientT] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "test", version: "0" });
+  await Promise.all([server.connect(serverT), client.connect(clientT)]);
+  return {
+    client,
+    close: async () => {
+      await client.close();
+      await server.close();
     },
   };
-  await server.connect(transport);
-  let lastId = 0;
-  const request = (method: string, params: Record<string, unknown>): Promise<unknown> =>
-    new Promise((resolve, reject) => {
-      const id = ++lastId;
-      answers.set(id, (reply) =>
-        "result" in reply ? resolve(reply.result) : reject(new Error(JSON.stringify(reply))),
-      );
-      transport.onmessage?.({ jsonrpc: "2.0", id, method, params });
-    });
-  await request("initialize", {
-    protocolVersion: "2025-06-18",
-    capabilities: {},
-    clientInfo: { name: "test", version: "0" },
-  });
-  transport.onmessage?.({ jsonrpc: "2.0", method: "notifications/initialized" });
-  return { request, close: () => server.close() };
 }
 
 const normalize = (s: string): string => s.replace(/\s+/g, " ").trim();
@@ -68,9 +46,7 @@ const normalize = (s: string): string => s.replace(/\s+/g, " ").trim();
 async function removeDescription(): Promise<string> {
   const session = await connect();
   try {
-    const listed = (await session.request("tools/list", {})) as {
-      tools: { name: string; description?: string }[];
-    };
+    const listed = await session.client.listTools();
     const tool = listed.tools.find((t) => t.name === "kumiki_remove");
     expect(tool?.description, "kumiki_remove is listed with a description").toBeTypeOf("string");
     return normalize(tool?.description ?? "");
@@ -131,7 +107,7 @@ describe("kumiki_remove's description of cascade", () => {
     writeFileSync(file, PROGRAM);
     const session = await connect();
     try {
-      const result = (await session.request("tools/call", {
+      const result = (await session.client.callTool({
         name: "kumiki_remove",
         arguments: { path: file, name: "type.N", cascade: true },
       })) as { content: { text: string }[]; isError?: boolean };
