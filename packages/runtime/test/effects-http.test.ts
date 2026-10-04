@@ -1,4 +1,4 @@
-// httpFetch unit coverage for app.http (#78): base-url prepend, header
+// httpFetch unit coverage for app.http (#78): base-url join, header
 // precedence (auto < global < input), credentials, and timeout via
 // AbortController. Each test stubs `globalThis.fetch` so no network is touched.
 
@@ -29,12 +29,6 @@ describe("httpFetch (#78)", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     vi.useRealTimers();
-  });
-
-  it("prepends base-url to the request URL", async () => {
-    const { calls } = stubFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    await httpFetch("GET", { url: "/quote" }, { baseUrl: "https://api.example.com" });
-    expect(calls[0]?.url).toBe("https://api.example.com/quote");
   });
 
   it("merges headers with precedence auto < global < input", async () => {
@@ -192,6 +186,79 @@ describe("httpFetch (#78)", () => {
     const v = res.value as { status: number; message: string };
     expect(v.status).toBe(204);
     expect(v.message).toMatch(/^decode failed/);
+  });
+});
+
+// http.md §6.3.1: an absolute url is fetched as written; any other url is
+// joined to `base-url` with exactly one `/`, the base's path kept as a prefix.
+describe("httpFetch base-url", () => {
+  const originalFetch = globalThis.fetch;
+  const API = "https://api.example.com";
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** The URL `fetch` is given for `url` under `baseUrl` (no `app.http` when absent). */
+  async function fetched(
+    url: string,
+    baseUrl?: string,
+    query?: Record<string, string>,
+  ): Promise<string | undefined> {
+    const { calls } = stubFetch(() => new Response("null"));
+    await httpFetch("GET", { url, query }, baseUrl === undefined ? undefined : { baseUrl });
+    return calls[0]?.url;
+  }
+
+  it.each([
+    [API, "/items/1"],
+    [API, "items/1"],
+    [`${API}/`, "/items/1"],
+    [`${API}/`, "items/1"],
+  ])("joins %s and %s with exactly one /", async (base, url) => {
+    expect(await fetched(url, base)).toBe(`${API}/items/1`);
+  });
+
+  it.each([
+    "https://cdn.other.org/item.json",
+    "HTTP://cdn.other.org/item.json",
+    "//cdn.other.org/item.json",
+    "data:application/json,null",
+  ])("fetches the absolute url %s as written, whichever way the base ends", async (url) => {
+    expect(await fetched(url, API)).toBe(url);
+    expect(await fetched(url, `${API}/`)).toBe(url);
+  });
+
+  it.each([
+    [`${API}/v1`, "/users", `${API}/v1/users`],
+    [`${API}/v1`, "users", `${API}/v1/users`],
+    [`${API}/v1/`, "/users", `${API}/v1/users`],
+    ["/api", "users", "/api/users"],
+    ["/api/", "/users", "/api/users"],
+    ["/", "users", "/users"],
+  ])("keeps the path of the base %s in front of %s", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
+  });
+
+  it.each([
+    ["", `${API}/items`],
+    ["?page=2", `${API}/items?page=2`],
+    ["#top", `${API}/items#top`],
+  ])("appends %j to the base as written", async (url, want) => {
+    expect(await fetched(url, `${API}/items`)).toBe(want);
+  });
+
+  it.each([
+    "/items/1",
+    "items/1",
+    "https://cdn.other.org/item.json",
+  ])("fetches %s as written with no base-url, or an empty one", async (url) => {
+    expect(await fetched(url)).toBe(url);
+    expect(await fetched(url, "")).toBe(url);
+  });
+
+  it("appends the query after the join", async () => {
+    expect(await fetched("/search", `${API}/`, { q: "a b" })).toBe(`${API}/search?q=a+b`);
   });
 });
 

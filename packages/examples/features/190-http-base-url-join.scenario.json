@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been requested yet",
+      "expect": { "noErrors": true, "state": { "status": "idle" } }
+    },
+    {
+      "label": "the url with a leading / is answered",
+      "do": { "click": "#user" },
+      "expect": { "noErrors": true, "state": { "status": "user ada" } }
+    },
+    {
+      "label": "the url without a leading / is answered",
+      "do": { "click": "#stats" },
+      "expect": { "noErrors": true, "state": { "status": "stats daily" } }
+    },
+    {
+      "label": "the absolute url is answered",
+      "do": { "click": "#logo" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "logo mark" },
+        "domIncludes": ["status: logo mark"]
+      }
+    }
+  ],
+  "effects": {
+    "user": [{ "outcome": "ok", "value": { "name": "ada" } }],
+    "stats": [{ "outcome": "ok", "value": { "name": "daily" } }],
+    "logo": [{ "outcome": "ok", "value": { "name": "mark" } }]
+  }
+}

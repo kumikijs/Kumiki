@@ -36,7 +36,7 @@ export async function httpFetch(
     key?: string;
     value?: unknown;
   };
-  const baseUrl = httpCfg?.baseUrl ?? "";
+  const baseUrl = baseBefore(x.url ?? "", httpCfg?.baseUrl ?? "");
   const url = withQuery(baseUrl + (x.url ?? ""), x.query);
   // Header precedence (spec http.md §6.1.5): auto < global < input, with
   // names compared case-insensitively so a global `Content-Type` and an input
@@ -213,6 +213,25 @@ function setHeader(headers: Record<string, string>, name: string, value?: string
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** A url that starts with a scheme (`https:`, `mailto:`) or with `//` (http.md §6.3.1). */
+const ABSOLUTE_URL = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
+
+/**
+ * What `app.http.base-url` puts in front of a request's `url` (http.md §6.3.1):
+ * nothing when there is no base or the url is absolute; the base as written
+ * when the url is empty or starts with `?` or `#`; otherwise the base without
+ * its trailing `/`, plus a `/` when the url does not start with one, so exactly
+ * one `/` separates the two. The base is a prefix, so a path it carries stays:
+ * `https://api.example.com/v1` before `/users` is `https://api.example.com/v1/users`,
+ * where resolving against the base (`new URL("/users", base)`) would drop `/v1`.
+ */
+function baseBefore(url: string, base: string): string {
+  if (!base || ABSOLUTE_URL.test(url)) return "";
+  if (url === "" || url.startsWith("?") || url.startsWith("#")) return base;
+  const trimmed = base.replace(/\/+$/, "");
+  return url.startsWith("/") ? trimmed : `${trimmed}/`;
 }
 
 /**

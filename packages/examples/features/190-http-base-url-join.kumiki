@@ -1,0 +1,54 @@
+# Feature (http.md §6.3.1): how `app.http`'s `base-url` meets a request's `url`.
+#
+# An absolute url — one that starts with a scheme (`https:`) or with `//` — is
+# fetched as written. Any other url is joined to the base with exactly one `/`
+# between them, whether the base ends in `/` and whether the url starts with
+# one. A base that carries a path is a prefix, so `/v1` stays in front of every
+# joined url:
+#
+#   user   "/users/1"                           GET https://api.example.com/v1/users/1
+#   stats  "stats"                              GET https://api.example.com/v1/stats
+#   logo   "https://cdn.example.org/logo.json"  GET https://cdn.example.org/logo.json
+#
+# `packages/tests/http-base-url.test.ts` reads the URLs that reached `fetch`
+# through the real handler; `smoke` makes each request against
+# `190-http-base-url-join.http.json`, which answers only the joined paths.
+
+type Item = {name: Text}
+
+slot status : Text = "idle"
+
+effect user cap=http.get
+            in=Unit
+            out=Result(Item, HttpError)
+            map-request={url: "/users/1", decode: Decoder.Json(Item)}
+
+effect stats cap=http.get
+             in=Unit
+             out=Result(Item, HttpError)
+             map-request={url: "stats", decode: Decoder.Json(Item)}
+
+effect logo cap=http.get
+            in=Unit
+            out=Result(Item, HttpError)
+            map-request={url: "https://cdn.example.org/logo.json", decode: Decoder.Json(Item)}
+
+reducer goUser  on=ui.click(UserBtn)  do= emit user()
+reducer goStats on=ui.click(StatsBtn) do= emit stats()
+reducer goLogo  on=ui.click(LogoBtn)  do= emit logo()
+
+reducer gotUser  on=user.ok($i, _)  do= status := "user " + $i.name
+reducer gotStats on=stats.ok($i, _) do= status := "stats " + $i.name
+reducer gotLogo  on=logo.ok($i, _)  do= status := "logo " + $i.name
+
+tile UserBtn  = button(text="User")  {id: "user"}
+tile StatsBtn = button(text="Stats") {id: "stats"}
+tile LogoBtn  = button(text="Logo")  {id: "logo"}
+
+tile App = column(UserBtn, StatsBtn, LogoBtn, text("status: " + status)) {pad: "lg", gap: "md"}
+
+app HttpBaseUrlJoin
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    http   = {base-url: "https://api.example.com/v1/"}
