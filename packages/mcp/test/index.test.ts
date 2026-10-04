@@ -1115,6 +1115,23 @@ describe("what an edit tool reports about the edit it made", () => {
     });
   });
 
+  it("names what a replace dropped from the definition's header", async () => {
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_add", {
+        path: file,
+        layer: "type",
+        name: "Box",
+        body: "(T) = {v: T}",
+      });
+      const replaced = await callTool(client, "kumiki_replace", {
+        path: file,
+        name: "type.Box",
+        body: "= {v: Int}",
+      });
+      expect(replaced.split("\n").slice(1)).toEqual(["  dropped parameter T"]);
+    });
+  });
+
   it("returns an id that identifies the edit in the file's history", async () => {
     // The point of returning the id: it is the handle `kumiki patch revert`
     // takes, and what tells this edit apart from every other edit to the same

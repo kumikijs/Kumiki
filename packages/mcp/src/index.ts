@@ -639,8 +639,7 @@ export function createServer(): McpServer {
       inputSchema: {
         path: z.string(),
         // The labels `kumiki_list` filters by, so a kind of definition it
-        // lists is one this tool writes. Written out here, it lacked `test`
-        // and `motion`.
+        // lists is one this tool writes.
         layer: z.enum(LAYERS),
         name: z.string(),
         body: z
@@ -661,12 +660,12 @@ export function createServer(): McpServer {
     {
       title: "Replace a definition",
       description:
-        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has. Returns the new op-id.",
+        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has; one that starts with `=` drops them. Returns the new op-id, and a `dropped` line for each clause or parameter the definition no longer has.",
       inputSchema: { path: z.string(), name: z.string(), body: z.string() },
     },
     async ({ path, name, body }) => {
-      const opId = replaceDef(resolve(process.cwd(), path), name, body);
-      return text(describeEdit({ op: "replace", qname: name, opId }));
+      const result = replaceDef(resolve(process.cwd(), path), name, body);
+      return text(describeEdit({ op: "replace", qname: name, ...result }));
     },
   );
 

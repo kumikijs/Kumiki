@@ -39,7 +39,7 @@ kumiki list <layer>                 # レイヤ内の全定義名
 kumiki list                         # 全定義名（layer prefix 付き）
 ```
 
-### 9.2.2 書き込み系
+### 9.2.2 書き込み系 {#_9-2-2-write-commands}
 
 ```bash
 kumiki add <layer> <name> <body>            # 新規定義追加
@@ -56,7 +56,7 @@ kumiki patch revert <op-id>                 # 特定 op を取り消し
 
 複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
-`add` の `<layer>` は `kumiki list` が受け付けるラベルのいずれか（`type`・`slot`・`effect`・`reducer`・`tile`・`fn`・`app`・`theme`・`motion`・`test`）で、それ以外の語に対して `kumiki add` はファイルを読む前に `2` で終了する。`<name>` は識別子 1 つであり、`add` はそれ以外を拒否する。body は定義から `<layer> <name>` とその後の区切りを除いたもので、`slot count : Int = 0` なら `Int = 0`、`tile Greeting = heading("Hi")` なら `heading("Hi")` である。tile の節（`in=`・`error-boundary=`・`scroll-restoration=`・`sub-routes=`）と type のパラメータは名前と `=` の間に置かれるので、それらを持つ body はそれらで始まり `=` も含む。`in=Text = heading($1)` は `tile Greet in=Text = heading($1)` を書き、`(T) = {v: T}` は `type Box(T) = {v: T}` を書く。節やパラメータで始まらない `replace` の body は、定義が持つものを残す。`tile Greeting error-boundary=Oops = …` に対して body `heading("Hello")` は `tile Greeting error-boundary=Oops = heading("Hello")` を書く。変えるには残すものを body に書き、すべて外すには body を `=` から始める。
+`add` の `<layer>` は `kumiki list` が受け付けるラベルのいずれか（`type`・`slot`・`effect`・`reducer`・`tile`・`fn`・`app`・`theme`・`motion`・`test`）で、それ以外の語に対して `kumiki add` はファイルを読む前に `2` で終了する。`<name>` は識別子 1 つであり、`add` はそれ以外を拒否する。body は定義から `<layer> <name>` とその後の区切りを除いたもので、`slot count : Int = 0` なら `Int = 0`、`tile Greeting = heading("Hi")` なら `heading("Hi")` である。tile の節（`in=`・`error-boundary=`・`scroll-restoration=`・`sub-routes=`）と type のパラメータは名前と `=` の間に置かれるので、それらを持つ body はそれらで始まり `=` も含む。`in=Text = heading($1)` は `tile Greet in=Text = heading($1)` を書き、`(T) = {v: T}` は `type Box(T) = {v: T}` を書く。節やパラメータで始まらない `replace` の body は、定義が持つものを残す。`tile Greeting error-boundary=Oops = …` に対して body `heading("Hello")` は `tile Greeting error-boundary=Oops = heading("Hello")` を書く。変えるには残すものを body に書き、すべて外すには body を `=` から始める。`replace` は `replaced` の行の後に、定義から無くなった節やパラメータごとに 1 行（`  dropped error-boundary`、`  dropped parameter T`）を出力する。検証を通る書き込みで、それらが気づかれずに失われることはない。
 
 書き込み系 op はファイルの再パース・再型検査で検証され、`severity: "error"` の診断が 1 つでも出ればロールバックする。ただし例外が 1 つある。プログラムは定義を 1 つずつ積み上げて構築されるため `app` が入るまでは app 不在の状態が続く。したがって **`E0003 missing-app` は書き込み op をロールバックさせない**。完成したアプリケーションかどうかは `kumiki check` が報告するものであり、編集途中のグラフが既に満たしているべき条件ではない。
 
@@ -152,7 +152,8 @@ MCP サーバ（[§9.7](#_9-7-mcp-server)）は同じ問いに `isError` で答�
 | `op` | op 種別 |
 | `layer` | 対象レイヤ |
 | `name` | 対象名 |
-| `body` | 新本体（add/replace で必須）。節とパラメータを含めて定義全体を表すので、`patch revert` はログの body をそのまま書き戻す |
+| `body` | 新本体（add/replace で必須）。形は [§9.2.2](#_9-2-2-write-commands) のとおり。tile と type の body は常に節やパラメータを書き、それらが無ければ `=` から始まる（`= heading("Hi")`）。そのため `patch apply` は、定義がその後どんな節を得ていても、op が書いた定義を書く |
+| `prev` | `replace` と `edit` のみ：op の前に定義が持っていた本体。形は `body` と同じ。`patch revert` はこれを書き戻すので、手で書いた節のようにどのログの body にも無い節やパラメータも戻る。名前と本体の間にあったもの（名前の後のコメント、改行など）は残らず、本体は `add` が書くのと同じように名前に続く |
 | `author` | 発行エージェント |
 | `ts` | 発行時刻（UNIX ms） |
 | `op-id` | op の ULID |
@@ -162,7 +163,9 @@ MCP サーバ（[§9.7](#_9-7-mcp-server)）は同じ問いに `isError` で答�
 | `bodies` | `remove` のみ：op が削除したすべての定義を `{layer, name, body}` として、削除時点の本体とともに記録する。要求された定義が先頭。`patch revert` はこれを復元する |
 | `with` | `add` のみ：同じ op で追加される他の定義 `{layer, name, body}`。cascade の revert が依存先を復元する手段 |
 
-`with` と `bodies` は 3 つのフィールドがすべて文字列であるオブジェクトの配列、`removed` は op 自身の定義で始まる修飾名の配列でなければならない。これに反する patch ファイルの op や op ログの行は、何も書き込む前に、そのフィールドを名指しして拒否される。
+`with` と `bodies` は 3 つのフィールドがすべて文字列であるオブジェクトの配列、`removed` は op 自身の定義で始まる修飾名の配列、`prev` は `replace` または `edit` の文字列でなければならない（`prev` を持つのはこの 2 つの op だけである）。これに反する patch ファイルの op や op ログの行は、何も書き込む前に、そのフィールドを名指しして拒否される。
+
+`prev` 無しで記録された `replace` や `edit` の `patch revert` は、ログがその定義について持つ直近の body を使う。そこにある tile や type の body が節やパラメータを書いていなければ、`replace` と同じく定義が持つものが残る。`<layer> <name>` で始まる、定義全体であるログの body は、その定義を名指しして拒否され、何も書き込まれない。
 
 ### 9.3.3 op の収束保証
 

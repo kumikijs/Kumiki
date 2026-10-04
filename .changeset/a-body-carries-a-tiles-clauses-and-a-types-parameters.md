@@ -35,9 +35,21 @@ A `replace` body that does not state them keeps the ones the definition has:
 `replace tile.Greeting 'heading("Hello")'` on
 `tile Greeting error-boundary=Oops = …` writes
 `tile Greeting error-boundary=Oops = heading("Hello")`. A body that starts at
-the `=` drops them. Every body the op log records states the whole
-definition, so `patch revert` of an edit or a replace puts back exactly the
-definition that op replaced. `add` refuses a name that is not one identifier.
-`add`, `replace` and MCP `kumiki_add` accept every kind of definition `list`
-shows, and `kumiki add` exits `2` for any other layer, naming the allowed
-ones, before it reads the file.
+the `=` drops them. `replace` and MCP `kumiki_replace` print a
+`  dropped <clause>` line (`  dropped parameter T` for a type) for each one the
+definition no longer has.
+
+`replace` and `edit` now record the body the definition had before the op, as
+`prev` in the op log, and `patch revert` writes that back. The revert puts
+back clauses that no logged body has, such as ones written by hand, and it
+works on a definition that no op created, which failed before with
+`no prior body found`. The op log records a tile or a type without clauses or
+parameters from its `=` (`= heading("Hi")`), so `patch apply` and
+`patch revert` read a logged body the same way. Reverting an op that an
+earlier version logged with a whole definition as its body now says so,
+instead of failing with a parse error.
+
+`add` refuses a name that is not one identifier. `add`, `replace` and MCP
+`kumiki_add` accept every kind of definition `list` shows, and `kumiki add`
+exits `2` for any other layer, naming the allowed ones, before it reads the
+file.
