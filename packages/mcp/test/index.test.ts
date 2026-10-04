@@ -979,6 +979,35 @@ tile Orphan = column(zzz.show)
     ).toBe(false);
   });
 
+  it("flags a per-line edit whose text is not on that line, and writes nothing", async () => {
+    const file = join(workdir, "counter.kumiki");
+    copyFileSync(COUNTER, file);
+    const source = readFileSync(file, "utf8");
+    // `count` is on line 2 of tile.App, not on line 3, which the patch names.
+    const patch = { "body:3": "replace 'count' -> 'total'" };
+    await withClient(async (client) => {
+      const res = await client.callTool({
+        name: "kumiki_edit",
+        arguments: { path: file, name: "tile.App", patch },
+      });
+      expect(res.isError).toBe(true);
+      const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+      const parsed = JSON.parse(body) as { error: { message: string } };
+      expect(parsed.error.message).toBe(
+        'edit rejected: "count" not present on body line 3 of tile.App',
+      );
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(fs.existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+    expect(
+      await flag("kumiki_edit", {
+        path: file,
+        name: "tile.App",
+        patch: { "body:2": "replace 'Count: ' -> 'Total: '" },
+      }),
+    ).toBe(false);
+  });
+
   it("flags an episode id and a spec document that name nothing", async () => {
     const file = join(workdir, "counter.kumiki");
     copyFileSync(FIX_COUNTER_TESTS, file);
@@ -1000,6 +1029,20 @@ tile Orphan = column(zzz.show)
       expect(layer?.enum).toContain("test");
       expect(layer?.enum).toContain("motion");
       expect(layer?.enum).toContain("slot");
+    });
+  });
+
+  it("adds every kind of definition `kumiki_list` filters by", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const layerEnum = (name: string): string[] | undefined =>
+        (
+          tools.find((t) => t.name === name)?.inputSchema.properties as
+            | { layer?: { enum?: string[] } }
+            | undefined
+        )?.layer?.enum;
+      expect(layerEnum("kumiki_add")).toEqual(layerEnum("kumiki_list"));
+      expect(layerEnum("kumiki_add")).toContain("motion");
     });
   });
 });
@@ -1098,6 +1141,23 @@ describe("what an edit tool reports about the edit it made", () => {
       });
       expect(edited).toContain("edited slot.stride");
       expect(edited).toMatch(OP_ID);
+    });
+  });
+
+  it("names what a replace dropped from the definition's header", async () => {
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_add", {
+        path: file,
+        layer: "type",
+        name: "Box",
+        body: "(T) = {v: T}",
+      });
+      const replaced = await callTool(client, "kumiki_replace", {
+        path: file,
+        name: "type.Box",
+        body: "= {v: Int}",
+      });
+      expect(replaced.split("\n").slice(1)).toEqual(["  dropped parameter T"]);
     });
   });
 

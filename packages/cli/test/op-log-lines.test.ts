@@ -49,7 +49,7 @@ const skipped = (line: number): string =>
 
 describe("an op log whose last line is torn", () => {
   it("reads as its complete entries, with a warning naming the log and the line", () => {
-    const first = replaceDef(file, "slot.a", "Int = 1");
+    const first = replaceDef(file, "slot.a", "Int = 1").opId;
     appendFileSync(logPath(), TORN);
 
     expect(readOpLog(file).map((e) => e["op-id"])).toEqual([first]);
@@ -58,10 +58,10 @@ describe("an op log whose last line is torn", () => {
   });
 
   it("takes the next write, logged after the last complete entry", () => {
-    const first = replaceDef(file, "slot.a", "Int = 1");
+    const first = replaceDef(file, "slot.a", "Int = 1").opId;
     appendFileSync(logPath(), TORN);
 
-    const second = replaceDef(file, "slot.a", "Int = 7");
+    const second = replaceDef(file, "slot.a", "Int = 7").opId;
 
     expect(readFileSync(file, "utf8")).toContain("slot a : Int = 7");
     expect(logLines().map((e) => e["op-id"])).toEqual([first, second]);
@@ -82,10 +82,10 @@ describe("an op log whose last line is torn", () => {
 
 describe("an op log whose last entry has no newline after it", () => {
   it("puts the next entry on a line of its own", () => {
-    const first = replaceDef(file, "slot.a", "Int = 1");
+    const first = replaceDef(file, "slot.a", "Int = 1").opId;
     writeFileSync(logPath(), logText().trimEnd());
 
-    const second = replaceDef(file, "slot.a", "Int = 7");
+    const second = replaceDef(file, "slot.a", "Int = 7").opId;
 
     expect(logLines().map((e) => e["op-id"])).toEqual([first, second]);
     expect(warnings).toEqual([]);
