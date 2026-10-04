@@ -1,11 +1,14 @@
 // Vite gives the same file different meanings through a query: `?raw` is its
 // text, `?url` its URL (`&inline` / `&no-inline` choosing the form), `?worker`
-// a wrapper that starts it as a worker. Those imports belong to Vite. The plugin compiles the module a `.kumiki` file *is* — the
-// plain import, and the `?import` marker Vite's dev server adds to it — and
-// nothing else, so a project can show an app's source next to the app.
+// a wrapper that starts it as a worker. Those imports belong to Vite. The
+// plugin compiles the module a `.kumiki` file *is* — the plain import, and
+// the `?import` marker Vite's dev server adds to it — so a project can show an
+// app's source next to the app.
 //
-// Each query form is checked against a project with no plugin at all: with
-// the plugin enabled, Vite must produce the same thing it produces alone.
+// Each of Vite's query forms is checked against a project with no plugin at
+// all: Vite alone must succeed, and with the plugin enabled it must produce
+// the same thing. A query Vite does not act on (a bare `?inline`, `?raw=1`)
+// fails without the plugin, so it is the plugin's, and it still compiles.
 
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -68,7 +71,9 @@ async function outcome(run: () => Promise<string | undefined>): Promise<string> 
   }
 }
 
-const ASSET_QUERIES = ["raw", "url", "url&inline", "url&no-inline", "inline"] as const;
+const ASSET_QUERIES = ["raw", "url", "url&inline", "url&no-inline"] as const;
+/** Queries Vite gives no meaning to on a `.kumiki` file: the module itself. */
+const NOT_VITES = ["inline", "no-inline", "raw=1", "url=x"] as const;
 // A worker's own entry is bundled by a separate build that runs only
 // `worker.plugins`, so a `vite build` of `?worker` fails in that build the same
 // way with or without this plugin and cannot tell the two apart. The wrapper
@@ -95,7 +100,18 @@ describe("vite build of each import form", () => {
       const root = project(`import v from "./app.kumiki?${query}";\nconsole.log(v);\n`);
       const alone = await outcome(() => buildInto(root, join(root, "alone"), []));
       const withPlugin = await outcome(() => buildInto(root, join(root, "plugin"), [kumiki()]));
+      expect(alone).toMatch(/^ok: /);
       expect(withPlugin).toBe(alone);
+    }, 60_000);
+  }
+
+  for (const query of NOT_VITES) {
+    it(`compiles \`?${query}\`, which Vite leaves alone`, async () => {
+      const out = await buildMain(`import App from "./app.kumiki?${query}";\nconsole.log(App);\n`, [
+        kumiki(),
+      ]);
+      expect(out).toContain("kumiki-state-styles");
+      expect(out).not.toContain(JSON.stringify(SOURCE));
     }, 60_000);
   }
 
@@ -148,7 +164,15 @@ describe("dev server transform of each import form", () => {
       const url = `/src/app.kumiki?${query}`;
       const expected = await outcome(async () => (await alone.transformRequest(url))?.code);
       const actual = await outcome(async () => (await withPlugin.transformRequest(url))?.code);
+      expect(expected).toMatch(/^ok: /);
       expect(actual).toBe(expected);
+    });
+  }
+
+  for (const query of NOT_VITES) {
+    it(`compiles \`?${query}\`, which Vite leaves alone`, async () => {
+      const out = await withPlugin.transformRequest(`/src/app.kumiki?${query}`);
+      expect(out?.code).toContain("export default App");
     });
   }
 });

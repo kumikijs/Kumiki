@@ -80,10 +80,13 @@ const RUNTIME_SPECIFIER = "@kumikijs/runtime";
 /**
  * Vite's own import queries. Each turns the import into something other than
  * the module the file compiles to — its text (`?raw`), its URL (`?url`, with
- * `?inline` / `?no-inline` choosing the form), or a wrapper that starts it as
- * a worker (`?worker`, `?sharedworker`) — so each is Vite's to answer.
+ * `&inline` / `&no-inline` choosing the form), or a wrapper that starts it as
+ * a worker (`?worker`, `?sharedworker`) — so each is Vite's to answer. Matched
+ * the way Vite matches them, as a flag with no value: `?raw=1` is not `?raw`
+ * to Vite, and a bare `?inline` means nothing to it outside CSS, so those
+ * still name the compiled module.
  */
-const VITE_QUERIES = new Set(["raw", "url", "inline", "no-inline", "worker", "sharedworker"]);
+const VITE_QUERY_RE = /[?&](?:raw|url|worker|sharedworker)(?:&|$)/;
 
 /**
  * The `.kumiki` file a Vite id asks this plugin to compile, or null when the
@@ -96,10 +99,7 @@ function kumikiFile(id: string): string | null {
   const file = q === -1 ? id : id.slice(0, q);
   if (!KUMIKI_RE.test(file)) return null;
   if (q === -1) return file;
-  for (const key of new URLSearchParams(id.slice(q + 1)).keys()) {
-    if (VITE_QUERIES.has(key)) return null;
-  }
-  return file;
+  return VITE_QUERY_RE.test(id.slice(q)) ? null : file;
 }
 
 /**

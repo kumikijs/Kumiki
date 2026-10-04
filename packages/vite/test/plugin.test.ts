@@ -95,7 +95,16 @@ describe("vite-plugin-kumiki", () => {
 
   it("compiles ids whose query still names the module itself", async () => {
     const src = readFileSync(COUNTER, "utf8");
-    for (const query of ["t=1700000000000", "worker_file&type=module", "import&v=abc123"]) {
+    for (const query of [
+      "t=1700000000000",
+      "worker_file&type=module",
+      "import&v=abc123",
+      // Vite acts on a valueless flag only, and on `inline` only for CSS.
+      "inline",
+      "no-inline",
+      "raw=1",
+      "url=x",
+    ]) {
       const out = (await transformOf().call(ctx as never, src, `${COUNTER}?${query}`)) as {
         code: string;
       } | null;
@@ -109,8 +118,8 @@ describe("vite-plugin-kumiki", () => {
       "raw",
       "url",
       "url&inline",
-      "inline",
-      "no-inline",
+      "url&no-inline",
+      "import&raw",
       "worker",
       "sharedworker",
     ]) {

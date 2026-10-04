@@ -19,9 +19,10 @@ Kumiki compile failed (src/app.kumiki):
 The dev server failed the same way, so a page could not show an app's source
 next to the app, or take its URL.
 
-Now an id whose query carries one of Vite's own `raw`, `url`, `inline`,
-`no-inline`, `worker` or `sharedworker` is left to Vite, and `?raw` gives the
-file's text and `?url` its URL, exactly as without the plugin. A plain import,
-the dev server's `?import`, a `?t=` cache buster and a worker entry's
-`?worker_file` still compile. A `?worker` import bundles its entry with
+Now an id whose query carries one of Vite's own `raw`, `url`, `worker` or
+`sharedworker` flags, matched as Vite matches them, is left to Vite, and `?raw`
+gives the file's text and `?url` its URL, exactly as without the plugin. A
+plain import, the dev server's `?import`, a `?t=` cache buster and a worker
+entry's `?worker_file` still compile, as do a `?raw=1` or a bare `?inline`,
+which Vite gives no meaning to. A `?worker` import bundles its entry with
 `worker.plugins`, so list `kumiki()` there too.
