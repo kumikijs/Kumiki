@@ -101,7 +101,7 @@ function afterOf(ep: EpisodeLogEntry, slot: string): unknown {
 function replayOnce(ep: EpisodeLogEntry): Record<string, unknown> {
   const app = makeDiceApp();
   return replayEpisodes({
-    app: { live: app.live, slots: app.slots, reducers: app.reducers },
+    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
     episodes: [ep],
     mocks: {},
     observer: () => "continue",
@@ -358,7 +358,7 @@ describe("a reducer that panicked (#337)", () => {
     for (let i = 0; i < 5; i++) {
       const app = makePanicApp();
       const report = replayEpisodes({
-        app: { live: app.live, slots: app.slots, reducers: app.reducers },
+        app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
         episodes: [ep],
         mocks: {},
         observer: () => "continue",

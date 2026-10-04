@@ -58,7 +58,7 @@ async function recordOneClick(): Promise<EpisodeLogEntry> {
 async function replayOnce(ep: EpisodeLogEntry): Promise<Record<string, unknown>> {
   const app = (await loadApp(EXAMPLE)) as AppShape & { live: Record<string, unknown> };
   return replayEpisodes({
-    app: { live: app.live, slots: app.slots, reducers: app.reducers },
+    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
     episodes: [ep],
     mocks: {},
     observer: () => "continue",

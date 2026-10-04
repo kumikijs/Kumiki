@@ -198,7 +198,7 @@ export async function replayCmd(
   // Stream each step as the executor emits it — keeps `--until-step` output
   // useful as a live trace and matches spec §10.5.3's "streams" wording.
   const report = replayEpisodes({
-    app: { live: app.live, slots: app.slots, reducers: app.reducers },
+    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
     episodes,
     mocks: opts.mocks,
     ...(opts.untilStep !== undefined ? { untilStep: opts.untilStep } : {}),
