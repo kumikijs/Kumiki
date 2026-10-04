@@ -1,0 +1,24 @@
+# Feature (lifecycle.md §7.1.6): `tile.mount` on several tiles.
+#
+#   reducer seeProfile  on=tile.mount(Profile)  do= ...
+#   reducer seeSettings on=tile.mount(Settings) do= ...
+#
+# A reducer name is declared once (E0007), so reacting to the mount of two
+# tiles takes two reducers, one per tile, each under its own name. Each fires
+# once, when its own tile mounts. Both tiles mount in the same render, so their
+# reducers fire in the order the tiles appear in the tree: `Profile`, then
+# `Settings`.
+
+slot seen : Text = ""
+
+tile Profile  = text("Profile")
+tile Settings = text("Settings")
+tile Account  = page(Profile, Settings, text("seen: " + seen))
+
+reducer seeProfile  on=tile.mount(Profile)  do= seen := seen + "Profile "
+reducer seeSettings on=tile.mount(Settings) do= seen := seen + "Settings "
+
+app TileMountSeveralTiles
+  caps   = []
+  routes = {"/" -> Account, "/404" -> Account}
+  init   = []
