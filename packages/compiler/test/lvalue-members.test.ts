@@ -21,6 +21,7 @@
 
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 
 const errsOf = (src: string) => check(parse(lex(src)));
 const app = (defs: string): string =>
@@ -248,6 +249,95 @@ describe("an index step into a Set", () => {
     ["the payload of an Option", `slot maybe : Option(Set(Int)) = None`, `maybe.get[1] := 2`],
   ])("is E0602 where the Set is %s", (_how, decls, body) => {
     expect(codesOf(withBody(decls, body))).toEqual(["E0602"]);
+  });
+});
+
+// A `Map` and a `List` are the only receivers an index names a place in
+// (§1.6.3). Any other receiver whose type is known has none for it to name — a
+// record has fields, a scalar has no inside, an `Option` is reached through
+// `.get` — so the step is refused with the code a `Set` index gets, at the step
+// itself. Let through, the right-hand side would be checked against nothing,
+// and the write would land under a literal key (`r["a"] := "oops"` puts a Text
+// in an Int field) or panic at run time.
+describe("an index step into a receiver with no places", () => {
+  /**
+   * Where the `[` at offset `step` of the reducer body sits in `src` — the
+   * position the step that has no place is reported at.
+   */
+  const stepPos = (src: string, body: string, step: number) => {
+    const lines = src.split("\n");
+    const at = lines.findIndex((l) => l.endsWith(`do= ${body}`));
+    const line = defined(lines[at], `a line ending in ${body}`);
+    return { line: at + 1, col: line.length - body.length + step + 1 };
+  };
+
+  it.each([
+    ["an Int", `slot n : Int = 5`, `n[0] := 7`, "Int"],
+    ["a Text", `slot t : Text = "abc"`, `t[0] := "z"`, "Text"],
+    ["a Bool", `slot b : Bool = false`, `b[0] := true`, "Bool"],
+    ["an Option", `slot o : Option(Int) = Some(1)`, `o[0] := 5`, "Option(Int)"],
+    ["a Result", `slot res : Result(Int, Text) = Ok(1)`, `res[0] := 5`, "Result(Int, Text)"],
+    ["a Tuple", `slot p : Tuple(Int, Int) = (1, 2)`, `p[0] := 3`, "Tuple(Int, Int)"],
+    ["a union", `type Filter = All | Done\nslot f : Filter = All`, `f[0] := Done`, "Filter"],
+    ["a record", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r[0] := 2`, "R"],
+    ["an alias of Int", `type Count = Int\nslot c : Count = 0`, `c[0] := 1`, "Count"],
+    ["a List's Int element", `slot xs : List(Int) = [1, 2, 3]`, `xs[0][0] := 9`, "Int"],
+    ["a Map's Text value", `slot m : Map(Text, Text) = {}`, `m["k"][0] := "v"`, "Text"],
+    ["an Option's payload", `slot o : Option(Int) = Some(1)`, `o.get[0] := 5`, "Int"],
+  ])("is E0602 on %s, at the step and alone", (_what, decls, body, name) => {
+    const src = withBody(decls, body);
+    const errs = errsOf(src);
+    // Alone: the step has no place, so there is no type for the right-hand
+    // side to be checked against, and nothing behind the E0602.
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.kind).toBe("unassignable-member");
+    expect(errs[0]?.message).toBe(
+      `Cannot assign through an index into "${name}": an index names a place only in a Map or a List`,
+    );
+    // The last `[` of each body opens the step that has no place.
+    expect(errs[0]?.pos).toEqual(stepPos(src, body, body.lastIndexOf("[")));
+  });
+
+  // The reported program. The field-path spelling of the same write is E0201
+  // against the field's type; the index spelling names no place, and a key that
+  // is one of the record's fields is answered with that field's step.
+  it("is E0602 on a record, and a key that names one of its fields gets that field's step", () => {
+    const decls = `type R = { a: Int }\nslot r : R = { a: 1 }`;
+    const errs = errsOf(withBody(decls, `r["a"] := "oops"`));
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.message).toBe(
+      `Cannot assign through an index into "R": an index names a place only in a Map or a List — write the field step ".a"`,
+    );
+    expect(codesOf(withBody(decls, `r.a := "oops"`))).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["a key that is no field of the record", `r["b"] := 2`],
+    ["a key that is not written as a literal", `r[k] := 2`],
+  ])("names no field step for %s", (_what, body) => {
+    const decls = `type R = { a: Int }\nslot r : R = { a: 1 }\nslot k : Text = "a"`;
+    const errs = errsOf(withBody(decls, body));
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.message).not.toContain("field step");
+  });
+
+  // One refusal per write: past the step that names no place, the path has no
+  // type, so the steps after it are not judged again.
+  it("reports the first step that names no place, not every step after it", () => {
+    const body = `n[0][1] := 7`;
+    const src = withBody(`slot n : Int = 5`, body);
+    const errs = errsOf(src);
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.message).toContain('into "Int"');
+    expect(errs[0]?.pos).toEqual(stepPos(src, body, body.indexOf("[")));
+  });
+
+  // The other side of the line: a receiver whose type is not known has no
+  // answer to give about its places, so it stays silent rather than guess. A
+  // name that resolves to no type is reported once, where the type is written.
+  it("stays silent on a receiver whose type is not known", () => {
+    const errs = errsOf(withBody(`slot u : Mystery = 0`, `u[0] := 1`));
+    expect(errs.map((e) => e.code)).toEqual(["E0117"]);
   });
 });
 

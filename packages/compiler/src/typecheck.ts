@@ -2503,10 +2503,12 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
 
 /**
  * An index step on the left of `:=`. A `List` index names a position, so it is
- * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
- * membership and nothing else, so `s[x] := v` has no place to write — the same
- * refusal §1.6.3 gives a member, and reported by the same code. Membership is
- * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ * an `Int` (`checkListIndex`). A `Map` index names an entry. Any other receiver
+ * whose type is known has no place for the step to name (`indexStep`), so the
+ * write has nowhere to land — the same refusal §1.6.3 gives a member, and
+ * reported by the same code. Let through, the write would check its
+ * right-hand side against nothing, and the runtime would store it under a
+ * literal key (a Text in a record's Int field) or panic on a scalar.
  */
 function checkIndexLvalue(
   lv: Lvalue & { kind: "LIndex" },
@@ -2514,15 +2516,35 @@ function checkIndexLvalue(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  const raw = lvalueType(lv.base, sym);
+  const base = unaliasType(raw, sym);
   checkListIndex(base, lv.index, sym, errors, ctx);
-  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
+  if (raw === null || base === null || indexStep(base, sym).kind !== "no-place") return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
-    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    message: noPlaceMessage(raw, base, lv.index, sym),
     pos: lv.pos,
   });
+}
+
+/**
+ * E0602's sentence for an index step into a receiver with no places. A `Set`
+ * is named for what changes it: membership, through `.add` / `.remove` /
+ * `.toggle` (stdlib.md §2.2.2). A record is answered with the field step when
+ * the key is written as one of its fields, since that is the write a key
+ * spelled like a field name was reaching for. `raw` is the receiver's type as
+ * written, so the message names the type the program declared.
+ */
+function noPlaceMessage(raw: TypeExpr, base: TypeExpr, index: Expr, sym: SymbolTable): string {
+  if (base.kind === "TypeApp" && base.name === "Set") {
+    return `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`;
+  }
+  const field =
+    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
+      ? ` — write the field step ".${index.value}"`
+      : "";
+  return `Cannot assign through an index into "${typeToString(raw)}": an index names a place only in a Map or a List${field}`;
 }
 
 /**
@@ -4156,13 +4178,40 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     if (lv.field === "get") return unwrappedType(base);
     return null;
   }
-  if (base.kind === "TypeApp") {
-    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
-    // a right-hand side to be checked against.
-    if (base.name === "List") return base.args[0] ?? null;
-    if (base.name === "Map") return base.args[1] ?? null;
+  // A step that names no place (`checkIndexLvalue`) has no type for a
+  // right-hand side to be checked against.
+  const step = indexStep(base, sym);
+  return step.kind === "place" ? step.type : null;
+}
+
+/**
+ * What an index step names in a receiver of type `base`, already unaliased
+ * (language.md §1.6.3). One answer for both questions the left of `:=` asks of
+ * the step — whether it can be written through (`checkIndexLvalue`) and what
+ * the right-hand side is checked against (`lvalueType`) — so the two cannot
+ * disagree about which receivers have places.
+ *
+ * - `place`       — a `List`'s element or a `Map`'s entry, and its type.
+ * - `no-place`    — a receiver whose type is known and has nothing for an index
+ *                   to name: a `Set`, a record, a scalar, an `Option`, a
+ *                   `Result`, a `Tuple`, a union.
+ * - `undecidable` — a receiver whose type is not known (`isOpaque`), about
+ *                   which there is nothing to say.
+ */
+type IndexStep =
+  | { kind: "place"; type: TypeExpr | null }
+  | { kind: "no-place" }
+  | { kind: "undecidable" };
+
+function indexStep(base: TypeExpr | null, sym: SymbolTable): IndexStep {
+  if (base === null || isOpaque(base, sym)) return { kind: "undecidable" };
+  if (base.kind === "TypeApp" && base.name === "List") {
+    return { kind: "place", type: base.args[0] ?? null };
   }
-  return null;
+  if (base.kind === "TypeApp" && base.name === "Map") {
+    return { kind: "place", type: base.args[1] ?? null };
+  }
+  return { kind: "no-place" };
 }
 
 /**
