@@ -15,7 +15,7 @@
 // that proceeds on a broken file.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -421,6 +421,35 @@ describe("kumiki run", () => {
     const { stdout, code } = runCli(["run", write("run-e.kumiki", CLEAN), scenario]);
     expect(stdout).toContain("scenario passed");
     expect(code).toBe(0);
+  });
+});
+
+describe("kumiki lock / unlock", () => {
+  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
+    const file = write("lock.kumiki", CLEAN);
+    const locks = `${file}.kumiki-locks.json`;
+    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
+    const granted = readFileSync(locks, "utf8");
+
+    const { stderr, code } = runCli(["lock", file, "agent:b", "slot.count"]);
+    expect(stderr).toContain('"slot.*", held by agent:a');
+    expect(code).toBe(1);
+    expect(readFileSync(locks, "utf8")).toBe(granted);
+
+    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
+  });
+
+  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
+    const file = write("unlock.kumiki", CLEAN);
+    const locks = `${file}.kumiki-locks.json`;
+    const none = runCli(["unlock", file, "agent:x"]);
+    expect(none.stderr).toContain("agent:x holds no lock");
+    expect(none.code).toBe(1);
+    expect(existsSync(locks)).toBe(false);
+
+    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
+    expect(runCli(["unlock", file, "agent:x"]).code).toBe(1);
+    expect(runCli(["unlock", file, "agent:a"]).code).toBe(0);
   });
 });
 

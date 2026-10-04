@@ -389,16 +389,64 @@ function writeLocks(path: string, locks: LockFile): void {
   atomicWriteFileSync(lockPath(path), `${JSON.stringify(locks, null, 2)}\n`);
 }
 
-function patternToRegExp(pattern: string): RegExp {
-  // Comma-separated globs: "slot.todos*,reducer.todo-*"
-  const parts = pattern
+/** The globs of a lock pattern, which are comma-separated: "slot.todos*,reducer.todo-*". */
+function patternGlobs(pattern: string): string[] {
+  return pattern
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const reSrc = parts
-    .map((g) => g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*"))
+}
+
+/**
+ * In a glob, `*` stands for any run of characters, dots included, and every
+ * other character for itself. `globsOverlap` reads a glob the same way.
+ */
+function patternToRegExp(pattern: string): RegExp {
+  const reSrc = patternGlobs(pattern)
+    .map((g) => g.split("*").map(escapeRegExp).join(".*"))
     .join("|");
   return new RegExp(`^(${reSrc})$`);
+}
+
+/**
+ * Whether some qualified name matches both globs, each read as
+ * `patternToRegExp` reads it. Neither glob has to contain the other: `slot.a*`
+ * and `slot.*b` share `slot.ab`. A qualified name has one dot, the one after
+ * its layer, so `slot.a*` and `*.inc` share none: what matches both is
+ * `slot.a.inc` and the like.
+ *
+ * The globs are walked together from the left, spelling a name that matches
+ * both. A step spells the character both globs have next, or one glob's next
+ * character while a `*` of the other takes it, or ends a `*`. Where both have
+ * a `*` next, the two can spell the dot between them (`slot*` and `*count`
+ * share `slot.count`); any other character spelled there can be left out.
+ */
+function globsOverlap(a: string, b: string): boolean {
+  const memo = new Map<string, boolean>();
+  // `dots`: how many the name spelled so far has.
+  const from = (i: number, j: number, dots: number): boolean => {
+    if (dots > 1) return false;
+    const key = `${i} ${j} ${dots}`;
+    let known = memo.get(key);
+    if (known === undefined) {
+      known = step(i, j, dots);
+      memo.set(key, known);
+    }
+    return known;
+  };
+  const spell = (c: string, dots: number): number => (c === "." ? dots + 1 : dots);
+  const step = (i: number, j: number, dots: number): boolean => {
+    const x = a[i];
+    const y = b[j];
+    if (x === undefined && y === undefined) return dots === 1;
+    if (x === "*" && from(i + 1, j, dots)) return true;
+    if (y === "*" && from(i, j + 1, dots)) return true;
+    if (x === "*" && y === "*") return from(i, j, spell(".", dots));
+    if (x === "*") return y !== undefined && from(i, j + 1, spell(y, dots));
+    if (y === "*") return x !== undefined && from(i + 1, j, spell(x, dots));
+    return x !== undefined && x === y && from(i + 1, j + 1, spell(x, dots));
+  };
+  return from(0, 0, 0);
 }
 
 /**
@@ -1106,12 +1154,35 @@ export function lockDef(path: string, agentId: string, pattern: string): void {
   withWriteLock(path, () => lockDefLocked(path, agentId, pattern));
 }
 
+/**
+ * The refusal for the first of `globs` that overlaps a pattern another agent
+ * holds, if any: some qualified name could match both. Granted, it would
+ * leave each agent refused by the other's lock on that name, so neither could
+ * edit it.
+ */
+function lockConflict(
+  locks: LockFile,
+  agentId: string,
+  globs: readonly string[],
+): string | undefined {
+  for (const glob of globs) {
+    for (const e of locks.entries) {
+      if (e.agent === agentId) continue;
+      for (const pat of e.patterns) {
+        if (patternGlobs(pat).some((held) => globsOverlap(glob, held))) {
+          return `lock conflict: "${glob}" overlaps "${pat}", held by ${e.agent}`;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 function lockDefLocked(path: string, agentId: string, pattern: string): void {
   const locks = readLocks(path);
-  const patterns = pattern
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const patterns = patternGlobs(pattern);
+  const conflict = lockConflict(locks, agentId, patterns);
+  if (conflict !== undefined) throw new Error(conflict);
   const existing = locks.entries.find((e) => e.agent === agentId);
   if (existing) {
     for (const p of patterns) if (!existing.patterns.includes(p)) existing.patterns.push(p);
@@ -1127,6 +1198,9 @@ export function unlockDef(path: string, agentId: string): void {
 
 function unlockDefLocked(path: string, agentId: string): void {
   const locks = readLocks(path);
+  if (!locks.entries.some((e) => e.agent === agentId)) {
+    throw new Error(`nothing to unlock: ${agentId} holds no lock on ${path}`);
+  }
   locks.entries = locks.entries.filter((e) => e.agent !== agentId);
   writeLocks(path, locks);
 }

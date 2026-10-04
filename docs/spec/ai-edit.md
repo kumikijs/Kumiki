@@ -105,7 +105,7 @@ Per verb, `1` means:
 | `view` / `refs` | the file, or the qualified name inside it, does not exist. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for |
 | `list` | the file does not exist, or the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
-| `lock` / `unlock` | the lock is held by another agent, or there is none to release |
+| `lock` / `unlock` | another agent holds a pattern overlapping one `lock` asks for, or the agent `unlock` names holds no lock to release ([§9.8.3](#_9-8-3-task-boundaries)) |
 | `replay` | the log is unreadable, the named episode is not in it, or a replayed episode panicked |
 | `dev` | the server could not start. Once it is serving it runs until interrupted, and so reports nothing |
 
@@ -354,6 +354,8 @@ kumiki lock agent-1 'slot.todos*,reducer.todo-*'
 ```
 
 If another agent issues an op in the same namespace, it is rejected.
+
+A pattern is a comma-separated list of globs over qualified names. In a glob, `*` stands for any run of characters, dots included, and every other character stands for itself. `lock` grants the globs to the agent unless one of them overlaps a pattern another agent holds, that is, unless some qualified name could match both. A qualified name has exactly one dot, the one between its layer and its name. `slot.count` and `slot.*` overlap, and so do `slot.a*` and `slot.*b`, though neither contains the other: both match `slot.ab`. `slot.a*` and `*.inc` do not, since only a name with a second dot, like `slot.a.inc`, matches both. Granting an overlapping pattern would leave each agent refused by the other's lock on the names both match, so nobody could edit them. An overlap refuses the whole request: the command exits `1`, the message names the overlapping pattern and the agent holding it, and the lock file is left unchanged. A pattern the agent already holds, or one that overlaps only its own, is granted. `unlock` releases every pattern the agent holds. For an agent that holds none it exits `1`, and the lock file is neither created nor rewritten.
 
 The lock is checked against **every definition the op touches**, not only the one the verb names. What the op touched is read off the source, not off the verb: once the source the op would write passes validation, the definitions before and after it are compared by qualified name, and every one that was added, removed, or whose text changed is checked. That covers each dependent a `remove --cascade` removes, the new name a `rename` creates and each definition whose text it rewrites, and a definition that a `replace`, `add` or `edit` body brings in with it (a `replace` of `slot.count` whose body goes on to a line `slot todosX : Int = 0` creates `slot.todosX`). One locked definition among them rejects the whole op before it is written: the file is left byte-identical, no op is logged, the command exits `1`, and the message names the first locked definition in qualified-name order and its owner. The named definition is also checked before anything is written. `patch apply`, `patch revert` and the MCP tools go through the same mutators, so the same check applies to them.
 
