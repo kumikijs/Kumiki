@@ -275,7 +275,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0108 `undef-member`
 
-`recv.member` アクセスで、`recv` の**推論型**が既知なのに `member` がその型のフィールドでも stdlib のメソッド/ショートカットでもない（ADR-002）。タイポ（`list.frist`）、形状違いのメンバー使用（`head` フィールドの無い record への `record.head`）、別の受け手のメンバー（`Result` への `res.filter(…)`、`List` への `xs.size`）を捕捉する。受け手が持つメンバーは標準ライブラリ §2.2 のその受け手自身の一覧であり、いずれかの受け手が持つ名前すべてではない（[§2.2.3 の dispatch 規則](./stdlib.md#_2-2-3-list-t)）。`recv.m` と `recv.m(…)` のどちらの書き方でも同じである。受け手型が推論できないときはエラーにならず、名前ベースのショートカット dispatch が使われる。
+`recv.member` アクセスで、`recv` の**推論型**が既知なのに `member` がその型のフィールドでも stdlib のメソッド/ショートカットでもない（ADR-002）。タイポ（`list.frist`）、形状違いのメンバー使用（`head` フィールドの無い record への `record.head`）、別の受け手のメンバー（`Result` への `res.filter(…)`、`List` への `xs.size`）を捕捉する。受け手が持つメンバーは標準ライブラリ §2.2 のその受け手自身の一覧であり、いずれかの受け手が持つ名前すべてではない（[§2.2.3 の dispatch 規則](./stdlib.md#_2-2-3-list-t)）。`recv.m` と `recv.m(…)` のどちらの書き方でも、引数がいくつであっても同じである。引数の数は受け手が持つメンバーについての問いなので、持たないメンバーの呼び出しはこのエラーだけになり、[E0213](#e0213-call-arity-mismatch) が併せて出ることはない — `Text` に対する `.get`、`.get()`、`.get(k)`、`.get(1, 2)` はどれも E0108 が 1 つである。受け手型が推論できないときはエラーにならず、名前ベースのショートカット dispatch が使われる。
 
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
 

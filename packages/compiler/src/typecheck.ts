@@ -3147,6 +3147,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
+      let lacksMember = false;
       if (!KNOWN_METHODS.has(e.method)) {
         errors.push({
           code: "E0801",
@@ -3167,9 +3168,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         const recordUpdate = e.method === "copy" && rt?.kind === "TypeRecord";
         if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
           errors.push(undefMemberError(raw, rt, e.method, e.pos, sym));
+          lacksMember = true;
         }
       }
-      {
+      // An argument count is a question about a member the receiver has. Asked
+      // of one it lacks, every count is the same E0108 just reported, as on
+      // the field-access side.
+      if (!lacksMember) {
         // A method whose lowering reads arguments it was not given crashes
         // codegen with a bare `TypeError` and no position — so `check` says ok
         // and `build` dies. Reported here, where the position is.
@@ -3222,8 +3227,11 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             continue;
           }
           if (isFragmentFnName(a, sym, ctx)) {
-            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
+            // How many arguments the member hands a fn is a question about a
+            // member the receiver has, as the call's own count is above.
+            if (lacksMember) continue;
+            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
             // value), so the key it computes is what the fn declares it
             // returns. A fn already refused for its arity is not checked again.
@@ -4066,6 +4074,9 @@ function checkGetOrArity(
  * a count its receiver does not take, which is right for an inference table and
  * silent by construction. So the receiver is asked here, where a count is what
  * is being judged.
+ *
+ * A receiver known to have no `.get` (`Text`, `Int`, a record without a `get`
+ * field) never gets here: its every count is the E0108 the caller reports.
  */
 function checkGetArity(
   e: Expr & { kind: "MethodCall" },
