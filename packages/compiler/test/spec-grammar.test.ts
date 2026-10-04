@@ -296,11 +296,12 @@ ${APP}`)[0];
 });
 
 describe("a tuple's arity is its type", () => {
-  // Unlike a list, whose length is not in its type. `assignable` compares a
-  // `TypeApp`'s arguments pairwise and treats a missing one as agreeing, which
-  // is right for `List(Int)` and silent here — and the silence reaches the
-  // runtime: a tuple pattern guards on `length`, so a mismatched literal makes
-  // every arm fail and writes `undefined` into the slot.
+  // Unlike a list, whose length is not in its type. A literal is held to the
+  // length rule `assignable` holds every tuple to, and reported as a whole
+  // rather than item by item. A tuple pattern guards on `length`, so a literal
+  // of another length would fail every arm and write `undefined` into the
+  // slot. packages/tests/tuple-arity.test.ts holds a tuple-typed value to the
+  // same rule.
   it("reports a literal with too many items", () => {
     const err = diags(`slot p : Tuple(Int, Int) = (1, 2, 3)${APP}`).find((d) => d.code === "E0201");
     expect(err?.message).toContain("tuple of 3 item(s)");

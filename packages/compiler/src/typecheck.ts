@@ -3702,13 +3702,18 @@ function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && d.name === "Tuple" && e.kind === "TupleLit") {
-    // Arity first, and on its own: a tuple's length IS its type, unlike a
-    // list's. `assignable` compares argument lists pairwise and treats a
-    // missing one as agreeing — right for `List`, where the count is the
-    // constructor's own arity, and wrong here, where `Tuple(Int, Int, Int) =
-    // (1, 2)` would reach codegen and lower to a pattern guard that never
-    // matches, writing `undefined` into the slot.
-    if (e.items.length !== d.args.length) {
+    // The length first, and on its own: a literal of the wrong length is
+    // wrong as a whole, so it is reported once, at the literal, rather than
+    // item by item against positions that are not its own. Asked of
+    // `assignable` with every item left undecided, which leaves the length as
+    // the only thing that can disagree — so a literal and a tuple-typed value
+    // are held to one length rule, the relation's.
+    const shape = container(
+      "Tuple",
+      e.items.map((it) => unknownType(it.pos)),
+      e.pos,
+    );
+    if (!assignable(shape, declared, sym)) {
       pushMismatch(
         errors,
         code,

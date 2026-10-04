@@ -561,6 +561,7 @@ Each is reported at the dropped argument, and the diagnostic's `unrendered` fiel
 A value does not have the type its position requires.
 
 > `Expected <declared> but got <actual>`
+> `Expected <declared> but got a tuple of <n> item(s)`
 > `Operator "<op>" expects a number but got <type>`
 > `Operator "<op>" expects Bool but got <type>`
 > `Operator "<op>" cannot compare <type> with <type>`
@@ -589,6 +590,8 @@ One message in this code is not about a type. A `credentials` literal that names
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
 
 Assignability is structural, with one implicit conversion — `Int` flows into a `Float` position and never the reverse. Aliases and generic instantiations are followed, and a `where` refinement is transparent: this check never evaluates one. On `type Volume = nominal Int where between(0, 11)`, `volume := 50` is not this error — whether a value is in range is decided at validation ([Forms §5.6](./forms.md#_5-6-validation-strategy)).
+
+A `Tuple`'s length is part of its type ([stdlib §2.1.2](./stdlib.md#_2-1-2-generic-types)): `Tuple(Int, Text)` and `Tuple(Int, Text, Int)` refuse each other in both directions, at the top of a type and inside a `List`, `Map`, `Option` or record alike. A tuple pattern matches only a value of its own length, so a pair in a triple's place would fall through every three-item arm. A tuple literal of another length is reported once, at the literal — `Expected Tuple(Int, Text, Int) but got a tuple of 2 item(s)` — and one of the right length is checked item by item.
 
 `()` is a value like any other: it is the one value of `Unit` ([stdlib §2.1](./stdlib.md#_2-1-built-in-types)), so it is accepted where `Unit` is declared and is this error against any other declared type (an `emit` argument reports E0202, and `emit e(())` on an `in=Unit` effect is E0213, since that effect takes no argument). `Card(())` against `tile Card in={label: Text}` reports `Expected {label: Text} but got Unit` at the `()`: `()` runs as `null`, which a tile reading `$1.label` cannot use.
 

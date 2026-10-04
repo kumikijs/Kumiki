@@ -480,8 +480,12 @@ function relate(
 
     case "TypeApp": {
       if (a.kind !== "TypeApp" || a.name !== d.name) return false;
-      // A constructor applied to the wrong number of arguments is E0210's
-      // business; comparing the pairs we have keeps this from piling on.
+      // `Tuple` takes any number of arguments, so no count is wrong for it: the
+      // count is the type (stdlib.md §2.1.2), and a tuple of another length is
+      // another type, whichever side is longer.
+      if (d.name === "Tuple" && a.args.length !== d.args.length) return false;
+      // Any other constructor applied to the wrong number of arguments is
+      // E0210's business; comparing the pairs we have keeps this from piling on.
       return d.args.every((darg, i) => {
         const aarg = a.args[i];
         return aarg === undefined || relate(aarg, darg, env, seen);
