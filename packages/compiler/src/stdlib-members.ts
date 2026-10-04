@@ -10,7 +10,9 @@
  * `codegen/expr.ts`), which is §2.2.3's name-based dispatch.
  *
  * `show` is not listed here: every value has it (§2.2.7), including a record,
- * so it is `UNIVERSAL_MEMBERS` rather than a line in every row.
+ * so it is `UNIVERSAL_MEMBERS` rather than a line in every row. The one value
+ * without it is an `EffectId` (§2.1.1.1), which has no row: the checker refuses
+ * its `show` in every spelling, as E0204 (`shownValue` in `typecheck.ts`).
  */
 export const RECEIVER_MEMBERS = {
   Map: [
@@ -130,7 +132,7 @@ export const RECEIVER_MEMBERS = {
   File: [],
 } as const satisfies Record<string, readonly string[]>;
 
-/** Every value has these, whatever its type. */
+/** Every value has these, whatever its type — but an `EffectId`, which has no member at all. */
 export const UNIVERSAL_MEMBERS: ReadonlySet<string> = new Set(["show"]);
 
 export type Receiver = keyof typeof RECEIVER_MEMBERS;

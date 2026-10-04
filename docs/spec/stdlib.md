@@ -25,7 +25,7 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 let id = emit fetchQuote()
 ```
 
-The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
+The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and rendering as text are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)) — `text(h)`, `heading(h)` and every other builtin that renders its content, `fmt(…)` with `h` among its arguments, and `.show`. `show` is the member every other value has ([§2.2.7](#_2-2-7-int-float)), and an `EffectId` does not have it: `h.show`, `h.show()` and `T.show(h)` are E0204 alike. To show whether a handle is held, render what the comparison answers: `text(if h == EffectId.none then "idle" else "loading")`.
 
 `EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
 
@@ -170,7 +170,7 @@ fn empty() -> Bool = todos.is-empty           # same as above
 fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
-> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
+> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value but an `EffectId` has, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
 
 **The lambda arguments of `map` / `filter` / `find` / `sort-by`** are decided by the receiver's **type**, not by the value at run time:
 - An element that is a `Tuple(A, B)` — the `[k, v]` pair `.entries` produces — is taken apart: `$1` is its first half, `$2` its second. Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`. An `Option` / `Result` holding a `Tuple(A, B)` is taken apart the same way.
@@ -248,7 +248,7 @@ These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier i
 
 An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
-`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
+`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`. The one type without it is `EffectId`, an opaque handle whose text is the runtime's to choose ([§2.1.1.1](#_2-1-1-1-effectid)).
 
 ### 2.2.8 Time
 

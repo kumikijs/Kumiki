@@ -1,0 +1,47 @@
+# Feature: an `EffectId` is an opaque handle (stdlib.md §2.1.1.1). A program
+# compares it with `==` / `!=`, keeps it in a slot of type `EffectId` and hands
+# it to an `http.cancel` effect, and that is all. Rendering it is E0204:
+# `text(handle)`, `heading(handle)` and `handle.show` would show whatever the
+# runtime represents a handle as, which is the runtime's to change.
+#
+# What the page shows instead is derived from a comparison with the sentinel:
+# a `Text` a `fn` answers, and a `Bool` rendered with `.show`. `start` keeps
+# the handle of the latest search in `lastSearch`; `cancel` hands it to
+# `cancelSearch` and puts the sentinel back. Cancelling a request that has
+# already finished is a no-op (http.md §6.4), so the handle is kept after the
+# response arrives and the scenario reads the page on both sides of the cancel.
+
+slot query      : Text     = "kumiki"
+slot lastSearch : EffectId = EffectId.none
+slot result     : Text     = "nothing yet"
+
+effect search       cap=http.get
+                    in=Text
+                    out=Result(Text, HttpError)
+                    policy=latest
+                    map-request={url: "/api/search?q=" + $1, decode: Decoder.Text}
+effect cancelSearch cap=http.cancel in=EffectId out=Unit
+
+reducer start  on=ui.click(SearchBtn) do= lastSearch := emit search(query)
+reducer cancel on=ui.click(CancelBtn) do= emit cancelSearch(lastSearch)
+                                          lastSearch := EffectId.none
+reducer found  on=search.ok($body, _) do= result := $body
+reducer failed on=search.err($err, _) do= result := "err: " + $err.message
+
+fn searchState(id: EffectId) -> Text =
+  if id == EffectId.none then "no search to cancel" else "a search to cancel"
+
+tile SearchBtn = button(text="Search", onClick=start)  {id: "search"}
+tile CancelBtn = button(text="Cancel", onClick=cancel) {id: "cancel"}
+tile App = column(
+             SearchBtn,
+             CancelBtn,
+             text(searchState(lastSearch)),
+             text("cancellable: " + (lastSearch != EffectId.none).show),
+             text("result: " + result))
+           {pad: "lg", gap: "md"}
+
+app EffectIdOpaque
+    caps   = [http.get, http.cancel]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

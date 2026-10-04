@@ -1634,6 +1634,11 @@ function checkTileCall(
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
   checkContentArgs(t, errors);
+  // A value builtin renders its content through `show`, as `.show` does.
+  const content = contentArg(t);
+  if (content && !isTileExpr(content.value)) {
+    refuseRenderedEffectId(content.value, `${t.name}(...)`, sym, errors, ctx);
+  }
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
@@ -2778,7 +2783,11 @@ function checkCallee(
       });
       return;
     }
-    if (callee === "fmt") reportFmtPlaceholders(args, pos, errors);
+    if (callee === "fmt") {
+      reportFmtPlaceholders(args, pos, errors);
+      // Every argument, the template included, is rendered through `show`.
+      for (const a of args) refuseRenderedEffectId(a, "fmt(...)", sym, errors, ctx);
+    }
     // What `parse` reads is a text (stdlib §2.4.3). Given anything else the
     // call is not a parse of anything: `Bool.parse(flag)` is `None` whatever
     // `flag` holds.
@@ -2945,7 +2954,72 @@ function withinOneEdit(a: string, b: string): boolean {
   return edits + (a.length - i) + (b.length - j) <= 1;
 }
 
+/**
+ * Whether `t` is an `EffectId`, through an alias or a `nominal` over one — the
+ * one answer both halves of E0204 ask, the operators and rendering.
+ */
+function isEffectId(t: TypeExpr | null, sym: SymbolTable): boolean {
+  return isPrimNamed(t, sym, "EffectId");
+}
+
+/**
+ * E0204 at `value` when it is an `EffectId` that `renderer` turns into text —
+ * `text(...)` and the other value builtins, `.show`, `fmt(...)`. A handle is
+ * opaque (stdlib.md §2.1.1.1): equality and storage are defined on it, and its
+ * text is whatever the runtime represents it as, so a page that showed it
+ * would change when that does.
+ */
+function refuseRenderedEffectId(
+  value: Expr,
+  renderer: string,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!isEffectId(inferType(value, sym, ctx), sym)) return;
+  errors.push({
+    code: "E0204",
+    kind: "effect-id-misuse",
+    message: `${renderer} cannot render EffectId — it is an opaque handle`,
+    pos: value.pos,
+  });
+}
+
+/**
+ * The member a qualified call names — `show` in `Int.show(v)` — when its
+ * qualifier is spelt as one, by the rule codegen and `builtinArity` apply;
+ * `null` for any other callee.
+ */
+function qualifiedMember(callee: string): string | null {
+  const dot = callee.indexOf(".");
+  return dot > 0 && isQualifierName(callee.slice(0, dot)) ? callee.slice(dot + 1) : null;
+}
+
+/**
+ * The value `e` shows, when `e` is `show` in one of its spellings: the member
+ * `v.show` / `v.show()`, and `T.show(v)`, whose qualifier is discarded
+ * (stdlib.md §2.4.3). Codegen lowers all three to `_s.show(v)`.
+ */
+function shownValue(e: Expr): Expr | undefined {
+  switch (e.kind) {
+    case "FieldAccess":
+      return e.field === "show" ? e.base : undefined;
+    case "MethodCall":
+      return e.method === "show" ? e.receiver : undefined;
+    case "Call":
+      return qualifiedMember(e.callee) === "show" && e.args.length === 1 ? e.args[0] : undefined;
+    default:
+      return undefined;
+  }
+}
+
 function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  // `show` is the member every value has but a handle, whose text is the
+  // runtime's to choose (stdlib.md §2.2.7, §2.1.1.1). Asked here, before the
+  // three spellings part company in the switch below, so the exception is made
+  // once for all of them.
+  const shown = shownValue(e);
+  if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
     case "Num":
     case "Str":
@@ -3077,18 +3151,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
     case "BinOp": {
-      // EffectId is opaque (spec stdlib §2.1.1.1): only `==` / `!=` defined.
-      // Boolean `&` / `|` cannot meaningfully apply to it either, but we leave
-      // them to the general unknown-receiver path — the typical misuse is
-      // arithmetic (`+` / `-` / `*` / `/`) or ordering (`<` / `>` / `<=` /
-      // `>=`), which is what we flag here.
-      const isEffectId = (t: TypeExpr | null): boolean =>
-        !!t && t.kind === "TypePrim" && t.name === "EffectId";
+      // EffectId is opaque (spec stdlib §2.1.1.1): `==` / `!=` are the only
+      // operators defined on it.
       let effectIdMisuse = false;
       if (e.op !== "==" && e.op !== "!=") {
         const lt = inferType(e.lhs, sym, ctx);
         const rt = inferType(e.rhs, sym, ctx);
-        if (isEffectId(lt) || isEffectId(rt)) {
+        if (isEffectId(lt, sym) || isEffectId(rt, sym)) {
           effectIdMisuse = true;
           errors.push({
             code: "E0204",
@@ -4833,8 +4902,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // All three are read through the one spelling rule codegen and
       // `builtinArity` apply, so a name a hyphen disqualifies as a qualifier
       // (`Othe-Id.fresh()`) is not a type-member call here either.
-      const member =
-        qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
+      const member = qualifiedMember(e.callee);
       if (member === "show") return prim("Text", e.pos);
       // `TypeName.parse(t)` is an `Option(T)` (stdlib §2.4.3) — for `Duration`
       // and `Bytes` too, which is why it is read ahead of their namespaces

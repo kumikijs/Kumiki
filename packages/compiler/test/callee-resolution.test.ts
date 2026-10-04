@@ -44,10 +44,14 @@ const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
  * that one line rather than the module keeps the assertions honest: the whole
  * module drags in the runtime helper prelude, whose own source contains most of
  * these names.
+ *
+ * The call site is the one element of a list whose length the fn returns, so
+ * its type never decides whether the probe compiles — `.show` would, since an
+ * `EffectId` has none (E0204) and `EffectId.none` is one of the call sites.
  */
 function loweringOf(callSite: string): string {
   const src = `slot a : Int = 0
-fn probe() -> Text = (${callSite}).show
+fn probe() -> Int = [${callSite}].length
 tile App = column(text(probe()))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 type Probe = Text
@@ -645,14 +649,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     if (name !== "Decoder.Json") {
       it(`${name} lowers to ${sentinel} with no parentheses`, () => {
         const body = loweringOf(name);
-        expect(body).toContain(`_s.show(${sentinel})`);
+        expect(body).toContain(`[${sentinel}]`);
         expect(body).not.toContain("_tag:");
       });
     }
 
     it(`${name} lowers the same way written as a call`, () => {
       const body = loweringOf(name === "Decoder.Json" ? `${name}(Text)` : `${name}()`);
-      expect(body).toContain(`_s.show(${sentinel})`);
+      expect(body).toContain(`[${sentinel}]`);
     });
   }
 
@@ -681,7 +685,8 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     // It earns its place as the other side of the rule above: a check that
     // refuses every other member of these namespaces must not refuse these.
     expect(codes(inReducer("t := (Decoder.None).show"))).toEqual([]);
-    expect(codes(inReducer("t := (EffectId.none).show"))).toEqual([]);
+    // A handle has no `show` (E0204), so the sentinel is held in a list instead.
+    expect(codes(inReducer("a := [EffectId.none].length"))).toEqual([]);
   });
 });
 
@@ -689,9 +694,11 @@ describe("every built-in is held to the count its lowering reads", () => {
   // Generated from the tables rather than written out, so a builtin cannot be
   // added without a case: the arity lives beside the name, and this walks both.
   //
-  // The call is wrapped in `.show` so the result type never decides the
-  // outcome — what is under test is the count, and a `Duration` assigned to an
-  // `Int` slot would otherwise add a second diagnostic to half the cases.
+  // The call is the one element of a list whose length is kept, so the result
+  // type never decides the outcome — what is under test is the count, and a
+  // `Duration` assigned to an `Int` slot would otherwise add a second
+  // diagnostic to half the cases. `.show` is not that wrapper: an `EffectId`
+  // has none (E0204), and `EffectId.none` is one of the calls.
 
   /**
    * An argument no builtin's lowering objects to — except `parse`, whose
@@ -783,18 +790,18 @@ describe("every built-in is held to the count its lowering reads", () => {
     const call = callOf(name);
 
     it(`${name} accepts ${arity.min}`, () => {
-      expect(codes(inReducer(`t := (${call(arity.min)}).show`))).toEqual([]);
+      expect(codes(inReducer(`a := [${call(arity.min)}].length`))).toEqual([]);
     });
 
     if (arity.min > 0) {
       it(`${name} reports one argument too few`, () => {
-        expect(codes(inReducer(`t := (${call(arity.min - 1)}).show`))).toEqual(["E0213"]);
+        expect(codes(inReducer(`a := [${call(arity.min - 1)}].length`))).toEqual(["E0213"]);
       });
     }
 
     if (Number.isFinite(arity.max)) {
       it(`${name} reports one argument too many`, () => {
-        expect(codes(inReducer(`t := (${call(arity.max + 1)}).show`))).toEqual(["E0213"]);
+        expect(codes(inReducer(`a := [${call(arity.max + 1)}].length`))).toEqual(["E0213"]);
       });
     }
   }

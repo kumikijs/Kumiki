@@ -22,6 +22,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { REFINEMENT_PREDS, refinementBases } from "../src/refinements.ts";
 import { UI_LIFTS } from "../src/ui-lifts.ts";
@@ -142,6 +143,22 @@ describe("spec ⇆ implementation diagnostic code-set drift", () => {
   });
 });
 
+/** The two tracks of the error catalogue, which the guards below read alike. */
+const TRACKS = {
+  en: path.join(repoRoot, "docs", "spec", "errors.md"),
+  ja: path.join(repoRoot, "docs", "ja", "spec", "errors.md"),
+} as const;
+
+/** `### <code> …` up to the next `### `, on either track. */
+function section(file: string, code: string): string {
+  const source = readFileSync(file, "utf8");
+  const start = source.search(new RegExp(`^### ${code}\\b`, "m"));
+  expect(start, `${file} has no §${code} heading`).toBeGreaterThanOrEqual(0);
+  const rest = source.slice(start + 1);
+  const end = rest.search(/^### /m);
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
 // The same guard for §W0212's "allowed root tile kinds" table, which is the
 // published copy of `UI_LIFTS` and was hand-synced on both tracks every time a
 // row moved. Codes had this and the table did not, so a row could drift in
@@ -150,16 +167,6 @@ describe("spec ⇆ implementation diagnostic code-set drift", () => {
 // so. The `ev` column also has to agree, so a row added to one side alone
 // fails rather than being skipped as unmatched.
 describe("§W0212's lift table matches UI_LIFTS", () => {
-  /** `### W0212 …` up to the next `### `, on either track. */
-  function w0212Section(file: string): string {
-    const source = readFileSync(file, "utf8");
-    const start = source.search(/^### W0212\b/m);
-    expect(start, `${file} has no §W0212 heading`).toBeGreaterThanOrEqual(0);
-    const rest = source.slice(start + 1);
-    const end = rest.search(/^### /m);
-    return end < 0 ? rest : rest.slice(0, end);
-  }
-
   /**
    * The table as `ev -> kinds`, with `null` for a cell that names no kind —
    * the `hover` row, whose value is prose and differs per track ("any tile" /
@@ -168,7 +175,7 @@ describe("§W0212's lift table matches UI_LIFTS", () => {
    */
   function liftTable(file: string): Map<string, ReadonlySet<string> | null> {
     const out = new Map<string, ReadonlySet<string> | null>();
-    for (const line of w0212Section(file).split("\n")) {
+    for (const line of section(file, "W0212").split("\n")) {
       if (!line.startsWith("|")) continue;
       const cells = line.split("|").slice(1, -1);
       if (cells.length !== 2) continue;
@@ -181,11 +188,6 @@ describe("§W0212's lift table matches UI_LIFTS", () => {
     }
     return out;
   }
-
-  const TRACKS = {
-    en: path.join(repoRoot, "docs", "spec", "errors.md"),
-    ja: path.join(repoRoot, "docs", "ja", "spec", "errors.md"),
-  } as const;
 
   const expected = new Map(UI_LIFTS.map((l) => [l.ev as string, l.tiles]));
 
@@ -219,21 +221,12 @@ describe("§W0212's lift table matches UI_LIFTS", () => {
 // cannot test documents a program E0804 refuses, and a base missing from a row
 // hides one it accepts. Keyed off the backticks, so both tracks parse alike.
 describe("§E0804's base table matches the refinement table", () => {
-  function e0804Section(file: string): string {
-    const source = readFileSync(file, "utf8");
-    const start = source.search(/^### E0804\b/m);
-    expect(start, `${file} has no §E0804 heading`).toBeGreaterThanOrEqual(0);
-    const rest = source.slice(start + 1);
-    const end = rest.search(/^### /m);
-    return end < 0 ? rest : rest.slice(0, end);
-  }
-
   /** The table as `predicate -> bases`, one entry per predicate a row names. */
   function baseTable(file: string): Map<string, ReadonlySet<string>> {
     const out = new Map<string, ReadonlySet<string>>();
     const backticked = (cell: string | undefined): string[] =>
       [...(cell ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string);
-    for (const line of e0804Section(file).split("\n")) {
+    for (const line of section(file, "E0804").split("\n")) {
       if (!line.startsWith("|")) continue;
       const cells = line.split("|").slice(1, -1);
       if (cells.length !== 3) continue;
@@ -248,11 +241,6 @@ describe("§E0804's base table matches the refinement table", () => {
     return out;
   }
 
-  const TRACKS = {
-    en: path.join(repoRoot, "docs", "spec", "errors.md"),
-    ja: path.join(repoRoot, "docs", "ja", "spec", "errors.md"),
-  } as const;
-
   for (const [track, file] of Object.entries(TRACKS)) {
     it(`lists every registered predicate once on the ${track} track`, () => {
       expect([...baseTable(file).keys()].sort()).toEqual([...REFINEMENT_PREDS].sort());
@@ -264,6 +252,68 @@ describe("§E0804's base table matches the refinement table", () => {
         expect(table.get(pred), `${track} §E0804 row "${pred}"`).toEqual(
           new Set(refinementBases(pred)),
         );
+      }
+    });
+  }
+});
+
+// The same guard for §E0204's messages. The code set above holds whatever the
+// sentences quoted under a code say, and E0204 quoted one — `text(...)`
+// refusing a handle — that nothing emitted. Each program below makes one of
+// E0204's mistakes: every message the checker gives them has to be a template
+// the section quotes, and every template has to be one of those messages, so a
+// sentence that drifts on either side fails.
+describe("§E0204's messages are the ones the checker emits", () => {
+  const program = (body: string) => `slot h : EffectId = EffectId.none
+slot t : Text = ""
+slot b : Bool = false
+tile B = button(text="b")
+${body}
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  const MISTAKES = [
+    `reducer z on=ui.click(B) do= b := h < h\ntile App = column(B)`,
+    `tile App = column(B, text(h), heading(h))`,
+    `reducer z on=ui.click(B) do= t := h.show\ntile App = column(B)`,
+    `tile App = column(B, text(fmt("{0}", h)))`,
+  ];
+
+  const emitted = MISTAKES.flatMap((body) =>
+    check(parse(lex(program(body))))
+      .filter((e) => e.code === "E0204")
+      .map((e) => e.message),
+  );
+
+  /** The quoted messages as patterns, a `<placeholder>` standing for any text. */
+  function templates(file: string): { quoted: string; pattern: RegExp }[] {
+    return [...section(file, "E0204").matchAll(/^> `(.+)`$/gm)].map((m) => {
+      const quoted = m[1] as string;
+      const literal = quoted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return { quoted, pattern: new RegExp(`^${literal.replace(/<[a-z-]+>/g, ".+")}$`) };
+    });
+  }
+
+  it("draws one E0204 from each mistake the programs make", () => {
+    // Extraction floor: with no message to match, both directions below pass.
+    expect(emitted).toHaveLength(5);
+  });
+
+  for (const [track, file] of Object.entries(TRACKS)) {
+    it(`quotes every message the checker emits on the ${track} track`, () => {
+      const quoted = templates(file);
+      for (const message of emitted) {
+        const matches = quoted.filter((t) => t.pattern.test(message)).map((t) => t.quoted);
+        expect(matches, `${track} §E0204 quoting "${message}"`).toHaveLength(1);
+      }
+    });
+
+    it(`quotes no message the checker does not emit on the ${track} track`, () => {
+      for (const { quoted, pattern } of templates(file)) {
+        expect(
+          emitted.some((m) => pattern.test(m)),
+          `${track} §E0204 quotes "${quoted}", which no mistake draws`,
+        ).toBe(true);
       }
     });
   }
