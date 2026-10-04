@@ -58,9 +58,10 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
       const local = ctx.typeParams.get(t.name) ?? ctx.userTypes.get(t.name);
       if (local) return local;
       const std = STDLIB_BY_NAME.get(t.name);
-      // `FormData` names `FormValue`, which names nothing back. The expansion
-      // still refuses to re-enter a name it is already inside, so an entry
-      // that named itself would end in `unknown` rather than recurse.
+      // A program's own type of a declarable name (`Email`) is found above,
+      // before this table. `FormData` names `FormValue`, which names nothing
+      // back; the expansion refuses to re-enter a name it is already inside, so
+      // an entry that named itself would end in `unknown` rather than recurse.
       if (!std || ctx.expanding.has(t.name)) return "unknown";
       return tsOfType(std.body, { ...ctx, expanding: new Set([...ctx.expanding, t.name]) });
     }

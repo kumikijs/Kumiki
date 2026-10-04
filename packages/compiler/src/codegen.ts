@@ -103,11 +103,12 @@ export type CodegenResult = {
 };
 
 export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
-  // The standard library's definitions beside the program's, as `check` holds
-  // them. A program that declares a type under a standard-library name does not
-  // reach codegen (E0231), so no entry here replaces another. The stdlib half is
-  // what gives `slot e : Email` its `refine`: `Email` is synthesised, not
-  // declared.
+  // The standard library's definitions first, the program's over them — the
+  // order `check` seeds its own table in. A program's own `type Email = …`
+  // replaces the entry here as it does there; one under a reserved name
+  // (`Route`, `PanicInfo`, …) is E0231 and never reaches codegen. The stdlib
+  // half is what gives `slot e : Email` its `refine` when the program declares
+  // no `Email`: that entry is synthesised, not declared.
   const types = new Map<string, TypeDef>(STDLIB_TYPES.map((d) => [d.name, d]));
   for (const d of program.defs) {
     if (d.kind === "TypeDef") types.set(d.name, d);

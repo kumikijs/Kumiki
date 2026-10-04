@@ -169,10 +169,11 @@ export type DuplicateDefinition = { readonly layer: string } & DuplicateName;
  *
  * Over `program.defs` rather than over the symbol tables, for two reasons the
  * tables cannot give: they are seeded with the standard library's types, so a
- * program's own `type Route = Text` would read as a second declaration, when
- * what is wrong with it is the reserved name (E0231); and they are per layer
- * already, so a `slot` and a `tile` sharing a name — which is legal, and which
- * code generation relies on — would need to be excluded by hand.
+ * program's own `type Email = Text` would read as a redeclaration of a name it
+ * is entitled to declare, and `type Route = Text` as one when what is wrong
+ * with it is the reserved name (E0231); and they are per layer already, so a
+ * `slot` and a `tile` sharing a name — which is legal, and which code
+ * generation relies on — would need to be excluded by hand.
  */
 export function findDuplicateDefinitions(program: Program): readonly DuplicateDefinition[] {
   const byLayer = new Map<string, DuplicateName[]>();

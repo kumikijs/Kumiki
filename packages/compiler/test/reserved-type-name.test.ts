@@ -1,15 +1,19 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { STDLIB_TYPES } from "../src/stdlib-types.ts";
+import { isReservedTypeName, RESERVED_TYPE_NAMES, STDLIB_TYPES } from "../src/stdlib-types.ts";
 
-// Most of the standard library's domain types (stdlib.md §2.1.3) name values
-// the runtime or the standard library builds: the `PanicInfo` an error-boundary
-// fallback is applied to, the `Route` the router maintains, the `HttpError` a
-// failed request delivers, a `Duration.s(5)`. A program cannot declare a type
-// under any of the names — the checker would reason about the program's type
-// while the runtime kept to the standard library's value. E0231 is reported at
-// the declaration, and every use of the name means the standard library's
-// type.
+// Six of the standard library's domain types (stdlib.md §2.1.3) name values the
+// runtime or the standard library builds or reads: the `PanicInfo` an
+// error-boundary fallback is applied to, the `Route` the router maintains, the
+// `HttpError` a failed request delivers and its `HttpStatus`, a
+// `Duration.ms(5)`, the `FormValue` a multipart body is read by. A program
+// cannot declare a type under one of those names — the checker would reason
+// about the program's type while the runtime kept to the standard library's.
+// E0231 is reported at the declaration, and every use of the name means the
+// standard library's type.
+//
+// The other four name types only a program builds values of. A program may
+// declare its own, and its uses then mean the program's type.
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
@@ -18,15 +22,47 @@ const diagnostics = (src: string) =>
   check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
 
-describe("a program declaring a type under a standard library name", () => {
-  for (const t of STDLIB_TYPES) {
-    it(`is E0231 at the declaration of "${t.name}"`, () => {
-      const found = check(parse(lex(`slot n : Int = 0\ntype ${t.name} = {v: Int}\n${TAIL}`)));
+/** One row per reserved name, so dropping one from the rule fails its row. */
+const RESERVED = ["PanicInfo", "Route", "HttpError", "HttpStatus", "Duration", "FormValue"];
+
+/**
+ * One row per declarable name: a declaration under it, and a use the standard
+ * library's definition would refuse — so each row fails if the name is
+ * reserved, and again if the use read the standard library's type.
+ */
+const DECLARABLE: [string, string][] = [
+  ["Email", `type Email = {address: Text}\nslot e : Email = {address: "ada@example.com"}`],
+  // The standard library's `Url` is a `nominal`, which another nominal over
+  // `Text` does not accept; the program's alias of `Text` meets it.
+  ["Url", `type Url = Text\ntype Slug = nominal Text\nfn slug(u: Url) -> Slug = u`],
+  ["Uuid", `type Uuid = Int\nslot id : Uuid = 5`],
+  ["FormData", `type FormData = Text\nslot f : FormData = "x"`],
+];
+
+describe("the reserved names", () => {
+  it("are standard library entries, and the rows below name exactly them", () => {
+    const stdlib = STDLIB_TYPES.map((t) => t.name);
+    for (const name of RESERVED_TYPE_NAMES) expect(stdlib).toContain(name);
+    expect([...RESERVED_TYPE_NAMES].sort()).toEqual([...RESERVED].sort());
+  });
+
+  it("and the declarable rows cover every other entry", () => {
+    // A new standard-library type has to be put in one group or the other.
+    const declarable = DECLARABLE.map(([name]) => name);
+    expect(STDLIB_TYPES.map((t) => t.name).sort()).toEqual([...RESERVED, ...declarable].sort());
+    for (const name of declarable) expect(isReservedTypeName(name)).toBe(false);
+  });
+});
+
+describe("a program declaring a type under a reserved name", () => {
+  for (const name of RESERVED) {
+    it(`is E0231 at the declaration of "${name}"`, () => {
+      const found = check(parse(lex(`slot n : Int = 0\ntype ${name} = {v: Int}\n${TAIL}`)));
       expect(found).toEqual([
         {
           code: "E0231",
           kind: "reserved-type-name",
-          message: `Type "${t.name}" collides with the standard library's ${t.name}; uses of it never see this type`,
+          message: `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`,
           pos: { line: 2, col: 1 },
         },
       ]);
@@ -40,10 +76,13 @@ describe("a program declaring a type under a standard library name", () => {
   });
 
   it("reports a declaration identical to the standard library's too", () => {
-    // `type Email = nominal Text where email` is the definition the standard
-    // library already gives the name. Declaring it again adds nothing, and
-    // would leave the name free to drift from what the standard library means.
-    expect(codes(`type Email = nominal Text where email\n${TAIL}`)).toEqual(["E0231"]);
+    // `type HttpStatus = nominal Int where between(0, 599)` is the definition
+    // the standard library already gives the name. Declaring it again adds
+    // nothing, and would leave the name free to drift from what the runtime
+    // hands over.
+    expect(codes(`type HttpStatus = nominal Int where between(0, 599)\n${TAIL}`)).toEqual([
+      "E0231",
+    ]);
   });
 
   it("reports each declaration of the name", () => {
@@ -55,7 +94,15 @@ describe("a program declaring a type under a standard library name", () => {
   });
 });
 
-describe("a use of the name keeps the standard library's type", () => {
+describe("a program declaring a type under a declarable name", () => {
+  for (const [name, decls] of DECLARABLE) {
+    it(`is accepted for "${name}", and the uses mean the program's type`, () => {
+      expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+    });
+  }
+});
+
+describe("a use of a reserved name keeps the standard library's type", () => {
   it("checks a slot against the standard library's Route, not the declared Text", () => {
     expect(diagnostics(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([
       `E0231 1:1 Type "Route" collides with the standard library's Route; uses of it never see this type`,
@@ -104,8 +151,9 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 });
 
 describe("the standard library names everywhere else", () => {
-  // Only `type <name> = …` is refused. Each of these writes one of the names
-  // in a position that reads it, or declares something that is not a type.
+  // Only `type <reserved name> = …` is refused. Each of these writes one of
+  // the names in a position that reads it, or declares something that is not
+  // a type.
   for (const t of STDLIB_TYPES) {
     const n = t.name;
     const lower = `${n.charAt(0).toLowerCase()}${n.slice(1)}`;

@@ -60,14 +60,10 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
  * program can never reach a definition under that name. Its fields live in the
  * checker's `PRIM_FIELDS` instead.
  *
- * No program may declare a type under one of these names (E0231), and every
- * use of one means the entry here. Most name a value the runtime or the
- * standard library builds or reads — a panic, the route, a failed request and
- * its status, a `Duration.s(5)`, the `FileV` a multipart body sends as a file
- * — so a program's own definition would be what the checker reasoned about
- * while the runtime kept to this one. `Url`, `Email`, `Uuid` and `FormData`
- * are only spellings of a type a program builds itself; they are reserved with
- * the rest so that one rule covers the whole table.
+ * Seeded before the program's own definitions. A program may declare a type
+ * under one of these names unless it is reserved ({@link isReservedTypeName});
+ * the program's definition then replaces the entry for that program, in the
+ * checker and in codegen alike.
  */
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
@@ -130,15 +126,39 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   }),
 ];
 
-const STDLIB_TYPE_NAMES: ReadonlySet<string> = new Set(STDLIB_TYPES.map((t) => t.name));
+/**
+ * The entries of {@link STDLIB_TYPES} whose values the runtime or the standard
+ * library builds or reads. A program's own definition under one of these names
+ * would be what the checker reasoned about while the runtime kept to the entry
+ * above, so no program may declare one (E0231) and every use of the name means
+ * the entry. Each is listed with what supplies or reads its values.
+ *
+ * The other entries — `Url`, `Email`, `Uuid`, `FormData` — name types only a
+ * program builds values of, and a program may declare its own.
+ */
+export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+  // The record an `error-boundary` fallback's `$1` and an `app.error`
+  // reducer's `$event` are bound to.
+  "PanicInfo",
+  // The type of the `route` slot the runtime maintains.
+  "Route",
+  // The record a failed `http.*` effect delivers.
+  "HttpError",
+  // That record's `status`; the `HttpError` entry names it.
+  "HttpStatus",
+  // What `Duration.ms(…)` and its siblings build, and the type of the toast
+  // effect's `duration`.
+  "Duration",
+  // The union whose `FileV` a `Multipart` body sends as a file.
+  "FormValue",
+]);
 
 /**
- * Whether `name` is one of {@link STDLIB_TYPES} — a name a program cannot
- * declare a type under (E0231), and whose definition the checker's table
- * keeps whatever the program declares.
+ * Whether a program is refused a `type` declared under `name` (E0231): one of
+ * {@link RESERVED_TYPE_NAMES}.
  */
-export function isStdlibTypeName(name: string): boolean {
-  return STDLIB_TYPE_NAMES.has(name);
+export function isReservedTypeName(name: string): boolean {
+  return RESERVED_TYPE_NAMES.has(name);
 }
 
 /**

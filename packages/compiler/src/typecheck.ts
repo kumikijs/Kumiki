@@ -82,7 +82,7 @@ import {
   receiversOf,
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
-import { isPrimTypeName, isStdlibTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import { isPrimTypeName, isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -292,9 +292,10 @@ function checkAll(
 ): KumikiError[] {
   const errors: KumikiError[] = [];
   const sym: SymbolTable = {
-    // A standard-library entry is never replaced: a program's `type Route = …`
-    // is E0231 (`checkTypeDef`), and every use of `Route` means the route the
-    // runtime builds.
+    // Seeded before the program's own definitions. A program's `type Email = …`
+    // replaces the standard-library entry; a reserved name keeps it — the
+    // program's `type Route = …` is E0231 (`checkTypeDef`), and every use of
+    // `Route` means the route the runtime builds.
     types: new Map(STDLIB_TYPES.map((t) => [t.name, t])),
     slots: new Map(),
     reducers: new Map(),
@@ -312,7 +313,7 @@ function checkAll(
   for (const def of program.defs) {
     switch (def.kind) {
       case "TypeDef":
-        if (!isStdlibTypeName(def.name)) sym.types.set(def.name, def);
+        if (!isReservedTypeName(def.name)) sym.types.set(def.name, def);
         break;
       case "SlotDef":
         sym.slots.set(def.name, def);
@@ -460,12 +461,14 @@ function checkCycles(
     const target = aliasTarget(def, typeOf);
     // `sym.types` holds the standard library's definitions (`STDLIB_TYPES`)
     // beside the program's, so a stdlib *domain* type — `Route`, `HttpError` —
-    // is followed like any other definition. A program's own declaration under
-    // one of those names is E0231 and never enters the table, so it closes no
-    // loop: the name it writes is the stdlib's. What is not in the table is a
-    // generic constructor (`List`, `Option`, `Map`), which has no body to come
-    // back along, and a name that denotes nothing at all, which is E0117's to
-    // report rather than a second name for one mistake.
+    // is followed like any other definition. A program that declares a
+    // declarable one (`type Email = Email`) has replaced the entry and closes a
+    // loop through its own. A reserved one keeps the entry — the declaration is
+    // E0231 — so `type Route = Route` names the stdlib record and closes none.
+    // What is not in the table is a generic constructor (`List`, `Option`,
+    // `Map`), which has no body to come back along, and a name that denotes
+    // nothing at all, which is E0117's to report rather than a second name for
+    // one mistake.
     return target && sym.types.has(target.to) ? [target] : [];
   };
   for (const cycle of findCycles(
@@ -7272,10 +7275,11 @@ function checkTypeArity(
 const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
 function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
-  // A standard-library type name means the standard library's type in every
-  // program (`STDLIB_TYPES`). The symbol table kept that entry, so this
-  // declaration is reported; its body is checked for what it says on its own.
-  if (isStdlibTypeName(def.name)) {
+  // A reserved standard-library type name means the standard library's type in
+  // every program (`RESERVED_TYPE_NAMES`). The symbol table kept that entry, so
+  // this declaration is reported; its body is checked for what it says on its
+  // own.
+  if (isReservedTypeName(def.name)) {
     errors.push({
       code: "E0231",
       kind: "reserved-type-name",

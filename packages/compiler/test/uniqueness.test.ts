@@ -77,10 +77,12 @@ ${APP}${TAIL}`;
     expect(codes(`slot leaf : Int = 1\ntile leaf = column(text("l"))\n${APP}${TAIL}`)).toEqual([]);
   });
 
-  it("leaves a type named like a standard library one to E0231", () => {
+  it("leaves a program's own definition of a standard library name alone", () => {
     // Seeded standard-library types live in the same table the checker reads,
-    // so a uniqueness check written over that table would report this as a
-    // second declaration. The name is reserved, which is E0231's to say.
+    // so a uniqueness check written over that table would report these as
+    // second declarations. `Email` is the program's to declare; `Route` is
+    // reserved, which is E0231's to say and not E0007's.
+    expect(codes(`type Email = Text\nslot r : Email = "x"\n${APP}${TAIL}`)).toEqual([]);
     expect(codes(`type Route = {path: Text}\n${APP}${TAIL}`)).toEqual(["E0231"]);
   });
 

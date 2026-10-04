@@ -87,9 +87,9 @@ describe("the built-in type constructors", () => {
 });
 
 describe("a stdlib type named in a program", () => {
-  // A program cannot declare one of these names itself — that is E0231, in
-  // `reserved-type-name.test.ts` — so a use always means the entry here.
-  it("is checked against the built-in definition", () => {
+  // Which names a program may declare itself, and what a use means when it
+  // has, is `reserved-type-name.test.ts`.
+  it("is checked against the built-in definition when the program declares nothing", () => {
     expect(codes(`slot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
   });
 });
