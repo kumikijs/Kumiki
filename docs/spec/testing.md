@@ -363,6 +363,8 @@ kumiki test --watch            # re-run on change
 kumiki test --coverage         # coverage (per reducer/effect/tile)
 ```
 
+Every run reports the `test` definitions of the file it was given and nothing else — a `--watch` re-run and each call of the MCP `kumiki_test` too, though they run one file after another in a single process. A file with no `test` reports none: `kumiki test` prints `no tests found`, and `kumiki_test` returns an empty `results`.
+
 ### 8.7.1 Output
 
 ```

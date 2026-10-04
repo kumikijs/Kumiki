@@ -44,7 +44,11 @@ import { STDLIB_TYPES } from "./stdlib-types.ts";
 
 export type CodegenOptions = {
   runtimeSpecifier: string;
-  /** Emit the in-language `test` definitions (`__kumikiTests`). Off for production builds. */
+  /**
+   * Emit the in-language `test` definitions and publish them, with their static
+   * coverage, as `__kumikiTests` / `__kumikiCoverage` — an empty list for a
+   * program without tests. Off for production builds.
+   */
   includeTests?: boolean;
   /**
    * Emit `export default App;` instead of auto-mounting to `#root`. Use when the
@@ -315,13 +319,18 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // `expect` is lowered through the full tile pipeline, so it can emit `_h(...)`
   // — and `_h` is this scope's handler memo. Emitting the tests at module scope
   // put those calls where the memo does not exist.
-  if (opts.includeTests && tests.length > 0) {
-    lines.push("const _tilesById = {");
-    for (const tile of tiles) {
-      lines.push(`  ${JSON.stringify(tile.name)}: (${jsBinding("$1")}) => ${genTile(tile, ctx)},`);
+  if (opts.includeTests) {
+    // Only a test body reads `_tilesById`, so a program without tests has none.
+    if (tests.length > 0) {
+      lines.push("const _tilesById = {");
+      for (const tile of tiles) {
+        lines.push(
+          `  ${JSON.stringify(tile.name)}: (${jsBinding("$1")}) => ${genTile(tile, ctx)},`,
+        );
+      }
+      lines.push("};");
+      lines.push("App._tilesById = _tilesById;");
     }
-    lines.push("};");
-    lines.push("App._tilesById = _tilesById;");
     lines.push("App._tests = [");
     for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
@@ -350,8 +359,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
 
   // In-language tests (`kumiki test`) run against the default instance — the
   // bodies are built inside `createApp()` above, so this only publishes the
-  // default instance's copy.
-  if (opts.includeTests && tests.length > 0) {
+  // default instance's copy. Published whenever tests are included, an empty
+  // list too: a runner that loads one program after another in a process
+  // (`kumiki test --watch`, the MCP server) reads these globals, and a module
+  // that left them alone would hand it the previous program's tests.
+  if (opts.includeTests) {
     lines.push("");
     lines.push("globalThis.__kumikiTests = App._tests;");
     lines.push("globalThis.__kumikiCoverage = App._coverage;");

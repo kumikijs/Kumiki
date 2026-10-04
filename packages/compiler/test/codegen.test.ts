@@ -39,6 +39,50 @@ describe("codegen", () => {
     expect(result.js).toContain("globalThis.__kumikiApp = App;");
   });
 
+  describe("the test globals", () => {
+    const NO_TESTS = `
+      slot n : Int = 0
+      reducer inc on=ui.click(B) do= n := n + 1
+      tile B = button(text="+", onClick=inc)
+      tile App = column(B, text(n.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    type Host = { __kumikiTests?: unknown; __kumikiCoverage?: unknown };
+
+    // A runner loading one program after another reads whatever the globals
+    // hold, so a module with tests included sets them even when it has none.
+    it("are set to the program's own, empty, when tests are included", async () => {
+      const result = compile(NO_TESTS, {
+        runtimeSpecifier: "@kumikijs/runtime",
+        exportApp: true,
+        includeTests: true,
+      });
+      if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
+      const host = globalThis as Host;
+      host.__kumikiTests = ["from an earlier program"];
+      host.__kumikiCoverage = "from an earlier program";
+      try {
+        const mod = await importGenerated(result.js);
+        expect(host.__kumikiTests).toEqual([]);
+        expect(host.__kumikiTests).toBe((mod.default as { _tests?: unknown })._tests);
+        expect(host.__kumikiCoverage).toEqual({
+          reducers: { total: ["inc"], used: [] },
+          tiles: { total: ["B", "App"], used: [] },
+          effects: { total: [], used: [] },
+        });
+      } finally {
+        delete host.__kumikiTests;
+        delete host.__kumikiCoverage;
+      }
+    });
+
+    it("are not emitted when tests are not included", () => {
+      const result = compile(NO_TESTS, { runtimeSpecifier: "./runtime.js" });
+      if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
+      expect(result.js).not.toMatch(/__kumikiTests|__kumikiCoverage|App\._tests|App\._coverage/);
+    });
+  });
+
   it("compiles a program that uses .concat (issue #5 regression)", () => {
     const src = `
       slot xs : List(Int) = [1, 2, 3]

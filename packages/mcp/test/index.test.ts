@@ -645,6 +645,27 @@ describe("kumiki_test", () => {
       expect(parsed.results[0]?.name).toBe("inc-works");
     });
   });
+
+  // One server runs every call in one process, so the file run before must not
+  // show through in the report of a file that has no `test`.
+  it("reports no tests for a file without any, after a file with some", {
+    timeout: 30000,
+  }, async () => {
+    await withClient(async (client) => {
+      const first = JSON.parse(
+        await callTool(client, "kumiki_test", { path: FIX_COUNTER_TESTS }),
+      ) as { total: number };
+      expect(first.total).toBe(2);
+      const out = await callTool(client, "kumiki_test", { path: COUNTER });
+      expect(JSON.parse(out)).toEqual({
+        total: 0,
+        passed: 0,
+        failed: 0,
+        filter: null,
+        results: [],
+      });
+    });
+  });
 });
 
 describe("kumiki_episode_list / kumiki_episode_tail", () => {

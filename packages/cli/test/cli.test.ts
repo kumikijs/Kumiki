@@ -1,9 +1,10 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runTests } from "../src/smoke.ts";
 import { CLI_ARGV } from "./helpers/cli.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -915,6 +916,118 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toMatch(/reducers {2}4\/4/);
     expect(out).toMatch(/tiles {5}2\/5/);
     expect(out).toContain("uncovered:");
+  });
+
+  // `--watch` and the MCP server's `kumiki_test` run one file after another in
+  // a single process. Each run reports the file it was given and nothing that
+  // an earlier run loaded: a file with no `test` has no results to report.
+  describe("one file after another in one process", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "kumiki-test-reload-"));
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** One test, failing: `inc` makes 1 where it expects 2. */
+    const WITH_TEST = `slot count : Int = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), IncBtn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test inc-increments =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 2}, effects: []}
+`;
+    /** The same program without its test. */
+    const NO_TEST = WITH_TEST.slice(0, WITH_TEST.indexOf("\ntest "));
+
+    it("reports neither the tests nor the coverage of the file run before", async () => {
+      const a = join(dir, "a.kumiki");
+      const b = join(dir, "b.kumiki");
+      writeFileSync(a, WITH_TEST);
+      writeFileSync(b, NO_TEST);
+
+      const first = await runTests(a, undefined, [], { coverage: true });
+      // The first file does leave a test and its coverage behind.
+      expect(first.results.map((r) => `${r.name}:${r.pass}`)).toEqual(["inc-increments:false"]);
+      expect(first.coverage?.reducers.used).toEqual(["inc"]);
+
+      const second = await runTests(b, undefined, [], { coverage: true });
+      expect(second.results.map((r) => r.name)).toEqual([]);
+      expect({ total: second.total, failed: second.failed }).toEqual({ total: 0, failed: 0 });
+      // The second file's own definitions, none of them exercised.
+      expect(second.coverage).toEqual({
+        reducers: { total: ["inc"], used: [] },
+        tiles: { total: ["IncBtn", "App"], used: [] },
+        effects: { total: [], used: [] },
+      });
+    });
+
+    it("prints `no tests found` when --watch re-runs a file whose last test was deleted", {
+      timeout: 60000,
+    }, async () => {
+      const file = join(dir, "w.kumiki");
+      writeFileSync(file, WITH_TEST);
+      const child = spawn(process.execPath, [...CLI_ARGV, "test", file, "--watch"], {
+        stdio: "pipe",
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8").on("data", (s: string) => {
+        stdout += s;
+      });
+      child.stderr.setEncoding("utf8").on("data", (s: string) => {
+        stderr += s;
+      });
+      // Settles once `done` holds for what the watcher has printed so far.
+      const until = (done: () => boolean): Promise<void> =>
+        new Promise((settle, fail) => {
+          const check = (): void => {
+            if (!done()) return;
+            child.off("exit", exited);
+            child.stdout.off("data", check);
+            child.stderr.off("data", check);
+            settle();
+          };
+          const exited = (): void => fail(new Error(`watcher exited:\n${stdout}\n${stderr}`));
+          child.on("exit", exited);
+          child.stdout.on("data", check);
+          child.stderr.on("data", check);
+          check();
+        });
+      const CHANGED = "— change detected —";
+      const rerun = (): string => stdout.slice(stdout.indexOf(CHANGED));
+      try {
+        await until(() => stdout.includes("watching for changes"));
+        expect(stdout).toContain("FAIL  inc-increments");
+
+        writeFileSync(file, NO_TEST);
+        // The watcher is installed just after it says it is watching; a write
+        // that lands first goes unseen, so repeat it until one is picked up.
+        const again = setInterval(() => writeFileSync(file, NO_TEST), 1000);
+        try {
+          await until(() => stdout.includes(CHANGED));
+        } finally {
+          clearInterval(again);
+        }
+        // The re-run ends in one of its verdicts: none, a summary, or a throw.
+        await until(
+          () =>
+            /no tests found|\d+\/\d+ passed/.test(rerun()) || stderr.includes("test run failed"),
+        );
+        expect(rerun()).toContain("no tests found");
+        expect(rerun()).not.toContain("inc-increments");
+      } finally {
+        child.kill();
+      }
+    });
   });
 
   // A program that does not compile stops `test` before any test runs, so the
