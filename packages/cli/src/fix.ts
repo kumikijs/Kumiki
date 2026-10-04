@@ -1,7 +1,7 @@
 // kumiki fix — propose auto-patches for repairable typecheck errors.
 
 import { readFileSync } from "node:fs";
-import type { KumikiError, Pos, TestDef, Token } from "@kumikijs/compiler";
+import type { AppDef, KumikiError, Pos, Program, TestDef, Token } from "@kumikijs/compiler";
 import {
   BUILTIN_EFFECT_CAPS,
   calleeCandidates,
@@ -10,6 +10,7 @@ import {
   LexError,
   lex,
   nearestName,
+  ParseError,
   parse,
   typeCandidates,
   variantTagsOf,
@@ -285,32 +286,99 @@ function suggestName(store: Store, missing: string): string | null {
 }
 
 /**
- * Append a capability name to an app's `caps = [...]` array, constrained to
- * the given line range so the search cannot accidentally hit a same-name field
- * elsewhere in the source. Returns:
- *   - a rewritten source when the caller's cap was added
- *   - `null` when no `caps = [...]` field exists in the range OR the cap was
- *     already present (no-op — nothing to patch)
- * A null return means "no patch was made"; the caller must not present the
- * patch as `applied`. The regex tolerates arbitrary whitespace around `caps`
- * / `=` and either empty (`[]`) or populated (`[a, b]`) arrays.
+ * Add `entry` to the `app`'s own `<field> = [...]` or `<field> = {...}` clause
+ * in `text`, unless `present` says the clause already has what it adds.
+ *
+ * The entry goes just past the last token of the clause's last entry, or just
+ * past the opening bracket when it has none, so a comment or a line break after
+ * the last entry stays where it was. That place is read off the tokens: a text
+ * pattern for `routes = {` also matches a tile's `sub-routes = {`, and only the
+ * lexer knows where a `#` comment starts. The app is the one the parser found,
+ * and its clauses end where the parser ended it, at the next definition. A
+ * clause written twice is extended at its last occurrence, the one the parser
+ * keeps.
+ *
+ * `text` is the text being patched, not the source the plan was made from, so
+ * the clause is found wherever an earlier patch moved it. `present` is asked
+ * about that text's parse. `null` when there is nothing to add: the text does
+ * not lex or parse, it has no app or the app has no such clause, or `present`
+ * says the entry is already there.
  */
-function appendAppCap(text: string, cap: string, appRange: [number, number] | null): string | null {
-  const lines = text.split(/\r?\n/);
-  const start = appRange ? appRange[0] - 1 : 0;
-  const end = appRange ? Math.min(appRange[1], lines.length) : lines.length;
-  const scoped = lines.slice(start, end).join("\n");
-  const re = /(caps\s*=\s*\[)([^\]]*)(\])/;
-  const match = re.exec(scoped);
-  if (!match) return null;
-  const items = match[2]!
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  if (items.includes(cap)) return null;
-  items.push(cap);
-  const patchedScoped = `${scoped.slice(0, match.index)}${match[1]}${items.join(", ")}${match[3]}${scoped.slice(match.index + match[0].length)}`;
-  return [...lines.slice(0, start), ...patchedScoped.split("\n"), ...lines.slice(end)].join("\n");
+function appendToAppClause(
+  text: string,
+  field: "caps" | "routes",
+  entry: string,
+  present: (app: AppDef) => boolean,
+): string | null {
+  let tokens: Token[];
+  let program: Program;
+  try {
+    tokens = lex(text);
+    program = parse(tokens);
+  } catch (e) {
+    if (e instanceof LexError || e instanceof ParseError) return null;
+    throw e;
+  }
+  const index = program.defs.findIndex((d) => d.kind === "AppDef");
+  const app = program.defs[index];
+  if (app?.kind !== "AppDef" || present(app)) return null;
+  const tokenAt = (p: Pos): number =>
+    tokens.findIndex((t) => t.pos.line === p.line && t.pos.col === p.col);
+  const next = program.defs[index + 1];
+  const from = tokenAt(app.pos);
+  const to = next ? tokenAt(next.pos) : tokens.length - 1;
+  if (from === -1 || to === -1) return null;
+  // The app's clauses are `name = value`, so at bracket depth 0 a name followed
+  // by `=` is a clause — and for these two fields the value is a bracket.
+  let open = -1;
+  let depth = 0;
+  for (let i = from; i < to; i++) {
+    const t = tokens[i]!;
+    if (t.kind === "op" && OPENING.has(t.value)) depth += 1;
+    else if (t.kind === "op" && CLOSING.has(t.value)) depth -= 1;
+    else if (depth === 0 && t.kind === "ident" && t.value === field) {
+      const eq = tokens[i + 1];
+      if (eq?.kind === "op" && eq.value === "=") open = i + 2;
+    }
+  }
+  if (open === -1) return null;
+  // The bracket that closes it. The text parsed, so there is one.
+  let close = open + 1;
+  for (depth = 0; close < tokens.length; close++) {
+    const t = tokens[close]!;
+    if (t.kind !== "op") continue;
+    if (OPENING.has(t.value)) depth += 1;
+    else if (CLOSING.has(t.value)) {
+      if (depth === 0) break;
+      depth -= 1;
+    }
+  }
+  const last = tokens[close - 1]!;
+  const line = lineSpan(text, last.pos.line);
+  if (last.kind === "eof" || !line) return null;
+  const start = line.start + last.pos.col - 1;
+  const empty = close - 1 === open;
+  const at = start + (empty ? 1 : tokenLength(text, last, start));
+  return `${text.slice(0, at)}${empty ? entry : `, ${entry}`}${text.slice(at)}`;
+}
+
+/**
+ * Add a capability to the app's `caps = [...]`. `null` when it is already
+ * listed or there is no such clause — no patch, so the caller must not
+ * present one as applied.
+ */
+function appendAppCap(text: string, cap: string): string | null {
+  return appendToAppClause(text, "caps", cap, (app) => app.caps.includes(cap));
+}
+
+/**
+ * Add `"/404" -> NotFound` to the app's `routes = {...}`. `null` when the
+ * routes already have a `/404` entry or there is no such clause.
+ */
+function append404Route(text: string): string | null {
+  return appendToAppClause(text, "routes", `"/404" -> NotFound`, (app) =>
+    app.routes.some((r) => r.path === "/404"),
+  );
 }
 
 /**
@@ -621,13 +689,11 @@ export function planFixesExplained(
         continue;
       }
       const cap = capMatch[1]!;
-      const appEntry = store.defs.find((e) => e.def.kind === "AppDef");
-      if (!appEntry) {
+      if (!store.defs.some((e) => e.def.kind === "AppDef")) {
         skip(err.code, "e0301-no-app-def", err.message);
         continue;
       }
-      const appRange: [number, number] = [appEntry.range.startLine, appEntry.range.endLine];
-      const dryRun = appendAppCap(store.source, cap, appRange);
+      const dryRun = appendAppCap(store.source, cap);
       if (dryRun === null) {
         skip(err.code, "e0301-cap-already-present-or-no-caps-field", err.message);
         continue;
@@ -636,26 +702,24 @@ export function planFixesExplained(
         code: err.code,
         message: err.message,
         description: `add capability "${cap}" to app.caps`,
-        apply: (text: string) => appendAppCap(text, cap, appRange) ?? text,
+        apply: (text: string) => appendAppCap(text, cap) ?? text,
       });
     }
     if (err.code === "E0001") {
+      // A program that already has a `NotFound` tile gets a route to it. A
+      // second `tile NotFound` would be E0007, and the gate refuses the whole
+      // repair over it.
+      const defined = store.byQName.has("tile.NotFound");
       addElsewhere({
         code: err.code,
         message: err.message,
-        description: `add "/404" -> NotFound to app.routes (you must define a NotFound tile)`,
+        description: defined
+          ? `add "/404" -> NotFound to app.routes`
+          : `add "/404" -> NotFound to app.routes, and define tile NotFound`,
         apply: (text: string) => {
-          // Append a NotFound tile + extend routes
-          const need = `\ntile NotFound = page(heading("404"))\n`;
-          // Inject "/404" -> NotFound before the closing brace of `routes = { ... }`.
-          const re = /(routes\s*=\s*\{)([^}]*)(\})/;
-          const replaced = text.replace(re, (_m, open: string, body: string, close: string) => {
-            if (body.includes('"/404"')) return `${open}${body}${close}`;
-            const trimmed = body.trimEnd();
-            const sep = trimmed.endsWith(",") || trimmed.endsWith("{") ? "" : ",";
-            return `${open}${body}${sep} "/404" -> NotFound ${close}`;
-          });
-          return need + replaced;
+          const routed = append404Route(text);
+          if (routed === null) return text;
+          return defined ? routed : `\ntile NotFound = page(heading("404"))\n${routed}`;
         },
       });
     }
