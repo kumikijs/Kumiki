@@ -165,6 +165,49 @@ describe("a chain of definitions that each apply the one below repeatedly", () =
       ),
     ).toEqual(["E0803"]);
   });
+
+  // The application is checked for refinements its arguments put over a base
+  // they cannot test, and that walk entered each application in a body with
+  // its arguments substituted: `D14`'s body holds three `D13`s, so it walked
+  // `D0` 3^14 times. Seconds here before, and a few levels more is minutes.
+  it("checks an application at fourteen levels that each apply the one below three times", () => {
+    expect(diags(`${chain(14, 3, "T")}\nslot a : D14(Text) = "ku"`, "a := 5")).toEqual([
+      "E0201 Expected D14(Text) but got Int",
+    ]);
+  });
+
+  // The walk reported the refinement once per path to it, so the count of
+  // copies is the count of walks: 3^12 here.
+  it("reports a refinement over the wrong base once, however many paths reach it", () => {
+    expect(
+      diags(`${chain(12, 3, "T where nonempty")}\nslot a : D12(Int) = 1`, "a := 2").filter((d) =>
+        d.startsWith("E0804"),
+      ),
+    ).toEqual([
+      'E0804 Refinement "nonempty" tests text but D12(Int) applies it over Int, so no value satisfies it',
+    ]);
+  });
+
+  // Each application's argument is taken through the generics that hand it
+  // straight back before the walk goes on, and the message still names the
+  // base as the application gives it: a container keeps the argument as written.
+  it("names the base a deep chain applies a refinement over, as before", () => {
+    const LIST = `type L(T) = List(T)\ntype Q(T) = T where nonempty\n${chain(3, 3, "Q(T)")}`;
+    expect(
+      diags(`${LIST}\nslot a : D3(L(D3(Int))) = []`, "a := []").filter((d) =>
+        d.startsWith("E0804"),
+      ),
+    ).toEqual([
+      'E0804 Refinement "nonempty" tests text but D3(L(D3(Int))) applies it over List(D3(Int)), so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D3(Int) applies it over Int, so no value satisfies it',
+    ]);
+    const UNION = `type U(T) = A(T) | B\n${chain(3, 3, "T where one-of(1, 2)")}`;
+    expect(
+      diags(`${UNION}\nslot a : D3(U(Text)) = B`, "a := B").filter((d) => d.startsWith("E0804")),
+    ).toEqual([
+      'E0804 Refinement "one-of" tests text or a number but D3(U(Text)) applies it over A(Text) | B, so no value satisfies it',
+    ]);
+  });
 });
 
 describe("a generic nominal applied inside itself", () => {

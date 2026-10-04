@@ -2,6 +2,7 @@ import {
   assignable,
   constructorArity,
   elementType,
+  forwardedHead,
   isKnownTypeName,
   isOpaque,
   nominallyComparable,
@@ -7044,36 +7045,76 @@ function checkApplication(
   const opaque = opaqueParams(typeParams, app.pos);
   const args = app.args.map((a) => substituteType(a, opaque));
   const unapplied = def.params.map(() => unknownType(app.pos));
-  for (const message of appliedBaseProblems(app.name, args, unapplied, typeToString(app), sym)) {
+  const walk: AppliedWalk = { shown: typeToString(app), sym, walked: new Set(), out: new Set() };
+  appliedBaseProblems(app.name, args, unapplied, walk);
+  for (const message of walk.out) {
     errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
   }
 }
 
 /**
- * The messages for {@link checkApplication}: `name` applied to `args`, set
- * against `judged`, the same application as the definitions around it were
- * already checked with — every parameter still opaque there, opaque. A
- * refinement whose base already had a problem under `judged` was reported
- * where that definition was checked, and one whose base is no different is
- * not the application's to report; only a problem the arguments bring is.
+ * One {@link checkApplication}: how the application reads in a message, the
+ * applications already walked, and the messages found so far.
+ *
+ * A message is reported once however many paths reach it: every copy names
+ * the same application at the same place, so a second one says nothing the
+ * first did not. And an application is walked once per set of arguments,
+ * which is what keeps a chain of definitions that each apply the one below
+ * several times linear: once each argument has been taken through the
+ * generics that hand it straight back, the three `D13`s in
+ * `type D14(T) = D13(D13(D13(T)))` are one application of `D13`.
+ */
+type AppliedWalk = {
+  readonly shown: string;
+  readonly sym: SymbolTable;
+  readonly walked: Set<string>;
+  readonly out: Set<string>;
+};
+
+/**
+ * The messages for {@link checkApplication}, added to `app.out`: `name`
+ * applied to `args`, set against `judged`, the same application as the
+ * definitions around it were already checked with — every parameter still
+ * opaque there, opaque. A refinement whose base already had a problem under
+ * `judged` was reported where that definition was checked, and one whose base
+ * is no different is not the application's to report; only a problem the
+ * arguments bring is.
+ *
+ * Each argument is first taken through the generics at its head that hand a
+ * parameter straight back (`assignable.ts#forwardedHead`). An argument is
+ * only ever substituted into a body and normalised, so this changes no base
+ * and no message; it is what lets two paths that hand down the same argument
+ * meet as one application.
  */
 function appliedBaseProblems(
   name: string,
-  args: TypeExpr[],
-  judged: TypeExpr[],
-  shown: string,
-  sym: SymbolTable,
+  writtenArgs: readonly TypeExpr[],
+  writtenJudged: readonly TypeExpr[],
+  app: AppliedWalk,
   seen: ReadonlySet<string> = new Set(),
-): string[] {
+): void {
+  const { sym } = app;
   const def = sym.types.get(name);
   // A mismatched arity is E0210's, and a parameter with no argument would be
   // read as whatever top-level type shares its name. Re-entering a name is a
   // chain E0009 reports, and the walk has to end on the way there.
-  if (!def || seen.has(name) || def.params.length !== args.length) return [];
+  if (!def || seen.has(name) || def.params.length !== writtenArgs.length) return;
+  const args = writtenArgs.map((a) => forwardedHead(a, sym));
+  const judged = writtenJudged.map((a) => forwardedHead(a, sym));
+  // Keyed on how the arguments read: a base is judged on its normal form,
+  // which drops a `where` as `typeToString` does, and a message shows the
+  // base as `typeToString` shows it.
+  const key = JSON.stringify([
+    name,
+    [...seen].sort(),
+    args.map(typeToString),
+    judged.map(typeToString),
+  ]);
+  if (app.walked.has(key)) return;
+  app.walked.add(key);
   const applied = paramSubstitution(def.params, args);
   const before = paramSubstitution(def.params, judged);
   const inside = new Set([...seen, name]);
-  const out: string[] = [];
   const walk = (t: TypeExpr): void => {
     switch (t.kind) {
       case "TypePrim":
@@ -7082,7 +7123,7 @@ function appliedBaseProblems(
       case "TypeApp": {
         const nested = t.args.map((a) => substituteType(a, applied));
         const nestedBefore = t.args.map((a) => substituteType(a, before));
-        out.push(...appliedBaseProblems(t.name, nested, nestedBefore, shown, sym, inside));
+        appliedBaseProblems(t.name, nested, nestedBefore, app, inside);
         for (const a of t.args) walk(a);
         return;
       }
@@ -7100,9 +7141,9 @@ function appliedBaseProblems(
           const was = judgedBase(substituteType(t.inner, before), sym);
           const now = judgedBase(substituteType(t.inner, applied), sym);
           if (now && !(was && refinementBaseProblem(r, was))) {
-            const over = `${shown} applies it over ${typeToString(now)}`;
+            const over = `${app.shown} applies it over ${typeToString(now)}`;
             const message = refinementBaseProblem(r, now, over);
-            if (message) out.push(message);
+            if (message) app.out.add(message);
           }
         }
         walk(t.inner);
@@ -7113,7 +7154,6 @@ function appliedBaseProblems(
     }
   };
   walk(def.body);
-  return out;
 }
 
 /**

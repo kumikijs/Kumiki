@@ -105,7 +105,7 @@ type Forwarded = Readonly<Record<NominalReading, (def: TypeDef) => number | null
  */
 const forwardedByTable = new WeakMap<TypeEnv["types"], Forwarded>();
 
-function newWalk(env: TypeEnv): Walk {
+function forwardedIn(env: TypeEnv): Forwarded {
   let forwarded = forwardedByTable.get(env.types);
   if (!forwarded) {
     const lookup = (name: string) => env.types.get(name);
@@ -115,7 +115,33 @@ function newWalk(env: TypeEnv): Walk {
     };
     forwardedByTable.set(env.types, forwarded);
   }
-  return { env, origins: new WeakMap(), forwarded };
+  return forwarded;
+}
+
+function newWalk(env: TypeEnv): Walk {
+  return { env, origins: new WeakMap(), forwarded: forwardedIn(env) };
+}
+
+/**
+ * `t` with each generic at its head that hands a parameter straight back
+ * taken in one step, as `unaliasType` takes it: `D0(D0(Text))` with
+ * `type D0(T) = T` is `Text`. Only the head moves — an argument written
+ * inside a container or a record stays as written — so `unaliasType` of the
+ * result is `unaliasType` of `t`, and so is anything that substitutes it
+ * for a parameter and normalises: the head is the first thing normalisation
+ * would have done with it.
+ */
+export function forwardedHead(t: TypeExpr, env: TypeEnv): TypeExpr {
+  const forwarded = forwardedIn(env);
+  let cur = t;
+  for (;;) {
+    if (cur.kind !== "TypeApp") return cur;
+    const def = env.types.get(cur.name);
+    if (!def) return cur;
+    const arg = forwardedArg(cur, def, forwarded.through);
+    if (!arg) return cur;
+    cur = arg;
+  }
 }
 
 /**
@@ -163,11 +189,10 @@ function applyDef(
 function forwardedArg(
   t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
   def: TypeDef,
-  walk: Walk,
-  nominal: NominalReading,
+  forwarded: (def: TypeDef) => number | null,
 ): TypeExpr | null {
   if (t.kind !== "TypeApp") return null;
-  const i = walk.forwarded[nominal](def);
+  const i = forwarded(def);
   return i === null ? null : (t.args[i] ?? null);
 }
 
@@ -187,7 +212,7 @@ function unaliasFrom(t: TypeExpr | null, outer: ReadonlySet<string>, walk: Walk)
     // Int` on the literal, blaming the value for a type with no body. E0009 is
     // what names that.
     if (seen.has(t.name)) return null;
-    const arg = forwardedArg(t, def, walk, "through");
+    const arg = forwardedArg(t, def, walk.forwarded.through);
     if (arg) return unaliasFrom(arg, seen, walk);
     return unaliasFrom(applyDef(t, def, seen, walk.origins), new Set([...seen, t.name]), walk);
   }
@@ -239,7 +264,7 @@ function nominalDecl(
   if (!def) return null;
   // A generic that hands its argument back without passing a `nominal` on
   // the way declares nothing itself, so the answer is the argument's.
-  const arg = forwardedArg(t, def, walk, "stop");
+  const arg = forwardedArg(t, def, walk.forwarded.stop);
   if (arg) return nominalDecl(arg, seen, walk);
   const body = applyDef(t, def, seen, walk.origins);
   const bare = bareType(body);
