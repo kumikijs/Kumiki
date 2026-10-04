@@ -48,6 +48,48 @@ slot label : Text = ""
     expect(refsOf(src, "type.Item")).toEqual(["type.ItemId@2:18"]);
   });
 
+  // A type-member call names its type by its qualifier (errors.md E0117: "a
+  // call's qualifier is a type name too"), and the call's position is the
+  // qualifier's, so `rename` rewrites `ItemId` in `ItemId.fresh()`.
+  describe("a qualified call", () => {
+    it("names the type a type-member call is qualified by, at the qualifier", () => {
+      const src = `type ItemId = nominal Text where uuid
+slot last : Option(ItemId) = None
+slot shown : Text = ""
+reducer add on=ui.click(B) do=
+    let id = ItemId.fresh()
+    shown := ItemId.show(id) + Int.show(1)
+    last := ItemId.parse(shown)
+tile B = button(text="b")
+`;
+      // `Int` is a type too, but not a definition, so it names nothing.
+      expect(refsOf(src, "reducer.add").filter((r) => r.startsWith("type."))).toEqual([
+        "type.ItemId@5:14",
+        "type.ItemId@6:14",
+        "type.ItemId@7:13",
+      ]);
+    });
+
+    it("names no type for a namespace's own member, even one a type shares the name of", () => {
+      // `Duration.ms` is a built-in call and `Duration.fresh()` no member at all
+      // (E0116): within `Duration` the members are exactly the built-in ones.
+      // Given its argument, `show` is the type member on any qualifier, so that
+      // call alone names the program's `Duration`.
+      const src = `type Duration = nominal Text
+slot wait : Int = 0
+slot raw : Text = ""
+reducer r on=ui.click(B) do=
+    wait := Duration.ms(5)
+    raw := Duration.fresh()
+    raw := Duration.show(raw)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.r").filter((r) => r.startsWith("type."))).toEqual([
+        "type.Duration@7:12",
+      ]);
+    });
+  });
+
   describe("a local binding shadows a definition of the same name", () => {
     const decl = `slot label : Text = ""
 slot items : List(Text) = []

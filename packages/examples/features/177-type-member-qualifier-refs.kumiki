@@ -1,0 +1,44 @@
+# Feature (ai-edit.md §9.2.1): a type-member call names its type by its
+# qualifier, so the call is a reference to that type.
+#
+#   let id = ItemId.fresh()                    `ItemId` is the type
+#   picked := ItemId.parse(ItemId.show(id))
+#
+# `kumiki refs <file> type.ItemId` lists the reducer that mints and reads the
+# ids, and
+#
+#   kumiki rename <file> type.ItemId ThingId   ->  let id = ThingId.fresh()
+#
+# rewrites every qualifier along with the declarations, leaving a file that
+# checks. The qualifier is a type on `fresh`, `parse` and `show` (stdlib.md
+# §2.4.1, §2.4.3). `Duration.ms(5)` and the other built-in calls of a
+# namespace name no type, even when a type of the program shares the name.
+
+type ItemId = nominal Text where uuid
+type Item   = {id: ItemId, label: Text}
+
+slot items  : Map(ItemId, Item) = {}
+slot draft  : Text              = ""
+slot picked : Option(ItemId)    = None
+
+reducer addItem on=ui.submit(AddForm) do=
+    let id = ItemId.fresh()
+    items[id] := {id, label=draft}
+    picked := ItemId.parse(ItemId.show(id))
+    draft := ""
+
+tile AddForm = form(column(
+    input(bind=draft, id="draft"),
+    button(text="Add", type="submit")))
+
+tile App = column(
+    AddForm,
+    text("items: " + items.size.show),
+    text(match picked with
+           | Some(id) -> "picked " + items.has(id).show
+           | None     -> "none picked"))
+
+app TypeMemberQualifierRefs
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

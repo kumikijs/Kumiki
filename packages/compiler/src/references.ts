@@ -33,6 +33,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { typeMemberQualifier } from "./builtin-calls.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -230,18 +231,25 @@ class Walker {
         this.expr(e.base, locals);
         this.expr(e.index, locals);
         return;
-      case "Call":
+      case "Call": {
         // `run-reducer(name)` (§8.3) takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
           return;
         }
-        // `TodoId.fresh()` is qualified — only an unqualified callee can name a
-        // `fn` definition. (A lowercase `a.b(x)` never reaches here: the parser
-        // requires a capitalised qualifier, so it is a `MethodCall`.)
-        if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
+        // `TodoId.fresh()` names the type `TodoId`, at the call's own position,
+        // which is the qualifier's. `typeMemberQualifier` is the rule the
+        // checker resolves qualifiers by, so `Duration.ms(5)` names no type
+        // even when the program declares one called `Duration`. Only an
+        // unqualified callee can name a `fn` definition. (A lowercase `a.b(x)`
+        // never reaches here: the parser requires a capitalised qualifier, so
+        // it is a `MethodCall`.)
+        const qualifier = typeMemberQualifier(e.callee, e.args.length);
+        if (qualifier !== undefined) this.add("type", qualifier, e.pos);
+        else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
+      }
       case "MethodCall":
         this.expr(e.receiver, locals);
         if (e.method === "run-reducer") {

@@ -39,10 +39,9 @@ import { assertNever, isTileExpr } from "./ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
+  isMissingNamespaceMember,
   isQualifierName,
-  QUALIFIED_BUILTIN_CALLS,
-  QUALIFIED_CALL_NAMESPACES,
-  TYPE_MEMBER_CALLS,
+  typeMemberQualifier,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
 import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./builtins.ts";
@@ -2649,12 +2648,7 @@ function checkCallee(
   // and this branch is not reached: `EffectId.show(h)` is the qualified
   // spelling of `h.show` and means what it says.
   const dot = callee.indexOf(".");
-  if (
-    dot > 0 &&
-    argCount === 0 &&
-    QUALIFIED_CALL_NAMESPACES.has(callee.slice(0, dot)) &&
-    !QUALIFIED_BUILTIN_CALLS.has(callee)
-  ) {
+  if (isMissingNamespaceMember(callee, argCount)) {
     errors.push({
       code: "E0116",
       kind: "undef-call",
@@ -2670,17 +2664,12 @@ function checkCallee(
   // every later sum concatenated. It now reads by the base the qualifier
   // resolves to, and a name that resolves to none has no base. Reported as E0117 with the sentence `resolveType` uses, so the repair path
   // for an unknown type name covers this one without knowing about it.
-  if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
-    const qualifier = callee.slice(0, dot);
-    // The same spelling rule `builtinArity` and codegen apply. Without it this
-    // reported an undefined *type* for a name that has no lowering under any
-    // spelling — and the type-name repair it invited landed on E0116 at the
-    // same position, costing a rollback and a round.
-    if (
-      isQualifierName(qualifier) &&
-      !isKnownTypeName(qualifier, sym) &&
-      !isPrimTypeName(qualifier)
-    ) {
+  // `typeMemberQualifier` is which qualifiers are resolved here, and the
+  // reference walker reads the same answer as an edge to the type.
+  const qualifier = typeMemberQualifier(callee, argCount);
+  if (qualifier !== undefined) {
+    const member = callee.slice(dot + 1);
+    if (!isKnownTypeName(qualifier, sym) && !isPrimTypeName(qualifier)) {
       errors.push({
         code: "E0117",
         kind: "undef-type",
@@ -2697,10 +2686,7 @@ function checkCallee(
     // string in an `Int` slot with no report at all.
     // `constructorArity` answers `null` for variadic `Tuple` and for a name that
     // is no type at all, so it is asked only of a name `isKnownTypeName` holds.
-    const typeArity =
-      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
-        ? constructorArity(qualifier, sym)
-        : 0;
+    const typeArity = isKnownTypeName(qualifier, sym) ? constructorArity(qualifier, sym) : 0;
     if (typeArity !== 0) {
       const wanted =
         typeArity === null
@@ -2710,7 +2696,6 @@ function checkCallee(
       // E0802 below — `type IntList = List(Int)` has no reading of a text, and
       // no uuid `Text` goes into it — so the message names both halves of the
       // repair in the one round.
-      const member = callee.slice(dot + 1);
       const readable =
         member === "parse"
           ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
@@ -2732,11 +2717,7 @@ function checkCallee(
     // above and has no reading is reported here, and none reaches the
     // lowering. A qualifier whose definition resolves to nothing is left to
     // the report at that definition.
-    if (
-      callee.slice(dot + 1) === "parse" &&
-      isQualifierName(qualifier) &&
-      parseQualifier(qualifier, sym).kind === "none"
-    ) {
+    if (member === "parse" && parseQualifier(qualifier, sym).kind === "none") {
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
@@ -2753,8 +2734,7 @@ function checkCallee(
     // which qualifiers `fresh` produces; a qualifier that resolves to nothing
     // is left to the report at its definition, as for `parse`.
     if (
-      callee.slice(dot + 1) === "fresh" &&
-      isQualifierName(qualifier) &&
+      member === "fresh" &&
       qualifierType(qualifier, pos, sym) !== null &&
       freshResultType(qualifier, pos, sym) === null
     ) {

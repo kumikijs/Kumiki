@@ -144,15 +144,57 @@ export const UNIMPLEMENTED_CALLS: ReadonlySet<string> = new Set(["trace"]);
 const QUALIFIER_RE = /^[A-Z][A-Za-z0-9_]*$/;
 
 /**
- * Whether `name` can be the qualifier of a lowered call. Exported because the
- * checker resolves the qualifier of a type-member call against the type table,
- * and a rule stricter than this one would report an undefined *type* for a name
- * that has no lowering under any spelling — `Othe-Id.fresh()` is not a type
- * member at all, because a Kumiki name may contain a hyphen and a qualifier may
- * not.
+ * Whether `name` can be the qualifier of a lowered call. `Othe-Id.fresh()` is
+ * not a type member at all, because a Kumiki name may contain a hyphen and a
+ * qualifier may not. Exported for the checker's inference, which reads a
+ * type-member call's result by the same spelling rule `typeMemberQualifier`
+ * applies.
  */
 export function isQualifierName(name: string): boolean {
   return QUALIFIER_RE.test(name);
+}
+
+/**
+ * Whether `callee` is written on a `QUALIFIED_CALL_NAMESPACES` qualifier with
+ * no argument and is none of that namespace's members — `EffectId.fresh`,
+ * `Duration.parse()`, a bare `Duration.nope`. A namespace's members are exactly
+ * the built-in calls `QUALIFIED_BUILTIN_CALLS` lists, so such a callee resolves
+ * to nothing (E0116), and in particular to no type member on the name.
+ */
+export function isMissingNamespaceMember(callee: string, argCount: number): boolean {
+  const dot = callee.indexOf(".");
+  return (
+    dot > 0 &&
+    argCount === 0 &&
+    QUALIFIED_CALL_NAMESPACES.has(callee.slice(0, dot)) &&
+    !QUALIFIED_BUILTIN_CALLS.has(callee)
+  );
+}
+
+/**
+ * The type name a type-member call is qualified by — `ItemId` in
+ * `ItemId.fresh()`, `ItemId.parse(t)` and `ItemId.show(v)` — or `undefined`
+ * when `callee` is no type-member call: unqualified, a member other than
+ * `TYPE_MEMBER_CALLS`, a member a namespace does not have
+ * (`isMissingNamespaceMember`), or a qualifier not spelled as one
+ * (`isQualifierName`). That last is the spelling rule `builtinArity` and codegen
+ * apply. A stricter one would report an undefined *type* for a name that has no
+ * lowering under any spelling, and the type-name repair that invites lands on
+ * E0116 at the same position, costing a rollback and a round.
+ *
+ * The answer is a name, not yet a type. The checker resolves it against the
+ * type table (E0117 when nothing answers), and the reference walker reads it as
+ * an edge to the definition of that name — one rule for both, so `refs` and
+ * `rename` see exactly the qualifiers the checker resolves.
+ */
+export function typeMemberQualifier(callee: string, argCount: number): string | undefined {
+  const dot = callee.indexOf(".");
+  if (dot <= 0 || !TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) return undefined;
+  const qualifier = callee.slice(0, dot);
+  if (!QUALIFIER_RE.test(qualifier) || isMissingNamespaceMember(callee, argCount)) {
+    return undefined;
+  }
+  return qualifier;
 }
 
 /**

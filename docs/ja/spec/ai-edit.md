@@ -39,6 +39,8 @@ kumiki list <layer>                 # レイヤ内の全定義名
 kumiki list                         # 全定義名（layer prefix 付き）
 ```
 
+参照元とは、checker がその名前をこの定義に解決する位置でこの定義を指す定義であり、型メンバー呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。名前空間の組み込み呼び出し — `Duration.ms(5)`・`EffectId.none` — は、プログラムが同名の型を宣言していても型を指さない（[E0117](./errors.md#e0117-undef-type)）。
+
 ### 9.2.2 書き込み系
 
 ```bash
