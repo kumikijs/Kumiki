@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "label": "Blue is no arm's variant, so the binding arm takes it and names it",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["swatch: Blue", "label: Blue", "points: 0", "alarm: false"]
+      }
+    },
+    {
+      "label": "the reducer's value and statement matches take the binding arm too",
+      "do": { "click": "#judge" },
+      "expect": {
+        "noErrors": true,
+        "state": { "points": 2, "alarm": false },
+        "domIncludes": ["points: 2", "alarm: false"]
+      }
+    },
+    {
+      "label": "Red is the first arm's, in every match",
+      "do": { "click": "#paint" },
+      "expect": {
+        "noErrors": true,
+        "state": { "color": { "_tag": "Red" } },
+        "domIncludes": ["swatch: red", "label: stop"]
+      }
+    },
+    {
+      "label": "the Red arm's night | rain is an or, ended by the arm after it",
+      "do": { "click": "#judge" },
+      "expect": {
+        "noErrors": true,
+        "state": { "points": 10, "alarm": true },
+        "domIncludes": ["points: 10", "alarm: true"]
+      }
+    }
+  ]
+}

@@ -902,9 +902,9 @@ class Parser {
     let lhs = this.parseLogicAnd();
     // `||` always works as bool OR. `|` also works as bool OR EXCEPT when it
     // clearly starts a match arm — i.e. it's immediately followed by a pattern
-    // (capital-letter variant or `_`) and a `->`. This lets `a | b` mean bool
-    // OR in expression context while still letting `not x | Done -> ...` be
-    // parsed as a match arm separator.
+    // and a `->`. This lets `a | b` mean bool OR in expression context while
+    // still letting `not x | Done -> ...` and `x | other -> ...` be parsed as
+    // a match arm separator.
     let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
       built += 1;
@@ -917,20 +917,24 @@ class Parser {
     return lhs;
   }
 
-  /** Heuristic: after `|`, does it look like the start of a match arm? */
+  /**
+   * After `|`, does a match arm start here? `->` is not a binary operator, so
+   * a pattern followed by one can only be an arm, whatever the pattern's form
+   * (§1.9) — a binding name as much as a variant. The pattern's tokens alone
+   * prove nothing: `a | b`, `a | Some(1).is-some` and `a | (b)` are ors, so
+   * what decides is whether a `->` follows them.
+   */
   private looksLikeMatchArm(): boolean {
     const next = this.peek(1);
     // `| _ ->` is a wildcard match arm
     if (next.kind === "ident" && next.value === "_") return true;
-    // `| Variant ->` / `| Variant(args) ->`, and `| (p, q) ->` — a tuple
-    // pattern arm (§1.9). A payload or a tuple proves nothing on its own:
-    // `a | Some(1).is-some` and `a | (b)` are ors written with the same tokens,
-    // so what decides is whether a `->` closes the parens.
-    if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
+    // `| Variant ->` / `| other ->` / `| Variant(binds) ->`
+    if (next.kind === "ident") {
       const after = this.peek(2);
       if (after.kind === "op" && after.value === "->") return true;
       if (after.kind === "op" && after.value === "(") return this.arrowClosesParens(3);
     }
+    // `| (p, q) ->` — a tuple pattern
     if (next.kind === "op" && next.value === "(") return this.arrowClosesParens(2);
     return false;
   }
