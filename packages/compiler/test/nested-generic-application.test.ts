@@ -165,6 +165,131 @@ describe("a chain of definitions that each apply the one below repeatedly", () =
       ),
     ).toEqual(["E0803"]);
   });
+
+  // The application is checked for refinements its arguments put over a base
+  // they cannot test, and that walk entered each application in a body with
+  // its arguments substituted: `D40`'s body holds three `D39`s, so it walked
+  // `D0` 3^40 times. Fourteen levels took seconds; forty would never finish.
+  it("checks an application at forty levels that each apply the one below three times", () => {
+    expect(diags(`${chain(40, 3, "T")}\nslot a : D40(Text) = "ku"`, "a := 5")).toEqual([
+      "E0201 Expected D40(Text) but got Int",
+    ]);
+  });
+
+  // The walk reported the refinement once per path to it, so the count of
+  // copies was the count of walks: 3^12 here, which overflowed the stack.
+  it("reports a refinement over the wrong base once, however many paths reach it", () => {
+    expect(
+      diags(`${chain(12, 3, "T where nonempty")}\nslot a : D12(Int) = 1`, "a := 2").filter((d) =>
+        d.startsWith("E0804"),
+      ),
+    ).toEqual([
+      'E0804 Refinement "nonempty" tests text but D12(Int) applies it over Int, so no value satisfies it',
+    ]);
+  });
+
+  // Each application's argument is taken through the generics that hand it
+  // straight back before the walk goes on, and the message still names the
+  // base as the application gives it: a container keeps the argument as written.
+  it("names the base a deep chain applies a refinement over, as before", () => {
+    const LIST = `type L(T) = List(T)\ntype Q(T) = T where nonempty\n${chain(3, 3, "Q(T)")}`;
+    expect(
+      diags(`${LIST}\nslot a : D3(L(D3(Int))) = []`, "a := []").filter((d) =>
+        d.startsWith("E0804"),
+      ),
+    ).toEqual([
+      'E0804 Refinement "nonempty" tests text but D3(L(D3(Int))) applies it over List(D3(Int)), so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D3(Int) applies it over Int, so no value satisfies it',
+    ]);
+    const UNION = `type U(T) = A(T) | B\n${chain(3, 3, "T where one-of(1, 2)")}`;
+    expect(
+      diags(`${UNION}\nslot a : D3(U(Text)) = B`, "a := B").filter((d) => d.startsWith("E0804")),
+    ).toEqual([
+      'E0804 Refinement "one-of" tests text or a number but D3(U(Text)) applies it over A(Text) | B, so no value satisfies it',
+    ]);
+  });
+
+  // `nominal` is looked through on the way to a base, so a generic nominal
+  // hands its parameter back as an alias does, and a chain of them meets the
+  // same way.
+  it("reports a refinement once through a chain of generic nominals", () => {
+    const NOMINAL = `type N(T) = nominal T where nonempty\n${chain(12, 3, "N(T)")}`;
+    expect(
+      diags(`${NOMINAL}\nslot a : D12(Int) = 1`, "a := 2").filter((d) => d.startsWith("E0804")),
+    ).toEqual([
+      'E0804 Refinement "nonempty" tests text but D12(Int) applies it over Int, so no value satisfies it',
+    ]);
+  });
+
+  // A bottom that is a type of its own hands nothing back, so every argument
+  // reaches `D0` distinct and the walk is still 3^k: kept shallow so it stays
+  // fast. It pins the messages that walk gives, which sharing must not change.
+  it("still checks a chain whose generics hand nothing back", () => {
+    const RECORD = chain(5, 3, "{v: T where nonempty}");
+    expect(
+      diags(`${RECORD}\nslot a : D5(Int) = {v: 1}`, "a := a").filter((d) => d.startsWith("E0804")),
+    ).toEqual([
+      'E0804 Refinement "nonempty" tests text but D0(D0(D0(T))) applies it over {v: D0(?)}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D0(D0(T)) applies it over {v: ?}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D1(D1(D1(T))) applies it over {v: D0(D0(D1(?)))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D1(D1(T)) applies it over {v: D0(D0(?))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D2(D2(D2(T))) applies it over {v: D0(D0(D1(D1(D2(?)))))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D2(D2(T)) applies it over {v: D0(D0(D1(D1(?))))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D3(D3(D3(T))) applies it over {v: D0(D0(D1(D1(D2(D2(D3(?)))))))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D3(D3(T)) applies it over {v: D0(D0(D1(D1(D2(D2(?))))))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D4(D4(D4(T))) applies it over {v: D0(D0(D1(D1(D2(D2(D3(D3(D4(?)))))))))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D4(D4(T)) applies it over {v: D0(D0(D1(D1(D2(D2(D3(D3(?))))))))}, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but D5(Int) applies it over Int, so no value satisfies it',
+    ]);
+  });
+});
+
+// An application reports each refinement its arguments put over the wrong
+// base once: paths that reach the same refinement say nothing new, and two
+// refinements that read alike are still two.
+describe("how many E0804s an application gets", () => {
+  const e0804 = (decl: string) => diags(decl, `o := o`).filter((d) => d.startsWith("E0804"));
+
+  it("reports two refinements that read alike twice", () => {
+    expect(
+      e0804(
+        `type P(T) = {a: T where nonempty, b: T where nonempty}\nslot s : P(Int) = {a: 1, b: 1}`,
+      ),
+    ).toEqual([
+      'E0804 Refinement "nonempty" tests text but P(Int) applies it over Int, so no value satisfies it',
+      'E0804 Refinement "nonempty" tests text but P(Int) applies it over Int, so no value satisfies it',
+    ]);
+  });
+
+  it("reports one refinement reached by two fields once, and a different one besides", () => {
+    const BOTH = `type NE(T) = T where nonempty
+type Pos(T) = T where positive
+type Both(A, B) = {x: NE(A), y: Pos(B), z: NE(A)}
+slot s : Both(Int, Text) = {x: 1, y: "a", z: 1}`;
+    expect(e0804(BOTH)).toEqual([
+      'E0804 Refinement "nonempty" tests text but Both(Int, Text) applies it over Int, so no value satisfies it',
+      'E0804 Refinement "positive" tests a number but Both(Int, Text) applies it over Text, so no value satisfies it',
+    ]);
+  });
+
+  // `Int()` is an application of a name nothing declares (E0117), which has no
+  // base to judge; `Int` has one. Both orders report the `Int` field.
+  it("tells an application with no arguments from the name it applies", () => {
+    const O = `type P(T) = T where nonempty\ntype O(A, B) = {x: P(A), y: P(B)}`;
+    const message =
+      'E0804 Refinement "nonempty" tests text but O(Int, Int) applies it over Int, so no value satisfies it';
+    expect(e0804(`${O}\nslot s : O(Int(), Int) = {x: 1, y: 1}`)).toEqual([message]);
+    expect(e0804(`${O}\nslot s : O(Int, Int()) = {x: 1, y: 1}`)).toEqual([message]);
+  });
+
+  // Two arguments written apart reach the one refinement over the same base,
+  // and that is one problem.
+  it("reports one refinement reached through two parameters over one base once", () => {
+    const O = `type P(T) = T where nonempty\ntype O(A, B) = {x: P(A), y: P(B)}`;
+    expect(e0804(`${O}\nslot s : O(Int, Int) = {x: 1, y: 1}`)).toEqual([
+      'E0804 Refinement "nonempty" tests text but O(Int, Int) applies it over Int, so no value satisfies it',
+    ]);
+  });
 });
 
 describe("a generic nominal applied inside itself", () => {

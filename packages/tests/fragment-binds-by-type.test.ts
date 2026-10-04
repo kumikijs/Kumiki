@@ -163,14 +163,24 @@ describe("a fn named as a two-positional fragment where only one is bound", () =
   // take a two-parameter `fn`; only an undecidable receiver is let through.
   const ADD2 = "fn add2(a: Int, b: Int) -> Int = a + b";
   it.each([
-    ["a record", "type P = { x: Int }\nslot p : P = { x: 1 }", "p.map(add2)"],
-    ["Text", 'slot t : Text = "x"', "t.map(add2)"],
-    ["an Option", "slot picked : Option(Int) = Some(1)", "picked.sort-by(add2)"],
-    ["a Result", "slot parsed : Result(Int, Text) = Ok(1)", "parsed.filter(add2)"],
+    ["an Option", "slot picked : Option(Int) = Some(1)", "picked.map(add2)"],
+    ["a Result", "slot parsed : Result(Int, Text) = Ok(1)", "parsed.map(add2)"],
     ["a List(Int)", "slot xs : List(Int) = [1]", "xs.map(add2)"],
   ])("reports E0213 over %s", (_what, defs, rhs) => {
     const found = codes(program(`${ADD2}\n${defs}`, "Int", rhs)).map((c) => c.slice(0, 5));
     expect(found).toContain("E0213");
+  });
+
+  // A receiver without the member at all has no count to get wrong: the
+  // member it lacks is the one mistake (errors.md E0108).
+  it.each([
+    ["a record", "type P = { x: Int }\nslot p : P = { x: 1 }", "p.map(add2)"],
+    ["Text", 'slot t : Text = "x"', "t.map(add2)"],
+    ["an Option", "slot picked : Option(Int) = Some(1)", "picked.sort-by(add2)"],
+    ["a Result", "slot parsed : Result(Int, Text) = Ok(1)", "parsed.filter(add2)"],
+  ])("reports only E0108 over %s, which lacks the member", (_what, defs, rhs) => {
+    const found = codes(program(`${ADD2}\n${defs}`, "Int", rhs)).map((c) => c.slice(0, 5));
+    expect(found).toEqual(["E0108"]);
   });
 });
 

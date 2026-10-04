@@ -48,7 +48,7 @@ const hashOf = (file: string, qname: string): string => viewHash(load(file), qna
 const renamedFixture = (): { file: string; add: string; replace: string; rename: string } => {
   const file = seed("slot a : Int = 0\n");
   const add = addDef(file, "slot", "count", "Int = 1");
-  const replace = replaceDef(file, "slot.count", "Int = 2");
+  const { opId: replace } = replaceDef(file, "slot.count", "Int = 2");
   const rename = renameDef(file, "slot.count", "total");
   return { file, add, replace, rename };
 };
@@ -116,7 +116,7 @@ describe("patch revert across a rename", () => {
     const file = seed("slot a : Int = 0\n");
     addDef(file, "slot", "x", "Int = 1");
     renameDef(file, "slot.x", "count");
-    const replace = replaceDef(file, "slot.count", "Int = 2");
+    const { opId: replace } = replaceDef(file, "slot.count", "Int = 2");
 
     patchRevert(file, replace);
 
@@ -218,7 +218,11 @@ describe("content hash across a rename", () => {
 
   it("keeps a depends-on digest recorded before the rename matching view --hash after it", () => {
     const file = seed(COUNTER);
-    const replace = replaceDef(file, "reducer.inc", "on=ui.click(IncBtn) do= count := count + 2");
+    const { opId: replace } = replaceDef(
+      file,
+      "reducer.inc",
+      "on=ui.click(IncBtn) do= count := count + 2",
+    );
     const recorded = readOpLog(file)
       .find((e) => e["op-id"] === replace)
       ?.["depends-on"].find((d) => d.startsWith("slot:count@h:"));

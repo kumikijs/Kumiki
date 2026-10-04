@@ -198,6 +198,9 @@ export function forwardedParams(
     }
   };
   return (root) => {
+    // Asked again for every application a walk meets, so an answer already
+    // held is read without setting up the walk.
+    if (answers.has(root.name)) return answers.get(root.name) ?? null;
     const stack: TypeDef[] = [root];
     const open = new Set<string>([root.name]);
     while (stack.length > 0) {
