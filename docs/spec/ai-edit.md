@@ -270,6 +270,8 @@ All errors are structured:
 }
 ```
 
+This `edit` op replaces the first `usres` on line 2 of `tile.TodoRow`, counting from the definition's first line. If `usres` is not on that line, for example because the line has changed since the error was reported, the op is rejected like any other failed write (§9.2.5): it exits `1`, writes nothing and logs nothing, and the message names the text and the line. A `{"find": …, "replace": …}` patch is rejected the same way when `find` is not in the definition.
+
 ### 9.6.1 Where the codes are defined
 
 [Error Code Specification](./errors.md) defines every code, normatively and in one place: what raises it, the message it carries, and the fix. Nothing here restates them — a second table is how `E0302` came to mean both "direct effect call" and "unknown capability", and a code whose meaning depends on which document you opened is not the permanent contract errors.md says it is.
