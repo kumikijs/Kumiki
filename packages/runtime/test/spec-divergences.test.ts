@@ -141,8 +141,47 @@ describe("Time.format honours its pattern", () => {
     expect(_stdlib.formatTime(` ${iso}\n`, "yyyy-MM-dd HH:mm")).toBe(
       _stdlib.formatTime(iso, "yyyy-MM-dd HH:mm"),
     );
-    // A numeric string is the millisecond number it spells.
-    expect(_stdlib.formatTime(String(at), "yyyy")).toBe(_stdlib.formatTime(at, "yyyy"));
+  });
+
+  it("reads text by Time.parse's grammar and no other", () => {
+    // A `Time` held as text is one a JSON payload filled, which the decoder
+    // does not convert. `Number` takes `"1"` for a millisecond after the epoch
+    // and `"2026"` for two seconds after it, and the platform's parser takes
+    // `"March 7"` for a day in 2001; each is text `Time.parse` refuses, so
+    // `format` has no instant to render from it either.
+    const pattern = "yyyy-MM-dd HH:mm";
+    const noInstant = _stdlib.formatTime(Number.NaN, pattern);
+    for (const text of [
+      "1",
+      "12",
+      "-1",
+      "1e3",
+      "0x10",
+      "2026",
+      "20260814",
+      String(at),
+      "hello 12",
+      "March 7",
+      "Tue 5",
+      "Aug 14 2026",
+      "2026-02-30",
+      "2026-08-14T21:05+0900",
+    ]) {
+      expect(_stdlib.parseTime(text)._tag, text).toBe("None");
+      expect(_stdlib.formatTime(text, pattern), text).toBe(noInstant);
+    }
+    for (const text of [
+      "2026-08-14",
+      "2026-08-14T21:05",
+      "2026-08-14 21:05:09.5",
+      "2026-08-14T21:05Z",
+      "2026-08-14t21:05:09.250z",
+      "2026-08-14T21:05+09:00",
+    ]) {
+      const parsed = _stdlib.parseTime(text) as { _tag: string; _0: number };
+      expect(parsed._tag, text).toBe("Some");
+      expect(_stdlib.formatTime(text, pattern), text).toBe(_stdlib.formatTime(parsed._0, pattern));
+    }
   });
 
   it("reads a date-only string on the same clock it renders", () => {
@@ -241,6 +280,8 @@ describe("Time.format honours its pattern", () => {
       ["2026-08-14T21:05:09.250z", Date.UTC(2026, 7, 14, 21, 5, 9, 250)],
       ["2026-08-14T21:05+09:00", Date.UTC(2026, 7, 14, 12, 5)],
       ["2026-08-14T21:05:09-07:30", Date.UTC(2026, 7, 15, 4, 35, 9)],
+      ["2026-08-14 21:05:09.5+09:00", Date.UTC(2026, 7, 14, 12, 5, 9, 500)],
+      ["2026-08-14 21:05Z", Date.UTC(2026, 7, 14, 21, 5)],
       // `Date.UTC(50, …)` would be 1950; the year is the one written.
       ["0050-01-01T10:00Z", new Date(Date.UTC(2000, 0, 1, 10)).setUTCFullYear(50)],
     ] as const) {
@@ -271,6 +312,43 @@ describe("Time.format honours its pattern", () => {
       "12026-08-14",
       "2026-08",
       "2026",
+    ]) {
+      expect(_stdlib.parseTime(bad)._tag, bad).toBe("None");
+    }
+  });
+
+  it("is None for the other forms ISO 8601 has", () => {
+    // Hours alone, a comma before the fraction, an offset of hours alone, a
+    // leap second, the basic format without separators, and week and ordinal
+    // dates: ISO 8601 spells an instant each of these ways, and the grammar
+    // reads none of them.
+    for (const bad of [
+      "2026-08-14T21Z",
+      "2026-08-14T21+09:00",
+      "2026-08-14T21:05:09,5",
+      "2026-08-14T21:05+09",
+      "2016-12-31T23:59:60Z",
+      "20260814",
+      "20260814T2105Z",
+      "2026-W33-5",
+      "2026-226",
+    ]) {
+      expect(_stdlib.parseTime(bad)._tag, bad).toBe("None");
+    }
+  });
+
+  it("is None for text the platform's fallback parser reads as a day", () => {
+    // V8 reads every one of these as some date: "1" as 2001-01-01, "hello 12"
+    // as 2001-12-01, "March 7" as 2001-03-07, "Tue 5" as 2001-05-01. The
+    // answer cannot depend on the engine, and none of them is ISO 8601.
+    for (const bad of [
+      "1",
+      "12",
+      "hello 12",
+      "March 7",
+      "Tue 5",
+      "03/07/2026",
+      "Sat, 07 Mar 2026 10:00:00 GMT",
     ]) {
       expect(_stdlib.parseTime(bad)._tag, bad).toBe("None");
     }

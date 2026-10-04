@@ -127,26 +127,29 @@ export function valueEqual(a: unknown, b: unknown): boolean {
 /**
  * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
  *
- * A blank — `null`, `undefined`, `""`, whitespace — is not zero here. `Number`
- * says it is, and the epoch is a date that looks real, which is the worst
- * thing an absent field can render as.
+ * A `Time` is a millisecond number, so a number is the instant it counts.
+ * Text — a `Time` field a JSON payload filled, which the decoder does not
+ * convert — is read by `Time.parse` and nothing else: digits are not a count
+ * of milliseconds (`"2026"` is no instant, not two seconds after the epoch).
+ * Anything else, `null` and `undefined` included, is `NaN`, never zero: the
+ * epoch is a date that looks real, which is the worst thing an absent field
+ * can render as.
  */
 function instantOf(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return Number.NaN;
   // Trimmed here, not in `Time.parse`: the reading refuses padded text, but a
   // `Time` that arrived as padded text still renders as the instant it names.
-  const raw = String(value ?? "").trim();
-  if (raw === "") return Number.NaN;
-  const n = Number(raw);
-  if (Number.isFinite(n)) return n;
-  const parsed = _stdlibCore.parseTime(raw);
+  const parsed = _stdlibCore.parseTime(value.trim());
   return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
 }
 
 /**
- * The one text form `Time.parse` reads (stdlib.md §2.2.8): `YYYY-MM-DD`, an
- * optional `[Tt ]HH:MM(:SS(.fraction)?)?`, and an optional zone (`Z`/`z` or
- * `±HH:MM`). Groups: year, month, day, hour, minute, second, fraction, zone,
- * offset sign, offset hours, offset minutes. An absent time is midnight.
+ * The one text form a `Time` is read from (stdlib.md §2.2.8), by `parseTime`
+ * alone: `YYYY-MM-DD`, an optional `[Tt ]HH:MM(:SS(.fraction)?)?`, and an
+ * optional zone (`Z`/`z` or `±HH:MM`). Groups: year, month, day, hour, minute,
+ * second, fraction, zone, offset sign, offset hours, offset minutes. An absent
+ * time is midnight.
  */
 const ISO_TIME =
   /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ]([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.(\d+))?)?)?([Zz]|([+-])([01]\d|2[0-3]):([0-5]\d))?$/;
@@ -221,7 +224,9 @@ export const _stdlibCore = {
   },
   /**
    * `Time.parse(text)` (stdlib.md §2.2.8) — `Some(ms)`, or `None` for text that
-   * names no instant.
+   * names no instant. The one reading of a `Time` from text: `T.parse` on a
+   * type over `Time` and a bound `input` lower to it, and `formatTime` asks it
+   * for a `Time` held as text.
    *
    * The text is ISO 8601 and nothing else: `YYYY-MM-DD`, then optionally a
    * time `[Tt ]HH:MM(:SS(.fraction)?)?`, then optionally a zone `Z`/`z` or
@@ -273,14 +278,13 @@ export const _stdlibCore = {
   formatTime(ms: unknown, pattern: unknown): string {
     // A `Time` is a millisecond number, and everything the compiler produces
     // is one. It can still arrive as text from outside the language — a JSON
-    // payload mapped into a `Time` field, or state persisted by a build whose
-    // `Time.parse` stored the string it was given. Reading those rather than
-    // rendering a NaN date is the difference between a date and a bug report.
+    // payload mapped into a `Time` field — and that text is read as
+    // `Time.parse` reads it (`instantOf`), so ISO 8601 renders the instant it
+    // names.
     //
-    // `null`, `""` and other blanks are NOT 1970: `Number(null)` is 0, so
-    // taking the numeric branch first would render the epoch for a field that
-    // is simply absent — a date that looks real. Those, and text that names no
-    // instant, render as NaN where they can be seen.
+    // `null`, `""` and other blanks are NOT 1970, and neither are digits: the
+    // epoch, or a moment after it, is a date that looks real. Those, and text
+    // that names no instant, render as NaN where they can be seen.
     const d = new Date(instantOf(ms));
     const p = typeof pattern === "string" ? pattern : String(pattern ?? "");
     const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
