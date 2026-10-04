@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import { lockDef } from "../mutate.ts";
+import { lockDef, lockPatternProblem } from "../mutate.ts";
 
 const USAGE = "Usage: kumiki lock <file> <agent-id> <pattern>";
 
@@ -15,6 +15,14 @@ export function registerLock(program: Command): void {
     .action(
       (file: string | undefined, agentId: string | undefined, pattern: string | undefined) => {
         if (!file || !agentId || !pattern) {
+          console.error(USAGE);
+          process.exit(2);
+        }
+        // Decided from the pattern alone, before the file is read, so it is the
+        // arguments' shape that is wrong (§9.2.5).
+        const problem = lockPatternProblem(pattern);
+        if (problem !== undefined) {
+          console.error(problem);
           console.error(USAGE);
           process.exit(2);
         }

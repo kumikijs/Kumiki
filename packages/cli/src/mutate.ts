@@ -423,44 +423,51 @@ function patternToRegExp(pattern: string): RegExp {
 }
 
 /**
- * Whether some qualified name matches both globs, each read as
- * `patternToRegExp` reads it. Neither glob has to contain the other: `slot.a*`
- * and `slot.*b` share `slot.ab`. A qualified name has one dot, the one after
- * its layer, so `slot.a*` and `*.inc` share none: what matches both is
- * `slot.a.inc` and the like.
+ * Whether some name with exactly one dot, the shape of every qualified name,
+ * matches both globs, each read as `patternToRegExp` reads it. Neither layers
+ * nor the characters a name may have are known here, so `slot.count?` overlaps
+ * `slot.*` though no qualified name matches `slot.count?`. Neither glob has to
+ * contain the other: `slot.a*` and `slot.*b` share `slot.ab`. `slot.a*` and
+ * `*.inc` share no such name: what matches both is `slot.a.inc` and the like.
  *
  * The globs are walked together from the left, spelling a name that matches
- * both. A step spells the character both globs have next, or one glob's next
- * character while a `*` of the other takes it, or ends a `*`. Where both have
- * a `*` next, the two can spell the dot between them (`slot*` and `*count`
- * share `slot.count`); any other character spelled there can be left out.
+ * both. A state of the walk is how far it is into each glob and how many dots
+ * it has spelled. A step spells the character both globs have next, or one
+ * glob's next character while a `*` of the other takes it, or ends a `*`.
+ * Where both have a `*` next, the two can spell the dot between them (`slot*`
+ * and `*count` share `slot.count`); any other character spelled there can be
+ * left out. The states still to visit are kept in a list rather than on the
+ * call stack, so globs of any length are compared.
  */
 function globsOverlap(a: string, b: string): boolean {
-  const memo = new Map<string, boolean>();
-  // `dots`: how many the name spelled so far has.
-  const from = (i: number, j: number, dots: number): boolean => {
-    if (dots > 1) return false;
-    const key = `${i} ${j} ${dots}`;
-    let known = memo.get(key);
-    if (known === undefined) {
-      known = step(i, j, dots);
-      memo.set(key, known);
-    }
-    return known;
+  // A name with a second dot is no qualified name, so `dots` is 0 or 1.
+  const seen = new Set<number>();
+  const todo: Array<[i: number, j: number, dots: number]> = [];
+  const visit = (i: number, j: number, dots: number): void => {
+    if (dots > 1) return;
+    const key = (i * (b.length + 1) + j) * 2 + dots;
+    if (seen.has(key)) return;
+    seen.add(key);
+    todo.push([i, j, dots]);
   };
   const spell = (c: string, dots: number): number => (c === "." ? dots + 1 : dots);
-  const step = (i: number, j: number, dots: number): boolean => {
+  visit(0, 0, 0);
+  for (let state = todo.pop(); state !== undefined; state = todo.pop()) {
+    const [i, j, dots] = state;
     const x = a[i];
     const y = b[j];
-    if (x === undefined && y === undefined) return dots === 1;
-    if (x === "*" && from(i + 1, j, dots)) return true;
-    if (y === "*" && from(i, j + 1, dots)) return true;
-    if (x === "*" && y === "*") return from(i, j, spell(".", dots));
-    if (x === "*") return y !== undefined && from(i, j + 1, spell(y, dots));
-    if (y === "*") return x !== undefined && from(i + 1, j, spell(x, dots));
-    return x !== undefined && x === y && from(i + 1, j + 1, spell(x, dots));
-  };
-  return from(0, 0, 0);
+    if (x === undefined && y === undefined) {
+      if (dots === 1) return true;
+      continue;
+    }
+    if (x === "*") visit(i + 1, j, dots);
+    if (y === "*") visit(i, j + 1, dots);
+    if (x === "*" && y === "*") visit(i, j, dots + 1);
+    else if (x === "*" && y !== undefined) visit(i, j + 1, spell(y, dots));
+    else if (y === "*" && x !== undefined) visit(i + 1, j, spell(x, dots));
+    else if (x !== undefined && x === y) visit(i + 1, j + 1, spell(x, dots));
+  }
+  return false;
 }
 
 /**
@@ -1715,15 +1722,33 @@ function canonicalForm(
   return JSON.stringify(out);
 }
 
+/**
+ * Why `pattern` cannot be locked, whatever the lock file holds, if it cannot:
+ * it names no glob. Refused, so that an agent has an entry in the lock file
+ * exactly when it holds a glob. `lock` asks this before it reads anything, and
+ * reports it as an argument of the wrong shape.
+ */
+export function lockPatternProblem(pattern: string): string | undefined {
+  if (patternGlobs(pattern).length > 0) return undefined;
+  return `lock pattern "${pattern}" names no glob. Give one or more, comma-separated, like "slot.todos*,reducer.todo-*".`;
+}
+
+/**
+ * Grant `agentId` the globs of `pattern`, or throw: when the pattern names no
+ * glob (`lockPatternProblem`), or when one of its globs overlaps a pattern
+ * another agent holds (`lockConflict`). A refusal leaves the lock file as it was.
+ */
 export function lockDef(path: string, agentId: string, pattern: string): void {
+  const problem = lockPatternProblem(pattern);
+  if (problem !== undefined) throw new Error(problem);
   withWriteLock(path, () => lockDefLocked(path, agentId, pattern));
 }
 
 /**
  * The refusal for the first of `globs` that overlaps a pattern another agent
- * holds, if any: some qualified name could match both. Granted, it would
- * leave each agent refused by the other's lock on that name, so neither could
- * edit it.
+ * holds, if any: some name could match both (`globsOverlap`). If granted, the
+ * glob would leave each agent refused by the other's lock on that name, so
+ * neither could edit it. Only other agents' patterns are compared.
  */
 function lockConflict(
   locks: LockFile,
@@ -1735,7 +1760,7 @@ function lockConflict(
       if (e.agent === agentId) continue;
       for (const pat of e.patterns) {
         if (patternGlobs(pat).some((held) => globsOverlap(glob, held))) {
-          return `lock conflict: "${glob}" overlaps "${pat}", held by ${e.agent}`;
+          return `lock conflict: "${glob}" overlaps "${pat}", held by ${e.agent}. None of the request was granted: ${e.agent} has to unlock first, or ask for a glob that does not overlap "${pat}".`;
         }
       }
     }
@@ -1764,7 +1789,13 @@ export function unlockDef(path: string, agentId: string): void {
 function unlockDefLocked(path: string, agentId: string): void {
   const locks = readLocks(path);
   if (!locks.entries.some((e) => e.agent === agentId)) {
-    throw new Error(`nothing to unlock: ${agentId} holds no lock on ${path}`);
+    // Named, so that a near miss (`agent-1` for `agent:1`) shows at once.
+    const holders = locks.entries.map((e) => e.agent);
+    const held =
+      holders.length === 0
+        ? "No agent holds one."
+        : `Locks on it are held by ${holders.join(", ")}.`;
+    throw new Error(`nothing to unlock: ${agentId} holds no lock on ${path}. ${held}`);
   }
   locks.entries = locks.entries.filter((e) => e.agent !== agentId);
   writeLocks(path, locks);

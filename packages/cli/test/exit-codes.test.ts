@@ -436,10 +436,17 @@ describe("kumiki run", () => {
 });
 
 describe("kumiki lock / unlock", () => {
+  /** Writes the lock file `lock` would leave with agent:a holding `slot.*`. */
+  function lockedByA(file: string): string {
+    const locks = `${file}.kumiki-locks.json`;
+    const entries = [{ agent: "agent:a", patterns: ["slot.*"] }];
+    writeFileSync(locks, `${JSON.stringify({ entries }, null, 2)}\n`);
+    return locks;
+  }
+
   it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
     const file = write("lock.kumiki", CLEAN);
-    const locks = `${file}.kumiki-locks.json`;
-    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
+    const locks = lockedByA(file);
     const granted = readFileSync(locks, "utf8");
 
     const { stderr, code } = runCli(["lock", file, "agent:b", "slot.count"]);
@@ -450,24 +457,31 @@ describe("kumiki lock / unlock", () => {
     expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
   });
 
+  it("lock exits 2 for a pattern that names no glob, before reading anything", SPAWN, () => {
+    const file = write("lock-no-glob.kumiki", CLEAN);
+    const { stderr, code } = runCli(["lock", file, "agent:a", " , "]);
+    expect(stderr).toContain('lock pattern " , " names no glob');
+    expect(stderr).toContain("Usage: kumiki lock");
+    expect(code).toBe(2);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
+  });
+
   it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
     const file = write("unlock.kumiki", CLEAN);
-    const locks = `${file}.kumiki-locks.json`;
     const none = runCli(["unlock", file, "agent:x"]);
     expect(none.stderr).toContain("agent:x holds no lock");
     expect(none.code).toBe(1);
-    expect(existsSync(locks)).toBe(false);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
 
-    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
-    expect(runCli(["unlock", file, "agent:x"]).code).toBe(1);
+    lockedByA(file);
     expect(runCli(["unlock", file, "agent:a"]).code).toBe(0);
   });
 });
 
-// The rows in the §9.2.5 table that this PR documents without changing. They
-// are stated as a contract, so they are asserted as one — the mechanisms live
-// in `smoke.ts`, and nothing else pins the codes they exit with.
-describe("the verbs the table documents but this change does not touch", () => {
+// The §9.2.5 rows for the verbs that fail on what the program does when it
+// runs. They are stated as a contract, so they are asserted as one — the
+// mechanisms live in `smoke.ts`, and nothing else pins the codes they exit with.
+describe("the verbs that fail on what the program does when it runs", () => {
   const PANICS = `slot count : Int = 0
 reducer boom on=ui.click(BoomBtn) do= panic("boom")
 tile BoomBtn = button(text="go", onClick=boom)
