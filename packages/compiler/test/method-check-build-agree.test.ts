@@ -8,7 +8,8 @@
 // `.get` / `.get-or` by receiver. So this walks every method codegen lowers
 // (`KNOWN_METHODS`), on a spread of receivers — the four `.get` has readings
 // on, an undecided one, and two it has none on — at every small count. A call
-// the checker rejects is fine; a call it accepts has to compile.
+// the checker rejects is fine; a call it accepts has to compile. Which of
+// `.get`'s calls it accepts is pinned in the two blocks after the walk.
 
 import { compile, KNOWN_METHODS } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -20,9 +21,8 @@ const RECEIVERS: ReadonlyArray<[label: string, decl: string, recv: string]> = [
   ["a Result", "slot v : Result(Int, Text) = Ok(1)", "v"],
   ["a Map", "slot v : Map(Text, Int) = {}", "v"],
   ["a List", "slot v : List(Int) = []", "v"],
-  // Two receivers `.get` has no reading on. The checker does not refuse
-  // `.get` on them yet, so all this walk asks of such a call is that it
-  // compiles — not that it is right.
+  // Two receivers `.get` has no reading on. The checker refuses `.get` on
+  // them as a member they lack, which the last block below pins.
   ["a Text", 'slot v : Text = ""', "v"],
   ["an Int", "slot v : Int = 0", "v"],
 ];
@@ -75,5 +75,24 @@ describe(".get compiles in the reading its receiver has", () => {
   ])("%s", (_label, decl, call) => {
     const r = compile(program(decl, call), { runtimeSpecifier: "./runtime.js" });
     expect(r.kind === "fail" ? r.errors.map((e) => e.code) : []).toEqual([]);
+  });
+});
+
+// And on the receivers it has no reading on, the walk's "does not crash" is
+// not the whole answer: every spelling of `.get` there — bare, and at every
+// count the walk tries — is refused as a member the receiver lacks, and as
+// nothing else.
+describe(".get is refused on the receivers that have no reading of it", () => {
+  const spellings = [
+    "v.get",
+    ...[0, 1, 2, 3].map((n) => `v.get(${Array(n).fill("1").join(", ")})`),
+  ];
+  it.each(
+    RECEIVERS.filter(([label]) => label === "a Text" || label === "an Int").flatMap(
+      ([label, decl]) => spellings.map((call): [string, string, string] => [call, label, decl]),
+    ),
+  )("%s on %s is E0108", (call, _label, decl) => {
+    const r = compile(program(decl, call), { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind === "fail" ? r.errors.map((e) => e.code) : []).toEqual(["E0108"]);
   });
 });

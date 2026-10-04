@@ -3147,6 +3147,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
+      let lacksMember = false;
       if (!KNOWN_METHODS.has(e.method)) {
         errors.push({
           code: "E0801",
@@ -3167,9 +3168,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         const recordUpdate = e.method === "copy" && rt?.kind === "TypeRecord";
         if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
           errors.push(undefMemberError(raw, rt, e.method, e.pos, sym));
+          lacksMember = true;
         }
       }
-      {
+      // An argument count is a question about a member the receiver has. Asked
+      // of one it lacks, every count is the same E0108 just reported, as on
+      // the field-access side.
+      if (!lacksMember) {
         // A method whose lowering reads arguments it was not given crashes
         // codegen with a bare `TypeError` and no position — so `check` says ok
         // and `build` dies. Reported here, where the position is.
@@ -4066,6 +4071,9 @@ function checkGetOrArity(
  * a count its receiver does not take, which is right for an inference table and
  * silent by construction. So the receiver is asked here, where a count is what
  * is being judged.
+ *
+ * A receiver known to have no `.get` (`Text`, `Int`, a record without a `get`
+ * field) never gets here: its every count is the E0108 the caller reports.
  */
 function checkGetArity(
   e: Expr & { kind: "MethodCall" },
