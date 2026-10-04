@@ -1197,6 +1197,16 @@ export type ParsedRoute = {
   childPattern?: string;
 };
 
+/**
+ * The patterns `route` is matched under, outermost first: its top-level
+ * pattern, then the `sub-routes` pattern it matched below that one. These are
+ * the patterns a `route.enter` / `route.leave` / `route.error` reducer can name
+ * and be fired for while `route` is the one shown (routing.md §3.4).
+ */
+function routeChain(route: ParsedRoute): string[] {
+  return route.childPattern === undefined ? [route.pattern] : [route.pattern, route.childPattern];
+}
+
 /** The slice of `Location` the routing path actually reads. */
 export type LocationLike = { pathname: string; search: string; hash: string };
 
@@ -2518,6 +2528,37 @@ export function mountCore(
   }
 
   /**
+   * The reducers a route lifecycle event runs while `route` is the one shown,
+   * each paired with the pattern it subscribes to (routing.md §3.4): for every
+   * pattern of the route's chain, the reducers on `route.<kind>(<pattern>)` in
+   * definition order. The chain is walked outermost first — the parent, then
+   * its sub-route — and the other way round for `leave`, so a route is left in
+   * the reverse of the order it was entered in.
+   */
+  function routeReducers(
+    kind: "enter" | "leave" | "error",
+    route: ParsedRoute,
+  ): { reducer: ReducerSpec; pattern: string }[] {
+    const chain = routeChain(route);
+    if (kind === "leave") chain.reverse();
+    const out: { reducer: ReducerSpec; pattern: string }[] = [];
+    for (const pattern of chain) {
+      const name = `route.${kind}(${JSON.stringify(pattern)})`;
+      for (const reducer of app.reducers) {
+        if (reducer.event.kind === "lifecycle" && reducer.event.name === name) {
+          out.push({ reducer, pattern });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Run the `route.enter` / `route.leave` reducers for `route`, handing each one it as `$route`. */
+  function fireRouteEvent(kind: "enter" | "leave", route: ParsedRoute): void {
+    for (const { reducer } of routeReducers(kind, route)) applyReducer(reducer, { $route: route });
+  }
+
+  /**
    * Fire the `route.error(<pattern>)` reducer chain. Takes the already-derived
    * PanicRecord from the caller so category / stack aren't recomputed and —
    * more importantly — the $event category matches the recording site's
@@ -2527,28 +2568,20 @@ export function mountCore(
   function fireRouteError(rec: PanicRecord): boolean {
     if (!app.routes || app.routes.length === 0) return false;
     const cur = slotValues.route as ParsedRoute | undefined;
-    const pattern = cur?.pattern;
-    if (!pattern) return false;
-    const eventName = `route.error(${JSON.stringify(pattern)})`;
-    const handlers = app.reducers.filter(
-      (r) => r.event.kind === "lifecycle" && r.event.name === eventName,
-    );
+    if (!cur?.pattern) return false;
+    const handlers = routeReducers("error", cur);
     if (handlers.length === 0) return false;
     // The same `PanicInfo` the other two paths hand a program, plus the
-    // `pattern` that is this event's own. It used to be built by hand here,
-    // which is how `location` came to be absent rather than `undefined` on
-    // this one path — a field the type declares, read off an object that does
-    // not carry it. The caller records `"render"` against the episode for the
-    // same panic, so that is what an unattributed one is called here too.
-    const info = {
-      ...userPanicInfo(rec, rec.location ?? "render", safeEpisodeId()),
-      pattern,
-    };
+    // `pattern` that is this event's own: the one the reducer subscribes to,
+    // the parent's or its sub-route's. The caller records `"render"` against
+    // the episode for the same panic, so that is what an unattributed one is
+    // called here too.
+    const info = userPanicInfo(rec, rec.location ?? "render", safeEpisodeId());
     inRouteErrorHandlers = true;
     try {
-      for (const h of handlers) {
+      for (const { reducer, pattern } of handlers) {
         try {
-          applyReducer(h, { $event: info, $route: cur });
+          applyReducer(reducer, { $event: { ...info, pattern }, $route: cur });
         } catch {
           // a panic inside route.error itself is logged via the inner applyReducer
           // path; we just keep iterating other handlers.
@@ -2863,26 +2896,20 @@ export function mountCore(
       scrollSaved.set(oldRoute.path, { x: sx, y: sy });
     }
     // Fire route.leave reducers BEFORE committing the new route so a guard can
-    // gate the transition. A move to another path leaves the old route
-    // (routing.md §3.4), even within one pattern (new params, a sibling
-    // sub-route); a query-only, hash-only or same-path move stays on it, and
-    // the initial mount has nothing to leave. The path alone decides: one path
-    // always parses to one pattern, so a pattern change is a path change. We
-    // observe whether any leave reducer emitted `confirm` — if so, we hold off
-    // updating slotValues.route and firing route.enter until the confirm modal
-    // resolves via `_resolveLeave`.
+    // gate the transition. A move to another path leaves the old route — every
+    // pattern of its chain (routing.md §3.4) — even when the new route shares
+    // a pattern with it (new params, a sibling sub-route); a query-only,
+    // hash-only or same-path move stays on it, and the initial mount has
+    // nothing to leave. The path alone decides: one path always parses to one
+    // chain, so a change of pattern is a change of path. We observe whether any
+    // leave reducer emitted `confirm` — if so, we hold off updating
+    // slotValues.route and firing route.enter until the confirm modal resolves
+    // via `_resolveLeave`.
     if (oldRoute && oldRoute.path !== newRoute.path) {
       observeLeaveConfirm = true;
       leaveAskedConfirm = false;
       try {
-        for (const r of app.reducers) {
-          if (
-            r.event.kind === "lifecycle" &&
-            r.event.name === `route.leave(${JSON.stringify(oldRoute.pattern)})`
-          ) {
-            applyReducer(r, { $route: oldRoute });
-          }
-        }
+        fireRouteEvent("leave", oldRoute);
       } finally {
         observeLeaveConfirm = false;
       }
@@ -2895,14 +2922,7 @@ export function mountCore(
       }
     }
     slotValues.route = newRoute;
-    for (const r of app.reducers) {
-      if (
-        r.event.kind === "lifecycle" &&
-        r.event.name === `route.enter(${JSON.stringify(newRoute.pattern)})`
-      ) {
-        applyReducer(r, { $route: newRoute });
-      }
-    }
+    fireRouteEvent("enter", newRoute);
     applyScrollFor(newRoute);
     render();
   }
@@ -2946,14 +2966,7 @@ export function mountCore(
     pendingLeave = null;
     if (outcome === "yes") {
       slotValues.route = p.newRoute;
-      for (const r of app.reducers) {
-        if (
-          r.event.kind === "lifecycle" &&
-          r.event.name === `route.enter(${JSON.stringify(p.newRoute.pattern)})`
-        ) {
-          applyReducer(r, { $route: p.newRoute });
-        }
-      }
+      fireRouteEvent("enter", p.newRoute);
       applyScrollFor(p.newRoute);
       render();
     } else {
@@ -3113,18 +3126,8 @@ export function mountCore(
       else anonTimers.push(handle);
     }
   }
-  // Fire initial route.enter reducer for current pattern.
-  if (app.routes && app.routes.length > 0) {
-    const cur = slotValues.route as ParsedRoute;
-    for (const r of app.reducers) {
-      if (
-        r.event.kind === "lifecycle" &&
-        r.event.name === `route.enter(${JSON.stringify(cur.pattern)})`
-      ) {
-        applyReducer(r, { $route: cur });
-      }
-    }
-  }
+  // Enter the route the app landed on: every pattern it is matched under.
+  if (app.routes && app.routes.length > 0) fireRouteEvent("enter", slotValues.route as ParsedRoute);
 
   render();
   // Registered here rather than beside `views`, because everything between the

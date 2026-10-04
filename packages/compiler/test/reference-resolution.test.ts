@@ -77,6 +77,62 @@ reducer r on=load.ok($v, _) do= n := 1${TAIL}`;
   }
 });
 
+describe("route lifecycle patterns (E0228)", () => {
+  // routing.md §3.4: the argument names a route the app renders — a key of
+  // `app.routes` or of a `sub-routes` map — and is compared to it as written.
+  // Every key below that targets a tile is one the router can enter; the two
+  // `->>` keys are ones it replaces before anything is entered.
+  const ROUTED = (on: string) => `slot n : Int = 0
+reducer r on=${on} do= n := 1
+tile Home = column(text("home"))
+tile Account = column(text("account"))
+tile Settings
+    sub-routes = {"/settings/account" -> Account, "/settings" -> Home, "/settings/old" ->> "/settings/account"}
+    = column(route-outlet())
+app A
+    caps   = []
+    routes = {"/" -> Home, "/users/:id" -> Home, "/settings/*" -> Settings, "/old" ->> "/", "/404" -> Home}
+    init   = []
+`;
+  const DECLARED = ["/", "/users/:id", "/settings/*", "/settings/account", "/settings", "/404"];
+
+  for (const ev of ["enter", "leave", "error"]) {
+    for (const pattern of DECLARED) {
+      it(`accepts route.${ev}("${pattern}"), which the app declares`, () => {
+        expect(codes(ROUTED(`route.${ev}("${pattern}")`))).not.toContain("E0228");
+      });
+    }
+
+    // A glob, a typo, a parameter under another name, a child spelled wrong:
+    // each is a string no route is declared at, so nothing ever fires it.
+    for (const pattern of ["/*", "/usrs/:id", "/users/:userId", "/settings/acount"]) {
+      it(`reports route.${ev}("${pattern}") at the pattern, listing the declared routes`, () => {
+        const err = diags(ROUTED(`route.${ev}("${pattern}")`)).find((e) => e.code === "E0228");
+        expect(err, `no E0228 for route.${ev}("${pattern}")`).toBeDefined();
+        expect(err?.kind).toBe("undef-route-pattern");
+        expect(`${err?.pos.line}:${err?.pos.col}`).toBe(
+          `2:${`reducer r on=route.${ev}(`.length + 1}`,
+        );
+        expect(err?.message).toContain(`route.${ev}("${pattern}")`);
+        for (const p of DECLARED) expect(err?.message).toContain(`"${p}"`);
+      });
+    }
+
+    for (const pattern of ["/old", "/settings/old"]) {
+      it(`reports route.${ev}("${pattern}"), a redirect nothing enters`, () => {
+        const err = diags(ROUTED(`route.${ev}("${pattern}")`)).find((e) => e.code === "E0228");
+        expect(err, `no E0228 for route.${ev}("${pattern}")`).toBeDefined();
+        expect(err?.message).toContain("redirect");
+      });
+    }
+  }
+
+  it("leaves the question to E0003 when there is no app to declare routes", () => {
+    const src = `slot n : Int = 0\nreducer r on=route.enter("/x") do= n := 1\n`;
+    expect(check(parse(lex(src)), { requireApp: false }).map((e) => e.code)).not.toContain("E0228");
+  });
+});
+
 describe("app.http handlers (E0102)", () => {
   // One handler per line, so the reported position tells the three apart —
   // on one line every field shares it with the `http` clause's own position,

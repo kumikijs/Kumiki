@@ -343,6 +343,17 @@ export type EventPattern =
        * `app.*` and `route.*` patterns, which name no tile.
        */
       tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
+      /**
+       * The route pattern `route.enter("/p")` / `route.leave("/p")` /
+       * `route.error("/p")` names, and where its string literal sits — folded
+       * into `name` for the same reason the tile is. Absent for every other
+       * lifecycle pattern.
+       */
+      routePattern?: {
+        readonly event: "route.enter" | "route.leave" | "route.error";
+        readonly pattern: string;
+        readonly pos: Pos;
+      };
       pos: Pos;
     };
 

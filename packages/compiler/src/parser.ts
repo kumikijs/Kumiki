@@ -661,18 +661,20 @@ class Parser {
         // `route.enter("/p")` / `route.leave("/p")` / `route.error("/p")` carry
         // the route pattern. The pattern is part of the event identity: the
         // runtime dispatches by matching the reducer's name against
-        // `route.enter(${JSON.stringify(matchedPattern)})`, so the literal must
-        // be preserved here (dropping it would leave every route reducer dead).
-        // Encode it the same way the runtime does so the names match verbatim.
+        // `route.enter(${JSON.stringify(pattern)})` for each pattern the route
+        // is matched under, so the literal must be preserved here (dropping it
+        // would leave every route reducer dead). Encode it the same way the
+        // runtime does so the names match verbatim.
         if (sub !== "enter" && sub !== "leave" && sub !== "error") {
           throw new ParseError(`Unknown route lifecycle event "route.${sub}"`, t.pos);
         }
         this.eat("op", "(");
-        const pattern = this.eat("str").value;
+        const patternTok = this.eat("str");
         this.eat("op", ")");
         return {
           kind: "LifecycleEvent",
-          name: `route.${sub}(${JSON.stringify(pattern)})`,
+          name: `route.${sub}(${JSON.stringify(patternTok.value)})`,
+          routePattern: { event: `route.${sub}`, pattern: patternTok.value, pos: patternTok.pos },
           pos: t.pos,
         };
       }

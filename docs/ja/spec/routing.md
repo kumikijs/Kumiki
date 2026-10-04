@@ -150,7 +150,11 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 | `route.enter(pattern)` | 新ルートに入った直後 |
 | `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-list-of-lifecycle-events)） |
 
-別のパスへのナビゲーションは切替であり、両方のイベントを次の順で発火する：離れるルートの `route.leave`、続いて入るルートの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、親のパターンを離れてから入り直す。クエリかハッシュだけを変えるナビゲーションと、表示中と同じパスへのナビゲーションは切替ではない：ルートに留まるので `route.leave` は走らず、leave ガード（§3.5.2）が確認を求めることもない。それでも `route` slot は更新され、`route.enter` が新しい `$route` で再び走るので、`$route.query` から読み込む reducer は新しいクエリを受け取る。離れるルートの無い初期ルートも `route.enter` だけを発火する。
+**`pattern` は宣言済みのルートを指す。** `app.routes`（[§3.1](#_3-1-ルートの宣言)）か、対象が tile である `sub-routes` マップ（[§3.6.2](#_3-6-2-child-route-map)）のキーであり、書かれたとおりにそれらのキーと比較される — パスと照合されるのではない。`route.enter("/todos/:id")` は id によらず `"/todos/:id"` として宣言されたルートで発火し、`route.enter("/*")` が発火するのは `"/*"` として宣言されたルートだけで、すべてのルートではない。そうしたキーを指さないパターン — タイポ、glob、あるいはルートが表示される前にルーターが辿る `->>` リダイレクトのキー — は決して発火しないので、`kumiki check` がパターンの位置で報告する（[E0228](./errors.md#e0228-undef-route-pattern)）。
+
+**ルートはパターンの連鎖の下でマッチする**：トップレベルのパターンと、そのルートの tile が `sub-routes` を宣言していれば、その下でマッチしたサブルートのパターン（親のデフォルトの子を含む、[§3.6.3](#_3-6-3-matching-rules)）である。`"/settings/*" -> SettingsLayout` とそのレイアウトの `"/settings/account" -> AccountSettings` があるとき、`/settings/account` での連鎖は `"/settings/*"`、`"/settings/account"` である。各イベントは連鎖のすべてのパターンについて発火する：`route.enter` は親、続いてそのサブルートの順、`route.leave` はサブルート、続いてその親の順で、1 つのパターンの reducer は定義順に走る。どれも同じ `$route` を受け取り、その `pattern` はトップレベルのものである（[§3.2](#_3-2-current-route-state)）。
+
+別のパスへのナビゲーションは切替であり、両方のイベントを次の順で発火する：離れるルートの連鎖のすべてのパターンの `route.leave`、続いて入るルートの連鎖のすべてのパターンの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、古い子と親を離れてから、親と新しい子に入る。クエリかハッシュだけを変えるナビゲーションと、表示中と同じパスへのナビゲーションは切替ではない：ルートに留まるので `route.leave` は走らず、leave ガード（§3.5.2）が確認を求めることもない。それでも `route` slot は更新され、連鎖の `route.enter` が新しい `$route` で再び走るので、`$route.query` から読み込む reducer は新しいクエリを受け取る。離れるルートの無い初期ルートも、連鎖のすべてのパターンについて `route.enter` だけを発火する。panic した描画は、表示中のルートのすべてのパターンについて親から順に `route.error` を発火し、各 reducer の `$event.pattern` はその reducer が指すパターンである（[ライフサイクル §7.5](./lifecycle.md#_7-5-404-と-error-ページ)）。
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -305,10 +309,10 @@ tile Chat
     = scroll(...)
 ```
 
-特定ルート進入時にトップへ：
+特定ルート進入時にトップへ。引数はアプリが宣言するルートを指し — ここでは [§3.1](#_3-1-ルートの宣言) の `"/todos/:id"` — 書かれたとおりに比較される（[§3.4](#_3-4-ルートライフサイクル)）ので、`route.enter("/*")` は「すべてのルート」を意味しない：
 
 ```kumiki fragment
-reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
+reducer scrollTop on=route.enter("/todos/:id") do= emit scroll-to({x: 0, y: 0})
 ```
 
 `scroll-to` は標準 effect。

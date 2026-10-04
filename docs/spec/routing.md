@@ -150,7 +150,11 @@ Events fired on route switches:
 | `route.enter(pattern)` | Just after entering the new route |
 | `route.error(pattern)` | A tile of that route threw while rendering ([Lifecycle](./lifecycle.md#_7-1-list-of-lifecycle-events)) |
 
-A navigation to another path is a switch, and fires both events in that order: `route.leave` for the route being left, then `route.enter` for the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves and re-enters the parent's pattern. A navigation that changes only the query or the hash, or that goes to the path already shown, is not a switch: it stays on the route, so `route.leave` does not run and a leave guard (§3.5.2) never asks. It still updates the `route` slot and runs `route.enter` again with the new `$route`, so a reducer that loads from `$route.query` sees the new query. The initial route fires only `route.enter` as well, since there is nothing to leave.
+**`pattern` names a declared route.** It is a key of `app.routes` ([§3.1](#_3-1-declaring-routes)) or of a `sub-routes` map ([§3.6.2](#_3-6-2-child-route-map)) whose target is a tile, and it is compared to those keys as written — it is not matched against the path. `route.enter("/todos/:id")` fires for the route declared as `"/todos/:id"`, whatever the id; `route.enter("/*")` would fire only for a route declared as `"/*"`, not for every route. A pattern that names no such key — a typo, a glob, or the key of a `->>` redirect, which the router follows before any route is shown — would never fire, and `kumiki check` reports it at the pattern ([E0228](./errors.md#e0228-undef-route-pattern)).
+
+**A route is matched under a chain of patterns**: its top-level pattern, then — when that route's tile declares `sub-routes` — the sub-route pattern it matched below it, the parent's default child included ([§3.6.3](#_3-6-3-matching-rules)). At `/settings/account`, with `"/settings/*" -> SettingsLayout` and the layout's `"/settings/account" -> AccountSettings`, the chain is `"/settings/*"`, `"/settings/account"`. Every event fires for every pattern of the chain: `route.enter` for the parent and then its sub-route, `route.leave` for the sub-route and then its parent, and the reducers on one pattern in definition order. Each of them gets the same `$route`, whose `pattern` is the top-level one ([§3.2](#_3-2-current-route-state)).
+
+A navigation to another path is a switch, and fires both events in that order: `route.leave` for every pattern of the route being left, then `route.enter` for every pattern of the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves the old child and the parent, then enters the parent and the new child. A navigation that changes only the query or the hash, or that goes to the path already shown, is not a switch: it stays on the route, so `route.leave` does not run and a leave guard (§3.5.2) never asks. It still updates the `route` slot and runs `route.enter` again for the chain with the new `$route`, so a reducer that loads from `$route.query` sees the new query. The initial route fires only `route.enter` as well, for every pattern of its chain, since there is nothing to leave. A render that panics fires `route.error` for every pattern of the route being shown, the parent first, and each reducer's `$event.pattern` is the pattern it names ([Lifecycle §7.5](./lifecycle.md#_7-5-404-and-error-pages)).
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -305,10 +309,10 @@ tile Chat
     = scroll(...)
 ```
 
-Scroll to the top on entering a specific route:
+Scroll to the top on entering a specific route. The argument names a route the app declares — here `"/todos/:id"` from [§3.1](#_3-1-declaring-routes) — and is compared to it as written ([§3.4](#_3-4-route-lifecycle)), so `route.enter("/*")` would not mean "every route":
 
 ```kumiki fragment
-reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
+reducer scrollTop on=route.enter("/todos/:id") do= emit scroll-to({x: 0, y: 0})
 ```
 
 `scroll-to` is a standard effect.

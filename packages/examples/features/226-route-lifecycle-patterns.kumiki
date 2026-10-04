@@ -1,0 +1,64 @@
+# Feature (routing.md §3.4): a route lifecycle event names a declared route
+# pattern — a key of `app.routes` or of a `sub-routes` map — and fires for
+# every pattern the route is matched under: the top-level pattern, then the
+# sub-route it matched. Opening `/settings/account` enters `/settings/*` and
+# then `/settings/account`. Switching to `/settings/billing` leaves the child
+# and then the parent, and enters the parent and then the new child — a move
+# to another path leaves the whole chain it came from. The bare `/settings`
+# path enters the parent's default sub-route, and going home leaves the chain
+# child first.
+#
+# The argument is compared to the declared keys as written: `route.enter("/*")`
+# or a misspelt `route.enter("/settings/acount")` names no route, and check
+# reports it (E0228) rather than accepting a subscription that never fires.
+
+slot trail : Text = ""
+
+reducer enterHome     on=route.enter("/")                 do= trail := trail + "+home "
+reducer leaveHome     on=route.leave("/")                 do= trail := trail + "-home "
+reducer enterSettings on=route.enter("/settings/*")       do= trail := trail + "+settings "
+reducer leaveSettings on=route.leave("/settings/*")       do= trail := trail + "-settings "
+reducer enterAccount  on=route.enter("/settings/account") do= trail := trail + "+account "
+reducer leaveAccount  on=route.leave("/settings/account") do= trail := trail + "-account "
+reducer enterBilling  on=route.enter("/settings/billing") do= trail := trail + "+billing "
+reducer leaveBilling  on=route.leave("/settings/billing") do= trail := trail + "-billing "
+reducer enterOverview on=route.enter("/settings")         do= trail := trail + "+overview "
+reducer leaveOverview on=route.leave("/settings")         do= trail := trail + "-overview "
+
+tile Trail = text("trail: " + trail)
+
+tile Home = page(
+    heading("Home"),
+    link(to="/settings/account") {text: "Open settings"},
+    Trail)
+
+tile AccountSettings = page(heading("Account settings"))
+tile BillingSettings = page(heading("Billing settings"))
+tile SettingsOverview = page(heading("Settings overview"))
+
+tile Settings
+    sub-routes = {
+        "/settings/account" -> AccountSettings,
+        "/settings/billing" -> BillingSettings,
+        "/settings"         -> SettingsOverview
+    }
+    = page(
+        heading("Settings"),
+        row(
+          link(to="/settings/account") {text: "Account"},
+          link(to="/settings/billing") {text: "Billing"},
+          link(to="/settings") {text: "Overview"},
+          link(to="/") {text: "Home"}),
+        route-outlet(),
+        Trail)
+
+tile NotFound = page(heading("404"))
+
+app RouteLifecyclePatterns
+    caps   = [nav.push]
+    routes = {
+        "/"           -> Home,
+        "/settings/*" -> Settings,
+        "/404"        -> NotFound
+    }
+    init   = []

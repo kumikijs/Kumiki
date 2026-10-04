@@ -2243,6 +2243,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       pos: lifecycleTile.pos,
     });
   }
+  checkRoutePattern(r, sym, errors);
   // §1.6.2 — the selector's tile name must refer to a declared `tile`. A typo
   // here used to bind nothing silently, which made `ui.click(Foo)` indistin-
   // guishable from `ui.click(Fooo)`. Fires before the reducer body is checked
@@ -6640,6 +6641,56 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
     }
     return null;
   };
+}
+
+/**
+ * The route patterns `app` declares, as a route lifecycle event names them
+ * (routing.md §3.4): the keys of `app.routes` and of every tile's `sub-routes`
+ * map. `renders` holds the keys that target a tile, in declaration order and
+ * once each — the patterns a route can be matched under. `redirects` holds the
+ * `->>` keys, which the router follows before it matches anything.
+ */
+function declaredRoutePatterns(
+  app: AppDef,
+  sym: SymbolTable,
+): { renders: string[]; redirects: Set<string> } {
+  const renders: string[] = [];
+  const redirects = new Set<string>();
+  const subRoutes = [...sym.tiles.values()].flatMap((t) => t.subRoutes ?? []);
+  for (const { path, tile } of [...app.routes, ...subRoutes]) {
+    if (tile.startsWith(">>")) redirects.add(path);
+    else if (!renders.includes(path)) renders.push(path);
+  }
+  return { renders, redirects };
+}
+
+/**
+ * E0228: a `route.enter` / `route.leave` / `route.error` pattern that is not a
+ * route the app renders. The runtime fires these events for the patterns the
+ * route being shown is matched under, comparing them to the argument as
+ * written, so a glob such as "/*", a misspelt pattern, or a `->>` key leaves
+ * the subscription with nothing to fire it. With no `app` there are no routes
+ * to compare against, and E0003 is the report.
+ */
+function checkRoutePattern(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const target = r.on.kind === "LifecycleEvent" ? r.on.routePattern : undefined;
+  if (!target || !sym.app) return;
+  const { renders, redirects } = declaredRoutePatterns(sym.app, sym);
+  if (renders.includes(target.pattern)) return;
+  const quoted = JSON.stringify(target.pattern);
+  const why = redirects.has(target.pattern)
+    ? `${quoted} is a redirect (->>), which the router follows before any route is shown, so the subscription never fires`
+    : `no route is declared at ${quoted}, so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character`;
+  const declared =
+    renders.length > 0
+      ? `Declared routes: ${renders.map((p) => JSON.stringify(p)).join(", ")}`
+      : "The app declares no routes";
+  errors.push({
+    code: "E0228",
+    kind: "undef-route-pattern",
+    message: `Reducer "${r.name}" subscribes to ${target.event}(${quoted}), but ${why}. ${declared}`,
+    pos: target.pos,
+  });
 }
 
 /**
