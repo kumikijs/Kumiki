@@ -1031,6 +1031,20 @@ tile Orphan = column(zzz.show)
       expect(layer?.enum).toContain("slot");
     });
   });
+
+  it("adds every kind of definition `kumiki_list` filters by", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const layerEnum = (name: string): string[] | undefined =>
+        (
+          tools.find((t) => t.name === name)?.inputSchema.properties as
+            | { layer?: { enum?: string[] } }
+            | undefined
+        )?.layer?.enum;
+      expect(layerEnum("kumiki_add")).toEqual(layerEnum("kumiki_list"));
+      expect(layerEnum("kumiki_add")).toContain("motion");
+    });
+  });
 });
 
 // What these pin is that the tools go through the shared formatter at all: the
@@ -1127,6 +1141,23 @@ describe("what an edit tool reports about the edit it made", () => {
       });
       expect(edited).toContain("edited slot.stride");
       expect(edited).toMatch(OP_ID);
+    });
+  });
+
+  it("names what a replace dropped from the definition's header", async () => {
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_add", {
+        path: file,
+        layer: "type",
+        name: "Box",
+        body: "(T) = {v: T}",
+      });
+      const replaced = await callTool(client, "kumiki_replace", {
+        path: file,
+        name: "type.Box",
+        body: "= {v: Int}",
+      });
+      expect(replaced.split("\n").slice(1)).toEqual(["  dropped parameter T"]);
     });
   });
 

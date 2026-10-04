@@ -2419,7 +2419,7 @@ describe("patch apply / revert", () => {
 
   it("reverts a replace op by restoring the prior body", () => {
     addDef(path, "slot", "counter", "Int = 0");
-    const replaceId = replaceDef(path, "slot.counter", "Int = 9");
+    const replaceId = replaceDef(path, "slot.counter", "Int = 9").opId;
     patchRevert(path, replaceId);
     const store = load(path);
     expect(viewDef(store, "slot.counter")).toContain("= 0");
