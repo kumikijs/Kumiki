@@ -638,9 +638,15 @@ export function createServer(): McpServer {
       description: "Append a new definition to a .kumiki file. Returns the new op-id.",
       inputSchema: {
         path: z.string(),
-        layer: z.enum(["type", "slot", "effect", "reducer", "tile", "fn", "app", "theme"]),
+        // The labels `kumiki_list` filters by, so a kind of definition it
+        // lists is one this tool writes.
+        layer: z.enum(LAYERS),
         name: z.string(),
-        body: z.string().describe("The definition body (without the `<layer> <name>` prefix)"),
+        body: z
+          .string()
+          .describe(
+            "The definition body (without the `<layer> <name>` prefix). A tile's clauses or a type's parameters, if any, go first: `in=Text = heading($1)`, `(T) = {v: T}`",
+          ),
       },
     },
     async ({ path, layer, name, body }) => {
@@ -653,12 +659,13 @@ export function createServer(): McpServer {
     "kumiki_replace",
     {
       title: "Replace a definition",
-      description: "Replace the body of an existing definition. Returns the new op-id.",
+      description:
+        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has; one that starts with `=` drops them. Returns the new op-id, and a `dropped` line for each clause or parameter the definition no longer has.",
       inputSchema: { path: z.string(), name: z.string(), body: z.string() },
     },
     async ({ path, name, body }) => {
-      const opId = replaceDef(resolve(process.cwd(), path), name, body);
-      return text(describeEdit({ op: "replace", qname: name, opId }));
+      const result = replaceDef(resolve(process.cwd(), path), name, body);
+      return text(describeEdit({ op: "replace", qname: name, ...result }));
     },
   );
 
