@@ -79,6 +79,24 @@ function assertNeverKind(kind: never): never {
 }
 
 /**
+ * The members of the Set `a` that `b` holds (`inB`), or that it does not —
+ * `intersect` and `diff`, one rule for both. Built with `Object.fromEntries`,
+ * which defines each key as an entry of its own: assigning `"__proto__"` into
+ * a fresh object would set its prototype and drop the member.
+ */
+function setKeep(
+  a: Record<string, true> | undefined | null,
+  b: Record<string, true> | undefined | null,
+  inB: boolean,
+): Record<string, true> {
+  return Object.fromEntries(
+    Object.keys(a ?? {})
+      .filter((k) => isEntryOf(b, k) === inB)
+      .map((k) => [k, true]),
+  );
+}
+
+/**
  * Value equality — the one answer to "are these two Kumiki values the same".
  * `==` / `!=` and `List.contains` / `unique` ask it here, and so does the test
  * layer wherever it compares two whole values; the reducer-test `expect` match
@@ -327,7 +345,7 @@ export const _stdlibCore = {
     return m ? Object.entries(m).map(([k, v]) => [restoreKey(k, kind), v]) : [];
   },
   mapGet(m: Record<string, unknown> | undefined | null, k: unknown): unknown {
-    return m ? m[entryKey(k)] : undefined;
+    return isEntryOf(m, k) ? (m as Record<string, unknown>)[entryKey(k)] : undefined;
   },
   /** Polymorphic `.get-or(default)` for Option-like values. */
   getOr(v: unknown, fallback: unknown): unknown {
@@ -343,18 +361,20 @@ export const _stdlibCore = {
     return v ?? fallback;
   },
   mapGetOr(m: Record<string, unknown> | undefined | null, k: unknown, def: unknown): unknown {
-    const key = entryKey(k);
-    if (m && key in m) return m[key];
-    return def;
+    return isEntryOf(m, k) ? (m as Record<string, unknown>)[entryKey(k)] : def;
   },
   mapInsert(m: Record<string, unknown>, k: unknown, v: unknown): Record<string, unknown> {
     return { ...m, [entryKey(k)]: v };
   },
-  /** `Map.remove(k)` and `Set.remove(x)`: every entry but the one `k` is stored under. */
-  mapRemove(m: Record<string, unknown>, k: unknown): Record<string, unknown> {
-    const key = entryKey(k);
-    const out: Record<string, unknown> = {};
-    for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== key) out[kk] = vv;
+  /**
+   * `Map.remove(k)` and `Set.remove(x)`: every entry but the one `k` is stored
+   * under — a copy with that key deleted. The copy keeps a `"__proto__"`
+   * entry as an entry; assigning that key into a fresh object would set the
+   * object's prototype instead.
+   */
+  mapRemove<V>(m: Record<string, V> | undefined | null, k: unknown): Record<string, V> {
+    const out = { ...m };
+    delete out[entryKey(k)];
     return out;
   },
   /**
@@ -366,7 +386,8 @@ export const _stdlibCore = {
    * `_0` fields as entries; any other object — a Map, or a Set, whose
    * elements are its keys and whose values are `true` — hands the predicate
    * each `[key, value]` pair, the key restored to its declared kind as `keys`
-   * restores it when codegen passes `kind`.
+   * restores it when codegen passes `kind`. The entries it keeps are built
+   * with `Object.fromEntries`, so a `"__proto__"` key stays an entry.
    */
   filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
@@ -376,14 +397,12 @@ export const _stdlibCore = {
     }
     if (_stdlibCore.variantIs(coll, "None")) return coll;
     if (coll && typeof coll === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        // One argument, the `[key, value]` pair, as `.entries` hands a List
-        // predicate its elements: the lambda then reads `$1` / `$2` off the
-        // pair, and never takes a two-element key for the pair itself.
-        if (pred([restoreKey(k, kind), v])) out[k] = v;
-      }
-      return out;
+      // One argument, the `[key, value]` pair, as `.entries` hands a List
+      // predicate its elements: the lambda then reads `$1` / `$2` off the
+      // pair, and never takes a two-element key for the pair itself.
+      return Object.fromEntries(
+        Object.entries(coll).filter(([k, v]) => pred([restoreKey(k, kind), v])),
+      );
     }
     return [];
   },
@@ -447,7 +466,8 @@ export const _stdlibCore = {
    * over a Map's entries (stdlib.md §2.2.1) — the same keys, each value
    * replaced by `fn([key, value])`, the key restored to its declared kind as
    * `keys` restores it. A Map is a plain object, so it is told apart from a
-   * tagged Option / Result first, as `filter` does.
+   * tagged Option / Result first, as `filter` does, and its result is built
+   * with `Object.fromEntries`, as `filter` builds its own.
    */
   mapOver(coll: unknown, fn: (x: unknown) => unknown, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.map(fn);
@@ -460,13 +480,11 @@ export const _stdlibCore = {
     }
     if (_stdlibCore.variantIs(coll, "None") || _stdlibCore.variantIs(coll, "Err")) return coll;
     if (coll && typeof coll === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        // One argument, the `[key, value]` pair, as `filter` hands its
-        // predicate: a two-element key is then never taken for the pair.
-        out[k] = fn([restoreKey(k, kind), v]);
-      }
-      return out;
+      // One argument, the `[key, value]` pair, as `filter` hands its
+      // predicate: a two-element key is then never taken for the pair.
+      return Object.fromEntries(
+        Object.entries(coll).map(([k, v]) => [k, fn([restoreKey(k, kind), v])]),
+      );
     }
     return coll == null ? [] : fn(coll);
   },
@@ -530,18 +548,10 @@ export const _stdlibCore = {
     for (const x of xs ?? []) acc = fn(acc, x);
     return acc;
   },
-  setHas(s: Record<string, true> | undefined, x: unknown): boolean {
-    return !!s && entryKey(x) in s;
-  },
+  /** `Set.has(x)` and `Map.has(k)`. */
+  setHas: isEntryOf,
   setToggle(s: Record<string, true> | undefined, x: unknown): Record<string, true> {
-    const k = entryKey(x);
-    const cur = { ...(s ?? {}) };
-    if (k in cur) {
-      delete cur[k];
-      return cur;
-    }
-    cur[k] = true;
-    return cur;
+    return isEntryOf(s, x) ? _stdlibCore.mapRemove(s, x) : _stdlibCore.setAdd(s, x);
   },
   /**
    * `+`. Numeric on two numbers; on anything with a `Text` side it is
@@ -779,7 +789,7 @@ export const _stdlibCore = {
   ): Record<string, unknown> {
     const obj = m ?? {};
     const key = entryKey(k);
-    if (!(key in obj)) return obj;
+    if (!isEntryOf(obj, k)) return obj;
     return { ...obj, [key]: fn(obj[key]) };
   },
   /**
@@ -810,20 +820,14 @@ export const _stdlibCore = {
     a: Record<string, true> | undefined | null,
     b: Record<string, true> | undefined | null,
   ): Record<string, true> {
-    const bb = b ?? {};
-    const out: Record<string, true> = {};
-    for (const k of Object.keys(a ?? {})) if (k in bb) out[k] = true;
-    return out;
+    return setKeep(a, b, true);
   },
   /** Set(T).diff(other) — keys in a not in b. */
   setDiff(
     a: Record<string, true> | undefined | null,
     b: Record<string, true> | undefined | null,
   ): Record<string, true> {
-    const bb = b ?? {};
-    const out: Record<string, true> = {};
-    for (const k of Object.keys(a ?? {})) if (!(k in bb)) out[k] = true;
-    return out;
+    return setKeep(a, b, false);
   },
   /** Option(T).or / Result(T,E).or — receiver when Some/Ok, else `other`. */
   or(v: unknown, other: unknown): unknown {

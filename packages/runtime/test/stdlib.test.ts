@@ -501,6 +501,64 @@ describe("one key per value (docs/spec/stdlib.md §2.2.1 / §2.2.2)", () => {
   });
 });
 
+// A Map or a Set is a plain object, which inherits every `Object.prototype`
+// member. A Text key is still an ordinary key whatever it spells: the members
+// answer from the entries written into the container and nothing else. The
+// results are read with `Object.keys` / `Object.entries`, which list own keys
+// only, so an own `"__proto__"` entry is told apart from the inherited accessor.
+describe("a key that names an Object.prototype member (docs/spec/stdlib.md §2.2.1 / §2.2.2)", () => {
+  const s = _stdlibCore;
+  const names = ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"];
+
+  for (const k of names) {
+    it(`an empty Map or Set does not hold ${JSON.stringify(k)}`, () => {
+      expect(s.setHas({}, k)).toBe(false);
+      expect(s.mapGet({}, k)).toBeUndefined();
+      expect(s.mapGetOr({}, k, 0)).toBe(0);
+      expect(Object.entries(s.mapUpdate({}, k, (v) => `${String(v)}!`))).toEqual([]);
+      expect(() => s.index({}, k)).toThrow(KumikiPanic);
+      expect(Object.keys(s.setToggle({}, k))).toEqual([k]);
+      expect(Object.keys(s.setIntersect(s.setAdd({}, k), {}))).toEqual([]);
+      expect(Object.keys(s.setDiff(s.setAdd({}, k), {}))).toEqual([k]);
+      expect(Object.keys(s.diff(s.setAdd({}, k), {}) as object)).toEqual([k]);
+    });
+
+    it(`a ${JSON.stringify(k)} entry reads back, and stays when another key is taken out`, () => {
+      const m = s.mapInsert(s.mapInsert({}, k, 1), "a", 2);
+      expect(s.setHas(m, k)).toBe(true);
+      expect(s.mapGet(m, k)).toBe(1);
+      expect(s.mapGetOr(m, k, 0)).toBe(1);
+      expect(s.index(m, k)).toBe(1);
+      expect(Object.entries(s.mapUpdate(m, k, (v) => (v as number) + 1))).toEqual([
+        [k, 2],
+        ["a", 2],
+      ]);
+      expect(Object.entries(s.mapRemove(m, "a"))).toEqual([[k, 1]]);
+      expect(Object.entries(s.mapRemove(m, k))).toEqual([["a", 2]]);
+
+      const set = s.setAdd(s.setAdd({}, k), "a");
+      expect(Object.keys(s.setToggle(set, "a"))).toEqual([k]);
+      expect(Object.keys(s.setToggle(set, k))).toEqual(["a"]);
+      expect(Object.keys(s.setIntersect(set, set))).toEqual([k, "a"]);
+      expect(Object.keys(s.setDiff(set, s.setAdd({}, "a")))).toEqual([k]);
+      expect(Object.keys(s.setUnion({}, set))).toEqual([k, "a"]);
+    });
+
+    it(`Map.filter and Map.map keep a ${JSON.stringify(k)} entry`, () => {
+      const m = s.mapInsert(s.mapInsert({}, k, 1), "a", 2);
+      expect(Object.entries(s.filter(m, () => true) as object)).toEqual([
+        [k, 1],
+        ["a", 2],
+      ]);
+      const plusOne = (pair: unknown) => (pair as [string, number])[1] + 1;
+      expect(Object.entries(s.mapOver(m, plusOne) as object)).toEqual([
+        [k, 2],
+        ["a", 3],
+      ]);
+    });
+  }
+});
+
 describe("value equality (docs/spec/language.md §1.9.4)", () => {
   const { eq, contains, listUnique } = _stdlibCore;
 

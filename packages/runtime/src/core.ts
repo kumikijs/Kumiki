@@ -3824,11 +3824,13 @@ export function _setPathHelper(
 }
 
 /**
- * Whether `key` names an entry of the Map `m` — its own key under `entryKey`,
- * so a key that happens to name an `Object.prototype` member (`"toString"`) is
- * not one. One answer for the index read (`_stdlibCore.index`) and the index
- * write (`_setPathHelper`), so the two sides of `:=` agree about which keys are
- * there.
+ * Whether `key` names an entry of the Map or Set `m` — its own key under
+ * `entryKey`, so a key that happens to name an `Object.prototype` member
+ * (`"toString"`, `"__proto__"`) is not one until it is written. The one answer
+ * every member that finds an entry asks: `has` / `get` / `get-or` / `update` /
+ * `toggle`, `intersect` / `diff`, the index read (`_stdlibCore.index`) and the
+ * index write (`_setPathHelper`), so no two of them disagree about which keys
+ * are there.
  */
 export function isEntryOf(m: unknown, key: unknown): boolean {
   return m !== null && typeof m === "object" && Object.hasOwn(m, entryKey(key));
