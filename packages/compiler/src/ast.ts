@@ -52,7 +52,7 @@ export type TestDef = {
   forAll?: { name: string; type: TypeExpr; pos: Pos }[];
   /** `property-test` only: the boolean `invariant` expression checked per case. */
   invariant?: Expr;
-  /** `property-test` only: trial count (default 100). */
+  /** `property-test` only: trial count, a whole number of 1 or more (default 100). */
   count?: number;
   /** `property-test` only: shrink on failure (default true). */
   shrink?: boolean;

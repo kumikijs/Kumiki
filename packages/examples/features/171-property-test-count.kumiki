@@ -1,0 +1,37 @@
+# Feature (testing.md §8.3.1): a property-test's `count` is how many cases it
+# generates — a whole number, 1 or more — and leaving it out asks for 100.
+#
+# `once` asks for the fewest cases a property can run, `hundred` for the
+# default. A `count` of 0 ran no case at all and reported PASS for an
+# invariant that fails on every input, so the test asserted nothing, and `0.5`
+# was accepted and ran one case. Both are parse errors at the literal now, and
+# `-3` is refused with the same message rather than with `Expected num`.
+#
+# `packages/tests/property-test-count.test.ts` runs these tests, then writes
+# `once`'s count as 0, 0.5 and -3 and asserts `kumiki test` refuses each one.
+
+slot clicks : Int = 0
+
+reducer inc on=ui.click(IncBtn) do= clicks := clicks + 1
+
+tile IncBtn = button(text="+1")
+
+tile App = column(IncBtn, text("clicks=" + clicks.show)) {pad: "lg", gap: "md"}
+
+app PropertyTestCount
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test once =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {clicks: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.clicks == n + 1
+        count     = 1
+
+test hundred =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {clicks: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.clicks == n + 1

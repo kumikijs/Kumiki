@@ -39,6 +39,7 @@ import type {
 } from "./ast.ts";
 import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
+import { isPositiveInt } from "./positive-int.ts";
 import { REFINEMENT_PREDS } from "./refinements.ts";
 
 export class ParseError extends Error {
@@ -2281,8 +2282,7 @@ class Parser {
       const kw = this.next();
       this.eat("op", "=");
       if ("value" in kw && kw.value === "count") {
-        const n = this.eat("num");
-        count = n.value;
+        count = this.eatPropertyTestCount(name);
       } else {
         const b = this.peek();
         if (b.kind === "kw" && (b.value === "true" || b.value === "false")) {
@@ -2305,6 +2305,25 @@ class Parser {
       ...(shrink !== undefined ? { shrink } : {}),
       pos,
     };
+  }
+
+  /**
+   * A property-test's `count`: how many cases it generates. Signed like any
+   * other literal, so `-3` is answered for what is wrong with it rather than
+   * with `Expected num, got op(-)`, and then held to a whole number of at least
+   * 1 — a count of 0 runs no case and would report the property as holding
+   * having checked nothing, and 0.5 is not a number of cases.
+   */
+  private eatPropertyTestCount(name: string): number {
+    const t = this.peek();
+    const n = this.eatSignedNumber();
+    if (!isPositiveInt(n)) {
+      throw new ParseError(
+        `property-test "${name}" count must be a whole number, 1 or more (got ${n})`,
+        t.pos,
+      );
+    }
+    return n;
   }
 
   /** `episode-test load="<path>" mocks={...} expect={...}` (spec §8.6). */

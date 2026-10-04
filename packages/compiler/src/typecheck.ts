@@ -70,6 +70,7 @@ import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
+import { isPositiveInt } from "./positive-int.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
@@ -486,10 +487,6 @@ const MOTION_EASINGS = new Set(["linear", "ease", "ease-in", "ease-out", "ease-i
 const MOTION_DURATION_TOKENS = new Set(["fast", "normal", "slow"]);
 const MOTION_DIRECTIONS = new Set(["normal", "reverse", "alternate", "alternate-reverse"]);
 const MOTION_TIMING_KEYS = new Set(["duration", "easing", "iteration", "direction"]);
-
-/** `duration` (ms) and `iteration` are spec'd as positive integers (no 0 / negative / float). */
-const isPositiveInt = (v: unknown): boolean =>
-  typeof v === "number" && Number.isInteger(v) && v > 0;
 
 type MotionBody = { [k: string]: import("./ast.ts").ThemeValue };
 
