@@ -31,8 +31,10 @@ async function serve(src: string): Promise<{ thrown: unknown; warnings: string[]
   writeFileSync(join(root, "bad.kumiki"), src);
   const warnings: string[] = [];
   const logger = createLogger("warn");
+  // Vite colours a warning when the terminal (or CI's FORCE_COLOR) asks for it,
+  // which can split `file:line:col`; the text is what is asserted.
   logger.warn = (msg) => {
-    warnings.push(msg);
+    warnings.push(stripVTControlCharacters(msg));
   };
   server = await createServer({
     root,
