@@ -2526,9 +2526,11 @@ function checkIndexLvalue(
 }
 
 /**
- * A `List` index is an `Int`, on either side of `:=` — the read and the write
- * name the same element (language.md §1.6.3). `base` is the receiver's type,
- * already unaliased; any other receiver is left alone.
+ * A `List` index is an `Int`, in each form that takes one: the read `xs[i]`
+ * and the write `xs[i] := v`, which name the same element (language.md
+ * §1.6.3), and `xs.get(i)`, which reads that element as an `Option`
+ * (stdlib.md §2.2.3). `base` is the receiver's type, already unaliased; any
+ * other receiver is left alone.
  */
 function checkListIndex(
   base: TypeExpr | null,
@@ -3225,6 +3227,12 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             checkExpr(a, sym, errors, ctx);
             const declared = memberArgType(recvType, e.method, i, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
+            // `xs.get(i)` reads the element `xs[i]` names, so its index is
+            // held to the same rule by the same check. Any other count is the
+            // E0213 `checkGetArity` reports, with no argument read as the index.
+            if (e.method === "get" && e.args.length === 1) {
+              checkListIndex(unaliasType(recvType, sym), a, sym, errors, ctx);
+            }
             continue;
           }
           if (isFragmentFnName(a, sym, ctx)) {

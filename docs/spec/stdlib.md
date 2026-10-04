@@ -134,7 +134,7 @@ What is converted is decided from the receiver's type, wherever the receiver com
 ```
 length                      : Int
 is-empty                    : Bool
-get(i)                      : Option(T)
+get(i)                      : Option(T)        ; i is Int
 head                        : Option(T)
 tail                        : List(T)
 last                        : Option(T)

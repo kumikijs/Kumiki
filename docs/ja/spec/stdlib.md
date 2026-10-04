@@ -134,7 +134,7 @@ to-list                     : List(T)
 ```
 length                      : Int
 is-empty                    : Bool
-get(i)                      : Option(T)
+get(i)                      : Option(T)        ; i は Int
 head                        : Option(T)
 tail                        : List(T)
 last                        : Option(T)
