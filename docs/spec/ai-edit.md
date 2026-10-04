@@ -200,7 +200,7 @@ kumiki remove slot.draft
 # Use --cascade to remove all dependents, or --force to leave dangling
 ```
 
-`--cascade` includes the dependents in the same op bundle and removes them too. `--force` tolerates dangling (emits a warning).
+`--cascade` includes the dependents in the same op bundle and removes them too. The dependents are every definition that references the removed one, directly or transitively, which can include the `app`. A definition that the removed one references stays, unless it is a dependent as well. `--force` tolerates dangling (emits a warning).
 
 The cascade's `remove` op lists every definition it took in `removed`, the requested one first, and records each one's body in `bodies`. `kumiki patch revert` of that op restores all of them as **one** `add` op: the requested definition is its `layer` / `name` / `body`, and the dependents are its `with` list. The bodies are the ones recorded on the remove, so they are what the file held at that moment, even when a rename has since rewritten a dependent without logging its new body. A `remove` logged before `bodies` existed falls back to the last body the op log recorded for each name before the remove; if any of them cannot be found, the revert writes nothing, exits `1`, and names the definitions it could not restore. A cascade logged without `removed` is refused outright, because what it removed is unknown. A revert never reports a partial restore as success.
 

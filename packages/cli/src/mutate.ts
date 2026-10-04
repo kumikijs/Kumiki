@@ -730,6 +730,15 @@ function headerItems(def: Def | undefined): string[] {
   }
 }
 
+/**
+ * What `cascade` adds to a remove (§9.4.1), in the words both surfaces use: the
+ * `--cascade` help of `kumiki remove` and the `kumiki_remove` description. One
+ * string, so the two state the relation `removeDef` walks, from the target out
+ * to whatever references it, and cannot state different ones.
+ */
+export const CASCADE_HELP =
+  "also remove its dependents: every definition that references it, directly or transitively, which can include the app";
+
 /** Removes `qname`, plus everything that references it when `cascade`. */
 export function removeDef(
   path: string,

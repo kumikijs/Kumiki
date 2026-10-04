@@ -12,6 +12,7 @@
 
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { CASCADE_HELP } from "../src/mutate.ts";
 import { CLI_ARGV } from "./helpers/cli.ts";
 
 // 60s per case, not 30: every one of these is a process start, and this file
@@ -51,4 +52,16 @@ describe("verb registration smoke", () => {
       expect(out).toMatch(new RegExp(`kumiki ${verb}`));
     });
   }
+});
+
+// `kumiki_remove` describes `cascade` with the same string, so an agent on
+// either surface reads the relation `removeDef` walks.
+describe("remove --help", () => {
+  it("describes --cascade as taking the target's dependents", { timeout: 60000 }, () => {
+    const { out, code } = runCli(["remove", "--help"]);
+    expect(code).toBe(0);
+    const help = out.replace(/\s+/g, " ");
+    expect(help).toContain(`--cascade ${CASCADE_HELP}`);
+    expect(help).toContain("every definition that references it");
+  });
 });
