@@ -1,0 +1,54 @@
+# Feature (language.md §1.3.2): a union of the program's own may name its
+# variants `Ok`, `Err`, `Some` or `None`. Variant names are identifiers and
+# none of the four is reserved, so `type Health = Ok | Degraded | Down` is a
+# union like any other.
+#
+# Where nothing declares a type — a `let`, a list literal — a tag that a
+# variant of the program's own could hold is that variant's as much as the
+# built-in one's, and the place the value lands decides, as for any other
+# tag of a union. `next` below lands in a `Health` slot and a `List(Health)`,
+# and the `match` on it takes the union's own `Ok` arm; `cleared` lands in a
+# `Filter`. `Health`'s `Ok` carries nothing, so `let r = Ok(2)` is a `Result`
+# and lands in one.
+
+type Health = Ok | Degraded | Down
+type Filter = None | Tag(Text)
+
+slot health  : Health            = Down
+slot history : List(Health)      = []
+slot said    : Text              = "-"
+slot filter  : Filter            = Tag("urgent")
+slot score   : Result(Int, Text) = Err("none yet")
+
+fn healthLabel(h: Health) -> Text = match h with
+    | Ok       -> "ok"
+    | Degraded -> "degraded"
+    | Down     -> "down"
+
+fn filterLabel(f: Filter) -> Text = match f with
+    | None   -> "all"
+    | Tag(t) -> t
+
+reducer recover on=ui.click(Recover)
+    do= let next = Ok
+        health := next
+        history := [next]
+        said := match next with | Ok -> "back up" | Degraded -> "slow" | Down -> "still down"
+        let cleared = None
+        filter := cleared
+        let r = Ok(2)
+        score := r
+
+tile Recover = button(text="recover") {id: "recover"}
+
+tile App = column(
+    Recover,
+    text("health=" + healthLabel(health) + " history=" + history.length.show),
+    text("said=" + said),
+    text("filter=" + filterLabel(filter)),
+    text("score=" + score.get-or(0).show))
+
+app UserUnionOkErrTags
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

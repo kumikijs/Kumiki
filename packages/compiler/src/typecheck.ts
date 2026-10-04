@@ -282,6 +282,13 @@ type SymbolTable = {
    * see `collectElementIds`.
    */
   elementIds: Set<string>;
+  /**
+   * The payload types of every variant a union of the program's own
+   * declares, by tag, wherever the union is written: `unionVariantsOf`. What
+   * `inferType` asks before it reads `Some` / `None` / `Ok` / `Err` as an
+   * `Option` or a `Result`.
+   */
+  unionVariants: ReadonlyMap<string, readonly (readonly TypeExpr[])[]>;
   app?: AppDef;
 };
 
@@ -306,6 +313,7 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    unionVariants: unionVariantsOf(program),
   };
 
   for (const def of program.defs) {
@@ -376,6 +384,69 @@ function checkAll(
   checkDuplicateNames(program, errors);
 
   return errors;
+}
+
+/**
+ * The payload types of every variant a union in the program declares, by
+ * tag. A union is a union wherever it is written — a `type` body, or the type
+ * of a slot, a fn's parameter or result, an effect, a tile's `in=` or a
+ * property test's `for-all` — and at any depth inside one, so all of them are
+ * read. A generic's parameter stands for whatever its application supplies,
+ * so a payload written with one is read as undecided.
+ */
+function unionVariantsOf(program: Program): Map<string, TypeExpr[][]> {
+  const variants = new Map<string, TypeExpr[][]>();
+  const walk = (t: TypeExpr | undefined): void => {
+    if (!t) return;
+    switch (t.kind) {
+      case "TypePrim":
+      case "TypeRef":
+        return;
+      case "TypeApp":
+        for (const a of t.args) walk(a);
+        return;
+      case "TypeRecord":
+        for (const f of t.fields) walk(f.type);
+        return;
+      case "TypeUnion":
+        for (const v of t.variants) {
+          variants.set(v.name, [...(variants.get(v.name) ?? []), v.payloads]);
+          for (const p of v.payloads) walk(p);
+        }
+        return;
+      case "TypeNominal":
+      case "TypeRefinement":
+        walk(t.inner);
+        return;
+      default:
+        assertNever(t);
+    }
+  };
+  for (const def of program.defs) {
+    if (def.kind === "TypeDef") {
+      const open = def.params.map(() => unknownType(def.pos));
+      walk(substituteType(def.body, paramSubstitution(def.params, open)));
+    }
+    if (def.kind === "SlotDef") walk(def.type);
+    if (def.kind === "TileDef") walk(def.in);
+    if (def.kind === "EffectDef") for (const t of [def.inType, def.outType]) walk(t);
+    if (def.kind === "FnDef") for (const t of [...def.params.map((p) => p.type), def.ret]) walk(t);
+    if (def.kind === "TestDef") for (const f of def.forAll ?? []) walk(f.type);
+  }
+  return variants;
+}
+
+/**
+ * Whether a variant `tag` of a union the program declares could hold a value
+ * whose payloads are `payloads`: as many of them, each assignable to the one
+ * declared. An undecidable payload could be anything, so it fits.
+ */
+function userVariantHolds(tag: string, payloads: TypeExpr[], sym: SymbolTable): boolean {
+  return (sym.unionVariants.get(tag) ?? []).some(
+    (declared) =>
+      declared.length === payloads.length &&
+      declared.every((d, i) => assignable(payloads[i] ?? null, d, sym)),
+  );
 }
 
 /** A definition declared twice (`E0007`), and a name written twice (`E0008`). */
@@ -4775,17 +4846,22 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       return container("Map", [k ?? unknownType(e.pos), v ?? unknownType(e.pos)], e.pos);
     }
     case "Variant": {
-      const inner = e.payload[0]
-        ? (inferType(e.payload[0], sym, ctx) ?? unknownType(e.pos))
-        : unknownType(e.pos);
+      // A user union's tag names its type only via the declared side, which
+      // `checkAgainst` has; from the expression alone it is undecidable —
+      // whatever the tag is called. A union may declare `Ok` or `None` too
+      // (language.md §1.3.2), so a built-in tag that a variant of the
+      // program's own could hold is undecidable as well: beside
+      // `type Outcome = Ok(Int) | Fail`, `Ok(1)` is an `Outcome` as much as a
+      // `Result`, and only where it lands can say which.
+      const payloads = e.payload.map((p) => inferType(p, sym, ctx) ?? unknownType(e.pos));
+      if (userVariantHolds(e.name, payloads, sym)) return null;
+      const inner = payloads[0] ?? unknownType(e.pos);
       if (e.name === "Some") return container("Option", [inner], e.pos);
       // `None` says nothing about the element type — `Option(Unit)` would make
       // it a mismatch against every `Option(T)` there is.
       if (e.name === "None") return container("Option", [unknownType(e.pos)], e.pos);
       if (e.name === "Ok") return container("Result", [inner, unknownType(e.pos)], e.pos);
       if (e.name === "Err") return container("Result", [unknownType(e.pos), inner], e.pos);
-      // A user union's tag names its type only via the declared side, which
-      // `checkAgainst` has; from the expression alone it is undecidable.
       return null;
     }
     case "BinOp":
