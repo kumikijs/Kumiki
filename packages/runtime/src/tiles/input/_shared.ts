@@ -112,8 +112,9 @@ export function tileId(node: { id?: unknown; props?: unknown }): string | undefi
 
 // Serialize a value to a stable option key for `<select>`. Recurses into
 // variant `_tag` payloads so `Some(A)` vs. `Some(B)` don't collapse to the
-// same key. Shared by both `create` and `patch` so option-slot lookups stay
-// consistent across renders.
+// same key. Shared by `create`, `patch` and the SSR pass (`ssr-render.ts`), so
+// option-slot lookups stay consistent across renders and a served page keys
+// and selects its options as the mounted one does.
 export function valueKey(v: unknown): string {
   if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
     const t = v as Record<string, unknown>;

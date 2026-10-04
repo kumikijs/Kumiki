@@ -1,0 +1,50 @@
+# Feature (runtime.md §10.3.8, §10.6.1): a `select` whose option values are
+# variants, variants with a payload, and records, served the way it mounts.
+#
+# An option is matched by the structural key of its value (a variant's tag
+# and payload, a record's fields), not by being the object the slot holds, so
+# `Some(Backlog)` and `Some(InProgress)` are two options. The server and the
+# client use the same key: it is each `<option>`'s `value`, and the option
+# whose key is the bound slot's is the selected one. The served page marks
+# that option `selected`, so its first paint shows "Medium", "In progress" and
+# "2 x 3" before any script runs. The scenario drives the mounted selects;
+# what the server serves is read in
+# packages/tests/served-select-structural-value.test.ts.
+
+type Size   = S | M | L
+type Status = Backlog | InProgress | Done
+type Dims   = {w: Int, h: Int}
+
+slot size   : Size           = M
+slot status : Option(Status) = Some(InProgress)
+slot dims   : Dims           = {w=2, h=3}
+
+fn sizeOptions() -> List({label: Text, value: Size})
+   = [{label: "Small",  value: S},
+      {label: "Medium", value: M},
+      {label: "Large",  value: L}]
+
+fn statusOptions() -> List({label: Text, value: Option(Status)})
+   = [{label: "Any",         value: None},
+      {label: "Backlog",     value: Some(Backlog)},
+      {label: "In progress", value: Some(InProgress)},
+      {label: "Done",        value: Some(Done)}]
+
+fn dimsOptions() -> List({label: Text, value: Dims})
+   = [{label: "1 x 1", value: {w=1, h=1}},
+      {label: "2 x 3", value: {w=2, h=3}},
+      {label: "4 x 4", value: {w=4, h=4}}]
+
+tile App = column(
+             select(bind=size, options=sizeOptions(), placeholder="Pick a size") {id: "size"},
+             select(bind=status, options=statusOptions()) {id: "status"},
+             select(bind=dims, options=dimsOptions()) {id: "dims"},
+             text("size: " + size.show),
+             text("status: " + status.map($1.show).get-or("any")),
+             text("dims: " + dims.w.show + " x " + dims.h.show))
+           {pad: "lg", gap: "md"}
+
+app ServedSelect
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

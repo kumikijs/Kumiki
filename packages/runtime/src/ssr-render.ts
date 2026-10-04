@@ -11,7 +11,9 @@
 // from `core.ts` as data (`propStyleDecls`, applied to every kind, and
 // `gridTracks` for a grid). `core.ts` touches no DOM at module scope — `ssr.ts`
 // already imports values from it — and the alternative is a second copy of the
-// mapping, which is exactly the drift the parity test exists to catch.
+// mapping, which is exactly the drift the parity test exists to catch. The same
+// holds for the two DOM-free rules it takes from the tile modules: the tag a
+// `heading` level maps to, and the key a `select` matches an option by.
 
 import type { BindSegment, StyleDecl, TileNode, TileProps } from "./core.ts";
 import {
@@ -22,6 +24,7 @@ import {
   pickBaseValue,
   propStyleDecls,
 } from "./core.ts";
+import { valueKey } from "./tiles/input/_shared.ts";
 import { headingTag } from "./tiles/text/heading.ts";
 
 const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
@@ -523,13 +526,16 @@ export function renderTileToString(node: TileNode): string {
     }
     case "select": {
       const bind = bindAttr(node);
+      // An option's `value` and whether it is selected both come from the
+      // structural key the mounted `<select>` keys it by (§10.3.8): a variant
+      // or a record is a different object on each side of the comparison, so
+      // only the key can say the two are the same value.
+      const currentKey = valueKey(node.value);
       const opts = (node.options ?? [])
-        .map(
-          (o) =>
-            `<option value="${escapeAttr(String(o.value))}"${
-              o.value === node.value ? " selected" : ""
-            }>${escapeText(String(o.label))}</option>`,
-        )
+        .map((o) => {
+          const k = valueKey(o.value);
+          return `<option value="${escapeAttr(k)}"${k === currentKey ? " selected" : ""}>${escapeText(String(o.label))}</option>`;
+        })
         .join("");
       return el(
         node,

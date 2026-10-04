@@ -134,19 +134,24 @@ function styleOf(el: Element): Record<string, string> {
  * asserted; without it, deleting `value` from `ssr-render.ts` was a silent,
  * permanent regression.
  *
- * The set is by NAME, not by element, and `<option value>` is the one place
- * that is wrong: an option's `value` DOES reflect, so the two paths disagree
- * there (the client writes `valueKey`'s JSON, the server the plain string) and
- * this exclusion hides it. Tracked in #404, which is where the encoding gets
- * decided; the harness needs a per-element exclusion to compare it.
+ * The set is by name, with one element taken back out: an `<option>`'s `value`
+ * DOES reflect — the client writes the option's structural key into the
+ * attribute (runtime.md §10.3.8) — so a served option has to carry the same
+ * key, and it is compared like any other attribute.
  */
 const PROPERTY_ON_THE_CLIENT = new Set(["value", "checked", "selected"]);
+
+/** Whether attribute `name` on `el` is one `PROPERTY_ON_THE_CLIENT` drops. */
+function propertyOnTheClient(el: Element, name: string): boolean {
+  if (name === "value" && el.tagName === "OPTION") return false;
+  return PROPERTY_ON_THE_CLIENT.has(name);
+}
 
 /** Every attribute except `style`, which is compared through the CSSOM. */
 function attrsOf(el: Element): Record<string, string> {
   const out: Record<string, string> = {};
   for (const a of Array.from(el.attributes)) {
-    if (a.name === "style" || PROPERTY_ON_THE_CLIENT.has(a.name)) continue;
+    if (a.name === "style" || propertyOnTheClient(el, a.name)) continue;
     out[a.name] = a.value;
   }
   return out;
@@ -471,6 +476,19 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
           options: [{ label: "A", value: "a" }],
         },
       ],
+      [
+        "select (variant and record values)",
+        {
+          kind: "select",
+          value: { _tag: "Some", _0: { _tag: "B" } },
+          options: [
+            { label: "None", value: { _tag: "None" } },
+            { label: "A", value: { _tag: "Some", _0: { _tag: "A" } } },
+            { label: "B", value: { _tag: "Some", _0: { _tag: "B" } } },
+            { label: "Box", value: { w: 2, h: 3 } },
+          ],
+        },
+      ],
     ],
   },
   slider: {
@@ -694,6 +712,31 @@ describe("the server pass renders what the client renders", () => {
       o.hasAttribute("selected"),
     );
     expect(chosen.map((o) => o.textContent)).toEqual(["B"]);
+
+    // A variant or a record is selected by its structural key: the slot's value
+    // is never the very object an option holds.
+    const selectedLabels = (node: TileNode): (string | null)[] =>
+      Array.from(serverElement(node).querySelectorAll("option"))
+        .filter((o) => o.hasAttribute("selected"))
+        .map((o) => o.textContent);
+    const statuses = [
+      { label: "A", value: { _tag: "Some", _0: { _tag: "A" } } },
+      { label: "B", value: { _tag: "Some", _0: { _tag: "B" } } },
+    ];
+    expect(
+      selectedLabels({
+        kind: "select",
+        value: { _tag: "Some", _0: { _tag: "B" } },
+        options: statuses,
+      }),
+    ).toEqual(["B"]);
+    const boxes = [
+      { label: "1x1", value: { w: 1, h: 1 } },
+      { label: "2x3", value: { w: 2, h: 3 } },
+    ];
+    expect(selectedLabels({ kind: "select", value: { w: 2, h: 3 }, options: boxes })).toEqual([
+      "2x3",
+    ]);
 
     // A textarea's value is its text, which is why it is the one control whose
     // state the harness excludes one node down rather than by attribute name.
