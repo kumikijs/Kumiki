@@ -418,7 +418,7 @@ export function assignable(
 ): boolean {
   return relate(actual, declared, env, {
     pairs: new Set(),
-    unfolded: new Set(),
+    unfolded: new Map(),
     budget: { reentries: REENTRY_LIMIT },
   });
 }
@@ -451,22 +451,29 @@ export function assignable(
  *
  * `unfolded` names, by their heads, the pairs unfolded on the way down with
  * an application of a generic on either side — the one kind of type whose
- * unfolding is a type not written anywhere. Meeting one again is a re-entry
- * with different arguments — the same arguments would have been a pair
- * already in progress — and once the comparison has made `REENTRY_LIMIT` of
- * them, a re-entry answers yes as a repeated pair does. That is what ends two
- * different generics that both grow, `G` against
- * `type H(T) = Leaf(T) | Node(H(List(T)))`. The budget is one count for the
- * whole comparison rather than one per path, so a pair that grows two ways at
- * each level stops as soon as one that grows one way.
+ * unfolding is a type not written anywhere — each with the size of the pair
+ * as written when it was last unfolded. Meeting the same heads again is a
+ * re-entry with different arguments — the same arguments would have been a
+ * pair already in progress. A regular generic that swaps or rotates its
+ * parameters (`type Sw(T, U) = Leaf(T) | Node(Sw(U, T))`) re-enters with a pair
+ * of the same size and ends at a repeated pair. A re-entry with a larger pair
+ * is one that grew, and once the comparison has made `REENTRY_LIMIT` of those,
+ * the next answers yes as a repeated pair does. That is what ends two different
+ * generics that both grow, `G` against `type H(T) = Leaf(T) | Node(H(List(T)))`.
+ *
+ * It ends every path: one that never ends meets some pair of heads again and
+ * again, each time with a pair it has not met, and pairs of a bounded size are
+ * finitely many, so those keep growing and each growth is charged. The budget
+ * is one count for the whole comparison rather than one per path, so a pair
+ * that grows two ways at each level stops as soon as one that grows one way.
  */
 type Path = {
   readonly pairs: ReadonlySet<string>;
-  readonly unfolded: ReadonlySet<string>;
+  readonly unfolded: ReadonlyMap<string, number>;
   readonly budget: { reentries: number };
 };
 
-/** How many re-entries of a pair of definitions one comparison makes before it assumes the rest. */
+/** How many re-entries that grew one comparison makes before it assumes the rest. */
 const REENTRY_LIMIT = 64;
 
 function relate(
@@ -509,8 +516,10 @@ function relate(
   // every level.
   if (isGenericApplication(actual, env) || isGenericApplication(declared, env)) {
     const heads = `${headName(actual)} ⇒ ${headName(declared)}`;
-    if (!path.unfolded.has(heads)) path = { ...path, unfolded: new Set([...path.unfolded, heads]) };
-    else if (--path.budget.reentries < 0) return true;
+    const size = typeSize(actual) + typeSize(declared);
+    const last = path.unfolded.get(heads);
+    if (last !== undefined && size > last && --path.budget.reentries < 0) return true;
+    path = { ...path, unfolded: new Map(path.unfolded).set(heads, size) };
   }
   const a = unaliasType(actual, env);
   const d = unaliasType(declared, env);
@@ -645,6 +654,25 @@ function isGenericApplication(t: TypeExpr | null, env: TypeEnv): boolean {
 function headName(t: TypeExpr | null): string {
   if (t === null) return "";
   return t.kind === "TypeRef" || t.kind === "TypeApp" ? t.name : t.kind;
+}
+
+/** How many nodes `t` is written with — what `unfolded` measures a pair by. */
+function typeSize(t: TypeExpr | null): number {
+  if (t === null) return 0;
+  switch (t.kind) {
+    case "TypePrim":
+    case "TypeRef":
+      return 1;
+    case "TypeApp":
+      return t.args.reduce((n, a) => n + typeSize(a), 1);
+    case "TypeRecord":
+      return t.fields.reduce((n, f) => n + typeSize(f.type), 1);
+    case "TypeUnion":
+      return t.variants.reduce((n, v) => v.payloads.reduce((m, p) => m + typeSize(p), n), 1);
+    case "TypeNominal":
+    case "TypeRefinement":
+      return 1 + typeSize(t.inner);
+  }
 }
 
 /**

@@ -33,9 +33,14 @@ the wrong type (`x := 5`, or a `G(Text)` into a `G(Int)`) is still E0201.
 
 Two different generics that both grow (`G` against
 `type H(T) = Leaf(T) | Node(H(List(T)))`) cannot be compared by their
-arguments, so they are still unfolded side by side; one comparison re-enters a
-pair of definitions with new arguments at most 64 times, and past that answers
-yes, as a repeated pair does.
+arguments, so they are still unfolded side by side, and what is counted is the
+growth: re-entering a pair of definitions with larger types than the last time
+counts once, and past 64 of those in one comparison the next answers yes, as a
+repeated pair does. Re-entries that did not grow are not counted, so two
+generics that swap their parameters (`type SA(T, U) = SLeaf(T) | SNode(SA(U, T))`
+and an `SB` like it) still end at a repeated pair however many fields of one
+record compare them, and a mismatch one level down in the last field is still
+E0201.
 
 `packages/examples/features/219-non-regular-recursive-type.kumiki` builds a
 value two levels down, passes it through a `fn` typed `Nest(Int) -> Nest(Int)`

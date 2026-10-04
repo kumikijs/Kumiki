@@ -193,8 +193,8 @@ fn b(w: W(Int)) -> W(Text) = w`,
 
 // Two different generics are not compared argument by argument — their
 // parameters need not line up — so the comparison unfolds both. When their
-// arguments keep growing it stops after a bounded number of re-entries and
-// answers yes, as re-entering a pair already being compared does.
+// arguments keep growing it stops after a bounded number of re-entries that
+// grew and answers yes, as re-entering a pair already being compared does.
 describe("two different generics that both grow", () => {
   run([
     [
@@ -219,6 +219,35 @@ type MB(T) = Nil | Cons(T, MA(List(T)))
 fn a(m: MA(Int)) -> MB(Int) = m
 fn b(m: MA(Int)) -> MB(Text) = m`,
       ["E0201 Expected MB(Text) but got MA(Int)"],
+    ],
+  ]);
+});
+
+// A regular generic whose recursion swaps its parameters re-enters a pair of
+// definitions with different arguments, but nothing grows: the bound counts
+// only re-entries that grew, so however many such comparisons one record holds,
+// each still ends at a repeated pair with unfolding's answer — here a mismatch
+// that shows one level down, in the last field.
+describe("a generic that swaps its parameters spends nothing", () => {
+  const record = (name: string, n: number, each: string, last: string) =>
+    `type ${name} = {${Array.from({ length: n }, (_, i) => `f${i}: ${each}`).join(", ")}, g: ${last}}`;
+  run([
+    [
+      "one generic, in the last of many fields",
+      `type Sw(T, U) = SwLeaf(T) | SwNode(Sw(U, T))
+${record("R1", 65, "Sw(Int, Text)", "Sw(Int, Text)")}
+${record("R2", 65, "Sw(Int, Text)", "Sw(Int, Int)")}
+fn f(r: R1) -> R2 = r`,
+      ["E0201 Expected R2 but got R1"],
+    ],
+    [
+      "two generics, in the last of many fields",
+      `type SA(T, U) = SLeaf(T) | SNode(SA(U, T))
+type SB(T, U) = SLeaf(T) | SNode(SB(U, T))
+${record("R1", 65, "SA(Int, Text)", "SA(Int, Text)")}
+${record("R2", 65, "SB(Int, Text)", "SB(Int, Int)")}
+fn f(r: R1) -> R2 = r`,
+      ["E0201 Expected R2 but got R1"],
     ],
   ]);
 });
