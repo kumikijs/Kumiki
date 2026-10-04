@@ -1,0 +1,33 @@
+# Feature (language.md §1.9): a Map literal whose keys are `true` / `false`.
+#
+#   slot labels : Map(Bool, Text) = {true: "on", false: "off"}
+#
+# `{ … }` is a record when its first key is a field name, and a Map
+# otherwise. `true` and `false` are values, not field names, so this literal
+# is a `Map(Bool, Text)`: the same Map `{(true): "on", false: "off"}` writes.
+# A reserved word that is not a value still names a field, so the test's
+# `{type: ui.click, target: Rename}` stays a record, beside a Bool-keyed Map.
+
+slot labels : Map(Bool, Text) = {true: "on", false: "off"}
+slot lit    : Bool            = false
+
+reducer flip on=ui.click(Flip) do= lit := !lit
+
+reducer rename on=ui.click(Rename) do= labels := {true: "yes", false: "no"}
+
+tile Flip   = button(text="flip") {id: "flip"}
+tile Rename = button(text="rename") {id: "rename"}
+
+tile App = column(
+  row(Flip, Rename) {gap: "sm"},
+  text("light: " + labels.get-or(lit, "?")))
+  {pad: "lg", gap: "md"}
+
+app BoolMapKeys
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test rename-writes-bool-keys = reducer-test rename
+    given  = {slots: {labels: {true: "a", false: "b"}}, event: {type: ui.click, target: Rename}}
+    expect = {slots: {labels: {true: "yes", false: "no"}}}

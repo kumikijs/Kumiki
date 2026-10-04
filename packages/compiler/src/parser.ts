@@ -84,6 +84,33 @@ export const PRIM_TYPES: ReadonlySet<string> = new Set([
   "File",
   "EffectId",
 ]);
+
+/**
+ * The reserved words that are a whole value on their own (language.md §1.2.2),
+ * each with the node `parsePrimary` reads it as.
+ *
+ * Being a value is also what keeps one from naming a record field: `{ … }` is
+ * a record when its first key is a field name (§1.9), and `{true: "on"}` has
+ * to be the `Map(Bool, Text)` it reads as — no record type can declare a field
+ * called `true`. Every other reserved word before a `:` can only be a field
+ * name (`{type: …}`, `{for: …}`): none of them is a whole expression.
+ */
+const VALUE_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
+  ["true", (pos: Pos): Expr => ({ kind: "Bool", value: true, pos })],
+  ["false", (pos: Pos): Expr => ({ kind: "Bool", value: false, pos })],
+  ["now", (pos: Pos): Expr => ({ kind: "Call", callee: "now", args: [], pos })],
+]);
+
+/**
+ * The record field name `t` spells, if it spells one: an identifier, or a
+ * reserved word that is not a value.
+ */
+function fieldNameOf(t: Token): string | undefined {
+  if (t.kind === "ident") return t.value;
+  if (t.kind === "kw" && !VALUE_KEYWORDS.has(t.value)) return t.value;
+  return undefined;
+}
+
 // Closed set of `app.*` lifecycle events (docs/spec/language.md §1.6.1,
 // lifecycle.md §7.1). `app.http-*` keep their hyphenated form — the lexer
 // already treats `-` as ident-continuation, so they arrive as a single token.
@@ -1120,13 +1147,10 @@ class Parser {
       this.next();
       return { kind: "Str", value: t.value, pos: t.pos };
     }
-    if (t.kind === "kw" && (t.value === "true" || t.value === "false")) {
+    const valueKeyword = t.kind === "kw" ? VALUE_KEYWORDS.get(t.value) : undefined;
+    if (valueKeyword) {
       this.next();
-      return { kind: "Bool", value: t.value === "true", pos: t.pos };
-    }
-    if (t.kind === "kw" && t.value === "now") {
-      this.next();
-      return { kind: "Call", callee: "now", args: [], pos: t.pos };
+      return valueKeyword(t.pos);
     }
     if (t.kind === "kw" && t.value === "if") {
       return this.parseIfExpr();
@@ -1414,13 +1438,12 @@ class Parser {
       this.next();
       return { kind: "MapLit", entries: [], pos: start.pos };
     }
-    // Heuristic: if the first key is a field name (identifier or keyword, e.g.
-    // `type` / `in`) followed by `=`, `:`, `,`, or `}`, treat the whole literal
-    // as a record. Otherwise it's a map. A bare keyword key is never a valid map
-    // key, so this stays unambiguous.
+    // A first key that is a field name (`fieldNameOf`: an identifier, or a
+    // reserved word such as `type` / `in` that is not a value) followed by `=`,
+    // `:`, `,` or `}` makes the whole literal a record. Any other first key —
+    // `true`, a string, `(k)`, `Some(1)` — makes it a Map.
     let isRecord = false;
-    const k0 = this.peek();
-    if (k0.kind === "ident" || k0.kind === "kw") {
+    if (fieldNameOf(this.peek()) !== undefined) {
       const peek1 = this.peek(1);
       if (
         peek1.kind === "op" &&
@@ -1433,10 +1456,18 @@ class Parser {
       const fields: { name: string; value: Expr; pos: Pos }[] = [];
       while (true) {
         const keyTok = this.peek();
-        if (keyTok.kind !== "ident" && keyTok.kind !== "kw") {
+        const fieldName = fieldNameOf(keyTok);
+        if (fieldName === undefined) {
+          // The first key made this a record, so a `true` here stands where a
+          // field name goes, and a value cannot be one.
+          if (keyTok.kind === "kw") {
+            throw new ParseError(
+              `\`${keyTok.value}\` is a value, not a record field name`,
+              keyTok.pos,
+            );
+          }
           throw new ParseError("Expected a record field name", keyTok.pos);
         }
-        const fieldName = keyTok.value;
         const fieldPos = keyTok.pos;
         this.next();
         let value: Expr;
