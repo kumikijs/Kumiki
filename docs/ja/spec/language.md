@@ -361,6 +361,11 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - `policy=latest-per-key(<expr>)` と `map-request` は effect 自身の式。どちらも
   effect の入力に適用されるため、`$1` が唯一の束縛であり、slot と `fn` は読めるが
   `$route` はここでは名前ではない
+- そこでの `$1` は effect の `in=` が宣言する型を持つ。tile の `$1` がその tile の
+  `in=` の型を持つのと同じである：`type UserQuery = {id: Text}` に対する
+  `in=UserQuery` では、`$1.id` はフィールドを読み、`$1.idd` は
+  [E0108](./errors.md#e0108-undef-member) になる。`in=Unit` の effect は引数なしで
+  放出されるため、その `$1` は型を持たない
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
@@ -545,7 +550,7 @@ issue.copy(status=Done, priority=High)
 
 | 構文 | 意味 |
 |---|---|
-| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順 |
+| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順、**tile 内ではその tile の `in=` 引数**（`$1` のみ — tile が取る positional 引数は1つ）、effect の `map-request` と `latest-per-key` の key 内ではその effect の `in=` の入力（`$1` のみ、[§1.5.2](#_1-5-2-意味)） |
 | `$el` | イベント発火元 tile の `{...}` props |
 | `$event` | イベントペイロード |
 | `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |

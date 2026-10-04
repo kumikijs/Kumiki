@@ -4203,11 +4203,9 @@ function checkEmitTarget(
       pos,
     });
   }
-  // `in=Unit` is the "no input" declaration, so the effect takes no argument;
-  // every other `in=` takes exactly one. Codegen destructures the argument, so
-  // a missing one is `Cannot destructure property 'key' of 'input'` at the
-  // first dispatch rather than a diagnostic.
-  const wants = isPrimNamed(inType, sym, "Unit") ? 0 : 1;
+  // Codegen destructures the argument, so a missing one is `Cannot destructure
+  // property 'key' of 'input'` at the first dispatch rather than a diagnostic.
+  const wants = declaresNoInput(inType, sym) ? 0 : 1;
   if (args.length !== wants) {
     errors.push({
       code: "E0213",
@@ -5348,11 +5346,32 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+  const input = [{ name: "$1", type: effectInputType(eff, sym) }];
+  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(input));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
-  if (eff.policy?.kind === "PolLatestKey")
-    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+  if (eff.policy?.kind === "PolLatestKey") checkExpr(eff.policy.key, sym, errors, pureScope(input));
+}
+
+/**
+ * The type `$1` holds in an effect's own expressions — its `map-request` and
+ * its `latest-per-key` key, both applied to the effect's input (language.md
+ * §1.5.2): the `in=` the effect declares, as a tile's `$1` is its `in=`.
+ *
+ * `null` for an `in=` that {@link declaresNoInput}: the effect is emitted with
+ * no argument, so `$1` there holds no value for a type to describe.
+ */
+function effectInputType(eff: EffectDef, sym: SymbolTable): TypeExpr | null {
+  return declaresNoInput(eff.inType, sym) ? null : eff.inType;
+}
+
+/**
+ * Whether an effect's `in=` is `Unit` (through any alias) — the "no input"
+ * declaration: an `emit` of it passes no argument, where every other `in=`
+ * takes exactly one.
+ */
+function declaresNoInput(inType: TypeExpr, sym: SymbolTable): boolean {
+  return isPrimNamed(inType, sym, "Unit");
 }
 
 /**
@@ -5381,8 +5400,9 @@ function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[
 
 /**
  * The scope for an expression evaluated with no payload and nothing in scope
- * but `binds`: an `effect`'s `map-request` and its `latest-per-key` key
- * (`["$1"]`, the effect's input), and `app.http`'s fields (nothing).
+ * but `binds`, each with its type (`null`: in scope, type unknown): an
+ * `effect`'s `map-request` and its `latest-per-key` key (`$1`, the effect's
+ * input, typed by {@link effectInputType}), and `app.http`'s fields (nothing).
  *
  * `slot-init` is the position, not the definition — what these need is its
  * pure, payloadless treatment. `map-request` carried this inline under the
@@ -5394,13 +5414,15 @@ function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[
  *
  * Shared rather than repeated so the three positions cannot drift apart.
  */
-function pureScope(binds: string[]): Ctx {
-  return {
+function pureScope(binds: readonly { name: string; type: TypeExpr | null }[]): Ctx {
+  const ctx: Ctx = {
     kind: "slot-init",
-    localBinds: new Set(binds),
+    localBinds: new Set(),
     routeBind: "no-payload",
     localTypes: new Map(),
   };
+  for (const b of binds) bindLocal(ctx, b.name, b.type);
+  return ctx;
 }
 
 function wildcardText(e: Expr & { kind: "Wildcard" }): string {

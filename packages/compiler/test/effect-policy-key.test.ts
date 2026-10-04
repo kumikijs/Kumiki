@@ -149,6 +149,119 @@ describe("an effect's map-request is checked in the same scope", () => {
   });
 });
 
+/** A program whose one effect takes `in=${input}` and declares `clauses`. */
+function inputApp(input: string, clauses: string): string {
+  return `type UserQuery = {id: Text, size: Int}
+type QueryAlias = UserQuery
+type UserId = nominal Text
+type Shape = Circle(Int) | Square(Int)
+effect load cap=http.get in=${input} out=Result(Text, HttpError)
+            ${clauses}
+tile B = button(text="b")
+tile Home = column(B)
+app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
+}
+
+/** `inputApp` with `url` as the `map-request`'s url. */
+function urlApp(input: string, url: string): string {
+  return inputApp(input, `map-request={url: ${url}, decode: Decoder.Text}`);
+}
+
+// language.md §1.5.2: both expressions are applied to the effect's input, so
+// `$1` is that input — with the type `in=` declares, the way a tile's `$1` has
+// the type of its own `in=`. A member the type does not have is E0108 there as
+// it is on a tile's `$1`.
+describe("`$1` in an effect's own expressions has the effect's in= type", () => {
+  it.each([
+    ["map-request", `map-request={url: "/api/users/" + $1.idd, decode: Decoder.Text}`],
+    ["the latest-per-key key", "policy=latest-per-key($1.idd)"],
+  ])("reports a field the in= record lacks, in %s, as E0108 at the access", (_where, clauses) => {
+    const source = inputApp("UserQuery", clauses);
+    const at = only(source);
+    expect(at.code).toBe("E0108");
+    expect(at.message).toBe('Record type has no field or method ".idd"');
+    expect(textAt(source, at)).toMatch(/^\$1\.idd/);
+  });
+
+  it.each([
+    ["map-request", `map-request={url: "/api/users/" + $1.id, decode: Decoder.Text}`],
+    ["the latest-per-key key", "policy=latest-per-key($1.id)"],
+    [
+      "map-request's query, headers and body",
+      `map-request={url: "/u", query: {"size": $1.size.show}, headers: {"X-Id": $1.id}, body: Json({"id": $1.id}), decode: Decoder.Text}`,
+    ],
+  ])("accepts a field the in= record has, in %s", (_where, clauses) => {
+    expect(codes(inputApp("UserQuery", clauses))).toEqual([]);
+  });
+
+  // The receiver the member table reads is the in= type through any alias or
+  // `nominal`, as for every other receiver.
+  it.each([
+    ["an alias of a record", "QueryAlias", 'Record type has no field or method ".idd"'],
+    ["a nominal over Text", "UserId", 'Type "Text" has no member ".idd"'],
+    ["Text", "Text", 'Type "Text" has no member ".idd"'],
+    ["Int", "Int", 'Type "Int" has no member ".idd"'],
+    ["an Option", "Option(Text)", 'Type "Option" has no member ".idd"'],
+    ["a List", "List(Text)", 'Type "List" has no member ".idd"'],
+  ])("reports a member %s does not have as E0108", (_what, input, message) => {
+    const at = only(urlApp(input, `"/u/" + $1.idd`));
+    expect(at.code).toBe("E0108");
+    expect(at.message).toBe(message);
+  });
+
+  it.each([
+    ["an alias of a record", "QueryAlias", `"/u/" + $1.id`],
+    ["a nominal over Text", "UserId", `"/u/" + $1 + $1.lower`],
+    ["Text", "Text", `"/u/" + $1.lower`],
+    ["Int", "Int", `"/u/" + $1 + "/" + $1.show`],
+    ["an Option", "Option(Text)", `"/u/" + $1.get-or("none")`],
+    ["a List", "List(Text)", `"/u/" + $1.join(",")`],
+  ])("accepts what %s has", (_what, input, url) => {
+    expect(codes(urlApp(input, url))).toEqual([]);
+  });
+
+  it("accepts Text as a latest-per-key key on in=Text", () => {
+    expect(codes(inputApp("Text", "policy=latest-per-key($1)"))).toEqual([]);
+  });
+
+  // Not only member names: every check that reads an operand's type reads
+  // `$1`'s, as it would anywhere else.
+  it.each([
+    ["map-request", "UserQuery", `map-request={url: "/u/" + ($1 * 2).show, decode: Decoder.Text}`],
+    ["the latest-per-key key", "Text", "policy=latest-per-key($1 - 1)"],
+  ])("reports an operator applied to an input of the wrong type, in %s, as E0201", (_w, input, clauses) => {
+    const source = inputApp(input, clauses);
+    const at = only(source);
+    expect(at.code).toBe("E0201");
+    expect(textAt(source, at)).toMatch(/^\$1 [*-]/);
+  });
+
+  // A union's members are not the member table's to judge, so a member read
+  // on one draws nothing — as on a tile's `$1`. The operator still does.
+  it("leaves a member of a union in= unjudged", () => {
+    expect(codes(urlApp("Shape", `"/u/" + $1.idd`))).toEqual([]);
+    expect(codes(urlApp("Shape", `"/u/" + ($1 * 2).show`))).toEqual(["E0201"]);
+  });
+
+  // An undecided `$1` reports nothing, which is the answer for these two:
+  // `in=Unit` declares an effect emitted with no argument, so `$1` holds no
+  // value to type; and an `in=` naming no type is E0117 already.
+  it.each([
+    ["Unit", "Unit", []],
+    ["a type that does not exist", "Nope", ["E0117"]],
+  ])("leaves the input undecided on %s", (_what, input, expected) => {
+    const clauses = `policy=latest-per-key($1.idd)
+            map-request={url: "/u/" + $1.idd + ($1 * 2).show, decode: Decoder.Text}`;
+    expect(codes(inputApp(input, clauses))).toEqual(expected);
+  });
+
+  it("leaves the input undecided on Unit through an alias", () => {
+    const source = `type Nothing = Unit
+${inputApp("Nothing", `map-request={url: "/u/" + $1.idd + ($1 * 2).show, decode: Decoder.Text}`)}`;
+    expect(codes(source)).toEqual([]);
+  });
+});
+
 type LoadedApp = {
   live: Record<string, unknown>;
   reducers: {
