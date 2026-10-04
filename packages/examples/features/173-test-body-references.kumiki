@@ -1,0 +1,49 @@
+# Feature (testing.md §8.1.1): the names a test body writes are references
+# like any other, so `kumiki refs` lists the test and `kumiki rename` rewrites
+# the name where the test wrote it.
+#
+#   given  = {slots: {draft: shout("Buy")}, …}      `shout` is the fn
+#   expect = {effects: [persist(<slots.items>)]}    `persist` is the effect,
+#                                                   `items` is the slot
+#
+# A call in a `given` / `expect` / `mocks` value is read the way the
+# expression layer reads it, so `shout("Buy")` calls the fn. Only an
+# `expect.effects` entry and a `mocks` key name an effect, and `<slots.items>`
+# (§8.2.2) names the slot. Each of the three is an identifier of its own, so
+#
+#   kumiki rename <file> effect.persist save    ->  save(<slots.items>)
+#   kumiki rename <file> fn.shout yell          ->  draft: yell("Buy")
+#   kumiki rename <file> slot.items todos       ->  persist(<slots.todos>)
+#
+# each leave a file that checks, with a test that still passes.
+
+slot draft : Text       = ""
+slot items : List(Text) = []
+
+effect persist cap=storage.write
+               in=List(Text)
+               out=Result(Unit, Text)
+               map-request={key: "items", value: $1}
+
+fn shout(t: Text) -> Text = t + "!"
+
+reducer addItem on=ui.submit(AddForm) do=
+    items := items.push(shout(draft))
+    draft := ""
+    emit persist(items)
+
+tile AddForm = form(column(
+    input(bind=draft, id="draft"),
+    button(text="Add", type="submit")))
+
+tile App = column(AddForm, text("items: " + items.join(", ")))
+
+app TestBodyReferences
+    caps   = [storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test add-shouts-and-persists =
+    reducer-test addItem
+        given  = {slots: {draft: shout("Buy")}, event: {type: ui.submit, target: AddForm}}
+        expect = {slots: {draft: ""}, effects: [persist(<slots.items>)]}

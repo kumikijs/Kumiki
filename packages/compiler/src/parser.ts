@@ -1211,9 +1211,9 @@ class Parser {
       }
       if (head.value === "slots") {
         this.eat("op", ".");
-        const slot = this.eat("ident").value;
+        const slot = this.eat("ident");
         this.eat("op", ">");
-        return { kind: "Wildcard", wild: "slot", slot, pos: t.pos };
+        return { kind: "Wildcard", wild: "slot", slot: slot.value, slotPos: slot.pos, pos: t.pos };
       }
       throw new ParseError(
         `Unknown test wildcard "<${head.value}…>" (expected <any-id> or <slots.NAME>)`,
