@@ -307,6 +307,22 @@ describe("kumiki refs / view", () => {
     expect(code).toBe(1);
   });
 
+  it("fails on a qname that is not defined under view --with-deps, as without it", SPAWN, () => {
+    const file = write("view-deps.kumiki", CLEAN);
+    const res = runCli(["view", file, "slot.nope", "--with-deps"]);
+    expect(res).toEqual({ stdout: "", stderr: 'Definition "slot.nope" not found\n', code: 1 });
+    expect(runCli(["view", file, "slot.nope"])).toEqual(res);
+  });
+
+  it("prints a defined qname after its dependencies under view --with-deps", SPAWN, () => {
+    const res = runCli(["view", write("view-deps-ok.kumiki", CLEAN), "tile.App", "--with-deps"]);
+    expect(res).toEqual({
+      stdout: 'slot count : Int = 0\n\ntile App = column(heading("Count: " + count.show))\n',
+      stderr: "",
+      code: 0,
+    });
+  });
+
   it("succeeds for a defined qname with no referrers", SPAWN, () => {
     const { stdout, code } = runCli(["refs", write("refs-ok.kumiki", CLEAN), "app.Demo"]);
     expect(stdout).toContain("(no references to app.Demo)");
