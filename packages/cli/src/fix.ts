@@ -12,6 +12,7 @@ import {
   nearestName,
   ParseError,
   parse,
+  servesNotFound,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
@@ -373,11 +374,14 @@ function appendAppCap(text: string, cap: string): string | null {
 
 /**
  * Add `"/404" -> NotFound` to the app's `routes = {...}`. `null` when the
- * routes already have a `/404` entry or there is no such clause.
+ * routes already serve `/404` by the rule E0001 checks (`servesNotFound`), or
+ * there is no such clause. A `/404` redirect does not serve it, and the caller
+ * declines that case before it gets here: an entry beside the redirect would
+ * write the `/404` pattern twice.
  */
 function append404Route(text: string): string | null {
   return appendToAppClause(text, "routes", `"/404" -> NotFound`, (app) =>
-    app.routes.some((r) => r.path === "/404"),
+    servesNotFound(app.routes),
   );
 }
 
@@ -706,6 +710,23 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0001") {
+      // E0001 counts only a `/404` route that renders a tile. When `/404` is
+      // taken by a redirect, the entry this repair adds would write the pattern
+      // a second time, which is E0008, so there is no patch to offer.
+      const app = store.program.defs.find((d): d is AppDef => d.kind === "AppDef");
+      const routes = app?.routes ?? [];
+      if (routes.some((r) => r.path === "/404") && !servesNotFound(routes)) {
+        skip(err.code, "e0001-404-is-a-redirect", err.message);
+        continue;
+      }
+      // Planned the way E0301 is, so `fix` never lists a patch that `--apply`
+      // then finds nothing to do with. The app's routes do not serve `/404`
+      // (that is what E0001 reports), so the dry run comes back empty only when
+      // the app has no `routes` clause to add the entry to.
+      if (append404Route(store.source) === null) {
+        skip(err.code, "e0001-no-routes-clause", err.message);
+        continue;
+      }
       // A program that already has a `NotFound` tile gets a route to it. A
       // second `tile NotFound` would be E0007, and the gate refuses the whole
       // repair over it.
@@ -987,7 +1008,8 @@ export type FixPlan = {
  *    to render.
  *
  * Callers that need a dry preview should use `planFix` and apply
- * `patches[i].apply` themselves.
+ * `patches[i].apply` themselves, and `gateComposed` to ask the gate about the
+ * result.
  */
 export function applyFixPlan(
   path: string,
@@ -1017,71 +1039,19 @@ export function applyFixPlan(
     // stays unset so the caller reports it as such.
     return { ...nothingWritten(plan, before), remaining: plan.errors };
   }
-  // Regression gate. Every path that would touch disk first re-parses and
-  // re-typechecks the composed source, then compares the two diagnostic
-  // multisets by `diagnosticKey` rather than by count. Rollback triggers when
-  // any of:
-  //   1. The composed source no longer parses at all — a *parse-error* is
-  //      strictly worse than the original type errors, so we discard even
-  //      though the pre-patch file had errors.
-  //   2. `after` holds a diagnostic `before` does not — introduced a new
-  //      failure. Catches 1-for-1 swaps (E0301→E0302 via typo) that a
-  //      count-only guard would miss. Warnings are outside the comparison in
-  //      both directions, deliberately: a repair that clears an error and
-  //      reveals an advisory diagnostic is still a repair, and rolling it back
-  //      would leave the file holding the error to avoid holding the warning.
-  //   3. Nothing from `before` was resolved — the composed source carries the
-  //      same diagnostics the original did, so the patches changed text and
-  //      improved nothing. A swap normally trips (2) instead, because the
-  //      diagnostic that replaced the old one is one `before` did not have;
-  //      this is the condition for a write with no diagnostic consequence at
-  //      all.
-  // Invariant: "apply => file is either strictly cleaner or unchanged".
-  // Callers observe rollback via `applied === 0 && regressionBlocked === true`.
-  // Parse and typecheck have distinct failure semantics: a parse-error is a
-  // rollback (case 1), a `check()` throw is an internal typechecker bug that
-  // must surface, not be silently reported as `parseError`. Keep the catches
-  // separate — `check()` is not in the try.
-  let parsed: ReturnType<typeof parse>;
-  try {
-    parsed = parse(lex(after));
-  } catch (e) {
-    // Parse-error rollback (case 1). Do NOT write. The synthetic E0000 in
-    // `remaining` and the `parseError` string surface the parser's message
-    // for callers rendering diagnostics; `regressionBlocked` distinguishes
-    // this from "genuinely no patch available".
-    const message = e instanceof Error ? e.message : String(e);
-    const pe = e as { pos?: { line: number; col: number } };
-    const synthetic: KumikiError = {
-      code: "E0000",
-      kind: "parse-error",
-      message,
-      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
-    };
+  // Every path that would touch disk goes through the gate first. A refusal is
+  // `applied === 0 && regressionBlocked === true`, and nothing is written.
+  const gate = gateComposed(plan.errors, after, capabilities);
+  if (gate.blocked !== undefined) {
+    // The `parseError` string repeats the parser's message for callers that
+    // render it; `regressionBlocked` tells every refusal apart from
+    // "genuinely no patch available".
     return {
       ...nothingWritten(plan, before),
-      remaining: [...plan.errors, synthetic],
+      remaining: gate.remaining,
       regressionBlocked: true,
-      blocked: { reason: "parse-error", message },
-      parseError: message,
-    };
-  }
-  // One typecheck, both halves. The errors decide the gate; the warnings are
-  // what the file will be carrying once this write lands, which is not the set
-  // it started with — a repair that resolves an undefined tile onto one that
-  // cannot fire the event a reducer subscribes to reveals a warning that was
-  // not there before.
-  const afterDiagnostics = check(parsed, { capabilities });
-  const dryRemaining = repairable(afterDiagnostics);
-  const introduced = surplus(dryRemaining, plan.errors);
-  const resolved = surplus(plan.errors, dryRemaining);
-  if (introduced.length > 0 || resolved.length === 0) {
-    return {
-      ...nothingWritten(plan, before),
-      remaining: plan.errors,
-      regressionBlocked: true,
-      blocked:
-        introduced.length > 0 ? { reason: "introduced", introduced } : { reason: "resolved-none" },
+      blocked: gate.blocked,
+      ...(gate.blocked.reason === "parse-error" ? { parseError: gate.blocked.message } : {}),
     };
   }
   try {
@@ -1105,10 +1075,91 @@ export function applyFixPlan(
     approved: applied,
     before,
     after,
-    remaining: dryRemaining,
-    warnings: advisory(afterDiagnostics),
+    remaining: gate.remaining,
+    warnings: gate.warnings,
     skipped: plan.skipped,
   };
+}
+
+/**
+ * What the regression gate decided about a composed source.
+ *
+ * `remaining` is what the file holds once the caller acts on the verdict,
+ * warnings excluded. When the source may be written, that is the composed
+ * source's errors, and `warnings` is its advisory half. When it may not, it is
+ * the file's own errors, plus a synthetic `E0000` when the composed source does
+ * not parse, so an empty `remaining` still means a clean file for a caller that
+ * reads nothing else. `warnings` exists only on the first member, so a caller
+ * cannot report a write without first checking it was allowed.
+ */
+export type GateVerdict =
+  | { blocked?: undefined; remaining: KumikiError[]; warnings: KumikiError[] }
+  | { blocked: NonNullable<FixApplyResult["blocked"]>; remaining: KumikiError[] };
+
+/**
+ * The regression gate: may `after`, the source a plan composed, replace a file
+ * whose errors are `errors`?
+ *
+ * It re-parses and re-typechecks `after`, then compares the two error
+ * multisets by `diagnosticKey`, not by count. It refuses when any of these
+ * holds:
+ *   1. `after` does not parse. A parse error is strictly worse than the
+ *      original type errors, so this refuses even though the file had errors.
+ *   2. `after` holds an error the file does not, so the repair introduced a
+ *      failure. This catches 1-for-1 swaps (E0301→E0302 via a typo) that a
+ *      count-only guard would miss. Warnings are outside the comparison in
+ *      both directions on purpose: a repair that clears an error and reveals
+ *      an advisory diagnostic is still a repair, and refusing it would leave
+ *      the file holding the error to avoid holding the warning.
+ *   3. Nothing in `errors` was resolved. The composed source carries the
+ *      errors the original did, so the patches changed text and improved
+ *      nothing. A swap normally trips (2) instead, because the error that
+ *      replaced the old one is one the file did not have; this is the
+ *      condition for a write with no diagnostic consequence at all.
+ * The invariant it keeps is "apply ⇒ the file is strictly cleaner or
+ * unchanged".
+ *
+ * Parse and typecheck fail differently on purpose. A parse failure is refusal
+ * (1); a `check()` throw is an internal typechecker bug that must surface, not
+ * be reported as a parse error, which is why `check()` is outside the `try`.
+ *
+ * Pure and given no path, so it cannot write. That is also what lets a test
+ * hand it text that does not parse: no repair rule composes such text today,
+ * and (1) is what keeps a rule that one day does from writing it.
+ */
+export function gateComposed(
+  errors: KumikiError[],
+  after: string,
+  capabilities: string[] = [],
+): GateVerdict {
+  let parsed: ReturnType<typeof parse>;
+  try {
+    parsed = parse(lex(after));
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const pe = e as { pos?: { line: number; col: number } };
+    const synthetic: KumikiError = {
+      code: "E0000",
+      kind: "parse-error",
+      message,
+      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+    };
+    return { blocked: { reason: "parse-error", message }, remaining: [...errors, synthetic] };
+  }
+  // One typecheck, both halves. The errors decide the gate; the warnings are
+  // what the file will be carrying once this write lands, which is not the set
+  // it started with — a repair that resolves an undefined tile onto one that
+  // cannot fire the event a reducer subscribes to reveals a warning that was
+  // not there before.
+  const diagnostics = check(parsed, { capabilities });
+  const remaining = repairable(diagnostics);
+  const introduced = surplus(remaining, errors);
+  if (introduced.length > 0)
+    return { blocked: { reason: "introduced", introduced }, remaining: errors };
+  if (surplus(errors, remaining).length === 0) {
+    return { blocked: { reason: "resolved-none" }, remaining: errors };
+  }
+  return { remaining, warnings: advisory(diagnostics) };
 }
 
 export type FixApplyResult = {
@@ -1260,7 +1311,7 @@ function surplus(a: readonly KumikiError[], b: readonly KumikiError[]): KumikiEr
  * Reads `blocked` alone, which carries one member per condition — so no branch
  * here depends on being asked before another.
  */
-function rollbackLine(r: {
+export function rollbackLine(r: {
   blocked?: FixApplyResult["blocked"];
   regressionBlocked?: boolean;
 }): string {

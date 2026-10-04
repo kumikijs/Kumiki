@@ -59,7 +59,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
-| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. |
+| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
 | `E0103` | yes | Close-name suggestion against known slot / binding names. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
