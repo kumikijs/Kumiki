@@ -537,13 +537,19 @@ slot c : Alias(Int) = 1`),
     expect(typeCodes(`type Loop(T) = Loop(T)`)).toEqual(["E0009"]);
   });
 
-  it("reports a program that redeclares a standard library type as its own cycle", () => {
-    // `sym.types` holds a program's definitions over `STDLIB_TYPES`, so a
-    // stdlib domain type is in the table and is followed like any other. The
-    // names that are not in it are the generic constructors.
-    expect(typeCodes(`type Route = Route`)).toEqual(["E0009"]);
-    // An alias *to* one is an ordinary chain that ends at its record.
+  it("follows a standard library type to its own definition", () => {
+    // `sym.types` holds `STDLIB_TYPES` beside the program's definitions, so a
+    // stdlib domain type is followed like any other — an alias *to* one is an
+    // ordinary chain that ends at its record. The names that are not in the
+    // table are the generic constructors.
     expect(typeCodes(`type A = HttpError`)).toEqual([]);
+    expect(typeCodes(`type A = B\ntype B = Route`)).toEqual([]);
+  });
+
+  it("reads a redeclared standard library type as the standard library's, not as a loop", () => {
+    // The declaration is E0231, and the name it writes is still the stdlib
+    // record — so `type Route = Route` is one mistake with one report.
+    expect(typeCodes(`type Route = Route`)).toEqual(["E0231"]);
   });
 
   // Every layer that can name a type. The cycle is the type's, so it is

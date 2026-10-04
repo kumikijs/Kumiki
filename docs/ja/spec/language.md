@@ -224,12 +224,12 @@ slot form : Contact = {email: "ada@example.com", age: 36}
 
 ```kumiki fragment
 type UserId    = nominal Text where len-eq(36)
-type Email     = nominal Text where email
-type Url       = nominal Text where url
+type WorkEmail = nominal Text where email
+type Homepage  = nominal Text where url
 type Percent   = nominal Float where between(0.0, 100.0)
-type User      = {id: UserId, name: Text where nonempty, email: Email}
-type HttpError = {status: Int where between(400, 599), message: Text}
-type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
+type User      = {id: UserId, name: Text where nonempty, email: WorkEmail}
+type ApiError  = {status: Int where between(400, 599), message: Text}
+type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(ApiError)
 ```
 
 ### 1.3.5 型の一意化
@@ -285,6 +285,7 @@ type Shape = Leaf | Branch(Shape, Shape)
 いずれも不変条件 3 により、自分自身へ戻るより先に構造的な型へ到達する。2 つを比較したときに停止するのは、この関係が**書かれたとおりの型**に対して**余帰納的**に読まれるからである：比較の途中で同じ組へ再入したら「はい」と答える。これは、比較の有限な部分が下りの途中ですでに検査済みであることから健全である。停止性は値が有限であることには依存しない — 上の `Node` は `next` が optional でもコンテナでもないため値を 1 つも持たないが、それでも合法な型である。
 
 5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
+6. **標準ライブラリのドメイン型の名前は、プログラムが宣言するものではない。** `HttpStatus`・`HttpError`・`Url`・`Email`・`Uuid`・`Duration`・`Route`・`FormData`・`FormValue`・`PanicInfo`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）は、どのプログラムでも標準ライブラリの定義を意味する。その多くが名指す値を、ランタイムと標準ライブラリが組み立てる、あるいは読むからである。`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて標準ライブラリの型のままである。プログラム自身の型には独自の名前を付ける（`type AppPanic = …`）。
 
 ---
 

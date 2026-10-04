@@ -86,15 +86,10 @@ describe("the built-in type constructors", () => {
   });
 });
 
-describe("a program's own definition shadows the standard library's", () => {
-  it("takes the program's Route over the built-in one", () => {
-    // The built-in `Route` is a record; a program that redefines it as Text
-    // must have its own definition checked against, not the built-in.
-    expect(codes(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([]);
-    expect(codes(`type Route = Text\nslot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
-  });
-
-  it("checks against the built-in when the program declares nothing", () => {
+describe("a stdlib type named in a program", () => {
+  // A program cannot declare one of these names itself — that is E0231, in
+  // `reserved-type-name.test.ts` — so a use always means the entry here.
+  it("is checked against the built-in definition", () => {
     expect(codes(`slot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
   });
 });

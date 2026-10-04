@@ -195,8 +195,8 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
     // write would have produced is what is refused, and what is judged.
     const { app, root } = await mounted(
       program(
-        `type Email = Text where email
-slot user  : {name: Text, email: Email} = {name: "Ada", email: "ada@example.com"}
+        `type Address = Text where email
+slot user  : {name: Text, email: Address} = {name: "Ada", email: "ada@example.com"}
 slot sent  : Text = ""
 reducer send on=ui.submit(Signup) do= sent := user.email`,
         `tile Signup = form(column(input(bind=user.email, id="e"), error(field=user)))`,

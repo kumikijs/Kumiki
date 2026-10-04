@@ -60,8 +60,14 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
  * program can never reach a definition under that name. Its fields live in the
  * checker's `PRIM_FIELDS` instead.
  *
- * A program that declares its own `type Route = …` shadows the entry here —
- * these are seeded before the program's definitions, not after.
+ * No program may declare a type under one of these names (E0231), and every
+ * use of one means the entry here. Most name a value the runtime or the
+ * standard library builds or reads — a panic, the route, a failed request and
+ * its status, a `Duration.s(5)`, the `FileV` a multipart body sends as a file
+ * — so a program's own definition would be what the checker reasoned about
+ * while the runtime kept to this one. `Url`, `Email`, `Uuid` and `FormData`
+ * are only spellings of a type a program builds itself; they are reserved with
+ * the rest so that one rule covers the whole table.
  */
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
@@ -123,6 +129,17 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
     pos: NO_POS,
   }),
 ];
+
+const STDLIB_TYPE_NAMES: ReadonlySet<string> = new Set(STDLIB_TYPES.map((t) => t.name));
+
+/**
+ * Whether `name` is one of {@link STDLIB_TYPES} — a name a program cannot
+ * declare a type under (E0231), and whose definition the checker's table
+ * keeps whatever the program declares.
+ */
+export function isStdlibTypeName(name: string): boolean {
+  return STDLIB_TYPE_NAMES.has(name);
+}
 
 /**
  * Generic type constructors with no definition to look up (stdlib §2.1.2), and

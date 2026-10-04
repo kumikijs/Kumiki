@@ -91,15 +91,6 @@ slot c : Cents = 5`,
     ).toEqual([]);
   });
 
-  it("timeout refuses a Text under a program's own type Duration = Text", () => {
-    // A program's `type Duration` shadows the stdlib one, so the field cannot be
-    // held to whatever `Duration` names in scope: here that is `Text`, and a
-    // `Text` still reaches `setTimeout` as `NaN`.
-    expect(diagnostics(app(`type Duration = Text`, `timeout: "soon"`))).toEqual([
-      "E0201 7:24 Expected Int but got Text",
-    ]);
-  });
-
   it("timeout refuses a Float: 5.5 is not an Int, by choice", () => {
     // `setTimeout(fn, 5.5)` would run, but the field is an `Int` of
     // milliseconds, and an `Int` position refuses a `Float` everywhere else too.

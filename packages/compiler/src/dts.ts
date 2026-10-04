@@ -58,9 +58,9 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
       const local = ctx.typeParams.get(t.name) ?? ctx.userTypes.get(t.name);
       if (local) return local;
       const std = STDLIB_BY_NAME.get(t.name);
-      // `FormData` names `FormValue`, which names nothing back — but a program
-      // that shadows one of these with a self-referential alias would, so the
-      // expansion refuses to re-enter a name it is already inside.
+      // `FormData` names `FormValue`, which names nothing back. The expansion
+      // still refuses to re-enter a name it is already inside, so an entry
+      // that named itself would end in `unknown` rather than recurse.
       if (!std || ctx.expanding.has(t.name)) return "unknown";
       return tsOfType(std.body, { ...ctx, expanding: new Set([...ctx.expanding, t.name]) });
     }

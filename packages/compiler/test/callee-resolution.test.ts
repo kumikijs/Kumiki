@@ -571,20 +571,15 @@ describe("a qualified stdlib member is read the same way without its parentheses
   it("claims the qualifier position and not the name", () => {
     // The parser reads this set without consulting the type table, so listing
     // `Duration` claims `Duration.<member>` in every position. What it does not
-    // claim is the name: a program that declares its own `type Duration` writes
-    // its tags as bare names, which is a different position, and reads its
-    // values through a lowercase receiver, which is postfix parsing. Pinned
-    // because a set the parser applies by spelling alone is the kind of change
-    // that takes a name away from the programs that already had it.
+    // claim is the name: `type Duration = …` parses, and what refuses it is the
+    // checker's rule for every standard-library type name (E0231), reported at
+    // the declaration. Pinned because a set the parser applies by spelling
+    // alone is the kind of change that turns a diagnostic into a parse error.
     const src = `type Duration = Short | Long
-slot d : Duration = Short
-slot t : Text = ""
-reducer pick on=ui.click(B) do= d := Long
-tile B = button(text="b")
-tile App = column(B, text(t), text(d.show))
+tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(codes(src)).toEqual([]);
+    expect(codes(src)).toEqual(["E0231"]);
   });
 
   it("leaves a listed name usable as a value and as a pattern", () => {

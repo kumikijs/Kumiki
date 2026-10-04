@@ -56,6 +56,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error`, of `route.error(<pattern>)` (which adds `pattern`), and of an `error-boundary` tile's `in=` |
 
+A program uses these names without declaring them. A `type` declared under any of them but `File`, which is a primitive type name (§2.1.1), is [E0231](./errors.md#e0231-reserved-type-name) — `type Route = …` — and the name keeps the definition above ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
+
 ---
 
 ## 2.2 Collection Methods

@@ -82,7 +82,7 @@ import {
   receiversOf,
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
-import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import { isPrimTypeName, isStdlibTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -292,8 +292,9 @@ function checkAll(
 ): KumikiError[] {
   const errors: KumikiError[] = [];
   const sym: SymbolTable = {
-    // Seeded before the program's own definitions, so `type Route = …` in a
-    // program shadows the standard-library one rather than colliding with it.
+    // A standard-library entry is never replaced: a program's `type Route = …`
+    // is E0231 (`checkTypeDef`), and every use of `Route` means the route the
+    // runtime builds.
     types: new Map(STDLIB_TYPES.map((t) => [t.name, t])),
     slots: new Map(),
     reducers: new Map(),
@@ -311,7 +312,7 @@ function checkAll(
   for (const def of program.defs) {
     switch (def.kind) {
       case "TypeDef":
-        sym.types.set(def.name, def);
+        if (!isStdlibTypeName(def.name)) sym.types.set(def.name, def);
         break;
       case "SlotDef":
         sym.slots.set(def.name, def);
@@ -457,12 +458,13 @@ function checkCycles(
     const def = typeOf(name);
     if (!def) return [];
     const target = aliasTarget(def, typeOf);
-    // `sym.types` holds the program's definitions over the standard library's
-    // (`STDLIB_TYPES`), so a stdlib *domain* type — `Route`, `HttpError` — is
-    // followed like any other definition, and a program that redeclares one
-    // closes a loop through its own. What is not in the table is a generic
-    // constructor (`List`, `Option`, `Map`), which has no body to come back
-    // along, and a name that denotes nothing at all, which is E0117's to
+    // `sym.types` holds the standard library's definitions (`STDLIB_TYPES`)
+    // beside the program's, so a stdlib *domain* type — `Route`, `HttpError` —
+    // is followed like any other definition. A program's own declaration under
+    // one of those names is E0231 and never enters the table, so it closes no
+    // loop: the name it writes is the stdlib's. What is not in the table is a
+    // generic constructor (`List`, `Option`, `Map`), which has no body to come
+    // back along, and a name that denotes nothing at all, which is E0117's to
     // report rather than a second name for one mistake.
     return target && sym.types.has(target.to) ? [target] : [];
   };
@@ -782,9 +784,9 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
  *
  * `PanicInfo` has to be assignable to what the fallback declares, which is the
  * condition the checker's reading of `$1` rests on — one-sided, like every
- * `assignable` call, and unless a program shadows `PanicInfo` with a type of
- * its own. The report is attached to the clause, not to the tile: two clauses
- * naming the same fallback are two reports.
+ * `assignable` call. The name is always the standard library's: a program
+ * cannot declare its own (E0231). The report is attached to the clause, not to
+ * the tile: two clauses naming the same fallback are two reports.
  */
 function checkBoundaryFallback(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   if (tile.errorBoundary === undefined) return;
@@ -4984,8 +4986,9 @@ function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolTable): 
 
 /**
  * The rows of the member table a receiver reads, or `null` for a type the
- * table does not speak for. Only the standard library's own `Duration` adds
- * its row: a program's own `type Duration` shadows it and may be anything.
+ * table does not speak for. Only the standard library's `Duration` adds its
+ * row, found under whatever wraps it (`isStdlibDuration`); the `Int` it is
+ * declared over does not.
  */
 function memberReceivers(raw: TypeExpr | null, t: TypeExpr, sym: SymbolTable): Receiver[] | null {
   const name = t.kind === "TypePrim" || t.kind === "TypeApp" ? t.name : null;
@@ -6797,8 +6800,7 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   }
   // `timeout` is milliseconds, and the boundary is "assignable to `Int`": a
   // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
-  // `Duration`", because a program's own `type Duration` shadows the stdlib one
-  // and may be anything.
+  // `Duration`", which would refuse that `nominal Int`.
   if (http.timeout !== undefined)
     checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
   if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
@@ -7270,5 +7272,16 @@ function checkTypeArity(
 const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
 function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
+  // A standard-library type name means the standard library's type in every
+  // program (`STDLIB_TYPES`). The symbol table kept that entry, so this
+  // declaration is reported; its body is checked for what it says on its own.
+  if (isStdlibTypeName(def.name)) {
+    errors.push({
+      code: "E0231",
+      kind: "reserved-type-name",
+      message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+      pos: def.pos,
+    });
+  }
   resolveType(def.body, sym, errors, new Set(def.params));
 }
