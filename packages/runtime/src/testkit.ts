@@ -458,6 +458,36 @@ function compareReducerExpect(
   };
 }
 
+type ReducerEmit = { effect: string; args: unknown[] };
+
+/**
+ * The state one reducer application leaves: `before`, the whole slot table the
+ * reducer ran against, with the batch's writes over it — and the batch's emits.
+ * A batch a refinement rejects leaves `before` as it was and emits nothing
+ * (runtime.md §10.3.3); the rejection is reported.
+ *
+ * Shared by the single-apply `reducer-test` and by `run-reducer` inside a
+ * property-test, so the two answer the same state for the same reducer,
+ * including for a slot the test neither seeds nor writes: it reads its value
+ * in `before`.
+ */
+function settleBatch(
+  reducer: string,
+  before: Record<string, unknown>,
+  result:
+    | { slots?: Record<string, unknown>; emits?: ReducerEmit[]; rejected?: RefinementRejection[] }
+    | null
+    | undefined,
+  slotMetas: Record<string, SlotMetaLike>,
+): { slots: Record<string, unknown>; emits: ReducerEmit[] } {
+  const rejected = batchRejections(result, slotMetas);
+  if (rejected.length > 0) {
+    reportRejectedBatch(reducer, rejected);
+    return { slots: { ...before }, emits: [] };
+  }
+  return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
+}
+
 // ----- property-test generators / runner (spec/testing.md §8.3) -----
 
 /** A type's generation recipe, emitted by codegen from the `for-all` types. */
@@ -1279,8 +1309,11 @@ export const _stdlibTest = {
   /**
    * Apply one reducer to a `{slots}` state and return the next `{slots}` — the
    * `run-reducer(name)` step used inside a `property-test` invariant (§8.3).
-   * Pure w.r.t. the test: it seeds `app.live` from `state.slots`, applies, and
-   * returns a fresh merged slots snapshot (emitted effects are ignored).
+   * Pure w.r.t. the test: it resets `app.live` as a reducer-test does (slot
+   * defaults and the seeded `route`, then `state.slots`), applies, and returns
+   * that whole table with the writes over it (emitted effects are ignored).
+   * A slot the state does not name therefore reads its default, in the first
+   * step of a chain and in every step after it.
    *
    * Chained steps make this the one apply path where a rejection is easiest to
    * hide: `run-reducer(inc).run-reducer(dec)` reads its predecessor's output, so
@@ -1297,19 +1330,11 @@ export const _stdlibTest = {
     name: string,
     event: Record<string, unknown>,
   ): { slots: Record<string, unknown> } {
-    const slots = state?.slots ?? {};
-    this.resetLive(app.live, app.slots, slots);
+    this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
-    const rejected = batchRejections(res, app.slots);
-    if (rejected.length > 0) {
-      reportRejectedBatch(name, rejected);
-      return { slots: { ...slots } };
-    }
-    const next: Record<string, unknown> = { ...slots };
-    for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
-    return { slots: next };
+    return { slots: settleBatch(name, app.live, res, app.slots).slots };
   },
   /**
    * Run a `property-test` (spec/testing.md §8.3): generate `count` (default 100)
@@ -1410,13 +1435,8 @@ export const _stdlibTest = {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here,
     // not silently lose every refinement check and pass a batch the app refuses.
-    const rejected = batchRejections(result, slotMetas);
-    if (rejected.length > 0) {
-      reportRejectedBatch(target, rejected);
-      return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
-    }
-    const finalSlots = { ...givenSlots, ...(result?.slots ?? {}) };
-    return compareReducerExpect(name, finalSlots, result?.emits ?? [], panic, expect);
+    const after = settleBatch(target, givenSlots, result, slotMetas);
+    return compareReducerExpect(name, after.slots, after.emits, panic, expect);
   },
   /**
    * Multi-step reducer-test with effect mocks (spec/testing.md §8.5). Dispatches

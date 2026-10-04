@@ -11,7 +11,7 @@
 // per-field behaviour: two-way `bind`.
 
 import type { AppShape, MountedApp, ReducerSpec } from "@kumikijs/runtime";
-import { _stdlib, mount, renderToString } from "@kumikijs/runtime";
+import { _stdlib, emptyRoute, mount, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** `count` is capped at 3; `mirror` and `log` are unconstrained bystanders. */
@@ -408,9 +408,12 @@ describe("every tier applies the same rule", () => {
     // Chained steps are why this one matters: without the check the refused
     // state becomes the next step's input and the invariant is proved about a
     // world the app cannot reach.
-    const after = _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {});
+    const after = _stdlib.runReducerStep(app, { slots: { count: 2 } }, "bump", {});
 
-    expect(after.slots).toEqual({ count: 0, log: "" });
+    // The whole table the step ran against, unchanged: `count` keeps its given
+    // value, and `log` — which the refused batch also wrote — keeps its default,
+    // as do the slots the test never named.
+    expect(after.slots).toEqual({ count: 2, mirror: 0, log: "", trace: "", route: emptyRoute() });
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 });
