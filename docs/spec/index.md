@@ -297,5 +297,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
+| `185-indexed-db-open-retry.kumiki` | type, slot, effect, reducer, tile, app | http | [§6.7.4](./http.md#_6-7-4-sessionstorage-indexeddb) |
 <!-- examples:end -->
 :::

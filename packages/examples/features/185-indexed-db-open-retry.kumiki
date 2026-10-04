@@ -1,0 +1,42 @@
+# Feature (http.md §6.7.4): opening the database is part of one indexed-*
+# effect's call, not a state the page stays in.
+#
+# The first effect that runs opens `app.indexed-db`, and the effects after it
+# share that connection. An open that another connection blocks (another tab
+# still holding version 1 while this one asks for 2) waits until that
+# connection closes, then reads. An open that fails is that load's `.err`, and
+# the next load opens again. When another tab opens a newer `version`, this
+# page closes its connection so that tab's upgrade is not blocked, and its
+# next load opens again. A connection the browser closes on its own is
+# dropped the same way.
+#
+# The scenario scripts `loadNote`: a failed load, then one that reads the
+# note. packages/tests/indexed-db-open.test.ts mounts this file against an
+# IndexedDB double that reports `blocked`, fails, and sends `versionchange`.
+
+type Note = {id: Text, body: Text}
+
+slot status : Text = "idle"
+
+effect loadNote cap=indexed.read
+                in=Text
+                out=Result(Option(Note), Text)
+                map-request={store: "notes", key: $1, decode: Decoder.Json(Note)}
+
+reducer go     on=ui.click(LoadBtn)   do= status := "loading"
+                                          emit loadNote("a")
+reducer loaded on=loadNote.ok($o, _)  do= status := "loaded " + $o.map($1.body).get-or("-")
+reducer failed on=loadNote.err($e, _) do= status := "err: " + $e
+
+tile LoadBtn = button(text="Load") {id: "load"}
+tile App = column(LoadBtn, text("status: " + status)) {pad: "lg", gap: "md"}
+
+app IndexedDbOpenRetry
+    caps   = [indexed.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    indexed-db = {
+        name:    "notes",
+        version: 2,
+        stores:  [{name: "notes", key: "id"}]
+    }

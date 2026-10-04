@@ -27,6 +27,17 @@ export type IndexRange = {
 
 const handles = new WeakMap<IndexedDbCfg, Promise<IDBDatabase>>();
 
+/**
+ * One open shared by the effects: the first call that needs the database
+ * opens it, and later calls wait on that open or reuse its connection. An
+ * open that fails is the err of the calls waiting on it and is not kept, so
+ * the next call opens again. `blocked` only reports that another connection
+ * holds the old version; the same request still ends in `success` or `error`
+ * once that connection closes, so it is waited on, not failed on. On
+ * `versionchange` (another tab opening a newer version) the connection
+ * closes, so it does not block that upgrade, and the next call opens again;
+ * a connection the browser closes on its own (`close`) is dropped the same way.
+ */
 function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
   const cached = handles.get(cfg);
   if (cached) return cached;
@@ -49,11 +60,19 @@ function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
         }
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => {
+        db.close();
+        handles.delete(cfg);
+      };
+      db.onclose = () => handles.delete(cfg);
+      resolve(db);
+    };
     req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
-    req.onblocked = () => reject(new Error("IndexedDB open blocked"));
   });
   handles.set(cfg, p);
+  p.catch(() => handles.delete(cfg));
   return p;
 }
 
