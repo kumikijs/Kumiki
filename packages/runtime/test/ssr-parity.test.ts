@@ -261,7 +261,13 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
   scroll: { cases: [["scroll", { kind: "scroll", children: [CHILD], props: CONTAINER_PROPS }]] },
   panel: { cases: [["panel", { kind: "panel", children: [CHILD], props: CONTAINER_PROPS }]] },
   fieldset: {
-    cases: [["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }]],
+    cases: [
+      ["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }],
+      // The caption is the first child on both paths, ahead of the fields.
+      ["fieldset (legend)", { kind: "fieldset", children: [CHILD], props: { legend: "Billing" } }],
+      // FALSY: an empty legend is no caption, not an empty <legend>.
+      ["fieldset (empty legend)", { kind: "fieldset", children: [CHILD], props: { legend: "" } }],
+    ],
   },
   region: { cases: [["region", { kind: "region", children: [CHILD], props: CONTAINER_PROPS }]] },
   grid: {
@@ -416,6 +422,9 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
       // The bind marker sits on the box inside the <label>, built from a path
       // through `bindLabel` as the input row above explains.
       ["check (bind)", { kind: "check", checked: true, bind: "agreed" }],
+      // The text beside the box, a <span> after the <input> as on a radio.
+      ["check (label)", { kind: "check", checked: true, props: { label: "I agree" } }],
+      ["check (empty label)", { kind: "check", checked: false, props: { label: "" } }],
     ],
   },
   switch: {

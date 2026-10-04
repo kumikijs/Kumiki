@@ -327,6 +327,16 @@ function commonAttrs(node: TileNode): Record<string, string> {
 }
 
 /**
+ * The text a `check` or a `radio` shows beside its box: its `label`, in the
+ * `<span>` the renderers append after the `<input>`, or nothing when it has
+ * none.
+ */
+function boxLabel(props: TileProps | undefined): string {
+  const label = typeof props?.label === "string" ? props.label : "";
+  return label ? `<span>${escapeText(label)}</span>` : "";
+}
+
+/**
  * A child list, skipping the holes a conditional leaves. `when(cond, Tile())`
  * lowers to a child that is `null` on the false branch, and the mount path's
  * `appendChildren` filters for exactly that — a bare walk here throws on the
@@ -381,8 +391,17 @@ export function renderTileToString(node: TileNode): string {
     case "region":
     case "scroll":
     case "panel":
-    case "fieldset":
       return el(node, "div", { "data-kumiki-tile": node.kind }, renderChildren(node.children));
+    case "fieldset": {
+      // The caption goes ahead of the fields, as the renderer prepends it.
+      const legend = attrValue(node.props?.legend);
+      return el(
+        node,
+        "div",
+        { "data-kumiki-tile": "fieldset" },
+        `${legend === undefined ? "" : `<legend>${escapeText(String(legend))}</legend>`}${renderChildren(node.children)}`,
+      );
+    }
     case "overlay": {
       // The z-axis: the first child stays in normal flow and every later one
       // gets its own absolutely-positioned layer, placed by `align`. Served
@@ -501,11 +520,10 @@ export function renderTileToString(node: TileNode): string {
         node.kind === "switch"
           ? { "data-kumiki-tile": "switch", role: "switch" }
           : { "data-kumiki-tile": "check" },
-        `<input${inner}>`,
+        `<input${inner}>${node.kind === "check" ? boxLabel(node.props) : ""}`,
       );
     }
     case "radio": {
-      const label = typeof node.props?.label === "string" ? node.props.label : "";
       const inner = serializeAttrs({
         type: "radio",
         name: node.group,
@@ -518,7 +536,7 @@ export function renderTileToString(node: TileNode): string {
         node,
         "label",
         { "data-kumiki-tile": "radio" },
-        `<input${inner}>${label ? `<span>${escapeText(label)}</span>` : ""}`,
+        `<input${inner}>${boxLabel(node.props)}`,
       );
     }
     case "select": {

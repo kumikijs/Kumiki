@@ -113,12 +113,14 @@ export type TileFamily =
  * is: `link` carries a URL-disposition check, an allowlist and a
  * once-per-target diagnostic, `icon` a theme-override lookup and a size scale,
  * and `heading` is six lines — an app with a heading used to download all of
- * it. `layout` is not, and must not be: of the thirteen kinds mapped to it,
- * twelve are rendered by five functions (`page` and `column` are both
- * `renderFlexColumn`; seven more — `card`, `box`, `panel`, `fieldset`,
- * `stack`, `region`, `scroll` — are all `renderBox`), and the thirteenth,
- * `route-outlet`, has no renderer of its own at all. Splitting it would ship
- * the same bytes under more names.
+ * it. `layout` is not, and must not be: of the twelve kinds mapped to it,
+ * eleven are rendered by five functions (`page` and `column` are both
+ * `renderFlexColumn`; six more — `card`, `box`, `panel`, `stack`, `region`,
+ * `scroll` — are all `renderBox`), and the twelfth, `route-outlet`, has no
+ * renderer of its own at all. Splitting it would ship the same bytes under
+ * more names. A container with code of its own — `fieldset`, which writes a
+ * `<legend>` — is not a layout kind for that reason: it ships alone, with the
+ * form tiles in `input`, instead of in the module every app downloads.
  *
  * Every kind of a listed family must have its own module, because the module
  * name is derived from the kind (`tiles-text-link`); a cross-package test pins
@@ -177,7 +179,6 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   panel: "layout",
   divider: "layout",
   scroll: "layout",
-  fieldset: "layout",
   "route-outlet": "layout",
   // tiles-text
   text: "text",
@@ -197,6 +198,7 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   slider: "input",
   switch: "input",
   form: "input",
+  fieldset: "input",
   editable: "input",
   // tiles-collection
   list: "collection",

@@ -618,12 +618,16 @@ function tileCallJs(
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
         const bindInfo = extractBindPath(t.args);
+        // The group is the `<input>`'s `name` (forms.md §5.5.2), so `name=`
+        // spells it too; `group=` is read first when a radio writes both.
+        const groupArg =
+          t.args.find((a) => a.name === "group") ?? t.args.find((a) => a.name === "name");
+        if (groupArg) fields.push(`group: ${jsOfExpr(asExpr(groupArg.value), ctx)}`);
         let valueJs: string | undefined;
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
-          if (arg.name === "group") fields.push(`group: ${valJs}`);
-          else if (arg.name === "value") valueJs = valJs;
+          if (arg.name === "value") valueJs = valJs;
           // A bind decides the selection itself, below; `selected=` beside
           // one is a second answer to the same question, and is not read
           // (W0216 says so at `kumiki check` time).
@@ -794,7 +798,14 @@ function tileCallJs(
           else if (arg.name === "max") fields.push(`max: ${valJs}`);
           else if (arg.name === "step") fields.push(`step: ${valJs}`);
         }
-        if (bindInfo) fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
+        if (bindInfo) {
+          fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
+        } else {
+          // The one-way value (forms.md §5.3): shown, and moved when the
+          // expression changes, with nothing written back.
+          const valArg = t.args.find((a) => a.name === "value");
+          if (valArg) fields.push(`value: ${jsOfExpr(asExpr(valArg.value), ctx)}`);
+        }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }

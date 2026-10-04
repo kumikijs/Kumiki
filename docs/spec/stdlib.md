@@ -382,13 +382,15 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `input` | text input | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | multi-line input | `bind`, `rows`, `placeholder` |
 | `check` | checkbox | `value`, `onClick`, `onChange`, `label` |
-| `radio` | radio button | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | radio button | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | slider | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
 
 `button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
+
+`check` `label` and `radio` `label` are the text beside the box: a `<span>` after the `<input>`, inside the `<label>` that wraps both, on the client and in server rendering alike, and nothing when the label is empty. `radio` `group` is the `name` attribute of its `<input>`, which is what makes the radios sharing it one set ([Forms §5.5.2](./forms.md#_5-5-2-radio)). `slider` `value` is the one-way value of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements): the slider shows it and follows it when a reducer changes it, and a `bind` beside it is read instead.
 
 ### 2.3.5 Forms
 
@@ -398,6 +400,8 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `label` | label | `for` |
 | `fieldset` | field set | `legend` |
 | `error` | validation error display | `field` |
+
+`fieldset` `legend` is the caption of the group: a `<legend>` ahead of its children, on the client and in server rendering alike, and none when the legend is empty.
 
 ### 2.3.6 Lists / Tables
 

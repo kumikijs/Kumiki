@@ -67,7 +67,7 @@ export const radioPatcher: TilePatcher<"radio"> = (el, _oldNode, newNode) => {
   const wrap = el as HTMLLabelElement;
   reconcileId(wrap, newNode);
   // check / radio / switch: create wraps a single `<input>` as the first
-  // child (radio also appends a trailing `<span>` label; check / switch do
+  // child (check and radio also append a trailing `<span>` label; switch does
   // not). Use the direct child instead of `querySelector("input")` to avoid
   // matching a nested input if a future container tile ever wraps another
   // input beneath the same label.

@@ -342,6 +342,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,575 measured, from 63,597 on dev at fece387): a
+    // `fieldset` writes its `legend` (stdlib.md §2.3.5), and ships alone in
+    // `tiles-input-fieldset.js` beside the other form tiles, so the layout
+    // module every app loads drops its two entries. Left in `tiles-layout.js`,
+    // the legend would have cost a counter that renders no fieldset 324 bytes.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

@@ -94,6 +94,7 @@ export default defineConfig([
       "tiles-input-slider": "src/tiles/input/slider.ts",
       "tiles-input-switch": "src/tiles/input/switch.ts",
       "tiles-input-form": "src/tiles/input/form.ts",
+      "tiles-input-fieldset": "src/tiles/input/fieldset.ts",
       "tiles-input-editable": "src/tiles/input/editable.ts",
       "tiles-collection": "src/tiles-collection.ts",
       "tiles-overlay": "src/tiles-overlay.ts",

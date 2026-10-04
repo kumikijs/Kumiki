@@ -35,6 +35,13 @@ export const checkTile: TileRenderer<"check"> = (node) => {
     if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
   });
   wrap.appendChild(inp);
+  // The text beside the box (stdlib.md §2.3.4), as a radio shows its own.
+  const labelText = (node.props?.label as string | undefined) ?? "";
+  if (labelText) {
+    const span = document.createElement("span");
+    span.textContent = labelText;
+    wrap.appendChild(span);
+  }
   applyControlState(inp, node.props);
   return wrap;
 };
@@ -43,7 +50,7 @@ export const checkPatcher: TilePatcher<"check"> = (el, _oldNode, newNode) => {
   const wrap = el as HTMLLabelElement;
   reconcileId(wrap, newNode);
   // check / radio / switch: create wraps a single `<input>` as the first
-  // child (radio also appends a trailing `<span>` label; check / switch do
+  // child (check and radio also append a trailing `<span>` label; switch does
   // not). Use the direct child instead of `querySelector("input")` to avoid
   // matching a nested input if a future container tile ever wraps another
   // input beneath the same label.
@@ -53,6 +60,20 @@ export const checkPatcher: TilePatcher<"check"> = (el, _oldNode, newNode) => {
     if (newNode.bind) bindDataset(inp, newNode.bind, newNode.bindPath);
     else clearBindDataset(inp);
     setHandlers(inp, inputHandlers(newNode));
+  }
+  // Reconcile the trailing label span if the label text changed.
+  const nextLabel = (newNode.props?.label as string | undefined) ?? "";
+  const span = wrap.querySelector("span");
+  if (nextLabel) {
+    if (span) {
+      if (span.textContent !== nextLabel) span.textContent = nextLabel;
+    } else {
+      const s = document.createElement("span");
+      s.textContent = nextLabel;
+      wrap.appendChild(s);
+    }
+  } else if (span) {
+    wrap.removeChild(span);
   }
   applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
 };

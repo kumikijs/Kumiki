@@ -1,0 +1,41 @@
+{
+  "steps": [
+    {
+      "label": "the check's label is a span beside its box (hovering a missing one fails the step)",
+      "do": { "hover": "[data-kumiki-tile='check'] > input + span" },
+      "expect": { "noErrors": true, "domIncludes": ["I agree to the terms"] }
+    },
+    {
+      "label": "and the box still toggles the slot",
+      "do": { "click": "[data-kumiki-tile='check'] > input" },
+      "expect": { "noErrors": true, "state": { "agreed": true }, "domIncludes": ["agreed=true"] }
+    },
+    {
+      "label": "a fieldset starts with the legend its props block names",
+      "do": { "hover": "[data-kumiki-tile='fieldset']:first-child > legend:first-child" },
+      "expect": { "noErrors": true, "domIncludes": ["Terms"] }
+    },
+    {
+      "label": "and with the one a named argument names",
+      "do": {
+        "hover": "[data-kumiki-tile='fieldset'] + [data-kumiki-tile='fieldset'] > legend:first-child"
+      },
+      "expect": { "noErrors": true, "domIncludes": ["Mode: a"] }
+    },
+    {
+      "label": "a radio written with name= carries it as its name, and the legend follows the slot",
+      "do": { "click": "[data-kumiki-tile='radio']:last-child > input[name='mode']" },
+      "expect": { "noErrors": true, "state": { "mode": "b" }, "domIncludes": ["Mode: b"] }
+    },
+    {
+      "label": "moving the slider writes the slot through its reducer",
+      "do": { "fill": "input[type='range']", "value": "35" },
+      "expect": { "noErrors": true, "state": { "vol": 35 }, "domIncludes": ["vol=35"] }
+    },
+    {
+      "label": "and a reducer adds to the value the slider wrote",
+      "do": { "clickText": "Louder" },
+      "expect": { "noErrors": true, "state": { "vol": 45 }, "domIncludes": ["vol=45"] }
+    }
+  ]
+}

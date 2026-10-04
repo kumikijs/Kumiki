@@ -1,8 +1,9 @@
 // Input tile renderers (#71): interactive controls (button, input, textarea,
-// check, radio, select, slider, switch, form, editable). `bind=` controls
-// write back to their slot through the owning mount's `_setSlot`, resolved
-// from the control element via the multi-mount app registry (`resolveApp` in
-// core) so several apps on one page never cross-wire.
+// check, radio, select, slider, switch, editable) and the form tiles that
+// hold them (form, fieldset). `bind=` controls write back to their slot
+// through the owning mount's `_setSlot`, resolved from the control element
+// via the multi-mount app registry (`resolveApp` in core) so several apps on
+// one page never cross-wire.
 //
 // Every renderer is paired with a patcher (#190) that mutates the mounted
 // element in place on a data-prop change, preserving browser-internal state
@@ -23,6 +24,7 @@ import type { TilePatchers, TileRenderers } from "./core.ts";
 import { buttonPatcher, buttonTile } from "./tiles/input/button.ts";
 import { checkPatcher, checkTile } from "./tiles/input/check.ts";
 import { editablePatcher, editableTile } from "./tiles/input/editable.ts";
+import { fieldsetPatcher, fieldsetTile } from "./tiles/input/fieldset.ts";
 import { formPatcher, formTile } from "./tiles/input/form.ts";
 import { inputPatcher, inputTile } from "./tiles/input/input.ts";
 import { radioPatcher, radioTile } from "./tiles/input/radio.ts";
@@ -41,6 +43,7 @@ export const inputTiles: TileRenderers = {
   slider: sliderTile,
   switch: switchTile,
   form: formTile,
+  fieldset: fieldsetTile,
   editable: editableTile,
 };
 
@@ -54,5 +57,6 @@ export const inputPatchers: TilePatchers = {
   slider: sliderPatcher,
   switch: switchPatcher,
   form: formPatcher,
+  fieldset: fieldsetPatcher,
   editable: editablePatcher,
 };
