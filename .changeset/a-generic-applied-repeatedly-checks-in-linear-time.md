@@ -14,13 +14,14 @@ slot a : D14(Text) = "ku"
 ```
 
 Before, `kumiki check` on this took time growing as 3^k in the depth of the
-chain: about 0.4 s at 11 levels, 12 s at 14, and minutes a few levels further.
+chain: about 0.4 s at 11 levels and 12 s at 14.
 The check for a refinement an application's arguments put over a base it
 cannot test walked every application in a body with its arguments
 substituted, so `D14`'s three `D13`s each walked `D13`'s three `D12`s, down to
 `D0`. With a refinement at the bottom (`type D0(T) = T where nonempty`), an
 application over the wrong base was also reported once per path: `D1(Int)`
-gave three identical E0804s, `D12(Int)` half a million.
+gave three identical E0804s, `D10(Int)` 59,049, and `D12(Int)` overflowed the
+stack.
 
 After, the same program checks in milliseconds. Each argument is first taken
 through the generics at its head that hand a parameter straight back, as
