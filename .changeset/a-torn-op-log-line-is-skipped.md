@@ -31,3 +31,19 @@ before. A last entry with no newline after it no longer has the next entry
 appended onto the same line. The MCP tools go through the same reader, so
 `kumiki_history` and the edit tools behave the same way; the warning goes to
 the server's stderr.
+
+A write op cuts the torn line off before it appends its own line. If that
+append fails, the file is put back and the rejection says the line was cut off:
+
+```
+replace rejected: the op could not be logged (ENOSPC: no space left on device, write; /…/c.kumiki.kumiki-ops.jsonl holds its complete entries, and its skipped last line was cut off); the file was restored
+```
+
+When cutting the log back after any failed append fails too, that error was
+dropped and the op was reported as rejected with nothing written, although the
+log's last line could still hold the op (and, whole but for its newline, be
+read back as one). The op now fails, naming the log and both errors:
+
+```
+replace failed: the op could not be logged (ENOSPC: no space left on device, write; cutting /…/c.kumiki.kumiki-ops.jsonl back to its complete entries failed too (EIO: …), so its last line may hold part of this op); the file was restored
+```

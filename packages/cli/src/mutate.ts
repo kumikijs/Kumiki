@@ -2,7 +2,7 @@
 // file and appends an entry to `<file>.kumiki-ops.jsonl`.
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, truncateSync } from "node:fs";
 import { check, type Def, LexError, lex, type Pos, parse, type Token } from "@kumikijs/compiler";
 import {
   type DefEntry,
@@ -306,22 +306,51 @@ function logOp(path: string, op: RawOp): string {
 }
 
 /**
+ * A failed append that left the op log other than it was. Its message is the
+ * append's error and what the log holds now.
+ */
+class OpLogChanged extends Error {
+  /** Cutting the log back failed too, so its last line may hold part of the op. */
+  readonly mayHoldOp: boolean;
+
+  constructor(message: string, mayHoldOp: boolean, options: ErrorOptions) {
+    super(message, options);
+    this.mayHoldOp = mayHoldOp;
+  }
+}
+
+/**
  * Append one line after the log's complete lines, or leave those as they
  * were: an append that fails partway (ENOSPC) would otherwise leave a torn
  * last line of its own. The new line never runs on from the one before it: a
  * last line the read skipped is cut off first, and a last entry with no
- * newline after it gets one.
+ * newline after it gets one. A failed append throws `OpLogChanged` when it
+ * leaves the log other than it was: without the skipped last line, or with
+ * what the append wrote still on it because cutting it back failed.
  */
 function appendLine(file: string, line: string, end: OpLogEnd | null): void {
+  if (end?.torn) truncateSync(file, end.size);
   try {
-    if (end?.torn) truncateSync(file, end.size);
     appendFileSync(file, `${end?.unterminated ? "\n" : ""}${line}\n`);
   } catch (e) {
     try {
       if (end === null) rmSync(file, { force: true });
       else truncateSync(file, end.size);
-    } catch {
-      // The append's error is the one to report.
+    } catch (r) {
+      const cut =
+        end === null ? `removing ${file}` : `cutting ${file} back to its complete entries`;
+      throw new OpLogChanged(
+        `${messageOf(e)}; ${cut} failed too (${messageOf(r)}), so its last line may hold part of this op`,
+        true,
+        { cause: e },
+      );
+    }
+    if (end?.torn) {
+      throw new OpLogChanged(
+        `${messageOf(e)}; ${file} holds its complete entries, and its skipped last line was cut off`,
+        false,
+        { cause: e },
+      );
     }
     throw e;
   }
@@ -416,7 +445,8 @@ function definitionTexts(source: string): Map<string, string> {
  * the file as the op left it. If it throws, the file is put back as it was, so
  * an op is never in the file without being in the log. That is safe only
  * because the caller holds the write lock: no other write can have landed in
- * between.
+ * between. If the log may still hold part of the op (`mayHoldOp`), the op has
+ * failed rather than been rejected.
  */
 function commit(path: string, next: string, verb: string, log: () => string): string {
   const before = readFileSync(path, "utf8");
@@ -426,11 +456,18 @@ function commit(path: string, next: string, verb: string, log: () => string): st
   try {
     return log();
   } catch (e) {
+    const mayHoldOp = e instanceof OpLogChanged && e.mayHoldOp;
     try {
       atomicWriteFileSync(path, before);
     } catch (r) {
       throw new Error(
-        `${verb} failed: the op could not be logged (${messageOf(e)}), and restoring ${path} failed too (${messageOf(r)}); the file holds an edit the op log does not`,
+        `${verb} failed: the op could not be logged (${messageOf(e)}), and restoring ${path} failed too (${messageOf(r)}); ${mayHoldOp ? "the file holds this op's edit" : "the file holds an edit the op log does not"}`,
+        { cause: e },
+      );
+    }
+    if (e instanceof OpLogChanged) {
+      throw new Error(
+        `${verb} ${mayHoldOp ? "failed" : "rejected"}: the op could not be logged (${e.message}); the file was restored`,
         { cause: e },
       );
     }

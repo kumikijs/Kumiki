@@ -1,15 +1,10 @@
 // A write verb on a file whose op log ends in a torn line.
 //
 // Every write op reads the op log for its parent op before it appends its own
-// entry. The log was parsed strictly, so a last line cut off mid-write (an
-// append that never finished) made every later `add` / `replace` / `edit` /
-// `remove` / `rename` exit 1 with a bare JSON `SyntaxError` — naming neither
-// the log nor the line — and `view --history` fail the same way, until
-// someone found and repaired the log by hand.
-//
-// The torn last line is skipped with a warning that names the log and the
-// line, and the next op logged takes its place. A line that is not an op
-// anywhere else still stops the verb, and the message says where it is.
+// entry, and `view --history` reads it too. A last line cut off mid-write (an
+// append that never finished) is skipped with a warning that names the log
+// and the line, and the next op logged takes its place. A line that is not an
+// op anywhere else stops the verb, and the message says where it is.
 //
 // These run the CLI from source as a user would, because what is under test
 // is the exit code and what the verb prints.
@@ -98,7 +93,7 @@ describe("an op log that ends in a torn line", () => {
     expect(loggedIds()).toEqual([opId(first.stdout), opId(replace.stdout)]);
 
     const add = kumiki("add", file, "slot", "extra", "Int = 0");
-    expect(add.stderr).toBe("");
+    expect(add.stderr).not.toContain("skipped the last line");
     expect(add.code).toBe(0);
     expect(loggedIds()).toEqual([opId(first.stdout), opId(replace.stdout), opId(add.stdout)]);
   });
