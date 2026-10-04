@@ -1887,9 +1887,9 @@ function inertHandler(
 
 /**
  * Collect every BUILTIN_TILES kind that may appear as a (descendant) part of
- * a named tile's render tree. Returns an empty set when nothing can be
- * statically inferred (cycle, undeclared name, or only dynamic bodies
- * without resolvable children).
+ * a named tile's render tree — the kinds of {@link renderedTree}. Returns an
+ * empty set when nothing can be statically inferred (cycle, undeclared name,
+ * or only dynamic bodies without resolvable children).
  *
  * Two checks read it, and a descendant match means opposite things to them —
  * worth knowing before either is narrowed. For `W0212` a descendant is the
@@ -1900,105 +1900,163 @@ function inertHandler(
  * descendant does NOT mean the handler is wired — only that this walk cannot
  * prove it is dropped.
  */
-function collectTileBuiltinKinds(
-  tileName: string,
-  sym: SymbolTable,
-  visited: Set<string> = new Set(),
-): Set<string> {
-  // `visited` is shared across the whole walk on purpose, and does two things:
-  // it stops a cycle from recurring (`E0005` is what reports one), and it stops
-  // a name reached twice through different branches from being re-expanded.
-  // The second is why it must not be per-branch — a diamond over a deep tile
-  // would otherwise re-walk the shared part once per path.
-  if (visited.has(tileName)) return new Set();
-  visited.add(tileName);
-  if (BUILTIN_TILES.has(tileName)) return new Set([tileName]);
-  const def = sym.tiles.get(tileName);
-  if (!def) return new Set();
-  // The same edges a cycle is looked for along: what this body expands into is
-  // what its render tree is made of. A name that resolves to neither a builtin
-  // nor a declared tile contributes nothing.
-  const out = new Set<string>();
-  for (const target of expansionTargets(def.body)) {
-    for (const kind of collectTileBuiltinKinds(target.to, sym, visited)) out.add(kind);
-  }
-  return out;
+function collectTileBuiltinKinds(tileName: string, sym: SymbolTable): Set<string> {
+  const tree = renderedTree(tileName, sym);
+  return new Set([...tree.root.values(), ...tree.inner.values()].map((e) => e.kind));
 }
 
 /**
- * Result of walking a tile body to collect the literal `{id: "..."}` values
- * its `TileCall`s can produce. `known: true` means every `TileCall` reachable
- * through the body's control-flow branches carries a literal `Str` id, so the
- * `ids` set fully enumerates the DOM ids the tile can render. `known: false`
- * means at least one reachable `TileCall` has no `{id}` prop or its `{id}`
- * value is a non-`Str` expression (a `Ref` etc.) — the runtime filter is the
- * authority for those cases and E0212 stays silent.
+ * One builtin element a tile renders, and the id it is dispatched with — what
+ * a `ui.<ev>(Tile#id)` subscription compares against (language.md §1.6.2).
+ * `id` is the literal, in either spelling a tile accepts (`writtenValue`), or
+ * `null` when there is no literal to read: the id is computed, absent, or
+ * decided by a call site (`callSiteId`).
+ */
+type RenderedElement = { readonly kind: string; readonly id: string | null };
+
+/**
+ * A tile's render tree as the builtin elements it is made of. `root` holds the
+ * ones the body renders at its top, which a call site of the tile merges its
+ * props onto (`_attachProps`); `inner` holds the rest. Each is keyed by kind
+ * and id, so an element reached along many paths is held once.
+ */
+type RenderedTree = {
+  readonly root: ReadonlyMap<string, RenderedElement>;
+  readonly inner: ReadonlyMap<string, RenderedElement>;
+};
+
+const NOTHING_RENDERED: RenderedTree = Object.freeze({ root: new Map(), inner: new Map() });
+
+function addElement(into: Map<string, RenderedElement>, el: RenderedElement): void {
+  into.set(JSON.stringify([el.kind, el.id]), el);
+}
+
+/**
+ * What a tile renders, walked along the edges code generation lowers it by: the
+ * {@link expansionTargets} of its body, and the `error-boundary` fallback of
+ * each tile called in it, which renders in that call's place under the same
+ * enclosing tiles (`boundaryJs`). A `ui.<ev>(Tile)` subscription is wired onto
+ * every element of this tree whose kind fires `<ev>` (`propsFor`), so `W0212`
+ * and `E0212` both read what a subscription reaches from this one walk.
+ *
+ * The tile's OWN boundary is not in it: its fallback replaces the tree the
+ * tile rendered, and renders outside it, so a selector on the tile does not
+ * reach the fallback.
+ *
+ * `memo` holds each tile's tree for the rest of the walk, so a tile reached
+ * along several paths is walked once. A tile reached while it is still being
+ * walked is a cycle — `E0005` reports it — and contributes nothing, the same
+ * as a name that resolves to neither a builtin nor a declared tile.
+ */
+function renderedTree(
+  tileName: string,
+  sym: SymbolTable,
+  memo: Map<string, RenderedTree> = new Map(),
+): RenderedTree {
+  const known = memo.get(tileName);
+  if (known) return known;
+  if (BUILTIN_TILES.has(tileName)) {
+    return { root: new Map([[tileName, { kind: tileName, id: null }]]), inner: new Map() };
+  }
+  const def = sym.tiles.get(tileName);
+  if (!def) return NOTHING_RENDERED;
+  memo.set(tileName, NOTHING_RENDERED);
+  const root = new Map<string, RenderedElement>();
+  const inner = new Map<string, RenderedElement>();
+  for (const edge of expansionTargets(def.body)) {
+    const here = edge.root ? root : inner;
+    if (BUILTIN_TILES.has(edge.to)) {
+      const id = edge.call ? writtenValue(edge.call, "id") : undefined;
+      addElement(here, { kind: edge.to, id: id?.kind === "Str" ? id.value : null });
+      continue;
+    }
+    const callee = sym.tiles.get(edge.to);
+    if (!callee) continue;
+    const sub = renderedTree(callee.name, sym, memo);
+    const decided = edge.call ? callSiteId(edge.call) : undefined;
+    for (const el of sub.root.values()) {
+      addElement(here, decided === undefined ? el : { kind: el.kind, id: decided });
+    }
+    for (const el of sub.inner.values()) addElement(inner, el);
+    // Only a call is lowered with its callee's boundary; an identifier
+    // argument standing in for the tile inlines the body alone.
+    const boundary = edge.call ? boundaryTarget(callee) : null;
+    if (boundary && sym.tiles.has(boundary.to)) {
+      const fallback = renderedTree(boundary.to, sym, memo);
+      for (const el of fallback.root.values()) addElement(here, el);
+      for (const el of fallback.inner.values()) addElement(inner, el);
+    }
+  }
+  const tree: RenderedTree = { root, inner };
+  memo.set(tileName, tree);
+  return tree;
+}
+
+/**
+ * What a user-tile call site leaves of the id its tile's root elements are
+ * dispatched with. Its props are merged onto those elements (`_attachProps`,
+ * language.md §1.7.3), so an `id` written there, in either spelling, replaces
+ * theirs: the literal, or `null` for a computed one. Any other prop is merged
+ * the same way, and what it leaves the dispatch payload holding is not
+ * followed here, so the id is `null` then too. `undefined` when the call site
+ * writes nothing but handlers and a `key`, which are not props
+ * (`isNotPropData`): the root elements keep the ids their tile gives them.
+ */
+function callSiteId(call: TileExpr & { kind: "TileCall" }): string | null | undefined {
+  const id = writtenValue(call, "id");
+  if (id !== undefined) return id.kind === "Str" ? id.value : null;
+  const names = [...call.props.map((p) => p.name), ...call.args.map((a) => a.name)];
+  const writesProp = names.some((n) => n !== undefined && n !== "key" && !HANDLER_NAMES.has(n));
+  return writesProp ? null : undefined;
+}
+
+/**
+ * Result of reading the ids a `ui.<ev>(Tile#id)` selector can match.
+ * `known: true` means every element the subscription is wired onto carries a
+ * literal id, so `ids` enumerates what the runtime filter can see. `known:
+ * false` means at least one of them has a computed id, none, or one a call
+ * site decides — the runtime filter is the authority then, and E0212 stays
+ * silent.
  */
 type TileIdCollection =
   | { readonly known: true; readonly ids: ReadonlySet<string> }
   | { readonly known: false };
 
-const ID_COLL_UNKNOWN: TileIdCollection = Object.freeze({ known: false });
-
-function mergeIdCollections(a: TileIdCollection, b: TileIdCollection): TileIdCollection {
-  if (!a.known || !b.known) return ID_COLL_UNKNOWN;
-  const out = new Set(a.ids);
-  for (const v of b.ids) out.add(v);
-  return { known: true, ids: out };
-}
-
 /**
- * §1.6.2 / issue #149 — collect the literal `{id}` values a tile's `TileCall`
- * roots can produce. Only walks THIS tile's body — referenced user tiles are
- * intentionally not descended so a future per-instance id-override at the use
- * site isn't foreclosed at compile time. Cycle-safe by construction: the
- * walker never crosses tile boundaries, so recursion is bounded by this
- * tile's own AST depth. Takes the `TileDef` directly (rather than looking up
- * by name) so a caller that forgets the existence guard fails loudly instead
- * of getting a silent `known: false` — the exact silent-failure mode this
- * whole diagnostic exists to prevent.
+ * The ids of the elements a `ui.<ev>(<tile>)` subscription is wired onto
+ * (language.md §1.6.2): every element of the tile's {@link renderedTree} whose
+ * kind fires `<ev>` — the kinds `UI_EVENT_TILE_KINDS` lists, which is the gate
+ * codegen lifts the handler by. The tile's root elements are taken as they
+ * render and as each of the tile's call sites leaves them, since the
+ * subscription reaches the tile wherever it is called.
  */
-function collectTileDeclaredIds(def: TileDef): TileIdCollection {
-  return walkTileExprForDeclaredIds(def.body);
-}
-
-function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
-  // Exhaustive switch: a future 6th `TileExpr` variant would otherwise
-  // silently fall through to the `TileCall`-shaped `props` read below and
-  // either return a wrong-looking id set or crash at runtime with no code /
-  // position. The `never` fallthrough turns that into a compile-time error.
-  switch (expr.kind) {
-    case "TileFor":
-    case "TileWhen":
-      return walkTileExprForDeclaredIds(expr.body);
-    case "TileIf":
-      return mergeIdCollections(
-        walkTileExprForDeclaredIds(expr.consequent),
-        walkTileExprForDeclaredIds(expr.alternate),
-      );
-    case "TileMatch": {
-      // Seed with UNKNOWN so a hypothetical 0-arm match (no branches to
-      // vouch for the id set) yields `known: false` and E0212 stays silent
-      // instead of emitting a message with an empty `actual` — the parser
-      // rejects 0-arm matches today, but this keeps the diagnostic honest
-      // if that ever changes.
-      let acc: TileIdCollection = ID_COLL_UNKNOWN;
-      for (let i = 0; i < expr.arms.length; i++) {
-        const armIds = walkTileExprForDeclaredIds(expr.arms[i]!.body);
-        acc = i === 0 ? armIds : mergeIdCollections(acc, armIds);
-      }
-      return acc;
-    }
-    case "TileCall": {
-      const id = expr.props.find((p) => p.name === "id")?.value;
-      if (id?.kind !== "Str") return ID_COLL_UNKNOWN;
-      return { known: true, ids: new Set([id.value]) };
-    }
-    default: {
-      const _exhaustive: never = expr;
-      return _exhaustive;
+function subscriptionIds(tile: TileDef, ev: string, sym: SymbolTable): TileIdCollection {
+  const tree = renderedTree(tile.name, sym);
+  const decided: (string | null)[] = [];
+  for (const def of sym.tiles.values()) {
+    for (const edge of expansionTargets(def.body)) {
+      if (edge.to !== tile.name || !edge.call) continue;
+      const id = callSiteId(edge.call);
+      if (id !== undefined) decided.push(id);
     }
   }
+  const fires = UI_EVENT_TILE_KINDS[ev];
+  const ids = new Set<string>();
+  let known = true;
+  const read = (id: string | null): void => {
+    if (id === null) known = false;
+    else ids.add(id);
+  };
+  for (const el of tree.root.values()) {
+    if (fires && !fires.has(el.kind)) continue;
+    read(el.id);
+    for (const id of decided) read(id);
+  }
+  for (const el of tree.inner.values()) {
+    if (fires && !fires.has(el.kind)) continue;
+    read(el.id);
+  }
+  return known ? { known: true, ids } : { known: false };
 }
 
 /**
@@ -2258,28 +2316,30 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       pos: r.on.pos,
     });
   }
-  // §1.6.2 / issue #149 — a typo in the `#id` portion of a `ui.<ev>(Tile#id)`
-  // selector previously survived all four compile stages and was silently
-  // filtered by the runtime `_dispatch`. When the target tile's every reachable
-  // TileCall carries a literal `{id: "..."}` prop and none of those literals
-  // matches the selector's id, the subscription can never fire — surface it as
-  // a compile-time error, gated by `strictSelectorId` (the runtime filter stays
-  // the authority for tiles with computed or missing `{id}`, and for the PR
-  // #148 regression test that intentionally constructs a literal mismatch).
-  // Skipped when E0211 already fires (undeclared tile) so users see one root
-  // cause, not two overlapping ones.
+  // §1.6.2 — the runtime `_dispatch` drops a `ui.<ev>(Tile#id)` event whose
+  // dispatched element has another id, so a `#id` that no element the
+  // subscription is wired onto carries is a reducer that never runs. Every
+  // such element having a literal id, none of them the selector's, proves it
+  // at compile time; gated by `strictSelectorId`. When the tile has no element
+  // that fires `<ev>` the set is empty and W0212 is the one to report. Skipped
+  // when E0211 already fires (undeclared tile) so users see one root cause,
+  // not two overlapping ones.
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
     const def = sym.tiles.get(r.on.selector.tile);
     if (def !== undefined) {
-      const decl = collectTileDeclaredIds(def);
-      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
-        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+      const wired = subscriptionIds(def, r.on.ev, sym);
+      if (wired.known && wired.ids.size > 0 && !wired.ids.has(r.on.selector.id)) {
+        const actual = [...wired.ids]
+          .sort()
+          .map((v) => `"${v}"`)
+          .join(" | ");
         errors.push({
           code: "E0212",
           kind: "selector-id-mismatch",
           message:
             `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
-            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+            `but every element of tile "${r.on.selector.tile}" that fires "${r.on.ev}" has id ${actual} ` +
+            `— this selector can never match`,
           pos: r.on.pos,
         });
       }

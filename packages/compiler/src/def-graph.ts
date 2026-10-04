@@ -2,9 +2,10 @@
 // close a loop?
 //
 // Four layers answer that question with the same shape but different edges, so
-// the traversal lives here once. It deals in names and positions only: the
-// diagnostics themselves are pushed by the typechecker, which is where every
-// coded diagnostic belongs.
+// the traversal lives here once. It deals in edges only — names and positions,
+// and for a tile body the call each edge was taken at: the diagnostics
+// themselves are pushed by the typechecker, which is where every coded
+// diagnostic belongs.
 //
 // The search over definitions is iterative. Recursion there would be the same
 // defect the tile walk had — a program is free to declare a chain of
@@ -33,6 +34,20 @@ export type Cycle = {
 };
 
 /**
+ * An edge out of a tile body, with where in the body it was taken.
+ *
+ * `root` is whether the node it leads to is one the body renders at its top —
+ * reached through `for` / `when` / `if` / `match` alone, not as a child of a
+ * call. Those are the nodes a call site of the tile merges its props onto
+ * (`_attachProps`). `call` is the tile call written there; an identifier
+ * argument standing in for a tile has none.
+ */
+export type TileEdge = GraphEdge & {
+  readonly root: boolean;
+  readonly call?: TileExpr & { kind: "TileCall" };
+};
+
+/**
  * The tile names a tile body statically expands into.
  *
  * These are exactly the edges code generation follows when it inlines: nested
@@ -47,9 +62,9 @@ export type Cycle = {
  * from. `sub-routes` is not an edge: a sub-route is selected by the router
  * through `route-outlet`, never inlined.
  */
-export function expansionTargets(body: TileExpr): readonly GraphEdge[] {
-  const out: GraphEdge[] = [];
-  walkTileBody(body, out);
+export function expansionTargets(body: TileExpr): readonly TileEdge[] {
+  const out: TileEdge[] = [];
+  walkTileBody(body, out, true);
   return out;
 }
 
@@ -278,21 +293,21 @@ export function aliasTarget(
   return null;
 }
 
-function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
+function walkTileBody(t: TileExpr, out: TileEdge[], root: boolean): void {
   switch (t.kind) {
     case "TileFor":
     case "TileWhen":
-      walkTileBody(t.body, out);
+      walkTileBody(t.body, out, root);
       return;
     case "TileIf":
-      walkTileBody(t.consequent, out);
-      walkTileBody(t.alternate, out);
+      walkTileBody(t.consequent, out, root);
+      walkTileBody(t.alternate, out, root);
       return;
     case "TileMatch":
-      for (const arm of t.arms) walkTileBody(arm.body, out);
+      for (const arm of t.arms) walkTileBody(arm.body, out, root);
       return;
     case "TileCall": {
-      out.push({ to: t.name, pos: t.pos });
+      out.push({ to: t.name, pos: t.pos, root, call: t });
       for (const a of t.args) {
         const v = a.value;
         // A named argument is a prop, and nothing renders a tile written as
@@ -310,10 +325,10 @@ function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
         // undefined one (E0102) — never an expansion edge either way, which
         // is why this `continue` needs no case of its own.
         if (a.name !== undefined) continue;
-        if (isTileExpr(v)) walkTileBody(v, out);
+        if (isTileExpr(v)) walkTileBody(v, out, false);
         else if ((v as Expr).kind === "Ref") {
           const ref = v as Expr & { kind: "Ref" };
-          out.push({ to: ref.name, pos: ref.pos });
+          out.push({ to: ref.name, pos: ref.pos, root: false });
         }
       }
       return;

@@ -4,16 +4,20 @@
 // Without this guard, an id-scoped reducer co-fires with the bare-tile one on
 // every same-tile click, indistinguishable from `on=ui.click(Tile)`.
 
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mount, runScenario } from "@kumikijs/runtime";
+import { check, lex, parse } from "@kumikijs/compiler";
+import { mount, runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { loadApp } from "./helpers/load.ts";
+import { loadApp, loadSource } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examples = join(here, "..", "examples");
 const blockStyleApp = join(examples, "features", "51-selector-id.kumiki");
 const argStyleApp = join(examples, "features", "52-selector-id-arg.kumiki");
+const descendantsApp = join(examples, "features", "216-selector-id-descendants.kumiki");
+const descendantsScenario = join(examples, "features", "216-selector-id-descendants.scenario.json");
 
 function freshRoot(): HTMLElement {
   const root = document.createElement("div");
@@ -78,5 +82,40 @@ describe("static TileName#id selector matching", () => {
     });
     expect(report.ok).toBe(true);
     expect(report.steps[0]?.state.hits).toBe(1);
+  });
+});
+
+// E0212 (`--strict-selector-id`) says a selector "can never match". On a
+// container that is a claim about the descendants the subscription is wired
+// onto, since `#id` filters on the element that dispatched. These hold the
+// claim to what the runtime dispatches, on the example that shows it.
+describe("E0212 agrees with what a container's selector matches", () => {
+  const source = readFileSync(descendantsApp, "utf8");
+  const scenario = JSON.parse(readFileSync(descendantsScenario, "utf8")) as Scenario;
+  /** The reducers `--strict-selector-id` reports, in the order it reports them. */
+  const flagged = (src: string): string[] =>
+    check(parse(lex(src)), { strictSelectorId: true })
+      .filter((d) => d.code === "E0212")
+      .map((d) => /Reducer "([^"]+)"/.exec(d.message)?.[1] ?? d.message);
+
+  it("accepts every selector the example's scenario shows firing", () => {
+    expect(flagged(source)).toEqual([]);
+  });
+
+  it("reports the selectors no wired element can match, and those never fire", async () => {
+    // The three the example's header names: the container's own id under an
+    // event it does not fire, a typo against an `id=` argument, and a
+    // button's id under an event only the input beside it fires.
+    const variant = `${source}
+reducer toolbarSelf on=ui.click(Toolbar#toolbar) do= log := log + "toolbar;"
+reducer clearTypo   on=ui.click(Clear#clr)       do= log := log + "clr;"
+reducer searchGo    on=ui.input(Search#go)       do= log := log + "searchgo;"
+`;
+    expect(flagged(variant)).toEqual(["toolbarSelf", "clearTypo", "searchGo"]);
+    // The example's scenario asserts the whole log after every event that
+    // could reach them, so it passes only if none of the three fired.
+    const report = await runScenario(await loadSource(variant), freshRoot(), scenario);
+    expect(report.steps.filter((s) => !s.ok).map((s) => [s.label, s.failures])).toEqual([]);
+    expect(report.ok).toBe(true);
   });
 });

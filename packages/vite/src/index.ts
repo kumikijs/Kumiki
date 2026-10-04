@@ -57,11 +57,11 @@ export type KumikiPluginOptions = {
    */
   strictIcons?: boolean;
   /**
-   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` cannot match any of the
-   * target tile's literal `{id: "..."}` props to `E0212 selector-id-mismatch`.
-   * Mirrors `kumiki check --strict-selector-id`. Tiles with computed or
-   * missing `{id}` (where the runtime `_dispatch` filter is authoritative)
-   * stay unblocked. Default: false.
+   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` no element the
+   * subscription is wired onto carries to `E0212 selector-id-mismatch`.
+   * Mirrors `kumiki check --strict-selector-id`. A computed or missing id
+   * (where the runtime `_dispatch` filter is authoritative) is never
+   * reported. Default: false.
    */
   strictSelectorId?: boolean;
 };

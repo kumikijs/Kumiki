@@ -1241,6 +1241,27 @@ describe("typecheck", () => {
       expect(w).toBeDefined();
       expect(w?.message).toContain("link");
     });
+
+    it("walks a nested tile's error-boundary fallback, which renders in its place", () => {
+      // When `Risky` panics, its fallback renders under `Outer`, and
+      // `Outer`'s subscription is wired onto the fallback's button. `Risky`'s
+      // own fallback replaces `Risky`'s tree, so `ui.click(Risky)` still has
+      // nothing to land on.
+      const src = `
+        slot s : Text = ""
+        reducer outer on=ui.click(Outer) do= s := "x"
+        reducer risky on=ui.click(Risky) do= s := "y"
+        tile Fallback in=PanicInfo = button(text="retry")
+        tile Risky error-boundary = Fallback = text("risky")
+        tile Outer = row(Risky)
+        tile App = column(Outer)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const warned = checkSrc(src)
+        .filter((e) => e.code === "W0212")
+        .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
+      expect(warned).toEqual(["risky"]);
+    });
   });
 
   // #149 — a typo in the `#id` portion of a `ui.<ev>(Tile#id)` selector was
@@ -1390,10 +1411,9 @@ describe("typecheck", () => {
       expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
     });
 
-    // TileMatch differs from TileIf: it folds N arms (potentially 1..N),
-    // seeded with UNKNOWN so a hypothetical 0-arm match cannot emit an
-    // empty-`actual` message. Every arm must contribute a literal id for the
-    // fold to stay `known: true`.
+    // Every arm of a TileMatch is the tile's root in one state, so each arm's
+    // id is in the set, and every arm needs a literal id for the set to be
+    // known.
     it("flags a TileMatch where every arm's literal id mismatches", () => {
       const src = `
         type Mode = A | B
@@ -1429,8 +1449,8 @@ describe("typecheck", () => {
     });
 
     it("stays silent when any TileMatch arm has no {id} prop", () => {
-      // Pin the fold semantics: one arm without {id} makes the whole tile's
-      // id set unknown, matching the TileIf partial-dynamic case.
+      // One arm without {id} makes the whole tile's id set unknown, matching
+      // the TileIf partial-dynamic case.
       const src = `
         type Mode = A | B
         slot m : Mode = A
@@ -1477,6 +1497,186 @@ describe("typecheck", () => {
       const e = errors.find((d) => d.code === "E0212");
       expect(e).toBeDefined();
       expect(e?.message).toContain("gate");
+    });
+
+    // The ids a selector can match are those of the elements its subscription
+    // is wired onto (language.md §1.6.2): every element under the tile whose
+    // kind fires the event, at any depth. Each case below states that set for
+    // one shape, with reducers on both sides of it in one program, so a
+    // selector that should pass and one that should not are asserted together.
+    describe("reads the ids of the elements the subscription is wired onto", () => {
+      /** The reducers E0212 names, in the order it reports them. */
+      const flagged = (src: string): string[] =>
+        checkStrict(src)
+          .filter((d) => d.code === "E0212")
+          .map((d) => /Reducer "([^"]+)"/.exec(d.message)?.[1] ?? d.message);
+      const program = (body: string, routes = "P"): string =>
+        [
+          'slot log : Text = ""',
+          body,
+          `app A caps=[] routes={"/" -> ${routes}, "/404" -> ${routes}} init=[]`,
+        ].join("\n");
+
+      it("matches a container's selector against its descendants, not its own id", () => {
+        const src = program(`
+reducer hitB on=ui.click(Bar#save) do= log := log + "save;"
+reducer hitA on=ui.click(Bar#bar) do= log := log + "bar;"
+tile Bar = row(button(text="Save", id="save"), button(text="Other", id="other")) {id: "bar"}
+tile Btn2 = button(text="Two", id="two")
+reducer hit2 on=ui.click(Btn2#tow) do= log := log + "two;"
+tile P = column(Bar, Btn2, text("log=" + log))`);
+        expect(flagged(src)).toEqual(["hitA", "hit2"]);
+        const bar = checkStrict(src).find((d) => d.message.includes("Bar#bar"));
+        expect(bar?.message).toContain('"other" | "save"');
+        expect(bar?.message).toContain("can never match");
+      });
+
+      it('reads an id written as id="…" as well as {id: "…"}, the block when both are', () => {
+        const src = program(`
+tile L2 = button(text="l2", id="l2")
+tile B7 = button(text="b7", id="arg7") {id: "block7"}
+reducer argOk    on=ui.click(L2#l2)     do= log := log + "x"
+reducer argBad   on=ui.click(L2#zz)     do= log := log + "x"
+reducer blockOk  on=ui.click(B7#block7) do= log := log + "x"
+reducer shadowed on=ui.click(B7#arg7)   do= log := log + "x"
+tile P = column(L2, B7)`);
+        expect(flagged(src)).toEqual(["argBad", "shadowed"]);
+      });
+
+      it("follows a descendant written as a tile reference, at the root or nested", () => {
+        const src = program(`
+tile Inner  = button(text="i", id="inner")
+tile Nested = box(Inner)
+tile Alias  = Inner
+tile Boxed  = box(Inner) {id: "boxed"}
+reducer nestedOk  on=ui.click(Nested#inner) do= log := log + "x"
+reducer nestedBad on=ui.click(Nested#zz)    do= log := log + "x"
+reducer aliasOk   on=ui.click(Alias#inner)  do= log := log + "x"
+reducer aliasBad  on=ui.click(Alias#zz)     do= log := log + "x"
+reducer boxedOk   on=ui.click(Boxed#inner)  do= log := log + "x"
+reducer boxedBad  on=ui.click(Boxed#boxed)  do= log := log + "x"
+tile P = column(Nested, Alias, Boxed)`);
+        expect(flagged(src)).toEqual(["nestedBad", "aliasBad", "boxedBad"]);
+      });
+
+      it("takes only the elements that fire the selector's event", () => {
+        // In the form: `submit` is the form's, `input` / `change` the input's,
+        // `click` the button's, `key` both controls', `hover` every element's.
+        const src = program(`
+slot q : Text = ""
+tile S = form(input(bind=q, id="q"), button(text="go", type="submit", id="g")) {id: "f"}
+reducer submitOk  on=ui.submit(S#f) do= log := log + "x"
+reducer submitBad on=ui.submit(S#q) do= log := log + "x"
+reducer inputOk   on=ui.input(S#q)  do= log := log + "x"
+reducer inputBad  on=ui.input(S#g)  do= log := log + "x"
+reducer inputForm on=ui.input(S#f)  do= log := log + "x"
+reducer changeOk  on=ui.change(S#q) do= log := log + "x"
+reducer clickOk   on=ui.click(S#g)  do= log := log + "x"
+reducer clickBad  on=ui.click(S#q)  do= log := log + "x"
+reducer keyOk     on=ui.key(S#q)    do= log := log + "x"
+reducer focusForm on=ui.focus(S#f)  do= log := log + "x"
+reducer hoverForm on=ui.hover(S#f)  do= log := log + "x"
+reducer hoverBtn  on=ui.hover(S#g)  do= log := log + "x"
+reducer hoverBad  on=ui.hover(S#zz) do= log := log + "x"
+tile P = column(S)`);
+        expect(flagged(src)).toEqual([
+          "submitBad",
+          "inputBad",
+          "inputForm",
+          "clickBad",
+          "focusForm",
+          "hoverBad",
+        ]);
+      });
+
+      it("descends through for / if / match / when children of a container", () => {
+        const src = program(`
+type Mode = Ma | Mb
+slot flag : Bool = true
+slot m : Mode = Ma
+slot xs : List(Text) = ["p"]
+tile F = column(for s in xs button(text=s, id="f"))
+tile I = row(if flag then button(text="i1", id="i1") else button(text="i2") {id: "i2"})
+tile M = row(match m with
+               | Ma -> button(text="ma", id="ma")
+               | Mb -> button(text="mb", id="mb"))
+tile W = row(when(flag, button(text="w", id="w")))
+reducer forOk    on=ui.click(F#f)  do= log := log + "x"
+reducer forBad   on=ui.click(F#zz) do= log := log + "x"
+reducer ifOk     on=ui.click(I#i2) do= log := log + "x"
+reducer ifBad    on=ui.click(I#zz) do= log := log + "x"
+reducer matchOk  on=ui.click(M#mb) do= log := log + "x"
+reducer matchBad on=ui.click(M#zz) do= log := log + "x"
+reducer whenOk   on=ui.click(W#w)  do= log := log + "x"
+reducer whenBad  on=ui.click(W#zz) do= log := log + "x"
+tile P = column(F, I, M, W)`);
+        expect(flagged(src)).toEqual(["forBad", "ifBad", "matchBad", "whenBad"]);
+      });
+
+      it("stays silent when a wired element's id is computed or missing", () => {
+        // `Known` is the control: the same shape with every id a literal.
+        const src = program(`
+slot n : Int = 0
+tile Computed = row(button(text="c", id=n.show), button(text="d", id="d"))
+tile Missing  = row(button(text="e"), button(text="f", id="f"))
+tile Known    = row(button(text="g", id="g"), button(text="h", id="h"))
+reducer computed on=ui.click(Computed#zz) do= log := log + "x"
+reducer missing  on=ui.click(Missing#zz)  do= log := log + "x"
+reducer known    on=ui.click(Known#zz)    do= log := log + "x"
+tile P = column(Computed, Missing, Known)`);
+        expect(flagged(src)).toEqual(["known"]);
+      });
+
+      it("takes the id a call site writes on a user tile as its root's", () => {
+        // A call site's props are merged onto the element the tile renders at
+        // its root, so `Four(id="five")` dispatches "five". Inside `Wrap`,
+        // the call site's id is the only one `Five`'s button has there.
+        // `Three`'s call site writes another prop, which leaves the id to
+        // the runtime.
+        const src = program(`
+tile Four  = button(text="four") {id: "four"}
+tile Three = button(text="three", id="three")
+tile Five  = button(text="five", id="b5")
+tile Wrap  = row(Five {id: "w5"})
+reducer callSiteId  on=ui.click(Four#five) do= log := log + "x"
+reducer ownId       on=ui.click(Four#four) do= log := log + "x"
+reducer neither     on=ui.click(Four#six)  do= log := log + "x"
+reducer otherProp   on=ui.click(Three#zz)  do= log := log + "x"
+reducer wrapCallSite on=ui.click(Wrap#w5)  do= log := log + "x"
+reducer wrapOwnId   on=ui.click(Wrap#b5)   do= log := log + "x"
+tile P = column(Four(id="five"), Four, Three {variant: "ghost"}, Wrap)`);
+        expect(flagged(src)).toEqual(["neither", "wrapOwnId"]);
+        const neither = checkStrict(src).find((d) => d.message.includes("Four#six"));
+        expect(neither?.message).toContain('"five" | "four"');
+      });
+
+      it("takes a nested tile's error-boundary fallback, which renders in its place", () => {
+        // The fallback of a tile called inside `Outer` renders under `Outer`,
+        // so `Outer`'s subscription is wired onto it. `Risky`'s own fallback
+        // replaces `Risky`'s tree, and a selector on `Risky` does not reach it.
+        const src = program(`
+tile Fallback in=PanicInfo = button(text="fb", id="fb")
+tile Risky error-boundary = Fallback = button(text="r", id="r")
+tile Outer = row(Risky)
+reducer outerOwn      on=ui.click(Outer#r)  do= log := log + "x"
+reducer outerFallback on=ui.click(Outer#fb) do= log := log + "x"
+reducer outerBad      on=ui.click(Outer#zz) do= log := log + "x"
+reducer riskyFallback on=ui.click(Risky#fb) do= log := log + "x"
+tile P = column(Outer)`);
+        expect(flagged(src)).toEqual(["outerBad", "riskyFallback"]);
+      });
+
+      it("reads a route target's tree like any other tile's", () => {
+        const src = program(
+          `
+tile Bar = row(button(text="Save", id="save"), button(text="Other", id="other")) {id: "bar"}
+tile L = button(text="l", id="l")
+tile P = column(Bar, L)
+reducer routeOk  on=ui.click(P#save) do= log := log + "x"
+reducer routeBad on=ui.click(P#zz)   do= log := log + "x"`,
+        );
+        expect(flagged(src)).toEqual(["routeBad"]);
+      });
     });
   });
 });

@@ -77,12 +77,13 @@ export type ExtendedCodegenOptions = CodegenOptions & {
    */
   strictIcons?: boolean;
   /**
-   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` cannot match any of the
-   * target tile's literal `{id: "..."}` props to `E0212 selector-id-mismatch`.
-   * Mirrors `kumiki check --strict-selector-id`; default-off so tiles with
-   * computed or missing `{id}` (where the runtime `_dispatch` filter is the
-   * authority) stay unblocked, and so the PR #148 regression test's
-   * deliberate literal mismatch still compiles cleanly.
+   * Promote `ui.<ev>(Tile#id)` selectors whose `#id` no element the
+   * subscription is wired onto carries to `E0212 selector-id-mismatch` (the
+   * id set is in docs/spec/errors.md). Mirrors `kumiki check
+   * --strict-selector-id`. A computed or missing id leaves the runtime
+   * `_dispatch` filter the authority, and is never reported. Default-off so
+   * the PR #148 regression test's deliberate literal mismatch still compiles
+   * cleanly.
    */
   strictSelectorId?: boolean;
   /**
