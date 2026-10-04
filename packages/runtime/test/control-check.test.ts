@@ -102,6 +102,35 @@ describe("a disabled control refuses every verb that drives one", () => {
   });
 });
 
+// Spelled out whole, once per shape of message: `StepRefusal` builds `message`
+// from `headline`, and that construction must not change a word of what a
+// fixture already reads.
+describe("the message a refusal carries", () => {
+  it("opens with the headline and ends with the assertion to write", () => {
+    const fault = controlFault("click", "click #off", { ...ACTIVE, tag: "button", disabled: true });
+    expect(fault?.message).toBe(
+      "click #off: <button> is disabled, so no user gesture reaches it — a step that means to" +
+        ' assert the refusal says {"expect": {"actionErrorIncludes": ["<button> is disabled"]}}',
+    );
+    expect(fault?.name).toBe("ControlRefusal");
+  });
+
+  it("puts the explanation between the two, outside the headline", () => {
+    const fault = controlFault("fill", "fill #e", {
+      ...ACTIVE,
+      tag: "div",
+      contentEditable: "false",
+    });
+    expect(fault?.headline).toBe("fill #e: <div> is not editable, so it takes no typing");
+    expect(fault?.message).toBe(
+      "fill #e: <div> is not editable, so it takes no typing" +
+        ' (`contenteditable="false"` is what an `editable` renders when it is disabled or' +
+        " read-only) — a step that means to assert the refusal says" +
+        ' {"expect": {"actionErrorIncludes": ["<div> is not editable"]}}',
+    );
+  });
+});
+
 describe("readonly and contenteditable=false refuse the typing alone", () => {
   it("fill is refused on a readonly control", () => {
     const fault = controlFault("fill", "fill #note", { ...ACTIVE, readonly: true });

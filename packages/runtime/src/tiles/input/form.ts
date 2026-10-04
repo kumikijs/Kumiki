@@ -9,13 +9,14 @@ import type {
   TileProps,
   TileRenderer,
 } from "../../core.ts";
-import { judgeShownField, resolveApp } from "../../core.ts";
+import { judgeShownField, noteHeldSubmit, resolveApp } from "../../core.ts";
 import type { InputHandlers } from "./_shared.ts";
 import { INPUT_STATE, inputHandlers, reconcileId, setHandlers, tileId } from "./_shared.ts";
 
 /**
- * Does every slot a control inside `form` binds pass its validation, judged on
- * what the controls show (forms.md §5.2.2)? `judgeShownField` makes the
+ * The slots a control inside `form` binds that fail their validation, judged on
+ * what the controls show (forms.md §5.2.2), in the order the controls bind
+ * them — empty when the form may submit. `judgeShownField` makes the
  * judgement, the one `error(field=…)` renders from — so a form whose fields
  * show a message does not submit, and one whose fields show none does.
  *
@@ -26,9 +27,9 @@ import { INPUT_STATE, inputHandlers, reconcileId, setHandlers, tileId } from "./
  * control outside the form shows is not what the form submits, so it does not
  * hold the form back.
  */
-function boundSlotsValid(form: HTMLFormElement): boolean {
+function failingBoundSlots(form: HTMLFormElement): string[] {
   const app = resolveApp(form);
-  if (!app) return true;
+  if (!app) return [];
   const controls = new Set<Node>();
   const slots = new Set<string>();
   for (const el of form.querySelectorAll<HTMLElement>("[data-kumiki-bind]")) {
@@ -38,8 +39,7 @@ function boundSlotsValid(form: HTMLFormElement): boolean {
     slots.add(slot);
   }
   const inForm = { contains: (el: Node | null) => el !== null && controls.has(el) };
-  for (const slot of slots) if (!judgeShownField(app, slot, inForm).valid) return false;
-  return true;
+  return [...slots].filter((slot) => !judgeShownField(app, slot, inForm).valid);
 }
 
 // form.onSubmit lives directly on props (not through a change-shaped event),
@@ -65,7 +65,12 @@ export const formTile: TileRenderer<"form"> = (node, ctx: TileCtx) => {
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const state = INPUT_STATE.get(form);
-    if (state?.onSubmit && boundSlotsValid(form)) state.onSubmit(state.el ?? {});
+    if (!state?.onSubmit) return;
+    const failing = failingBoundSlots(form);
+    // Recorded against the event, for a driver that caused it to ask: a held
+    // submit leaves nothing behind in the app to assert on.
+    if (failing.length > 0) noteHeldSubmit(e, failing);
+    else state.onSubmit(state.el ?? {});
   });
   for (const child of node.children as TileNode[]) {
     if (child != null) form.appendChild(ctx.render(child));
