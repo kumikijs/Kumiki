@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { compile } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
+import { formatDiagnostic } from "../diagnostic.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 
 const require = createRequire(import.meta.url);
@@ -153,16 +154,16 @@ export async function buildCmd(
   const first = compile(source, baseOpts);
   if (first.kind === "fail") {
     for (const w of first.warnings) {
-      console.error(`${w.code} ${w.kind} at ${w.pos.line}:${w.pos.col}: ${w.message}`);
+      console.error(formatDiagnostic(w));
     }
     for (const err of first.errors) {
-      console.error(`${err.code} ${err.kind} at ${err.pos.line}:${err.pos.col}: ${err.message}`);
+      console.error(formatDiagnostic(err));
     }
     reportCapabilitySearch(first.errors, caps);
     process.exit(1);
   }
   for (const w of first.warnings) {
-    console.error(`${w.code} ${w.kind} at ${w.pos.line}:${w.pos.col}: ${w.message}`);
+    console.error(formatDiagnostic(w));
   }
   let result = first;
   if (first.usedIcons.length > 0) {

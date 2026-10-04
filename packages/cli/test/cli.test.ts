@@ -916,6 +916,96 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toMatch(/tiles {5}2\/5/);
     expect(out).toContain("uncovered:");
   });
+
+  // A program that does not compile stops `test` before any test runs, so the
+  // diagnostic is all the reader gets. It has to say where, as `check` does —
+  // `test` used to print only the code and message.
+  describe("a compile error", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "kumiki-test-diag-"));
+    });
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const NOT_A_RECORD = `slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="+", onClick=inc)
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test starts-at-41 =
+    reducer-test inc
+        given  = {slots: 41}
+        expect = {slots: {count: 42}}
+`;
+
+    const cli = (args: string[]) =>
+      spawnSync(process.execPath, [...CLI_ARGV, ...args], { stdio: "pipe", encoding: "utf8" });
+
+    it("is reported with the file and the line and column `check` gives", {
+      timeout: 30000,
+    }, () => {
+      const file = join(dir, "not-a-record.kumiki");
+      writeFileSync(file, NOT_A_RECORD);
+      const checked = cli(["check", file]);
+      expect(checked.status).toBe(1);
+      const lines = checked.stderr.trim().split("\n");
+      expect(lines).toEqual([
+        "E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
+      ]);
+
+      const tested = cli(["test", file]);
+      expect(tested.status).toBe(1);
+      expect(tested.stderr).toContain(file);
+      for (const line of lines) expect(tested.stderr).toContain(line);
+      expect(tested.stderr).toContain('in test "starts-at-41"');
+    });
+
+    it("prints the warnings `check` prints, before the errors", { timeout: 30000 }, () => {
+      // A `box` cannot fire `focus`, so subscribing to one is W0212.
+      const file = join(dir, "warned.kumiki");
+      writeFileSync(
+        file,
+        `slot f : Text = ""
+reducer recordFocus on=ui.focus(Card) do= f := "focused"
+tile Card = box(text("hi"))
+${NOT_A_RECORD}`,
+      );
+      const checked = cli(["check", file]);
+      expect(checked.status).toBe(1);
+      const lines = checked.stderr.trim().split("\n");
+      expect(lines).toEqual([
+        expect.stringMatching(/^W0212 /),
+        expect.stringMatching(/^E0713 test-shape-invalid at 11:26: /),
+      ]);
+
+      const tested = cli(["test", file]);
+      expect(tested.status).toBe(1);
+      const reported = tested.stderr.split("\n");
+      const at = reported.findIndex((l) => l.includes(`compile failed (${file}):`));
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(reported.slice(at + 1, at + 3)).toEqual([
+        lines[0],
+        `${lines[1]} (in test "starts-at-41")`,
+      ]);
+    });
+
+    it("names no test when the diagnostic is outside one", { timeout: 30000 }, () => {
+      const file = join(dir, "unknown-name.kumiki");
+      writeFileSync(
+        file,
+        NOT_A_RECORD.replace("text(count.show)", "text(nope)").replace(
+          "{slots: 41}",
+          "{slots: {count: 41}}",
+        ),
+      );
+      const tested = cli(["test", file]);
+      expect(tested.status).toBe(1);
+      expect(tested.stderr).toMatch(/E0103 \S+ at 4:27: /);
+      expect(tested.stderr).not.toContain("in test");
+    });
+  });
 });
 
 // M4b: `kumiki fix --auto-patch <test-name>`. These exercise the real CLI wiring
