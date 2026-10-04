@@ -2,6 +2,7 @@ import {
   assertNever,
   type EffectDef,
   type Expr,
+  type FnDef,
   type ReducerDef,
   type TestDef,
   type TileDef,
@@ -45,7 +46,9 @@ export function coverageJs(
   reducers: ReducerDef[],
   tiles: TileDef[],
   effects: EffectDef[],
+  fns: FnDef[],
 ): string {
+  const declaresFn = (name: string) => fns.some((f) => f.name === name);
   const usedReducers = new Set<string>();
   const usedTiles = new Set<string>();
   const usedEffects = new Set<string>();
@@ -78,7 +81,7 @@ export function coverageJs(
     } else if (t.testKind === "tile-test") {
       if (t.target) usedTiles.add(t.target);
     } else if (t.testKind === "property-test") {
-      scanRunReducers(t.invariant, markReducer);
+      scanRunReducers(t.invariant, declaresFn, markReducer);
     } else if (t.testKind === "episode-test") {
       // episode-test replays a log: every effect mocked is one the test exercises.
       if (t.mocks?.kind === "RecordLit") {

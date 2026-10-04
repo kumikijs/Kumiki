@@ -326,7 +326,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
     // Static coverage for `kumiki test --coverage` (§8.7).
-    lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
+    lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects, fns)};`);
   }
 
   // The two splices are order-dependent: `refinementsAt` is the larger index,

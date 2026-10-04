@@ -33,6 +33,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { callsBuiltin, RUN_REDUCER } from "./builtin-calls.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -231,8 +232,9 @@ class Walker {
         this.expr(e.index, locals);
         return;
       case "Call":
-        // `run-reducer(name)` (§8.3) takes a reducer NAME, not a value.
-        if (e.callee === "run-reducer") {
+        // `run-reducer(name)` (§8.3) takes a reducer NAME, not a value — unless
+        // the program declares a fn of that name, which wins (`callsBuiltin`).
+        if (e.callee === RUN_REDUCER && callsBuiltin(e.callee, (n) => this.index.fn.has(n))) {
           this.runReducerArg(e.args[0]);
           return;
         }

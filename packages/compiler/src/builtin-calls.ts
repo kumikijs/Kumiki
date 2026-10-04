@@ -6,9 +6,10 @@
 // `build` both green, `doubel is not defined` on the first click.
 //
 // Closing that means the checker has to know exactly what codegen can lower.
-// Codegen does not read these tables — `codegen/expr.ts` dispatches through its
-// own chain of bespoke cases, one per builtin, because each lowers to something
-// different. What keeps the two in step is
+// `codegen/expr.ts` lowers each builtin through a bespoke case of its own,
+// because each lowers to something different, and enters those cases only for
+// a call `callsBuiltin` below answers yes for — the answer the checker types
+// the call by. What keeps the cases in step with the tables is
 // `packages/compiler/test/callee-resolution.test.ts`, which compiles a call to
 // every name below and asserts the result is not the fallback. A name the
 // checker accepts and codegen forgot fails there rather than in an app.
@@ -45,7 +46,8 @@ const atLeast = (n: number): BuiltinArity => ({ min: n, max: Number.POSITIVE_INF
 // itself to resolve the reducer name. Listing it here would have whitelisted
 // the one context where it is wrong: `t := run-reducer("inc")` in an ordinary
 // reducer passes check and build and then throws `_init is not defined`, which
-// is the exact failure this file exists to stop.
+// is the exact failure this file exists to stop. It is in
+// `UNQUALIFIED_BUILTIN_CALLS` below, which answers a different question.
 export const BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["now", exactly(0)],
   ["random", exactly(0)],
@@ -53,6 +55,23 @@ export const BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["panic", exactly(1)],
   ["file-url", exactly(1)],
   ["prefers-dark", exactly(0)],
+]);
+
+/**
+ * `run-reducer(reducer)`: the state a reducer leaves, in a property-test
+ * invariant (testing.md §8.3). Codegen lowers it; it is kept out of
+ * `BUILTIN_CALLS` for the reason given there.
+ */
+export const RUN_REDUCER = "run-reducer";
+
+/**
+ * Every unqualified callee codegen lowers itself. A `fn` name takes no
+ * qualifier, so these are the names a program's `fn` can share with a builtin;
+ * where one does, the call is to the `fn` (`callsBuiltin`).
+ */
+export const UNQUALIFIED_BUILTIN_CALLS: ReadonlySet<string> = new Set([
+  ...BUILTIN_CALLS.keys(),
+  RUN_REDUCER,
 ]);
 
 /** Callees codegen lowers by their full `Qualifier.member` name. */
@@ -171,6 +190,22 @@ export function builtinArity(callee: string): BuiltinArity | undefined {
 /** Whether codegen has a lowering for `callee`. */
 export function isBuiltinCallee(callee: string): boolean {
   return builtinArity(callee) !== undefined;
+}
+
+/**
+ * Whether a call written `callee(…)` is the builtin of that name. A `fn` the
+ * program declares under the name wins (language.md §1.8.5): the call is to the
+ * `fn`, checked against its signature and lowered to it, wherever it is
+ * written, and the builtin is out of that program's reach.
+ *
+ * Codegen enters its builtin lowerings only for a call this answers `true` for,
+ * and the checker types a call as the builtin only on the same answer, so the
+ * two cannot read one name two ways. A builtin added to the table leaves a
+ * program that declares a `fn` of that name calling its `fn`.
+ */
+export function callsBuiltin(callee: string, declaresFn: (name: string) => boolean): boolean {
+  if (UNQUALIFIED_BUILTIN_CALLS.has(callee)) return !declaresFn(callee);
+  return isBuiltinCallee(callee);
 }
 
 /**

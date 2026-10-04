@@ -1,4 +1,5 @@
 import type { Expr, FragmentShape, KeyKind, Pattern, Pos, TypeExpr } from "../ast.ts";
+import { callsBuiltin, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import { PRIM_TYPES } from "../parser.ts";
 import {
@@ -129,6 +130,14 @@ function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   return `((_o) => (_o._tag === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
 }
 
+/**
+ * A call to the user-defined fn `callee`, and the fallback for a callee codegen
+ * has no lowering of its own for.
+ */
+function fnCallJs(callee: string, args: Expr[], ctx: EvalCtx): string {
+  return `${jsBinding(callee)}(${args.map((a) => jsOfExpr(a, ctx)).join(", ")})`;
+}
+
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
   switch (e.kind) {
     case "Num":
@@ -223,10 +232,16 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "Call": {
       const cn = e.callee;
+      // A fn the program declares under a builtin's name wins over the builtin,
+      // on the answer the checker typed the call by: no case below is reached
+      // for a call `callsBuiltin` does not answer yes for.
+      if (!callsBuiltin(cn, (name) => ctx.gen.fns.some((f) => f.name === name))) {
+        return fnCallJs(cn, e.args, ctx);
+      }
       // `run-reducer(name)` inside a property-test invariant (§8.3): apply the
       // named reducer to the trial's initial state (`_init` / `_event` are bound
       // in the generated trial fn). Chained `.run-reducer(...)` is in methodCallJs.
-      if (cn === "run-reducer") {
+      if (cn === RUN_REDUCER) {
         return `_s.runReducerStep(App, _init, ${JSON.stringify(reducerNameArg(e.args[0]))}, _event)`;
       }
       // Module calls like TodoId.fresh, now, etc.
@@ -307,9 +322,9 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // The runtime helper is None-safe so `file-url(avatar.get)` does not
       // throw before `is-some` guards inside `when(...)` short-circuit.
       if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, e.pos, ctx)})`;
-      const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
-      // Otherwise treat as user-defined fn
-      return `${jsBinding(cn)}(${args})`;
+      // A builtin with no case above, which the callee tables keep a checked
+      // program from naming (`callee-resolution.test.ts`).
+      return fnCallJs(cn, e.args, ctx);
     }
     case "MethodCall": {
       return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind, e.fragmentShape);

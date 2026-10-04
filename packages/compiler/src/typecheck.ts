@@ -39,9 +39,11 @@ import { assertNever, isTileExpr } from "./ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
+  callsBuiltin,
   isQualifierName,
   QUALIFIED_BUILTIN_CALLS,
   QUALIFIED_CALL_NAMESPACES,
+  RUN_REDUCER,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
@@ -2599,6 +2601,11 @@ function checkMemberLvalue(
   }
 }
 
+/** `callsBuiltin` against the program's own fns: whether `callee(…)` is the builtin. */
+function isBuiltinCall(callee: string, sym: SymbolTable): boolean {
+  return callsBuiltin(callee, (name) => sym.fns.has(name));
+}
+
 /**
  * Resolve a `Call`'s callee. Codegen's fallback lowers an unknown name to a
  * call on a JS binding of that name, so anything this function lets through
@@ -2616,10 +2623,11 @@ function checkCallee(
 ): void {
   const argCount = args.length;
   const fn = sym.fns.get(callee);
-  // A declared `fn` wins over the unimplemented list. Codegen has no lowering
-  // for `trace`, so it takes the user-fn fallback and a program that declares
-  // `fn trace` works — reporting E0802 for it would reject a running program
-  // and tell its author their own function is unimplemented.
+  // A declared `fn` wins over the unimplemented list, as it does over a builtin
+  // codegen lowers (below). Codegen has no lowering for `trace`, so it takes
+  // the user-fn fallback and a program that declares `fn trace` works —
+  // reporting E0802 for it would reject a running program and tell its author
+  // their own function is unimplemented.
   if (!fn && UNIMPLEMENTED_CALLS.has(callee)) {
     errors.push({
       code: "E0802",
@@ -2767,7 +2775,9 @@ function checkCallee(
       return;
     }
   }
-  const arity = builtinArity(callee);
+  // Held to the builtin's count only when the call is the builtin: a declared
+  // `fn` of its name wins, and the call is checked against the fn below.
+  const arity = isBuiltinCall(callee, sym) ? builtinArity(callee) : undefined;
   if (arity !== undefined) {
     if (argCount < arity.min || argCount > arity.max) {
       errors.push({
@@ -3130,11 +3140,12 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "Call":
       // `run-reducer(name)` takes a reducer, not a value, and lowers only
-      // inside a generated property-test trial — so it is absent from the
-      // callee tables on purpose. `checkTest` resolves the name and the count
+      // inside a generated property-test trial — so it is absent from
+      // `BUILTIN_CALLS` on purpose. `checkTest` resolves the name and the count
       // there; walking it here would report the callee as undefined and the
-      // reducer as a name.
-      if (ctx.kind === "test" && e.callee === "run-reducer") {
+      // reducer as a name. A `fn` the program declares as `run-reducer` wins,
+      // and its call is checked like any fn's.
+      if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
@@ -4814,8 +4825,13 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // yields the dispatched effect's EffectId.
       return prim("EffectId", e.pos);
     case "Call": {
-      if (e.callee === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
-      const fixed = CALL_RESULT.get(e.callee);
+      // A builtin's own type only when the call is the builtin: a declared
+      // `fn` of its name wins, and is answered by its signature at the end.
+      const builtin = isBuiltinCall(e.callee, sym);
+      if (builtin && e.callee === RUN_REDUCER && ctx.runReducerScope) {
+        return runReducerState(sym, e.pos);
+      }
+      const fixed = builtin ? CALL_RESULT.get(e.callee) : undefined;
       if (fixed) return prim(fixed, e.pos);
       const dot = e.callee.indexOf(".");
       const qualifier = dot > 0 ? e.callee.slice(0, dot) : null;
@@ -5881,8 +5897,12 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
         });
       }
     };
+    // A call to a `fn` the program declares as `run-reducer` is the fn's, and
+    // `checkExpr` checks it like any other.
     walkExpr(t.invariant, (n) => {
-      if (n.kind === "Call" && n.callee === "run-reducer") checkRunReducer(n.args, n.pos);
+      if (n.kind === "Call" && n.callee === RUN_REDUCER && isBuiltinCall(n.callee, sym)) {
+        checkRunReducer(n.args, n.pos);
+      }
       if (n.kind === "MethodCall" && n.method === "run-reducer") checkRunReducer(n.args, n.pos);
     });
     return;

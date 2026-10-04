@@ -784,6 +784,10 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
    = ts.map($2.copy(text=$2.text.trim))
 ```
 
+**A declared `fn` wins over a built-in function of the same name.** A call `name(…)` is to the program's own `fn` when it declares one under that name, and to the [built-in function](./stdlib.md#_2-4-built-in-functions) otherwise. That holds for every built-in function a call can name: `random`, `fmt`, `panic`, `file-url`, `prefers-dark`, `trace`, and `run-reducer` in a [property-test invariant](./testing.md#_8-3-property-tests). `now` is a reserved word, so no `fn` can be named it. With the `fn` declared, every call of the name is checked against the `fn`'s signature and runs its body: in a tile, a reducer, another `fn`, a test body, and a fragment position that names the `fn` ([§1.8.6](#_1-8-6-partial-application-and-higher-order-functions)). The built-in is then out of that program's reach, so a program that needs both gives its `fn` another name.
+
+`panic(message)` written on its own as a reducer statement is the statement form rather than a call, since a `fn`'s value would have nowhere to go there. It stops the reducer whatever the program declares.
+
 ### 1.8.6 Partial Application and Higher-Order Functions
 
 Since there are no lambdas, passing higher-order functions uses either a "fn name" or an "expression fragment":

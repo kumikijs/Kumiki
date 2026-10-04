@@ -755,7 +755,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
        | _                    -> false
 ```
 
-### 1.8.5 tile / reducer からの呼び出し
+### 1.8.5 tile / reducer からの呼び出し {#_1-8-5-calling-from-tile-reducer}
 
 ```kumiki fragment
 tile TodoList = column(
@@ -771,6 +771,10 @@ reducer normalize
 fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
    = ts.map($2.copy(text=$2.text.trim))
 ```
+
+**宣言した `fn` は同名のビルトイン関数に優先する。** 呼び出し `name(…)` は、プログラムがその名前で `fn` を宣言していればその `fn` の呼び出しであり、していなければ[ビルトイン関数](./stdlib.md#_2-4-builtin-functions)の呼び出しである。呼び出しで名指せるビルトイン関数すべてがこれに従う：`random`、`fmt`、`panic`、`file-url`、`prefers-dark`、`trace`、そして [property-test の invariant](./testing.md#_8-3-property-tests) における `run-reducer`。`now` は予約語なので、その名前の `fn` は宣言できない。`fn` を宣言すると、その名前の呼び出しはすべて `fn` のシグネチャで検査され、`fn` の本体を実行する：tile、reducer、別の `fn`、テスト本体、そして `fn` を名指す式断片の位置（[§1.8.6](#_1-8-6-部分適用と高階関数)）のいずれでも同じである。そのプログラムからビルトインには届かなくなるので、両方が要るプログラムは `fn` に別の名前を付ける。
+
+reducer の文として単独で書いた `panic(message)` は呼び出しではなく文の形である。そこでは `fn` の値の行き先が無いからである。プログラムが何を宣言していても、reducer を停止する。
 
 ### 1.8.6 部分適用と高階関数
 
