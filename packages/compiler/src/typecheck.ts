@@ -5750,6 +5750,38 @@ function walkExpr(e: Expr | undefined, visit: (n: Expr) => void): void {
   }
 }
 
+/**
+ * E0109 for a wildcard inside a structured Set member or map key of a
+ * reducer-test `expect` (`[{id: <slots.pick>}]`). The matcher stands a
+ * wildcard in for a member or key only when it is the whole member or key;
+ * one nested inside is keyed with the rest of the value when the literal is
+ * built, by its sentinel's form, so the test could never pass.
+ *
+ * Runs after the `expect` has been checked against the slots' and effects'
+ * types, which is what marks a list literal as a Set (`asSet`). A wildcard is
+ * reported once, at the outermost member or key that holds it.
+ */
+function checkWildcardsInKeys(expect: Expr, errors: KumikiError[]): void {
+  const reported = new Set<Expr>();
+  const refuseNested = (key: Expr): void => {
+    if (key.kind === "Wildcard") return;
+    walkExpr(key, (n) => {
+      if (n.kind !== "Wildcard" || reported.has(n)) return;
+      reported.add(n);
+      errors.push({
+        code: "E0109",
+        kind: "test-wildcard-misuse",
+        message: `Test wildcard "${wildcardText(n)}" cannot stand inside a Set member or map key: the member or key is keyed by its whole value, so a wildcard there can only be the whole member or key`,
+        pos: n.pos,
+      });
+    });
+  };
+  walkExpr(expect, (n) => {
+    if (n.kind === "ListLit" && n.asSet) for (const it of n.items) refuseNested(it);
+    if (n.kind === "MapLit") for (const en of n.entries) refuseNested(en.key);
+  });
+}
+
 function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
   checkTestNames(t, sym, errors);
   // Wildcards are legal only in a reducer-test `expect`. The `given` (both kinds)
@@ -5855,6 +5887,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
         });
       }
     });
+    checkWildcardsInKeys(t.expect as Expr, errors);
     if (!sym.reducers.has(t.target ?? "")) {
       errors.push({
         code: "E0102",

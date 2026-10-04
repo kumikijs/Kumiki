@@ -5,6 +5,7 @@
       "do": { "submit": "#email" },
       "expect": {
         "noErrors": true,
+        "actionErrorIncludes": ["the field bound to email fails its validation"],
         "state": { "sent": "(nothing)" },
         "domIncludes": ["Invalid email format"]
       }

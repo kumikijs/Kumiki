@@ -6,14 +6,17 @@
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
-  ControlRefusal,
   type ControlVerb,
+  constraintFault,
   controlFault,
   type DispatchTarget,
   dispatchFault,
   judgeRefusal,
   readControl,
+  readInvalidControls,
   type Action as ScenarioAction,
+  StepRefusal,
+  submitFault,
 } from "@kumikijs/runtime";
 import { type ConsoleMessage, chromium, type Locator, type Page, type Route } from "playwright";
 
@@ -479,7 +482,7 @@ async function serveScenario(
     for (const step of scenario.steps) {
       errorBuf = [];
       const actionDesc = step.do ? describeAction(step.do) : undefined;
-      let fault: { message: string; refusal?: ControlRefusal } | undefined;
+      let fault: { message: string; refusal?: StepRefusal } | undefined;
       if (step.do) {
         try {
           await performAction(page, step.do);
@@ -488,7 +491,7 @@ async function serveScenario(
           // throws in this process (only `readControl` crosses into the page),
           // so the class survives.
           const message = e instanceof Error ? e.message : String(e);
-          fault = e instanceof ControlRefusal ? { message, refusal: e } : { message };
+          fault = e instanceof StepRefusal ? { message, refusal: e } : { message };
         }
         await page.waitForTimeout(settleMs);
       }
@@ -652,7 +655,12 @@ async function refuse(loc: Locator, verb: ControlVerb, where: string): Promise<v
   if (fault) throw fault;
 }
 
-async function performAction(page: Page, a: Action): Promise<void> {
+/**
+ * Run one action on the page, throwing what kept it from running. Exported for
+ * the tests that must put the page in a state no action reaches before they
+ * drive one — a number field holding text that reads as no number, say.
+ */
+export async function performAction(page: Page, a: Action): Promise<void> {
   if ("wait" in a) {
     await page.waitForTimeout(a.wait);
     return;
@@ -662,14 +670,78 @@ async function performAction(page: Page, a: Action): Promise<void> {
     // the real thing, so constraint validation and the browser's own submit
     // sequence are part of what it verifies. The selector may name the form or
     // anything inside it, as at the scenario tier.
-    await page
-      .locator(a.submit)
-      .first()
-      .evaluate((el: Element) => {
+    //
+    // `requestSubmit()` dispatches the event synchronously, and a listener
+    // added now runs after the form tile's own, so it sees the event once the
+    // gate has judged it. The record is read in the page and the rule asked
+    // here — `submitFault`, the one the scenario tier asks.
+    //
+    // The seam asked is the one of the app that owns the form, found by the
+    // root this runner mounted it in: `#root` for one app, `#kumiki-root-<i>`
+    // for the i-th of several. Any app's seam would answer for an event its own
+    // form tile saw, but an owner without one must fail the step, not pass on
+    // a neighbour's silence.
+    const where = describeAction(a);
+    const target = page.locator(a.submit).first();
+    const outcome = await target.evaluate(
+      (el: Element) => {
         const form = el instanceof HTMLFormElement ? el : el.closest("form");
-        if (!form) throw new Error("no form at or above the selector");
-        form.requestSubmit();
-      });
+        if (!form) return { kind: "no form" as const };
+        const root = form.closest("#root, [id^='kumiki-root-']");
+        const multi = window.__kumikiApps;
+        const owner =
+          root === null
+            ? undefined
+            : root.id === "root"
+              ? multi
+                ? undefined
+                : window.__kumikiApp
+              : multi?.[Number(root.id.slice("kumiki-root-".length))];
+        if (!owner) return { kind: "no owner" as const };
+        const asker = owner._submitHeldBy;
+        if (typeof asker !== "function") return { kind: "no seam" as const };
+        // Whether the event fired at all: `requestSubmit()` runs constraint
+        // validation first, and a control that fails it stops the submit with
+        // no event — no gate judged it, so the record has nothing to say.
+        let fired = false;
+        let held: readonly string[] | undefined;
+        const ask = (e: Event): void => {
+          fired = true;
+          held = asker(e);
+        };
+        form.addEventListener("submit", ask);
+        try {
+          form.requestSubmit();
+        } finally {
+          form.removeEventListener("submit", ask);
+        }
+        return { kind: "asked" as const, fired, held: held ? [...held] : [] };
+      },
+      undefined,
+      { timeout: 3000 },
+    );
+    if (outcome.kind === "no form") throw new Error(`no form at or above selector ${a.submit}`);
+    if (outcome.kind === "no owner") {
+      throw new Error(`${where}: the form sits in no app root this page mounted`);
+    }
+    if (outcome.kind === "no seam") {
+      throw new Error(
+        `${where}: the app that owns the form carries no \`_submitHeldBy\` seam, so nothing can say whether the form held the submit back`,
+      );
+    }
+    if (!outcome.fired) {
+      // Read after the fact: a failed `requestSubmit()` changes no control's
+      // validity, and `readInvalidControls` closes over nothing, so it crosses
+      // into the page as it is.
+      const invalid = await target.evaluate(readInvalidControls, undefined, { timeout: 3000 });
+      const stopped = constraintFault(where, invalid);
+      if (stopped) throw stopped;
+      throw new Error(
+        `${where}: requestSubmit() fired no submit event, and no control in the form reports a failed constraint`,
+      );
+    }
+    const fault = submitFault(where, outcome.held);
+    if (fault) throw fault;
     return;
   }
   if ("dispatch" in a) {
@@ -931,8 +1003,12 @@ declare global {
       reducers?: Array<{ name: string; selector?: { tile: string; id?: string } }>;
       _dispatch?: (n: string, p: Record<string, unknown>) => void;
       _navigate?: (path: string) => void;
+      _submitHeldBy?: (e: Event) => readonly string[] | undefined;
     };
     /** Co-mounted instances, in document order (multi-mount runner). */
-    __kumikiApps?: Array<{ live?: Record<string, unknown> }>;
+    __kumikiApps?: Array<{
+      live?: Record<string, unknown>;
+      _submitHeldBy?: (e: Event) => readonly string[] | undefined;
+    }>;
   }
 }

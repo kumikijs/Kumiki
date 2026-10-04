@@ -23,6 +23,7 @@ import { loadSource } from "./helpers/load.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const EXAMPLE = join(here, "..", "examples", "features", "124-set-literal.kumiki");
+const SLOT_KEY_EXAMPLE = join(here, "..", "examples", "features", "170-slot-wildcard-key.kumiki");
 
 const DEFS = `type Bag = {tags: Set(Text)}
 type P   = {x: Int}
@@ -237,6 +238,204 @@ test names-a-member-it-lacks = reducer-test grow
     given  = {slots: {sel: ["00000000-0000-4000-8000-000000000001"]}, event: {type: ui.click, target: Go}}
     expect = {slots: {sel: ["00000000-0000-4000-8000-000000000002", <any-id>]}}`),
     ).toEqual(["keeps-the-given:true", "names-a-member-it-lacks:false @slots.sel"]);
+  });
+
+  it("resolves a <slots.X> member to the slot's value after the reducer", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(`slot tags : Set(Text) = []
+slot pick : Text      = ""
+slot other : Text     = ""
+reducer addTag on=ui.click(Go) do= tags := tags.add(pick)
+test add-tag = reducer-test addTag
+    given  = {slots: {tags: [], pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: [<slots.pick>]}}
+test beside-a-literal = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: ["z", <slots.pick>]}}
+test names-a-value-it-lacks = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "a", other: "q"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: ["a", <slots.other>]}}
+test one-is-not-two = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: [<slots.pick>]}}`),
+    ).toEqual([
+      "add-tag:true",
+      "beside-a-literal:true",
+      "names-a-value-it-lacks:false @slots.tags",
+      "one-is-not-two:false @slots.tags",
+    ]);
+  });
+
+  it("resolves a <slots.X> map key to the slot's value after the reducer", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(`slot counts : Map(Text, Int) = {}
+slot pick   : Text           = ""
+slot other  : Text           = ""
+reducer bump on=ui.click(Go) do= counts := counts.insert(pick, 1)
+test bumps = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {"z": 2, <slots.pick>: 1}}}
+test names-a-key-it-lacks = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "a", other: "q"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {"z": 2, <slots.other>: 1}}}
+test wrong-value = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {"z": 2, <slots.pick>: 5}}}`),
+    ).toEqual([
+      "bumps:true",
+      "names-a-key-it-lacks:false @slots.counts",
+      "wrong-value:false @slots.counts",
+    ]);
+  });
+
+  it("passes the tests of the <slots.X> member and key example", { timeout: 30_000 }, async () => {
+    const results = await testFile(SLOT_KEY_EXAMPLE);
+    expect(results.map((r) => `${r.name}:${r.pass}`)).toEqual([
+      "a-slot-member:true",
+      "a-slot-key:true",
+    ]);
+  });
+
+  it("fails a <slots.X> member that is already one of the others, in either order", {
+    timeout: 30_000,
+  }, async () => {
+    // Each member the literal writes asks for one member of its own: a slot
+    // whose value is already written beside it must not merge with it and
+    // pass on a Set that holds one member fewer than the literal names.
+    expect(
+      await runTests(`slot tags  : Set(Text) = []
+slot pick  : Text      = ""
+slot other : Text      = ""
+reducer addTag on=ui.click(Go) do= tags := tags.add(pick)
+test literal-first = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "z"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: ["z", <slots.pick>]}}
+test slot-first = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "z"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: [<slots.pick>, "z"]}}
+test two-slots = reducer-test addTag
+    given  = {slots: {tags: [], pick: "z", other: "z"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: [<slots.pick>, <slots.other>]}}`),
+    ).toEqual([
+      "literal-first:false @slots.tags",
+      "slot-first:false @slots.tags",
+      "two-slots:false @slots.tags",
+    ]);
+  });
+
+  it("fails a <slots.X> map key that is already one of the others, in either order", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(`slot counts : Map(Text, Int) = {}
+slot pick   : Text           = ""
+slot other  : Text           = ""
+reducer bump on=ui.click(Go) do= counts := counts.insert(pick, 1)
+test literal-first = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "z"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {"z": 1, <slots.pick>: 1}}}
+test slot-first = reducer-test bump
+    given  = {slots: {counts: {"z": 2}, pick: "z"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {<slots.pick>: 1, "z": 1}}}
+test two-slots = reducer-test bump
+    given  = {slots: {counts: {}, pick: "z", other: "z"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {<slots.pick>: 1, <slots.other>: 1}}}`),
+    ).toEqual([
+      "literal-first:false @slots.counts",
+      "slot-first:false @slots.counts",
+      "two-slots:false @slots.counts",
+    ]);
+  });
+
+  it("keys a <slots.X> holding __proto__ as an own key, not the prototype", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(`slot tags   : Set(Text)      = []
+slot counts : Map(Text, Int) = {}
+slot pick   : Text           = ""
+reducer put on=ui.click(Go) do=
+    tags := tags.add(pick)
+    counts := counts.insert(pick, 1)
+test set-member = reducer-test put
+    given  = {slots: {pick: "__proto__"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {tags: [<slots.pick>]}}
+test map-key = reducer-test put
+    given  = {slots: {pick: "__proto__"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {counts: {<slots.pick>: 1}}}`),
+    ).toEqual(["set-member:true", "map-key:true"]);
+  });
+
+  it("keys a <slots.X> holding a record the way add keys it", { timeout: 30_000 }, async () => {
+    expect(
+      await runTests(`type P = {x: Int, y: Int}
+slot ps   : Set(P) = {}
+slot pick : P      = {x: 0, y: 0}
+reducer addP on=ui.click(Go) do= ps := ps.add(pick)
+test a-record-member = reducer-test addP
+    given  = {slots: {ps: [{x: 3, y: 4}], pick: {y: 2, x: 1}}, event: {type: ui.click, target: Go}}
+    expect = {slots: {ps: [{x: 3, y: 4}, <slots.pick>]}}`),
+    ).toEqual(["a-record-member:true"]);
+  });
+
+  it("pairs <any-id> with what is left once each <slots.X> has taken its own", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(`type ItemId = nominal Text where uuid
+slot sel  : Set(ItemId)      = {}
+slot m    : Map(ItemId, Int) = {}
+slot kept : ItemId           = ItemId.fresh()
+reducer grow on=ui.click(Go) do=
+    sel := sel.add(kept).add(ItemId.fresh())
+    m := m.insert(kept, 2).insert(ItemId.fresh(), 1)
+reducer keepOnly on=ui.click(Go) do= sel := sel.add(kept)
+test set-any-first = reducer-test grow
+    given  = {event: {type: ui.click, target: Go}}
+    expect = {slots: {sel: [<any-id>, <slots.kept>]}}
+test set-slot-first = reducer-test grow
+    given  = {event: {type: ui.click, target: Go}}
+    expect = {slots: {sel: [<slots.kept>, <any-id>]}}
+test set-no-second = reducer-test keepOnly
+    given  = {event: {type: ui.click, target: Go}}
+    expect = {slots: {sel: [<any-id>, <slots.kept>]}}
+test map-pairs = reducer-test grow
+    given  = {event: {type: ui.click, target: Go}}
+    expect = {slots: {m: {<any-id>: 1, <slots.kept>: 2}}}
+test map-swapped = reducer-test grow
+    given  = {event: {type: ui.click, target: Go}}
+    expect = {slots: {m: {<any-id>: 2, <slots.kept>: 1}}}`),
+    ).toEqual([
+      "set-any-first:true",
+      "set-slot-first:true",
+      "set-no-second:false @slots.sel",
+      "map-pairs:true",
+      "map-swapped:false @slots.m",
+    ]);
+  });
+
+  it("resolves a <slots.X> member in an expected effect's argument", {
+    timeout: 30_000,
+  }, async () => {
+    expect(
+      await runTests(
+        `effect save cap=storage.write in=Set(Text) out=Result(Unit, Text)
+slot tags : Set(Text) = []
+slot pick : Text      = ""
+reducer emitSave on=ui.click(Go) do= emit save(tags.add(pick))
+test emits-it = reducer-test emitSave
+    given  = {slots: {tags: ["z"], pick: "a"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {}, effects: [save(["z", <slots.pick>])]}
+test one-fewer = reducer-test emitSave
+    given  = {slots: {tags: ["z"], pick: "z"}, event: {type: ui.click, target: Go}}
+    expect = {slots: {}, effects: [save(["z", <slots.pick>])]}`,
+        "[storage.write]",
+      ),
+    ).toEqual(["emits-it:true", "one-fewer:false @effects[0].args"]);
   });
 
   it("expects an empty Set with []", { timeout: 30_000 }, async () => {
