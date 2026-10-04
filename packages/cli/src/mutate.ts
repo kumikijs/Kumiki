@@ -2,7 +2,7 @@
 // file and appends an entry to `<file>.kumiki-ops.jsonl`.
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, truncateSync } from "node:fs";
 import { check, lex, type Pos, parse } from "@kumikijs/compiler";
 import {
   type DefEntry,
@@ -105,19 +105,75 @@ function hashBody(body: string): string {
   return createHash("sha256").update(body).digest("hex").slice(0, 16);
 }
 
+/**
+ * The op log's entries, oldest first.
+ *
+ * Each entry is one line that ends in a newline. A last line with no newline
+ * after it that is not valid JSON is skipped with a warning naming the log and
+ * the line, and the next op logged replaces it. Any other line that is not an
+ * op is an error naming the log and the line.
+ */
 export function readOpLog(path: string): OpLogEntry[] {
+  return readOpLogFile(path).entries;
+}
+
+/** The op log as read: its entries, and where the next one goes. */
+type OpLogRead = {
+  entries: OpLogEntry[];
+  /** Where the log's complete lines end; `null` when there is no log. */
+  end: OpLogEnd | null;
+};
+
+/** Where the op log's complete lines end. */
+type OpLogEnd = {
+  /** Their length in bytes. */
+  size: number;
+  /** A skipped last line follows them. */
+  torn: boolean;
+  /** The last of them has no newline after it. */
+  unterminated: boolean;
+};
+
+function readOpLogFile(path: string): OpLogRead {
   const p = opLogPath(path);
-  if (!existsSync(p)) return [];
-  const text = readFileSync(p, "utf8");
-  const out: OpLogEntry[] = [];
-  for (const [i, line] of text.split(/\r?\n/).entries()) {
+  if (!existsSync(p)) return { entries: [], end: null };
+  // Sizes are counted in the bytes, not the decoded text: a byte that is not
+  // valid UTF-8 decodes to U+FFFD, which takes three.
+  const bytes = readFileSync(p);
+  const lines = bytes.toString("utf8").split(/\r?\n/);
+  const entries: OpLogEntry[] = [];
+  let torn = false;
+  for (const [i, line] of lines.entries()) {
     if (!line.trim()) continue;
-    const entry = JSON.parse(line) as OpLogEntry;
-    const problem = opShapeProblem(entry);
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch (e) {
+      // The last piece of the split is the only line with no newline after it.
+      // Warned at once, not by `process.emitWarning`, which waits a tick: a
+      // verb that then fails exits before the warning is printed.
+      if (i === lines.length - 1) {
+        console.warn(
+          `warning: ${p}:${i + 1}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
+        );
+        torn = true;
+        continue;
+      }
+      throw new Error(`${p}:${i + 1}: not valid JSON (${messageOf(e)})`);
+    }
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error(`${p}:${i + 1}: not an op object`);
+    }
+    const op = entry as OpLogEntry;
+    const problem = opShapeProblem(op);
     if (problem !== undefined) throw new Error(`${p}:${i + 1}: ${problem}`);
-    out.push(entry);
+    entries.push(op);
   }
-  return out;
+  const size = torn ? bytes.lastIndexOf("\n") + 1 : bytes.length;
+  return {
+    entries,
+    end: { size, torn, unterminated: size > 0 && bytes[size - 1] !== 0x0a },
+  };
 }
 
 /**
@@ -168,11 +224,6 @@ function defSpecsProblem(value: unknown, field: string): string | undefined {
   return undefined;
 }
 
-function lastOpId(path: string): string | undefined {
-  const log = readOpLog(path);
-  return log.at(-1)?.["op-id"];
-}
-
 /**
  * Compute the `depends-on` list for an op. The body is scanned for identifiers
  * matching other definitions; each match contributes `<layer>:<name>@h:<hash>`
@@ -216,7 +267,8 @@ function depsFromBody(store: Store, body: string, selfName: string): string[] {
 
 function logOp(path: string, op: RawOp): string {
   const id = newId("op");
-  const parents = lastOpId(path);
+  const log = readOpLogFile(path);
+  const parents = log.entries.at(-1)?.["op-id"];
   const dependsOn = op.body !== undefined ? computeDependsOn(path, op.layer, op.name, op.body) : [];
   const entry: OpLogEntry = {
     op: op.op,
@@ -235,22 +287,25 @@ function logOp(path: string, op: RawOp): string {
     "parent-ops": parents ? [parents] : [],
     "depends-on": dependsOn,
   };
-  appendLine(opLogPath(path), JSON.stringify(entry));
+  appendLine(opLogPath(path), JSON.stringify(entry), log.end);
   return id;
 }
 
 /**
- * Append one line, or leave the file as it was: an append that fails partway
- * (ENOSPC) would otherwise leave a torn last line that no later read can parse.
+ * Append one line after the log's complete lines, or leave those as they
+ * were: an append that fails partway (ENOSPC) would otherwise leave a torn
+ * last line of its own. The new line never runs on from the one before it: a
+ * last line the read skipped is cut off first, and a last entry with no
+ * newline after it gets one.
  */
-function appendLine(file: string, line: string): void {
-  const size = existsSync(file) ? statSync(file).size : null;
+function appendLine(file: string, line: string, end: OpLogEnd | null): void {
   try {
-    appendFileSync(file, `${line}\n`);
+    if (end?.torn) truncateSync(file, end.size);
+    appendFileSync(file, `${end?.unterminated ? "\n" : ""}${line}\n`);
   } catch (e) {
     try {
-      if (size === null) rmSync(file, { force: true });
-      else truncateSync(file, size);
+      if (end === null) rmSync(file, { force: true });
+      else truncateSync(file, end.size);
     } catch {
       // The append's error is the one to report.
     }

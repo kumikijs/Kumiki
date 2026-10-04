@@ -60,6 +60,8 @@ Write ops on one file are **serialized**. `add`, `replace`, `edit`, `rename`, `r
 
 A writer that finds the lock held waits for it: 30 s by default, or `KUMIKI_WRITE_LOCK_WAIT_MS` milliseconds. The wait is per writer, so with several queued the last one waits for every writer ahead of it. If the lock is not released in time, the op is rejected: exit `1`, nothing written, nothing logged, and the message names the holder's pid and host (and its thread, when that is a worker thread) and the lock file. The MCP tools wait the same way, and the server answers no other request while one of them waits. A lock is taken over instead of waited on when its holder is known to be gone: it names a process on this host that has exited; it names the writer's own thread, which holds nothing, so the lock was left by one of its own releases that failed; or it names no holder (empty, not JSON, a pid that is not a positive integer, or a thread id that is not a non-negative integer) and is more than 2 s old. The lock records the writing thread as well as the process, because the worker threads of one process share its pid: a lock naming another thread of a running process is waited on like any live writer's. Whether a thread is still running cannot be checked from another thread, so a lock left by a worker thread that ended mid-write (one that was terminated, say) is waited on until its process exits; if that thread is not writing the file, delete the lock file. A lock that records no thread names the process's main thread. A lock naming a process on another host — another container, or Windows and WSL on a shared drive — is never taken over, because whether that process is still running cannot be checked; if it is not, delete the lock file.
 
+The op log `<file>.kumiki-ops.jsonl` holds one op per line, and each line ends in a newline. Every write op reads it for its `parent-ops` before it appends its own line, and `view --history` and `patch revert` read it too. A last line that has no newline after it and is not valid JSON — the remains of an append that was cut short — is a torn last line: it is skipped with a warning that names the log and the line, and the next op logged is written in its place. Any other line that is not an op (not JSON, not an object, or with a field of the wrong shape, §9.3.2) fails every verb that reads the log, with an error that names the log and the line: a write op is rejected and the file put back, and `view --history` and `patch revert` exit `1`.
+
 ### 9.2.3 Validation Commands
 
 ```bash
@@ -102,7 +104,7 @@ Per verb, `1` means:
 | `run` | the scenario document is unreadable / not a scenario, or a step fails |
 | `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0`; `--watch` runs until interrupted and so reports nothing |
 | `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` for any file that is not already in that state |
-| `view` / `refs` | the file, or the qualified name inside it, does not exist. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for |
+| `view` / `refs` | the file, or the qualified name inside it, does not exist. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for. It also exits `1` when the op log holds a line that is not an op, other than a torn last line (§9.2.2) |
 | `list` | the file does not exist, or the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
 | `lock` / `unlock` | the lock is held by another agent, or there is none to release |
@@ -158,7 +160,7 @@ The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isErr
 | `bodies` | `remove` only: every definition the op deleted as `{layer, name, body}`, with the body it had when it was deleted, the requested one first. `patch revert` restores these |
 | `with` | `add` only: further definitions `{layer, name, body}` added in the same op — how the revert of a cascade restores its dependents |
 
-`with` and `bodies` must be arrays of objects whose three fields are strings, and `removed` an array of qualified names starting with the op's own definition. An op in a patch file or a line in the op log that breaks this is rejected, naming the field, before anything is written.
+`with` and `bodies` must be arrays of objects whose three fields are strings, and `removed` an array of qualified names starting with the op's own definition. An op in a patch file that breaks this is rejected, naming the field, before anything is written. A line in the op log that breaks it is an error naming the field, the log and the line (§9.2.2).
 
 ### 9.3.3 op Convergence Guarantees
 
