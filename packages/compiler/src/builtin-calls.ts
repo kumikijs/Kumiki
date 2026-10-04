@@ -97,7 +97,10 @@ export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Ma
  *
  * Not every qualifier codegen lowers: `TYPE_MEMBER_CALLS` resolves `fresh` /
  * `parse` / `show` on any capitalised name, and those are deliberately absent,
- * which is why a bare `Int.parse` is still that field read.
+ * which is why a bare `Int.parse` is still that field read. `Time` is absent
+ * too, though its bare members are read as calls: it is a type with one
+ * builtin among its members (`BUILTIN_MEMBERS`), not a namespace of them, so
+ * its membership stays open (`readsBareMemberAsCall`).
  *
  * Membership is closed, and `checkCallee` is what closes it: without that,
  * `TYPE_MEMBER_CALLS` reached inside these namespaces and `EffectId.fresh`
@@ -110,6 +113,49 @@ export const QUALIFIED_CALL_NAMESPACES: ReadonlySet<string> = new Set([
   "Duration",
   "Bytes",
 ]);
+
+/**
+ * Builtins a type lists among its own members, keyed by the qualified spelling
+ * the type gives them: `docs/spec/stdlib.md` §2.2.8 lists `Time.now` beside
+ * `Time.parse`, and it is the `now` of §2.4.2. The parser reads that spelling,
+ * with or without its parentheses, as a call to the builtin it names
+ * (`qualifiedCallee`), so the type, the argument count, the lowering and the
+ * environment read the runtime journals are the builtin's own — nothing past
+ * the parser sees which spelling was written, and no second entry for any of
+ * them exists to disagree with the first.
+ */
+export const BUILTIN_MEMBERS: ReadonlyMap<string, string> = new Map([["Time.now", "now"]]);
+
+const BUILTIN_MEMBER_QUALIFIERS: ReadonlySet<string> = new Set(
+  [...BUILTIN_MEMBERS.keys()].map((name) => name.slice(0, name.indexOf("."))),
+);
+
+/**
+ * Whether the parser reads `qualifier.member`, written without parentheses, as
+ * a call given no arguments rather than as a field read on a variant of the
+ * qualifier's name — which evaluates to `undefined`, and which nothing reports.
+ *
+ * That is a `QUALIFIED_CALL_NAMESPACES` qualifier, and the qualifier of a
+ * `BUILTIN_MEMBERS` spelling: `Time.now` has to be read as a call to be the
+ * builtin at all, and read that way, a member `Time` does not have
+ * (`Time.nope`) is a callee that resolves to nothing, and a type member short
+ * of its argument (`Time.parse`) gets the diagnostic its parenthesised
+ * spelling gets. Unlike those namespaces, `Time` keeps the type members of
+ * §2.4: `checkCallee` closes the membership of `QUALIFIED_CALL_NAMESPACES`
+ * only.
+ */
+export function readsBareMemberAsCall(qualifier: string): boolean {
+  return QUALIFIED_CALL_NAMESPACES.has(qualifier) || BUILTIN_MEMBER_QUALIFIERS.has(qualifier);
+}
+
+/**
+ * The callee of a call written `qualifier.member`: the builtin a
+ * `BUILTIN_MEMBERS` spelling names, and otherwise the spelling as written.
+ */
+export function qualifiedCallee(qualifier: string, member: string): string {
+  const written = `${qualifier}.${member}`;
+  return BUILTIN_MEMBERS.get(written) ?? written;
+}
 
 /**
  * Members codegen lowers on *any* capitalised qualifier — `TodoId.fresh()`,
@@ -174,7 +220,8 @@ export function isBuiltinCallee(callee: string): boolean {
 }
 
 /**
- * Candidate names for a did-you-mean on an unresolved callee: the builtins plus
+ * Candidate names for a did-you-mean on an unresolved callee: the builtins,
+ * under each spelling that resolves to one (`Time.now` as well as `now`), plus
  * whatever `fn` names the caller supplies. Deliberately not the whole
  * definition table — suggesting a slot or a tile for a misspelled function call
  * would rewrite the source into a different kind of mistake.
@@ -186,7 +233,12 @@ export function isBuiltinCallee(callee: string): boolean {
  * the qualifier the author already wrote.
  */
 export function calleeCandidates(fnNames: Iterable<string>, missing?: string): string[] {
-  const base = [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
+  const base = [
+    ...BUILTIN_CALLS.keys(),
+    ...QUALIFIED_BUILTIN_CALLS.keys(),
+    ...BUILTIN_MEMBERS.keys(),
+    ...fnNames,
+  ];
   const dot = missing === undefined ? -1 : missing.indexOf(".");
   if (missing === undefined || dot <= 0 || !QUALIFIER_RE.test(missing.slice(0, dot))) return base;
   const qualifier = missing.slice(0, dot);

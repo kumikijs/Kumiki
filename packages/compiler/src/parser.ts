@@ -37,7 +37,7 @@ import type {
   TypeExpr,
   UiEventKind,
 } from "./ast.ts";
-import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
+import { qualifiedCallee, readsBareMemberAsCall } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
 import { REFINEMENT_PREDS } from "./refinements.ts";
 
@@ -1244,13 +1244,17 @@ class Parser {
       // without parentheses reached the failure the arity check exists for,
       // past the arity check. It is now the same E0213 as `Duration.s()`.
       //
-      // `kw` is accepted alongside `ident` to mirror the parenthesised branch
-      // below, which needs it — none of the constants named above lex as a
-      // keyword. Matching the two shapes keeps `Decoder.if` a resolvable callee
-      // that `checkCallee` names, rather than a parse error in one form and a
-      // diagnostic in the other.
+      // `Time` is read this way too (`readsBareMemberAsCall`): `Time.now`
+      // (stdlib §2.2.8) is the builtin `now`, and `qualifiedCallee` makes the
+      // call the builtin's own in this branch and in the parenthesised one
+      // below alike, so `Time.now` and `Time.now()` are one call to `now`.
+      //
+      // `kw` is accepted alongside `ident` because `now` lexes as a keyword,
+      // and to mirror the parenthesised branch below. Matching the two shapes
+      // keeps `Decoder.if` a resolvable callee that `checkCallee` names, rather
+      // than a parse error in one form and a diagnostic in the other.
       if (
-        QUALIFIED_CALL_NAMESPACES.has(name) &&
+        readsBareMemberAsCall(name) &&
         this.matchOp(".") &&
         (this.matchTAt(1, "ident") || this.matchTAt(1, "kw")) &&
         !this.matchTAt(2, "op", "(")
@@ -1259,7 +1263,7 @@ class Parser {
         // The guard restricts this token to `ident` / `kw`, both of which carry
         // a string `value`, so there is no other shape to fall back to.
         const member = (this.next() as { value: string }).value;
-        return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, member), args: [], pos: t.pos };
       }
       if (
         isQualifierReceiver &&
@@ -1280,7 +1284,7 @@ class Parser {
           }
         }
         this.eat("op", ")");
-        return { kind: "Call", callee: `${name}.${sub}`, args, pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, sub), args, pos: t.pos };
       }
       // direct call
       if (this.matchOp("(")) {

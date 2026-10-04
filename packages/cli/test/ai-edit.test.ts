@@ -2760,6 +2760,35 @@ describe("planFixesExplained: skip-reason classification", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("e0116: a misspelt `Time.now` is answered with the qualified builtin", () => {
+    // `Time.now` is a callee in its own right (stdlib §2.2.8), so it is a
+    // candidate as written — `Time.nwo` is two edits from it, and from no
+    // other name that resolves.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-time-now-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot at : Time = Time.nwo",
+        'tile App = column(text(at.format("yyyy")))',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    expect(patches.map((p) => p.description)).toEqual([
+      'replace "Time.nwo" with "Time.now" at 1:18',
+    ]);
+    const patched = patches[0]!.apply(readFileSync(file, "utf8"));
+    expect(patched).toContain("slot at : Time = Time.now\n");
+    expect(check(parse(lex(patched)))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("e0117-quoted-name-extract-failed: E0117 message without a quoted name", () => {
     const store = writeAndLoad('tile A = heading("hi")\n');
     const { patches, skipped } = planFixesExplained(store, [synth("E0117", "some undefined type")]);

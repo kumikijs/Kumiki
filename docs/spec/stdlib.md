@@ -253,7 +253,7 @@ An argument outside a function's domain produces what the platform produces — 
 ### 2.2.8 Time
 
 ```
-Time.now                    : Time
+Time.now                    : Time            ; the current time — the builtin now (§2.4.2)
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
@@ -483,6 +483,8 @@ The id is a uuid `Text`, so `TypeName` is a type a `Text` goes into: `Text` itse
 ```
 now                        : Time          ; the current time
 ```
+
+`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry, and a replay answers it from that entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so a type declared over `Time` does not have it.
 
 ### 2.4.3 Type Conversion
 

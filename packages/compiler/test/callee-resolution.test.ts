@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 // not published — so this reaches for them directly, as `ui-lifts.test.ts` does.
 import {
   BUILTIN_CALLS,
+  BUILTIN_MEMBERS,
   type BuiltinArity,
   QUALIFIED_BUILTIN_CALLS,
   QUALIFIED_CALL_NAMESPACES,
@@ -685,6 +686,146 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
+describe("`Time.now` is the builtin `now`", () => {
+  // `docs/spec/stdlib.md` §2.2.8 lists `Time.now : Time` beside `Time.parse`,
+  // and it is the read §2.4.2 calls `now`. The parser reads the qualified
+  // spelling, with or without its parentheses, as a call to that builtin, so
+  // its type, its count and its lowering are the ones `now` has — asserted
+  // here against what the bare keyword gets, never against a copy of it.
+  const SPELLINGS = ["Time.now", "Time.now()"];
+
+  /** `now` in every position an expression is written: `NOW` marks each one. */
+  const EVERYWHERE = `slot at : Time = NOW
+fn later(t: Time) -> Time = NOW.plus(Duration.s(1))
+reducer stamp on=ui.click(B) do= at := NOW
+tile B = button(text="b")
+tile App = column(B, text(NOW.format("yyyy")), text(later(at).show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test stamps =
+    reducer-test stamp
+        given  = {slots: {at: NOW}, event: {type: ui.click, target: B}}
+        expect = {slots: {}}
+`;
+
+  function moduleWith(spelling: string): string {
+    const result = compile(EVERYWHERE.replaceAll("NOW", spelling), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    if (result.kind !== "ok") {
+      throw new Error(`compile failed: ${result.errors.map((e) => e.code).join(", ")}`);
+    }
+    return result.js;
+  }
+
+  it("lowers to the module `now` lowers to, in a slot, fn, reducer, tile and test", () => {
+    // The whole module rather than one line: codegen embeds no source
+    // positions, so a byte-identical module is what "the same builtin" means
+    // in every position at once, the environment read the runtime journals
+    // for a reducer included.
+    const bare = moduleWith("now");
+    expect(bare.match(/_s\.now\(\)/g)?.length).toBe(5);
+    for (const spelling of SPELLINGS) expect(moduleWith(spelling), spelling).toBe(bare);
+  });
+
+  it("is a Time, refused where a Bool is declared in the sentence `now` gets", () => {
+    const flag = (body: string) =>
+      check(
+        parse(
+          lex(`fn flag() -> Bool = ${body}
+tile App = column(text(flag().show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`),
+        ),
+      );
+    const bare = flag("now");
+    expect(bare).toEqual([
+      {
+        code: "E0201",
+        kind: "type-mismatch",
+        message: "Expected Bool but got Time",
+        pos: { line: 1, col: 21 },
+      },
+    ]);
+    for (const spelling of SPELLINGS) expect(flag(spelling), spelling).toEqual(bare);
+  });
+
+  it("is a Time where one is declared, with Time's members", () => {
+    for (const spelling of SPELLINGS) {
+      expect(
+        codes(inReducer(`t := ${spelling}.plus(Duration.s(1)).format("yyyy")`)),
+        spelling,
+      ).toEqual([]);
+    }
+  });
+
+  it("takes no argument, as `now` takes none", () => {
+    expect(check(parse(lex(inReducer("t := Time.now(1).show"))))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "now" expects 0 argument(s) but got 1',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
+  });
+
+  it("reads a member Time does not have as a call to nothing, in either spelling", () => {
+    // `Time` is read the way `Duration` is: a member written without
+    // parentheses is a call given no arguments, not a field read on a variant
+    // named `Time`, which would evaluate to `undefined` with no diagnostic.
+    const bare = check(parse(lex(inReducer("t := (Time.nope).show"))));
+    expect(bare).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-call",
+        message: 'Call to undefined function "Time.nope"',
+        pos: { line: 4, col: 36 },
+      },
+    ]);
+    expect(check(parse(lex(inReducer("t := (Time.nope()).show"))))).toEqual(bare);
+  });
+
+  it("reports a type member written without parentheses as its called spelling", () => {
+    // The same reading reaches the members every type name has (§2.4): the
+    // bare spelling is the call given no arguments, so each gets the
+    // diagnostic its parenthesised spelling gets — the count for `parse` and
+    // `show`, and for `fresh` the E0802 that names the repair.
+    const EXPECTED: Record<string, string> = { parse: "E0213", show: "E0213", fresh: "E0802" };
+    expect(Object.keys(EXPECTED).sort()).toEqual([...TYPE_MEMBER_CALLS.keys()].sort());
+    for (const [member, code] of Object.entries(EXPECTED)) {
+      const bare = check(parse(lex(inReducer(`t := (Time.${member}).show`))));
+      expect(
+        bare.map((e) => e.code),
+        member,
+      ).toEqual([code]);
+      expect(check(parse(lex(inReducer(`t := (Time.${member}()).show`)))), member).toEqual(bare);
+    }
+  });
+
+  it("keeps the type members of Time, which a closed namespace refuses", () => {
+    // `Time` is not one of the closed namespaces, whose zero-argument
+    // `parse` / `show` / `fresh` are E0116: on `Time` they are the type members
+    // of §2.4, as on any type, and a missing argument is a count.
+    expect(loweringOf('Time.parse("2026-08-14")')).toContain('_s.parseTime("2026-08-14")');
+    expect(codes(inReducer("t := Time.show(a)"))).toEqual([]);
+    expect(check(parse(lex(inReducer("t := (Time.parse()).show"))))[0]?.message).toBe(
+      'Function "Time.parse" expects 1 argument(s) but got 0',
+    );
+  });
+
+  it("is the spelling `Time`, not a type whose base is Time", () => {
+    // §2.2.8 lists `now` on `Time` itself, and §2.4 gives every type name only
+    // `fresh` / `parse` / `show`. A nominal over `Time` is a different type,
+    // with no `now` of its own.
+    const src = `type Stamp = nominal Time
+slot s : Stamp = Stamp.now()
+tile App = column(text(s.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codes(src)).toEqual(["E0116"]);
+  });
+});
+
 describe("every built-in is held to the count its lowering reads", () => {
   // Generated from the tables rather than written out, so a builtin cannot be
   // added without a case: the arity lives beside the name, and this walks both.
@@ -703,8 +844,19 @@ describe("every built-in is held to the count its lowering reads", () => {
   /** `fresh` / `parse` / `show` resolve on any capitalised qualifier. */
   const QUALIFIER = "Probe";
 
+  /**
+   * `now` is a keyword, so the bare name takes no parentheses and has no other
+   * count to write. Its count is written through the spelling `Time` gives it,
+   * which the parser reads as a call to the same builtin.
+   */
+  const QUALIFIED_SPELLING = new Map(
+    [...BUILTIN_MEMBERS].map(([written, builtin]) => [builtin, written]),
+  );
+
   function callOf(name: string): (n: number) => string {
-    const spelling = TYPE_MEMBER_CALLS.has(name) ? `${QUALIFIER}.${name}` : name;
+    const spelling = TYPE_MEMBER_CALLS.has(name)
+      ? `${QUALIFIER}.${name}`
+      : (QUALIFIED_SPELLING.get(name) ?? name);
     const filler = fillerOf(name);
     return (n) => `${spelling}(${Array.from({ length: n }, () => filler).join(", ")})`;
   }
@@ -715,20 +867,11 @@ describe("every built-in is held to the count its lowering reads", () => {
     ...TYPE_MEMBER_CALLS,
   ];
 
-  /**
-   * `now` is a keyword, so the parser builds its zero-argument call itself and
-   * there is no way to write another count. The arity in the table is what
-   * `checkCallee` would hold it to if the spelling ever loosened.
-   */
-  const PARSER_FIXED = new Set(["now"]);
-
-  const NAMED = ALL.filter(([name]) => !PARSER_FIXED.has(name));
-
   it("covers all three tables", () => {
     expect(ALL.length).toBe(
       BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size + TYPE_MEMBER_CALLS.size,
     );
-    expect([...PARSER_FIXED].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
+    expect([...QUALIFIED_SPELLING.keys()].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
   });
 
   /**
@@ -779,7 +922,7 @@ describe("every built-in is held to the count its lowering reads", () => {
     expect(() => parse(lex(inReducer("t := now(1).show")))).toThrow(/Expected/);
   });
 
-  for (const [name, arity] of NAMED) {
+  for (const [name, arity] of ALL) {
     const call = callOf(name);
 
     it(`${name} accepts ${arity.min}`, () => {

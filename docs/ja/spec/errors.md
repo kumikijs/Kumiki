@@ -351,13 +351,13 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 | callee | 規定箇所 |
 |---|---|
-| `now` / `random` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-builtin-functions) |
+| `now`（`Time.now` とも書く）/ `random` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-builtin-functions) |
 | `Duration.*` / `Bytes.*` / `<T>.fresh` / `.parse` / `.show` | [標準ライブラリ §2.2](./stdlib.md#_2-2-コレクションメソッド)・[§2.4](./stdlib.md#_2-4-builtin-functions) |
 | `Decoder.*` / `EffectId.none` | [HTTP / Storage §6.1.4](./http.md#_6-1-4-decoder-型)・[標準ライブラリ §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
 | `file-url` | [フォーム §5.10](./forms.md#_5-10-file-upload) |
 | `prefers-dark` | [スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従) |
 
-`Decoder` / `EffectId` / `Duration` / `Bytes` のメンバを**括弧なし**で書いたものは値ではなく、引数を渡さない呼び出しである。`Decoder.Text` や `EffectId.none` はそう書かれ、`Duration.s` / `Bytes.from-text` も——後者 2 つの名前空間に 0 引数のメンバは無いが——同じ読み方をする。したがってその名前空間が宣言していないメンバは何も持たない値に評価されるのではなくここで報告され（`Duration.nope` は E0116）、実在するメンバに引数を渡さなかった場合は [E0213](#e0213-call-arity-mismatch) になる。この 4 つは上の表が挙げる組み込み呼び出しの qualifier である。それ以外の qualifier に対する括弧なしの `<T>.fresh` / `.parse` / `.show` は呼び出しとして読まれ**ない**——フィールド読みのまま何も持たない値に評価され、診断も出ない。これは規則ではなく既知のギャップである。
+`Decoder` / `EffectId` / `Duration` / `Bytes` のメンバを**括弧なし**で書いたものは値ではなく、引数を渡さない呼び出しである。`Decoder.Text` や `EffectId.none` はそう書かれ、`Duration.s` / `Bytes.from-text` も——後者 2 つの名前空間に 0 引数のメンバは無いが——同じ読み方をする。したがってその名前空間が宣言していないメンバは何も持たない値に評価されるのではなくここで報告され（`Duration.nope` は E0116）、実在するメンバに引数を渡さなかった場合は [E0213](#e0213-call-arity-mismatch) になる。この 4 つは上の表が挙げる組み込み呼び出しの qualifier である。`Time` も同じ読み方をする。`Time.now`——上の `now` を型の名前で書いたもの（[標準ライブラリ §2.4.2](./stdlib.md#_2-4-2-時刻)）——が括弧なしで書かれるそのメンバだからである：`Time.nope` は E0116、テキストを渡さない `Time.parse` は [E0213](#e0213-call-arity-mismatch) になり、どちらの綴りでも同じである。ほかのメンバはあらゆる型が持つ `fresh` / `parse` / `show` であり、4 つの名前空間と違ってそれらを保つ（[E0117](#e0117-undef-type)）。それ以外の qualifier に対する括弧なしの `<T>.fresh` / `.parse` / `.show` は呼び出しとして読まれ**ない**——フィールド読みのまま何も持たない値に評価され、診断も出ない。これは規則ではなく既知のギャップである。
 
 `run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。それ以外の場所に書けば E0116 になる。テスト本体の中では専用の文面を持つ——誤っているのは名前ではなく位置だからである：
 
