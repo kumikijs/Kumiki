@@ -151,8 +151,11 @@ function errText(e: unknown) {
  * `Diagnostic[]`, and preserve the discriminated union so the client can
  * `switch (r.status)` on the response. The `applied` variant always carries
  * `regressed: []`: a patch that would regress a test is `test-blocked`.
+ *
+ * Exported so a test can serialise an outcome no file reaches today, such as a
+ * refusal over composed source that does not parse.
  */
-function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
+export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
   const base = { ok: o.ok, status: o.status };
   switch (o.status) {

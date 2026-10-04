@@ -6642,6 +6642,18 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
   };
 }
 
+/**
+ * Whether `routes` has the `/404` entry E0001 asks for: a route at `/404` that
+ * renders a tile. A redirect there does not count, which is why the check
+ * reports a `/404` redirect as missing.
+ *
+ * Exported because `kumiki fix` repairs E0001, and its repair has to agree with
+ * this check about when there is nothing to add.
+ */
+export function servesNotFound(routes: AppDef["routes"]): boolean {
+  return routes.some((r) => r.path === "/404" && !r.tile.startsWith(">>"));
+}
+
 function checkApp(
   app: AppDef,
   sym: SymbolTable,
@@ -6660,7 +6672,6 @@ function checkApp(
       });
     }
   }
-  let saw404 = false;
   for (const r of app.routes) {
     if (r.tile.startsWith(">>")) continue; // redirect
     if (!sym.tiles.has(r.tile)) {
@@ -6672,9 +6683,8 @@ function checkApp(
       });
     }
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
-    if (r.path === "/404") saw404 = true;
   }
-  if (!saw404) {
+  if (!servesNotFound(app.routes)) {
     errors.push({
       code: "E0001",
       kind: "missing-404",
