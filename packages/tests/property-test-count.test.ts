@@ -1,9 +1,7 @@
-// Regression: a property-test's `count` is a whole number, 1 or more
-// (testing.md §8.3.1). It was read as any number literal: `count = 0` ran no
-// case and `kumiki test` reported PASS for an invariant that fails on every
-// input, and `count = 0.5` ran one case. Example 171's tests are run as
-// written, then with `once`'s count written as each of those, through the same
-// compile-and-run path `kumiki test` uses.
+// A property-test's `count` is a whole number, 1 or more (testing.md §8.3.1).
+// Example 171's tests are run as written, then with `once`'s count written as
+// each literal that is not one, through the same compile-and-run path
+// `kumiki test` uses.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -23,12 +21,13 @@ mkdirSync(TMP, { recursive: true });
  * line:col of that literal, where a parse error reports it.
  */
 function withOnceCount(count: string): { source: string; line: number; col: number } {
-  const clause = "count     = ";
-  const at = SOURCE.indexOf(`${clause}1`, SOURCE.indexOf("test once =")) + clause.length;
-  if (at < clause.length) throw new Error("the example's `once` has no `count = 1`");
+  const once = SOURCE.indexOf("test once =");
+  const m = /count\s*=\s*(\S+)/.exec(SOURCE.slice(once));
+  if (once < 0 || m?.[1] !== "1") throw new Error("the example's `once` has no `count = 1`");
+  const at = once + m.index + m[0].length - m[1].length;
   const before = SOURCE.slice(0, at).split("\n");
   return {
-    source: `${SOURCE.slice(0, at)}${count}${SOURCE.slice(at + 1)}`,
+    source: `${SOURCE.slice(0, at)}${count}${SOURCE.slice(at + m[1].length)}`,
     line: before.length,
     col: (before.at(-1)?.length ?? 0) + 1,
   };
@@ -46,7 +45,9 @@ describe("a property-test runs the number of cases its count asks for", () => {
   it.each([
     "0",
     "0.5",
+    "0.50",
     "-3",
+    "-0",
   ])("refuses count = %s at the literal, naming the clause", async (count) => {
     const { source, line, col } = withOnceCount(count);
     const path = join(TMP, `count-${count}.kumiki`);

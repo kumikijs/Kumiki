@@ -187,7 +187,7 @@ property-test ::= 'property-test'
 property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
 
-`count` is a whole number, 1 or more. A property that runs no case asserts nothing, and it must not report success any more than a scenario without `steps` may ([§8.10](#_8-10-the-three-layers-of-tooling-verification)), so `count = 0` is a parse error rather than a test that passes having checked nothing. `0.5` and `-3` are no number of cases either, and each is the same parse error, at the literal: `property-test "<name>" count must be a whole number, 1 or more (got 0.5)`.
+`count` is a whole number, 1 or more. A property that runs no case asserts nothing, and it must not report success any more than a scenario without `steps` may ([§8.10](#_8-10-the-three-layers-of-tooling-verification)), so `count = 0` is a parse error rather than a test that passes having checked nothing. Neither `0.5` nor `-3` is a number of cases either; each is the same parse error, at the literal: `property-test "<name>" count must be a whole number, 1 or more (got 0.5)`.
 
 `run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
 

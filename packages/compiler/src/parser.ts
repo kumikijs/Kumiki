@@ -1917,11 +1917,18 @@ class Parser {
 
   /** A number literal with the sign the lexer emits as its own operator. */
   private eatSignedNumber(): number {
+    return this.eatSignedNumberLit().value;
+  }
+
+  /** A number literal with an optional leading `-`, and the text it is written as. */
+  private eatSignedNumberLit(): { value: number; raw: string } {
     if (this.matchOp("-") && this.matchTAt(1, "num")) {
       this.next();
-      return -this.eat("num").value;
+      const t = this.eat("num");
+      return { value: -t.value, raw: `-${t.raw}` };
     }
-    return this.eat("num").value;
+    const t = this.eat("num");
+    return { value: t.value, raw: t.raw };
   }
 
   private parseDuration(): number {
@@ -2316,14 +2323,14 @@ class Parser {
    */
   private eatPropertyTestCount(name: string): number {
     const t = this.peek();
-    const n = this.eatSignedNumber();
-    if (!isPositiveInt(n)) {
+    const n = this.eatSignedNumberLit();
+    if (!isPositiveInt(n.value)) {
       throw new ParseError(
-        `property-test "${name}" count must be a whole number, 1 or more (got ${n})`,
+        `property-test "${name}" count must be a whole number, 1 or more (got ${n.raw})`,
         t.pos,
       );
     }
-    return n;
+    return n.value;
   }
 
   /** `episode-test load="<path>" mocks={...} expect={...}` (spec §8.6). */

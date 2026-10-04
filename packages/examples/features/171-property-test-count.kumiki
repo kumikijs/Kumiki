@@ -5,9 +5,6 @@
 # default. A `count` of 0 would run no case and report the property as holding
 # having checked nothing, and `0.5` is not a number of cases, so `count = 0`,
 # `count = 0.5` and `count = -3` are each a parse error at the literal.
-#
-# `packages/tests/property-test-count.test.ts` runs these tests, then writes
-# `once`'s count as 0, 0.5 and -3 and asserts `kumiki test` refuses each one.
 
 slot clicks : Int = 0
 
