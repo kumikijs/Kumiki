@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "label": "the spinner renders, and the link's prefetch has run the reducer it names in quotes",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Loading", "prefetched: 1"],
+        "state": { "prefetched": 1 }
+      }
+    }
+  ]
+}

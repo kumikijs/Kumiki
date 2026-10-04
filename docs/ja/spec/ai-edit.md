@@ -56,6 +56,8 @@ kumiki patch revert <op-id>                 # 特定 op を取り消し
 
 複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
+`rename` は定義自身の名前と、それへの参照をすべて書き換える。prop が文字列リテラルとして持つ名前も参照である：tile の `motion: "Spin"`（[§4.9.1](./style.md#_4-9-1-the-motion-definition)）と link の `prefetch: "loadTodo"`（[§3.8](./routing.md#_3-8-prefetch)）。そこでは引用符の間の文字列が書き換わり、引用符はそのまま残るので、`kumiki rename motion.Spin Whirl` は `{motion: "Spin"}` を `{motion: "Whirl"}` にする。たまたま同じ綴りの、コメント中の語や他の文字列リテラルには触れない。
+
 書き込み系 op はファイルの再パース・再型検査で検証され、`severity: "error"` の診断が 1 つでも出ればロールバックする。ただし例外が 1 つある。プログラムは定義を 1 つずつ積み上げて構築されるため `app` が入るまでは app 不在の状態が続く。したがって **`E0003 missing-app` は書き込み op をロールバックさせない**。完成したアプリケーションかどうかは `kumiki check` が報告するものであり、編集途中のグラフが既に満たしているべき条件ではない。
 
 1 つのファイルへの書き込み op は**直列化**される。`add`・`replace`・`edit`・`rename`・`remove`・`patch apply`・`patch revert`・`lock`・`unlock` は、読み込み → 検証 → 書き込み → ログ追記の間ずっとそのファイルの書き込みロック（兄弟ファイル `<file>.kumiki-write.lock`。§9.8.3 の所有ロック `<file>.kumiki-locks.json` とは別物）を保持する。`patch apply` と `patch revert` は、それを構成する op 全体で 1 度だけ保持する。合成したソースは書き込む*前に*検証され、ファイルはその場で書き換えるのではなく rename した兄弟ファイルで置き換えられるので、他の読み手が書きかけのファイルを見ることはなく、reject された op が何かを上書きすることもない。（置き換えなので、ファイルのパスにあるシンボリックリンクは辿られずに置き換えられ、ファイル自身のパーミッションは保たれない。）その後 op ログへの追記に失敗した場合は、ファイルを元に戻して op を reject する。その結果、op ログのすべての op はファイルに反映されており、成功を報告した op はすべて両方にある。`kumiki fix --apply` も rename で書き込むが書き込みロックは取らないので、同じファイルに対して書き込み系 verb と並行して実行してはならない。

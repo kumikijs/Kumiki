@@ -42,7 +42,9 @@ export type Reference = {
   layer: RefLayer;
   name: string;
   /**
-   * Position of the identifier token itself, so a rewrite can be exact.
+   * Position of the identifier token itself, so a rewrite can be exact. A name
+   * a string literal holds (`{motion: "Spin"}`) is at the column after the
+   * opening quote, where the name starts (see `nameInString`).
    *
    * Absent when the reference has no identifier of its own to point at — a
    * test's `{slots: {count: 0}}` key, for instance, where the slot name is the
@@ -51,6 +53,16 @@ export type Reference = {
    */
   pos?: Pos;
 };
+
+/**
+ * Where the name inside a string literal starts, given the literal's own
+ * position, which is its opening quote. `rename` checks for the old name at
+ * each reference's position before it rewrites, so the reference points at the
+ * name itself, and the quotes around it stay as they are.
+ */
+function nameInString(literal: Pos): Pos {
+  return { line: literal.line, col: literal.col + 1 };
+}
 
 /** Definition names by layer, for resolving a bare name to a definition. */
 export type DefIndex = Record<RefLayer, Set<string>>;
@@ -418,11 +430,13 @@ class Walker {
           if (t.name === "link" && p.name === "prefetch") {
             // §3.8: a bare ident or a string literal, both naming a reducer.
             if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
-            else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
+            else if (p.value.kind === "Str") {
+              this.add("reducer", p.value.value, nameInString(p.value.pos));
+            }
             continue;
           }
           if (p.name === "motion" && p.value.kind === "Str") {
-            this.add("motion", p.value.value, p.value.pos);
+            this.add("motion", p.value.value, nameInString(p.value.pos));
             continue;
           }
           this.expr(p.value, locals);

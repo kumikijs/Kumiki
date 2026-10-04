@@ -1,0 +1,42 @@
+# Feature (ai-edit.md §9.2.2): a definition a prop names in a string literal
+# is referenced there, and `rename` rewrites the name between the quotes.
+#
+#   {motion: "Spin"}         names the motion `Spin` (style.md §4.9.1)
+#   {prefetch: "loadTodo"}   names the reducer `loadTodo` (routing.md §3.8)
+#
+#   kumiki rename <file> motion.Spin Whirl          ->  {motion: "Whirl"}
+#   kumiki rename <file> reducer.loadTodo fetchTodo ->  {prefetch: "fetchTodo"}
+#
+# The quotes stay, and the file still checks.
+
+slot prefetched : Int = 0
+
+reducer loadTodo
+    on=route.enter("/todos/:id")
+    do= prefetched := prefetched + 1
+
+motion Spin = {
+    keyframes: {from: {rotate: 0}, to: {rotate: 360}},
+    duration:  "slow",
+    easing:    "linear",
+    iteration: "infinite"
+}
+
+tile Spinner = box(text("Loading")) {motion: "Spin"}
+
+tile Home = page(
+    Spinner,
+    link(to="/todos/abc-123") {
+        text: "Todo abc-123",
+        prefetch: "loadTodo",
+        prefetch-args: {"id": "abc-123"}
+    },
+    text("prefetched: " + prefetched.show)
+)
+
+tile Todo = page(heading("Todo"))
+
+app StringLiteralRefs
+    caps   = []
+    routes = {"/" -> Home, "/todos/:id" -> Todo, "/404" -> Home}
+    init   = []

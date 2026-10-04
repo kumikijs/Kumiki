@@ -289,7 +289,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。
+`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。reducer 名は上のように裸の識別子で書くほか、文字列リテラルでも書ける：`prefetch: "loadTodo"` も同じ reducer を指す。
 
 ---
 
