@@ -1,0 +1,19 @@
+# Feature (routing.md §3.1.1): a `:name` segment reaches `route.params`
+# percent-decoded, so `/items/a%2Fb` gives `id = "a/b"` and `/items/%E3%81%82`
+# gives `id = "あ"`. A segment that is not valid percent-encoding, such as the
+# stray `%` in `/items/100%` or escapes that do not spell UTF-8 (`%E3%81`),
+# still matches the parameter and is kept as written: `id` is `"100%"`, and
+# the route renders rather than falling to `/404`. `route.path` is the path as
+# the URL holds it, escapes included.
+
+tile Item     = page(heading("Item [" + route.params.get-or("id", "?") + "]"),
+                     text("at " + route.path),
+                     link(to="/") {text: "home"})
+tile Home     = page(heading("Home"),
+                     link(to="/items/100%") {text: "the full amount"})
+tile NotFound = page(heading("404 " + route.path))
+
+app PathParamStrayPercent
+    caps   = [nav.push]
+    routes = { "/" -> Home, "/items/:id" -> Item, "/404" -> NotFound }
+    init   = []

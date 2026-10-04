@@ -226,13 +226,26 @@ function matchPattern(pattern: string, path: string): Record<string, string> | n
     const s = pathSegs[i];
     if (s === undefined) return null;
     if (p.startsWith(":")) {
-      params[p.slice(1)] = decodeURIComponent(s);
+      params[p.slice(1)] = decodeParam(s);
     } else if (p !== s) {
       return null;
     }
   }
   if (pathSegs.length !== patSegs.length) return null;
   return params;
+}
+
+/**
+ * A parameter's value (§3.1.1): the segment percent-decoded, or the segment as
+ * written when it is not valid percent-encoding (a stray `%`, escapes that do
+ * not spell UTF-8). The path is user input, so it still matches the route.
+ */
+function decodeParam(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }
 
 function buildPath(x: {

@@ -29,6 +29,8 @@ app TodoApp
 | `/*` | Wildcard (everything remaining) |
 | `/?query` | Note: queries are handled separately. Do not write them in the path |
 
+A parameter's value is its segment percent-decoded: `/todos/a%2Fb` gives `id = "a/b"`, and `/todos/%E3%81%82` gives `id = "あ"`. A segment that is not valid percent-encoding, such as one with a `%` not followed by two hex digits (`/todos/100%`) or with escapes that do not spell UTF-8, still matches the parameter and is kept as written, none of its escapes decoded: `id` is `"100%"`. A URL is user input, so such a path renders its route; it does not fall to `/404`. A static segment is compared with the path as written. `route.path` ([§3.2](#_3-2-current-route-state)) is the path as the URL holds it, escapes included.
+
 ### 3.1.2 Match Order
 
 1. More specific routes take precedence (static > parameter > wildcard)
