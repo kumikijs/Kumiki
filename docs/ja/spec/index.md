@@ -297,5 +297,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
+| `206-memory-router-relative-link.kumiki` | slot, reducer, tile, app | ルーティング | [§3.3.1](./routing.md#_3-3-1-link-要素-推奨) [§3.3.4](./routing.md#_3-3-4-ルータソース-history-と-memory) [§3.9](./routing.md#_3-9-スクロール復元) |
 <!-- examples:end -->
 :::

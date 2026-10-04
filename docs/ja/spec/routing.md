@@ -100,6 +100,8 @@ tile Nav = row(
 
 `to` に書けるのは**このアプリが配信するパス**である。別オリジンの宛先（`https://example.com/docs`、`mailto:` / `tel:` など）はルーターが扱えない。`history.pushState` に渡せるのは同一オリジンの URL だけだからである。そうしたリンクはそもそも横取りされず、クリックはブラウザのものとして `<a href>` と同じように遷移する。`external`（[stdlib §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）はリンクがアプリを離れることを*宣言*し、加えて新しいブラウジングコンテキストで開くためのものであり、別オリジンのリンクを動かすためのものではない。同一オリジンの絶対 URL（`http://localhost:3000/todos`）は同一オリジンなので、ブラウザではなくルーターが受け取る。
 
+パスでない `to`——`?page=2`、`#faq`、`install`、`../guide`、`""`——は相対である。ブラウザが `href` を表示中のページに対して解決するのと同じように、現在の location に対して解決される：`/docs/intro` 上では `?page=2` は `/docs/intro?page=2` へ、`#faq` は `/docs/intro#faq` へ、`install` は `/docs/install` へ、`../guide` は `/guide` へ、`""` は `/docs/intro` そのものへ行く。`navigate` / `navigate-replace`（§3.3.2）に渡す `path` も同じように解決される。パス（`/docs`）は書かれたとおりに扱われる。表示中のページでの `#faq` はページ内ジャンプであり、ルートを切り替えずに、それが指す要素へスクロールする（[§3.9](#_3-9-スクロール復元)）。
+
 ### 3.3.2 effect として書く
 
 reducer から遷移するには effect を emit：
@@ -136,7 +138,7 @@ emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 mount(app, el, { router: "memory", initialPath: "/" }); // initialPath は任意、デフォルト "/"
 ```
 
-memory ルータは現在のパスをメモリに保持する：初期ルートは（`location` ではなく）`initialPath` から解決され、`navigate` / `navigate-replace` / `navigate-back` / link クリックはそのメモリ内パスを更新して再描画し、`history.*` には触れない。パスパラメータ・query・リダイレクト（`->>`）・`/404` フォールバックはすべて同一に振る舞う——変わるのは location の*ソース*だけ。`router: "history"` がデフォルトのままなので、実 origin で配信されるアプリは影響を受けない。埋め込みシームが公開する：自動マウントするバンドルはマウント前に `globalThis.__kumikiMount`（例 `{ router: "memory" }`）を読み、`defineKumikiElement(tag, app, { router: "memory" })` は Web Component へ転送する。
+memory ルータは現在のパスをメモリに保持する：初期ルートは（`location` ではなく）`initialPath` から解決され、`navigate` / `navigate-replace` / `navigate-back` / link クリックはそのメモリ内パスを更新して再描画し、`history.*` には触れない。パスパラメータ・query・リダイレクト（`->>`）・`/404` フォールバック・相対の宛先（[§3.3.1](#_3-3-1-link-要素-推奨)。メモリ内の location に対して解決される）はすべて同一に振る舞う——変わるのは location の*ソース*だけ。`router: "history"` がデフォルトのままなので、実 origin で配信されるアプリは影響を受けない。埋め込みシームが公開する：自動マウントするバンドルはマウント前に `globalThis.__kumikiMount`（例 `{ router: "memory" }`）を読み、`defineKumikiElement(tag, app, { router: "memory" })` は Web Component へ転送する。
 
 ---
 
@@ -150,7 +152,7 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 | `route.enter(pattern)` | 新ルートに入った直後 |
 | `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-list-of-lifecycle-events)） |
 
-別のパスへのナビゲーションは切替であり、両方のイベントを次の順で発火する：離れるルートの `route.leave`、続いて入るルートの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、親のパターンを離れてから入り直す。クエリかハッシュだけを変えるナビゲーションと、表示中と同じパスへのナビゲーションは切替ではない：ルートに留まるので `route.leave` は走らず、leave ガード（§3.5.2）が確認を求めることもない。それでも `route` slot は更新され、`route.enter` が新しい `$route` で再び走るので、`$route.query` から読み込む reducer は新しいクエリを受け取る。離れるルートの無い初期ルートも `route.enter` だけを発火する。
+別のパスへのナビゲーションは切替であり、両方のイベントを次の順で発火する：離れるルートの `route.leave`、続いて入るルートの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、親のパターンを離れてから入り直す。クエリかハッシュだけを変えるナビゲーションと、表示中と同じパスへのナビゲーションは切替ではない：ルートに留まるので `route.leave` は走らず、leave ガード（§3.5.2）が確認を求めることもない。それでも `route` slot は更新され、`route.enter` が新しい `$route` で再び走るので、`$route.query` から読み込む reducer は新しいクエリを受け取る。離れるルートの無い初期ルートも `route.enter` だけを発火する。ページ内ジャンプ（[§3.9](#_3-9-スクロール復元)）——ハッシュを持ち、表示中のパスとクエリに留まる宛先（`/docs` 上の `#faq`）——はどちらのイベントも走らせず、`route.hash` を更新する。
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -312,6 +314,8 @@ reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
 ```
 
 `scroll-to` は標準 effect。
+
+宛先がハッシュを持ち、表示中のパスとクエリを保つナビゲーション——`/docs` 上の `#faq`、あるいはそこでの `/docs#faq`——は、ブラウザでフラグメントをたどるのと同じく**ページ内ジャンプ**である。`route.hash` を更新し、`route.leave` も `route.enter` も走らせず（[§3.4](#_3-4-ルートライフサイクル)）、トップへスクロールしない。代わりに、`id` がそのハッシュである要素をスクロールして表示する。要素は document（Web Component ならその shadow root）から、書かれたままのハッシュ、次にパーセントデコードしたハッシュで探す——ブラウザがフラグメントの対象を見つけるのと同じである。`scroll-restoration = false` でもこれは止まらない。その id を持つ要素が無ければ、スクロール位置はそのままにする。同じハッシュをもう一度たどれば、もう一度ジャンプする。
 
 ---
 

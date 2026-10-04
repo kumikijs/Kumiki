@@ -52,6 +52,31 @@ export function splitPath(p: string): LocationLike {
   return { pathname: rest || "/", search, hash };
 }
 
+/**
+ * The origin `resolveTarget` puts `at` on. A router location has no origin of
+ * its own, and `.invalid` (RFC 2606) is a name no real target can point at.
+ */
+const BASE_ORIGIN = "http://router.invalid";
+
+/**
+ * Where a navigation to `to` lands from the location `at` (routing.md §3.3.1).
+ * A path (`/docs`) is taken as written, as `initialPath` is. Anything else —
+ * `?page=2`, `#faq`, `next`, `../other` — is resolved against `at` by the URL
+ * standard, the way a browser resolves a link's href against the page it is
+ * on. A target that names an origin of its own (`https://…`, `mailto:`) is
+ * left as written: resolving it would drop that origin.
+ */
+function resolveTarget(to: string, at: LocationLike): string {
+  if (to[0] === "/") return to;
+  try {
+    const url = new URL(to, BASE_ORIGIN + at.pathname + at.search + at.hash);
+    if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
+  } catch {
+    // Not a URL even against `at` (`http://[`): there is nothing to resolve.
+  }
+  return to;
+}
+
 function memoryRouter(initialPath = "/"): Router {
   const stack: string[] = [initialPath || "/"];
   const listeners = new Set<() => void>();
@@ -309,17 +334,53 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
   };
 }
 
+/** The URL a parsed route was read from: its path, query and hash. */
+function href({ path, query, hash }: ParsedRoute): string {
+  const search = new URLSearchParams(query).toString();
+  return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
+}
+
+/**
+ * Whether the move from `from` to `to` is an in-page jump (routing.md §3.9):
+ * `to` has a hash, and the path and query `from` already shows. For a jump,
+ * returns what scrolls the element with that id into view once the page has
+ * rendered; `undefined` for any other move. The element is looked up in the
+ * document — or the shadow root — `root` is in, by the hash as written and
+ * then percent-decoded, as a browser finds a fragment's target. With no such
+ * element nothing scrolls.
+ */
+function jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined {
+  if (to.hash._tag !== "Some") return undefined;
+  if (href({ ...from, hash: NONE }) !== href({ ...to, hash: NONE })) return undefined;
+  const id = to.hash._0;
+  return () => {
+    const scope = root.getRootNode() as Partial<Pick<Document, "getElementById">>;
+    let el = scope.getElementById?.(id);
+    try {
+      el ??= scope.getElementById?.(decodeURIComponent(id));
+    } catch {
+      // A malformed escape (`#100%`): the hash as written was the only name.
+    }
+    el?.scrollIntoView();
+  };
+}
+
 /** The routing module surface consumed by `mountCore` (see core `RoutingImpl`). */
 export const routing: RoutingImpl = {
   createRouter(mode, initialPath) {
-    return mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    const router = mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    // One rule resolves a target for either source (§3.3.4: only the source of
+    // the location differs), before the target reaches it.
+    const resolving =
+      (go: (path: string) => void) =>
+      (path: string): void =>
+        go(resolveTarget(path, router.read()));
+    return { ...router, push: resolving(router.push), replace: resolving(router.replace) };
   },
   parseLocation,
   matchPattern,
   findRedirect,
-  href({ path, query, hash }) {
-    const search = new URLSearchParams(query).toString();
-    return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
-  },
+  href,
+  jump,
   installNavEffects,
 };

@@ -962,6 +962,13 @@ export type RoutingImpl = {
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** The URL a parsed route was read from: its path, query and hash. */
   href(route: ParsedRoute): string;
+  /**
+   * For an in-page jump from `from` to `to` (routing.md §3.9), what brings the
+   * element the hash names into view, run once the page has rendered. A jump
+   * runs no `route.enter` and does not scroll to the top. `undefined` for any
+   * other move.
+   */
+  jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -2122,7 +2129,8 @@ export function mountCore(
   // §3.9 scroll restoration: track per-path scroll positions and the source of
   // each navigation. push / replace forward → scroll to top (unless the matched
   // tile opted out with `scroll-restoration = false`); popstate → restore the
-  // saved position for the destination path.
+  // saved position for the destination path. An in-page jump does neither: it
+  // brings its hash's element into view (`RoutingImpl.jump`).
   const scrollSaved = new Map<string, { x: number; y: number }>();
   let lastNavSource: "push" | "replace" | "pop" = "push";
 
@@ -2894,17 +2902,29 @@ export function mountCore(
         return;
       }
     }
-    slotValues.route = newRoute;
-    for (const r of app.reducers) {
-      if (
-        r.event.kind === "lifecycle" &&
-        r.event.name === `route.enter(${JSON.stringify(newRoute.pattern)})`
-      ) {
-        applyReducer(r, { $route: newRoute });
+    enterRoute(newRoute, routing.jump(oldRoute, newRoute, target));
+  }
+
+  /**
+   * Commit `route` to the `route` slot and render it. Any move but an in-page
+   * jump runs the route's `route.enter` reducers (§3.4) and its scroll (§3.9)
+   * first; a jump runs neither, and calls `jump` once the page is painted.
+   */
+  function enterRoute(route: ParsedRoute, jump?: () => void): void {
+    slotValues.route = route;
+    if (!jump) {
+      for (const r of app.reducers) {
+        if (
+          r.event.kind === "lifecycle" &&
+          r.event.name === `route.enter(${JSON.stringify(route.pattern)})`
+        ) {
+          applyReducer(r, { $route: route });
+        }
       }
+      applyScrollFor(route);
     }
-    applyScrollFor(newRoute);
     render();
+    jump?.();
   }
 
   function findRouteEntry(route: ParsedRoute): RouteEntry | undefined {
@@ -2945,17 +2965,7 @@ export function mountCore(
     if (!p) return;
     pendingLeave = null;
     if (outcome === "yes") {
-      slotValues.route = p.newRoute;
-      for (const r of app.reducers) {
-        if (
-          r.event.kind === "lifecycle" &&
-          r.event.name === `route.enter(${JSON.stringify(p.newRoute.pattern)})`
-        ) {
-          applyReducer(r, { $route: p.newRoute });
-        }
-      }
-      applyScrollFor(p.newRoute);
-      render();
+      enterRoute(p.newRoute);
     } else {
       // Revert: rewrite the URL back to the old path without re-firing the
       // leave guard (pendingLeave is already null, but the recursion guard at

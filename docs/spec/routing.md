@@ -100,6 +100,8 @@ tile Nav = row(
 
 `to` names a path **this app serves**. A target on another origin — `https://example.com/docs`, or a `mailto:` / `tel:` URL — is one the router cannot serve: only a same-origin URL can reach `history.pushState`. Such a link is not intercepted at all; the browser keeps the click and navigates it exactly as an `<a href>` would. `external` ([stdlib §2.3.2](./stdlib.md#_2-3-2-text-elements)) is how a link *says* it leaves the app, and additionally opens it in a new browsing context — it is not what makes an off-origin link work. An absolute URL to this origin (`http://localhost:3000/todos`) is same-origin, so the router takes it rather than the browser.
 
+A `to` that is not a path — `?page=2`, `#faq`, `install`, `../guide`, or `""` — is relative. It resolves against the current location the way a browser resolves an `href` against the page it is on: on `/docs/intro`, `?page=2` goes to `/docs/intro?page=2`, `#faq` to `/docs/intro#faq`, `install` to `/docs/install`, `../guide` to `/guide`, and `""` to `/docs/intro` itself. A `path` given to `navigate` / `navigate-replace` (§3.3.2) resolves the same way. A path (`/docs`) is taken as written. `#faq` on the page already shown is an in-page jump, which scrolls to the element it names rather than switching routes ([§3.9](#_3-9-scroll-restoration)).
+
 ### 3.3.2 Writing It as an effect
 
 To transition from a reducer, emit an effect:
@@ -136,7 +138,7 @@ In an **embedded or sandboxed host** — the docs playground `<iframe srcdoc san
 mount(app, el, { router: "memory", initialPath: "/" }); // initialPath optional, defaults to "/"
 ```
 
-The memory router holds the current path in memory: the initial route resolves from `initialPath` (not `location`), and `navigate` / `navigate-replace` / `navigate-back` / link clicks update that in-memory path and re-render without touching `history.*`. Path params, query, redirects (`->>`), and the `/404` fallback all behave identically — only the *source* of the location changes. `router: "history"` remains the default, so apps served at a real origin are unaffected. The embedding seams expose it: the auto-mounting bundle reads `globalThis.__kumikiMount` (e.g. `{ router: "memory" }`) before mounting, and `defineKumikiElement(tag, app, { router: "memory" })` forwards it to the Web Component.
+The memory router holds the current path in memory: the initial route resolves from `initialPath` (not `location`), and `navigate` / `navigate-replace` / `navigate-back` / link clicks update that in-memory path and re-render without touching `history.*`. Path params, query, redirects (`->>`), the `/404` fallback, and a relative target ([§3.3.1](#_3-3-1-the-link-element-recommended)), which resolves against the in-memory location, all behave identically — only the *source* of the location changes. `router: "history"` remains the default, so apps served at a real origin are unaffected. The embedding seams expose it: the auto-mounting bundle reads `globalThis.__kumikiMount` (e.g. `{ router: "memory" }`) before mounting, and `defineKumikiElement(tag, app, { router: "memory" })` forwards it to the Web Component.
 
 ---
 
@@ -150,7 +152,7 @@ Events fired on route switches:
 | `route.enter(pattern)` | Just after entering the new route |
 | `route.error(pattern)` | A tile of that route threw while rendering ([Lifecycle](./lifecycle.md#_7-1-list-of-lifecycle-events)) |
 
-A navigation to another path is a switch, and fires both events in that order: `route.leave` for the route being left, then `route.enter` for the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves and re-enters the parent's pattern. A navigation that changes only the query or the hash, or that goes to the path already shown, is not a switch: it stays on the route, so `route.leave` does not run and a leave guard (§3.5.2) never asks. It still updates the `route` slot and runs `route.enter` again with the new `$route`, so a reducer that loads from `$route.query` sees the new query. The initial route fires only `route.enter` as well, since there is nothing to leave.
+A navigation to another path is a switch, and fires both events in that order: `route.leave` for the route being left, then `route.enter` for the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves and re-enters the parent's pattern. A navigation that changes only the query or the hash, or that goes to the path already shown, is not a switch: it stays on the route, so `route.leave` does not run and a leave guard (§3.5.2) never asks. It still updates the `route` slot and runs `route.enter` again with the new `$route`, so a reducer that loads from `$route.query` sees the new query. The initial route fires only `route.enter` as well, since there is nothing to leave. An in-page jump ([§3.9](#_3-9-scroll-restoration)) — a target with a hash, on the path and query already shown (`#faq` on `/docs`) — runs neither event; it updates `route.hash`.
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -312,6 +314,8 @@ reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
 ```
 
 `scroll-to` is a standard effect.
+
+A navigation whose target has a hash and keeps the path and query already shown — `#faq` on `/docs`, or `/docs#faq` there — is an **in-page jump**, as following a fragment is in a browser. It updates `route.hash`, runs neither `route.leave` nor `route.enter` ([§3.4](#_3-4-route-lifecycle)), and does not scroll to the top. It scrolls the element whose `id` is that hash into view instead, looked up in the document (or, for a Web Component, its shadow root) by the hash as written and then percent-decoded, as a browser finds a fragment's target; `scroll-restoration = false` does not turn this off. When no element has that id, the scroll position is left alone. Following the same hash again jumps again.
 
 ---
 
