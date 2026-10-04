@@ -307,11 +307,14 @@ class Parser {
     } else if (v.kind === "str") {
       this.next();
       out[key] = v.value;
-    } else if (v.kind === "num") {
-      this.next();
-      out[key] = v.value;
     } else {
-      throw new ParseError(`Theme values must be string, number, or nested record`, v.pos);
+      // Literal-only, so the sign the lexer split off is put back here (§1.2):
+      // `translate-x: -24` is the number -24.
+      const n = this.tryEatSignedNumber();
+      if (n === undefined) {
+        throw new ParseError(`Theme values must be string, number, or nested record`, v.pos);
+      }
+      out[key] = n;
     }
   }
 
@@ -491,19 +494,12 @@ class Parser {
   }
 
   private parseRefinementArg(): number | string {
-    const t = this.peek();
     // A refinement's arguments are literals, and `-40.0` is one. The lexer
     // emits the sign as its own operator (it has no way to know whether a `-`
     // is unary), so a literal-only position has to put it back.
-    if (t.kind === "op" && t.value === "-" && this.matchTAt(1, "num")) {
-      this.next();
-      const n = this.next() as { value: number };
-      return -n.value;
-    }
-    if (t.kind === "num") {
-      this.next();
-      return t.value;
-    }
+    const n = this.tryEatSignedNumber();
+    if (n !== undefined) return n;
+    const t = this.peek();
     if (t.kind === "str") {
       this.next();
       return t.value;
@@ -1916,11 +1912,18 @@ class Parser {
 
   /** A number literal with the sign the lexer emits as its own operator. */
   private eatSignedNumber(): number {
+    // Not a number: `eat` throws the error that names what is there instead.
+    return this.tryEatSignedNumber() ?? this.eat("num").value;
+  }
+
+  /** `eatSignedNumber`, or undefined (nothing consumed) when no number starts here. */
+  private tryEatSignedNumber(): number | undefined {
     if (this.matchOp("-") && this.matchTAt(1, "num")) {
       this.next();
       return -this.eat("num").value;
     }
-    return this.eat("num").value;
+    if (this.matchT("num")) return this.eat("num").value;
+    return undefined;
   }
 
   private parseDuration(): number {

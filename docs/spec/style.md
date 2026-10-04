@@ -72,8 +72,10 @@ A `breakpoints` width is a minimum viewport width in `px`, `rem` or `em` (`"640p
 ```
 theme-def ::= 'theme' identifier '=' '{' theme-section (',' theme-section)* '}'
 theme-section ::= identifier ':' '{' theme-entry (',' theme-entry)* '}'
-theme-entry ::= identifier ':' (string | '{' theme-entry (',' theme-entry)* '}')
+theme-entry ::= identifier ':' (string | int | float | '{' theme-entry (',' theme-entry)* '}')
 ```
+
+`int` and `float` are the number literals of [§1.2](./language.md#_1-2-lexical), sign included (`-4`).
 
 `theme` is a single value of type `Theme`. You can define multiple themes to switch between dark/light.
 
@@ -415,6 +417,8 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
   | `translate-x` / `translate-y` | px (number) | position |
   | `scale` | number | size |
   | `rotate` | deg (number) | rotation |
+
+  Each value is a number literal, so it may carry a sign ([§1.2](./language.md#_1-2-lexical)): `translate-x: -24` starts 24px left of where the tile rests, and `rotate: -90` a quarter turn counter-clockwise.
 
   Multiple transform properties on one stop compose into a single `transform` in a **fixed order** — `translate-x`, `translate-y`, `scale`, `rotate` — regardless of the order you write them (CSS `transform` is not commutative, so the order is fixed for determinism). An unknown property is a compile error (**E0401**); malformed keyframes (no `from`/`to`) are **E0403**.
 - The timing fields are optional (defaults `duration:"normal"`, `easing:"ease"`, `iteration:1`, `direction:"normal"`); a value outside its closed set is **E0402**.

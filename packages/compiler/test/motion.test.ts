@@ -50,12 +50,40 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     expect(checkSrc(src)).toEqual([]);
   });
 
+  it("reads a negative keyframe value as that number", () => {
+    // §1.2 makes the sign part of a number literal, and §4.9.1 gives the
+    // transform properties no lower bound: -24px is left of the resting place,
+    // -90deg a quarter turn counter-clockwise.
+    const src = `motion SlideFromLeft = {
+    keyframes: {from: {translate-x: -24, translate-y: -8, rotate: -90, scale: -1.5, opacity: 0}, to: {translate-x: 0, opacity: 1}},
+    duration: "normal"
+}
+tile App = box() {motion: "SlideFromLeft"}
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+    expect(checkSrc(src)).toEqual([]);
+    const motion = parse(lex(src)).defs.find((d): d is MotionDef => d.kind === "MotionDef");
+    const keyframes = motion?.body.keyframes as Record<string, unknown>;
+    expect(keyframes.from).toEqual({
+      "translate-x": -24,
+      "translate-y": -8,
+      rotate: -90,
+      scale: -1.5,
+      opacity: 0,
+    });
+  });
+
   it("rejects a non-positive-integer duration / iteration (E0402)", () => {
-    // duration and iteration are spec'd as positive Ints. 0 and floats reach the
-    // validator and must be rejected (they would generate invalid/undefined CSS).
-    // Negatives are unrepresentable — a leading `-` is a separate operator token,
-    // so the theme-record parser rejects them before typechecking.
-    const cases = ["duration: 0", "duration: 1.5", "iteration: 0", "iteration: 2.5"];
+    // duration and iteration are spec'd as positive Ints. 0, negatives and
+    // floats reach the validator and must be rejected (they would generate
+    // invalid/undefined CSS).
+    const cases = [
+      "duration: 0",
+      "duration: -100",
+      "duration: 1.5",
+      "iteration: 0",
+      "iteration: -1",
+      "iteration: 2.5",
+    ];
     for (const timing of cases) {
       const src = `motion Bad = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}, ${timing}}
 tile App = box() {motion: "Bad"}
