@@ -1,0 +1,57 @@
+# Feature (language.md §1.2, errors.md E0217): a negative Int literal is a
+# literal, and its sign is part of it.
+#
+# JavaScript represents every integer from -9007199254740991 through
+# 9007199254740991 exactly. A literal past either end is rounded on the way
+# in, so the program would run with a value other than the one written, and
+# E0217 reports it in every position an Int is declared. The bound is the same
+# on both sides: each literal below at the negative end, written one further
+# out as `-9007199254740993`, is E0217 exactly as `9007199254740993` is — in a
+# slot, a record field, a list item, a payload, an argument and a write alike.
+#
+# `-floor` in the `flip` reducer negates a name rather than writing a literal,
+# so the check leaves it to the operator.
+
+type Span = {lo: Int, hi: Int}
+
+fn same(n: Int) -> Int = n
+
+slot floor  : Int         = -9007199254740991
+slot span   : Span        = {lo: -9007199254740991, hi: 9007199254740991}
+slot ends   : List(Int)   = [-9007199254740991, 9007199254740991]
+slot picked : Option(Int) = None
+slot passed : Int         = 0
+
+reducer flip on=ui.click(Flip)
+    do= floor := -floor
+
+reducer pick on=ui.click(Pick)
+    do= picked := Some(-9007199254740991)
+        passed := same(-9007199254740991)
+
+reducer reset on=ui.click(Reset)
+    do= floor  := -9007199254740991
+        picked := None
+        passed := 0
+
+tile Flip  = button(text="flip")  {id: "flip"}
+tile Pick  = button(text="pick")  {id: "pick"}
+tile Reset = button(text="reset") {id: "reset"}
+
+tile App
+    = column(
+        Flip,
+        Pick,
+        Reset,
+        text("floor: " + floor.show),
+        text("span: " + span.lo.show + " to " + span.hi.show),
+        text("ends: " + ends.map($1.show).join(", ")),
+        text("picked: " + (match picked with
+                             | Some(n) -> n.show
+                             | None    -> "none")),
+        text("passed: " + passed.show))
+
+app NegativeIntLiteral
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

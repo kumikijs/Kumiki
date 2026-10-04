@@ -777,6 +777,45 @@ describe("Int literal precision (E0217)", () => {
   it("reports a fractional literal as a type mismatch, not a precision loss", () => {
     expect(prog(`slot s : Int = 0.5`)).toEqual(["E0201"]);
   });
+
+  // language.md §1.2 makes the sign part of the literal (`int ::= '-'? [0-9]+`),
+  // but the lexer emits it as its own operator, so `-9007199254740993` reaches
+  // the checker as a negation of `9007199254740993`.
+  it("reports a negative literal past the safe range, signed, at its sign", () => {
+    expect(check(parse(lex(`slot lo : Int = -9007199254740993\n${TAIL}`)))).toEqual([
+      {
+        code: "E0217",
+        kind: "int-literal-precision",
+        message:
+          "Int literal -9007199254740993 is not exactly representable and was rounded to -9007199254740992",
+        pos: { line: 1, col: 17 },
+      },
+    ]);
+  });
+
+  it("reports a negative literal in every position it reports the positive one", () => {
+    const signed = `type R = {a: Int}
+fn id(x: Int) -> Int = x
+slot xs : List(Int) = [-9007199254740995]
+slot r : R = {a: -9007199254740995}
+slot o : Option(Int) = Some(-9007199254740995)
+slot n : Int = 0
+reducer w on=ui.click(B) do= n := id(-9007199254740997)
+reducer w2 on=ui.click(B) do= n := -9007199254740997
+${TAIL}`;
+    const at = (src: string) =>
+      check(parse(lex(src)))
+        .filter((e) => e.code === "E0217")
+        .map((e) => `${e.pos.line}:${e.pos.col}`);
+    // The sign sits in the column the digits start in once it is removed.
+    const positions = ["3:24", "4:18", "5:29", "7:38", "8:36"];
+    expect(at(signed.replaceAll("-9007", "9007"))).toEqual(positions);
+    expect(at(signed)).toEqual(positions);
+  });
+
+  it("accepts the most negative safe integer", () => {
+    expect(prog(`slot s : Int = -9007199254740991`)).toEqual([]);
+  });
 });
 
 describe(".copy()", () => {

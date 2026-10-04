@@ -833,9 +833,11 @@ The tag lowers to `{_tag: "Zork"}`, which no `match` arm can match; the UI silen
 
 ### E0217 `int-literal-precision`
 
-An `Int` position is given a literal outside the range JavaScript represents exactly (`Number.MAX_SAFE_INTEGER`, 9007199254740991). The literal is rounded on the way into the AST, so the program would run with a value that is not the one written.
+An `Int` position is given a literal outside the range JavaScript represents exactly, -9007199254740991 through 9007199254740991 (`Number.MIN_SAFE_INTEGER` through `Number.MAX_SAFE_INTEGER`). The literal is rounded on the way into the AST, so the program would run with a value that is not the one written.
 
 > `Int literal <value> is not exactly representable and was rounded to <value>`
+
+The sign is part of the literal ([§1.2](./language.md#_1-2-lexical)), so a negative literal is held to the same bound in every position a positive one is, reported at its `-`, and named with its sign: `-9007199254740993` is reported as rounded to `-9007199254740992`.
 
 A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — that is a type mistake, not a precision one.
 

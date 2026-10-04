@@ -35,7 +35,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { assertNever, isTileExpr } from "./ast.ts";
+import { assertNever, isTileExpr, numberLiteral } from "./ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
@@ -3771,20 +3771,21 @@ function checkAgainst(
     }
     return;
   }
+  const literal = numberLiteral(e);
   if (
-    e.kind === "Num" &&
+    literal !== null &&
     d.kind === "TypePrim" &&
     d.name === "Int" &&
-    Number.isInteger(e.value) &&
-    !Number.isSafeInteger(e.value)
+    Number.isInteger(literal.value) &&
+    !Number.isSafeInteger(literal.value)
   ) {
     errors.push({
       code: "E0217",
       kind: "int-literal-precision",
-      // `e.value` is already the rounded double, so the literal as written has
-      // to come from the lexeme — reporting `e.value` on both sides of "was
+      // `literal.value` is already the rounded double, so the literal as written
+      // has to come from the lexeme — reporting the value on both sides of "was
       // rounded to" says the number was rounded to itself.
-      message: `Int literal ${e.raw ?? e.value} is not exactly representable and was rounded to ${e.value}`,
+      message: `Int literal ${literal.written} is not exactly representable and was rounded to ${literal.value}`,
       pos: e.pos,
     });
     return;

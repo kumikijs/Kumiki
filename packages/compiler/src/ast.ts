@@ -294,6 +294,25 @@ export function assertNever(node: never): void {
   void node;
 }
 
+/**
+ * The number literal `e` is, sign included, or `null` when it is not one.
+ *
+ * language.md §1.2 makes the sign part of the literal (`int ::= '-'? [0-9]+`),
+ * but the lexer emits it as its own operator, so `-1` reaches the AST as a
+ * negation of `1`, and a check that matches `Num` alone misses every negative
+ * literal. Only one sign is the literal's: `- -1` negates the literal `-1`.
+ *
+ * `written` is the literal as the source spells it; `value` is the double it
+ * denotes, already rounded where the digits are more than a double holds.
+ */
+export function numberLiteral(e: Expr): { value: number; written: string } | null {
+  if (e.kind === "Num") return { value: e.value, written: e.raw ?? String(e.value) };
+  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
+    return { value: -e.rhs.value, written: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+  }
+  return null;
+}
+
 export type Refinement = {
   kind: "Refinement";
   pred: string;
