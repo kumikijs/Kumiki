@@ -1,0 +1,62 @@
+# Feature (http.md §6.1.5): the headers the runtime puts on an HTTP request
+# itself, and the program's own headers over them. A header name matches in
+# any letter case, so a header the program sets replaces the default of that
+# name and exactly one value is sent.
+#
+#   load    GET    Decoder.Json(Item)               Accept: application/json
+#   rename  PATCH  a record body, and its own       Accept: application/json
+#                  "content-type"                   Content-Type: application/merge-patch+json
+#   feed    GET    Decoder.Json(Item), and its own  Accept: application/vnd.shop+json
+#                  "ACCEPT"
+#   readme  GET    Decoder.Text                     no Accept
+#
+# `app.http.headers` sits between the two: over the defaults, under an
+# effect's own `headers`. `packages/tests/http-default-headers.test.ts` reads
+# the headers that reached `fetch` through the real handler; `smoke` makes each
+# request against `188-http-default-headers.http.json`.
+
+type Item = {name: Text}
+
+slot status : Text = "idle"
+
+effect load cap=http.get
+            in=Unit
+            out=Result(Item, HttpError)
+            map-request={url: "/items/1", decode: Decoder.Json(Item)}
+
+effect rename cap=http.patch
+              in=Text
+              out=Result(Item, HttpError)
+              map-request={url: "/items/1", headers: {"content-type": "application/merge-patch+json"}, body: {name: $1}, decode: Decoder.Json(Item)}
+
+effect feed cap=http.get
+            in=Unit
+            out=Result(Item, HttpError)
+            map-request={url: "/feed", headers: {"ACCEPT": "application/vnd.shop+json"}, decode: Decoder.Json(Item)}
+
+effect readme cap=http.get
+              in=Unit
+              out=Result(Text, HttpError)
+              map-request={url: "/readme", decode: Decoder.Text}
+
+reducer goLoad   on=ui.click(LoadBtn)   do= emit load()
+reducer goRename on=ui.click(RenameBtn) do= emit rename("lamp")
+reducer goFeed   on=ui.click(FeedBtn)   do= emit feed()
+reducer goReadme on=ui.click(ReadmeBtn) do= emit readme()
+
+reducer loaded   on=load.ok($i, _)   do= status := "load " + $i.name
+reducer renamed  on=rename.ok($i, _) do= status := "rename " + $i.name
+reducer fed      on=feed.ok($i, _)   do= status := "feed " + $i.name
+reducer gotReadme on=readme.ok($t, _) do= status := "readme " + $t
+
+tile LoadBtn   = button(text="Load")   {id: "load"}
+tile RenameBtn = button(text="Rename") {id: "rename"}
+tile FeedBtn   = button(text="Feed")   {id: "feed"}
+tile ReadmeBtn = button(text="Readme") {id: "readme"}
+
+tile App = column(LoadBtn, RenameBtn, FeedBtn, ReadmeBtn, text("status: " + status)) {pad: "lg", gap: "md"}
+
+app HttpDefaultHeaders
+    caps   = [http.get, http.patch]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

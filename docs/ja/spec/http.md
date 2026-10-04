@@ -84,17 +84,18 @@ Decoder.None         # レスポンス本文を捨てる
 
 decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
 
-### 6.1.5 共通 props（自動付与）
+### 6.1.5 共通 props（自動付与） {#_6-1-5-common-props-auto-applied}
 
 すべての HTTP effect は次を自動付与：
 
-- `Accept: application/json`（Decoder が Json のとき）
+- `Accept: application/json`（Decoder が Json のとき。リクエストが Decoder を指定しないときも Json である）
 - `Content-Type: application/json`（HttpBody が Json のとき、または本文が HttpBody の variant でないとき）
 - `Content-Type: application/x-www-form-urlencoded`（Form のとき）
 - `Content-Type: multipart/form-data`（Multipart のとき。boundary を含めるため fetch 自身が書く）
-- `User-Agent: Kumiki`
 
-ユーザー指定の headers が優先される。上の既定値より `app.http.headers` が、`app.http.headers` より effect 自身の `headers` が優先される。ヘッダ名はどの段階でも大文字小文字を区別せずに比べるので、effect の `content-type` はグローバルの `Content-Type` を置き換え、送られる値はちょうど 1 つになる。
+ブラウザはスクリプトが `User-Agent` を設定することを確実には許さないので、ランタイムはこれを付与しない。
+
+ユーザー指定の headers が優先される。上の既定値より `app.http.headers` が、`app.http.headers` より effect 自身の `headers` が優先される。ヘッダ名はどの段階でも大文字小文字を区別せずに比べるので、effect の `content-type` はグローバルの `Content-Type` も既定の Content-Type も置き換え、どのヘッダも送られる値はちょうど 1 つになる。
 
 例外は `Multipart` だけである。プログラムが指定した `Content-Type` は捨てられる。このヘッダには fetch だけが知る boundary が必要で、boundary のない `multipart/form-data` はサーバが解析できないからである。
 
@@ -476,9 +477,9 @@ reducer addErr
 |---|---|
 | `timeout` | 30 秒 |
 | `retry` | `none` |
-| `Accept` | `application/json` |
+| `Accept` (Json decoder 時) | `application/json` |
 | `Content-Type` (Json body 時) | `application/json` |
-| `User-Agent` | `Kumiki` |
+| `User-Agent` | ランタイムは付与しない（[§6.1.5](#_6-1-5-common-props-auto-applied)） |
 | `credentials` | `same-origin` |
 
 ストレージ effect のデフォルト：

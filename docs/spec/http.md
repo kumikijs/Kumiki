@@ -88,13 +88,14 @@ The decoded value is also checked against `T`: every predicate `T` carries, at e
 
 All HTTP effects automatically apply the following:
 
-- `Accept: application/json` (when the Decoder is Json)
+- `Accept: application/json` (when the Decoder is Json, as it is when the request names none)
 - `Content-Type: application/json` (when the HttpBody is Json, or the body is not an HttpBody variant)
 - `Content-Type: application/x-www-form-urlencoded` (when Form)
 - `Content-Type: multipart/form-data` (when Multipart; written by fetch itself, so that it carries the boundary)
-- `User-Agent: Kumiki`
 
-User-specified headers take precedence: `app.http.headers` over the defaults above, and the effect's own `headers` over `app.http.headers`. A header name is compared case-insensitively at every step, so an effect's `content-type` replaces a global `Content-Type` and exactly one value is sent.
+The runtime sets no `User-Agent`, since a browser does not reliably let a script set it.
+
+User-specified headers take precedence: `app.http.headers` over the defaults above, and the effect's own `headers` over `app.http.headers`. A header name is compared case-insensitively at every step, so an effect's `content-type` replaces a global `Content-Type` or the default one, and each header is sent with exactly one value.
 
 The one exception is `Multipart`: a `Content-Type` the program sets on it is dropped, because the header must carry the boundary that only fetch knows. `multipart/form-data` without that boundary cannot be parsed by the server.
 
@@ -482,9 +483,9 @@ Defaults for all HTTP effects:
 |---|---|
 | `timeout` | 30 seconds |
 | `retry` | `none` |
-| `Accept` | `application/json` |
+| `Accept` (with Json decoder) | `application/json` |
 | `Content-Type` (with Json body) | `application/json` |
-| `User-Agent` | `Kumiki` |
+| `User-Agent` | not set by the runtime ([§6.1.5](#_6-1-5-common-props-auto-applied)) |
 | `credentials` | `same-origin` |
 
 Defaults for storage effects:
