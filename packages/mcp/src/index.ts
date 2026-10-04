@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import {
   addDef,
   applyFixPlan,
+  CASCADE_HELP,
   describeEdit,
   editDef,
   episodeLogPathFor,
@@ -667,7 +668,8 @@ export function createServer(): McpServer {
     {
       title: "Remove a definition",
       description:
-        "Remove a definition. Set cascade=true to also remove definitions that only it referenced. " +
+        `Remove a definition. Set cascade=true to ${CASCADE_HELP}. ` +
+        "Without it, removing a definition that something references is refused. " +
         "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
         "line for each further definition the cascade took.",
       inputSchema: { path: z.string(), name: z.string(), cascade: z.boolean().optional() },

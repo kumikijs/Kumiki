@@ -36,6 +36,7 @@ export {
 } from "./harness.ts";
 export {
   addDef,
+  CASCADE_HELP,
   type DefSpec,
   describeEdit,
   type EditReport,
