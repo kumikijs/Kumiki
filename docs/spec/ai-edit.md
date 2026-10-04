@@ -199,7 +199,7 @@ kumiki remove slot.draft
 
 The cascade's `remove` op lists every definition it took in `removed`, the requested one first, and records each one's body in `bodies`. `kumiki patch revert` of that op restores all of them as **one** `add` op: the requested definition is its `layer` / `name` / `body`, and the dependents are its `with` list. The bodies are the ones recorded on the remove, so they are what the file held at that moment, even when a rename has since rewritten a dependent without logging its new body. A `remove` logged before `bodies` existed falls back to the last body the op log recorded for each name before the remove; if any of them cannot be found, the revert writes nothing, exits `1`, and names the definitions it could not restore. A cascade logged without `removed` is refused outright, because what it removed is unknown. A revert never reports a partial restore as success.
 
-Reverting that `add` removes exactly the set it added: the named definition and every member of `with`. It does not re-derive the set from what references the named definition now, so a member that no longer depends on it is still removed. It is refused, before anything is written, if a member is no longer in the file (renamed or removed since) or if a definition outside the set references a member; the error names each such reference as `<outside> references <member>`. A member locked by another agent refuses it too, as for any op ([§9.8.3](#_9-8-3-task-boundaries)): the file is left byte-identical and nothing is logged. The same holds for each definition the restoring `add` puts back. `patch apply` of a cascade `remove` that carries `removed` likewise removes that recorded set, under the same refusals.
+Reverting that `add` removes exactly the set it added: the named definition and every member of `with`. It does not re-derive the set from what references the named definition now, so a member that no longer depends on it is still removed. A member renamed since is removed under its new name ([§9.5.3](#_9-5-3-names-at-display-time)). It is refused, before anything is written, if a member is no longer in the file (removed since) or if a definition outside the set references a member; the error names each such reference as `<outside> references <member>`. A member locked by another agent refuses it too, as for any op ([§9.8.3](#_9-8-3-task-boundaries)): the file is left byte-identical and nothing is logged. The same holds for each definition the restoring `add` puts back. `patch apply` of a cascade `remove` that carries `removed` likewise removes that recorded set, under the same refusals.
 
 ### 9.4.2 Post-Check at op Application
 
@@ -229,6 +229,8 @@ canonical(body) = AST normalization (identifiers replaced by type hash + positio
 hash(def) = blake3(canonical(def.body) ⊕ hash(dep1) ⊕ hash(dep2) ⊕ ...)
 ```
 
+No definition's name is part of the hash. The definition's own name is left out, and a reference to another definition counts as that definition's hash, not as its spelling. Whitespace and comments are not part of it either. So a rename leaves the hash of the renamed definition, and of every definition that references it, as it was, and so does a change of whitespace or comments. A `depends-on` digest recorded before a rename still matches `kumiki view --hash` of the dependency after it. A change to what a body says (`Int = 0` to `Int = 1`) changes the hash of that definition and of every definition that depends on it. Two definitions that differ only in their names, such as `slot a : Int = 0` and `slot b : Int = 0`, have the same hash.
+
 ### 9.5.2 Reference Resolution
 
 A name reference like `users` in the source text is recorded within the graph store as `slot:hash:9ab3c1...`.
@@ -240,6 +242,11 @@ A name reference like `users` in the source text is recorded within the graph st
 ### 9.5.3 Names at Display Time
 
 When retrieved via `kumiki view`, hashes are turned back into human-readable names (**labels**).
+
+A rename moves the label, not the definition. After `kumiki rename slot.count total`:
+
+- `kumiki view --history slot.total` lists the ops made on the definition while it was `slot.count`, then the rename, then the ops made since. Ops on an earlier definition that was called `slot.total` and removed stay listed too. `slot.count` keeps listing the ops made under it, as that name's history.
+- `kumiki patch revert` of an op made before the rename acts on the definition under the name it has now. Reverting a `replace` of `slot.count` restores the earlier body on `slot.total`, even if another definition has taken the name `slot.count` since. The earlier body is looked up under whichever name the definition had when the op log recorded it.
 
 ## 9.6 Error Codes and Automatic Repair
 

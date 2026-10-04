@@ -695,7 +695,11 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
     );
   }
 
-  const sites: Pos[] = [defNamePos(store, entry, old)];
+  const own = defNamePos(store, entry, old);
+  if (own === undefined) {
+    throw new Error(`rename aborted: cannot locate "${old}" on its own definition line`);
+  }
+  const sites: Pos[] = [own];
   for (const e of store.defs) {
     for (const r of referenceSites(store, `${e.layer}.${e.name}`)) {
       if (r.layer === entry.layer && r.name === old && r.pos) sites.push(r.pos);
@@ -744,14 +748,16 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
  * `fn n`, `type e`) matched inside the keyword instead. That produced
  * `stotal lot` from `rename slot.lot total`, written to disk before `validate`
  * caught it and rolled back.
+ *
+ * Undefined when the name is not found on the keyword's line. The content hash
+ * leaves out the same position `rename` rewrites, so it reads it here too.
  */
-function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
+function defNamePos(store: Store, entry: DefEntry, name: string): Pos | undefined {
   const line = store.lines[entry.range.startLine - 1] ?? "";
   const keywordCol = (entry.def as { pos?: Pos }).pos?.col ?? 1;
   const from = keywordCol - 1 + entry.layer.length;
   const at = line.indexOf(name, from);
-  if (at < 0) throw new Error(`rename aborted: cannot locate "${name}" on its own definition line`);
-  return { line: entry.range.startLine, col: at + 1 };
+  return at < 0 ? undefined : { line: entry.range.startLine, col: at + 1 };
 }
 
 /**
@@ -963,13 +969,15 @@ function patchRevertLocked(path: string, opId: string): string {
   const idx = log.findIndex((e) => e["op-id"] === opId);
   if (idx === -1) throw new Error(`patch revert: op-id "${opId}" not found in log`);
   const target = log[idx]!;
+  // Each definition the op touched is acted on under the name it has now.
+  const now = (layer: string, name: string): string => nameNow(log, idx, `${layer}.${name}`);
   switch (target.op) {
     case "add": {
       // Inverse of add = remove. An add that restored a cascade removes exactly
       // the set it added — not what references the named definition now.
-      const main = `${target.layer}.${target.name}`;
+      const main = now(target.layer, target.name);
       if (target.with === undefined) return removeDef(path, main, false).opId;
-      const set: RemovedNames = [main, ...target.with.map((d) => `${d.layer}.${d.name}`)];
+      const set: RemovedNames = [main, ...target.with.map((d) => now(d.layer, d.name))];
       return removeSet(path, load(path), set, true).opId;
     }
     case "remove": {
@@ -983,7 +991,7 @@ function patchRevertLocked(path: string, opId: string): string {
       if (prev === undefined) {
         throw new Error(`patch revert: no prior body found for ${target.layer}.${target.name}`);
       }
-      return replaceDef(path, `${target.layer}.${target.name}`, prev);
+      return replaceDef(path, now(target.layer, target.name), prev);
     }
     case "edit": {
       // Best-effort: rebuild prior body from history.
@@ -993,11 +1001,11 @@ function patchRevertLocked(path: string, opId: string): string {
           `patch revert: cannot reconstruct prior body for edit of ${target.layer}.${target.name}`,
         );
       }
-      return replaceDef(path, `${target.layer}.${target.name}`, prev);
+      return replaceDef(path, now(target.layer, target.name), prev);
     }
     case "rename": {
       if (!target.newName) throw new Error("patch revert: rename op missing newName");
-      return renameDef(path, `${target.layer}.${target.newName}`, target.name);
+      return renameDef(path, now(target.layer, target.newName), target.name);
     }
     default:
       throw new Error(`patch revert: unsupported op kind "${target.op}"`);
@@ -1041,41 +1049,97 @@ function removedDefs(
   return [first, ...rest];
 }
 
+/** The last body the log recorded for the definition before op `idx`, under whatever name it had then. */
 function priorBody(
   log: OpLogEntry[],
   idx: number,
   layer: string,
   name: string,
 ): string | undefined {
-  for (let i = idx - 1; i >= 0; i--) {
-    const e = log[i]!;
-    if (e.layer === layer && e.name === name && typeof e.body === "string") return e.body;
-    const restored = e.with?.find((d) => d.layer === layer && d.name === name);
+  for (const [e, current] of namesBack(log, idx, `${layer}.${name}`)) {
+    if (`${e.layer}.${e.name}` === current && typeof e.body === "string") return e.body;
+    const restored = e.with?.find((d) => `${d.layer}.${d.name}` === current);
     if (restored) return restored.body;
   }
   return undefined;
 }
 
 /**
- * Return the op log entries that touched a qname, in chronological order: the
- * ops named after it, and the ops that took or restored it alongside another
- * definition (a cascade's `removed`, a restore's `with`).
+ * The qualified names a `rename` op moved a definition between; undefined for
+ * any other op. A name is a label (§9.5.3): history and revert follow a
+ * definition through a rename by this one rule rather than by the name an op
+ * was logged under.
  */
-export function viewHistory(path: string, qname: string): OpLogEntry[] {
-  const [layer, name] = splitQname(qname);
-  return readOpLog(path).filter(
-    (e) =>
-      (e.layer === layer && e.name === name) ||
-      e.removed?.includes(qname) === true ||
-      e.with?.some((d) => d.layer === layer && d.name === name) === true,
+function renamedBy(op: OpLogEntry): { from: string; to: string } | undefined {
+  if (op.op !== "rename" || op.newName === undefined) return undefined;
+  return { from: `${op.layer}.${op.name}`, to: `${op.layer}.${op.newName}` };
+}
+
+/**
+ * The ops before `end`, latest first, each with the name the definition called
+ * `qname` at `end` had right after that op: `qname` back to the rename that
+ * gave it that name, then the name it had before, and so on.
+ */
+function* namesBack(
+  log: readonly OpLogEntry[],
+  end: number,
+  qname: string,
+): Generator<[OpLogEntry, string]> {
+  let current = qname;
+  for (let i = end - 1; i >= 0; i--) {
+    const e = log[i]!;
+    yield [e, current];
+    const renamed = renamedBy(e);
+    if (renamed?.to === current) current = renamed.from;
+  }
+}
+
+/** The name the definition called `qname` just after op `idx` has now, after every later rename. */
+function nameNow(log: readonly OpLogEntry[], idx: number, qname: string): string {
+  let current = qname;
+  for (const e of log.slice(idx + 1)) {
+    const renamed = renamedBy(e);
+    if (renamed?.from === current) current = renamed.to;
+  }
+  return current;
+}
+
+/** Whether `op` names `qname`: as its own definition, in a cascade's `removed`, or in a restore's `with`. */
+function namesDef(op: OpLogEntry, qname: string): boolean {
+  return (
+    `${op.layer}.${op.name}` === qname ||
+    op.removed?.includes(qname) === true ||
+    op.with?.some((d) => `${d.layer}.${d.name}` === qname) === true
   );
 }
 
 /**
- * Content hash of a definition: sha256 of its body XOR-mixed with the hashes
- * of its transitive deps. PoC stand-in for the blake3-based hash specified in
- * §9.5.1. Shared with `computeDependsOn` so `view --hash <q>` and the `@h:`
- * digest in another op's `depends-on` line up.
+ * Return the op log entries that touched a qname, in chronological order: the
+ * ops that name it (its own, a cascade's `removed`, a restore's `with`), and,
+ * for the definition that holds the name now, the ops made on it under earlier
+ * names and each rename that moved it. After `rename slot.count total`, the
+ * history of `slot.total` therefore starts with the ops on `slot.count`, and
+ * `slot.count` keeps them too, as that name's history.
+ */
+export function viewHistory(path: string, qname: string): OpLogEntry[] {
+  const log = readOpLog(path);
+  const out: OpLogEntry[] = [];
+  for (const [e, current] of namesBack(log, log.length, qname)) {
+    if (namesDef(e, qname) || namesDef(e, current) || renamedBy(e)?.to === current) out.push(e);
+  }
+  return out.reverse();
+}
+
+/**
+ * Content hash of a definition (§9.5.1): sha256 of its canonical form mixed
+ * with the hashes of its direct deps, which carry their own deps' hashes. PoC
+ * stand-in for the blake3-based hash the spec names. Shared with
+ * `computeDependsOn` so `view --hash <q>` and the `@h:` digest in another op's
+ * `depends-on` line up.
+ *
+ * No definition's name is part of it (§9.5.1): see `canonicalForm`. A rename therefore
+ * leaves the hash of the renamed definition, and of every definition that
+ * references it, as it was, and so does a change of whitespace or comments.
  */
 export function viewHash(store: Store, qname: string): string {
   return computeHash(store, qname, new Map());
@@ -1094,12 +1158,51 @@ function computeHash(store: Store, qname: string, memo: Map<string, string>): st
     memo.set(qname, h);
     return h;
   }
-  const body = store.lines.slice(entry.range.startLine - 1, entry.range.endLine).join("\n");
-  const deps = directDeps(store, qname).sort();
-  const depPart = deps.map((d) => computeHash(store, d, memo)).join(":");
-  const h = hashBody(`${body}|${depPart}`);
+  const canonical = canonicalForm(store, entry, qname, memo);
+  // Ordered by hash, not by name, so that a rename of a dep cannot reorder them.
+  const depPart = directDeps(store, qname)
+    .map((d) => computeHash(store, d, memo))
+    .sort()
+    .join(":");
+  const h = hashBody(`${canonical}|${depPart}`);
   memo.set(qname, h);
   return h;
+}
+
+/**
+ * A definition's tokens, as its hash reads them. Whitespace and comments are
+ * not tokens. The positions `rename` rewrites are not spelled by name: the
+ * definition's own name and every reference to itself are `@self`, and every
+ * other reference is the referenced definition's layer and hash. Everything
+ * else is kept as written, local names and the order of record fields
+ * included.
+ */
+function canonicalForm(
+  store: Store,
+  entry: DefEntry,
+  qname: string,
+  memo: Map<string, string>,
+): string {
+  const key = (p: Pos): string => `${p.line}:${p.col}`;
+  const labels = new Map<string, string>();
+  const own = defNamePos(store, entry, entry.name);
+  if (own !== undefined) labels.set(key(own), "@self");
+  for (const r of referenceSites(store, qname)) {
+    if (!r.pos) continue;
+    const target = `${r.layer}.${r.name}`;
+    const label = target === qname ? "@self" : `@${r.layer}:${computeHash(store, target, memo)}`;
+    labels.set(key(r.pos), label);
+  }
+  // Lexed on its own, so a token's line is counted from the definition's first.
+  const offset = entry.range.startLine - 1;
+  const text = store.lines.slice(offset, entry.range.endLine).join("\n");
+  const out: unknown[] = [];
+  for (const t of lex(text)) {
+    if (t.kind === "eof") continue;
+    const label = labels.get(key({ line: t.pos.line + offset, col: t.pos.col }));
+    out.push(label ?? [t.kind, t.kind === "num" ? t.raw : t.value]);
+  }
+  return JSON.stringify(out);
 }
 
 export function lockDef(path: string, agentId: string, pattern: string): void {
