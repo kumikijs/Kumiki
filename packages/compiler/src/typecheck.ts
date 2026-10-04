@@ -79,6 +79,7 @@ import {
   isOwnMember,
   isReceiver,
   type Receiver,
+  receiverParams,
   receiversOf,
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
@@ -3223,7 +3224,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             // argument is evaluated where the call is, so it reads the
             // enclosing scope's `$1` / `$2`, as codegen emits it.
             checkExpr(a, sym, errors, ctx);
-            const declared = memberArgType(recvType, e.method, i, sym);
+            const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
@@ -3270,7 +3271,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           // An argument whose type the receiver's fixes is checked against it
           // like any declared position — which is also what builds a list
           // literal there as the Set it is declared to be (stdlib.md §2.2.2).
-          const declared = memberArgType(recvType, e.method, i, sym);
+          const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
           if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
         }
       }
@@ -3626,35 +3627,43 @@ function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ct
 
 /**
  * The type a member's `index`th argument is declared as by the receiver's
- * type (stdlib.md §2.2), or `null` where the receiver does not fix one: a
- * `List`'s element for `contains` / `push` / `prepend`, a `Map`'s value for
- * `insert` / `update` (whose fragment answers the new value), and the
- * receiver itself for a `Set`'s `union` / `intersect` / `diff`.
+ * type (stdlib.md §2.2.1–§2.2.3, transcribed in `RECEIVER_PARAMS`), or `null`
+ * where the receiver does not fix one. A `K` / `T` is the receiver's first
+ * type argument and a `V` its second; another container of the receiver's
+ * type is the receiver's type as it was written, so an alias or a `nominal`
+ * receiver asks for itself.
+ *
+ * A call given fewer arguments than the signature takes has none read against
+ * it, since which argument it meant as which is not decided: `m.get-or(d)` is
+ * the Option reading, whose one argument is no key, and its count is the
+ * E0213 `checkGetOrArity` reports.
  */
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
   index: number,
+  argCount: number,
   sym: SymbolTable,
 ): TypeExpr | null {
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
-  const [a, b] = t.args;
-  switch (t.name) {
-    case "List":
-      return index === 0 && LIST_ELEMENT_ARGS.has(member) ? (a ?? null) : null;
-    case "Map":
-      return index === 1 && MAP_VALUE_ARGS.has(member) ? (b ?? null) : null;
-    case "Set":
-      return index === 0 && SET_OPERANDS.has(member) ? recv : null;
-    default:
+  const params = receiverParams(t.name, member);
+  if (params === undefined || argCount < params.length) return null;
+  const param = params[index] ?? null;
+  switch (param) {
+    case null:
       return null;
+    case "K":
+    case "T":
+      return t.args[0] ?? null;
+    case "V":
+      return t.args[1] ?? null;
+    case "Map(K, V)":
+    case "Set(T)":
+    case "List(T)":
+      return recv;
   }
 }
-
-const LIST_ELEMENT_ARGS: ReadonlySet<string> = new Set(["contains", "push", "prepend"]);
-const MAP_VALUE_ARGS: ReadonlySet<string> = new Set(["insert", "update"]);
-const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);
 
 /**
  * Check `e` against the type the site declares, reporting at the innermost

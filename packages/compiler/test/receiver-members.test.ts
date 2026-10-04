@@ -11,7 +11,12 @@ import { readFileSync } from "node:fs";
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { KNOWN_MEMBERS, METHOD_MIN_ARGS } from "../src/codegen/expr.ts";
-import { RECEIVER_MEMBERS, type Receiver, UNIVERSAL_MEMBERS } from "../src/stdlib-members.ts";
+import {
+  RECEIVER_MEMBERS,
+  RECEIVER_PARAMS,
+  type Receiver,
+  UNIVERSAL_MEMBERS,
+} from "../src/stdlib-members.ts";
 
 const APP = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -382,4 +387,42 @@ describe("the table is the one §2.2 lists", () => {
   it("lists `show` as the member every value has", () => {
     expect([...UNIVERSAL_MEMBERS]).toEqual(["show"]);
   });
+});
+
+/**
+ * How many parameters the signature block of §2.2.1–§2.2.3 gives each member
+ * of `Map` / `Set` / `List`: `insert(k, v)` two, `keys` none.
+ */
+function specParamCounts(path: string): Map<string, Map<string, number>> {
+  const md = readFileSync(new URL(path, import.meta.url), "utf8");
+  const out = new Map<string, Map<string, number>>();
+  for (const section of md.split(/^### 2\.2\.\d+ /m).slice(1)) {
+    const receiver = section.slice(0, section.indexOf("\n")).replace(/\(.*$/, "").trim();
+    if (!Object.hasOwn(RECEIVER_PARAMS, receiver)) continue;
+    const counts = new Map<string, number>();
+    const block = /^```\n([\s\S]*?)^```/m.exec(section)?.[1] ?? "";
+    for (const line of block.split("\n")) {
+      const m = /^([a-z][a-z0-9-]*)(?:\(([^)]*)\))?\s+:/.exec(line);
+      if (m?.[1]) counts.set(m[1], m[2] === undefined ? 0 : m[2].split(",").length);
+    }
+    out.set(receiver, counts);
+  }
+  return out;
+}
+
+describe("the parameter table is the one §2.2.1–§2.2.3 lists", () => {
+  for (const [track, path] of [
+    ["en", "../../../docs/spec/stdlib.md"],
+    ["ja", "../../../docs/ja/spec/stdlib.md"],
+  ] as const) {
+    it(`gives each member the ${track} spec's parameter count`, () => {
+      const table = new Map(
+        Object.entries(RECEIVER_PARAMS).map(([r, row]) => [
+          r,
+          new Map(Object.entries(row).map(([m, params]) => [m, params.length])),
+        ]),
+      );
+      expect(specParamCounts(path)).toEqual(table);
+    });
+  }
 });

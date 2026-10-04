@@ -136,6 +136,112 @@ export const UNIVERSAL_MEMBERS: ReadonlySet<string> = new Set(["show"]);
 export type Receiver = keyof typeof RECEIVER_MEMBERS;
 export type MemberOf<R extends Receiver> = (typeof RECEIVER_MEMBERS)[R][number];
 
+type MapParam = "K" | "V" | "Map(K, V)";
+type SetParam = "T" | "Set(T)";
+type ListParam = "T" | "List(T)";
+
+/** A parameter {@link RECEIVER_PARAMS} types by the receiver, as it writes it. */
+export type ReceiverParam = MapParam | SetParam | ListParam;
+
+/**
+ * One row of {@link RECEIVER_PARAMS}: every member of `R`, each with its
+ * parameters in order, each written as one of `P` or as `null`.
+ */
+type ParamRow<R extends Receiver, P extends string> = Readonly<
+  Record<MemberOf<R>, readonly (P | null)[]>
+>;
+
+/**
+ * The parameters of each `Map` / `Set` / `List` member, position by position,
+ * as the signatures of stdlib.md §2.2.1–§2.2.3 type them — where that type is
+ * the receiver's own: a key `K` or value `V` of a `Map(K, V)`, an element `T`
+ * of a `Set(T)` or `List(T)`, or another container of the receiver's type,
+ * written as the receiver is (`Map(K, V)`, `Set(T)`, `List(T)`).
+ *
+ * `null` is a parameter the receiver does not type: a fragment the lambda
+ * binds (`map`, `filter`, `find`, `sort-by`, `fold`'s second), a `List`'s
+ * index or count (`get`, `slice`, `chunk`), `join`'s separator, `fold`'s
+ * initial accumulator, and `zip`'s other list, whose element type `U` is its
+ * own. `get-or`'s default is `null` too: it is checked against what the call
+ * answers, on each receiver that has the member.
+ *
+ * Every member of the three rows is listed, so a member a row gains without a
+ * line here is a `tsc` error.
+ */
+export const RECEIVER_PARAMS = {
+  Map: {
+    keys: [],
+    values: [],
+    entries: [],
+    size: [],
+    "is-empty": [],
+    has: ["K"],
+    get: ["K"],
+    "get-or": ["K", null],
+    insert: ["K", "V"],
+    remove: ["K"],
+    // The fragment answers the entry's new value.
+    update: ["K", "V"],
+    merge: ["Map(K, V)"],
+    filter: [null],
+    map: [null],
+  },
+  Set: {
+    size: [],
+    has: ["T"],
+    add: ["T"],
+    remove: ["T"],
+    toggle: ["T"],
+    union: ["Set(T)"],
+    intersect: ["Set(T)"],
+    diff: ["Set(T)"],
+    filter: [null],
+    "to-list": [],
+  },
+  List: {
+    length: [],
+    "is-empty": [],
+    get: [null],
+    head: [],
+    tail: [],
+    last: [],
+    push: ["T"],
+    prepend: ["T"],
+    concat: ["List(T)"],
+    slice: [null, null],
+    reverse: [],
+    sort: [],
+    "sort-by": [null],
+    unique: [],
+    map: [null],
+    filter: [null],
+    contains: ["T"],
+    find: [null],
+    fold: [null, null],
+    join: [null],
+    chunk: [null],
+    zip: [null],
+  },
+} as const satisfies {
+  Map: ParamRow<"Map", MapParam>;
+  Set: ParamRow<"Set", SetParam>;
+  List: ParamRow<"List", ListParam>;
+};
+
+/**
+ * The parameters of `member` on a `receiver` {@link RECEIVER_PARAMS} has a row
+ * for, or `undefined` when it has none or the row does not list the member.
+ */
+export function receiverParams(
+  receiver: string,
+  member: string,
+): readonly (ReceiverParam | null)[] | undefined {
+  if (!Object.hasOwn(RECEIVER_PARAMS, receiver)) return undefined;
+  const row: Readonly<Record<string, readonly (ReceiverParam | null)[]>> =
+    RECEIVER_PARAMS[receiver as keyof typeof RECEIVER_PARAMS];
+  return Object.hasOwn(row, member) ? row[member] : undefined;
+}
+
 const MEMBER_SETS = new Map<string, ReadonlySet<string>>(
   Object.entries(RECEIVER_MEMBERS).map(([r, ms]) => [r, new Set<string>(ms)]),
 );
