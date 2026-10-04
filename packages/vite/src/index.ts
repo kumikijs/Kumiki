@@ -77,10 +77,29 @@ const KUMIKI_RE = /\.kumiki$/;
 /** The specifier the generated module imports when the runtime is not inlined. */
 const RUNTIME_SPECIFIER = "@kumikijs/runtime";
 
-/** Strip a Vite id's query/suffix (`/abs/app.kumiki?import` → `/abs/app.kumiki`). */
-function cleanId(id: string): string {
+/**
+ * Vite's own import queries. Each turns the import into something other than
+ * the module the file compiles to — its text (`?raw`), its URL (`?url`, with
+ * `?inline` / `?no-inline` choosing the form), or a wrapper that starts it as
+ * a worker (`?worker`, `?sharedworker`) — so each is Vite's to answer.
+ */
+const VITE_QUERIES = new Set(["raw", "url", "inline", "no-inline", "worker", "sharedworker"]);
+
+/**
+ * The `.kumiki` file a Vite id asks this plugin to compile, or null when the
+ * id is not ours. A query still names the compiled module unless it is one of
+ * Vite's own: the dev server's `?import`, a `?t=` / `?v=` cache buster, and
+ * the `?worker_file` id a worker loads its entry by are all the module itself.
+ */
+function kumikiFile(id: string): string | null {
   const q = id.indexOf("?");
-  return q === -1 ? id : id.slice(0, q);
+  const file = q === -1 ? id : id.slice(0, q);
+  if (!KUMIKI_RE.test(file)) return null;
+  if (q === -1) return file;
+  for (const key of new URLSearchParams(id.slice(q + 1)).keys()) {
+    if (VITE_QUERIES.has(key)) return null;
+  }
+  return file;
 }
 
 /**
@@ -147,8 +166,8 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       return own ? null : pluginLocalRuntime(this);
     },
     async transform(code, id) {
-      const file = cleanId(id);
-      if (!KUMIKI_RE.test(file)) return null;
+      const file = kumikiFile(id);
+      if (file === null) return null;
 
       // When --strict-icons is on, resolve @kumikijs/icons up front so the
       // closed name set reaches `check()` on the first pass. The resolver is

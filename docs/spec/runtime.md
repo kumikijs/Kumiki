@@ -1065,6 +1065,7 @@ The module also exports a `createApp()` factory — `import App, { createApp } f
 - **The runtime is shared, not copied** — the compiled module keeps its `import "@kumikijs/runtime"` and the bundler ships one copy, which the example above depends on: `mount` comes from the same package. `bundle: true` inlines the runtime into the module instead, for a module that must stand alone; anything else importing the runtime then gets a second copy (129 kB against 82 kB for the counter, and one more copy per further `.kumiki` import) and the copies do not share the runtime's module-level state. The plugin resolves the specifier from the project when the project can, and from its own dependency otherwise, so a project that installed only `@kumikijs/vite` still builds — with one copy either way.
 - **Options** — `bundle` (default `false`, above). `types` (default `false`: emit a sibling `<name>.kumiki.gen.ts` of typed `KumikiSlots` / `KumikiProviders` helpers for type-safe provider authoring; written only when its contents change — the names are prefixed so they cannot collide with a program's own `Slots` or `Providers` type).
 - **Capabilities** — `kumiki.caps.json` is resolved automatically, by the same rule as the CLI: from the source file's directory up to the nearest directory holding a `package.json`. Deliberately not bounded by Vite's `root`, because `kumiki dev` makes the `.kumiki` file's own directory the root — a manifest `kumiki check` reads has to be the manifest the dev server reads. See [Registering custom capabilities](./stdlib.md#_2-5-standard-capabilities).
+- **Vite's own queries stay Vite's** — `import src from "./app.kumiki?raw"` is the file's text and `"./app.kumiki?url"` its URL, exactly as without the plugin, so a page can show an app's source next to the app. The plugin compiles a `.kumiki` id unless its query carries one of Vite's `raw`, `url`, `inline`, `no-inline`, `worker` or `sharedworker`; any other query (the dev server's `?import`, a `?t=` cache buster, a worker entry's `?worker_file`) still names the compiled module. A worker's entry is bundled with `worker.plugins`, so `?worker` needs `kumiki()` listed there too.
 - **Failures are located** — a type error, a parse error and a lex error all reach Vite's overlay as a diagnostic carrying file, line and column, so the overlay can jump to the offending line.
 - **Typing the import** — reference the shipped ambient types once so `import App from "./x.kumiki"` is typed as `AppShape`:
 
@@ -1072,7 +1073,7 @@ The module also exports a `createApp()` factory — `import App, { createApp } f
   /// <reference types="@kumikijs/vite/client" />
   ```
 
-Verified by `packages/vite/test/plugin.test.ts` (compilation), `runtime-dedupe.test.ts` (one runtime in a real `vite build`) and `diagnostics.test.ts` (located failures, manifest lookup); the typed-helper generator (`generateDts`) by `packages/compiler/test/dts.test.ts` and `dts-compiles.test.ts`.
+Verified by `packages/vite/test/plugin.test.ts` (compilation), `runtime-dedupe.test.ts` (one runtime in a real `vite build`) and `diagnostics.test.ts` (located failures, manifest lookup) and `query-imports.test.ts` (each import form, in `vite build` and the dev server); the typed-helper generator (`generateDts`) by `packages/compiler/test/dts.test.ts` and `dts-compiles.test.ts`.
 
 ---
 
