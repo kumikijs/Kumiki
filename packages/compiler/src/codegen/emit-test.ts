@@ -19,7 +19,7 @@ import {
 import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
-import { typeToGenDesc } from "./emit-type.ts";
+import { forAllGenerator, noGeneratorMessage } from "./emit-type.ts";
 import { jsOfExpr } from "./expr.ts";
 
 /** The outcome of a mock value `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`. */
@@ -145,7 +145,15 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     // `const <name> = _b[...]` we destructure at the top of the trial fn.
     const pctx = makeEvalCtx(gen, new Set(forAll.map((f) => f.name)));
     const varsJs = forAll
-      .map((f) => `${fieldKey(f.name)}: ${JSON.stringify(typeToGenDesc(f.type, gen, new Set()))}`)
+      .map((f) => {
+        // E0715 refuses a type with no generator at check time, so this throw
+        // is for a caller that skipped `check`: it names the code, rather than
+        // emitting a descriptor the runtime would have to answer with a
+        // stand-in for a value.
+        const g = forAllGenerator(f.type, gen);
+        if ("refused" in g) throw new Error(`E0715 ${noGeneratorMessage(f.name, g.refused)}`);
+        return `${fieldKey(f.name)}: ${JSON.stringify(g.desc)}`;
+      })
       .join(", ");
     const binds = forAll
       .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)

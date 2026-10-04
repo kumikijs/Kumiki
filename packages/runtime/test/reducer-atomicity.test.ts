@@ -398,20 +398,21 @@ describe("every tier applies the same rule", () => {
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 
-  it("refuses the batch in a property-test's run-reducer step", () => {
+  it("refuses the batch in a property-test's run-reducer step, failing the trial", () => {
     const app = {
       live: { count: 0, log: "" } as Record<string, unknown>,
       slots: makeApp().slots,
       reducers: [overflow("bump")],
       effects: {},
     };
-    // Chained steps are why this one matters: without the check the refused
-    // state becomes the next step's input and the invariant is proved about a
-    // world the app cannot reach.
-    const after = _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {});
-
-    expect(after.slots).toEqual({ count: 0, log: "" });
-    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
+    // The step has no next state to answer: the reducer did not run. Answering
+    // the state it started from would let the invariant hold about a step that
+    // never happened, and a chained step start from it (testing.md §8.3.1).
+    expect(() => _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {})).toThrow(
+      'reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))',
+    );
+    // The failure carries the rejection, so it is not reported a second time.
+    expect(errors.some((e) => e.includes("was rejected"))).toBe(false);
   });
 });
 

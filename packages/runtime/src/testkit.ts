@@ -16,6 +16,7 @@ import {
   type ReducerSpec,
   type RefinementNaming,
   type RefinementRejection,
+  rejectedBatchText,
   reportRejectedBatch,
   withEnvReplay,
 } from "./core.ts";
@@ -473,14 +474,21 @@ export type GenDesc =
       oneOf?: (number | string)[];
     }
   | { t: "Bool" }
+  /** `Unit`, whose one value `()` lowers to `null`. */
+  | { t: "Unit" }
   | { t: "List"; elem: GenDesc }
   | { t: "Set"; elem: GenDesc }
   | { t: "Map"; key: GenDesc; val: GenDesc }
   | { t: "Option"; inner: GenDesc }
-  | { t: "Result"; ok: GenDesc; err: GenDesc }
+  /** `base`: the outcomes to take past the recursion depth bound ({@link GEN_DEPTH}). */
+  | { t: "Result"; ok: GenDesc; err: GenDesc; base?: ("Ok" | "Err")[] }
   | { t: "Record"; fields: { name: string; desc: GenDesc }[] }
-  | { t: "Union"; variants: { name: string; payloads: GenDesc[] }[] }
-  | { t: "Unknown" };
+  | { t: "Tuple"; items: GenDesc[] }
+  /** `base`: the variants (by index) to take past the recursion depth bound. */
+  | { t: "Union"; variants: { name: string; payloads: GenDesc[] }[]; base?: number[] }
+  /** A recursive type: inside `body`, `{t: "Rec", name}` is a step back into it. */
+  | { t: "Fix"; name: string; body: GenDesc }
+  | { t: "Rec"; name: string };
 
 /** Deterministic PRNG (mulberry32) so a failing property reproduces exactly. */
 function _rng(seed: number): () => number {
@@ -521,12 +529,27 @@ function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
   return `https://${word(6)}.example.com/${word(4)}`;
 }
 
-function genValue(desc: GenDesc, rng: () => number): unknown {
+/**
+ * How many steps into a recursive type generation takes freely. Past it, every
+ * choice takes the way that ends soonest — a union's or a `Result`'s `base`
+ * choices, `None`, an empty collection — so a value of a recursive type ends
+ * (testing.md §8.3.2). Codegen marks the `base` choices.
+ */
+const GEN_DEPTH = 4;
+
+/** The recursive types entered on the way to a descriptor, by name, and how many steps deep. */
+type GenScope = { types: ReadonlyMap<string, GenDesc>; depth: number };
+
+const GEN_TOP: GenScope = { types: new Map(), depth: 0 };
+
+function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN_TOP): unknown {
   // `one-of` names the whole domain, whatever the base type is, so it is
   // answered ahead of the type it refines.
   if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
     return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
   }
+  const gen = (d: GenDesc): unknown => genValue(d, rng, scope);
+  const ending = scope.depth >= GEN_DEPTH;
   switch (desc.t) {
     case "Int": {
       const lo = desc.min ?? -1000;
@@ -549,80 +572,155 @@ function genValue(desc: GenDesc, rng: () => number): unknown {
     }
     case "Bool":
       return rng() < 0.5;
+    case "Unit":
+      return null;
     case "List": {
-      const n = Math.floor(rng() * 11);
+      const n = ending ? 0 : Math.floor(rng() * 11);
       const a: unknown[] = [];
-      for (let i = 0; i < n; i++) a.push(genValue(desc.elem, rng));
+      for (let i = 0; i < n; i++) a.push(gen(desc.elem));
       return a;
     }
+    // Keyed the way `add` / `insert` key a member, so a lookup in the program
+    // under test finds a generated one.
     case "Set": {
-      const n = Math.floor(rng() * 11);
+      const n = ending ? 0 : Math.floor(rng() * 11);
       const o: Record<string, true> = {};
-      for (let i = 0; i < n; i++) o[String(genValue(desc.elem, rng))] = true;
+      for (let i = 0; i < n; i++) o[entryKey(gen(desc.elem))] = true;
       return o;
     }
     case "Map": {
-      const n = Math.floor(rng() * 11);
+      const n = ending ? 0 : Math.floor(rng() * 11);
       const o: Record<string, unknown> = {};
-      for (let i = 0; i < n; i++) o[String(genValue(desc.key, rng))] = genValue(desc.val, rng);
+      for (let i = 0; i < n; i++) o[entryKey(gen(desc.key))] = gen(desc.val);
       return o;
     }
     case "Option":
-      return rng() < 0.5 ? { _tag: "None" } : { _tag: "Some", _0: genValue(desc.inner, rng) };
-    case "Result":
-      return rng() < 0.5
-        ? { _tag: "Ok", _0: genValue(desc.ok, rng) }
-        : { _tag: "Err", _0: genValue(desc.err, rng) };
+      return ending || rng() < 0.5 ? { _tag: "None" } : { _tag: "Some", _0: gen(desc.inner) };
+    case "Result": {
+      const tag =
+        ending && desc.base
+          ? desc.base[Math.floor(rng() * desc.base.length)]
+          : rng() < 0.5
+            ? "Ok"
+            : "Err";
+      return tag === "Ok" ? { _tag: "Ok", _0: gen(desc.ok) } : { _tag: "Err", _0: gen(desc.err) };
+    }
     case "Record": {
       const o: Record<string, unknown> = {};
-      for (const f of desc.fields) o[f.name] = genValue(f.desc, rng);
+      for (const f of desc.fields) o[f.name] = gen(f.desc);
       return o;
     }
+    // The array a tuple literal lowers to, each element by its own descriptor.
+    case "Tuple":
+      return desc.items.map(gen);
     case "Union": {
-      const v = desc.variants[Math.floor(rng() * desc.variants.length)];
-      if (!v) return null;
+      const choices = ending && desc.base ? desc.base.map((i) => desc.variants[i]) : desc.variants;
+      const v = choices[Math.floor(rng() * choices.length)];
+      if (!v) throw new Error("no generator for a union with no variant to take");
       const node: Record<string, unknown> = { _tag: v.name };
       v.payloads.forEach((p, i) => {
-        node[`_${i}`] = genValue(p, rng);
+        node[`_${i}`] = gen(p);
       });
       return node;
     }
+    case "Fix":
+      return genValue(desc.body, rng, {
+        types: new Map(scope.types).set(desc.name, desc.body),
+        depth: scope.depth,
+      });
+    case "Rec": {
+      const body = scope.types.get(desc.name);
+      if (!body) {
+        throw new Error(
+          `no generator for "${desc.name}": no recursive type of that name encloses it`,
+        );
+      }
+      return genValue(body, rng, { types: scope.types, depth: scope.depth + 1 });
+    }
     default:
-      return null;
+      throw new Error(`no generator for the descriptor ${_jsonStr(desc)}`);
   }
 }
 
-/** Candidate values "simpler" than `v`, for shrinking a counterexample. */
-function _shrink(v: unknown): unknown[] {
-  if (typeof v === "number") {
-    if (v === 0) return [];
-    const half = Math.trunc(v / 2);
-    return half === 0 ? [0] : [0, half];
+/**
+ * Values "simpler" than `v` that are still values of `desc`, for shrinking a
+ * counterexample: a number toward zero within its bounds, a text toward its
+ * shortest length, a collection toward fewer elements, `Some` toward `None`,
+ * and a record or a tuple one part at a time. A candidate outside the type
+ * would be a value the generator never produces — one a slot may refuse —
+ * and the counterexample reported would be one no generated trial was run on.
+ */
+function shrinkCandidates(
+  v: unknown,
+  desc: GenDesc,
+  types: ReadonlyMap<string, GenDesc>,
+): unknown[] {
+  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
+    const first = desc.oneOf[0];
+    return v === first ? [] : [first];
   }
-  if (typeof v === "string") {
-    if (v === "") return [];
-    return ["", v.slice(0, Math.floor(v.length / 2))];
-  }
-  if (Array.isArray(v)) {
-    if (v.length === 0) return [];
-    const out: unknown[] = [[]];
-    for (let i = 0; i < v.length; i++) out.push([...v.slice(0, i), ...v.slice(i + 1)]);
-    return out;
-  }
-  if (v && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    if ("_tag" in o) return o._tag === "Some" ? [{ _tag: "None" }] : [];
-    const keys = Object.keys(o);
-    if (keys.length === 0) return [];
-    const out: unknown[] = [{}];
-    for (const k of keys) {
-      const cp = { ...o };
-      delete cp[k];
-      out.push(cp);
+  switch (desc.t) {
+    case "Int":
+    case "Float": {
+      if (typeof v !== "number") return [];
+      const target = Math.min(
+        Math.max(0, desc.min ?? Number.NEGATIVE_INFINITY),
+        desc.max ?? Number.POSITIVE_INFINITY,
+      );
+      if (v === target) return [];
+      const half = target + Math.trunc((v - target) / 2);
+      return half === target ? [target] : [target, half];
     }
-    return out;
+    case "Text": {
+      // A shape (`email`, …) has no shorter instance that is still one.
+      if (typeof v !== "string" || desc.form) return [];
+      const shortest = desc.minLen ?? 0;
+      if (v.length <= shortest) return [];
+      const least = v.slice(0, shortest);
+      const half = v.slice(0, Math.max(shortest, Math.floor(v.length / 2)));
+      return half === least ? [least] : [least, half];
+    }
+    case "List":
+      if (!Array.isArray(v) || v.length === 0) return [];
+      return [[], ...v.map((_, i) => [...v.slice(0, i), ...v.slice(i + 1)])];
+    case "Set":
+    case "Map": {
+      if (!v || typeof v !== "object") return [];
+      const o = v as Record<string, unknown>;
+      const keys = Object.keys(o);
+      if (keys.length === 0) return [];
+      return [
+        {},
+        ...keys.map((k) => {
+          const cp = { ...o };
+          delete cp[k];
+          return cp;
+        }),
+      ];
+    }
+    case "Option":
+      return (v as { _tag?: unknown } | null)?._tag === "Some" ? [{ _tag: "None" }] : [];
+    case "Record": {
+      const o = v as Record<string, unknown>;
+      return desc.fields.flatMap((f) =>
+        shrinkCandidates(o[f.name], f.desc, types).map((c) => ({ ...o, [f.name]: c })),
+      );
+    }
+    case "Tuple":
+      if (!Array.isArray(v)) return [];
+      return desc.items.flatMap((d, i) =>
+        shrinkCandidates(v[i], d, types).map((c) => v.map((x, j) => (j === i ? c : x))),
+      );
+    case "Fix":
+      return shrinkCandidates(v, desc.body, new Map(types).set(desc.name, desc.body));
+    case "Rec": {
+      const body = types.get(desc.name);
+      return body ? shrinkCandidates(v, body, types) : [];
+    }
+    default:
+      // `Bool`, `Unit`, a union, a `Result`: nothing simpler is tried.
+      return [];
   }
-  return [];
 }
 
 /** Greedily minimize a failing binding set, holding each var's failure. */
@@ -637,7 +735,7 @@ function shrinkCounterexample(
   while (improved && guard++ < 1000) {
     improved = false;
     for (const k of Object.keys(vars)) {
-      for (const cand of _shrink(cur[k])) {
+      for (const cand of shrinkCandidates(cur[k], vars[k] as GenDesc, new Map())) {
         const next = { ...cur, [k]: cand };
         if (fails(next)) {
           cur = next;
@@ -649,6 +747,14 @@ function shrinkCounterexample(
   }
   return cur;
 }
+
+/**
+ * A `run-reducer` step whose batch a refinement rejected (runtime.md §10.3.3).
+ * The reducer did not run, so the step has no next state to answer: it fails
+ * the trial it is in, and the property runner gives the rejection as the
+ * reason (testing.md §8.3.1).
+ */
+class RejectedStep extends Error {}
 
 // ----- shared per-episode executor (spec/testing.md §8.6 + runtime.md §10.5.3) -----
 // Drives the reducer queue, applies effect mocks, and emits observer events.
@@ -1285,7 +1391,10 @@ export const _stdlibTest = {
    * Chained steps make this the one apply path where a rejection is easiest to
    * hide: `run-reducer(inc).run-reducer(dec)` reads its predecessor's output, so
    * a batch the app would refuse becomes the next step's starting state and the
-   * invariant is checked against a world that cannot happen.
+   * invariant is checked against a world that cannot happen. Answering the
+   * state the step started from instead hides it too: the invariant then holds
+   * about a reducer that never ran. A rejected batch answers no state — the step
+   * throws {@link RejectedStep}, and the trial fails with the rejection.
    */
   runReducerStep(
     app: {
@@ -1303,10 +1412,7 @@ export const _stdlibTest = {
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
     const rejected = batchRejections(res, app.slots);
-    if (rejected.length > 0) {
-      reportRejectedBatch(name, rejected);
-      return { slots: { ...slots } };
-    }
+    if (rejected.length > 0) throw new RejectedStep(rejectedBatchText(name, rejected));
     const next: Record<string, unknown> = { ...slots };
     for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
     return { slots: next };
@@ -1315,7 +1421,8 @@ export const _stdlibTest = {
    * Run a `property-test` (spec/testing.md §8.3): generate `count` (default 100)
    * cases for the `vars` descriptors with a seeded PRNG (reproducible), check
    * `trial(binds) === true` each time, and on failure shrink to a minimal
-   * counterexample (unless `shrink === false`).
+   * counterexample (unless `shrink === false`). A trial whose `run-reducer`
+   * batch was rejected fails, and the rejection follows the counterexample.
    */
   runPropertyTest(input: {
     name: string;
@@ -1329,24 +1436,27 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
-    const fails = (b: Record<string, unknown>): boolean => {
+    // Why the trial on `b` fails, or `undefined` when it holds. A throw counts
+    // as a failure; a rejected `run-reducer` batch is one that has a reason.
+    const failure = (b: Record<string, unknown>): { reason?: string } | undefined => {
       try {
-        return trial(b) !== true;
-      } catch {
-        return true;
+        return trial(b) === true ? undefined : {};
+      } catch (e) {
+        return e instanceof RejectedStep ? { reason: e.message } : {};
       }
     };
+    const fails = (b: Record<string, unknown>): boolean => failure(b) !== undefined;
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
       if (fails(binds)) {
         const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
+        const reason = failure(minimal)?.reason;
         return {
           name,
           pass: false,
           expected: "invariant holds for all generated inputs",
-          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}`,
+          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}${reason ? ` — ${reason}` : ""}`,
           diffAt: "(property)",
           cases: i + 1,
         };

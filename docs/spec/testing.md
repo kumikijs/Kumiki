@@ -189,6 +189,17 @@ property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 
 `run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
 
+A trial whose `run-reducer` batch a refinement rejects **fails** ([batching](./runtime.md#a-batch-commits-all-or-nothing)). The reducer did not run, so the step has no state to answer: an invariant read against the state it started from would hold about a step that never happened, as `run-reducer(put).slots.pair == p` does on every trial where `put` is refused. The failure carries the counterexample and the rejection, which names the reducer and the write it was refused for:
+
+```
+FAIL  inc-stays-in-range (1 cases, 2ms)
+  expected: invariant holds for all generated inputs
+  actual:   counterexample (case 1/100): {"n":3} — reducer "inc" was rejected: slot "count" cannot hold 4 (between(0, 3))
+  diff at:  (property)
+```
+
+A property therefore holds only over trials in which every `run-reducer` ran. To state what happens when a batch is refused, write a reducer-test, whose `expect` names the slots a refused batch leaves ([§8.2.3](#_8-2-3-the-batch-rule-applies-here-too)); to keep a property clear of the refusal, generate the inputs the reducer accepts (`n: Int where between(0, 2)`).
+
 ### 8.3.2 Generators
 
 Each type has an automatic generator:
@@ -204,10 +215,18 @@ Each type has an automatic generator:
 | `Set(T)` | 0~10 elements |
 | `Option(T)` | 50% None / 50% Some |
 | `Result(T, E)` | 50% Ok / 50% Err |
+| `Unit` | `()` |
+| `Tuple(T1, …, Tn)` | each element by its own generator |
 | `nominal T` | T's generator |
 | `refinement T where p` | generate T constrained by p |
 | record `{…}` | each field generated recursively |
 | union | a random variant, payloads generated recursively |
+| `G(A1, …, An)` | G's body, its parameters generated as the arguments |
+| a recursive type | its body, to a bounded depth (below) |
+
+Every `for-all` value is a value of its type, built in full — each element of a tuple and each field of a record by its own generator, under its own refinements (a `regex` aside, which the note below explains), so `p: Tuple(Text, Int where negative)` is always a pair whose second half is negative. A type the generator cannot build is refused when the program is checked, at the `for-all` field that names it ([E0715](./errors.md#e0715-for-all-no-generator)) — one that holds, anywhere in it, a `File` or an `EffectId` (which only the platform or an `emit` makes), a recursive type with no finite value (`type Inf = {v: Int, next: Inf}`), or a generic that applies itself to a different argument (`type Grow(T) = Stop | Deeper(Grow(List(T)))`, a new type at every step). No trial is handed a stand-in such as `null` in place of a value.
+
+A recursive type is generated to a bounded depth. For four steps into the type every choice is taken at random; past that, each takes the way that ends soonest — the variant or `Result` outcome that needs the fewest further steps, `None`, an empty collection. `type Tree = Leaf | Node(Int, Tree)` generates trees at most four `Node`s deep, `type Chain = {v: Int, next: Option(Chain)}` chains that end at `None`, and two types that hold each other end wherever either of them can. A recursive type ends this way whenever it has a finite value at all; one that has none is E0715's.
 
 Custom generators:
 
@@ -218,7 +237,7 @@ test foo =
         ...
 ```
 
-> **Implementation note.** A refinement folds into its base generator as a bound rather than reject-sampling: `between(a, b)` constrains the numeric range, `nonempty` / `len-*` the string length, `positive` / `negative` the sign. `email` / `url` / `uuid` fold in as a **shape**: the generator builds an instance of the form, so a generated value passes the same check the runtime applies to a write ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)) — a generator that ignored them would drive the property over states the app refuses to be in. `one-of` generates from the listed literals. `regex` is the one predicate with no constraint to fold, because generating from an arbitrary pattern is a different problem from checking against one: a `for-all` over a `regex`-refined type generates unconstrained base values, so give it a custom generator or write the case by hand. Generation is **seeded** (default: a hash of the test name), so a failing case reproduces exactly across runs; on failure the counterexample is **shrunk** (unless `shrink = false`) toward a minimal value (numbers → 0, strings → "", collections → fewer elements). `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state, so steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`).
+> **Implementation note.** A refinement folds into its base generator as a bound rather than reject-sampling: `between(a, b)` constrains the numeric range, `nonempty` / `len-*` the string length, `positive` / `negative` the sign. `email` / `url` / `uuid` fold in as a **shape**: the generator builds an instance of the form, so a generated value passes the same check the runtime applies to a write ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)) — a generator that ignored them would drive the property over states the app refuses to be in. `one-of` generates from the listed literals. `regex` is the one predicate with no constraint to fold, because generating from an arbitrary pattern is a different problem from checking against one: a `for-all` over a `regex`-refined type generates unconstrained base values, so give it a custom generator or write the case by hand. Generation is **seeded** (default: a hash of the test name), so a failing case reproduces exactly across runs; on failure the counterexample is **shrunk** (unless `shrink = false`) toward a minimal value that is still a value of its type (numbers → 0 or the bound nearest it, strings → the shortest length allowed, collections → fewer elements, `Some` → `None`, a record or a tuple one part at a time), so the counterexample reported is one a trial could have been run on. `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state, so steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`).
 
 ## 8.4 Tile snapshot Tests
 

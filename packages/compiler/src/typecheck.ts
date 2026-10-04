@@ -53,6 +53,7 @@ import {
   REDUCER_REF,
   STANDARD_CAPABILITIES,
 } from "./capabilities.ts";
+import { forAllGenerator, noGeneratorMessage } from "./codegen/emit-type.ts";
 import {
   FIELD_ACCESS_SHORTCUTS,
   FRAGMENT_ARGUMENTS,
@@ -5845,7 +5846,23 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
   if (t.testKind === "property-test") {
     // The `for-all` types must resolve, and every `run-reducer(name)` in the
     // invariant must name a declared reducer.
-    for (const f of t.forAll ?? []) resolveType(f.type, sym, errors);
+    for (const f of t.forAll ?? []) {
+      const before = errors.length;
+      resolveType(f.type, sym, errors);
+      // A name that resolves to nothing is E0117's to report. Anything else in
+      // the type the generator cannot build is E0715, at the field: codegen
+      // emits the same answer, so an accepted type is generated in full.
+      if (errors.length > before) continue;
+      const g = forAllGenerator(f.type, sym);
+      if ("refused" in g) {
+        errors.push({
+          code: "E0715",
+          kind: "for-all-no-generator",
+          message: noGeneratorMessage(f.name, g.refused),
+          pos: f.pos,
+        });
+      }
+    }
     // `run-reducer` is the one callee `checkExpr` does not walk, so its argument
     // and its count are resolved here or nowhere. `reducerNameArg` reads a bare
     // name and answers `""` for anything else, and the runner then throws

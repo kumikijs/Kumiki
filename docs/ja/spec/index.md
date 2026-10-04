@@ -130,6 +130,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | テスト |
 | [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | テスト |
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | テスト |
+| [E0715](./errors.md#e0715-for-all-no-generator) | `for-all-no-generator` | type | テスト |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |
 | [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | コア |
@@ -297,5 +298,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
+| `230-property-test-tuple.kumiki` | slot, reducer, fn, tile | テスト | [§8.3](./testing.md#_8-3-property-tests) |
 <!-- examples:end -->
 :::

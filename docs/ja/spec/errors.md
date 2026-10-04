@@ -1102,7 +1102,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 **修正**：タイポを直す、カスタムパスを `theme.icons` に登録する、または `@kumikijs/icons` をインストールして組み込み名を有効化する。
 
-テスト DSL 不変条件（現時点では E0712 / E0713 / E0714。E0710–E0719 はこの用途のために予約）は test 系定義の内部でのみ発火し、オプトインフラグを必要としない。
+テスト DSL 不変条件（現時点では E0712 / E0713 / E0714 / E0715。E0710–E0719 はこの用途のために予約）は test 系定義の内部でのみ発火し、オプトインフラグを必要としない。
 
 ### E0712 `episode-mock-invalid`
 
@@ -1161,6 +1161,43 @@ test typo-section =
 未知キーの*中*の名前は解決しない：存在しないセクションに属する名前は、最初の間違いを直した瞬間に消える位置に出る 2 つ目の診断になるからである。そこでもなお報告されるのは、どこに書かれていても間違っているもの——`given` の中のワイルドカードはどのセクションでも [E0109](#e0109-test-wildcard-misuse) であり、セクション名を直しても残る。
 
 **修正**：その種別の綴りでセクション名を書く。受理される集合はメッセージに載っており、それは `codegen/emit-test.ts` がセクションを読むのと同じテーブルである——checker が拒否するセクションは、どこも lowering しないセクションであり、`episode-test` の `expect` が認識しないセクションは codegen で throw する（何も主張しないテストに降ろさない）。
+
+### E0715 `for-all-no-generator`
+
+`property-test` の `for-all` 変数の型が、ジェネレータの作れない型である（[テスト §8.3.2](./testing.md#_8-3-2-generators)）。どの試行も、各 `for-all` 型の値を丸ごと作ってから走る。ジェネレータが値を持たない部分を含む型は、その部分に代用品を入れたまま invariant へ渡ることになり、代用品を抱えたバッチが拒否されて reducer が一度も走らなかった invariant が、全ケースで成功し得る。
+
+型のどこかに、次のいずれかを含んでいる：
+
+- `File` または `EffectId`。`File` はプラットフォームから、`EffectId` は `emit` から来るものであり、どちらにも作り出せる値が無い。`FormData` は `FileV` バリアントを通じてそれを含む。
+- 有限の値を持たない再帰型——中に自分自身をもう 1 つ入れなければ作れない型。下の `Inf` がそれである。終わり方を持つ再帰型——再帰ペイロードを持たないバリアント、あるいはそれを包む `Option` やコレクション——は、深さを制限して生成する。
+- 自分自身を別の引数に適用するジェネリック（`type Grow(T) = Stop | Deeper(Grow(List(T)))`）。1 段ごとに新しい型になり、戻ってくる先の型が無い。
+
+```kumiki invalid
+type Inf = {v: Int, next: Inf}
+
+slot count : Int = 0
+
+reducer bump on=ui.click(B) do=
+    count := count + 1
+
+tile B = button(text="+")
+
+test inf-has-no-value =
+    property-test
+        for-all   = {x: Inf}
+        given     = {slots: {count: x.v}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(bump).slots.count == x.v + 1
+```
+
+どの `Inf` も別の `Inf` を含むので、最初に作れる 1 つが存在しない：フィールド `x` が報告され、試行は 1 つも走らない。
+
+> `` No generator for `for-all` "<name>": "<type>" has none ``
+> `` No generator for `for-all` "<name>": "<type>" has no finite value ``
+> `` No generator for `for-all` "<name>": "<type>" applies itself to a different argument ``
+
+報告位置は `for-all` のフィールドである。型の中の名前が何にも解決されない場合はこれではなく [E0117](#e0117-undef-type) であり、そのフィールドについてジェネレータの有無を重ねて問うことはしない。
+
+**修正**：性質を述べられる型を生成する——再帰型に終わり方を与える（`next: Option(Inf)`）、あるいは型のうち `File` を含まない部分を使う——か、そのケースを reducer-test として書く。codegen も同じ問いを立てるので、`check` を飛ばした呼び出し元は、穴の開いた記述子ではなくこのコードを throw されたエラーとして受け取る。
 
 ## E08xx — ランタイムハザード
 

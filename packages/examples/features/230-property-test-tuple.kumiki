@@ -1,0 +1,59 @@
+# Feature (testing.md §8.3.2): a property-test over a `Tuple`.
+#
+#   for-all = {p: Tuple(Text, Int where negative)}
+#
+# The generator builds a tuple element by element, each element by its own
+# generator and under its own refinements: the second half of every `p` is
+# negative, so `p` is a value the `pair` slot accepts. `put` and `lower`
+# therefore run on every trial, and each property is about what they did.
+#
+# A trial whose `run-reducer` batch a refinement rejects fails the property,
+# with the counterexample and the rejection: a property holds only over
+# trials in which the reducer ran.
+
+slot pair : Tuple(Text, Int where negative) = ("a", -1)
+slot hits : Int = 0
+
+reducer put on=ui.click(PutBtn) do=
+    hits := hits + 1
+    pair := pair
+
+reducer lower on=ui.click(LowerBtn) do=
+    pair := match pair with
+              | (label, n) -> (label, n - 1)
+
+fn pairLabel(p: Tuple(Text, Int)) -> Text
+   = match p with
+       | (label, n) -> label + " " + n.show
+
+tile PutBtn   = button(text="put")   {id: "put"}
+tile LowerBtn = button(text="lower") {id: "lower"}
+
+tile App = column(
+  text("pair: " + pairLabel(pair)),
+  text("hits: " + hits.show),
+  row(PutBtn, LowerBtn))
+
+app TupleProperty
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
+
+test put-keeps-the-pair =
+    property-test
+        for-all   = {p: Tuple(Text, Int where negative)}
+        given     = {slots: {pair: p, hits: 0}, event: {type: ui.click, target: PutBtn}}
+        invariant = run-reducer(put).slots.pair == p
+
+test put-counts-once =
+    property-test
+        for-all   = {p: Tuple(Text, Int where negative)}
+        given     = {slots: {pair: p, hits: 0}, event: {type: ui.click, target: PutBtn}}
+        invariant = run-reducer(put).slots.hits == 1
+
+test lower-keeps-the-label =
+    property-test
+        for-all   = {p: Tuple(Text, Int where negative)}
+        given     = {slots: {pair: p}, event: {type: ui.click, target: LowerBtn}}
+        invariant = run-reducer(lower).slots.pair == match p with
+                                                       | (label, n) -> (label, n - 1)
