@@ -1,0 +1,48 @@
+# Feature (language.md §1.8.6): a fragment's positionals have the types the
+# method hands it, and a `fn` named as the fragment is checked as the call it
+# stands for.
+#
+#   xs.map(label)           # label($1)          $1 : Int, the element
+#   stock.filter(available) # available($1, $2)  $1 : Text, the key; $2 : Int, the value
+#   xs.fold("", append)     # append($1, $2)     $1 : Text, the init's type; $2 : Int
+#
+# Each `fn` below declares the types it is handed, so all three are
+# well-typed. A parameter of another type is E0201 at the name, as it is at
+# the `$1` when the call is written out:
+#
+#   fn shout(t: Text) -> Text = t + "!"
+#   xs.map(shout)           # E0201 Expected Text but got Int
+#   xs.map(shout($1))       # E0201 Expected Text but got Int
+#
+# A positional whose type the checker cannot decide is checked against
+# nothing — the accumulator of a `fold` from `{}`, which is the empty Map and
+# the empty Set alike.
+
+slot xs     : List(Int)      = [3, 1, 2]
+slot stock  : Map(Text, Int) = {"apple": 3, "pear": 0, "plum": 5}
+
+slot labels : List(Text)     = []
+slot onHand : Map(Text, Int) = {}
+slot joined : Text           = ""
+
+fn label(n: Int) -> Text = "#" + n.show
+fn available(name: Text, count: Int) -> Bool = count > 0 & name != ""
+fn append(acc: Text, n: Int) -> Text = acc + n.show
+
+reducer run on=ui.click(Run)
+    do= labels := xs.map(label)
+        onHand := stock.filter(available)
+        joined := xs.fold("", append)
+
+tile Run = button(text="run") {id: "run"}
+
+tile App = column(
+  Run,
+  text("labels: " + labels.join(",")),
+  text("on hand: " + onHand.keys.join(",")),
+  text("joined: " + joined))
+
+app FragmentPositionalsTyped
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

@@ -56,6 +56,9 @@ import {
 import {
   FIELD_ACCESS_SHORTCUTS,
   FRAGMENT_ARGUMENTS,
+  type FragmentArgument,
+  type FragmentPositional,
+  fragmentCall,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,
 } from "./codegen.ts";
@@ -3215,7 +3218,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         // positionals, recorded for codegen whatever the fragment is spelled
         // as — `xs.map(len)` is `xs.map(len($1))` and binds the same way.
         const shape =
-          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e, sym, ctx) : undefined;
         if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
         for (const [i, a] of e.args.entries()) {
           if (fragment?.index !== i) {
@@ -3227,19 +3230,21 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
+          // A bare `fn` name is the call the lowering makes of it
+          // (`fragmentCall`), and is checked as that call from here on: its
+          // parameters against the positionals, the key it computes, the
+          // value it answers — as the call written out would be.
+          let body: Expr = a;
           if (isFragmentFnName(a, sym, ctx)) {
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
             // How many arguments the member hands a fn is a question about a
             // member the receiver has, as the call's own count is above.
             if (lacksMember) continue;
-            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
-            // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
-            // value), so the key it computes is what the fn declares it
-            // returns. A fn already refused for its arity is not checked again.
-            if (fits && e.method === "sort-by" && i === 0) {
-              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+            // A fn refused for its arity is not checked again.
+            if (!checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors)) {
+              continue;
             }
-            continue;
+            body = fragmentCall(a.name, sym.fns.get(a.name)?.params.length ?? 0, a.pos);
           }
           // Inside the fragment `$1` (and `$2`, where the lambda binds one) are
           // the implicit lambda's parameters, and they SHADOW any outer ones —
@@ -3248,7 +3253,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           // `$1`. What they are bound to is per method and per receiver, and
           // `fragmentBindings` answers only where the lowering's own reading
           // is certain: a wrong guess costs a diagnostic on a working program.
-          const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
+          const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
           if (shape === "value") {
@@ -3263,15 +3268,15 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           } else if (fragment.binds === 2) {
             bindLocal(inner, "$2", p2);
           }
-          checkExpr(a, sym, errors, inner);
+          checkExpr(body, sym, errors, inner);
           if (e.method === "sort-by" && i === 0) {
-            checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
+            checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
           // An argument whose type the receiver's fixes is checked against it
           // like any declared position — which is also what builds a list
           // literal there as the Set it is declared to be (stdlib.md §2.2.2).
           const declared = memberArgType(recvType, e.method, i, sym);
-          if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
+          if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
       if (e.method === "get-or") {
@@ -5087,75 +5092,102 @@ function keyKindOfReader(
 }
 
 /**
- * What the fragment argument at `argIndex` of `recv.method(…)` binds as `$1`
- * and `$2` (stdlib.md §2.2), read off the receiver's type the way the lowering
- * hands them over (`methodCallJs`):
+ * What the fragment argument of `call` binds as `$1` and `$2` (stdlib.md
+ * §2.2), read off the receiver's type through the row `FRAGMENT_ARGUMENTS`
+ * gives the method on it — the table the lowering (`methodCallJs`) reads the
+ * fragment's position from:
  *
  * - `List(T)` — `filter` / `map` / `find` / `sort-by`: `$1` is the element. An
  *   element that is a `Tuple(A, B)` — what `.entries` produces — is taken
  *   apart, `$1 = A` and `$2 = B`.
- * - `List(T).fold(init, expr)`: `$2` is the element. `$1` is the accumulator,
- *   whose type the init only approximates (`[]`, `{}`), so it stays open.
- * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E).map`: `$1`
- *   is `T`, taken apart like a `List`'s element except under `flat-map`,
- *   whose lowering does not; `Result.map-err`: `$1` is `E`.
- * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value — the key
- *   only when it reads back as a value of `K` (`keyRepresentation`);
+ * - `List(T).fold(init, expr)`: `$1` is the accumulator, typed as the init
+ *   is, and `$2` the element.
+ * - `Option(T)` — `map` / `filter` / `flat-map` — and `Result(T, E)` — `map`
+ *   / `flat-map`: `$1` is `T`, taken apart like a `List`'s element except
+ *   under `flat-map`, whose lowering does not; `Result.map-err`: `$1` is `E`.
+ * - `Map(K, V).filter` / `map`: `$1` is the key and `$2` the value;
  *   `Map.update(k, expr)`: `$1` is the current `V`.
  *
- * Everything else is `null`, which binds the name with no type — as every
- * fragment was bound before. That includes an element the checker cannot
- * decide (a type parameter), which the lowering's fallback may take apart.
- * Which of `$1` / `$2` a fragment binds at all is {@link fragmentShape}'s
- * answer; this one only types them.
+ * A positional whose type is not decided is `null`, which binds the name with
+ * no type: on a receiver with no row (a `Set`'s `filter`), an element the
+ * checker cannot decide (a type parameter, which the lowering's fallback may
+ * take apart), an init it cannot (`{}`, both the empty Map and the empty
+ * Set), a key that does not read back as a value of `K`. Which of `$1` / `$2`
+ * a fragment binds at all is {@link fragmentShape}'s answer; this one only
+ * types them.
  */
 function fragmentBindings(
   recv: TypeExpr | null,
-  method: string,
-  argIndex: number,
+  call: Expr & { kind: "MethodCall" },
   sym: SymbolTable,
+  ctx: Ctx,
 ): [TypeExpr | null, TypeExpr | null] {
-  const none: [null, null] = [null, null];
-  const t = unaliasType(recv, sym);
-  if (t?.kind !== "TypeApp") return none;
-  const [a, b] = t.args;
-  switch (t.name) {
-    case "List": {
-      if (!a) return none;
-      if (method === "fold") return argIndex === 1 ? [null, a] : none;
-      if (argIndex !== 0 || !ELEMENT_FRAGMENTS.has(method)) return none;
-      return pairOrElement(a, sym);
+  const found = fragmentRow(recv, call.method, sym);
+  if (found === null) return [null, null];
+  const [first = null, second = null] = found.row.map((p) =>
+    positionalType(p, found.app, call, sym, ctx),
+  );
+  if (found.fragment.second !== "pair-value" || found.row.length !== 1) return [first, second];
+  return first === null ? [null, null] : pairOrElement(first, sym);
+}
+
+/**
+ * The row `FRAGMENT_ARGUMENTS` gives `method` on the receiver's type, with
+ * that type normalised — `null` when the type is not a container
+ * application, or the method has no row on it.
+ */
+function fragmentRow(
+  recv: TypeExpr | null,
+  method: string,
+  sym: SymbolTable,
+): {
+  fragment: FragmentArgument;
+  app: TypeExpr & { kind: "TypeApp" };
+  row: readonly FragmentPositional[];
+} | null {
+  const fragment = FRAGMENT_ARGUMENTS.get(method);
+  const app = unaliasType(recv, sym);
+  if (fragment === undefined || app?.kind !== "TypeApp") return null;
+  const rows: Readonly<Record<string, readonly FragmentPositional[] | undefined>> = fragment.on;
+  const row = Object.hasOwn(rows, app.name) ? rows[app.name] : undefined;
+  return row === undefined ? null : { fragment, app, row };
+}
+
+/**
+ * The type one positional of `call`'s fragment has on the receiver `app`: the
+ * first type argument for `T` and `K`, the second for `V` and `E`, and the
+ * init's type for `Acc` — `fold`'s first argument, evaluated where the call
+ * is. A key is typed only when it reads back as a value of `K`
+ * (`keyRepresentation`): a type parameter or a `Bytes` key is handed over as
+ * the string it is stored under.
+ */
+function positionalType(
+  p: FragmentPositional,
+  app: TypeExpr & { kind: "TypeApp" },
+  call: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  ctx: Ctx,
+): TypeExpr | null {
+  const [first = null, second = null] = app.args;
+  switch (p) {
+    case "T":
+      return first;
+    case "K":
+      return keyRepresentation(first, sym) === null ? null : first;
+    case "V":
+    case "E":
+      return second;
+    case "Acc": {
+      const init = call.args[0];
+      return init === undefined ? null : inferType(init, sym, ctx);
     }
-    case "Option":
-      if (argIndex !== 0 || !a) return none;
-      if (method === "flat-map") return [a, null];
-      return method === "map" || method === "filter" ? pairOrElement(a, sym) : none;
-    case "Result":
-      if (argIndex !== 0) return none;
-      if (method === "map") return a ? pairOrElement(a, sym) : none;
-      return method === "map-err" ? [b ?? null, null] : none;
-    case "Map":
-      if (method === "update") return argIndex === 1 ? [b ?? null, null] : none;
-      if ((method !== "filter" && method !== "map") || argIndex !== 0) return none;
-      return [keyRepresentation(a ?? null, sym) === null ? null : (a ?? null), b ?? null];
-    default:
-      return none;
   }
 }
 
 /**
- * The `List` members whose fragment is handed each element (`argFnList`) —
- * read off `FRAGMENT_ARGUMENTS`, whose `pair-value` entries are exactly those,
- * so the two tables cannot drift.
- */
-const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
-  [...FRAGMENT_ARGUMENTS].filter(([, f]) => f.second === "pair-value").map(([m]) => m),
-);
-
-/**
- * How the fragment of `recv.method(…)` — a `filter` / `map` / `find` /
- * `sort-by`, lowered through `argFnList` — binds `$1` and `$2` (stdlib.md
- * §2.2.3), decided from the receiver's static type:
+ * How the fragment of `call` — a `filter` / `map` / `find` / `sort-by`,
+ * lowered through `argFnList` — binds `$1` and `$2` (stdlib.md §2.2.3),
+ * decided from the receiver's static type:
  *
  * - `"pair"`: each value handed over is a `Tuple(A, B)` — a `List` of pairs
  *   from `.entries`, or an `Option` / `Result` holding one — and is taken
@@ -5179,29 +5211,24 @@ const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
  * an undecidable receiver lets a `fn` of two through (`checkFragmentFnArity`).
  *
  * The one classifier codegen (through `MethodCall.fragmentShape`), the
- * positional scope and the arity of a bare `fn` fragment all read.
+ * positional scope and the arity of a bare `fn` fragment all read. It reads
+ * the row `FRAGMENT_ARGUMENTS` gives the method on the receiver, as
+ * {@link fragmentBindings} does: two positionals are a key and a value, and
+ * one is the value handed over, whose type decides whether it is a pair.
  */
 function fragmentShape(
   recv: TypeExpr | null,
-  method: string,
+  call: Expr & { kind: "MethodCall" },
   sym: SymbolTable,
+  ctx: Ctx,
 ): FragmentShape | null {
   if (isOpaque(recv, sym)) return "undecided";
-  const t = unaliasType(recv, sym);
-  if (t?.kind !== "TypeApp" || !ELEMENT_FRAGMENTS.has(method)) return null;
-  const [a] = t.args;
-  switch (t.name) {
-    case "List":
-      return elementShape(a ?? null, sym).shape;
-    case "Option":
-      return method === "map" || method === "filter" ? elementShape(a ?? null, sym).shape : null;
-    case "Result":
-      return method === "map" ? elementShape(a ?? null, sym).shape : null;
-    case "Map":
-      return method === "filter" || method === "map" ? "key-value" : null;
-    default:
-      return null;
-  }
+  const found = fragmentRow(recv, call.method, sym);
+  if (found === null || found.fragment.second !== "pair-value") return null;
+  const [only, more] = found.row;
+  if (only === undefined) return null;
+  if (more !== undefined) return "key-value";
+  return elementShape(positionalType(only, found.app, call, sym, ctx), sym).shape;
 }
 
 /**

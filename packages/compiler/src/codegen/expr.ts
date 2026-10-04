@@ -460,13 +460,34 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
 ]);
 
 /**
+ * What a fragment positional holds, named the way the receiver's signature
+ * in stdlib.md §2.2 names it: `T` is a `List(T)`'s element, an `Option(T)`'s
+ * value and a `Result(T, E)`'s `Ok` value; `E` is a `Result`'s error; `K` and
+ * `V` are a `Map(K, V)`'s key and value; `Acc` is `fold`'s accumulator
+ * (`fold(init, expr) : Acc`), whose type is its init's.
+ */
+export type FragmentPositional = "T" | "K" | "V" | "E" | "Acc";
+
+/** The type constructors a fragment method has positionals on. */
+export type FragmentReceiver = "List" | "Option" | "Result" | "Map";
+
+/** One method's row in {@link FRAGMENT_ARGUMENTS}. */
+export type FragmentArgument = {
+  index: number;
+  binds: 1 | 2;
+  second?: "element" | "pair-value";
+  on: Readonly<Partial<Record<FragmentReceiver, readonly FragmentPositional[]>>>;
+};
+
+/**
  * The argument of each higher-order method that is an expression fragment
  * rather than a value, how many positionals (`$1`, `$2`) the lambda it is
- * lowered into binds, and what the second one is. A bare `fn` name there is
- * the one place a `fn` name is not a value (language.md §1.8.6):
- * `xs.map(double)` means `xs.map(double($1))`, so `methodCallJs` lowers it as
- * that call and the checker lets it through instead of reporting E0127. One
- * table so the two cannot disagree about which position is which.
+ * lowered into binds, what the second one is, and what each one holds on each
+ * receiver. A bare `fn` name there is the one place a `fn` name is not a
+ * value (language.md §1.8.6): `xs.map(double)` means `xs.map(double($1))`, so
+ * `methodCallJs` lowers it as that call ({@link fragmentCall}) and the checker
+ * checks that call instead of reporting E0127. One table so the two cannot
+ * disagree about which position is which.
  *
  * `second` is why the checker cannot read `binds` alone. `fold` binds the
  * element as `$2` on every receiver, so a `fn` that stops at the accumulator
@@ -475,20 +496,60 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
  * Where the checker decides the value is one value, `argFnList` declares no
  * `$2` at all; only where the lowering falls back does it fill one with the
  * JS index or the element again, which no `fn` written for it means.
+ *
+ * `on` is what the checker types the positionals as, `$1` first, on a
+ * receiver whose type it decides. A `"pair-value"` method's row of one hands
+ * over a value that is taken apart when it is a `Tuple(A, B)` — `$1` and `$2`
+ * are then its halves — and is `$1` whole otherwise. A receiver with no row
+ * binds them with no type: a `Set`, whose `filter` is handed each member as
+ * an `[element, true]` entry with the key it is stored under, and any
+ * receiver that does not have the method.
  */
-export const FRAGMENT_ARGUMENTS: ReadonlyMap<
+export const FRAGMENT_ARGUMENTS: ReadonlyMap<string, FragmentArgument> = new Map<
   string,
-  { index: number; binds: 1 | 2; second?: "element" | "pair-value" }
-> = new Map([
-  ["filter", { index: 0, binds: 2, second: "pair-value" }],
-  ["map", { index: 0, binds: 2, second: "pair-value" }],
-  ["find", { index: 0, binds: 2, second: "pair-value" }],
-  ["sort-by", { index: 0, binds: 2, second: "pair-value" }],
-  ["fold", { index: 1, binds: 2, second: "element" }],
-  ["flat-map", { index: 0, binds: 1 }],
-  ["update", { index: 1, binds: 1 }],
-  ["map-err", { index: 0, binds: 1 }],
+  FragmentArgument
+>([
+  [
+    "filter",
+    {
+      index: 0,
+      binds: 2,
+      second: "pair-value",
+      on: { List: ["T"], Option: ["T"], Map: ["K", "V"] },
+    },
+  ],
+  [
+    "map",
+    {
+      index: 0,
+      binds: 2,
+      second: "pair-value",
+      on: { List: ["T"], Option: ["T"], Result: ["T"], Map: ["K", "V"] },
+    },
+  ],
+  ["find", { index: 0, binds: 2, second: "pair-value", on: { List: ["T"] } }],
+  ["sort-by", { index: 0, binds: 2, second: "pair-value", on: { List: ["T"] } }],
+  ["fold", { index: 1, binds: 2, second: "element", on: { List: ["Acc", "T"] } }],
+  ["flat-map", { index: 0, binds: 1, on: { Option: ["T"], Result: ["T"] } }],
+  ["update", { index: 1, binds: 1, on: { Map: ["V"] } }],
+  ["map-err", { index: 0, binds: 1, on: { Result: ["E"] } }],
 ]);
+
+/**
+ * The call a bare `fn` name in a fragment position stands for: the `fn`
+ * applied to the positionals the fragment binds, as many as it declares —
+ * `double` is `double($1)`, `add` in a `fold` is `add($1, $2)` — positioned
+ * at the name. `methodCallJs` lowers this call and the checker checks it, so
+ * the bare name and the call written out are one expression to both.
+ */
+export function fragmentCall(fn: string, arity: number, pos: Pos): Expr & { kind: "Call" } {
+  return {
+    kind: "Call",
+    callee: fn,
+    args: ["$1", "$2"].slice(0, arity).map((name) => ({ kind: "Ref", name, pos })),
+    pos,
+  };
+}
 
 export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "filter",
@@ -655,24 +716,17 @@ function keyKindArg(kind: KeyKind | undefined): string {
 
 /**
  * A bare `fn` name in a fragment position, rewritten as the call the fragment
- * stands for — `double` becomes `double($1)`, `add` in a `fold` becomes
- * `add($1, $2)`. The rewrite is needed because a `Ref` to a `fn` lowers to the
- * generated function itself, and a list of functions is not what
- * `xs.map(double)` means. A name a local or a slot shadows is that value, not
- * the `fn`, exactly as a `Ref` resolves.
+ * stands for ({@link fragmentCall}). The rewrite is needed because a `Ref` to
+ * a `fn` lowers to the generated function itself, and a list of functions is
+ * not what `xs.map(double)` means. A name a local or a slot shadows is that
+ * value, not the `fn`, exactly as a `Ref` resolves.
  */
 function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): Expr | null {
   if (FRAGMENT_ARGUMENTS.get(method)?.index !== index || a.kind !== "Ref") return null;
   if (ctx.localBinds.has(a.name) || ctx.gen.slots.some((s) => s.name === a.name)) return null;
   const fn = ctx.gen.fns.find((f) => f.name === a.name);
   if (!fn) return null;
-  const positionals = ["$1", "$2"].slice(0, fn.params.length);
-  return {
-    kind: "Call",
-    callee: a.name,
-    args: positionals.map((name) => ({ kind: "Ref", name, pos: a.pos })),
-    pos: a.pos,
-  };
+  return fragmentCall(a.name, fn.params.length, a.pos);
 }
 
 export function methodCallJs(

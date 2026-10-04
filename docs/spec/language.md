@@ -803,6 +803,23 @@ items.filter(isActiveOnly)
 
 A fn name in a fragment position is the call the method makes with the fragment's positionals: `items.map(double)` is `items.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. It is the **only** position a bare fn name is right — a fn is not a value, so `label` written where a value goes is [E0127](./errors.md#e0127-fn-as-value), and the call is `label()`. The positions, and how many positionals each binds, are listed under E0127.
 
+**The type of each positional** is what the method hands the fragment, read off the receiver's type:
+
+| Method | Receiver | `$1` | `$2` |
+|---|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | `List(T)` | the element, `T` | — |
+| `filter`, `map` | `Option(T)` | the value, `T` | — |
+| `map` | `Result(T, E)` | the `Ok` value, `T` | — |
+| `filter`, `map` | `Map(K, V)` | the key, `K` | the value, `V` |
+| `fold(init, f)` | `List(T)` | the accumulator, of the init's type | the element, `T` |
+| `flat-map` | `Option(T)`, `Result(T, E)` | the value, `T` | — |
+| `update(k, f)` | `Map(K, V)` | the current value, `V` | — |
+| `map-err` | `Result(T, E)` | the error, `E` | — |
+
+Under `filter`, `map`, `find` and `sort-by`, a `T` that is a `Tuple(A, B)` — what `.entries` produces — is taken apart: `$1` is `A` and `$2` is `B` ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)). A positional is checked like any value of its type, and a fn name is checked as the call it stands for: with `fn loud(t: Text)`, `xs.map(loud($1))` over a `List(Int)` is [E0201](./errors.md#e0201-type-mismatch), and so is `xs.map(loud)`. `xs.fold(0, f)` checks `f`'s first parameter against `Int`, the init's type, and its second against the element.
+
+A positional whose type the checker cannot decide has none, and nothing is checked against it: over a receiver whose type is not decided (a type parameter, a `fn` result with no `->`), under a `Set`'s `filter`, which §2.2.3 gives no binding, and for the accumulator of a `fold` whose init has no type of its own — `{}`, which is both the empty Map and the empty Set.
+
 ---
 
 ## 1.9 Expression Language
