@@ -926,46 +926,19 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  // The matched child can only render if the parent's body actually contains
+  // The matched child can only render if the tree the parent renders contains
   // a `route-outlet`. Without one, sub-routes compile but silently render
   // nothing — exactly the "compiles but does nothing" failure mode Kumiki
-  // refuses to ship. Catch it at the type check.
-  if (!tileBodyUsesRouteOutlet(tile.body)) {
+  // refuses to ship. Catch it at the type check. That tree is the body with
+  // every tile it expands into inlined, and the runtime fills the first outlet
+  // anywhere in it, so an outlet in a layout helper counts.
+  if (!collectTileBuiltinKinds(tile.name, sym).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
-      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      message: `Tile "${tile.name}" declares sub-routes but renders no "route-outlet", in its body or in any tile the body expands into — the matched child would have nowhere to render`,
       pos: tile.pos,
     });
-  }
-}
-
-/** True if any sub-tree of the tile body is a `route-outlet` call. */
-function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
-  switch (t.kind) {
-    case "TileCall": {
-      if (t.name === "route-outlet") return true;
-      for (const arg of t.args) {
-        const v = arg.value as TileExpr;
-        if (
-          v.kind === "TileCall" ||
-          v.kind === "TileFor" ||
-          v.kind === "TileWhen" ||
-          v.kind === "TileIf" ||
-          v.kind === "TileMatch"
-        ) {
-          if (tileBodyUsesRouteOutlet(v)) return true;
-        }
-      }
-      return false;
-    }
-    case "TileFor":
-    case "TileWhen":
-      return tileBodyUsesRouteOutlet(t.body);
-    case "TileIf":
-      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
-    case "TileMatch":
-      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
   }
 }
 
@@ -1891,11 +1864,13 @@ function inertHandler(
  * statically inferred (cycle, undeclared name, or only dynamic bodies
  * without resolvable children).
  *
- * Two checks read it, and a descendant match means opposite things to them —
- * worth knowing before either is narrowed. For `W0212` a descendant is the
- * true answer: codegen propagates `ui.click(TodoRow)` down to the `check` of
- * `TodoRow = row(check(...), …)`, so finding one means the subscription is
- * wired. For `W0213` it is deliberate under-reporting: an explicit handler
+ * Three checks read it, and a descendant match does not mean the same thing to
+ * each — worth knowing before any of them is narrowed. For `W0212` a
+ * descendant is the true answer: codegen propagates `ui.click(TodoRow)` down to
+ * the `check` of `TodoRow = row(check(...), …)`, so finding one means the
+ * subscription is wired. For `E0113` it is the true answer too: the runtime
+ * fills the first `route-outlet` anywhere in the tree a `sub-routes` parent
+ * renders. For `W0213` it is deliberate under-reporting: an explicit handler
  * prop lands on the ROOT node and nowhere else (`tileCallJs`), so a firing
  * descendant does NOT mean the handler is wired — only that this walk cannot
  * prove it is dropped.

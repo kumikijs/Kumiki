@@ -345,11 +345,15 @@ This is the `E0008` rule under an older code: it came first, and a code's meanin
 
 ### E0113 `sub-routes-without-outlet`
 
-A tile declares `sub-routes` but its body never calls `route-outlet`. The matched child route would have nowhere to render — the page would silently miss its child content even though the compile succeeded.
+A tile declares `sub-routes` but renders no `route-outlet`, in its body or in any tile the body expands into. The matched child route would have nowhere to render — the page would silently miss its child content even though the compile succeeded.
 
-> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+> `Tile "<name>" declares sub-routes but renders no "route-outlet", in its body or in any tile the body expands into — the matched child would have nowhere to render`
 
-**Fix**: Add a `route-outlet()` somewhere in the tile body where the child should appear, or remove the `sub-routes` block.
+The outlet does not have to be written in the tile's own body. The runtime fills the first `route-outlet` in the tree the tile renders ([Routing §3.6.3](./routing.md#_3-6-3-matching-rules)), and code generation builds that tree by inlining every tile the body expands into, along the edges [E0005](#e0005-tile-cycle) follows from a body: nested tile calls, an identifier argument standing in for a tile, and the branches of `for` / `when` / `if` / `match`. So an outlet in a layout helper counts, however many tiles down. So does one in a tile that declares `sub-routes` of its own: inlined here, it is part of this tile's tree and shows this tile's child — its own `sub-routes` apply where it is the route target. An outlet under a branch counts as it does when written inline; when the branch does not render, the runtime reports the child it discarded.
+
+Two places do not count, because neither is in the tree the runtime fills: a tile written as a named argument, which nothing renders, and the tile's own `error-boundary` fallback — the runtime fills the outlet from inside the boundary, in the tree the fallback replaces.
+
+**Fix**: Add a `route-outlet()` where the child should appear — in the tile body, or in a tile it renders — or remove the `sub-routes` block.
 
 ### E0114 `sub-routes-without-wildcard-parent`
 

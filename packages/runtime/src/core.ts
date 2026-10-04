@@ -1277,11 +1277,12 @@ export function pickRootTile(app: AppShape, slotValues: Record<string, unknown>)
         if (!childEntry) return routeTree(r, keepTree);
         const fill: OutletFill = (tree) => {
           if (!injectRouteOutlet(tree, routeTree(childEntry, keepTree))) {
-            // E0113 refuses a `sub-routes` tile whose body never calls
-            // `route-outlet`, but one under `when` / `if` / `match` passes it
-            // and can be absent at runtime. The child was built for nothing,
-            // and a panic in it was the parent's boundary's to catch — loud,
-            // so the smoke / scenario tiers see the outlet that was not there.
+            // E0113 refuses a `sub-routes` tile with no `route-outlet` in its
+            // body or in a tile the body expands into, but one under `when` /
+            // `if` / `match` passes it and can be absent at runtime. The child
+            // was built for nothing, and a panic in it was the parent's
+            // boundary's to catch — loud, so the smoke / scenario tiers see
+            // the outlet that was not there.
             console.error(
               `[kumiki] route "${r.pattern}" matched sub-route "${childEntry.pattern}" but tile "${r.name ?? r.pattern}" rendered no route-outlet — the child was discarded`,
             );

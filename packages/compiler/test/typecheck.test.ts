@@ -350,6 +350,124 @@ describe("typecheck", () => {
         true,
       );
     });
+
+    // The runtime fills the first `route-outlet` in the tree the parent
+    // renders, and code generation builds that tree by inlining every tile the
+    // body expands into. So E0113 looks along that expansion — the edges E0005
+    // follows from a body — rather than at the body's own text.
+    describe("E0113 reads the tiles the body expands into", () => {
+      const program = (defs: string, body: string, routes = "") => `
+        tile NotFound = page(heading("404"))
+        tile Account = page(heading("account"))
+        ${defs}
+        tile Layout
+          sub-routes = { "/x/a" -> Account }
+          = ${body}
+        app A caps=[] routes={ "/x/*" -> Layout, ${routes}"/404" -> NotFound } init=[]
+      `;
+      const codes = (defs: string, body: string) =>
+        checkSrc(program(defs, body)).map((e) => e.code);
+
+      const reached: [string, string, string, string?][] = [
+        ["named bare", `tile Outlet = column(route-outlet())`, `page(heading("s"), Outlet)`],
+        ["called", `tile Outlet = column(route-outlet())`, `page(heading("s"), Outlet())`],
+        [
+          "more than one tile down",
+          `tile Inner = column(route-outlet())
+           tile Middle = row(Inner())
+           tile Outlet = column(Middle)`,
+          `page(Outlet)`,
+        ],
+        [
+          "named as the child of a builtin container",
+          `tile Outlet = column(route-outlet())`,
+          `page(card(Outlet))`,
+        ],
+        [
+          "that takes an input",
+          `tile Frame in=Text = column(heading($1), route-outlet())`,
+          `page(Frame("s"))`,
+        ],
+        [
+          // Inlined into `Layout`, `Inner`'s body is part of `Layout`'s tree
+          // and its outlet is the one the runtime fills with `Layout`'s child.
+          // Its own `sub-routes` apply where it is the route target.
+          "that declares sub-routes of its own",
+          `tile InnerChild = page(heading("inner"))
+           tile Inner sub-routes = { "/y/a" -> InnerChild } = column(route-outlet())`,
+          `page(Inner)`,
+          `"/y/*" -> Inner, `,
+        ],
+      ];
+      for (const [what, defs, body, routes] of reached) {
+        it(`accepts an outlet in a tile ${what}`, () => {
+          expect(checkSrc(program(defs, body, routes))).toEqual([]);
+        });
+      }
+
+      it("accepts a helper's outlet under a branch, as it accepts one written inline there", () => {
+        // A branch is an expansion edge, so this is the inline `when(shown,
+        // route-outlet())` one tile down — accepted the same way, and absent
+        // at runtime the same way when the branch does not render.
+        expect(
+          codes(
+            `slot shown : Bool = true
+             tile Outlet = column(when(shown, route-outlet()))`,
+            `page(Outlet)`,
+          ),
+        ).not.toContain("E0113");
+      });
+
+      const unreached: [string, string, string][] = [
+        ["a helper with no outlet", `tile Helper = column(text("h"))`, `page(Helper)`],
+        [
+          // Nothing renders a tile written as a named argument, so neither its
+          // own outlet nor a helper's there is in the tree.
+          "an outlet written as a named argument",
+          ``,
+          `page(column(x=route-outlet()))`,
+        ],
+      ];
+      for (const [what, defs, body] of unreached) {
+        it(`reports ${what} as E0113`, () => {
+          expect(codes(defs, body)).toContain("E0113");
+        });
+      }
+
+      it("reports an outlet only in the tile's own error-boundary fallback as E0113", () => {
+        // The fallback replaces the tree that panicked, and the runtime fills
+        // the outlet from inside the boundary, in the tree it replaces — so
+        // the fallback's outlet is never the one filled. E0005 follows this
+        // edge; E0113 does not.
+        const src = `
+          tile NotFound = page(heading("404"))
+          tile Account = page(heading("account"))
+          tile Fb in=PanicInfo = column(route-outlet())
+          tile Layout
+            error-boundary = Fb
+            sub-routes = { "/x/a" -> Account }
+            = page(heading("s"))
+          app A caps=[] routes={ "/x/*" -> Layout, "/404" -> NotFound } init=[]
+        `;
+        expect(checkSrc(src).map((e) => e.code)).toContain("E0113");
+      });
+
+      it("terminates on a helper that expands into itself, and still reports E0113", () => {
+        expect(codes(`tile Loop = column(text("x"), Loop)`, `page(Loop)`)).toEqual([
+          "E0113",
+          "E0005",
+        ]);
+      });
+
+      it("says what it looked at", () => {
+        const err = checkSrc(program(`tile Helper = column(text("h"))`, `page(Helper)`)).find(
+          (e) => e.code === "E0113",
+        );
+        expect(err?.message).toBe(
+          `Tile "Layout" declares sub-routes but renders no "route-outlet", in its body or in any tile the body expands into — the matched child would have nowhere to render`,
+        );
+      });
+    });
   });
 
   describe("episode-test mocks (issue #90)", () => {
