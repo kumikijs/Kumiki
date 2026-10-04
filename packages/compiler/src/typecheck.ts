@@ -3227,8 +3227,11 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             continue;
           }
           if (isFragmentFnName(a, sym, ctx)) {
-            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
+            // How many arguments the member hands a fn is a question about a
+            // member the receiver has, as the call's own count is above.
+            if (lacksMember) continue;
+            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
             // value), so the key it computes is what the fn declares it
             // returns. A fn already refused for its arity is not checked again.
