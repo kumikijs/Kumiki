@@ -44,7 +44,7 @@ reducer go on=ui.click(Btn) do= w := w.union(["a"])`);
 
   // Each row writes the literal in one position whose declared type is a Set
   // only through the position's own type — an element, a value, a payload, an
-  // alias, a return type, a member's argument, a `let … in` body.
+  // alias, a return type, a `let … in` body, a Map's index, a member's argument.
   it.each([
     ["a List element", "slot v : List(Set(Int)) = [[1]]", "[_s.setOf([1])]"],
     [
@@ -59,6 +59,16 @@ reducer go on=ui.click(Btn) do= w := w.union(["a"])`);
       "a let … in body",
       "slot v : Set(Int) = []\nreducer go on=ui.click(Btn) do= v := let x = 1 in [x]",
       "return _s.setOf([x])",
+    ],
+    [
+      "the index of a Map read",
+      'slot m : Map(Set(Int), Text) = {}\nslot t : Text = ""\nreducer go on=ui.click(Btn) do= t := m[[1]]',
+      ", _s.setOf([1]));",
+    ],
+    [
+      "the index of a Map write",
+      'slot m : Map(Set(Int), Text) = {}\nreducer go on=ui.click(Btn) do= m[[1]] := "a"',
+      "[{ at: _s.setOf([1]) }]",
     ],
     [
       "the argument of List.contains",

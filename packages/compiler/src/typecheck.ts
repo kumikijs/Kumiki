@@ -2502,11 +2502,12 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
 }
 
 /**
- * An index step on the left of `:=`. A `List` index names a position, so it is
- * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
- * membership and nothing else, so `s[x] := v` has no place to write — the same
- * refusal §1.6.3 gives a member, and reported by the same code. Membership is
- * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ * An index step on the left of `:=`. The index has the type of what it names
+ * (`indexType`): a `List`'s position is an `Int`, a `Map(K, V)`'s entry is at a
+ * `K`. A `Set` has membership and nothing else, so `s[x] := v` has no place to
+ * write — the same refusal §1.6.3 gives a member, and reported by the same
+ * code. Membership is changed through `.add` / `.remove` / `.toggle`
+ * (stdlib.md §2.2.2).
  */
 function checkIndexLvalue(
   lv: Lvalue & { kind: "LIndex" },
@@ -2515,7 +2516,7 @@ function checkIndexLvalue(
   ctx: Ctx,
 ): void {
   const base = unaliasType(lvalueType(lv.base, sym), sym);
-  checkListIndex(base, lv.index, sym, errors, ctx);
+  checkAgainst(lv.index, indexType(base, lv.index.pos), sym, errors, ctx);
   if (base?.kind !== "TypeApp" || base.name !== "Set") return;
   errors.push({
     code: "E0602",
@@ -2526,19 +2527,19 @@ function checkIndexLvalue(
 }
 
 /**
- * A `List` index is an `Int`, on either side of `:=` — the read and the write
- * name the same element (language.md §1.6.3). `base` is the receiver's type,
- * already unaliased; any other receiver is left alone.
+ * The type an index into `base` has, on either side of `:=` — the read and the
+ * write name the same place (language.md §1.6.3): a `List` index is a position,
+ * an `Int`, and a `Map(K, V)` index is the key of an entry, a `K` as the Map's
+ * type writes it. The index is checked against it as a value is against its
+ * declared type, so a key declared `nominal Text` takes a `Text` and refuses
+ * another nominal (§1.3.5). `base` is the receiver's type, already unaliased;
+ * any other receiver answers `null`, and its index is checked against nothing.
  */
-function checkListIndex(
-  base: TypeExpr | null,
-  index: Expr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  if (base?.kind !== "TypeApp" || base.name !== "List") return;
-  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
+function indexType(base: TypeExpr | null, at: Pos): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return prim("Int", at);
+  if (base.name === "Map") return base.args[0] ?? null;
+  return null;
 }
 
 /**
@@ -3123,11 +3124,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
       return;
-    case "Index":
+    case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
+      const base = unaliasType(inferType(e.base, sym, ctx), sym);
+      checkAgainst(e.index, indexType(base, e.index.pos), sym, errors, ctx);
       return;
+    }
     case "Call":
       // `run-reducer(name)` takes a reducer, not a value, and lowers only
       // inside a generated property-test trial — so it is absent from the
