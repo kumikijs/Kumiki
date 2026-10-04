@@ -1,0 +1,57 @@
+# Feature (stdlib.md §2.5, §2.6.5; routing.md §3.5.2): `toast` and `confirm`
+# both run on `notification.show`, and a host provider registered for that
+# capability replaces the toast alone. `confirm` always renders the runtime's
+# own dialog, because its answer is a reducer the dialog dispatches and a
+# provider returns an `EffectResult`, which has no way to carry one. A host
+# that mounts this app with `providers: {"notification.show": …}` gets the
+# "Saved" toast and never the guard's question, so the unsaved-changes guard
+# below keeps asking and its answer keeps settling the move it holds.
+#
+# A move the guard holds lasts until its dialog is answered or another
+# navigation arrives. The later navigation replaces it: the held move is
+# dropped, its dialog closes unanswered (neither `discard` nor `keep` runs),
+# and the new navigation leaves the page still shown, so the guard asks again,
+# this time about the new destination.
+
+slot dirty  : Bool = false
+slot saves  : Int  = 0
+slot kept   : Int  = 0
+slot homes  : Int  = 0
+slot abouts : Int  = 0
+
+reducer edit on=ui.input(Draft) do= dirty := true
+reducer save on=ui.click(SaveBtn)
+    do= dirty := false
+        saves := saves + 1
+        emit toast({kind: "success", text: "Saved"})
+
+reducer guardEdit on=route.leave("/edit")
+    do= if dirty
+        then emit confirm({title: "Discard changes?",
+                           message: "You have unsaved edits.",
+                           onYes: discard,
+                           onNo:  keep})
+        else ()
+reducer discard on=ui.click(_) do= dirty := false
+reducer keep    on=ui.click(_) do= kept := kept + 1
+
+reducer enterHome  on=route.enter("/")      do= homes := homes + 1
+reducer enterAbout on=route.enter("/about") do= abouts := abouts + 1
+
+tile Draft    = textarea(placeholder="Draft", onInput=edit)
+tile SaveBtn  = button(text="Save", onClick=save)
+tile Home     = page(heading("Home page"), link(to="/edit") {text: "Edit"})
+tile About    = page(heading("About page"), link(to="/edit") {text: "Edit"})
+tile Editor   = page(heading("Editor"),
+                     text("dirty: " + dirty.show),
+                     text("saves: " + saves.show),
+                     Draft,
+                     SaveBtn,
+                     link(to="/") {text: "Home"},
+                     link(to="/about") {text: "About"})
+tile NotFound = page(heading("404"), link(to="/") {text: "Home"})
+
+app ConfirmBesideAToastProvider
+    caps   = [notification.show, nav.push]
+    routes = {"/" -> Home, "/about" -> About, "/edit" -> Editor, "/404" -> NotFound}
+    init   = []

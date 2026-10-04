@@ -945,6 +945,14 @@ export type NavContext = {
 export type BuiltinInstaller = (app: AppShape, nav: NavContext) => void;
 
 /**
+ * The hook a `confirm` modal calls as it opens (routing.md §3.5.2): `close`
+ * shuts it unanswered when a later navigation drops the move it was asked
+ * about, and the returned function settles that move by its answer. Nothing
+ * comes back when no move is waiting on this modal.
+ */
+export type HoldLeave = (close: () => void) => ((outcome: "yes" | "no") => void) | undefined;
+
+/**
  * The routing feature module's surface (see `router.ts`). Optional at mount:
  * a routeless app never pays for router/nav-effect code (#71).
  */
@@ -2114,10 +2122,13 @@ export function mountCore(
   // when a route.leave reducer emits `confirm`, the runtime holds the
   // transition — the modal stays on top of the OLD route's tile, and Yes/No
   // (from the confirm effect handler) either commits newRoute + fires
-  // route.enter, or reverts the router to oldRoute's path.
-  let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
-  let observeLeaveConfirm = false;
-  let leaveAskedConfirm = false;
+  // route.enter, or reverts the router to oldRoute's path. A navigation that
+  // arrives first drops the held move and closes its modal unanswered.
+  type HeldMove = { oldRoute: ParsedRoute; newRoute: ParsedRoute; close?: () => void };
+  let pendingLeave: HeldMove | null = null;
+  // The move whose route.leave reducers are running; a `confirm` one of them
+  // emits holds it.
+  let leaving: HeldMove | null = null;
 
   // §3.9 scroll restoration: track per-path scroll positions and the source of
   // each navigation. push / replace forward → scroll to top (unless the matched
@@ -2758,7 +2769,9 @@ export function mountCore(
       envReads,
     );
     for (const emit of result.emits) {
-      if (observeLeaveConfirm && emit.effect === "confirm") leaveAskedConfirm = true;
+      // Held before the dispatch, so the modal the confirm opens finds the
+      // move it answers.
+      if (leaving && emit.effect === "confirm") pendingLeave = leaving;
       dispatcher.dispatch(emit);
     }
     for (const name of result.stopTimers ?? []) {
@@ -2845,9 +2858,12 @@ export function mountCore(
 
   function syncRouteFromLocation(): void {
     if (!routing || !router) return;
-    // A pending leave guard is already gating the previous transition; ignore
-    // re-entrant syncs (e.g. a router.replace from the No path would re-call us).
-    if (pendingLeave) return;
+    // A navigation while a move is held replaces it (routing §3.5.2): the held
+    // move is dropped and its modal closed unanswered. The held move never
+    // committed, so this one leaves the route still shown, guards and all.
+    const dropped = pendingLeave;
+    pendingLeave = null;
+    dropped?.close?.();
     // Resolve any static redirect for the current path BEFORE computing the
     // new route — keeps the URL bar in sync with what gets rendered and
     // covers both top-level and sub-route redirects.
@@ -2867,13 +2883,12 @@ export function mountCore(
     // (routing.md §3.4), even within one pattern (new params, a sibling
     // sub-route); a query-only, hash-only or same-path move stays on it, and
     // the initial mount has nothing to leave. The path alone decides: one path
-    // always parses to one pattern, so a pattern change is a path change. We
-    // observe whether any leave reducer emitted `confirm` — if so, we hold off
-    // updating slotValues.route and firing route.enter until the confirm modal
-    // resolves via `_resolveLeave`.
+    // always parses to one pattern, so a pattern change is a path change. A
+    // leave reducer that emits `confirm` holds the move: slotValues.route and
+    // route.enter wait for the confirm modal's answer (`_holdLeave`).
     if (oldRoute && oldRoute.path !== newRoute.path) {
-      observeLeaveConfirm = true;
-      leaveAskedConfirm = false;
+      const move: HeldMove = { oldRoute, newRoute };
+      leaving = move;
       try {
         for (const r of app.reducers) {
           if (
@@ -2884,10 +2899,9 @@ export function mountCore(
           }
         }
       } finally {
-        observeLeaveConfirm = false;
+        leaving = null;
       }
-      if (leaveAskedConfirm) {
-        pendingLeave = { oldRoute, newRoute };
+      if (pendingLeave === move) {
         // The OLD route's tile remains visible underneath the modal; render so
         // any slot writes the leave reducer made (or the modal itself) flush.
         render();
@@ -2940,9 +2954,9 @@ export function mountCore(
     }
   }
 
-  function resolveLeave(outcome: "yes" | "no"): void {
-    const p = pendingLeave;
-    if (!p) return;
+  /** Settle `p` by its modal's answer, unless a later navigation dropped it. */
+  function resolveLeave(p: HeldMove, outcome: "yes" | "no"): void {
+    if (pendingLeave !== p) return;
     pendingLeave = null;
     if (outcome === "yes") {
       slotValues.route = p.newRoute;
@@ -2957,11 +2971,9 @@ export function mountCore(
       applyScrollFor(p.newRoute);
       render();
     } else {
-      // Revert: rewrite the URL back to the old path without re-firing the
-      // leave guard (pendingLeave is already null, but the recursion guard at
-      // the top of syncRouteFromLocation also short-circuits if this somehow
-      // re-enters before the new state is observed). The URL is rebuilt whole,
-      // so the old route's query and hash come back with its path.
+      // Revert: rewrite the URL back to the old path. `replace` notifies no
+      // subscriber, so the leave guard does not run again. The URL is rebuilt
+      // whole, so the old route's query and hash come back with its path.
       if (routing) router?.replace(routing.href(p.oldRoute));
       slotValues.route = p.oldRoute;
       render();
@@ -3062,8 +3074,15 @@ export function mountCore(
   ) => {
     updateRoute(path, !!replace);
   };
-  (app as AppShape & { _resolveLeave?: (outcome: "yes" | "no") => void })._resolveLeave =
-    resolveLeave;
+  // A confirm modal opening while a move is held is that move's question: it
+  // hands over how to close it, and gets back how to settle the move. A second
+  // modal for the same move gets nothing, so only the guard's answer settles it.
+  (app as AppShape & { _holdLeave?: HoldLeave })._holdLeave = (close) => {
+    const move = pendingLeave;
+    if (!move || move.close) return undefined;
+    move.close = close;
+    return (outcome) => resolveLeave(move, outcome);
+  };
   (
     app as AppShape & { _submitHeldBy?: (e: Event) => readonly string[] | undefined }
   )._submitHeldBy = submitHeldBy;

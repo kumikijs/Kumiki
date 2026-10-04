@@ -1,9 +1,9 @@
 // The `confirm` built-in effect (lifecycle §7.6): renders a modal dialog with
 // Yes / No actions and dispatches the user-supplied reducer references. The
-// runtime also resolves any pending `route.leave` guard the confirm was
-// emitted from (routing §3.5.2): Yes commits the held transition, No reverts.
+// runtime also settles the `route.leave` move the confirm was emitted from
+// (routing §3.5.2): Yes commits the held transition, No reverts.
 
-import { type AppShape, type BuiltinInstaller, overridableInvoke } from "./core.ts";
+import type { AppShape, BuiltinInstaller, HoldLeave } from "./core.ts";
 
 type ConfirmInput = {
   title?: string;
@@ -14,18 +14,21 @@ type ConfirmInput = {
 
 type AppWithHooks = AppShape & {
   _dispatch?: (name: string, el: Record<string, unknown>) => void;
-  _resolveLeave?: (outcome: "yes" | "no") => void;
+  _holdLeave?: HoldLeave;
 };
 
 export const installConfirm: BuiltinInstaller = (app) => {
   app.effects.confirm = {
     name: "confirm",
     cap: "notification.show",
-    invoke: overridableInvoke("notification.show", async (input) => {
+    // Not `overridableInvoke`: a `notification.show` provider replaces the
+    // toast only (stdlib §2.5). Its `EffectResult` cannot dispatch `onYes` /
+    // `onNo` or settle a held move, so the dialog is always this one.
+    invoke: async (input) => {
       const t = (input ?? {}) as ConfirmInput;
       await renderConfirmModal(app as AppWithHooks, t);
       return { kind: "ok", value: null };
-    }),
+    },
   };
 };
 
@@ -79,15 +82,22 @@ function renderConfirmModal(app: AppWithHooks, t: ConfirmInput): Promise<void> {
     };
     document.addEventListener("keydown", onKey);
 
-    const finish = (outcome: "yes" | "no"): void => {
+    const close = (): void => {
       document.removeEventListener("keydown", onKey);
       overlay.remove();
+      resolve();
+    };
+    // The move a `route.leave` guard holds behind this dialog, if any. A
+    // navigation that drops the move closes the dialog through `close`.
+    const settle = app._holdLeave?.(close);
+
+    const finish = (outcome: "yes" | "no"): void => {
+      close();
       // Order matters: run the user-supplied callback first so any cleanup
       // (e.g. `dirty := false`) lands before route.enter sees the new route.
       const cb = outcome === "yes" ? t.onYes : t.onNo;
       if (cb) app._dispatch?.(cb, {});
-      app._resolveLeave?.(outcome);
-      resolve();
+      settle?.(outcome);
     };
 
     yesBtn.addEventListener("click", () => finish("yes"));
