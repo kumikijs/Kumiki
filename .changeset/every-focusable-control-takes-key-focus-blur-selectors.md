@@ -14,5 +14,3 @@ The three rows are now built from two named lists in `ui-lifts.ts`, so they cann
 On a link, `ui.key` runs before the browser acts on the key. On Enter, the link is then activated and the router navigates as usual, so the reducer cannot cancel the navigation. `click` on a link stays reserved for navigation.
 
 **A subscription that did nothing now runs.** The rows only grow. A `ui.key` reducer aimed at a container (`ui.key(Form)` over `tile Form = column(…)`) used to wire only to an `input` / `textarea` / `button` descendant. It now also wires to a `link` / `slider` / `select` / `check` / `radio` / `switch` descendant. The same holds for `ui.focus` / `ui.blur` with `link` / `slider`. A reducer aimed directly at one of those kinds used to get W0212 and no behaviour; it now gets the behaviour and no warning. Check such reducers for keys or focus changes they did not expect.
-
-`video` (with `controls`) and `details` are not in these rows yet (#525).

@@ -472,6 +472,7 @@ app A
 
   // Each kind, and the events that reach the element its renderer returns:
   // every focusable root takes all three, a label-wrapped control `key` only.
+  // A `video` is a focusable root when it has `controls`.
   const ALL = ["key", "focus", "blur"] as const;
   const kinds: ReadonlyArray<{ kind: string; tile: string; evs: readonly UiEv[] }> = [
     { kind: "input", tile: "input(bind=note)", evs: ALL },
@@ -481,6 +482,7 @@ app A
     { kind: "slider", tile: "slider(bind=vol, min=0, max=10)", evs: ALL },
     { kind: "link", tile: 'link(to="/", text="home")', evs: ALL },
     { kind: "select", tile: "select(bind=size, options=sizes())", evs: ALL },
+    { kind: "video", tile: 'video(src="/a.mp4", controls=true)', evs: ALL },
     { kind: "check", tile: "check(value=done)", evs: ["key"] },
     { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
     { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
@@ -542,6 +544,43 @@ app A
       });
     }
   }
+
+  for (const ev of ALL) {
+    it(`reports ui.${ev} on details with what keeps it away, and lifts nothing onto it`, () => {
+      // The <summary> takes focus inside the <details> the listener would sit
+      // on. `focus` / `blur` do not bubble there. `keydown` does, and from
+      // every tile in the panel too: see the case below. Either way the
+      // <summary> fires the event, so "no descendant fires it" is not the
+      // reason.
+      const tile = 'details(summary="Question", text(note))';
+      const reported = check(parse(lex(source(ev, tile))));
+      expect(reported.map((e) => e.code)).toEqual(["W0212"]);
+      expect(reported[0]?.message).toContain("around its <summary>");
+      expect(build(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
+    });
+  }
+
+  it("lifts ui.key on a details onto the input in its panel, and onto nothing else", () => {
+    // A keydown in the input bubbles to the <details>. A listener there as
+    // well as the input's own would run the reducer twice per key, so the
+    // details takes as many listeners as a box around the same input: none.
+    const lifted = (tile: string): number =>
+      build(source("key", tile)).split(`onKeyDown: _h("hit")`).length - 1;
+    const details = 'details(summary="Question", input(bind=note))';
+    expect(codes(source("key", details))).toEqual([]);
+    expect(lifted(details)).toBeGreaterThan(0);
+    expect(lifted(details)).toBe(lifted("box(input(bind=note))"));
+    // And the warning a details with nothing else in its panel draws says why.
+    expect(check(parse(lex(source("key", 'details(summary="Q", text(note))'))))).toEqual([
+      expect.objectContaining({
+        code: "W0212",
+        message: expect.stringContaining(
+          `a details takes no "key" listener on the <details> around its <summary>, ` +
+            `since one there would also hear every "key" from the tiles inside it`,
+        ),
+      }),
+    ]);
+  });
 
   it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {
     // The row a reader expects to move with these three. It must not: a

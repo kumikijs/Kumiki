@@ -12,8 +12,8 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *   For `key` / `focus` / `blur` the runtime attaches the listener to
  *   whatever element a renderer returned, so which kinds a selector reaches
  *   is decided by where those events arrive at that element — see
- *   `FOCUSABLE_ROOT`, `LABEL_WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`,
- *   which the three rows are built from. For `click` / `submit` / `change` /
+ *   `FOCUSABLE_ROOT`, `WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`, which the
+ *   three rows are built from. For `click` / `submit` / `change` /
  *   `input` each kind's renderer decides whether it calls the handler, and an
  *   absence there records that decision. Some are facts about the element
  *   (`editable` fires no `change`); some are runtime policy (`link` reserves
@@ -22,8 +22,8 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  * `firesUnheard`: the runtime-policy absences of that row — a kind left out of
  *   `tiles` although its element fires `ev`, mapped to what its renderer does
  *   with the event instead of calling `handler`. W0212 gives that as its
- *   reason. For a left-out kind found neither here nor by
- *   `labelWrappedUnreached`, it says no descendant fires the event.
+ *   reason. For a left-out kind found neither here nor by `wrappedUnreached`,
+ *   it says no descendant fires the event.
  *
  * Consumers:
  *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
@@ -31,7 +31,7 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *    explicit `onX=r` wirings so they are not re-emitted as data props.
  *  - `typecheck.ts#checkReducer` — emits W0212 when a reducer's selector
  *    targets a tile not listed in `tiles`, giving the reason
- *    `labelWrappedUnreached` or `firesUnheardIn` names when one names one;
+ *    `wrappedUnreached` or `firesUnheardIn` names when one names one;
  *    `checkTile` resolves an explicit handler's value as a reducer name
  *    rather than an expression.
  *  - `references.ts` — the same resolution for the AI-editing verbs, so
@@ -58,8 +58,8 @@ export type UiLift = {
  * Kinds whose rendered element is itself focusable, so `focus`, `blur` and
  * `keydown` all arrive at the element the runtime attaches its listeners to
  * (`applyUiEventHandlers`). The `key` / `focus` / `blur` rows are built from
- * this list, `LABEL_WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`, so the three
- * rows cannot drift apart.
+ * this list, `WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`, so the three rows
+ * cannot drift apart.
  *
  * - `input` / `textarea` / `button` / `select` / `slider`: form controls (a
  *   `slider` is a bare `<input type="range">`, operated with arrow keys).
@@ -72,10 +72,17 @@ export type UiLift = {
  *   own click listener navigates as always. The reducer sees the key and
  *   cannot stop the navigation. This is unlike `click`, which the link reserves
  *   for navigation and which is therefore absent from the `click` row.
+ * - `video`: a `<video>` rendered with `controls` is focusable and in the tab
+ *   order. It receives `focus` and `blur` as focus enters and leaves it as a
+ *   whole; moving between its own play / volume / fullscreen buttons fires
+ *   neither on it. It receives the keydown of a key pressed while it has focus
+ *   itself (Space then plays or pauses it), and not that of one pressed while
+ *   one of those buttons has focus. Measured in Chromium.
  *
  * What this list cannot answer is whether one *instance* can take focus: a
- * `disabled` control, or an `editable` rendered `contenteditable="false"`,
- * fires none of the three. That is a runtime property of the element.
+ * `disabled` control, an `editable` rendered `contenteditable="false"`, or a
+ * `video` rendered without `controls` fires none of the three. That is a
+ * runtime property of the element.
  */
 const FOCUSABLE_ROOT = [
   "input",
@@ -85,31 +92,54 @@ const FOCUSABLE_ROOT = [
   "slider",
   "editable",
   "link",
+  "video",
 ] as const;
 
 /**
- * Kinds rendered as a `<label>` wrapping their focusable `<input>`, so the
- * runtime's listeners sit on the label and not on the control that takes
- * focus. Which events reach the label is `ROOT_LISTENED_BUBBLES`: `keydown`
- * BUBBLES from the inner `<input>` to the label, so a `ui.key` selector lands;
- * `focus` and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on
- * the label ever runs, and W0212 is correct to emit for them. The `<input>`
- * does fire them, so W0212 gives that reason (`labelWrappedUnreached`) rather
- * than saying no descendant fires the event. These three look like one case
- * with the focusable controls and are two.
+ * Kinds whose renderer returns an element WRAPPING the one that takes focus,
+ * so the runtime's listeners sit on the `wrapper` and not on the `focused`
+ * element. Which events reach the wrapper is `ROOT_LISTENED_BUBBLES`: `focus`
+ * and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on the
+ * wrapper ever runs, and W0212 is correct to emit for them. `keydown` BUBBLES,
+ * so a listener on the wrapper hears it, together with the keydown of anything
+ * else the wrapper holds (`holdsChildren`):
+ *
+ * - `check` / `radio` / `switch`: a `<label>` around their `<input>` and
+ *   nothing else, so a `ui.key` selector lands on the label.
+ * - `details`: a `<details>` around its `<summary>` AND the tiles of its
+ *   panel. A control in the panel that the `key` row lists carries the same
+ *   subscription lifted onto it, and its keydown bubbles on to the
+ *   `<details>`, so a listener there would run the reducer a second time for
+ *   each key. No `key` listener is lifted onto a `details` either.
+ *
+ * The focused element does fire the event in every case, so W0212 gives that
+ * reason (`wrappedUnreached`) rather than saying no descendant fires it. These
+ * kinds look like one case with the focusable roots and are two.
  */
-const LABEL_WRAPPED_CONTROL = ["check", "radio", "switch"] as const;
+const WRAPPED_CONTROL = {
+  check: { wrapper: "label", focused: "input", holdsChildren: false },
+  radio: { wrapper: "label", focused: "input", holdsChildren: false },
+  switch: { wrapper: "label", focused: "input", holdsChildren: false },
+  details: { wrapper: "details", focused: "summary", holdsChildren: true },
+} as const satisfies Record<string, { wrapper: string; focused: string; holdsChildren: boolean }>;
+
+type WrappedKind = keyof typeof WRAPPED_CONTROL;
+
+function isWrapped(kind: string): kind is WrappedKind {
+  return Object.hasOwn(WRAPPED_CONTROL, kind);
+}
 
 /**
  * The three events the runtime listens for on the element a renderer returned
  * (`applyUiEventHandlers`; its fourth listener, `mouseenter`, is the `hover`
  * row, which any tile takes), and whether each bubbles. A `FOCUSABLE_ROOT`
- * kind receives all three on that element. A `LABEL_WRAPPED_CONTROL` kind
- * receives only the ones that bubble from its `<input>` to its `<label>`.
+ * kind receives all three on that element. A `WRAPPED_CONTROL` kind receives
+ * only the ones that bubble from its focused element to its wrapper, and only
+ * where the wrapper holds nothing else (`wrapperHears`).
  *
  * The `key` / `focus` / `blur` rows are built from this, and so is the reason
- * W0212 gives for a label-wrapped kind a row leaves out, so the row and the
- * reason cannot disagree.
+ * W0212 gives for a wrapped kind a row leaves out, so the row and the reason
+ * cannot disagree.
  */
 const ROOT_LISTENED_BUBBLES = { key: true, focus: false, blur: false } as const;
 
@@ -119,29 +149,60 @@ function isRootListened(ev: UiEventKind): ev is RootListened {
   return Object.hasOwn(ROOT_LISTENED_BUBBLES, ev);
 }
 
-/** The kinds a `key` / `focus` / `blur` selector reaches. */
-function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
-  const reached: readonly string[] = ROOT_LISTENED_BUBBLES[ev]
-    ? [...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]
-    : FOCUSABLE_ROOT;
-  return new Set(reached);
+/** Whether a listener on `kind`'s wrapper hears `ev` from its focused element alone. */
+function wrapperHears(ev: RootListened, kind: WrappedKind): boolean {
+  return ROOT_LISTENED_BUBBLES[ev] && !WRAPPED_CONTROL[kind].holdsChildren;
 }
 
-const LABEL_WRAPPED: ReadonlySet<string> = new Set(LABEL_WRAPPED_CONTROL);
+/** The kinds a `key` / `focus` / `blur` selector reaches. */
+function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
+  const wrapped = Object.keys(WRAPPED_CONTROL).filter((k) => isWrapped(k) && wrapperHears(ev, k));
+  return new Set([...FOCUSABLE_ROOT, ...wrapped]);
+}
+
+/** Wrapped kinds that share a wrapper and a focused element, and the event that misses them. */
+export type WrappedUnreached = {
+  readonly kinds: string[];
+  readonly wrapper: string;
+  readonly focused: string;
+  /**
+   * `ev` bubbles from `focused` to `wrapper`, so what keeps it from a listener
+   * is the other tiles the wrapper holds; otherwise it is that it does not
+   * bubble.
+   */
+  readonly bubbles: boolean;
+};
 
 /**
- * The label-wrapped kinds among `kinds` whose `<input>` fires `ev` where their
- * listener never receives it: `ev` is one the runtime listens for on the
- * `<label>` and it does not bubble there. Sorted. Empty when that is not why
- * `ev` misses these kinds: for an event the label receives (`key`), and for
- * one the `<input>` does not fire at all (`submit`).
+ * The wrapped kinds among `kinds` whose focused element fires `ev` where no
+ * listener of theirs receives it: `ev` is one the runtime listens for on the
+ * wrapper, and it does not bubble there, or it does and the wrapper holds
+ * other tiles whose `ev` a listener there would hear too. Grouped by wrapper
+ * and focused element, each group's kinds sorted, the groups in the order of
+ * their first kind. Empty when that is not why `ev` misses these kinds: for an
+ * event the wrapper hears (`key` on a `check`), and for one the focused
+ * element does not fire at all (`submit`).
  *
  * W0212 reads it to say so. For these kinds "no descendant fires it" is
- * untrue, because the `<input>` does.
+ * untrue, because the focused element does.
  */
-export function labelWrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): string[] {
-  if (!isRootListened(ev) || ROOT_LISTENED_BUBBLES[ev]) return [];
-  return [...kinds].filter((k) => LABEL_WRAPPED.has(k)).sort();
+export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): WrappedUnreached[] {
+  if (!isRootListened(ev)) return [];
+  const groups = new Map<string, WrappedUnreached>();
+  for (const kind of [...kinds].sort()) {
+    if (!isWrapped(kind) || wrapperHears(ev, kind)) continue;
+    const { wrapper, focused } = WRAPPED_CONTROL[kind];
+    const at = `${wrapper} ${focused}`;
+    const group = groups.get(at) ?? {
+      kinds: [],
+      wrapper,
+      focused,
+      bubbles: ROOT_LISTENED_BUBBLES[ev],
+    };
+    group.kinds.push(kind);
+    groups.set(at, group);
+  }
+  return [...groups.values()];
 }
 
 export const UI_LIFTS: ReadonlyArray<UiLift> = [

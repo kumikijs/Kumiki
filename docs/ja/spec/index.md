@@ -298,5 +298,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `233-label-wrapped-focus.kumiki` | type, slot, reducer, tile | コア | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
+| `236-media-details-focus.kumiki` | slot, reducer, tile | コア | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 <!-- examples:end -->
 :::

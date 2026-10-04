@@ -298,5 +298,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `233-label-wrapped-focus.kumiki` | type, slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
+| `236-media-details-focus.kumiki` | slot, reducer, tile | core | [§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) |
 <!-- examples:end -->
 :::

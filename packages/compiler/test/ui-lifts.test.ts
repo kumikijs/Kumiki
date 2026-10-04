@@ -10,9 +10,9 @@ import {
   firesUnheardIn,
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
-  labelWrappedUnreached,
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
+  wrappedUnreached,
 } from "../src/ui-lifts.ts";
 
 const ALL_UI_EVENT_KINDS: ReadonlyArray<UiEventKind> = [
@@ -52,43 +52,70 @@ describe("UI_LIFTS", () => {
       new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
     );
     expect(byEv.get("input")?.tiles).toEqual(new Set(["input", "textarea", "editable"]));
-    // Every kind whose element is itself focusable is in all three; the
-    // label-wrapped controls in `key` only, because a keydown bubbles to the
-    // label and a focus / blur does not.
-    const focusable = ["input", "textarea", "button", "select", "slider", "editable", "link"];
+    // Every kind whose element is itself focusable is in all three, `video`
+    // among them (a `<video>` with `controls`). The label-wrapped controls are
+    // in `key` only, because a keydown bubbles to the label and a focus / blur
+    // does not. `details` is in none: its `<details>` holds its panel as well
+    // as its `<summary>`.
+    const focusable = [
+      "input",
+      "textarea",
+      "button",
+      "select",
+      "slider",
+      "editable",
+      "link",
+      "video",
+    ];
     expect(byEv.get("key")?.tiles).toEqual(new Set([...focusable, "check", "radio", "switch"]));
     expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
     expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
   });
 });
 
-describe("labelWrappedUnreached", () => {
-  const LABEL_WRAPPED = ["check", "radio", "switch"];
+describe("wrappedUnreached", () => {
+  const WRAPPED = ["check", "radio", "switch", "details"];
+  const LABEL = { wrapper: "label", focused: "input" } as const;
+  const DETAILS = { wrapper: "details", focused: "summary" } as const;
 
-  it("answers focus and blur, which fire on the <input> and do not bubble to the <label>", () => {
-    const answered = ALL_UI_EVENT_KINDS.filter(
-      (ev) => labelWrappedUnreached(ev, LABEL_WRAPPED).length > 0,
-    );
-    expect(answered.sort()).toEqual(["blur", "focus"]);
-    expect(labelWrappedUnreached("focus", LABEL_WRAPPED)).toEqual(LABEL_WRAPPED);
-    expect(labelWrappedUnreached("blur", LABEL_WRAPPED)).toEqual(LABEL_WRAPPED);
+  it("answers focus and blur for every wrapped kind, which do not bubble to the wrapper", () => {
+    const groups = [
+      { kinds: ["check", "radio", "switch"], ...LABEL, bubbles: false },
+      { kinds: ["details"], ...DETAILS, bubbles: false },
+    ];
+    expect(wrappedUnreached("focus", WRAPPED)).toEqual(groups);
+    expect(wrappedUnreached("blur", WRAPPED)).toEqual(groups);
+  });
+
+  it("answers key for details alone, whose wrapper holds its panel too", () => {
+    // A keydown bubbles to a <label> and to a <details> alike. The label
+    // holds its <input> and nothing else, so `key` reaches a check; the
+    // <details> also holds the tiles of its panel.
+    expect(wrappedUnreached("key", WRAPPED)).toEqual([
+      { kinds: ["details"], ...DETAILS, bubbles: true },
+    ]);
+  });
+
+  it("answers no other event", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter((ev) => wrappedUnreached(ev, WRAPPED).length > 0);
+    expect(answered.sort()).toEqual(["blur", "focus", "key"]);
   });
 
   it("names only kinds the event's row leaves out, so W0212 can give it as the reason", () => {
     for (const ev of ALL_UI_EVENT_KINDS) {
       const row = UI_EVENT_TILE_KINDS[ev];
-      for (const kind of labelWrappedUnreached(ev, LABEL_WRAPPED)) {
-        expect(row?.has(kind), `${kind} in the ${ev} row`).toBe(false);
+      for (const { kinds } of wrappedUnreached(ev, WRAPPED)) {
+        for (const kind of kinds) expect(row?.has(kind), `${kind} in the ${ev} row`).toBe(false);
       }
     }
   });
 
-  it("keeps the label-wrapped kinds of a body and drops the rest, sorted", () => {
-    expect(labelWrappedUnreached("focus", ["text", "switch", "box", "check"])).toEqual([
-      "check",
-      "switch",
+  it("keeps the wrapped kinds of a body and drops the rest, sorted", () => {
+    expect(wrappedUnreached("focus", ["text", "switch", "details", "box", "check"])).toEqual([
+      { kinds: ["check", "switch"], ...LABEL, bubbles: false },
+      { kinds: ["details"], ...DETAILS, bubbles: false },
     ]);
-    expect(labelWrappedUnreached("focus", ["box", "text"])).toEqual([]);
+    expect(wrappedUnreached("focus", ["box", "text", "video"])).toEqual([]);
   });
 });
 
@@ -128,7 +155,7 @@ describe("firesUnheard / firesUnheardIn", () => {
   it("answers nothing for a kind whose element fires nothing, or a row with no record", () => {
     expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
     expect(firesUnheardIn("change", ["editable"])).toEqual([]);
-    // The label-wrapped focus / blur absence is `labelWrappedUnreached`'s.
+    // The label-wrapped focus / blur absence is `wrappedUnreached`'s.
     expect(firesUnheardIn("focus", ["check"])).toEqual([]);
   });
 });
