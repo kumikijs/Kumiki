@@ -1,0 +1,46 @@
+# Feature (language.md §1.3.1): a variant may be named after a primitive
+# type.
+#
+#   type SortBy = Name | Time | Size
+#
+# A union alternative is an identifier with an optional payload, and `Time`,
+# `Text`, `Int` and the other primitive names are identifiers like any other
+# there: `Time` is a nullary variant of `SortBy`, written as a value, a
+# pattern and an operand of `==` the way `Name` is. Read as a type — the
+# `Option(Time)` slot and parameter below — or as the qualifier of
+# `Time.parse`, the name is the primitive.
+
+type SortBy = Name | Time | Size
+
+slot sort   : SortBy       = Name
+slot parsed : Option(Time) = None
+
+fn label(s: SortBy) -> Text = match s with
+  | Name -> "by name"
+  | Time -> "by time"
+  | Size -> "by size"
+
+fn day(o: Option(Time)) -> Text = match o with
+  | Some(t) -> t.format("yyyy-MM-dd")
+  | None    -> "none"
+
+reducer byName on=ui.click(ByName) do= sort := Name
+reducer byTime on=ui.click(ByTime)
+    do= sort := Time
+        parsed := Time.parse("2026-02-28")
+reducer bySize on=ui.click(BySize) do= sort := Size
+
+tile ByName = button(text="name", id="name")
+tile ByTime = button(text="time", id="time")
+tile BySize = button(text="size", id="size")
+
+tile App = column(
+  row(ByName, ByTime, BySize),
+  text("sorted " + label(sort)),
+  text("is time: " + (sort == Time).show),
+  text(if sort == Time then "parsed " + day(parsed) else "not by time"))
+
+app PrimitiveNamedVariants
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

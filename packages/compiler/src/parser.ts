@@ -395,10 +395,37 @@ class Parser {
     return refined;
   }
 
+  /**
+   * One alternative of a union, as the variant it spells (§1.3.1:
+   * `variant ::= identifier ( '(' type-expr (',' type-expr)* ')' )?`). The atom
+   * has been read as a type, so a bare name arrives as a `TypePrim` when it is
+   * a primitive's and as a `TypeRef` otherwise — in a union both are the name
+   * of a nullary variant, and `Name | Time | Size` declares one called `Time`.
+   */
   private typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
-    if (t.kind === "TypeRef") return { name: t.name, payloads: [], pos: t.pos };
-    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args, pos: t.pos };
-    throw new ParseError(`Unsupported variant form`, t.pos);
+    switch (t.kind) {
+      case "TypeRef":
+      case "TypePrim":
+        return { name: t.name, payloads: [], pos: t.pos };
+      case "TypeApp":
+        return { name: t.name, payloads: t.args, pos: t.pos };
+      case "TypeRecord":
+        throw this.notAVariant("a record", t.pos);
+      case "TypeNominal":
+        throw this.notAVariant("a `nominal` type", t.pos);
+      case "TypeRefinement":
+        throw this.notAVariant("a refinement (`… where …`)", t.pos);
+      case "TypeUnion":
+        throw this.notAVariant("a union", t.pos);
+    }
+  }
+
+  /** The refusal of a union alternative that spells no variant, naming what it is instead. */
+  private notAVariant(form: string, pos: Pos): ParseError {
+    return new ParseError(
+      `Unsupported variant form: a union alternative is a name, optionally with a payload (\`Name\` or \`Name(T, …)\`), not ${form}`,
+      pos,
+    );
   }
 
   private parseTypeUnionAtom(): TypeExpr {
