@@ -27,7 +27,9 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
   args,
   pos: NO_POS,
 });
-const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
+type RecordType = Extract<TypeExpr, { kind: "TypeRecord" }>;
+
+const record = (fields: Record<string, TypeExpr>): RecordType => ({
   kind: "TypeRecord",
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
@@ -54,6 +56,20 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
 });
 
 /**
+ * The standard `Route`: the five fields routing.md §3.2 documents, which is
+ * what a program reads, and the type of the `route` slot the runtime
+ * maintains. (`parseLocation` also carries `childPattern` for `route-outlet`;
+ * that one is runtime bookkeeping and is deliberately not part of the type.)
+ */
+export const ROUTE_TYPE: RecordType = record({
+  path: prim("Text"),
+  pattern: prim("Text"),
+  params: app("Map", prim("Text"), prim("Text")),
+  query: app("Map", prim("Text"), prim("Text")),
+  hash: app("Option", prim("Text")),
+});
+
+/**
  * Domain types provided by the standard library (docs/spec/stdlib.md §2.1.3).
  *
  * `File` is absent on purpose: the grammar makes it a primitive type name, so a
@@ -77,21 +93,7 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
-  // The five fields routing.md §3.2 documents, which is what a program reads.
-  // (`parseLocation` also carries `childPattern` for `route-outlet`; that one
-  // is runtime bookkeeping and is deliberately not part of the type.)
-  // `pattern` and `hash` were missing here, so a provider signature generated
-  // for a `Route` typed them as `unknown`.
-  def(
-    "Route",
-    record({
-      path: prim("Text"),
-      pattern: prim("Text"),
-      params: app("Map", prim("Text"), prim("Text")),
-      query: app("Map", prim("Text"), prim("Text")),
-      hash: app("Option", prim("Text")),
-    }),
-  ),
+  def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
   // The payload of `app.error` and of an `error-boundary` tile's `in=`
   // (docs/spec/lifecycle.md §7.2.3). Filed with the domain types rather than

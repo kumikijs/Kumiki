@@ -30,7 +30,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 | `expect.effects` の要素 | effect（宣言されたもの、または標準 effect） | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | `given.mocks` のキー | effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | すべての式——slot の値、`given.in`、`expect.panic`、`invariant`、モックのペイロード、`episode-test` の `expect` | 式レイヤの規則どおり | E0103 / E0116 など |
-| `given.slots` / `expect.slots` の値、`expect.effects` の引数、`given.mocks` のペイロード | slot の型・effect の `in=` 型・effect の `out=` の該当側の値 | [E0201](./errors.md#e0201-type-mismatch)、[E0214](./errors.md#e0214-missing-record-field)、[E0215](./errors.md#e0215-unknown-record-field) |
+| slot の値（`given.slots` / `expect.slots` / `slots-equal`）、`expect.effects` の引数、`given.mocks` のペイロード | slot の宣言された型・effect の `in=` 型・effect の `out=` の該当側の値 | [E0201](./errors.md#e0201-type-mismatch)、[E0214](./errors.md#e0214-missing-record-field)、[E0215](./errors.md#e0215-unknown-record-field) |
 | `given` / `expect` の**セクション**キー | そのテスト種別が受理する閉じた集合の 1 つ | [E0714](./errors.md#e0714-test-section-unknown) |
 
 セクション名そのものは解決すべき名前ではなく語彙であり、テスト種別ごと・節ごとに閉じている：
@@ -48,6 +48,8 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 
 `given.event.type` が名指すのは event であり、その語彙は式レイヤではなくトリガ文法のものである。`target` が tile なのはその event が `ui.*` のときだけで、timer で駆動される reducer は timer 名を書き、effect の結果で駆動される reducer には書く名前が無い。どちらのフィールドも生成されたテストには届かない——payload は event の*その他の*フィールドから作られ、ランナーが適用する reducer はテスト自身の target である——ので、この規則はテストが何を*する*かではなく何を*言っている*かについてのものである。
+
+テストが書く slot の値は、その slot の宣言された型の値である。これはどのテスト種別でも（[§8.5](#_8-5-effect-mock) の multi-step 形の `reducer-test` を含む）、slot の値を書くどのセクションでも同じである: `given.slots` の seed、`expect.slots` の値、`episode-test` の `slots-equal` のレコード。slot 自身の初期値と同じ規則で検査され——`Int` は `Float` に流れ込み、空の `[]` や `{}` は宣言されたコレクション、`None` は宣言された `Option` になり、`where` の refinement は評価されない——型が受け取らない値は、値の位置で **E0201** になる。型の違う seed は、アプリが決して取りえない状態から reducer を走らせ、型の違う期待値は、アプリが決して到達しない状態を表明する: `slot count : Int` に対して `given.slots: {count: "5"}` は `count + 1` をテキスト `"51"` にし、`expect.slots: {count: "51"}` はそれに一致してしまう。`reducer-test` の `expect` 中のワイルドカード（[§8.2.2](#_8-2-2-wildcards)）は型を持たず、どんな値の代わりにもなる。`route` slot はランタイムのもので型は `Route` であり、その seed は必要なフィールドだけを書く（[§8.2.5](#_8-2-5-the-route-slot)）。
 
 テスト本体から slot は**読める**（その slot が保持する値になる）。`for-all` の名前は `given` と `invariant` の両方でスコープに入り、generator が宣言した型を持つ。`run-reducer(<reducer>)` が取るのは値ではなく reducer 名であり、呼べるのは property-test の invariant だけである（[§8.3](#_8-3-property-tests)）：trial の束縛を読む形に lowering されるため、それ以外の場所では、生成モジュールがどのテストも結果を出す前に死ぬ。
 
@@ -123,7 +125,7 @@ test route-seeded-in-part =
         expect = {slots: {at: "/posts/:id#7"}}
 ```
 
-route 自身のフィールド（`path` / `pattern` / `params` / `query` / `hash`）以外の名前は **E0108**、record でない `route` は **E0201** である。これらが無ければ、綴り間違いは補完に飲み込まれ、テストは空 route に対して走る — 緑のまま、避けようとした分岐を実行しながら。
+route 自身のフィールド（`path` / `pattern` / `params` / `query` / `hash`）以外の名前は **E0108**、record でない `route` は **E0201** である。これらが無ければ、綴り間違いは補完に飲み込まれ、テストは空 route に対して走る — 緑のまま、避けようとした分岐を実行しながら。seed が書いたフィールドの値は、標準の `Route`（[§3.2](./routing.md#_3-2-current-route-state)）におけるそのフィールドの型の値でなければならず、そうでなければ値の位置で **E0201** になる — プログラム自身の `type Route` が何と言おうと、この slot が持つのはランタイムの route だからである。補完が埋めるのは書かれなかったフィールドだけなので、`hash: "top"`（`Some("top")` のつもり）や `params: {"id": 7}` は、この検査がなければ書いたとおり reducer に届く: アプリが決して居ることのない route である。
 
 `expect.slots` は比較する slot を列挙するものであり、書かれなかった slot は比較されない。したがって seed した route を毎回書き直す必要はなく、テストの主題であるときは他の slot と同様に表明できる。ただし列挙された slot の値は**完全なキー集合で厳密に照合**される（[§8.2.2](#_8-2-2-wildcards)）ため、`expect` に `route` を書くときは record 全体を書く。
 

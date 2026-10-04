@@ -82,7 +82,7 @@ import {
   receiversOf,
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
-import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import { isPrimTypeName, ROUTE_TYPE, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -625,23 +625,28 @@ function isTestSlot(name: string, sym: SymbolTable): boolean {
 }
 
 /**
- * The fields of the `route` slot (routing.md §3.2). A test may name any subset
- * of them; anything else is a typo the harness would drop silently, leaving a
- * green test that exercised the branch it meant to avoid. Checked here rather
- * than at runtime so the report names the source position.
+ * The fields of the `route` slot: those of its type, the standard `Route`
+ * (routing.md §3.2). A test may name any subset of them; anything else is a
+ * typo the harness would drop silently, leaving a green test that exercised
+ * the branch it meant to avoid. Checked here rather than at runtime so the
+ * report names the source position.
  *
  * Kept in step with the runtime's `emptyRoute` by a test in `@kumikijs/tests`.
  */
-export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set([
-  "path",
-  "pattern",
-  "params",
-  "query",
-  "hash",
-]);
+export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set(ROUTE_TYPE.fields.map((f) => f.name));
 
-/** Report a `route` seed that is not a record of route fields. */
-function checkRouteSeed(value: Expr, errors: KumikiError[]): void {
+/**
+ * Report a `route` value in a test — a seed, or an expectation of one — that is
+ * not a record of route fields, or that writes a field in a type the field does
+ * not take.
+ *
+ * A seed may leave fields out, because the harness completes them from the
+ * empty route; the ones it writes reach the reducer as written. Each is checked
+ * as any other slot value is, against the field's type in the runtime's
+ * `Route` — the slot holds the runtime's route whatever a program's own
+ * `type Route` says, so the type is not looked up by name.
+ */
+function checkRouteSeed(value: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (value.kind !== "RecordLit") {
     errors.push({
       code: "E0201",
@@ -655,7 +660,11 @@ function checkRouteSeed(value: Expr, errors: KumikiError[]): void {
     return;
   }
   for (const f of value.fields) {
-    if (ROUTE_SLOT_FIELDS.has(f.name)) continue;
+    const field = ROUTE_TYPE.fields.find((d) => d.name === f.name);
+    if (field) {
+      checkAgainst(f.value, field.type, sym, errors, ctx);
+      continue;
+    }
     errors.push({
       code: "E0108",
       kind: "undef-member",
@@ -6284,7 +6293,8 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
         pos: f.pos,
       });
     } else if (!sym.slots.has(f.name)) {
-      checkRouteSeed(f.value, errors);
+      // The runtime's `route`, whose seed is a partial record (`checkRouteSeed`).
+      checkRouteSeed(f.value, sym, errors, ctx);
     }
     checkExpr(f.value, sym, errors, ctx);
     // A test's slot value is the slot's value — seeded by a `given`, compared
