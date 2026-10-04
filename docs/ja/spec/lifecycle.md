@@ -110,6 +110,8 @@ reducer trackPageView
 
 複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
 
+`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、境界がどこに宣言されていても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が、fallback が消えたとき —— tile が panic せずに描画し直されたとき、あるいはその tile 自体が消えたとき —— に `tile.unmount(<fallback>)` が発火する。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。panic した tile は描画されたものではないので、fallback がその代わりに表示されている間はその tile 自身の `tile.mount` は発火せず、マウント済みの tile が panic し始めるとその `tile.unmount` が発火する。
+
 ---
 
 ## 7.2 エラー処理 {#_7-2-error-handling}

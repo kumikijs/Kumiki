@@ -1,0 +1,45 @@
+# Feature: an `error-boundary` fallback fires `tile.mount` / `tile.unmount`
+# like any other tile on screen (spec/lifecycle.md §7.1.6, §7.3).
+#
+# `Chart` reads `data.get`, which panics while `data` is `None`, so its
+# boundary shows `ChartFallback` in its place: `tile.mount(ChartFallback)`
+# fires, and `tile.mount(Chart)` does not — the tile that panicked is not what
+# rendered. "retry" re-renders the fallback with the panic still there, which
+# is not a new appearance, so nothing fires. "load" fills `data`: `Chart`
+# renders its own body, the fallback leaves, and `tile.unmount(ChartFallback)`
+# fires beside `tile.mount(Chart)`.
+
+slot data           : Option(Int) = None
+slot attempts       : Int         = 0
+slot fallbackShown  : Int         = 0
+slot fallbackGone   : Int         = 0
+slot chartShown     : Int         = 0
+
+reducer sawFallback on=tile.mount(ChartFallback) do= fallbackShown := fallbackShown + 1
+reducer sawFallbackGone on=tile.unmount(ChartFallback) do= fallbackGone := fallbackGone + 1
+reducer sawChart on=tile.mount(Chart) do= chartShown := chartShown + 1
+reducer doRetry on=ui.click(RetryBtn) do= attempts := attempts + 1
+reducer doLoad on=ui.click(LoadBtn) do= data := Some(42)
+
+tile ChartFallback
+    in=PanicInfo
+    = text("chart unavailable: " + $1.message + " (attempts: " + attempts.show + ")") {color: "danger"}
+
+tile Chart
+    error-boundary = ChartFallback
+    = column(text("chart: " + data.get.show))
+
+tile RetryBtn = button(text="retry", onClick=doRetry)
+tile LoadBtn  = button(text="load", onClick=doLoad)
+
+tile App = column(
+    heading("Boundary fallback mount"),
+    Chart,
+    row(RetryBtn, LoadBtn) {gap: "sm"},
+    text("fallback shown " + fallbackShown.show + ", gone " + fallbackGone.show + "; chart shown " + chartShown.show))
+  {pad: "lg", gap: "md"}
+
+app BoundaryFallbackMount
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

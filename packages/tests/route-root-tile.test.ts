@@ -442,7 +442,8 @@ app M caps=[] routes={"/" -> Home, "/404" -> Missing} init=[]
   it("names the declaring tile when its own fallback panics", async () => {
     // The fallback is lowered inside the boundary's catch, so a panic in it
     // leaves the factory the way an unguarded one would, and takes the same
-    // attribution path: the route target is `Boom`, the fallback has no name.
+    // attribution path: the route target is `Boom`, and the fallback is not a
+    // route target.
     const root = await at(`slot xs : List(Int) = []
 tile Fallback in=PanicInfo = column(text(xs.head.get.show))
 tile Boom error-boundary=Fallback = column(text(panic("first")))
@@ -520,26 +521,6 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
 `);
     expect(root.textContent).toContain("len=0");
   });
-
-  it("gives the fallback tile no mount marker of its own", async () => {
-    // The fallback is lowered by the boundary rather than through a call site,
-    // so `tile.mount(<the fallback>)` never fires. Pinned because it is a
-    // consequence of where the lowering happens, not a decision.
-    const app = await loadSource(`slot xs : List(Int) = []
-slot fbMounts : Int = 0
-reducer sawFb on=tile.mount(Fallback) do= fbMounts := fbMounts + 1
-tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
-tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
-tile Host = column(Boom())
-app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
-`);
-    mountedRoot = freshRoot();
-    const { dispose } = mount(app, mountedRoot, { router: "memory" });
-    disposeFn = dispose;
-    await tick();
-    expect(mountedRoot.textContent).toContain("caught:");
-    expect((app.live as Record<string, unknown>).fbMounts).toBe(0);
-  });
 });
 
 describe("a tile named as a route fires tile.mount and tile.unmount", () => {
@@ -593,9 +574,9 @@ app M caps=[] routes={"/" -> Panel, "/other" -> Other, "/404" -> Other} init=[]
 
   it("fires no mount for a tile that is showing its fallback, in either position", async () => {
     // The boundary wraps the marker from the outside, so a tile that panicked
-    // did not render and has nothing to diff against. That is a consequence of
-    // the wrap order rather than a decision, which is why it is pinned in both
-    // positions: whatever it is, a route root and a call site agree.
+    // did not render and has nothing to diff against: what is on screen is its
+    // fallback (lifecycle.md §7.1.6). Pinned in both positions, so a route root
+    // and a call site agree.
     const src = `slot xs : List(Int) = []
 slot mounts : Int = 0
 reducer sawMount on=tile.mount(Boom) do= mounts := mounts + 1
