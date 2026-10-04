@@ -1,7 +1,7 @@
 /**
  * How a write path is encoded for the runtime's setter, shared by the two
  * places that build one: the assignment a reducer lowers to
- * (`emit-reducer.ts`) and a `bind=` target (`emit-tile.ts`). Both used to
+ * (`emit-reducer.ts`) and a `bind=` target (`bind-target.ts`). Both used to
  * carry their own copy of the rule and their own spelling of the datum, which
  * is how the two sides of `.get` came to disagree in the first place.
  *

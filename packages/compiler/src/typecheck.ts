@@ -36,6 +36,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
+import { bindTarget } from "./bind-target.ts";
 import {
   type BuiltinArity,
   builtinArity,
@@ -744,12 +745,12 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    ctx.localBinds.add("$1");
-    ctx.localTypes.set("$1", tile.in);
+    bindLocal(ctx, "$1", tile.in, "input");
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   // `error-boundary` is a tile reference like any other, and was the only one
@@ -969,6 +970,9 @@ function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
   }
 }
 
+/** A declaration of a tile's own that binds a local (`Ctx.localBinders`). */
+type LocalBinder = "input" | "for";
+
 type Ctx = {
   /**
    * Which position the expression is written in. Not decoration: it decides
@@ -1009,6 +1013,14 @@ type Ctx = {
    * variable as an Int.
    */
   localTypes: Map<string, TypeExpr>;
+  /**
+   * Which of a tile's own declarations bound a local: the tile's `in=` (`$1`)
+   * or a `for`. Kept only in a tile's scope, where E0229 reads it to say what
+   * a bind target's root is. Written through `bindLocal` like `localTypes`,
+   * so a name another declaration rebinds is removed, and a name still here
+   * is the one that declaration bound.
+   */
+  localBinders?: Map<string, LocalBinder>;
   /**
    * `run-reducer(<reducer>)` lowers to a read of `_init` / `_event`, which are
    * bound only inside a generated property trial — so a property-test
@@ -1079,12 +1091,15 @@ type Ctx = {
  * Bring `name` into scope with `type`, or with no type when it cannot be
  * worked out. The delete is the load-bearing half: a bind shadows whatever the
  * name meant outside, so leaving the outer type behind makes the checker
- * reason about a value that is no longer there.
+ * reason about a value that is no longer there. The same holds for `binder`,
+ * the tile declaration that binds `name` when it is one `localBinders` keeps.
  */
-function bindLocal(ctx: Ctx, name: string, type: TypeExpr | null): void {
+function bindLocal(ctx: Ctx, name: string, type: TypeExpr | null, binder?: LocalBinder): void {
   ctx.localBinds.add(name);
   if (type) ctx.localTypes.set(name, type);
   else ctx.localTypes.delete(name);
+  if (binder) ctx.localBinders?.set(name, binder);
+  else ctx.localBinders?.delete(name);
 }
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
@@ -1120,7 +1135,12 @@ function checkIterationTarget(iter: Expr, sym: SymbolTable, errors: KumikiError[
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
 function innerScope(ctx: Ctx): Ctx {
-  return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+  return {
+    ...ctx,
+    localBinds: new Set(ctx.localBinds),
+    localTypes: new Map(ctx.localTypes),
+    ...(ctx.localBinders ? { localBinders: new Map(ctx.localBinders) } : {}),
+  };
 }
 
 /** The controls `bind` writes back from (forms.md §5.1.1, plus `editable`). */
@@ -1145,21 +1165,112 @@ const BIND_CONTROLS = new Set([
  */
 function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   const bind = t.args.find((a) => a.name === "bind");
-  let cur = bind?.value as Expr | undefined;
-  while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
-    if (cur.kind === "MethodCall") {
-      const hint =
-        cur.method === "get" && cur.args.length === 0
-          ? ' — the unwrap step is written ".get"'
-          : " — a member derives a value, so there is no place in the receiver for the control to write";
-      errors.push({
-        code: "E0602",
-        kind: "unassignable-member",
-        message: `Cannot bind through ".${cur.method}(${cur.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
-        pos: cur.pos,
-      });
+  if (!bind || isTileExpr(bind.value)) return;
+  for (const step of bindTarget(bind.value).steps) {
+    if (step.kind !== "MethodCall") continue;
+    const hint =
+      step.method === "get" && step.args.length === 0
+        ? ' — the unwrap step is written ".get"'
+        : " — a member derives a value, so there is no place in the receiver for the control to write";
+    errors.push({
+      code: "E0602",
+      kind: "unassignable-member",
+      message: `Cannot bind through ".${step.method}(${step.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
+      pos: step.pos,
+    });
+  }
+}
+
+/**
+ * E0229: a `bind=` target whose root is not a slot where the target is
+ * written (forms.md §5.1). The control writes back to the slot its target's
+ * root names — the root `bindTarget` reads, which is the one the lowering
+ * writes — so a root with no slot behind it writes nowhere. Without this
+ * check the lowering writes a local's name (a `for` variable, the tile's
+ * `$1`, a `match` binding) into the live slot table as a slot of its own that
+ * nothing reads, and drops a root that is no name at all (a literal, a call),
+ * so the control takes edits that reach nothing. A local of a slot's name
+ * hides the slot here as it does for a read. A name that resolves to nothing
+ * is E0103 and a `fn` is E0127, each reported where the target is read as a
+ * value.
+ */
+function checkBindTargetRoot(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!BIND_CONTROLS.has(t.name)) return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const root = bindRootNotASlot(bindTarget(bindArg.value).root, sym, ctx);
+  if (!root) return;
+  errors.push({
+    code: "E0229",
+    kind: "bind-target-not-slot",
+    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}, not a slot — a bind writes back to a slot or a field path into one. ${root.fix} (see docs/spec/forms.md §5.1)`,
+    pos: bindArg.value.pos,
+  });
+}
+
+/**
+ * Names a program reads without declaring them: the runtime provides each, so
+ * a reference to one is neither undefined nor a slot the program declared.
+ */
+const RUNTIME_NAMES: ReadonlySet<string> = new Set(["route", "now", "self"]);
+
+/**
+ * A bind target's root that is not a slot: how E0229 names it, what it is —
+ * as far as the checker knows — and the fix that goes with it. `null` for a
+ * slot, and for a name E0103 or E0127 reports.
+ */
+function bindRootNotASlot(
+  root: Expr,
+  sym: SymbolTable,
+  ctx: Ctx,
+): { named: string; is: string; fix: string } | null {
+  const fix = "Bind a slot, or show the value with value= and write the slot from a reducer";
+  switch (root.kind) {
+    case "Ref": {
+      const named = `"${root.name}"`;
+      if (ctx.localBinds.has(root.name)) {
+        switch (ctx.localBinders?.get(root.name)) {
+          case "for":
+            return {
+              named,
+              is: "it is the variable of a for",
+              fix: "To edit a row, show it with value= and update the list from a reducer",
+            };
+          case "input":
+            return {
+              named,
+              is: "it is this tile's input",
+              fix: `Bind the slot by its name, or show ${root.name} with value= and write the slot from a reducer`,
+            };
+          default:
+            return { named, is: "it is a local name", fix };
+        }
+      }
+      if (sym.slots.has(root.name) || !RUNTIME_NAMES.has(root.name)) return null;
+      return { named, is: "it is a name the runtime provides", fix };
     }
-    cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
+    case "Str":
+      return {
+        named: `the text literal ${JSON.stringify(root.value)}`,
+        is: "a literal is a value",
+        fix: sym.slots.has(root.value)
+          ? `Write the slot's name without quotes: bind=${root.value}`
+          : fix,
+      };
+    case "Num":
+    case "Bool":
+      return {
+        named: `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
+        is: "a literal is a value",
+        fix,
+      };
+    default:
+      return { named: "this expression", is: "it computes a value", fix };
   }
 }
 
@@ -1455,7 +1566,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       checkExpr(t.iter, sym, errors, ctx);
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
-      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
+      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
       checkTileExpr(t.body, sym, errors, inner);
       return;
     }
@@ -1638,6 +1749,7 @@ function checkTileCall(
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, errors);
+  checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
   checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
@@ -3039,8 +3151,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
         return;
       }
-      // Could be a built-in like `route`
-      if (e.name === "route" || e.name === "now" || e.name === "self") return;
+      if (RUNTIME_NAMES.has(e.name)) return;
       // `$1` in a tile is bound only when the tile declares `in=`; reaching here
       // means it didn't (in= adds `$1` to localBinds). Point at the real fix.
       if (e.name === "$1" && ctx.kind === "tile") {
@@ -3619,6 +3730,7 @@ function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ct
     ...ctx,
     localBinds: new Set(ctx.localBinds),
     localTypes: new Map(ctx.localTypes),
+    ...(ctx.localBinders ? { localBinders: new Map(ctx.localBinders) } : {}),
   };
   bindLocal(inner, e.name, inferType(e.value, sym, ctx));
   return inner;
@@ -5954,6 +6066,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   });
 }

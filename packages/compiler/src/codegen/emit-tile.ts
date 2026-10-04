@@ -1,6 +1,7 @@
 import { unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
+import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
@@ -15,7 +16,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
-import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
+import type { BindSegment } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
 export function genTile(tile: TileDef, gen: GenCtx): string {
@@ -286,23 +287,18 @@ export type BindInfo = { root: string; path: BindSegment[]; read: string };
 
 /**
  * For `bind=draft` or `bind=draft.get.title`, extract the root slot name, the
- * static path, and a JS expression to read the value.
+ * static path, and a JS expression to read the value — the target as
+ * `bindTarget` reads it, which is what the checker asks to be a slot (E0229).
  * Only static field-access paths are supported (no Index, no dynamic lookups).
  * Returns null if no `bind=` arg exists or the path isn't statically resolvable.
  */
 export function extractBindPath(args: { name?: string; value: unknown }[]): BindInfo | null {
   const bindArg = args.find((a) => a.name === "bind");
   if (!bindArg) return null;
-  let cur = bindArg.value as Expr;
-  const reverseSegments: BindSegment[] = [];
-  while (cur.kind === "FieldAccess") {
-    const fa = cur as Expr & { field: string; accessKind?: "field" | "shortcut" };
-    reverseSegments.push(isUnwrapStep(fa.field, fa.accessKind) ? UNWRAP_SEGMENT : fa.field);
-    cur = (cur as Expr & { base: Expr }).base;
-  }
-  if (cur.kind !== "Ref") return null;
-  const root = (cur as Expr & { name: string }).name;
-  const path = reverseSegments.reverse();
+  const target = bindTarget(bindArg.value as Expr);
+  if (target.root.kind !== "Ref" || target.path === null) return null;
+  const root = target.root.name;
+  const path = target.path;
   // Build a safe reader: `((_live["root"] ?? {})["a"] ?? {})["b"] ...`.
   let readRaw = `_live[${JSON.stringify(root)}]`;
   for (const seg of path) {
