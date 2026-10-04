@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
-import { check, lex, type Pos, parse } from "@kumikijs/compiler";
+import { check, type Def, LexError, lex, type Pos, parse, type Token } from "@kumikijs/compiler";
 import {
   type DefEntry,
   directDeps,
@@ -61,6 +61,12 @@ export type OpLogEntry = {
    * inverse of a cascade, which is one op in both directions.
    */
   with?: DefSpec[];
+  /**
+   * `replace` and `edit` only: the body the definition had before the op, as
+   * it stood in the file. It is what `patch revert` writes back, so the revert
+   * never depends on a body some earlier op happened to log.
+   */
+  prev?: string;
   patch?: unknown;
   author: string;
   ts: number;
@@ -79,6 +85,7 @@ type RawOp = {
   removed?: string[];
   bodies?: DefSpec[];
   with?: DefSpec[];
+  prev?: string;
   patch?: unknown;
 };
 
@@ -141,6 +148,12 @@ function opShapeProblem(op: RawOp): string | undefined {
     if (first === undefined || `${first.layer}.${first.name}` !== own) {
       return `\`bodies\` must start with the op's own definition ${own}`;
     }
+  }
+  if (op.prev !== undefined) {
+    if (op.op !== "replace" && op.op !== "edit")
+      return "`prev` is only valid on `replace` and `edit`";
+    const prev: unknown = op.prev;
+    if (typeof prev !== "string") return "`prev` must be a string";
   }
   if (op.removed !== undefined) {
     if (op.op !== "remove" || op.cascade !== true) {
@@ -228,6 +241,7 @@ function logOp(path: string, op: RawOp): string {
     ...(op.removed !== undefined ? { removed: op.removed } : {}),
     ...(op.bodies !== undefined ? { bodies: op.bodies } : {}),
     ...(op.with !== undefined ? { with: op.with } : {}),
+    ...(op.prev !== undefined ? { prev: op.prev } : {}),
     ...(op.patch !== undefined ? { patch: op.patch } : {}),
     author: authorOf(),
     ts: Date.now(),
@@ -446,10 +460,13 @@ function enforceLock(path: string, qname: string): void {
  * it. `remove` carries the definitions it deleted, because a cascade removes
  * the dependents of the name it was given — up to and including the `app` — and
  * a report naming only that one name is how a file loses its entry point
- * quietly.
+ * quietly. `replace` carries the clauses and parameters its body no longer
+ * states (`headerItems`), for the same reason: the write is valid, so nothing
+ * else would say they are gone.
  */
 export type EditReport =
-  | { op: "add" | "replace" | "edit"; qname: string; opId: string }
+  | { op: "add" | "edit"; qname: string; opId: string }
+  | { op: "replace"; qname: string; opId: string; dropped?: readonly string[] }
   | { op: "rename"; qname: string; newName: string; opId: string }
   | { op: "remove"; qname: string; opId: string; removed: RemovedNames };
 
@@ -475,7 +492,10 @@ export function describeEdit(report: EditReport): string {
     case "add":
       return `added ${report.qname}${opIdSuffix}`;
     case "replace":
-      return `replaced ${report.qname}${opIdSuffix}`;
+      return [
+        `replaced ${report.qname}${opIdSuffix}`,
+        ...(report.dropped ?? []).map((item) => `  dropped ${item}`),
+      ].join("\n");
     case "edit":
       return `edited ${report.qname}${opIdSuffix}`;
     case "rename":
@@ -503,38 +523,211 @@ export function addDef(path: string, layer: string, name: string, body: string):
  * typecheck on their own, without the definition they depend on.
  */
 function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
+  for (const d of defs) {
+    if (!isDefinitionName(d.name)) {
+      throw new Error(
+        `add rejected: "${d.name}" is not one identifier, so it cannot name a definition (a tile's clauses and a type's parameters go at the start of the body); nothing was written`,
+      );
+    }
+  }
   // The named definition up front; the rest of `with` is covered by the
   // before/after diff in `validate`, like anything else the write adds.
   enforceLock(path, `${defs[0].layer}.${defs[0].name}`);
   const src = readFileSync(path, "utf8");
-  // Compose definition syntax for the requested layer. The body argument is
-  // the right-hand side (e.g. "Int = 0" for a slot, "Bool -> Bool = not $1" for
-  // a fn). Layer-specific assembly is small enough to inline here.
-  const inserted = defs.map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
+  // The body argument is the definition after its name and the layer's
+  // separator (e.g. "Int = 0" for a slot, "Bool -> Bool = not $1" for a fn).
+  // A tile or a type states its header; one added without states that it has
+  // none, which is how it is written and logged.
+  const stated = (d: DefSpec): DefSpec => ({ ...d, body: withHeader(d.layer, d.body, () => "= ") });
+  const [first, ...others] = defs;
+  const main = stated(first);
+  const rest = others.map(stated);
+  const inserted = [main, ...rest].map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
   const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
-  const [main, ...rest] = defs;
   return commit(path, next, "add", () =>
     logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) }),
   );
 }
 
-export function replaceDef(path: string, qname: string, body: string): string {
+/**
+ * Whether `name` lexes as one identifier, as every definition's name does. A
+ * name is written into the file as given, so anything more becomes part of the
+ * definition — `add type 'Box(T)' …` would write `type Box(T) = …` — while the
+ * op is logged under a name no definition has, which nothing can view, revert
+ * or remove.
+ */
+function isDefinitionName(name: string): boolean {
+  let tokens: Token[];
+  try {
+    tokens = lex(name);
+  } catch (e) {
+    if (e instanceof LexError) return false;
+    throw e;
+  }
+  const [only, end] = tokens;
+  return only?.kind === "ident" && only.value === name && end?.kind === "eof";
+}
+
+/**
+ * Replace a definition with `body`. A body that does not state a tile's
+ * clauses or a type's parameters (`statesHeader`) keeps the ones the
+ * definition has: a body that rewrites only what follows the `=` must not
+ * drop them unnoticed. One that states them may state fewer, and `dropped`
+ * names each clause or parameter the definition no longer has.
+ *
+ * The op records the body the definition had (`prev`), which is what
+ * `patch revert` writes back, and logs the body it wrote with its header
+ * stated, so a logged body means the same to every reader.
+ */
+export function replaceDef(
+  path: string,
+  qname: string,
+  body: string,
+): { opId: string; dropped: string[] } {
   enforceLock(path, qname);
   return withWriteLock(path, () => replaceDefLocked(path, qname, body));
 }
 
-function replaceDefLocked(path: string, qname: string, body: string): string {
+function replaceDefLocked(
+  path: string,
+  qname: string,
+  body: string,
+): { opId: string; dropped: string[] } {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
+  const prev = bodyOf(store, entry, "replace");
+  const whole = withHeader(entry.layer, body, () => headerOf(store, entry, "replace"));
   const before = store.lines.slice(0, entry.range.startLine - 1);
   const after = store.lines.slice(entry.range.endLine);
-  const inserted = assemble(entry.layer, entry.name, body).split(/\r?\n/);
+  const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
   const next = [...before, ...inserted, ...after].join("\n");
-  return commit(path, next, "replace", () =>
-    logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body }),
+  const opId = commit(path, next, "replace", () =>
+    logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev }),
   );
+  const now = headerItems(load(path).byQName.get(qname)?.def);
+  return { opId, dropped: headerItems(entry.def).filter((item) => !now.includes(item)) };
+}
+
+/**
+ * How a body states the header of a tile or a type — what the definition has
+ * between its name and the `=` before its right-hand side — keyed by the
+ * layers that have one: it starts with a clause (`<word> =`) or with the
+ * parameters' `(`, or with that `=`, which states there is nothing there.
+ * Neither right-hand side can start that way: a tile's opens with a tile name
+ * or `for` / `when` / `if` / `match`, never `<word> =`, and a type's never
+ * opens with `(` or `=`. So a body is read one way or the other by its first
+ * characters alone.
+ */
+const HEADER_START: ReadonlyMap<string, RegExp> = new Map([
+  ["tile", /^\s*(?:=|[A-Za-z_][A-Za-z0-9_-]*\s*=)/],
+  ["type", /^\s*[(=]/],
+]);
+
+function statesHeader(layer: string, body: string): boolean {
+  return HEADER_START.get(layer)?.test(body) ?? false;
+}
+
+/**
+ * `body` with its header stated: as given when it states one, or when its
+ * layer has none; otherwise after `header()` — the definition's own header
+ * for a `replace`, `= ` (none) for an `add`.
+ */
+function withHeader(layer: string, body: string, header: () => string): string {
+  return !HEADER_START.has(layer) || statesHeader(layer, body) ? body : `${header()}${body}`;
+}
+
+/**
+ * Where the header of a tile or a type sits in its definition's text: from
+ * the first token after the name — a clause, the parameters' `(`, or the `=`
+ * when there is no header — to the right-hand side, which starts where the
+ * parser put the definition's body. Read off the tokens, so a comment after
+ * the name is never taken for part of the header. Throws, naming the
+ * definition, when the text is not laid out that way.
+ */
+function headerSpan(
+  store: Store,
+  entry: DefEntry,
+  verb: string,
+): { text: string; from: number; to: number } {
+  const qname = `${entry.layer}.${entry.name}`;
+  const text = viewDef(store, qname) ?? "";
+  const rhs = rightHandSide(entry.def);
+  const lines = text.split("\n");
+  // Positions relative to the definition's text: its first line is line 1.
+  const offset = (line: number, col: number): number =>
+    lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) + col - 1;
+  const tokens = lex(text);
+  const [keyword, name, first] = tokens;
+  const line = rhs === undefined ? 0 : rhs.line - entry.range.startLine + 1;
+  const at = tokens.findIndex((t) => t.pos.line === line && t.pos.col === rhs?.col);
+  const eq = tokens[at - 1];
+  if (
+    rhs === undefined ||
+    keyword?.kind !== "kw" ||
+    keyword.value !== entry.layer ||
+    name?.kind !== "ident" ||
+    name.value !== entry.name ||
+    first === undefined ||
+    at < 3 ||
+    eq?.kind !== "op" ||
+    eq.value !== "="
+  ) {
+    throw new Error(`${verb} rejected: cannot locate the header of ${qname}`);
+  }
+  return { text, from: offset(first.pos.line, first.pos.col), to: offset(line, rhs.col) };
+}
+
+/** Where the parser put the right-hand side of a definition that has a header. */
+function rightHandSide(def: Def): Pos | undefined {
+  switch (def.kind) {
+    case "TileDef":
+    case "TypeDef":
+      return def.body.pos;
+    default:
+      return undefined;
+  }
+}
+
+/** A tile's or a type's header and the `=` after it: `error-boundary=Oops = `, `(T) = `, `= `. */
+function headerOf(store: Store, entry: DefEntry, verb: string): string {
+  const { text, from, to } = headerSpan(store, entry, verb);
+  return text.slice(from, to);
+}
+
+/**
+ * The body of a definition in the file: the definition without `<layer>
+ * <name>`, as the op log records it and `assemble` writes it back. A tile's
+ * or a type's starts with its header, or with its `=` when it has none.
+ */
+function bodyOf(store: Store, entry: DefEntry, verb: string): string {
+  if (HEADER_START.has(entry.layer)) {
+    const { text, from } = headerSpan(store, entry, verb);
+    return text.slice(from).trimEnd();
+  }
+  return extractBody(entry.layer, entry.name, viewDef(store, `${entry.layer}.${entry.name}`) ?? "");
+}
+
+/**
+ * What the header of a tile or a type says, item by item: the clauses that
+ * change what the tile does, and the parameters. `scroll-restoration=true` is
+ * the default, so the parser keeps nothing of it and it is not an item.
+ */
+function headerItems(def: Def | undefined): string[] {
+  switch (def?.kind) {
+    case "TileDef":
+      return [
+        ...(def.in !== undefined ? ["in"] : []),
+        ...(def.errorBoundary !== undefined ? ["error-boundary"] : []),
+        ...(def.scrollRestoration === false ? ["scroll-restoration"] : []),
+        ...(def.subRoutes !== undefined ? ["sub-routes"] : []),
+      ];
+    case "TypeDef":
+      return def.params.map((p) => `parameter ${p}`);
+    default:
+      return [];
+  }
 }
 
 /**
@@ -636,13 +829,13 @@ function removeSet(
     );
   }
   const entries = set.map((q) => store.byQName.get(q)).filter((e) => e !== undefined);
-  // Each body as it stands now, so a revert restores exactly this — not the
-  // last body some earlier op happened to log, which a rename of something it
-  // references leaves stale.
+  // Each body as it stands now, so a revert restores this — not the last body
+  // some earlier op happened to log, which a rename of something it references
+  // leaves stale.
   const [main, ...rest] = entries.map((e) => ({
     layer: e.layer,
     name: e.name,
-    body: extractBody(e.layer, e.name, viewDef(store, `${e.layer}.${e.name}`) ?? ""),
+    body: bodyOf(store, e, "remove"),
   }));
   if (main === undefined) throw new Error("remove rejected: nothing to remove");
   // Remove from bottom up so line numbers stay valid.
@@ -771,7 +964,9 @@ function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
  *   { "body:<line>": "replace 'a' -> 'b'" }       — per-line replacement
  *
  * The edit is confined to the target definition's source range; matches
- * outside the range are not touched.
+ * outside the range are not touched. Either shape is rejected, with nothing
+ * written, when the text it replaces is not where it says: in the definition
+ * for `find`, on line `<line>` of it for a per-line patch.
  */
 export function editDef(path: string, qname: string, patch: unknown): string {
   enforceLock(path, qname);
@@ -783,6 +978,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
+  const prev = bodyOf(store, entry, "edit");
   const bodyStart = entry.range.startLine - 1;
   const bodyEnd = entry.range.endLine;
   const before = store.lines.slice(0, bodyStart);
@@ -791,13 +987,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   let updated: string[];
   if (isFindReplacePatch(patch)) {
     const joined = target.join("\n");
-    if (!joined.includes(patch.find)) {
-      throw new Error(`edit rejected: "find" pattern not present in ${qname}`);
-    }
-    // Function replacer so that `$&` / `$$` / `` $` `` / `$'` in the replacement
-    // string aren't interpreted by String.prototype.replace.
-    const replaceWith = patch.replace;
-    updated = joined.replace(patch.find, () => replaceWith).split("\n");
+    updated = replaceFirst(joined, patch.find, patch.replace, `in ${qname}`).split("\n");
   } else if (isPerLinePatch(patch)) {
     updated = target.slice();
     for (const [key, instruction] of Object.entries(patch)) {
@@ -810,8 +1000,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
       const cur = updated[lineIdx];
       if (cur === undefined)
         throw new Error(`edit rejected: body line ${lineIdx + 1} out of range`);
-      const toStr = to!;
-      updated[lineIdx] = cur.replace(from!, () => toStr);
+      updated[lineIdx] = replaceFirst(cur, from!, to!, `on body line ${lineIdx + 1} of ${qname}`);
     }
   } else {
     throw new Error(
@@ -820,41 +1009,52 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   }
   const next = [...before, ...updated, ...after].join("\n");
   return commit(path, next, "edit", () => {
-    // Record the post-edit body so `depends-on` is computable and
-    // `patchRevert(editId)` can find a usable prior body via the op log. The
-    // recorded body is the *logical* body (the RHS of `assemble`), so feeding
-    // it back into addDef/replaceDef round-trips cleanly.
+    // Record the post-edit body, so `depends-on` is computable and a later op
+    // that records no body of its own can fall back to it, and the body the
+    // edit replaced, which `patch revert` writes back. Both are bodies as
+    // `assemble` takes them, so writing either back round-trips.
     const updatedStore = load(path);
     const updatedEntry = updatedStore.byQName.get(qname);
-    const fullDef = updatedEntry
-      ? updatedStore.lines
-          .slice(updatedEntry.range.startLine - 1, updatedEntry.range.endLine)
-          .join("\n")
-      : undefined;
-    const newBody =
-      fullDef !== undefined ? extractBody(entry.layer, entry.name, fullDef) : undefined;
+    const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
     return logOp(path, {
       op: "edit",
       layer: entry.layer,
       name: entry.name,
       patch,
       ...(newBody !== undefined ? { body: newBody } : {}),
+      prev,
     });
   });
 }
 
 /**
- * Inverse of `assemble`: strip the layer-specific opener (`slot <name> :`,
- * `type <name> =`, …) so we recover the "logical body" written by the user
- * and stored in op log entries.
+ * `text` with its first `from` replaced by `to`, for both `edit` patch shapes.
+ * Throws when `from` is not in `text`: there is nothing to replace, and an edit
+ * that went ahead without it would be reported and logged as applied. `where`
+ * names the text searched, for the message.
+ */
+function replaceFirst(text: string, from: string, to: string, where: string): string {
+  if (!text.includes(from)) {
+    throw new Error(`edit rejected: ${JSON.stringify(from)} not present ${where}`);
+  }
+  // Function replacer so that `$&` / `$$` / `` $` `` / `$'` in the replacement
+  // string aren't interpreted by String.prototype.replace.
+  return text.replace(from, () => to);
+}
+
+/**
+ * Inverse of `assemble` for a layer without a header: strip the layer-specific
+ * opener (`slot <name> :`, `theme <name> =`, …) so we recover the "logical
+ * body" written by the user and stored in op log entries. `bodyOf` reads a
+ * tile's or a type's off its tokens instead.
  */
 function extractBody(layer: string, name: string, source: string): string {
   const n = escapeRegExp(name);
   const text = source;
   switch (layer) {
-    case "type":
-    case "tile":
     case "theme":
+    case "motion":
+    case "test":
       return text.replace(new RegExp(`^\\s*${layer}\\s+${n}\\s*=\\s*`), "").trimEnd();
     case "slot":
       return text.replace(new RegExp(`^\\s*slot\\s+${n}\\s*:\\s*`), "").trimEnd();
@@ -939,7 +1139,7 @@ function applyOne(path: string, op: RawOp): string {
       return addDefs(path, [{ layer: op.layer, name: op.name, body: op.body }, ...(op.with ?? [])]);
     case "replace":
       if (op.body === undefined) throw new Error("replace op missing body");
-      return replaceDef(path, `${op.layer}.${op.name}`, op.body);
+      return replaceDef(path, `${op.layer}.${op.name}`, op.body).opId;
     case "edit":
       if (op.patch === undefined) throw new Error("edit op missing patch");
       return editDef(path, `${op.layer}.${op.name}`, op.patch);
@@ -985,24 +1185,28 @@ function patchRevertLocked(path: string, opId: string): string {
       // Inverse of remove = add, of every definition the op removed — a
       // cascade is one op (§9.4.1), so its inverse is one too.
       const [first, ...rest] = removedDefs(log, idx, opId);
-      return addDefs(path, [first, ...rest]);
+      return addDefs(path, [writableBody(first), ...rest.map(writableBody)]);
     }
     case "replace": {
-      const prev = priorBody(log, idx, target.layer, target.name);
+      // The body the op replaced, as it recorded it. One logged before ops
+      // recorded it falls back to the last body the log has for the name.
+      const prev = target.prev ?? priorBody(log, idx, target.layer, target.name);
       if (prev === undefined) {
         throw new Error(`patch revert: no prior body found for ${target.layer}.${target.name}`);
       }
-      return replaceDef(path, `${target.layer}.${target.name}`, prev);
+      const { layer, name, body } = writableBody({ ...target, body: prev });
+      return replaceDefLocked(path, `${layer}.${name}`, body).opId;
     }
     case "edit": {
-      // Best-effort: rebuild prior body from history.
-      const prev = priorBody(log, idx, target.layer, target.name);
+      // As for `replace`: the recorded body, or the log's best guess at it.
+      const prev = target.prev ?? priorBody(log, idx, target.layer, target.name);
       if (prev === undefined) {
         throw new Error(
           `patch revert: cannot reconstruct prior body for edit of ${target.layer}.${target.name}`,
         );
       }
-      return replaceDef(path, `${target.layer}.${target.name}`, prev);
+      const { layer, name, body } = writableBody({ ...target, body: prev });
+      return replaceDefLocked(path, `${layer}.${name}`, body).opId;
     }
     case "rename": {
       if (!target.newName) throw new Error("patch revert: rename op missing newName");
@@ -1048,6 +1252,23 @@ function removedDefs(
     );
   }
   return [first, ...rest];
+}
+
+/**
+ * `spec`, refused when its body is a whole definition: a body never starts
+ * with its own `<layer> <name>`, since no right-hand side or header starts
+ * with a definition keyword. Written back, it would read `tile X = tile X …`.
+ * Earlier versions logged the body of a tile or a type with clauses or
+ * parameters that way.
+ */
+function writableBody(spec: DefSpec): DefSpec {
+  const opener = new RegExp(`^\\s*${spec.layer}\\s+${escapeRegExp(spec.name)}(?![A-Za-z0-9_-])`);
+  if (opener.test(spec.body)) {
+    throw new Error(
+      `patch revert: the body logged for ${spec.layer}.${spec.name} starts with "${spec.layer} ${spec.name}", so it is a whole definition rather than a body and cannot be written back (earlier versions logged a tile's or a type's body that way when it had clauses or parameters); nothing was written`,
+    );
+  }
+  return spec;
 }
 
 function priorBody(
@@ -1154,26 +1375,30 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** What follows the name: nothing before `(` (`fn f(x: Int)`, `type Box(T)`), a space otherwise. */
+const afterName = (rest: string): string => `${rest.startsWith("(") ? "" : " "}${rest}`;
+
 function assemble(layer: string, name: string, body: string): string {
   // Each layer has its canonical opener. Keep this regenerable from the AST
   // later; for the PoC we lean on tiny templates.
+  if (statesHeader(layer, body)) return `${layer} ${name}${afterName(body)}`;
   switch (layer) {
     case "type":
-      return `type ${name} = ${body}`;
+    case "tile":
+    case "theme":
+    case "motion":
+    case "test":
+      return `${layer} ${name} = ${body}`;
     case "slot":
       return `slot ${name} : ${body}`;
     case "effect":
       return `effect ${name} ${body}`;
     case "reducer":
       return `reducer ${name} ${body}`;
-    case "tile":
-      return `tile ${name} = ${body}`;
     case "fn":
-      return `fn ${name}${body.startsWith("(") ? "" : " "}${body}`;
+      return `fn ${name}${afterName(body)}`;
     case "app":
       return `app ${name}\n${body}`;
-    case "theme":
-      return `theme ${name} = ${body}`;
     default:
       throw new Error(`Unknown layer "${layer}"`);
   }

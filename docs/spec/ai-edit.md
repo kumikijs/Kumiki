@@ -54,6 +54,8 @@ kumiki patch revert <op-id>                 # revert a specific op
 
 Multi-line bodies (a reducer's `do=` block, a fn's multi-line RHS, etc.) must go through `--body-file` — the positional form is joined with single spaces so whitespace-significant content (newlines, tab runs) is lost. Passing `--body-file` alongside a positional body is rejected as a mutually-exclusive conflict.
 
+The `<layer>` of `add` is one of the labels `kumiki list` takes: `type`, `slot`, `effect`, `reducer`, `tile`, `fn`, `app`, `theme`, `motion`, `test`. For any other word, `kumiki add` exits `2` before it reads the file. `<name>` is one identifier, and `add` rejects anything else. The body is the definition without `<layer> <name>` and the separator after it: `Int = 0` for `slot count : Int = 0`, `heading("Hi")` for `tile Greeting = heading("Hi")`. A tile's clauses (`in=`, `error-boundary=`, `scroll-restoration=`, `sub-routes=`) and a type's parameters sit between the name and the `=`, so a body with them starts with them and includes the `=`. `in=Text = heading($1)` writes `tile Greet in=Text = heading($1)`, and `(T) = {v: T}` writes `type Box(T) = {v: T}`. A `replace` body that does not start with clauses or parameters keeps the ones the definition has: on `tile Greeting error-boundary=Oops = …`, the body `heading("Hello")` writes `tile Greeting error-boundary=Oops = heading("Hello")`. To change them, the body states the ones to keep. To drop them all, it starts at the `=`. After its `replaced` line, `replace` prints one line for each clause or parameter the definition no longer has, `  dropped error-boundary` or `  dropped parameter T`, so a write that passes validation does not lose one unnoticed.
+
 A write op is validated by re-parsing and re-typechecking the file, and rolls back on any `severity: "error"` diagnostic — with one exception. A program is built one definition at a time, so it is app-less until the `app` lands; **`E0003 missing-app` does not roll back a write op**. Whether the program is a complete application is what `kumiki check` reports, not what a mid-edit graph must already satisfy.
 
 Write ops on one file are **serialized**. `add`, `replace`, `edit`, `rename`, `remove`, `patch apply`, `patch revert`, `lock` and `unlock` each hold the file's write lock — a sibling `<file>.kumiki-write.lock`, not to be confused with the ownership lock `<file>.kumiki-locks.json` of §9.8.3 — for the whole read → validate → write → log sequence; `patch apply` and `patch revert` hold it once across the ops they are made of. The composed source is validated *before* it is written, and the file is replaced by a renamed sibling rather than written in place, so another reader never sees a half-written file and a rejected op never overwrites anything. (Being replaced, a symlink at the file's path is replaced rather than followed, and the file does not keep its own permissions.) If the op cannot then be appended to the op log, the file is put back and the op is rejected. As a result, every op in the op log is reflected in the file, and every op that reported success is in both. `kumiki fix --apply` also writes by rename but does not take the write lock, so it must not run alongside the write verbs on the same file.
@@ -148,7 +150,8 @@ The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isErr
 | `op` | op kind |
 | `layer` | target layer |
 | `name` | target name |
-| `body` | new body (required for add/replace) |
+| `body` | new body (required for add/replace), as [§9.2.2](#_9-2-2-write-commands) describes it. A tile's or a type's always states its clauses or parameters, and starts at its `=` when it has none (`= heading("Hi")`), so `patch apply` writes the definition the op wrote, whatever clauses the definition has gained since |
+| `prev` | `replace` and `edit` only: the body the definition had before the op, in the same form as `body`. `patch revert` writes it back, so clauses and parameters that no logged body has, such as ones written by hand, come back too. What separated the name from the body, such as a comment after the name or a line break, is not kept: the body follows the name as `add` writes it |
 | `author` | issuing agent |
 | `ts` | issue time (UNIX ms) |
 | `op-id` | the op's ULID |
@@ -158,7 +161,9 @@ The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isErr
 | `bodies` | `remove` only: every definition the op deleted as `{layer, name, body}`, with the body it had when it was deleted, the requested one first. `patch revert` restores these |
 | `with` | `add` only: further definitions `{layer, name, body}` added in the same op — how the revert of a cascade restores its dependents |
 
-`with` and `bodies` must be arrays of objects whose three fields are strings, and `removed` an array of qualified names starting with the op's own definition. An op in a patch file or a line in the op log that breaks this is rejected, naming the field, before anything is written.
+`with` and `bodies` must be arrays of objects whose three fields are strings, `removed` an array of qualified names starting with the op's own definition, and `prev` a string on a `replace` or an `edit`, which are the only ops that have one. An op in a patch file or a line in the op log that breaks this is rejected, naming the field, before anything is written.
+
+`patch revert` of a `replace` or an `edit` logged without `prev` falls back to the last body the log has for the definition. A tile or a type body there that does not state its clauses or parameters keeps the ones the definition has, as in a `replace`. A logged body that is a whole definition, starting with `<layer> <name>`, is refused, naming the definition, and nothing is written.
 
 ### 9.3.3 op Convergence Guarantees
 
@@ -264,6 +269,8 @@ All errors are structured:
   }
 }
 ```
+
+This `edit` op replaces the first `usres` on line 2 of `tile.TodoRow`, counting from the definition's first line. If `usres` is not on that line, for example because the line has changed since the error was reported, the op is rejected like any other failed write (§9.2.5): it exits `1`, writes nothing and logs nothing, and the message names the text and the line. A `{"find": …, "replace": …}` patch is rejected the same way when `find` is not in the definition.
 
 ### 9.6.1 Where the codes are defined
 
