@@ -300,6 +300,19 @@ error(field=email)
 
 述語を複数持つ型（[§1.3.1](./language.md#_1-3-1-構文)）では、§1.3.1 が与える順で、現在の値が**最初に失敗した述語**のメッセージが出る。`slot draft : Text where nonempty where len-lt(7) = ""` の手つかずのフィールドは「Required」であり、空の値が十分満たしている側の境界ではない。
 
+`field=` は slot、または slot の中への**パス**を指す：slot の名前に続くステップで、各ステップはレコードのフィールド（`form.email`）、`Option` / `Result` のペイロードへの `.get`（`draft.get.title`）、あるいは `List`（`rows[0]`）や `Map`（`book["b"]`）へのリテラルのキーによるインデックスである。
+
+```kumiki snippet
+input(bind=form.email, type="email")
+error(field=form.email)
+input(bind=form.age, type="number")
+error(field=form.age)
+```
+
+パスがあるとき、tile はそのパスかそれより下の失敗だけを描画する。slot はそのパスへの `bind` と同じようにそのパスで判定される（[§5.6](#_5-6-バリデーション戦略)） — パスに沿った述語と、パスの終点より下のすべての述語 — ので、兄弟の失敗はこの tile のものではない。`email` と `age` がどちらも失敗するレコードでは、各フィールドがレコードのどこにあっても、`error(field=form.email)` は email のメッセージを、`error(field=form.age)` は age のメッセージを描画する。bind された `input` が読めないテキストは、その input が bind するパスでの失敗である：age のフィールドの `"1.5"` は `error(field=form.age)` では「Must be a whole number」であり、`error(field=form.email)` では何も出ない。slot だけを書けば slot 全体が対象になる：`error(field=form)` は `form` のどこかで最初に見つかった失敗を描画する。値に届かないパス — `None` や `Err` への `.get`、`List` の末尾を越えたインデックス、`Map` にないキー — にはそこで失敗するものがなく、何も描画しない。
+
+パスは slot の型に照らして検査される：レコードにないフィールドは [E0108](./errors.md#e0108-undef-member)、`Int` でない `List` のインデックスは [E0201](./errors.md#e0201-type-mismatch) である。それ以外は slot の中のどの場所も指さず、tile が描画しうる失敗がないので [E0230](./errors.md#e0230-error-field-not-path) になる：リテラル（`field="email"`）、`for` の変数や tile の `$1` のようなローカルな名前、値を導出するメンバー（`.length`）、呼び出し、そのほかの式、`List` でも `Map` でもないものへのインデックス。キーが計算されるインデックス（`error(field=rows[i].email)`）も E0230 である：パスは要素や項目をリテラルのキーで指す（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。
+
 ### 5.7.2 標準メッセージ {#_5-7-2-standard-messages}
 
 | 述語 | デフォルト |

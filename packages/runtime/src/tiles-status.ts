@@ -1,7 +1,7 @@
 // Status / messaging tile renderers (#71): spinner, skeleton, progress, the
 // inline toast tile, and the validation `error` tile.
 
-import type { BindReader, TilePatchers, TileRenderers } from "./core.ts";
+import type { BindReader, PathSegment, TilePatchers, TileRenderers } from "./core.ts";
 import {
   currentTheme,
   ensureAnimationStyles,
@@ -20,8 +20,12 @@ import {
  * (no error shown) when the value passes its refinement, when the slot has no
  * refinement, or when no app is mounted. The message text comes
  * from `theme.errors[<pred>]` if overridden, else the spec §5.7.2 default.
+ *
+ * With a `path` (`error(field=form.email)`, §5.7.1), only a failure at or below
+ * it is the tile's: the slot's gate is asked about that path, as a `bind` to it
+ * is, so a sibling that fails first takes nothing from this field's message.
  */
-function resolveFieldError(field: string): string {
+function resolveFieldError(field: string, path: readonly PathSegment[] = []): string {
   // Render-time lookup: the error tile is being built for the app whose
   // render pass is running (multi-mount registry in core).
   const app = getRenderingApp();
@@ -34,7 +38,7 @@ function resolveFieldError(field: string): string {
   // Only a control in the view being rendered speaks for this tile: another
   // view of the same shape shows the slot's own value. The judgement is the
   // one a form gates its submit on (§5.2.2).
-  const shown = judgeShownField(app, field, getRenderingView());
+  const shown = judgeShownField(app, field, getRenderingView(), path);
   if (shown.valid) return "";
   const overrides = currentTheme()?.errors as Record<string, string> | undefined;
   // Text that does not read as the bound base at all is judged before any
@@ -47,7 +51,7 @@ function resolveFieldError(field: string): string {
   const value = shown.value;
   // The message names the predicate the value fails, which for a type carrying
   // several is not necessarily the one `refineKind` holds.
-  const failed = failedRefinement(value, meta);
+  const failed = failedRefinement(value, meta, path);
   const pred = failed.kind ?? "";
   const args = failed.args ?? [];
   return overrides?.[pred] ?? defaultFieldError(pred, args);
@@ -162,7 +166,7 @@ export const statusTiles: TileRenderers = {
     span.setAttribute("aria-live", "assertive");
     span.dataset.field = node.field;
     span.style.color = "#c00";
-    span.textContent = resolveFieldError(node.field);
+    span.textContent = resolveFieldError(node.field, node.path);
     return span;
   },
 };
@@ -213,7 +217,7 @@ export const statusPatchers: TilePatchers = {
     // relationships keep tracking without a full subtree rebuild.
     const span = el as HTMLSpanElement;
     if (span.dataset.field !== newNode.field) span.dataset.field = newNode.field;
-    const nextText = resolveFieldError(newNode.field);
+    const nextText = resolveFieldError(newNode.field, newNode.path);
     if (span.textContent !== nextText) span.textContent = nextText;
   },
 };

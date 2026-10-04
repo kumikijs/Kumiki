@@ -397,7 +397,17 @@ export type TileNode = (
       max?: number;
       step?: number;
     }
-  | { kind: "error"; field: string; props?: TileProps }
+  | {
+      kind: "error";
+      /** The slot whose failure the tile renders. */
+      field: string;
+      /**
+       * The path below the slot it renders the failure at or below (forms.md
+       * §5.7.1); absent for the whole slot.
+       */
+      path?: PathSegment[];
+      props?: TileProps;
+    }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
   | {
       /**
@@ -494,11 +504,14 @@ export type SlotMeta = {
    * the chain's predicates too — and emits the three fields above only for a
    * type whose predicates all sit on the type itself.
    *
-   * Given a `bind` path as `at`, it answers only a failure on that path —
-   * along it, or below where it ends — so a write to one field of a record is
-   * not refused for a sibling the user has not reached yet (forms.md §5.6).
+   * Given a path as `at`, it answers only a failure on that path — along it,
+   * or below where it ends — so a write to one field of a record is not
+   * refused for a sibling the user has not reached yet (forms.md §5.6), and an
+   * `error(field=…)` for one field renders that field's failure (§5.7.1). A
+   * `bind` path's steps are fields and `.get`; an `error` path may also index
+   * a List element or a Map entry (`{at: key}`).
    */
-  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly PathSegment[]) => RefinementFailure | undefined;
 };
 
 /**
@@ -582,14 +595,15 @@ export type SlotGate = {
  * write-back, the `error` tile — so a slot built with `refineFailure` alone is
  * gated as fully as one codegen emitted.
  *
- * `at` is the path a `bind` wrote through: only a failure on it refuses the
- * write. A predicate on the slot's own type is on every path, so a type whose
- * predicates all sit there (`refine`) is judged whole either way.
+ * `at` is the path a `bind` wrote through, or the one an `error` tile renders
+ * for: only a failure on it counts. A predicate on the slot's own type is on
+ * every path, so a type whose predicates all sit there (`refine`) is judged
+ * whole either way.
  */
 export function slotAccepts(
   meta: SlotGate | undefined,
   value: unknown,
-  at?: readonly BindSegment[],
+  at?: readonly PathSegment[],
 ): boolean {
   if (meta?.refineFailure) return meta.refineFailure(value, at) === undefined;
   return meta?.refine ? meta.refine(value) : true;
@@ -605,7 +619,7 @@ export type RefinementNaming = {
   refineKind?: string;
   refineArgs?: (number | string)[];
   refineAll?: RefinementPart[];
-  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly PathSegment[]) => RefinementFailure | undefined;
 };
 
 /**
@@ -614,16 +628,18 @@ export type RefinementNaming = {
  * named predicate. A conjunction's own test cannot answer this — it is one
  * function that returns false — so a message built from `refineKind` alone
  * names whichever predicate that field happens to hold, right only while a type
- * carries exactly one.
+ * carries exactly one. Given a path as `at`, the first failure on that path, as
+ * {@link slotAccepts} judges it.
  */
 export function failedRefinement(
   value: unknown,
   meta: RefinementNaming | undefined,
+  at?: readonly PathSegment[],
 ): { kind?: string; args?: (number | string)[]; path?: readonly RefinementStep[] } {
   // A type with predicates below its own chain answers with the failure
   // itself, which is the only reader that can say *where* inside the value.
   if (meta?.refineFailure) {
-    const deep = meta.refineFailure(value);
+    const deep = meta.refineFailure(value, at);
     if (!deep) return {};
     return deep.path.length === 0 ? { kind: deep.kind, args: deep.args } : deep;
   }
@@ -1657,12 +1673,16 @@ export type BindView = Pick<Node, "contains">;
  * stale, and every stale entry for the slot is dropped here rather than by
  * every path that can move a control. A live entry in another view is kept
  * and not used.
+ *
+ * `unread` is the first one a control bound at or below `at` shows: text
+ * another field cannot read is that field's to say, not a sibling's.
  */
 export function refusedBindShown(
   app: object,
   slot: string,
   view: BindView | undefined,
   held?: unknown,
+  at: readonly PathSegment[] = [],
 ): Pick<RefusedBind, "value" | "unread"> | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
@@ -1681,13 +1701,29 @@ export function refusedBindShown(
   let value = held;
   let unread: BindReader["as"] | undefined;
   for (const r of shown) {
-    const at = JSON.stringify(r.path);
-    if (laid.has(at)) continue;
-    laid.add(at);
+    const where = JSON.stringify(r.path);
+    if (laid.has(where)) continue;
+    laid.add(where);
     value = r.path.length > 0 ? _setPathHelper(value ?? {}, r.path, r.value) : r.value;
-    unread ??= r.unread;
+    if (bindPathStartsWith(r.path, at)) unread ??= r.unread;
   }
   return { value, unread };
+}
+
+/**
+ * Whether the bind path `path` begins with `prefix`, step for step: the same
+ * field, or `.get` against `.get`. A bind path never indexes, so an index step
+ * of `prefix` is a step none of its steps is.
+ */
+function bindPathStartsWith(path: readonly BindSegment[], prefix: readonly PathSegment[]): boolean {
+  return (
+    prefix.length <= path.length &&
+    prefix.every((step, i) => {
+      const own = path[i];
+      if (typeof step !== "object" || step === null) return own === step;
+      return !isIndexSegment(step) && isUnwrapSegment(step) && typeof own === "object";
+    })
+  );
 }
 
 /** A field as it shows, judged: valid, or why not (see `judgeShownField`). */
@@ -1707,18 +1743,24 @@ export type ShownField =
  * on it (§5.2.2), so given the same view the two cannot disagree. They are
  * not always handed the same view: the tile asks about the view being
  * rendered, the form about its own controls.
+ *
+ * Given a path as `at` — an `error(field=…)`'s, below its slot (§5.7.1) — the
+ * field at that path is the one judged: text a control cannot read counts
+ * only from a control bound at or below it, and the value is judged by the
+ * slot's gate asked about that path, as a `bind` to it would be.
  */
 export function judgeShownField(
   app: AppShape,
   slot: string,
   view: BindView | undefined,
+  at: readonly PathSegment[] = [],
 ): ShownField {
   const meta = app.slots?.[slot];
   const held = app.live?.[slot] ?? meta?.value;
-  const refused = refusedBindShown(app, slot, view, held);
+  const refused = refusedBindShown(app, slot, view, held, at);
   if (refused?.unread) return { valid: false, unread: refused.unread };
   const value = refused ? refused.value : held;
-  return slotAccepts(meta, value) ? { valid: true } : { valid: false, value };
+  return slotAccepts(meta, value, at) ? { valid: true } : { valid: false, value };
 }
 
 /**
@@ -4501,12 +4543,10 @@ function reconcileNode(
     // changing the slot the node is built from (forms.md §5.1.2), so its
     // patcher re-derives the message on every pass, equal node or not.
     //
-    // It is also what makes the tile follow its slot at all. A compiled app
-    // gets that today by accident: codegen emits `error(field=contact)` with
-    // `props: { field: _live["contact"], … }`, so the node is never equal
-    // across a change of the slot and the patcher above runs. This branch is
-    // what keeps the message right if that argument stopped leaking into
-    // `props`.
+    // It is also what makes the tile follow its slot at all. The node names
+    // the slot and the path into it (forms.md §5.7.1), not the value there —
+    // a field is a place, and codegen keeps it out of `props` as it keeps a
+    // `bind=` target — so it compares equal across a change of the slot.
     //
     // Guarded like the patcher call above, so the two exits cannot drift.
     try {

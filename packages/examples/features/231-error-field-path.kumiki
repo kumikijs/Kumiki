@@ -1,0 +1,28 @@
+# Feature (forms.md §5.7.1): `error(field=…)` takes a path into a slot, and
+# renders only the failure at or below it. Both fields of the pristine `form`
+# fail — `email: ""` and `age: 0`, which a declared default may hold — and
+# each field's tile shows its own message beside the other's: the age's
+# message does not wait behind the email's, which comes first in the record.
+# Text the age field cannot read is a failure at `form.age`, so it is that
+# tile's alone. The bare slot, `error(field=form)`, shows the first failure
+# anywhere in it.
+
+type Contact = {email: Text where email, age: Int where between(18, 120)}
+
+slot form : Contact = {email: "", age: 0}
+
+tile App = column(
+    text("[email]"),
+    input(bind=form.email, type="email", id="email"),
+    error(field=form.email),
+    text("[age]"),
+    input(bind=form.age, type="number", id="age"),
+    error(field=form.age),
+    text("[form]"),
+    error(field=form),
+    text("[end]"))
+
+app ErrorFieldPath
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

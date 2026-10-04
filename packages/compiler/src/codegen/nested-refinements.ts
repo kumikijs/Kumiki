@@ -64,8 +64,9 @@ export type NestedRefinements = {
   /**
    * The name of a module-level function answering the first predicate a value
    * of `t` fails, with its path, or `undefined` when `t` carries none at all.
-   * Given a bind path as its second argument, it answers the first failure on
-   * that path — along it or below its end — and passes over the rest.
+   * Given a path as its second argument — a bind's, or an `error(field=…)`'s,
+   * which may also index — it answers the first failure on that path — along
+   * it or below its end — and passes over the rest.
    * Defined whenever `carriesNestedRefinement(t)` holds, and the same name for
    * every `t` that spells the same type.
    */
@@ -83,21 +84,54 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
    * One step into a position: `f` is the failure found there. The check is
    * called by name — an inline arrow would be a closure built on every call.
    *
-   * `o` is the focus a `bind` write is judged by (forms.md §5.6): the bind
-   * path still to walk, or absent for a whole-value check. While it has steps
-   * left, only the position it names is entered — `onPath` says whether this
-   * step is that one — so a sibling's failure cannot refuse a write to a field
-   * beside it. Once it is used up, everything below is checked.
+   * `o` is the focus a `bind` write is judged by (forms.md §5.6), and an
+   * `error(field=…)` renders by (§5.7.1): the path still to walk, or absent
+   * for a whole-value check. While it has steps left, only the position it
+   * names is entered — `onPath` says whether this step is that one — so a
+   * sibling's failure cannot refuse a write to a field beside it, or take the
+   * place of the field's own message. Once it is used up, everything below is
+   * checked.
    *
-   * A position no bind step can name — a container's element, key or entry, a
-   * union's payload — has no `onPath`, and is checked whole whatever the focus
-   * holds: a step it cannot read must not pass over what is below it.
+   * A position no step can name — a Set member, a Tuple member, a union's
+   * payload — has no `onPath`, and is checked whole whatever the focus holds: a
+   * step it cannot read must not pass over what is below it. A List element
+   * and a Map entry are named by an index step, through `atIndex`.
    */
   const at = (stepJs: string, check: string, valueJs: string, onPath?: string): string => {
     const found = `return { ...f, path: [${stepJs}, ...f.path] };`;
     return onPath === undefined
       ? `if ((f = ${named$(check)}(${valueJs}))) ${found}`
       : `if ((!o?.length || ${onPath}) && (f = ${named$(check)}(${valueJs}, o?.slice(1)))) ${found}`;
+  };
+
+  /** Whether `_rqAt`, which `atIndex` reads a focus's next step with, is declared yet. */
+  let indexDeclared = false;
+
+  /**
+   * One step into a List element or a Map entry, which an index step of the
+   * focus (`{at: key}`) names when `keyJs` is its key. Only an
+   * `error(field=…)` path indexes — a bind path never does — and a focus
+   * whose next step is not an index names nothing here: the position is
+   * checked whole, as `at` checks one no step can name. With `keyJs` `null`
+   * the position is a Map key, which no index names: it is beside every index
+   * step, as a sibling field is beside a field.
+   */
+  const atIndex = (
+    stepJs: string,
+    check: string,
+    valueJs: string,
+    keyJs: string | null,
+  ): string => {
+    if (!indexDeclared) {
+      indexDeclared = true;
+      decls.push(
+        `const _rqAt = (o) => typeof o?.[0] === "object" && o[0] !== null && "at" in o[0];`,
+      );
+    }
+    const found = `return { ...f, path: [${stepJs}, ...f.path] };`;
+    return keyJs === null
+      ? `if (!_rqAt(o) && (f = ${named$(check)}(${valueJs}))) ${found}`
+      : `if ((!_rqAt(o) || o[0].at === ${keyJs}) && (f = ${named$(check)}(${valueJs}, _rqAt(o) ? o.slice(1) : undefined))) ${found}`;
   };
 
   /** `check` as a helper's name, declaring it first when it is an arrow. */
@@ -243,7 +277,7 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         return walk(
           t,
           "Array.isArray(v)",
-          check ? [`for (const [i, e] of v.entries()) { ${at("i", check, "e")} }`] : [],
+          check ? [`for (const [i, e] of v.entries()) { ${atIndex("i", check, "e", "i")} }`] : [],
         );
       }
       // A set's members are an object's keys at runtime (`setAdd`,
@@ -264,17 +298,19 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       }
       case "Map": {
         const steps: string[] = [];
+        const read = keyJs(a0, "k");
+        const bind = read === "k" ? "" : `const kk = ${read}; `;
+        const kk = read === "k" ? "k" : "kk";
         const key = sub(a0);
         if (key) {
-          const read = keyJs(a0, "k");
-          const bind = read === "k" ? "" : `const kk = ${read}; `;
-          const kk = read === "k" ? "k" : "kk";
-          steps.push(`for (const k of Object.keys(v)) { ${bind}${at(`{ key: ${kk} }`, key, kk)} }`);
+          steps.push(
+            `for (const k of Object.keys(v)) { ${bind}${atIndex(`{ key: ${kk} }`, key, kk, null)} }`,
+          );
         }
         const val = sub(a1);
         if (val) {
           steps.push(
-            `for (const [k, e] of Object.entries(v)) { ${at(`{ entry: ${keyJs(a0, "k")} }`, val, "e")} }`,
+            `for (const [k, e] of Object.entries(v)) { ${bind}${atIndex(`{ entry: ${kk} }`, val, "e", kk)} }`,
           );
         }
         return walk(t, `${object} && !Array.isArray(v)`, steps);

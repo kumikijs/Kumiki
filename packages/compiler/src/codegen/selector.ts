@@ -21,7 +21,7 @@ export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string
  * One predicate rather than one list per loop: the top-level props, the `el`
  * payload and the named-argument fold all have to agree about what is not a
  * prop, and three copies of the list is three places for them to stop agreeing.
- * `forEl` adds the two the reducer payload alone excludes.
+ * `forEl` adds the ones the reducer payload alone excludes.
  */
 function isNotPropData(tile: string, name: string, forEl = false): boolean {
   if (HANDLER_NAMES.has(name)) return true;
@@ -35,8 +35,10 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   // not reducer data, and shipping it twice re-evaluates every `@token` ref.
   if (forEl && name === "style") return true;
   // An lvalue (`todos[i].done`), not a value: lowering it emits a read of the
-  // slot under a name nothing consults.
-  if (forEl && name === "bind") return true;
+  // slot under a name nothing consults. An `error` tile's `field` names a
+  // place the same way (forms.md §5.7.1), and a read of one can panic — `.get`
+  // on a `None`, an index past a List's end — where the tile renders nothing.
+  if (forEl && (name === "bind" || (tile === "error" && name === "field"))) return true;
   return false;
 }
 

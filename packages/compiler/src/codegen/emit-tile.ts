@@ -2,6 +2,7 @@ import { unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
+import { errorField, fieldPath } from "../error-field.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import {
@@ -799,12 +800,20 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "error": {
+        // The slot the field's root names, and the path below it (forms.md
+        // §5.7.1). A field that names no place (E0230) lowers to none.
         const fieldArg = t.args.find((a) => a.name === "field");
-        const fieldName =
-          fieldArg && (fieldArg.value as Expr).kind === "Ref"
-            ? (fieldArg.value as Expr & { name: string }).name
-            : "";
-        return `({ kind: "error", field: ${JSON.stringify(fieldName)}, props: ${propsObj} })`;
+        const field = fieldArg && !isTileExpr(fieldArg.value) ? errorField(fieldArg.value) : null;
+        const path = field ? fieldPath(field) : null;
+        const fields = [`kind: "error"`];
+        if (field?.root.kind === "Ref" && path) {
+          fields.push(`field: ${JSON.stringify(field.root.name)}`);
+          if (path.length > 0) fields.push(`path: ${JSON.stringify(path)}`);
+        } else {
+          fields.push(`field: ""`);
+        }
+        fields.push(`props: ${propsObj}`);
+        return `({ ${fields.join(", ")} })`;
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;
