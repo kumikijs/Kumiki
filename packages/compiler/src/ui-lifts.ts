@@ -19,6 +19,11 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *   (`editable` fires no `change`); some are runtime policy (`link` reserves
  *   `click` for navigation, and `slider` listens for `input` only to write its
  *   bind, never calling `onInput`). The comment on each row says which.
+ * `firesUnheard`: the runtime-policy absences of that row — a kind left out of
+ *   `tiles` although its element fires `ev`, mapped to what its renderer does
+ *   with the event instead of calling `handler`. W0212 gives that as its
+ *   reason. For a left-out kind found neither here nor by
+ *   `labelWrappedUnreached`, it says no descendant fires the event.
  *
  * Consumers:
  *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
@@ -26,8 +31,9 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *    explicit `onX=r` wirings so they are not re-emitted as data props.
  *  - `typecheck.ts#checkReducer` — emits W0212 when a reducer's selector
  *    targets a tile not listed in `tiles`, giving the reason
- *    `labelWrappedUnreached` names when it names one; `checkTile` resolves an
- *    explicit handler's value as a reducer name rather than an expression.
+ *    `labelWrappedUnreached` or `firesUnheardIn` names when one names one;
+ *    `checkTile` resolves an explicit handler's value as a reducer name
+ *    rather than an expression.
  *  - `references.ts` — the same resolution for the AI-editing verbs, so
  *    `refs` / `rename` / `remove --cascade` see the handler → reducer edge.
  *  - `docs/spec/errors.md` §W0212 — published version of this table.
@@ -45,6 +51,7 @@ export type UiLift = {
   readonly ev: UiEventKind;
   readonly handler: string;
   readonly tiles: ReadonlySet<string> | null;
+  readonly firesUnheard?: Readonly<Record<string, string>>;
 };
 
 /**
@@ -145,8 +152,9 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
     // the runtime's link renderer reserves the click event for navigation
     // interception and does not invoke user `onClick` reducers
     // (`packages/runtime/src/tiles/text/`). Lifting that requires a separate
-    // runtime change.
+    // runtime change. Runtime policy, so it is recorded in `firesUnheard`.
     tiles: new Set(["button", "check", "switch", "radio"]),
+    firesUnheard: { link: "keeps it for navigation" },
   },
   { ev: "submit", handler: "onSubmit", tiles: new Set(["form"]) },
   {
@@ -156,17 +164,60 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
     // event at all — the omission is the rule here, not a gap.
     tiles: new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
   },
-  // An `editable` does fire `input`, and its renderer calls the tile's
-  // `onInput` from that listener, so a selector lands on it like any other
-  // text control. `slider` is absent by its renderer's choice, not the DOM's:
-  // an `<input type="range">` fires `input`, and the renderer listens to it
-  // to write the bind but never calls `onInput`.
-  { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea", "editable"]) },
+  {
+    ev: "input",
+    handler: "onInput",
+    // An `editable` does fire `input`, and its renderer calls the tile's
+    // `onInput` from that listener, so a selector lands on it like any other
+    // text control. The kinds in `firesUnheard` are absent by their renderers'
+    // choice, not the DOM's: an `<input type="range">`, a checkbox, a radio and
+    // a `<select>` all fire `input`. The `slider` renderer listens to it to
+    // write the bind; the others listen for `change` alone. None of them calls
+    // `onInput`.
+    tiles: new Set(["input", "textarea", "editable"]),
+    firesUnheard: {
+      slider: "listens for it only to write the bind",
+      check: 'listens for "change" instead',
+      radio: 'listens for "change" instead',
+      switch: 'listens for "change" instead',
+      select: 'listens for "change" instead',
+    },
+  },
   { ev: "key", handler: "onKeyDown", tiles: rootListenedTiles("key") },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
   { ev: "focus", handler: "onFocus", tiles: rootListenedTiles("focus") },
   { ev: "blur", handler: "onBlur", tiles: rootListenedTiles("blur") },
 ];
+
+/**
+ * The kinds among `kinds` that fire `ev` where no reducer hears it, from the
+ * row's `firesUnheard`: grouped by what their renderer does with the event
+ * instead, each group's kinds sorted, the groups in the order of their first
+ * kind. Empty for a kind whose element fires nothing, and for every kind of
+ * a row with no such record.
+ *
+ * W0212 reads it to say so. For these kinds "no descendant fires it" is
+ * untrue, because the element does.
+ */
+export function firesUnheardIn(
+  ev: UiEventKind,
+  kinds: Iterable<string>,
+): Array<{ readonly kinds: string[]; readonly instead: string; readonly handler: string }> {
+  const lift = UI_LIFTS.find((l) => l.ev === ev);
+  const record = lift?.firesUnheard;
+  if (lift === undefined || record === undefined) return [];
+  const byInstead = new Map<string, string[]>();
+  for (const kind of [...kinds].sort()) {
+    const instead = Object.hasOwn(record, kind) ? record[kind] : undefined;
+    if (instead === undefined) continue;
+    byInstead.set(instead, [...(byInstead.get(instead) ?? []), kind]);
+  }
+  return [...byInstead].map(([instead, grouped]) => ({
+    kinds: grouped,
+    instead,
+    handler: lift.handler,
+  }));
+}
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */
 export const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = Object.fromEntries(

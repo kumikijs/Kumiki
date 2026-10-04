@@ -11,19 +11,7 @@
       }
     },
     {
-      "label": "focusing the checkbox runs nothing: focus does not bubble to the label, where onFocus= sits",
-      "do": {
-        "focus": "#agree input"
-      },
-      "expect": {
-        "noErrors": true,
-        "state": {
-          "log": ""
-        }
-      }
-    },
-    {
-      "label": "ticking it runs its ui.change reducer, after the bind is written",
+      "label": "ticking the check runs its ui.change reducer, after the bind is written",
       "do": {
         "click": "#agree input"
       },
@@ -41,18 +29,6 @@
       "do": {
         "key": "#agree input",
         "value": " "
-      },
-      "expect": {
-        "noErrors": true,
-        "state": {
-          "log": "ac ak "
-        }
-      }
-    },
-    {
-      "label": "leaving the checkbox runs nothing either",
-      "do": {
-        "blur": "#agree input"
       },
       "expect": {
         "noErrors": true,

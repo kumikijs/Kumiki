@@ -34,6 +34,7 @@ import type {
   TileExpr,
   TypeDef,
   TypeExpr,
+  UiEventKind,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
 import {
@@ -104,6 +105,7 @@ import {
 // an undefined reference. `test/ui-lifts.test.ts` exercises every entry of
 // this set through the checker, so a second copy cannot drift unnoticed again.
 import {
+  firesUnheardIn,
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
   handlerReducerName,
@@ -2294,10 +2296,9 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   // suppresses false positives for the cascade pattern where a focusable
   // child IS in the body (e.g. `TodoRow = row(check(...))` + `ui.click`).
   // Wildcard `_` selectors are skipped (no tile to resolve); undeclared
-  // selectors are already covered by E0211. A label-wrapped control in the
-  // body (`labelWrappedUnreached`) does fire `focus` / `blur` from its
-  // `<input>`, so for those the reason given is that the event does not bubble
-  // to the `<label>` the listener is on, not that nothing fires it.
+  // selectors are already covered by E0211. Some kinds in the body do fire
+  // `<ev>` where no reducer hears it, and for those "nothing fires it" is not
+  // the reason: see `uiEventMismatchReason`.
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
     const { ev, selector } = r.on;
     const allowed = UI_EVENT_TILE_KINDS[ev];
@@ -2307,13 +2308,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
       // Empty set = unresolvable (cycle / undeclared / dynamic-only body) →
       // conservative skip, no warning.
       if (descendants.size > 0 && !hasMatch) {
-        const unreached = labelWrappedUnreached(ev, descendants);
-        const reason =
-          unreached.length > 0
-            ? `"${ev}" never reaches a listener in tile "${selector.tile}": ` +
-              `a ${unreached.join(" / ")} listens on the <label> around its <input>, ` +
-              `and the "${ev}" that <input> fires does not bubble to the <label>`
-            : `tile "${selector.tile}" has no descendant that fires "${ev}"`;
+        const reason = uiEventMismatchReason(ev, selector.tile, descendants);
         errors.push({
           code: "W0212",
           kind: "ui-event-tile-mismatch",
@@ -2336,6 +2331,35 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+/**
+ * Why a `ui.<ev>(<tile>)` subscription reaches no reducer, given the kinds its
+ * body renders and none of which the `<ev>` row lists. "No descendant fires
+ * it" is the default, and true only of kinds whose element fires nothing; two
+ * kinds of absence are not that, and each gets the reason that holds:
+ *
+ *  - a label-wrapped control's `<input>` fires `focus` / `blur`, which do not
+ *    bubble to the `<label>` the listener is on (`labelWrappedUnreached`);
+ *  - a kind's element fires `<ev>` and its renderer does something else with
+ *    it than call the handler (`firesUnheardIn`, the row's `firesUnheard`).
+ */
+function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
+  const unreached = labelWrappedUnreached(ev, kinds);
+  const unheard = firesUnheardIn(ev, kinds);
+  const labelClause =
+    `a ${unreached.join(" / ")} listens on the <label> around its <input>, ` +
+    `and the "${ev}" that <input> fires does not bubble to the <label>`;
+  if (unheard.length === 0) {
+    if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
+    return `"${ev}" never reaches a listener in tile "${tile}": ${labelClause}`;
+  }
+  const clauses = unheard.map(
+    (g) =>
+      `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
+  );
+  if (unreached.length > 0) clauses.unshift(labelClause);
+  return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
 }
 
 function checkStmt(

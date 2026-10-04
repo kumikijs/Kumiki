@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { UiEventKind } from "../src/ast.ts";
+import { BUILTIN_TILES } from "../src/builtins.ts";
 import { compile } from "../src/compile.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { buildDefIndex, referencesIn } from "../src/references.ts";
 import { check } from "../src/typecheck.ts";
 import {
+  firesUnheardIn,
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
   labelWrappedUnreached,
@@ -87,6 +89,47 @@ describe("labelWrappedUnreached", () => {
       "switch",
     ]);
     expect(labelWrappedUnreached("focus", ["box", "text"])).toEqual([]);
+  });
+});
+
+describe("firesUnheard / firesUnheardIn", () => {
+  it("records only builtin kinds that its row leaves out", () => {
+    // A kind both lifted onto and recorded as unheard would be two answers to
+    // one question; W0212 would never give the reason, and nothing would say
+    // the record had gone stale.
+    for (const lift of UI_LIFTS) {
+      for (const kind of Object.keys(lift.firesUnheard ?? {})) {
+        expect(BUILTIN_TILES.has(kind), `${kind} in the ${lift.ev} record`).toBe(true);
+        expect(lift.tiles?.has(kind), `${kind} in the ${lift.ev} row`).toBe(false);
+      }
+    }
+  });
+
+  it("records the absences that are runtime policy: link for click, five kinds for input", () => {
+    const recorded = Object.fromEntries(
+      UI_LIFTS.filter((l) => l.firesUnheard).map((l) => [
+        l.ev,
+        Object.keys(l.firesUnheard ?? {}).sort(),
+      ]),
+    );
+    expect(recorded).toEqual({
+      click: ["link"],
+      input: ["check", "radio", "select", "slider", "switch"],
+    });
+  });
+
+  it("groups the kinds of a body by what their renderer does instead, with the row's handler", () => {
+    expect(firesUnheardIn("input", ["text", "switch", "slider", "check"])).toEqual([
+      { kinds: ["check", "switch"], instead: 'listens for "change" instead', handler: "onInput" },
+      { kinds: ["slider"], instead: "listens for it only to write the bind", handler: "onInput" },
+    ]);
+  });
+
+  it("answers nothing for a kind whose element fires nothing, or a row with no record", () => {
+    expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
+    expect(firesUnheardIn("change", ["editable"])).toEqual([]);
+    // The label-wrapped focus / blur absence is `labelWrappedUnreached`'s.
+    expect(firesUnheardIn("focus", ["check"])).toEqual([]);
   });
 });
 

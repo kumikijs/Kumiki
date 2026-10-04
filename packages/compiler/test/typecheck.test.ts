@@ -1242,25 +1242,31 @@ describe("typecheck", () => {
       expect(w?.message).toContain("link");
     });
 
+    /** The one W0212 a `ui.<ev>(D)` subscription draws, given `D`'s definition. */
+    const w0212 = (ev: string, tiles: string) => {
+      const src = `
+        type Size = S | M
+        fn sizes() -> List({label: Text, value: Size})
+           = [{label: "Small", value: S}, {label: "Medium", value: M}]
+        slot size : Size = S
+        slot done : Bool = false
+        slot note : Text = ""
+        slot hits : Int = 0
+        reducer r on=ui.${ev}(D) do= hits := hits + 1
+        ${tiles}
+        tile App = column(D)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const found = checkSrc(src).filter((e) => e.code === "W0212");
+      expect(found).toHaveLength(1);
+      return found[0]!.message;
+    };
+
     // `check` / `radio` / `switch` render a `<label>` around their `<input>`,
     // and the listener sits on the label. The `<input>` does fire `focus` and
     // `blur`; neither bubbles, so neither reaches the label. "No descendant
     // fires it" would be untrue for these, so the message says what is true.
     describe("on a label-wrapped control, says the event does not bubble to the label", () => {
-      const w0212 = (ev: string, tiles: string) => {
-        const src = `
-          slot done : Bool = false
-          slot hits : Int = 0
-          reducer r on=ui.${ev}(D) do= hits := hits + 1
-          ${tiles}
-          tile App = column(D)
-          app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-        `;
-        const found = checkSrc(src).filter((e) => e.code === "W0212");
-        expect(found).toHaveLength(1);
-        return found[0]!.message;
-      };
-
       it("names the <input>, the event and the <label> for ui.focus on a check", () => {
         expect(w0212("focus", "tile D = check(value=done)")).toBe(
           `Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": ` +
@@ -1318,6 +1324,86 @@ describe("typecheck", () => {
         expect(w0212("submit", "tile D = check(value=done)")).toBe(
           `Reducer "r" subscribes to ui.submit(D) but tile "D" has no descendant that fires "submit" ` +
             `(DOM-allowed: form; observed in body: check). The handler is silently dropped.`,
+        );
+      });
+    });
+
+    // A kind whose element does fire the event, and whose renderer does
+    // something else with it than call the handler: runtime policy, not a fact
+    // about the element. "No descendant fires it" would be untrue for these.
+    describe("on a kind whose renderer does not pass the event on, says what it does instead", () => {
+      it("says a link keeps click for navigation", () => {
+        expect(w0212("click", 'tile D = link(to="/", text="home")')).toBe(
+          `Reducer "r" subscribes to ui.click(D) but "click" never reaches a reducer in tile "D": ` +
+            `a link fires "click", and its renderer keeps it for navigation, never calling onClick ` +
+            `(DOM-allowed: button, check, switch, radio; observed in body: link). ` +
+            `The handler is silently dropped.`,
+        );
+      });
+
+      it("says a slider listens for input only to write its bind", () => {
+        expect(w0212("input", "tile D = slider(bind=hits, min=0, max=10)")).toBe(
+          `Reducer "r" subscribes to ui.input(D) but "input" never reaches a reducer in tile "D": ` +
+            `a slider fires "input", and its renderer listens for it only to write the bind, ` +
+            `never calling onInput ` +
+            `(DOM-allowed: input, textarea, editable; observed in body: slider). ` +
+            `The handler is silently dropped.`,
+        );
+      });
+
+      const CHANGE_ONLY = {
+        check: "check(value=done)",
+        radio: 'radio(group="g", selected=done)',
+        switch: "switch(value=done)",
+        select: "select(bind=size, options=sizes())",
+      } as const;
+      for (const [kind, tile] of Object.entries(CHANGE_ONLY)) {
+        it(`says a ${kind} listens for change, not input`, () => {
+          const message = w0212("input", `tile D = ${tile}`);
+          expect(message).toContain(
+            `"input" never reaches a reducer in tile "D": a ${kind} fires "input", ` +
+              `and its renderer listens for "change" instead, never calling onInput (`,
+          );
+          expect(message).not.toContain("has no descendant");
+        });
+      }
+
+      it("names together the kinds that share a reason, and gives each reason once", () => {
+        const message = w0212(
+          "input",
+          'tile D = row(select(bind=size, options=sizes()), slider(bind=hits, min=0, max=10), check(value=done), text("x"))',
+        );
+        expect(message).toContain(
+          `"input" never reaches a reducer in tile "D": ` +
+            `a check / select fires "input", and its renderer listens for "change" instead, never calling onInput; ` +
+            `a slider fires "input", and its renderer listens for it only to write the bind, never calling onInput (`,
+        );
+      });
+
+      it("gives it through a container and a referenced tile", () => {
+        const message = w0212(
+          "click",
+          'tile Inner = link(to="/", text="home")\ntile D = box(Inner)',
+        );
+        expect(message).toContain(`a link fires "click", and its renderer keeps it for navigation`);
+        expect(message).toContain("observed in body: box, link");
+      });
+
+      it("keeps 'no descendant fires it' where the element fires nothing", () => {
+        // The controls: a `contenteditable` fires no `change`, and a `text`
+        // and a `button` have no reason recorded for the events below.
+        expect(w0212("change", "tile D = editable(bind=note)")).toContain(
+          `but tile "D" has no descendant that fires "change" (`,
+        );
+        expect(w0212("click", 'tile D = text("hi")')).toBe(
+          `Reducer "r" subscribes to ui.click(D) but tile "D" has no descendant that fires "click" ` +
+            `(DOM-allowed: button, check, switch, radio; observed in body: text). ` +
+            `The handler is silently dropped.`,
+        );
+        expect(w0212("input", 'tile D = button(text="b")')).toBe(
+          `Reducer "r" subscribes to ui.input(D) but tile "D" has no descendant that fires "input" ` +
+            `(DOM-allowed: input, textarea, editable; observed in body: button). ` +
+            `The handler is silently dropped.`,
         );
       });
     });

@@ -10,10 +10,8 @@
 #
 # So `ui.focus(Agree)` is W0212, and its message gives that reason: the
 # <input> fires "focus", which does not bubble to the <label> the listener is
-# on. `onFocus=` written on the check is attached to the same <label>:
-# `agreeFocus` is wired that way, and the scenario shows it never runs. `Note`
-# is an `input`, which takes focus itself, so its `ui.focus` / `ui.blur`
-# reducers run.
+# on. `Note` is an `input`, which takes focus itself, so its `ui.focus` /
+# `ui.blur` reducers run.
 
 type Size = Small | Large
 
@@ -25,13 +23,12 @@ slot log    : Text = ""
 
 reducer agreeChange on=ui.change(Agree) do= log := log + "ac "
 reducer agreeKey    on=ui.key(Agree)    do= log := log + "ak "
-reducer agreeFocus  on=ui.focus(_)      do= log := log + "af "
 reducer litChange   on=ui.change(Lit)   do= log := log + "wc "
 reducer sizeChange  on=ui.change(Big)   do= log := log + "rc "
 reducer noteFocus   on=ui.focus(Note)   do= log := log + "nf "
 reducer noteBlur    on=ui.blur(Note)    do= log := log + "nb "
 
-tile Agree = check(bind=agreed, onFocus=agreeFocus) {id: "agree"}
+tile Agree = check(bind=agreed) {id: "agree"}
 tile Lit   = switch(bind=lit) {id: "lit"}
 tile Big   = radio(group="size", bind=size, value=Large) {label: "Large", id: "big"}
 tile Note  = input(bind=note) {id: "note"}
