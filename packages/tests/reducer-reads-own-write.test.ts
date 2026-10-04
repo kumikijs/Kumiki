@@ -98,19 +98,17 @@ describe("a statement-level if / match after the write", () => {
 });
 
 describe("a read after a write whose value is undefined in JS", () => {
-  // A `match` with no arm for the scrutinee answers JS `undefined` (the
-  // checker does not require exhaustiveness today), and the batch commits that
+  // `$el` has no type the checker reads, so a prop the firing tile does not
+  // carry passes `check` and answers JS `undefined`, and the batch commits that
   // value. A later read in the same body has to see the same write rather than
   // fall back to the value from before the reducer ran.
   it.each([
     ["directly in the body", "got"],
     ["in a match arm", "match 1 with | n -> got"],
   ])("reads what the batch commits, %s", async (_row, read) => {
-    const source = `type K = A | B
-slot k    : K    = B
-slot got  : Text = "old"
+    const source = `slot got  : Text = "old"
 slot seen : Text = "unset"
-reducer go on=ui.click(Go) do= got := match k with | A -> "a"
+reducer go on=ui.click(Go) do= got := $el.missing
                                seen := ${read}
 tile Go = button(text="go", onClick=go)
 tile App = column(Go)

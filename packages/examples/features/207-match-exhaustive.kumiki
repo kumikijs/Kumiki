@@ -1,0 +1,52 @@
+# Feature (language.md §1.9): a `match` used as a value has an arm for every
+# value of its scrutinee's type.
+#
+#   match color with | Red -> Green | Green -> Blue | Blue -> Red      # every variant
+#   match color with | Red -> 1 | _ -> 0                               # `_` for the rest
+#   match picked with | Some(n) -> n.show | None -> "nothing"          # an Option, both arms
+#   match (picked, color) with | (Some(n), Blue) -> … | (Some(n), _) -> … | (None, _) -> …
+#
+# A value `match` evaluates to one of its arms, so the arms cover each variant
+# of a union, both arms of an `Option` or a `Result`, and each combination of a
+# tuple's items — `_` or a name covers whatever the other arms leave out. A
+# `match` whose arms leave a value out is E0227, which names each value it
+# leaves out: dropping the `Blue` arm below reports `Blue`, and dropping the
+# `None` arm reports `None`.
+
+type Color = Red | Green | Blue
+
+slot color  : Color       = Red
+slot picked : Option(Int) = None
+slot code   : Int         = 0
+slot label  : Text        = "-"
+
+reducer next-color on=ui.click(NextColor)
+    do= color := match color with | Red -> Green | Green -> Blue | Blue -> Red
+
+reducer pick on=ui.click(Pick)
+    do= picked := match picked with | Some(n) -> Some(n + 1) | None -> Some(1)
+
+reducer score on=ui.click(Score)
+    do= code := match color with | Red -> 1 | _ -> 0
+        label := match (picked, color) with | (Some(n), Blue) -> "blue " + n.show | (Some(n), _) -> n.show | (None, _) -> "none"
+
+fn colorName(c: Color) -> Text = match c with | Red -> "red" | Green -> "green" | Blue -> "blue"
+
+tile NextColor = button(text="next color") {id: "next-color"}
+tile Pick      = button(text="pick")       {id: "pick"}
+tile Score     = button(text="score")      {id: "score"}
+
+tile App
+    = column(
+        heading("a value match covers its scrutinee"),
+        row(NextColor, Pick, Score) {gap: "sm"},
+        text("color: " + colorName(color)),
+        text("picked: " + (match picked with | Some(n) -> n.show | None -> "nothing")),
+        text("code: " + code.show),
+        text("label: " + label))
+      {pad: "lg", gap: "md"}
+
+app MatchExhaustive
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

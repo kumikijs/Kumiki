@@ -1156,7 +1156,7 @@ For the built-ins enumerated in [Standard Library](./stdlib.md), the runtime imp
 | Feature | Guarantee |
 |---|---|
 | `Map`, `Set`, `List` | pure (no in-place mutation) |
-| `Option`, `Result` | exhaustiveness check for pattern matching |
+| `Option`, `Result` | exhaustiveness check for a value `match` ([E0227](./errors.md#e0227-non-exhaustive-match)); a value no arm matches panics |
 | `now`, `random()` | callable wherever an expression is. A read **inside a reducer body** has the value it returned recorded on that episode's step as `env-reads` ([§10.5.1](#_10-5-1-structure-of-an-episode)), so a replay reproduces it rather than drawing a new value; a read anywhere else (a tile expression, a render) is not recorded, and nothing replays those |
 | `*.fresh()` | generates UUIDv7; recorded as an `env-reads` entry like `now` / `random()` under the same reducer-body scope, so a replayed episode stamps the ids the run actually stamped |
 | `panic(message)` | puts the episode into the `panic` state and rolls back slots |

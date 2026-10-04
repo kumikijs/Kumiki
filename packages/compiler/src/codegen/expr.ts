@@ -975,8 +975,9 @@ export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string
  * value the body last wrote to the slot, if it has written one, and the value
  * the slot held when the reducer started otherwise (language.md §1.6.4
  * invariant 7). "Has written" is whether `_next` holds the key, not whether the
- * value is `undefined`: a `match` with no arm for its scrutinee writes
- * `undefined`, the batch commits that, and a later read has to agree with it.
+ * value is `undefined`: a read of a prop the firing tile does not carry
+ * (`$el.missing`) writes `undefined`, the batch commits that, and a later read
+ * has to agree with it.
  */
 export function slotReadJs(name: string, reducerScope: boolean | undefined): string {
   const key = JSON.stringify(name);
@@ -1039,11 +1040,20 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
   return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
 }
 
+/**
+ * A value `match`: an IIFE that destructures the scrutinee and returns the
+ * first arm that matches. A value no arm matches is a panic (lifecycle.md
+ * §7.2.2), never `undefined`: the checker reports a `match` whose arms leave
+ * out a value of a decidable type (E0227), and the panic is what is left for a
+ * scrutinee whose type it cannot decide.
+ */
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
   const sc = jsOfExpr(e.scrutinee, ctx);
-  // Generate an IIFE that destructures the scrutinee and matches each arm.
   const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
-  return `((_v) => { ${armsJs} else { return undefined; } })(${sc})`;
+  const miss = JSON.stringify(
+    `No arm of the match at ${e.pos.line}:${e.pos.col} matches its value`,
+  );
+  return `((_v) => { ${armsJs} else { return _s.panic(${miss}); } })(${sc})`;
 }
 
 function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string {
