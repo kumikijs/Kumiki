@@ -2485,7 +2485,8 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   if (lv.kind === "LSlot") return;
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
-    checkIndexLvalue(lv, sym, errors, ctx);
+    const base = unaliasType(lvalueType(lv.base, sym), sym);
+    checkIndexStep(base, lv.index, "write", lv.pos, sym, errors, ctx);
   } else {
     // Record the same decision `classifyFieldAccess` records for a read, so
     // codegen lowers `opt.get.f` and `rec.get.f` differently. Left unset when
@@ -2502,27 +2503,42 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
 }
 
 /**
- * An index step on the left of `:=`. A `List` index names a position, so it is
- * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
- * membership and nothing else, so `s[x] := v` has no place to write — the same
- * refusal §1.6.3 gives a member, and reported by the same code. Membership is
- * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ * An index step, on either side of `:=`. A `List` index names a position, so it
+ * is an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
+ * membership and nothing else, so an index into one names nothing (language.md
+ * §1.6.3): `s[x] := v` has no place to write — the same refusal §1.6.3 gives a
+ * member, and reported by the same code — and `s[x]` has no value to read,
+ * which is why `indexedType` gives it no type. Membership is read with `.has`
+ * and changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ * `base` is the receiver's type, already unaliased.
  */
-function checkIndexLvalue(
-  lv: Lvalue & { kind: "LIndex" },
+function checkIndexStep(
+  base: TypeExpr | null,
+  index: Expr,
+  side: "read" | "write",
+  pos: Pos,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const base = unaliasType(lvalueType(lv.base, sym), sym);
-  checkListIndex(base, lv.index, sym, errors, ctx);
+  checkListIndex(base, index, sym, errors, ctx);
   if (base?.kind !== "TypeApp" || base.name !== "Set") return;
-  errors.push({
-    code: "E0602",
-    kind: "unassignable-member",
-    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
-    pos: lv.pos,
-  });
+  const set = typeName(base, sym);
+  errors.push(
+    side === "write"
+      ? {
+          code: "E0602",
+          kind: "unassignable-member",
+          message: `Cannot assign through an index into "${set}": a Set has members, not places — use .add / .remove / .toggle`,
+          pos,
+        }
+      : {
+          code: "E0232",
+          kind: "index-into-set",
+          message: `Cannot read through an index into "${set}": a Set has members, not places — use .has`,
+          pos,
+        },
+  );
 }
 
 /**
@@ -3123,11 +3139,13 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
       return;
-    case "Index":
+    case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
+      const base = unaliasType(inferType(e.base, sym, ctx), sym);
+      checkIndexStep(base, e.index, "read", e.pos, sym, errors, ctx);
       return;
+    }
     case "Call":
       // `run-reducer(name)` takes a reducer, not a value, and lowers only
       // inside a generated property-test trial — so it is absent from the
@@ -4156,12 +4174,21 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     if (lv.field === "get") return unwrappedType(base);
     return null;
   }
-  if (base.kind === "TypeApp") {
-    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
-    // a right-hand side to be checked against.
-    if (base.name === "List") return base.args[0] ?? null;
-    if (base.name === "Map") return base.args[1] ?? null;
-  }
+  return indexedType(base);
+}
+
+/**
+ * The type of what an index step names, the same on either side of `:=`
+ * (language.md §1.6.3): a `List`'s element, a `Map`'s value. A `Set` index
+ * names nothing (`checkIndexStep` reports it), so it has no type — neither for
+ * a right-hand side to be checked against, nor for a read to carry into the
+ * position that takes it, which would report the one mistake a second time.
+ * `base` is the receiver's type, already unaliased.
+ */
+function indexedType(base: TypeExpr | null): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return base.args[0] ?? null;
+  if (base.name === "Map") return base.args[1] ?? null;
   return null;
 }
 
@@ -4703,14 +4730,8 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       const fixed = METHOD_RESULT.get(e.field);
       return fixed ? prim(fixed, e.pos) : null;
     }
-    case "Index": {
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      if (base?.kind === "TypeApp") {
-        if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
-        if (base.name === "Map") return base.args[1] ?? null;
-      }
-      return null;
-    }
+    case "Index":
+      return indexedType(unaliasType(inferType(e.base, sym, ctx), sym));
     case "MethodCall": {
       // `r.copy(f=v)` is record update — same type in, same type out. Not a
       // collection member, so it is answered here rather than in the table of

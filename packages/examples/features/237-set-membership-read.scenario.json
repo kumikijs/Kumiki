@@ -1,0 +1,45 @@
+{
+  "steps": [
+    {
+      "label": ".has reads membership wherever the Set is reached",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "five: true six: false",
+          "draft: true published: false",
+          "group has 2: true",
+          "ada is admin: true",
+          "maybe has 7: false"
+        ]
+      }
+    },
+    {
+      "label": "the check toggles the member its value= reads",
+      "do": { "click": "#five" },
+      "expect": { "noErrors": true, "domIncludes": ["five: false six: false"] }
+    },
+    {
+      "label": "toggling again puts the member back",
+      "do": { "click": "#five" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["five: true six: false"],
+        "state": { "picked": { "5": true } }
+      }
+    },
+    {
+      "label": "a field's Set changes through .remove and .add, and .has reads the change",
+      "do": { "click": "#publish" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["draft: false published: true"],
+        "state": { "doc": { "tags": { "published": true } } }
+      }
+    },
+    {
+      "label": "the payload of an Option is read through .map",
+      "do": { "click": "#fill" },
+      "expect": { "noErrors": true, "domIncludes": ["maybe has 7: true"] }
+    }
+  ]
+}

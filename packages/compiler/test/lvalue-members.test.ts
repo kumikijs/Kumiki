@@ -216,6 +216,27 @@ describe("the write side answers the read side's question too", () => {
   });
 });
 
+// The ways a Set is reached: [how, declarations, the index step into it, a
+// value of its element type]. However the Set is reached, the step into it is
+// the same step, so the write and the read are both run over this one table.
+const SET_REACHED: [string, string, string, string][] = [
+  [
+    "a record field",
+    `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
+    `doc.tags["a"]`,
+    `"b"`,
+  ],
+  ["an alias", `type Tags = Set(Text)\nslot tags : Tags = []`, `tags["a"]`, `"b"`],
+  ["a nominal type", `type Tags = nominal Set(Text)\nslot tags : Tags = []`, `tags["a"]`, `"b"`],
+  ["an element of a List", `slot sets : List(Set(Int)) = []`, `sets[0][1]`, `2`],
+  ["a value of a Map", `slot byKey : Map(Text, Set(Int)) = {}`, `byKey["a"][1]`, `2`],
+  ["the payload of an Option", `slot maybe : Option(Set(Int)) = None`, `maybe.get[1]`, `2`],
+];
+
+/** A tile that shows `expr`, the smallest program that reads it. */
+const shown = (decls: string, expr: string): string =>
+  app(`${decls}\ntile App = column(text("v: " + ${expr}.show))`);
+
 // An index step is one of §1.6.3's three, but only on a receiver that has a
 // place for it to name. A `List` index names a position and a `Map` index names
 // an entry; a `Set` has membership and nothing else, so `s[x] := v` is refused
@@ -234,20 +255,78 @@ describe("an index step into a Set", () => {
     expect(errs.map((x) => x.code)).toEqual(["E0602"]);
   });
 
-  // However the Set is reached, the step into it is the same step.
+  it.each(SET_REACHED)("is E0602 where the Set is %s", (_how, decls, step, value) => {
+    expect(codesOf(withBody(decls, `${step} := ${value}`))).toEqual(["E0602"]);
+  });
+});
+
+// The read takes the same step, and finds nothing to answer either: what a Set
+// says about a value is whether it holds it, and `.has` is how that is asked.
+// The read has no type, so a position that expects one does not report it a
+// second time.
+describe("an index read into a Set", () => {
+  it("is E0232, naming the Set and pointing at .has", () => {
+    const errs = errsOf(shown(`slot s : Set(Int) = [5]`, `s[5]`));
+    expect(errs.map((x) => x.code)).toEqual(["E0232"]);
+    expect(errs[0]?.kind).toBe("index-into-set");
+    expect(errs[0]?.message).toContain('into "Set"');
+    expect(errs[0]?.message).toContain(".has");
+  });
+
+  it.each(SET_REACHED)("is E0232 where the Set is %s", (_how, decls, step) => {
+    expect(codesOf(shown(decls, step))).toEqual(["E0232"]);
+  });
+
   it.each([
-    [
-      "a record field",
-      `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
-      `doc.tags["a"] := "b"`,
-    ],
-    ["an alias", `type Tags = Set(Text)\nslot tags : Tags = []`, `tags["a"] := "b"`],
-    ["a nominal type", `type Tags = nominal Set(Text)\nslot tags : Tags = []`, `tags["a"] := "b"`],
-    ["an element of a List", `slot sets : List(Set(Int)) = []`, `sets[0][1] := 2`],
-    ["a value of a Map", `slot byKey : Map(Text, Set(Int)) = {}`, `byKey["a"][1] := 2`],
-    ["the payload of an Option", `slot maybe : Option(Set(Int)) = None`, `maybe.get[1] := 2`],
-  ])("is E0602 where the Set is %s", (_how, decls, body) => {
-    expect(codesOf(withBody(decls, body))).toEqual(["E0602"]);
+    ["an Int", `slot n : Int = 0`, `n := s[5]`],
+    ["a Bool", `slot b : Bool = false`, `b := s[5]`],
+    ["an if condition", `slot n : Int = 0`, `if s[5] then n := 1`],
+  ])("is reported once where %s is expected", (_how, decl, body) => {
+    expect(codesOf(withBody(`slot s : Set(Int) = [5]\n${decl}`, body))).toEqual(["E0232"]);
+  });
+
+  it("is reported once as a fn body checked against its declared result", () => {
+    const src = app(`fn f(s: Set(Int)) -> Bool = s[5]\ntile App = column(text(f([5]).show))`);
+    expect(codesOf(src)).toEqual(["E0232"]);
+  });
+
+  // A step after it is not checked against the element type either: `.foo`
+  // is not a mistake about an `Int`, since no `Int` was read.
+  it("leaves the step after it unjudged", () => {
+    expect(codesOf(shown(`slot s : Set(Int) = [5]`, `s[5].foo`))).toEqual(["E0232"]);
+  });
+
+  // A bound control shows the value at its target before it writes one, so a
+  // target that takes the step is this read too — and the control's own check
+  // of the bound type has no type to judge.
+  it.each([
+    ["an input", `input(bind=tags["a"])`],
+    ["a check", `check(bind=tags["a"])`],
+  ])("is E0232 at the target of %s", (_how, control) => {
+    const src = app(`slot tags : Set(Text) = []\ntile App = column(${control})`);
+    expect(codesOf(src)).toEqual(["E0232"]);
+  });
+});
+
+describe("a membership read and the other index reads stay legal", () => {
+  it.each([
+    ["Set.has", `slot s : Set(Int) = [5]`, `s.has(5)`],
+    ["Set.has through .get", `slot maybe : Option(Set(Int)) = None`, `maybe.get.has(1)`],
+    ["a List index", `slot xs : List(Int) = [1]`, `xs[0]`],
+    ["a Map index", `slot m : Map(Text, Int) = {"a": 1}`, `m["a"]`],
+    ["a Map keyed by a Set", `slot s : Set(Int) = []\nslot m : Map(Set(Int), Int) = {}`, `m[s]`],
+  ])("accepts %s", (_how, decls, expr) => {
+    expect(errsOf(shown(decls, expr))).toEqual([]);
+  });
+
+  // A receiver whose type the checker cannot decide stays silent, as it does
+  // for a member: a false error on a dynamic receiver is worse than the silence.
+  // `{}` is the empty Map and the empty Set alike, so it gives the accumulator
+  // of a fold it starts no type.
+  it.each([
+    ["the accumulator of a fold from {}", `slot xs : List(Int) = [1]`, `xs.fold({}, $1[$2])`],
+  ])("says nothing about an index into %s", (_how, decls, expr) => {
+    expect(errsOf(shown(decls, expr))).toEqual([]);
   });
 });
 
