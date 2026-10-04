@@ -127,13 +127,17 @@ function newWalk(env: TypeEnv): Walk {
  * taken in one step, as `unaliasType` takes it: `D0(D0(Text))` with
  * `type D0(T) = T` is `Text`. Only the head moves — an argument written
  * inside a container or a record stays as written — so `unaliasType` of the
- * result is `unaliasType` of `t`, and so is anything that substitutes it
- * for a parameter and normalises: the head is the first thing normalisation
- * would have done with it.
+ * result is `unaliasType` of `t`, and so is `unaliasType` of anything that
+ * substitutes it for a parameter: the head is the first thing normalisation
+ * would have done with it. It is the `through` reading, so it looks through
+ * `nominal` too, and `nominalDecl`, which stops there, cannot take its answer.
  */
 export function forwardedHead(t: TypeExpr, env: TypeEnv): TypeExpr {
+  // Asked of every argument a walk substitutes: one that is no application
+  // is answered before the table is looked up.
+  if (t.kind !== "TypeApp") return t;
   const forwarded = forwardedIn(env);
-  let cur = t;
+  let cur: TypeExpr = t;
   for (;;) {
     if (cur.kind !== "TypeApp") return cur;
     const def = env.types.get(cur.name);

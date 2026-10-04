@@ -7045,40 +7045,113 @@ function checkApplication(
   const opaque = opaqueParams(typeParams, app.pos);
   const args = app.args.map((a) => substituteType(a, opaque));
   const unapplied = def.params.map(() => unknownType(app.pos));
-  const walk: AppliedWalk = { shown: typeToString(app), sym, walked: new Set(), out: new Set() };
-  appliedBaseProblems(app.name, args, unapplied, walk);
-  for (const message of walk.out) {
+  const run: AppliedRun = {
+    shown: typeToString(app),
+    sym,
+    reported: new Map(),
+    out: [],
+  };
+  appliedBaseProblems(app.name, args, unapplied, run, { entered: null, from: null, walked: null });
+  for (const message of run.out) {
     errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
   }
 }
 
 /**
- * One {@link checkApplication}: how the application reads in a message, the
- * applications already walked, and the messages found so far.
+ * One {@link checkApplication}: how the application reads in a message, and
+ * the messages found so far.
  *
- * A message is reported once however many paths reach it: every copy names
- * the same application at the same place, so a second one says nothing the
- * first did not. And an application is walked once per set of arguments,
- * which is what keeps a chain of definitions that each apply the one below
- * several times linear: once each argument has been taken through the
- * generics that hand it straight back, the three `D13`s in
- * `type D14(T) = D13(D13(D13(T)))` are one application of `D13`.
+ * A refinement is reported once for each message it gives, however many
+ * paths through the body reach it: every copy names the same application at
+ * the same place, so a second one says nothing the first did not. Two
+ * refinements that give the same message are still two.
  */
-type AppliedWalk = {
+type AppliedRun = {
   readonly shown: string;
   readonly sym: SymbolTable;
-  readonly walked: Set<string>;
-  readonly out: Set<string>;
+  readonly reported: Map<Refinement, Set<string>>;
+  readonly out: string[];
 };
 
 /**
- * The messages for {@link checkApplication}, added to `app.out`: `name`
- * applied to `args`, set against `judged`, the same application as the
+ * Where a body is walked from: the name entered to get here and the scope it
+ * was entered from — together the names every application in the body is
+ * read under — and the applications already walked from here.
+ *
+ * Each is walked once per name and argument nodes — the same nodes, not
+ * nodes that read alike. That is what keeps a chain of definitions that each
+ * apply the one below several times linear: with `type D0(T) = T` and
+ * `type D1(T) = D0(D0(D0(T)))`, once each argument has been taken through the
+ * generics that hand it straight back, every `D0` in `D1`'s body is applied
+ * to the very node `T` was substituted with, and is walked once.
+ *
+ * Only applications walked from the same place are compared. That is enough
+ * for such a chain, where each level's body is then walked once, and it keeps
+ * the comparison to the few applications one body names: a handful of
+ * identity checks, so a chain whose generics hand nothing back — every
+ * argument new, nothing to share — walks no slower than it did. Comparing
+ * nodes rather than how they read also means two arguments that only read
+ * alike (`Int()`, a name nothing declares applied to nothing, and `Int`) are
+ * never taken for one another.
+ */
+type AppliedScope = {
+  readonly entered: string | null;
+  readonly from: AppliedScope | null;
+  walked: WalkedApplication[] | null;
+};
+
+/** Whether `name` was entered on the way to `scope`. */
+function hasEntered(scope: AppliedScope, name: string): boolean {
+  for (let s: AppliedScope | null = scope; s; s = s.from) if (s.entered === name) return true;
+  return false;
+}
+
+type WalkedApplication = {
+  readonly name: string;
+  readonly args: readonly TypeExpr[];
+  readonly judged: readonly TypeExpr[];
+};
+
+function sameNodes(a: readonly TypeExpr[], b: readonly TypeExpr[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Whether `name` has been walked from `scope` with these very argument nodes. */
+function walkedFrom(
+  scope: AppliedScope,
+  name: string,
+  args: readonly TypeExpr[],
+  judged: readonly TypeExpr[],
+): boolean {
+  if (!scope.walked) return false;
+  for (const w of scope.walked) {
+    if (w.name === name && sameNodes(w.args, args) && sameNodes(w.judged, judged)) return true;
+  }
+  return false;
+}
+
+/** Record `message` for `r`, unless `r` has already given it. */
+function reportApplied(run: AppliedRun, r: Refinement, message: string): void {
+  let given = run.reported.get(r);
+  if (!given) {
+    given = new Set();
+    run.reported.set(r, given);
+  }
+  if (given.has(message)) return;
+  given.add(message);
+  run.out.push(message);
+}
+
+/**
+ * The messages for {@link checkApplication}, added to `run`: `name` applied
+ * to `writtenArgs`, set against `writtenJudged`, the same application as the
  * definitions around it were already checked with — every parameter still
  * opaque there, opaque. A refinement whose base already had a problem under
- * `judged` was reported where that definition was checked, and one whose base
- * is no different is not the application's to report; only a problem the
- * arguments bring is.
+ * the judged arguments was reported where that definition was checked, and
+ * one whose base is no different is not the application's to report; only a
+ * problem the arguments bring is.
  *
  * Each argument is first taken through the generics at its head that hand a
  * parameter straight back (`assignable.ts#forwardedHead`). An argument is
@@ -7090,31 +7163,25 @@ function appliedBaseProblems(
   name: string,
   writtenArgs: readonly TypeExpr[],
   writtenJudged: readonly TypeExpr[],
-  app: AppliedWalk,
-  seen: ReadonlySet<string> = new Set(),
+  run: AppliedRun,
+  scope: AppliedScope,
 ): void {
-  const { sym } = app;
+  const { sym } = run;
   const def = sym.types.get(name);
   // A mismatched arity is E0210's, and a parameter with no argument would be
   // read as whatever top-level type shares its name. Re-entering a name is a
   // chain E0009 reports, and the walk has to end on the way there.
-  if (!def || seen.has(name) || def.params.length !== writtenArgs.length) return;
+  if (!def || hasEntered(scope, name) || def.params.length !== writtenArgs.length) return;
   const args = writtenArgs.map((a) => forwardedHead(a, sym));
   const judged = writtenJudged.map((a) => forwardedHead(a, sym));
-  // Keyed on how the arguments read: a base is judged on its normal form,
-  // which drops a `where` as `typeToString` does, and a message shows the
-  // base as `typeToString` shows it.
-  const key = JSON.stringify([
-    name,
-    [...seen].sort(),
-    args.map(typeToString),
-    judged.map(typeToString),
-  ]);
-  if (app.walked.has(key)) return;
-  app.walked.add(key);
+  // The walk below reads nothing but the argument nodes and the guard, so a
+  // second walk with the same nodes from the same scope adds no message.
+  if (walkedFrom(scope, name, args, judged)) return;
+  scope.walked ??= [];
+  scope.walked.push({ name, args, judged });
   const applied = paramSubstitution(def.params, args);
   const before = paramSubstitution(def.params, judged);
-  const inside = new Set([...seen, name]);
+  const inside: AppliedScope = { entered: name, from: scope, walked: null };
   const walk = (t: TypeExpr): void => {
     switch (t.kind) {
       case "TypePrim":
@@ -7123,7 +7190,7 @@ function appliedBaseProblems(
       case "TypeApp": {
         const nested = t.args.map((a) => substituteType(a, applied));
         const nestedBefore = t.args.map((a) => substituteType(a, before));
-        appliedBaseProblems(t.name, nested, nestedBefore, app, inside);
+        appliedBaseProblems(t.name, nested, nestedBefore, run, inside);
         for (const a of t.args) walk(a);
         return;
       }
@@ -7141,9 +7208,9 @@ function appliedBaseProblems(
           const was = judgedBase(substituteType(t.inner, before), sym);
           const now = judgedBase(substituteType(t.inner, applied), sym);
           if (now && !(was && refinementBaseProblem(r, was))) {
-            const over = `${app.shown} applies it over ${typeToString(now)}`;
+            const over = `${run.shown} applies it over ${typeToString(now)}`;
             const message = refinementBaseProblem(r, now, over);
-            if (message) app.out.add(message);
+            if (message) reportApplied(run, r, message);
           }
         }
         walk(t.inner);

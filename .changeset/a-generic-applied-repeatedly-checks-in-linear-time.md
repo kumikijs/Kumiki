@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-A chain of generics that each apply the one below several times checks in linear time
+A chain of generics that hand their parameter back and each apply the one below several times checks in linear time
 
 ```
 type D0(T) = T
@@ -23,9 +23,14 @@ application over the wrong base was also reported once per path: `D1(Int)`
 gave three identical E0804s, `D10(Int)` 59,049, and `D12(Int)` overflowed the
 stack.
 
-After, the same program checks in milliseconds. Each argument is first taken
-through the generics at its head that hand a parameter straight back, as
-normalisation already takes them, so the three `D13`s meet as one application
-and it is walked once. Each E0804 message is reported once at the
-application; the messages themselves, and which applications get one, are
-unchanged.
+After, the same program checks in milliseconds, and so does a forty-level
+chain. Each argument is first taken through the generics at its head that
+hand a parameter straight back, as normalisation already takes them, so the
+three `D13`s are applied to the same argument and walked once. A refinement
+is reported once for each base it is put over, however many paths reach it,
+so `D1(Int)` gets one E0804; two refinements are still two. The messages
+themselves are unchanged.
+
+A chain whose generics hand nothing back (`type D0(T) = {v: T}`) has no
+argument to share, and its walk is still 3^k, as before; it is no slower
+than it was.
