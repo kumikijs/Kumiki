@@ -1012,6 +1012,9 @@ fn current() = todos                          # fn 引数で受け取れ
 
 # ❌ CSS 属性セレクタ
 reducer r on=ui.change(input[type=file]) do= ...   # tile 名で書け
+
+# ❌ arm のない match
+tile Width = match size with                  # どの位置の match も `| pattern -> …` の arm を 1 つ以上とる：`match` の位置でパースエラー
 ```
 
 ---

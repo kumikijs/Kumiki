@@ -1034,6 +1034,9 @@ reducer r on=ui.change(input[type=file]) do= ...   # write it by tile name
 # ❌ literal match pattern
 match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (Prohibitions)
 
+# ❌ a match with no arms
+tile Width = match size with                          # every match takes one `| pattern -> …` arm or more, in every position: a parse error at the `match`
+
 # ❌ $1 in a tile with no in=
 tile Row = card(text(issues[$1].title))               # E0103: declare `tile Row in=IssueId = …` (Positional Binding / Examples)
 

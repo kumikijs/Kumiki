@@ -13,7 +13,6 @@ import type {
   Expr,
   FnDef,
   Lvalue,
-  MatchArm,
   MotionDef,
   NamedRef,
   Pattern,
@@ -30,7 +29,6 @@ import type {
   TileArg,
   TileDef,
   TileExpr,
-  TileMatchArm,
   TileProp,
   Token,
   TypeDef,
@@ -746,18 +744,7 @@ class Parser {
       return { kind: "IfStmt", cond, consequent: thenBody, alternate: elseBody, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      const start = this.next();
-      const scrutinee = this.parseExpr();
-      this.eat("kw", "with");
-      const arms: { pattern: Pattern; body: Statement[] }[] = [];
-      while (this.matchOp("|")) {
-        this.next();
-        const pattern = this.parsePattern();
-        this.eat("op", "->");
-        const body = this.parseStatementBody();
-        arms.push({ pattern, body });
-      }
-      return { kind: "MatchStmt", scrutinee, arms, pos: start.pos };
+      return { kind: "MatchStmt", ...this.parseMatch(() => this.parseStatementBody()) };
     }
     if (this.matchOp("(") && this.matchTAt(1, "op", ")")) {
       // `()` as a statement → noop
@@ -1333,19 +1320,32 @@ class Parser {
   }
 
   private parseMatchExpr(): Expr {
+    return { kind: "MatchExpr", ...this.parseMatch(() => this.parseExpr()) };
+  }
+
+  /**
+   * `'match' expr 'with' ('|' pattern '->' body)+`, the shape the expression,
+   * statement and tile forms share; each passes the parser for its own arm
+   * body. The `+` holds in every form, so the arm count is checked here, once,
+   * and reported at the `match`.
+   */
+  private parseMatch<B>(parseBody: () => B): {
+    scrutinee: Expr;
+    arms: { pattern: Pattern; body: B }[];
+    pos: Pos;
+  } {
     const start = this.eat("kw", "match");
     const scrutinee = this.parseExpr();
     this.eat("kw", "with");
-    const arms: MatchArm[] = [];
+    const arms: { pattern: Pattern; body: B }[] = [];
     while (this.matchOp("|")) {
       this.next();
       const pattern = this.parsePattern();
       this.eat("op", "->");
-      const body = this.parseExpr();
-      arms.push({ pattern, body });
+      arms.push({ pattern, body: parseBody() });
     }
     if (arms.length === 0) throw new ParseError("match requires at least one arm", start.pos);
-    return { kind: "MatchExpr", scrutinee, arms, pos: start.pos };
+    return { scrutinee, arms, pos: start.pos };
   }
 
   private parsePattern(): Pattern {
@@ -1596,18 +1596,7 @@ class Parser {
       return { kind: "TileIf", cond, consequent: thenT, alternate: elseT, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      const start = this.next();
-      const scrut = this.parseExpr();
-      this.eat("kw", "with");
-      const arms: TileMatchArm[] = [];
-      while (this.matchOp("|")) {
-        this.next();
-        const pattern = this.parsePattern();
-        this.eat("op", "->");
-        const body = this.parseTileExpr();
-        arms.push({ pattern, body });
-      }
-      return { kind: "TileMatch", scrutinee: scrut, arms, pos: start.pos };
+      return { kind: "TileMatch", ...this.parseMatch(() => this.parseTileExpr()) };
     }
     return this.parseTileCall();
   }
