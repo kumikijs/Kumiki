@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
-import { check, lex, type Pos, parse } from "@kumikijs/compiler";
+import { check, lex, type Pos, parse, type Token } from "@kumikijs/compiler";
 import {
   type DefEntry,
   directDeps,
@@ -503,13 +503,22 @@ export function addDef(path: string, layer: string, name: string, body: string):
  * typecheck on their own, without the definition they depend on.
  */
 function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
+  for (const d of defs) {
+    if (!isDefinitionName(d.name)) {
+      throw new Error(
+        `add rejected: "${d.name}" is not one identifier, so it cannot name a definition (a tile's clauses and a type's parameters go at the start of the body); nothing was written`,
+      );
+    }
+  }
   // The named definition up front; the rest of `with` is covered by the
   // before/after diff in `validate`, like anything else the write adds.
   enforceLock(path, `${defs[0].layer}.${defs[0].name}`);
   const src = readFileSync(path, "utf8");
   // Compose definition syntax for the requested layer. The body argument is
-  // the right-hand side (e.g. "Int = 0" for a slot, "Bool -> Bool = not $1" for
-  // a fn). Layer-specific assembly is small enough to inline here.
+  // the definition after its name and the layer's separator (e.g. "Int = 0" for
+  // a slot, "Bool -> Bool = not $1" for a fn), led by a tile's clauses or a
+  // type's parameters when it has them. Layer-specific assembly is small enough
+  // to inline here.
   const inserted = defs.map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
   const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
   const [main, ...rest] = defs;
@@ -518,23 +527,83 @@ function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
   );
 }
 
-export function replaceDef(path: string, qname: string, body: string): string {
-  enforceLock(path, qname);
-  return withWriteLock(path, () => replaceDefLocked(path, qname, body));
+/**
+ * Whether `name` lexes as one identifier, as every definition's name does. A
+ * name is written into the file as given, so anything more becomes part of the
+ * definition — `add type 'Box(T)' …` would write `type Box(T) = …` — while the
+ * op is logged under a name no definition has, which nothing can view, revert
+ * or remove.
+ */
+function isDefinitionName(name: string): boolean {
+  let tokens: Token[];
+  try {
+    tokens = lex(name);
+  } catch {
+    return false;
+  }
+  const [only, end] = tokens;
+  return only?.kind === "ident" && only.value === name && end?.kind === "eof";
 }
 
-function replaceDefLocked(path: string, qname: string, body: string): string {
+/**
+ * Replace a definition with `body`. A body that does not state a tile's
+ * clauses or a type's parameters (`statesHeader`) keeps the ones the
+ * definition has: a body that rewrites only what follows the `=` must not
+ * drop them unnoticed.
+ */
+export function replaceDef(path: string, qname: string, body: string): string {
+  enforceLock(path, qname);
+  return withWriteLock(path, () => replaceDefLocked(path, qname, body, true));
+}
+
+/**
+ * `keepHeader` is off for `patch revert`, whose body is one the op log
+ * recorded. A logged body states its definition whole, so one without clauses
+ * or parameters means the definition had none, and keeping the current ones
+ * would leave in place a header the reverted op added.
+ */
+function replaceDefLocked(path: string, qname: string, body: string, keepHeader: boolean): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
+  // Written and logged alike, so the logged body writes the definition back whole.
+  const whole = keepHeader ? withHeaderOf(store, entry, body) : body;
   const before = store.lines.slice(0, entry.range.startLine - 1);
   const after = store.lines.slice(entry.range.endLine);
-  const inserted = assemble(entry.layer, entry.name, body).split(/\r?\n/);
+  const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
   const next = [...before, ...inserted, ...after].join("\n");
   return commit(path, next, "replace", () =>
-    logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body }),
+    logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body: whole }),
   );
+}
+
+/**
+ * `body`, after the header of the definition it replaces when it states none
+ * of its own: the text from the name to the right-hand side, its `=` included
+ * (`error-boundary=Oops = `, `(T) = `). A definition without one, and any
+ * definition but a tile or a type, adds nothing.
+ */
+function withHeaderOf(store: Store, entry: DefEntry, body: string): string {
+  const { def } = entry;
+  if (statesHeader(entry.layer, body) || (def.kind !== "TileDef" && def.kind !== "TypeDef")) {
+    return body;
+  }
+  const current = extractBody(
+    entry.layer,
+    entry.name,
+    viewDef(store, `${entry.layer}.${entry.name}`) ?? "",
+  );
+  // The right-hand side runs from where the parser put the definition's body
+  // to the definition's end; the current body is the header, then that.
+  const { line, col } = def.body.pos;
+  const rhs = [
+    store.lines[line - 1]?.slice(col - 1) ?? "",
+    ...store.lines.slice(line, entry.range.endLine),
+  ]
+    .join("\n")
+    .trimEnd();
+  return `${current.slice(0, current.length - rhs.length)}${body}`;
 }
 
 /** Removes `qname`, plus everything that references it when `cascade`. */
@@ -844,8 +913,16 @@ function extractBody(layer: string, name: string, source: string): string {
   const text = source;
   switch (layer) {
     case "type":
-    case "tile":
+    case "tile": {
+      // A tile with clauses or a type with parameters keeps them, and the `=`
+      // after them, in its body (`statesHeader`); one without starts at the `=`.
+      const rest = text.replace(new RegExp(`^\\s*${layer}\\s+${n}`), "");
+      const eq = /^\s*=\s*/.exec(rest);
+      return (eq ? rest.slice(eq[0].length) : rest.trimStart()).trimEnd();
+    }
     case "theme":
+    case "motion":
+    case "test":
       return text.replace(new RegExp(`^\\s*${layer}\\s+${n}\\s*=\\s*`), "").trimEnd();
     case "slot":
       return text.replace(new RegExp(`^\\s*slot\\s+${n}\\s*:\\s*`), "").trimEnd();
@@ -983,7 +1060,7 @@ function patchRevertLocked(path: string, opId: string): string {
       if (prev === undefined) {
         throw new Error(`patch revert: no prior body found for ${target.layer}.${target.name}`);
       }
-      return replaceDef(path, `${target.layer}.${target.name}`, prev);
+      return replaceDefLocked(path, `${target.layer}.${target.name}`, prev, false);
     }
     case "edit": {
       // Best-effort: rebuild prior body from history.
@@ -993,7 +1070,7 @@ function patchRevertLocked(path: string, opId: string): string {
           `patch revert: cannot reconstruct prior body for edit of ${target.layer}.${target.name}`,
         );
       }
-      return replaceDef(path, `${target.layer}.${target.name}`, prev);
+      return replaceDefLocked(path, `${target.layer}.${target.name}`, prev, false);
     }
     case "rename": {
       if (!target.newName) throw new Error("patch revert: rename op missing newName");
@@ -1145,26 +1222,50 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Whether `body` starts where a tile's or a type's name ends: with what the
+ * definition has between its name and the `=` before its right-hand side (a
+ * tile's clauses, a type's parameters), or with that `=` itself, which states
+ * there is nothing there. Neither right-hand side can start that way — a tile
+ * body opens with a tile name or `for` / `when` / `if` / `match`, never with
+ * `<word> =`, and a type body never opens with `(` or `=` — so a body is read
+ * one way or the other by its first characters alone.
+ */
+function statesHeader(layer: string, body: string): boolean {
+  switch (layer) {
+    case "tile":
+      return /^\s*(?:=|[A-Za-z_][A-Za-z0-9_-]*\s*=)/.test(body);
+    case "type":
+      return /^\s*[(=]/.test(body);
+    default:
+      return false;
+  }
+}
+
+/** What follows the name: nothing before `(` (`fn f(x: Int)`, `type Box(T)`), a space otherwise. */
+const afterName = (rest: string): string => `${rest.startsWith("(") ? "" : " "}${rest}`;
+
 function assemble(layer: string, name: string, body: string): string {
   // Each layer has its canonical opener. Keep this regenerable from the AST
   // later; for the PoC we lean on tiny templates.
+  if (statesHeader(layer, body)) return `${layer} ${name}${afterName(body)}`;
   switch (layer) {
     case "type":
-      return `type ${name} = ${body}`;
+    case "tile":
+    case "theme":
+    case "motion":
+    case "test":
+      return `${layer} ${name} = ${body}`;
     case "slot":
       return `slot ${name} : ${body}`;
     case "effect":
       return `effect ${name} ${body}`;
     case "reducer":
       return `reducer ${name} ${body}`;
-    case "tile":
-      return `tile ${name} = ${body}`;
     case "fn":
-      return `fn ${name}${body.startsWith("(") ? "" : " "}${body}`;
+      return `fn ${name}${afterName(body)}`;
     case "app":
       return `app ${name}\n${body}`;
-    case "theme":
-      return `theme ${name} = ${body}`;
     default:
       throw new Error(`Unknown layer "${layer}"`);
   }

@@ -56,6 +56,8 @@ kumiki patch revert <op-id>                 # 特定 op を取り消し
 
 複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
+`add` の `<layer>` は `kumiki list` が受け付けるラベルのいずれか（`type`・`slot`・`effect`・`reducer`・`tile`・`fn`・`app`・`theme`・`motion`・`test`）で、それ以外の語に対して `kumiki add` はファイルを読む前に `2` で終了する。`<name>` は識別子 1 つであり、`add` はそれ以外を拒否する。body は定義から `<layer> <name>` とその後の区切りを除いたもので、`slot count : Int = 0` なら `Int = 0`、`tile Greeting = heading("Hi")` なら `heading("Hi")` である。tile の節（`in=`・`error-boundary=`・`scroll-restoration=`・`sub-routes=`）と type のパラメータは名前と `=` の間に置かれるので、それらを持つ body はそれらで始まり `=` も含む。`in=Text = heading($1)` は `tile Greet in=Text = heading($1)` を書き、`(T) = {v: T}` は `type Box(T) = {v: T}` を書く。節やパラメータで始まらない `replace` の body は、定義が持つものを残す。`tile Greeting error-boundary=Oops = …` に対して body `heading("Hello")` は `tile Greeting error-boundary=Oops = heading("Hello")` を書く。変えるには残すものを body に書き、すべて外すには body を `=` から始める。
+
 書き込み系 op はファイルの再パース・再型検査で検証され、`severity: "error"` の診断が 1 つでも出ればロールバックする。ただし例外が 1 つある。プログラムは定義を 1 つずつ積み上げて構築されるため `app` が入るまでは app 不在の状態が続く。したがって **`E0003 missing-app` は書き込み op をロールバックさせない**。完成したアプリケーションかどうかは `kumiki check` が報告するものであり、編集途中のグラフが既に満たしているべき条件ではない。
 
 1 つのファイルへの書き込み op は**直列化**される。`add`・`replace`・`edit`・`rename`・`remove`・`patch apply`・`patch revert`・`lock`・`unlock` は、読み込み → 検証 → 書き込み → ログ追記の間ずっとそのファイルの書き込みロック（兄弟ファイル `<file>.kumiki-write.lock`。§9.8.3 の所有ロック `<file>.kumiki-locks.json` とは別物）を保持する。`patch apply` と `patch revert` は、それを構成する op 全体で 1 度だけ保持する。合成したソースは書き込む*前に*検証され、ファイルはその場で書き換えるのではなく rename した兄弟ファイルで置き換えられるので、他の読み手が書きかけのファイルを見ることはなく、reject された op が何かを上書きすることもない。（置き換えなので、ファイルのパスにあるシンボリックリンクは辿られずに置き換えられ、ファイル自身のパーミッションは保たれない。）その後 op ログへの追記に失敗した場合は、ファイルを元に戻して op を reject する。その結果、op ログのすべての op はファイルに反映されており、成功を報告した op はすべて両方にある。`kumiki fix --apply` も rename で書き込むが書き込みロックは取らないので、同じファイルに対して書き込み系 verb と並行して実行してはならない。
@@ -150,7 +152,7 @@ MCP サーバ（[§9.7](#_9-7-mcp-server)）は同じ問いに `isError` で答�
 | `op` | op 種別 |
 | `layer` | 対象レイヤ |
 | `name` | 対象名 |
-| `body` | 新本体（add/replace で必須）|
+| `body` | 新本体（add/replace で必須）。節とパラメータを含めて定義全体を表すので、`patch revert` はログの body をそのまま書き戻す |
 | `author` | 発行エージェント |
 | `ts` | 発行時刻（UNIX ms） |
 | `op-id` | op の ULID |

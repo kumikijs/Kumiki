@@ -1002,6 +1002,20 @@ tile Orphan = column(zzz.show)
       expect(layer?.enum).toContain("slot");
     });
   });
+
+  it("adds every kind of definition `kumiki_list` filters by", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const layerEnum = (name: string): string[] | undefined =>
+        (
+          tools.find((t) => t.name === name)?.inputSchema.properties as
+            | { layer?: { enum?: string[] } }
+            | undefined
+        )?.layer?.enum;
+      expect(layerEnum("kumiki_add")).toEqual(layerEnum("kumiki_list"));
+      expect(layerEnum("kumiki_add")).toContain("motion");
+    });
+  });
 });
 
 // What these pin is that the tools go through the shared formatter at all: the

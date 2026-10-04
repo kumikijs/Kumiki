@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
-import type { Command } from "commander";
+import { Argument, type Command } from "commander";
 import { addDef, describeEdit } from "../mutate.ts";
+import { LAYERS } from "../store.ts";
 import { resolveBody } from "./_shared/body-input.ts";
 import { requireValue } from "./_shared/value.ts";
 
@@ -11,9 +12,15 @@ export function registerAdd(program: Command): void {
     .command("add")
     .description("Add a new definition to a .kumiki file")
     .argument("[file]", "target .kumiki file")
-    .argument("[layer]", "layer name (type/slot/effect/reducer/tile/fn/app)")
+    // The labels the store puts on definitions, as `list` takes: a kind of
+    // definition `list` shows is one `add` writes, and any other word is
+    // refused before the file is read.
+    .addArgument(new Argument("[layer]", "kind of definition to add").choices([...LAYERS]))
     .argument("[name]", "definition name")
-    .argument("[body...]", "body tokens (joined by spaces; prefer --body-file for multi-line)")
+    .argument(
+      "[body...]",
+      "body tokens: a tile's clauses or a type's parameters, if any, go first (joined by spaces; prefer --body-file for multi-line)",
+    )
     .option(
       "--body-file <path>",
       "read body from a file (use '-' for stdin); preserves whitespace",
