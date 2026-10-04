@@ -16,7 +16,7 @@ import {
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { runTestsSource, testFile } from "./smoke.ts";
-import { directDeps, listDefs, load, type Store } from "./store.ts";
+import { directDeps, lineSpan, listDefs, load, type Store } from "./store.ts";
 import { atomicWriteFileSync } from "./write-lock.ts";
 
 /**
@@ -115,30 +115,6 @@ function identifierAt(store: Store, pos: Pos): string | null {
   const after = rest.slice(m[0].length);
   if (/^[.([]/.test(after)) return null;
   return m[0];
-}
-
-/**
- * Where line `line` (1-based) starts and where it ends, as offsets into `text`.
- * `end` is the offset of the terminator, so on a CRLF file the slice
- * `[start, end)` keeps the trailing `\r`. Neither consumer minds: a `\b`-search
- * is unaffected by it (`\r` is not a word character), and no name a repair
- * writes can contain one.
- *
- * Everything that edits a line goes through this rather than
- * `split(/\r?\n/).join("\n")`, which rewrites every CRLF in the file to LF —
- * a whole-file diff for a one-token repair, on the platform where CRLF is the
- * default, with nothing said about it.
- */
-function lineSpan(text: string, line: number): { start: number; end: number } | null {
-  let start = 0;
-  for (let n = 1; n < line; n++) {
-    const nl = text.indexOf("\n", start);
-    if (nl === -1) return null;
-    start = nl + 1;
-  }
-  if (start > text.length) return null;
-  const nl = text.indexOf("\n", start);
-  return { start, end: nl === -1 ? text.length : nl };
 }
 
 /**

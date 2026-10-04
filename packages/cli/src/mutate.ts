@@ -8,10 +8,12 @@ import {
   type DefEntry,
   directDeps,
   findReferences,
+  joinLines,
   load,
   loadSource,
   referenceSites,
   type Store,
+  spliceLines,
   viewDef,
 } from "./store.ts";
 import { atomicWriteFileSync, withWriteLock } from "./write-lock.ts";
@@ -511,7 +513,7 @@ function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
   // the right-hand side (e.g. "Int = 0" for a slot, "Bool -> Bool = not $1" for
   // a fn). Layer-specific assembly is small enough to inline here.
   const inserted = defs.map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
-  const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
+  const next = src + joinLines(src, [src.endsWith("\n") ? `\n${inserted}\n` : `\n\n${inserted}\n`]);
   const [main, ...rest] = defs;
   return commit(path, next, "add", () =>
     logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) }),
@@ -528,10 +530,8 @@ function replaceDefLocked(path: string, qname: string, body: string): string {
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
-  const before = store.lines.slice(0, entry.range.startLine - 1);
-  const after = store.lines.slice(entry.range.endLine);
   const inserted = assemble(entry.layer, entry.name, body).split(/\r?\n/);
-  const next = [...before, ...inserted, ...after].join("\n");
+  const next = spliceLines(store.source, entry.range.startLine, entry.range.endLine, inserted);
   return commit(path, next, "replace", () =>
     logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body }),
   );
@@ -637,15 +637,15 @@ function removeSet(
   }));
   if (main === undefined) throw new Error("remove rejected: nothing to remove");
   // Remove from bottom up so line numbers stay valid.
-  let lines = store.lines.slice();
+  let next = store.source;
   for (const e of [...entries].sort((a, b) => b.range.startLine - a.range.startLine)) {
-    lines = [...lines.slice(0, e.range.startLine - 1), ...lines.slice(e.range.endLine)];
+    next = spliceLines(next, e.range.startLine, e.range.endLine, []);
   }
   // §9.4.1: a cascade is one op, and it says what it took. `removed` is written
   // whenever `cascade` was requested, including when it took nothing, so its
   // absence means "not a cascade" rather than "a cascade with no dependents".
   // A replay removes that recorded set (`applyOne`).
-  const opId = commit(path, lines.join("\n"), "remove", () =>
+  const opId = commit(path, next, "remove", () =>
     logOp(path, {
       op: "remove",
       layer: main.layer,
@@ -728,7 +728,10 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
     lines[line - 1] = next;
   }
 
-  const next = lines.join("\n");
+  let next = store.source;
+  for (const line of byLine.keys()) {
+    next = spliceLines(next, line, line, lines.slice(line - 1, line));
+  }
   return commit(path, next, "rename", () =>
     logOp(path, { op: "rename", layer: entry.layer, name: old, newName }),
   );
@@ -776,9 +779,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const bodyStart = entry.range.startLine - 1;
   const bodyEnd = entry.range.endLine;
-  const before = store.lines.slice(0, bodyStart);
   const target = store.lines.slice(bodyStart, bodyEnd);
-  const after = store.lines.slice(bodyEnd);
   let updated: string[];
   if (isFindReplacePatch(patch)) {
     const joined = target.join("\n");
@@ -809,7 +810,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
       `edit rejected: patch must be {find,replace} or {body:<n>: "replace 'a' -> 'b'"}`,
     );
   }
-  const next = [...before, ...updated, ...after].join("\n");
+  const next = spliceLines(store.source, entry.range.startLine, entry.range.endLine, updated);
   return commit(path, next, "edit", () => {
     // Record the post-edit body so `depends-on` is computable and
     // `patchRevert(editId)` can find a usable prior body via the op log. The

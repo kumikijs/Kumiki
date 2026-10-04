@@ -1,6 +1,7 @@
 // Definition store: parse a .kumiki file, record source ranges, and answer
 // list / view / refs queries. Read-only on disk; mutations go through a
-// separate path that rewrites the file and appends to the op-log.
+// separate path that rewrites the file and appends to the op-log, splicing
+// the source at these line ranges (`spliceLines`).
 
 import { readFileSync } from "node:fs";
 import type { Def, Program, Token } from "@kumikijs/compiler";
@@ -62,15 +63,94 @@ export function load(path: string): Store {
   return loadSource(readFileSync(path, "utf8"));
 }
 
+/**
+ * A line break: `\n` or `\r\n`. A lone `\r` is whitespace inside a line
+ * (language.md §1.2). `Store.lines` is the source split on it, so no line
+ * there holds the break that ends it.
+ */
+const LINE_BREAK = /\r?\n/;
+
 /** `load` for source text that is not (or not yet) on disk. */
 export function loadSource(source: string): Store {
-  const lines = source.split(/\r?\n/);
+  const lines = source.split(LINE_BREAK);
   const tokens = lex(source);
   const program = parse(tokens);
   const defs = buildEntries(program, lines, tokens);
   const byQName = new Map<string, DefEntry>();
   for (const e of defs) byQName.set(`${e.layer}.${e.name}`, e);
   return { source, lines, program, defs, byQName };
+}
+
+/**
+ * Where line `line` (1-based) of `text` starts and where its text ends, as
+ * offsets: `text.slice(start, end)` is the line as `Store.lines` holds it,
+ * without its line break. `null` for a line the text does not have.
+ *
+ * An edit made at these offsets leaves every other character of the text as it
+ * was. Splitting the text into lines and joining them back with `\n` instead
+ * rewrites every CRLF in the file to LF — a whole-file diff for a one-token
+ * edit, on the platform where CRLF is the default, with nothing said about it.
+ */
+export function lineSpan(text: string, line: number): { start: number; end: number } | null {
+  if (line < 1) return null;
+  let start = 0;
+  for (let n = 1; n < line; n++) {
+    const nl = text.indexOf("\n", start);
+    if (nl === -1) return null;
+    start = nl + 1;
+  }
+  const nl = text.indexOf("\n", start);
+  if (nl === -1) return { start, end: text.length };
+  return { start, end: text[nl - 1] === "\r" ? nl - 1 : nl };
+}
+
+/** The line break `text` is written with: the first one in it, `\n` when it has none. */
+function lineBreakOf(text: string): string {
+  return LINE_BREAK.exec(text)?.[0] ?? "\n";
+}
+
+/**
+ * `lines` as text to write into `source`: joined, with every line break in
+ * the result — between two of them or inside one — written as `source`'s own
+ * (`lineBreakOf`). A body or a patch carries whichever line break it was
+ * written with; the file keeps one.
+ */
+export function joinLines(source: string, lines: readonly string[]): string {
+  return lines.join("\n").split(LINE_BREAK).join(lineBreakOf(source));
+}
+
+/**
+ * `text` with lines `from` to `to` (1-based, inclusive) replaced by `lines`
+ * (`joinLines`), and every other character as it was. So each line it keeps
+ * keeps its own line break, and line `to`'s stays after the lines written. With
+ * no `lines`, the range goes with one line break: the one that ends it, or,
+ * when it runs to the end of the text, the one before it.
+ *
+ * The lines come out as `[...before, ...lines, ...after]` — including for the
+ * empty range `to === from - 1`, which inserts `lines` before line `from`. The
+ * store gives a definition that range when the next one starts on its line.
+ */
+export function spliceLines(
+  text: string,
+  from: number,
+  to: number,
+  lines: readonly string[],
+): string {
+  const first = lineSpan(text, from);
+  const last = lineSpan(text, to);
+  if (first === null || to < from - 1 || (to > 0 && last === null)) {
+    throw new Error(`lines ${from} to ${to} are not lines of the text`);
+  }
+  if (lines.length > 0) {
+    // With `to` 0 they go before line 1, where no line's break follows them,
+    // so the file's does.
+    const rest = last === null ? lineBreakOf(text) + text : text.slice(last.end);
+    return text.slice(0, first.start) + joinLines(text, lines) + rest;
+  }
+  const next = lineSpan(text, to + 1);
+  if (next !== null) return text.slice(0, first.start) + text.slice(next.start);
+  const prev = lineSpan(text, from - 1);
+  return prev === null ? "" : text.slice(0, prev.end);
 }
 
 function buildEntries(program: Program, lines: string[], tokens: Token[]): DefEntry[] {
