@@ -6,9 +6,9 @@
 // is the whole subject here: a left-associative chain (`1 + 1 + 1 + …`,
 // `x.trim().trim()…`, a run of `not`, a type's `where`s, an assignment target's
 // `s.a[0]…` path) is parsed by a loop and costs the parser no stack, but still
-// builds one node per operator — so bounding only what the parser recursed
-// through moved the crash downstream instead of removing it, and `compile` went
-// down at ~2,500 operators while `parse` returned clean.
+// builds one node per step, and every stage after the parse walks those nodes
+// by recursion. Bounding only what the parser recursed through would let such
+// a chain parse clean and overflow the stack downstream.
 //
 // Every assertion therefore goes through `compile`, not `parse`. The thresholds
 // also differ per construct, so one row per construct is what makes a missed
@@ -122,10 +122,10 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     at: (d) => `slot v : Int = ${"-".repeat(d)}1\n${TAIL}`,
   },
   {
-    // One `TypeRefinement` per `where`. The atom takes the first before the
-    // chain's loop starts, so the longest accepted chain — 255 `where`s over
-    // `Int` — is as deep as the longest accepted type application, 255 nested
-    // `List(`s.
+    // One `TypeRefinement` per `where` over `Int`. `parseTypeUnionAtom` takes
+    // the first before the loop starts charging, so this chain is refused one
+    // step later than the expression chains: 255 `where`s are accepted, as deep
+    // a tree as the longest accepted type application, 255 nested `List(`s.
     name: "where chain",
     effective: 256,
     at: (d) => `type T = Int${" where between(0, 10)".repeat(d)}\nslot v : T = 1\n${TAIL}`,
@@ -150,6 +150,39 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 slot s : R = {a: 1}
 tile B = button(text="b", onClick=r)
 reducer r on=ui.click(B) do= s${".a".repeat(d)} := 1
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  {
+    // Both kinds of step in one path: one count covers them, so alternating
+    // them goes no further than either alone. Type-checks at every depth.
+    name: "slot-assignment mixed path",
+    effective: 255,
+    at: (d) =>
+      `type R = {a: List(R)}
+slot s : R = {a: []}
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= s${Array.from({ length: d }, (_, i) => (i % 2 === 0 ? ".a" : "[0]")).join("")} := ${d % 2 === 1 ? "[]" : "{a: []}"}
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  // A chain inside another construct starts from the level that construct is
+  // at, so it is refused that many steps sooner.
+  {
+    name: "where chain on a record field",
+    effective: 255,
+    at: (d) =>
+      `type T = {f: Int${" where between(0, 10)".repeat(d)}}\nslot v : T = {f: 1}\n${TAIL}`,
+  },
+  {
+    name: "slot-assignment path inside an if",
+    effective: 254,
+    at: (d) =>
+      `slot s : List(Int) = [1]
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= if true then { s${"[0]".repeat(d)} := 1 }
 tile App = column(B)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,

@@ -1,8 +1,8 @@
 {
   "steps": [
     {
-      "label": "the tag ten steps down reads back through the same path",
-      "expect": { "noErrors": true, "domIncludes": ["tag: kumi"] }
+      "label": "the tag ten steps down renders, read through the path rename writes",
+      "expect": { "noErrors": true, "domIncludes": ["tag: kumi"], "domExcludes": ["tag: kumiki"] }
     },
     {
       "label": "the ten-step write lands on that tag, and every predicate accepts it",

@@ -7,9 +7,9 @@ A type's `where` chain and an assignment target's path now count against the 256
 `language.md` §1.2.3 bounds every tree at 256 levels, including a chain the
 parser reads with a loop, because every stage after the parse walks the tree by
 recursion. The binary, prefix and postfix chains were already charged to that
-budget. Two other loops that build one node per step were not: the `where`s on
-a type (one refinement each) and the `.field` / `[index]` steps of an
-assignment target.
+budget. Two other loops that build one node per step were not: the `where`s
+written on one type expression (one refinement each) and the `.field` /
+`[index]` steps of an assignment target.
 
 ```
 slot s : List(Int) = [1]
@@ -26,7 +26,6 @@ report the same positioned parse error a long `+` chain does, at the `where`,
 Parse error at 2:795: Nesting is deeper than 256 levels — extract part of this into a definition of its own
 ```
 
-A program inside the budget is unaffected, and that covers every program in the
-examples and benchmarks. At the top of a definition a type takes up to 255
-`where`s and an assignment target up to 254 steps; whatever a chain sits inside
-spends the same budget.
+A program inside the budget is unaffected. At the top of a definition a type
+takes up to 255 `where`s and an assignment target up to 254 steps; whatever a
+chain sits inside spends the same budget.

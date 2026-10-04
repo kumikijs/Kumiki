@@ -177,9 +177,9 @@ class Parser {
    * A left-associative chain — `1 + 1 + 1 + …`, `x.trim().trim()…`, a run of
    * prefix operators, a type's `where`s, an assignment target's `s.a[0]…`
    * path — is parsed by a loop, so it costs the parser no stack. It still
-   * builds one node per operator, each nested inside the last, and everything
-   * downstream walks that by recursion. Left unbounded it parsed clean and
-   * crashed `compile` instead, so every such loop charges what it builds here.
+   * builds one node per step, each nested inside the last, and everything
+   * downstream walks that by recursion, so each such loop charges one level
+   * per node of its own chain.
    */
   private widen(built: number): void {
     if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
@@ -381,14 +381,15 @@ class Parser {
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
     // Refinement. `refinement-type ::= type-expr 'where' pred-expr` is recursive
-    // (§1.3.1), so the `where`s chain without a bound and every predicate the
-    // type collects has to hold. Read as a loop rather than by recursing:
-    // `parseTypeUnionAtom` above has already taken the first one — folded onto
-    // the `nominal` node as a property, or wrapping a bare atom — and a second
-    // `if` here is what used to cap the form at two, with a third reported as a
-    // parse error while the grammar said otherwise. Each `where` still wraps
-    // the type in one more node, so the chain is charged to the depth budget
-    // like any other.
+    // (§1.3.1), so the grammar puts no count on the `where`s, and every
+    // predicate the type collects has to hold. Read as a loop rather than by
+    // recursing: `parseTypeUnionAtom` above has already taken the first one —
+    // folded onto the `nominal` node as a property, or wrapping a bare atom —
+    // and a second `if` here is what used to cap the form at two, with a third
+    // reported as a parse error while the grammar said otherwise. Each `where`
+    // this loop takes wraps the type in one more node and is charged to the
+    // depth budget. The first, taken by `parseTypeUnionAtom`, is not, which is
+    // why a `where` chain is refused one step later than the expression chains.
     let refined = first;
     let built = 0;
     while (this.matchKw("where")) {
