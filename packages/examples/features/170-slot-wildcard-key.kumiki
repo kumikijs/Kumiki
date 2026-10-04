@@ -1,0 +1,40 @@
+# Feature (testing.md §8.2.2): `<slots.X>` as a Set member or a map key in a
+# reducer-test `expect`.
+#
+#   expect = {slots: {tags: ["z", <slots.pick>]}}
+#   expect = {slots: {counts: {"z": 2, <slots.pick>: 1}}}
+#
+# As a value, `<slots.X>` matches slot `X`'s post-execution value. As a Set
+# member or a map key it stands for that value too: the matcher keys it the
+# way `add` / `insert` key the value, as if the value had been written in its
+# place. Like any member or key the literal writes, it asks for one of its
+# own: had `pick` held "z", `["z", <slots.pick>]` would name two members under
+# one key and fail.
+
+slot tags   : Set(Text)      = ["z"]
+slot counts : Map(Text, Int) = {"z": 2}
+slot pick   : Text           = "a"
+
+reducer addTag on=ui.click(Add) do=
+    tags := tags.add(pick)
+    counts := counts.insert(pick, 1)
+
+tile Add = button(text="add") {id: "add"}
+
+tile App = column(
+  Add,
+  text("tags: " + tags.size.show + " has-a=" + tags.has("a").show),
+  text("counts: " + counts.size.show))
+
+app SlotWildcardKey
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
+
+test a-slot-member = reducer-test addTag
+    given  = {slots: {tags: ["z"], pick: "a"}, event: {type: ui.click, target: Add}}
+    expect = {slots: {tags: ["z", <slots.pick>]}}
+
+test a-slot-key = reducer-test addTag
+    given  = {slots: {counts: {"z": 2}, pick: "a"}, event: {type: ui.click, target: Add}}
+    expect = {slots: {counts: {"z": 2, <slots.pick>: 1}}}

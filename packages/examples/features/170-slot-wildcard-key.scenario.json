@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "the slots start with the one member and entry the literals write",
+      "expect": { "noErrors": true, "domIncludes": ["tags: 1 has-a=false", "counts: 1"] }
+    },
+    {
+      "label": "add puts pick's value in both",
+      "do": { "click": "#add" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["tags: 2 has-a=true", "counts: 2"],
+        "state": { "tags": { "z": true, "a": true }, "counts": { "z": 2, "a": 1 } }
+      }
+    }
+  ]
+}

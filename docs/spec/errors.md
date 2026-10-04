@@ -319,7 +319,11 @@ A test wildcard (`<any-id>` / `<slots.X>`) appears outside a `reducer-test` `exp
 
 > `Test wildcard "<any-id>" is only valid inside a reducer-test \`expect\``
 
-**Fix**: Remove the wildcard, or move it into the `reducer-test` `expect`.
+Inside a `reducer-test` `expect`, a wildcard nested in a structured Set member or map key (`[{id: <slots.pick>}]`, `{ {x: <any-id>}: 1 }`) is E0109 too. A Set member or map key is keyed by its whole value, so a wildcard can stand in for the whole member or key and nothing smaller; one nested inside would be keyed by its own form and the test could never pass.
+
+> `Test wildcard "<slots.pick>" cannot stand inside a Set member or map key: the member or key is keyed by its whole value, so a wildcard there can only be the whole member or key`
+
+**Fix**: Remove the wildcard, or move it into the `reducer-test` `expect`. For a nested one, write the member or key out in full, or put the wildcard in place of the whole member or key (`[<slots.pick>]`, where slot `pick` holds the whole record).
 
 ### E0111 `orphan-sub-routes`
 
