@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "each value renders in its place, through the text tile written around it",
+      "expect": { "noErrors": true, "domIncludes": ["Summary42Total itemshelloSum: 42add"] }
+    },
+    {
+      "label": "both texts that read the slot show its new value",
+      "do": { "click": "#add" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Summary43Total itemshelloSum: 43add"],
+        "state": { "total": 43 }
+      }
+    }
+  ]
+}
