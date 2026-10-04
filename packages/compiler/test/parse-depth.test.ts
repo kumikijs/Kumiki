@@ -4,10 +4,11 @@
 //
 // The bound is on the tree, not on how the parser reached it. That distinction
 // is the whole subject here: a left-associative chain (`1 + 1 + 1 + …`,
-// `x.trim().trim()…`, a run of `not`) is parsed by a loop and costs the parser
-// no stack, but still builds one node per operator — so bounding only what the
-// parser recursed through moved the crash downstream instead of removing it,
-// and `compile` went down at ~2,500 operators while `parse` returned clean.
+// `x.trim().trim()…`, a run of `not`, a type's `where`s, an assignment target's
+// `s.a[0]…` path) is parsed by a loop and costs the parser no stack, but still
+// builds one node per operator — so bounding only what the parser recursed
+// through moved the crash downstream instead of removing it, and `compile` went
+// down at ~2,500 operators while `parse` returned clean.
 //
 // Every assertion therefore goes through `compile`, not `parse`. The thresholds
 // also differ per construct, so one row per construct is what makes a missed
@@ -119,6 +120,39 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     name: "prefix operator run",
     effective: 255,
     at: (d) => `slot v : Int = ${"-".repeat(d)}1\n${TAIL}`,
+  },
+  {
+    // One `TypeRefinement` per `where`. The atom takes the first before the
+    // chain's loop starts, so the longest accepted chain — 255 `where`s over
+    // `Int` — is as deep as the longest accepted type application, 255 nested
+    // `List(`s.
+    name: "where chain",
+    effective: 256,
+    at: (d) => `type T = Int${" where between(0, 10)".repeat(d)}\nslot v : T = 1\n${TAIL}`,
+  },
+  // An assignment target is a path, one `LIndex` / `LField` per step.
+  {
+    name: "slot-assignment index path",
+    effective: 255,
+    at: (d) =>
+      `slot s : List(Int) = [1]
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= s${"[0]".repeat(d)} := 1
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  {
+    name: "slot-assignment field path",
+    effective: 255,
+    at: (d) =>
+      `type R = {a: Int}
+slot s : R = {a: 1}
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= s${".a".repeat(d)} := 1
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
   },
 ];
 

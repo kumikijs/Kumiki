@@ -175,10 +175,11 @@ class Parser {
    * Charge `built` levels against the same budget without recursing.
    *
    * A left-associative chain — `1 + 1 + 1 + …`, `x.trim().trim()…`, a run of
-   * prefix operators — is parsed by a loop, so it costs the parser no stack.
-   * It still builds one node per operator, each nested inside the last, and
-   * everything downstream walks that by recursion. Left unbounded it parsed
-   * clean and crashed `compile` instead.
+   * prefix operators, a type's `where`s, an assignment target's `s.a[0]…`
+   * path — is parsed by a loop, so it costs the parser no stack. It still
+   * builds one node per operator, each nested inside the last, and everything
+   * downstream walks that by recursion. Left unbounded it parsed clean and
+   * crashed `compile` instead, so every such loop charges what it builds here.
    */
   private widen(built: number): void {
     if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
@@ -385,9 +386,14 @@ class Parser {
     // `parseTypeUnionAtom` above has already taken the first one — folded onto
     // the `nominal` node as a property, or wrapping a bare atom — and a second
     // `if` here is what used to cap the form at two, with a third reported as a
-    // parse error while the grammar said otherwise.
+    // parse error while the grammar said otherwise. Each `where` still wraps
+    // the type in one more node, so the chain is charged to the depth budget
+    // like any other.
     let refined = first;
+    let built = 0;
     while (this.matchKw("where")) {
+      built += 1;
+      this.widen(built);
       this.next();
       const ref = this.parseRefinement();
       refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
@@ -847,15 +853,25 @@ class Parser {
     return out;
   }
 
+  /**
+   * An assignment target: a slot and its `.field` / `[index]` steps. Each step
+   * wraps the path so far, the way `x.a[0]…` read as an expression does, so it
+   * is charged to the depth budget the same way.
+   */
   private parseLvalue(): Lvalue {
     const tok = this.eat("ident");
     let lv: Lvalue = { kind: "LSlot", name: tok.value, pos: tok.pos };
+    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
+        built += 1;
+        this.widen(built);
         this.next();
         const f = this.eat("ident");
         lv = { kind: "LField", base: lv, field: f.value, pos: f.pos };
       } else if (this.matchOp("[")) {
+        built += 1;
+        this.widen(built);
         const t = this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");

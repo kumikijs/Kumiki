@@ -1,0 +1,36 @@
+# Feature (language.md §1.2.3): a type's `where`s and an assignment target's
+# path are chains, and count against the 256-level depth budget like any other.
+#
+# A type takes any number of `where`s (§1.3.1), and an assignment target any
+# number of `.field` / `[index]` steps (§1.6.3). The parser reads both with a
+# loop, but every step wraps what came before it in one more node, and every
+# stage after the parse walks that tree by recursion. So both are charged to
+# the budget that bounds nesting and the other left-associative chains
+# (`1 + 1 + …`, `x.trim().trim()…`): past it, the parser refuses the program
+# with "Nesting is deeper than 256 levels" at the step that went over.
+#
+# This program sits far inside the budget. `Tag` carries three predicates, and
+# `rename` writes ten steps down through records and Lists to one of them.
+
+type Tag   = Text where nonempty where len-lt(9) where regex("[a-z]+")
+type Pin   = { tags: List(Tag) }
+type Cell  = { pins: List(Pin) }
+type Row   = { cells: List(Cell) }
+type Board = { rows: List(Row) }
+type World = { boards: List(Board) }
+
+slot world : World = {boards: [{rows: [{cells: [{pins: [{tags: ["kumi"]}]}]}]}]}
+
+reducer rename on=ui.click(Rename)
+    do= world.boards[0].rows[0].cells[0].pins[0].tags[0] := "kumiki"
+
+tile Rename = button(text="rename") {id: "rename"}
+
+tile App = column(
+  Rename,
+  text("tag: " + world.boards[0].rows[0].cells[0].pins[0].tags[0]))
+
+app ChainsWithinTheDepthBudget
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
