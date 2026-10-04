@@ -221,10 +221,12 @@ describe("patch revert of a cascade", () => {
 
   it("refuses to revert the restore when a member is no longer in the file", () => {
     const { file, restoreId } = restoredFixture();
-    removeDef(file, "tile.Page", false);
+    const { opId: removedId } = removeDef(file, "tile.Page", false);
     const before = snapshot(file);
 
-    expect(() => patchRevert(file, restoreId)).toThrowError(/tile\.Page is no longer in the file/);
+    expect(() => patchRevert(file, restoreId)).toThrowError(
+      `patch revert: ${restoreId} added tile.Page, which is no longer in the file: ${removedId} removed tile.Page; nothing was written`,
+    );
 
     expect(snapshot(file)).toEqual(before);
   });
