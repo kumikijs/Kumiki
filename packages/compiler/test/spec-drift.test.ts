@@ -23,6 +23,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { BUILTIN_PROP_ROWS, INPUT_ELEMENTS, PROP_TYPE_SPELLING } from "../src/builtin-props.ts";
 import { REFINEMENT_PREDS, refinementBases } from "../src/refinements.ts";
 import { UI_LIFTS } from "../src/ui-lifts.ts";
 
@@ -267,4 +268,122 @@ describe("§E0804's base table matches the refinement table", () => {
       }
     });
   }
+});
+
+// The same guard for stdlib.md §2.3.11's prop table, the published copy of
+// `BUILTIN_PROP_ROWS`. A row typing a prop the checker does not hold to that
+// type, or a prop the checker types that no row lists, is a program the spec
+// and `check` disagree about. forms.md types the input elements' props (§5.3)
+// and the form's (§5.2.1) in tables of its own, so each type written there has
+// to be the one the checker holds the prop to as well.
+describe("stdlib §2.3.11's prop table matches BUILTIN_PROP_ROWS", () => {
+  /** The body under the heading `heading` matches, up to the next `##` / `###` heading. */
+  function section(file: string, heading: RegExp): string {
+    const source = readFileSync(file, "utf8");
+    const start = source.search(heading);
+    expect(start, `${file} has no heading matching ${heading}`).toBeGreaterThanOrEqual(0);
+    const body = source.slice(source.indexOf("\n", start) + 1);
+    const end = body.search(/^#{2,3} /m);
+    return end < 0 ? body : body.slice(0, end);
+  }
+
+  const backticked = (cell: string | undefined): string[] =>
+    [...(cell ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string);
+
+  /**
+   * The cells of each three-cell table row whose first cell names something in
+   * backticks — which skips the header and the `|---|` separator.
+   */
+  function rows(text: string): string[][] {
+    return text
+      .split("\n")
+      .filter((line) => line.startsWith("|"))
+      .map((line) => line.split("|").slice(1, -1))
+      .filter((cells) => cells.length === 3 && backticked(cells[0]).length > 0);
+  }
+
+  /** §2.3.11 as `"<tile> <prop>" -> type`, keyed off the backticks so both tracks parse alike. */
+  function propTable(file: string): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const [props, type, tiles] of rows(section(file, /^### 2\.3\.11 /m))) {
+      const spelled = backticked(type);
+      expect(spelled, `${file} §2.3.11 row "${props}" names one type`).toHaveLength(1);
+      for (const tile of backticked(tiles)) {
+        for (const prop of backticked(props)) {
+          const key = `${tile} ${prop}`;
+          expect(out.has(key), `${file} §2.3.11 lists "${key}" in two rows`).toBe(false);
+          out.set(key, spelled[0] as string);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** A forms.md table as `prop -> type`, for the rows whose type is one written in backticks. */
+  function typedProps(file: string, heading: RegExp): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const [prop, type] of rows(section(file, heading))) {
+      const spelled = backticked(type);
+      if (spelled.length === 1) out.set(backticked(prop)[0] as string, spelled[0] as string);
+    }
+    return out;
+  }
+
+  const expected = new Map(
+    BUILTIN_PROP_ROWS.flatMap((row) =>
+      row.tiles.flatMap((tile) =>
+        row.props.map((prop) => [`${tile} ${prop}`, PROP_TYPE_SPELLING[row.type]] as const),
+      ),
+    ),
+  );
+
+  const TRACKS = {
+    en: path.join(repoRoot, "docs", "spec"),
+    ja: path.join(repoRoot, "docs", "ja", "spec"),
+  } as const;
+
+  for (const [track, dir] of Object.entries(TRACKS)) {
+    it(`lists the props the checker types, with the same types, on the ${track} track`, () => {
+      const table = propTable(path.join(dir, "stdlib.md"));
+      expect(Object.fromEntries([...table].sort())).toEqual(
+        Object.fromEntries([...expected].sort()),
+      );
+    });
+
+    it(`types forms.md §5.3's props on every input element as the checker does, on the ${track} track`, () => {
+      const typed = typedProps(path.join(dir, "forms.md"), /^## 5\.3 /m);
+      // `id` is the one typed row left to stdlib §2.3.10's common props, which
+      // every kind takes.
+      expect([...typed.keys()].sort()).toEqual([
+        "auto-complete",
+        "auto-focus",
+        "disabled",
+        "id",
+        "placeholder",
+        "readonly",
+        "required",
+      ]);
+      for (const [prop, type] of typed) {
+        if (prop === "id") continue;
+        for (const tile of INPUT_ELEMENTS) {
+          expect(expected.get(`${tile} ${prop}`), `${track} forms §5.3 "${prop}" on ${tile}`).toBe(
+            type,
+          );
+        }
+      }
+    });
+
+    it(`types forms.md §5.2.1's form props as the checker does, on the ${track} track`, () => {
+      const typed = typedProps(path.join(dir, "forms.md"), /^### 5\.2\.1 /m);
+      expect([...typed.keys()].sort()).toEqual(["auto-complete", "novalidate"]);
+      for (const [prop, type] of typed) {
+        expect(expected.get(`form ${prop}`), `${track} forms §5.2.1 "${prop}"`).toBe(type);
+      }
+    });
+  }
+
+  it("takes the input elements to be the elements of stdlib §2.3.4", () => {
+    const table = section(path.join(TRACKS.en, "stdlib.md"), /^### 2\.3\.4 /m);
+    expect(rows(table).map(([element]) => backticked(element)[0])).toEqual([...INPUT_ELEMENTS]);
+  });
 });

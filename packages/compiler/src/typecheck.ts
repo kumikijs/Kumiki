@@ -45,6 +45,7 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
+import { builtinPropType, OPTION_SPELLING, PROP_TYPE_SPELLING } from "./builtin-props.ts";
 import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./builtins.ts";
 import {
   BUILTIN_EFFECTS,
@@ -1719,6 +1720,7 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
@@ -1756,8 +1758,79 @@ function checkTileCall(
       }
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }
+}
+
+/**
+ * A builtin tile's prop against the type stdlib.md §2.3.11 gives it, asked of
+ * both spellings alike — `modal(open=…)` and `modal() {open: …}` are one prop
+ * (language.md §1.7.1). A typed prop is held to its type as any declared
+ * position is, so a value that cannot have it is E0201 at the value; a prop the
+ * table does not type, and every prop of a user tile, is not asked about.
+ */
+function checkBuiltinProp(
+  tile: string,
+  prop: string,
+  value: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const want = builtinPropType(tile, prop);
+  if (want === undefined) return;
+  if (want === "Options") {
+    checkSelectOptions(value, sym, errors, ctx);
+    return;
+  }
+  checkAgainst(value, prim(want, value.pos), sym, errors, ctx);
+}
+
+/**
+ * A `select`'s options: a `List` of records that each carry a `label` (what the
+ * option shows) and a `value` (what choosing it writes). Other fields are not
+ * read and so not refused, which is why this is not `checkAgainst` against a
+ * record type — a record type names every field its values have. A literal is
+ * judged entry by entry, so the report lands on the entry that is wrong; any
+ * other value by its element type. A type that cannot be read is not judged.
+ */
+function checkSelectOptions(value: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (value.kind === "ListLit") {
+    for (const item of value.items) {
+      const t = inferType(item, sym, ctx);
+      if (t === null || isOpaque(t, sym) || isOptionRecord(t, sym)) continue;
+      pushMismatch(
+        errors,
+        "E0201",
+        `Expected ${OPTION_SPELLING} but got ${typeToString(t)}`,
+        item.pos,
+      );
+    }
+    return;
+  }
+  const t = inferType(value, sym, ctx);
+  if (t === null || isOpaque(t, sym)) return;
+  const list = unaliasType(t, sym);
+  const elem =
+    list?.kind === "TypeApp" && list.name === "List" ? (list.args[0] ?? null) : undefined;
+  if (elem !== undefined && (isOpaque(elem, sym) || isOptionRecord(elem, sym))) return;
+  pushMismatch(
+    errors,
+    "E0201",
+    `Expected ${PROP_TYPE_SPELLING.Options} but got ${typeToString(t)}`,
+    value.pos,
+  );
+}
+
+/** Whether `t` is a record with a `label` and a `value`, whatever else it holds. */
+function isOptionRecord(t: TypeExpr | null, sym: SymbolTable): boolean {
+  const u = unaliasType(t, sym);
+  return (
+    u?.kind === "TypeRecord" &&
+    recordFieldType(u, "label") !== null &&
+    recordFieldType(u, "value") !== null
+  );
 }
 
 /**

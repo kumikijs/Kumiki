@@ -1,0 +1,42 @@
+# Feature (stdlib.md §2.3.11): a builtin tile's prop takes a value of the type
+# the stdlib table gives it, and each value here is one:
+#
+#   select(options=[{label: "Apple", value: "apple"}, …])   List({label, value})
+#   modal(open=shown, …)                                    Bool
+#   button(text="Save", disabled=true)                      Bool
+#
+# The select shows each label and writes the value chosen, the modal starts
+# closed and opens when `Open` sets `shown`, and the disabled button refuses
+# the click. The renderers read these props with their type and convert
+# nothing, so `kumiki check` refuses a value that cannot have it (E0201),
+# written as a named argument or in the `{…}` block alike:
+# `options=["apple", "pear"]` is entries with no label and no value,
+# `open="false"` is a non-empty text, which reads as open, and
+# `disabled="true"` is not `true`, which leaves the button enabled.
+
+slot fruit : Text = "apple"
+slot shown : Bool = false
+slot saves : Int  = 0
+
+tile OpenBtn  = button(text="Open") {id: "open"}
+tile CloseBtn = button(text="Close") {id: "close"}
+tile SaveBtn  = button(text="Save", disabled=true) {id: "save"}
+
+reducer openModal  on=ui.click(OpenBtn)  do= shown := true
+reducer closeModal on=ui.click(CloseBtn) do= shown := false
+reducer save       on=ui.click(SaveBtn)  do= saves := saves + 1
+
+tile App = column(
+  select(bind=fruit,
+         options=[{label: "Apple", value: "apple"}, {label: "Pear", value: "pear"}]) {id: "fruit"},
+  text("fruit=" + fruit),
+  OpenBtn,
+  modal(text("Keep the pick?"), CloseBtn, open=shown, title="Confirm", onClose=closeModal),
+  SaveBtn,
+  text("saves=" + saves.show),
+  text("shown=" + shown.show))
+
+app BuiltinPropTypes
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
