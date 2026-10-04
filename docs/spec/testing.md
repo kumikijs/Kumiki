@@ -353,6 +353,17 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 - Confirm that the same input produces the same result even after changing a model / algorithm
 - Verify that an old log can be migrated when the schema changes
 
+A log keeps the names the program had when it was recorded. An `episode-test` **fails** for an episode whose entry reducer — its first `reducer` step, or a `panic` step that names one — is not in the program, whatever its `expect` names, and the report names the episode and the reducer:
+
+```
+FAIL  replay-renamed
+  expected: every episode replayed
+  actual:   ep_01M42ZJR5YZDC8N65KEZ6X56QB: no reducer named "inc"
+  diff at:  episodes
+```
+
+Replay has nothing to run such an episode with ([runtime.md §10.5.3](./runtime.md#_10-5-3-replay)), and an episode that is not replayed raises no panic and no error, so `no-panics` / `no-errors` alone would hold over it on the very rename that stopped it testing anything. Record the log again, or give the reducer the name the log has. An episode with no entry reducer at all is one in which no reducer ran, and replays clean; runtime.md §10.5.3 says why.
+
 ## 8.7 The Runner
 
 ```bash

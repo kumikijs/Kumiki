@@ -19,6 +19,7 @@ import {
   reportRejectedBatch,
   withEnvReplay,
 } from "./core.ts";
+import { noReducerNamed } from "./dispatch-check.ts";
 import { valueEqual } from "./stdlib.ts";
 
 /**
@@ -701,6 +702,13 @@ export function standInValue(
 }
 
 /**
+ * An episode's entry reducer, as the log recorded its name, when the program
+ * declares no reducer by that name (§10.5.3). `message` is what every tier
+ * says about such a name ({@link noReducerNamed}).
+ */
+type MissingEntryReducer = { reducer: string; message: string };
+
+/**
  * Observer event for a single replay step (spec/runtime.md §10.5.1 step kinds,
  * plus the `episode-start` / `episode-end` brackets the executor adds so the
  * formatter can frame each episode). Step indices are 1-based and increment
@@ -717,6 +725,11 @@ export type ReplayEvent =
        * the log does not carry (§10.5.3): it runs with no `$1`.
        */
       entryResultMissing?: string;
+      /**
+       * The entry reducer, when the program has none by its name: the
+       * episode is not replayed, and the run fails.
+       */
+      entryReducerMissing?: MissingEntryReducer;
     }
   | {
       kind: "reducer";
@@ -807,6 +820,8 @@ export type ReplayReport = {
   envDrift: EnvDrift;
   /** Episodes whose entry reducer's recorded result was not in the log (§10.5.3). */
   entryResultsMissing: { episodeId: string; reducer: string }[];
+  /** Episodes not replayed, because the program has no reducer by their entry reducer's name. */
+  entryReducersMissing: ({ episodeId: string } & MissingEntryReducer)[];
 };
 
 /**
@@ -954,6 +969,21 @@ function executeEpisode(
       s.kind === "reducer" || (s.kind === "panic" && typeof s.name === "string"),
   );
   const entry = firstRed && app.reducers.find((r) => r.name === firstRed.name);
+  // The log keeps the name the entry reducer had when it was recorded, and a
+  // program changed since — a rename, a removal — has nothing to run the
+  // episode with. That is reported, and fails the run (§10.5.3): an episode
+  // that is not replayed raises no panic and no error, so `no-panics` and
+  // `no-errors` hold over it on exactly the change a replay is kept to catch.
+  const entryReducerMissing: MissingEntryReducer | undefined =
+    firstRed && !entry
+      ? {
+          reducer: firstRed.name,
+          message: noReducerNamed(
+            firstRed.name,
+            app.reducers.map((r) => r.name),
+          ),
+        }
+      : undefined;
   const cursors: Record<string, number> = {};
   const entryIn = firstRed && entry ? entryPayload(app.effects, ep, entry, firstRed, cursors) : {};
   // Reported rather than inferred (§10.5.3): a trimmed or hand-edited log that
@@ -964,8 +994,14 @@ function executeEpisode(
     episodeId: ep.id,
     trigger: ep.trigger,
     ...(entryResultMissing !== undefined ? { entryResultMissing } : {}),
+    ...(entryReducerMissing !== undefined ? { entryReducerMissing } : {}),
   };
   if (emit(started)) return { panics, unhandledErrors, stopped: true };
+  // An episode with no entry reducer at all is one in which no reducer ran,
+  // which the live runtime records only for an `ssr.hydrate` bootstrap whose
+  // `app.init` results reached none — it opens every other episode at a
+  // reducer dispatch. Replay re-runs reducers, never `app.init` emits, and
+  // only reducers write slots, so running nothing reproduces that episode.
   if (!firstRed || !entry) {
     emit({ kind: "episode-end", episodeId: ep.id });
     return { panics, unhandledErrors, stopped: false };
@@ -1229,9 +1265,13 @@ export function replayEpisodes(input: {
   const stepCounter = { n: 0 };
   const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
   const entryResultsMissing: ReplayReport["entryResultsMissing"] = [];
+  const entryReducersMissing: ReplayReport["entryReducersMissing"] = [];
   const noting: ReplayObserver = (ev) => {
     if (ev.kind === "episode-start" && ev.entryResultMissing !== undefined) {
       entryResultsMissing.push({ episodeId: ev.episodeId, reducer: ev.entryResultMissing });
+    }
+    if (ev.kind === "episode-start" && ev.entryReducerMissing !== undefined) {
+      entryReducersMissing.push({ episodeId: ev.episodeId, ...ev.entryReducerMissing });
     }
     return observer(ev);
   };
@@ -1254,6 +1294,7 @@ export function replayEpisodes(input: {
     finalSlots,
     envDrift,
     entryResultsMissing,
+    entryReducersMissing,
   };
 }
 
@@ -1506,7 +1547,8 @@ export const _stdlibTest = {
    * delivery; `fixed` injects an explicit `{outcome, value}`. After every
    * episode replays, compare the live slots against `expect.slotsEqual` —
    * either a record literal or `"from-log"` (accumulated from each reducer
-   * step's `slot-diffs`).
+   * step's `slot-diffs`). An episode whose entry reducer the program does not
+   * declare is not replayed, and fails the test whatever `expect` names.
    *
    * Reuses {@link executeEpisode} (and `replayEpisodes`) — the same per-episode
    * executor drives both the assert-based `kumiki test` runner and the trace
@@ -1531,8 +1573,14 @@ export const _stdlibTest = {
 
     const panics: { episodeId: string; message: string }[] = [];
     const unhandledErrors: string[] = [];
+    const notReplayed: string[] = [];
     const stepCounter = { n: 0 };
-    const observer: ReplayObserver = () => "continue";
+    const observer: ReplayObserver = (ev) => {
+      if (ev.kind === "episode-start" && ev.entryReducerMissing !== undefined) {
+        notReplayed.push(`${ev.episodeId}: ${ev.entryReducerMissing.message}`);
+      }
+      return "continue";
+    };
     // `episode-test` asserts against slots, not provenance; the drift is still
     // accumulated so the executor has one shape to write into.
     const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
@@ -1541,6 +1589,20 @@ export const _stdlibTest = {
       const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
       for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
       for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
+    }
+
+    // Ahead of every `expect`, and whatever it names: an episode that was not
+    // replayed moved no slot and raised nothing, so each expectation below
+    // would be judged on its absence — and a slot mismatch reported here
+    // instead would name the symptom rather than the missing reducer.
+    if (notReplayed.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "every episode replayed",
+        actual: notReplayed.join("; "),
+        diffAt: "episodes",
+      };
     }
 
     // Compute the from-log expectation from the recorded reducer slot-diffs.

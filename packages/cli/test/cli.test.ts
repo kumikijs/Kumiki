@@ -1317,6 +1317,38 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
     expect(out).toContain("1 episode(s) replayed");
   });
 
+  // The counter with `inc` renamed to `bump`, replaying one episode recorded
+  // under each name: the first names `inc`, which the program no longer
+  // declares, so it has no reducer to run with; the second still replays.
+  it("names an episode whose entry reducer is not in the program, and exits 1", {
+    timeout: 30000,
+  }, () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-replay-renamed-"));
+    try {
+      const program = join(dir, "renamed.kumiki");
+      writeFileSync(program, readFileSync(REPLAY_COUNTER, "utf8").replace(/\binc\b/g, "bump"));
+      const episode = (id: string, reducer: string): string =>
+        JSON.stringify({
+          id,
+          trigger: { kind: "ui.click", target: "IncBtn" },
+          steps: [{ kind: "reducer", name: reducer, "slot-diffs": [], emits: [] }],
+          status: "completed",
+        });
+      const log = join(dir, "renamed.log.jsonl");
+      writeFileSync(log, `${episode("ep_inc", "inc")}\n${episode("ep_bump", "bump")}\n`);
+      const { out, code } = runCli(["replay", program, "--from-log", log]);
+      expect(out).toContain(
+        'episode ep_inc — ui.click on IncBtn  (not replayed: no reducer named "inc")',
+      );
+      expect(out).toContain("[reducer] bump  count: 0 -> 1");
+      expect(out).toContain("1 episode(s) replayed");
+      expect(out).toContain('not replayed: ep_inc: no reducer named "inc"');
+      expect(code).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("unknown episode-id exits 1 with 'episode <id> not found'", { timeout: 30000 }, () => {
     const { out, code } = runCli([
       "replay",

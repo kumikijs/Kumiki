@@ -1,0 +1,44 @@
+# Feature (runtime.md §10.5.3, testing.md §8.6): an episode whose entry
+# reducer is not in the program is not replayed, and that fails the replay.
+#
+# The fixture next to this file was recorded from this program with
+# `kumiki run --episode-log` while the reducer below was named `inc`. A log
+# keeps the name each reducer had when it ran, so after the rename to `bump`
+# its one episode names a reducer the program does not declare, and replay has
+# nothing to run it with. An episode that is not replayed raises no panic and
+# no error, so `no-panics` / `no-errors` would hold over it on exactly the
+# change the test is kept around to catch.
+#
+# `kumiki test` therefore fails `replay-renamed`, whatever its `expect` names,
+# and says which reducer and which episode:
+#
+#   FAIL  replay-renamed
+#     expected: every episode replayed
+#     actual:   ep_01M42ZJR5YZDC8N65KEZ6X56QB: no reducer named "inc"
+#     diff at:  episodes
+#
+# `kumiki replay` over the same log ends that episode's line with
+# `(not replayed: no reducer named "inc")`, leaves it out of the
+# `episode(s) replayed` count, and exits 1. Recording the log again, or naming
+# the reducer `inc` again, makes the test pass.
+#
+# `packages/tests/replay-missing-reducer.test.ts` runs this test as written,
+# and with the reducer named `inc`, where it passes.
+
+slot count : Int = 0
+
+reducer bump on=ui.click(IncBtn) do= count := count + 1
+
+tile IncBtn = button(text="+")
+tile App    = column(text("n=" + count.show), IncBtn) {pad: "md"}
+
+app ReplayMissingReducer
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test replay-renamed =
+    episode-test
+        load   = "194-replay-missing-reducer.fixture.jsonl"
+        mocks  = {}
+        expect = {no-panics: true, no-errors: true}

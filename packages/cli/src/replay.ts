@@ -112,7 +112,12 @@ export function formatEvent(ev: ReplayEvent): string | null {
       const missing = ev.entryResultMissing
         ? `  (no recorded result for ${ev.entryResultMissing})`
         : "";
-      return `episode ${ev.episodeId} — ${ev.trigger.kind}${target}${missing}`;
+      // No reducer to run it with (§10.5.3): nothing follows this line, and
+      // the line says why rather than reading as an episode that did nothing.
+      const skipped = ev.entryReducerMissing
+        ? `  (not replayed: ${ev.entryReducerMissing.message})`
+        : "";
+      return `episode ${ev.episodeId} — ${ev.trigger.kind}${target}${missing}${skipped}`;
     }
     case "reducer": {
       const diffs = ev.slotDiffs
@@ -166,7 +171,8 @@ export function formatEvent(ev: ReplayEvent): string | null {
 /**
  * CLI entry: load the .kumiki app, load the episode log, optionally filter to
  * one `<episode-id>`, replay through `replayEpisodes`, and stream the per-step
- * trace. Exits 1 if any panic / unhandled effect error surfaced during replay.
+ * trace. Exits 1 if any panic / unhandled effect error surfaced during replay,
+ * or an episode was not replayed because the program has no entry reducer for it.
  */
 export async function replayCmd(
   kumikiPath: string,
@@ -225,7 +231,12 @@ export async function replayCmd(
   if (report.stoppedAt !== null) {
     console.log(`(stopped at step ${report.stoppedAt})`);
   }
-  console.log(`\n${episodes.length} episode(s) replayed`);
+  const notReplayed = report.entryReducersMissing;
+  console.log(`\n${episodes.length - notReplayed.length} episode(s) replayed`);
+  if (notReplayed.length > 0) {
+    const formatted = notReplayed.map((m) => `${m.episodeId}: ${m.message}`).join("; ");
+    console.error(`not replayed: ${formatted}`);
+  }
   if (report.panics.length > 0) {
     console.error(`panics: ${report.panics.map((p) => `${p.episodeId}: ${p.message}`).join("; ")}`);
   }
@@ -233,5 +244,7 @@ export async function replayCmd(
     const formatted = report.unhandledErrors.map((u) => `${u.episodeId}: ${u.effect}`).join(", ");
     console.error(`unhandled effect errors: ${formatted}`);
   }
-  if (report.panics.length > 0 || report.unhandledErrors.length > 0) process.exit(1);
+  if (report.panics.length > 0 || report.unhandledErrors.length > 0 || notReplayed.length > 0) {
+    process.exit(1);
+  }
 }

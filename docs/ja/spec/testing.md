@@ -312,6 +312,17 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 - モデル / アルゴリズムを変更した後でも同じ入力で同じ結果が出るか確認
 - スキーマ変更時に旧 log が migration できるか検証
 
+ログは記録時のプログラムの名前を保持する。入口の reducer — 最初の `reducer` step、または reducer を名指す `panic` step — がプログラムにない episode に対して、`episode-test` は `expect` が何を挙げていても**失敗し**、その報告は episode と reducer を名指す：
+
+```
+FAIL  replay-renamed
+  expected: every episode replayed
+  actual:   ep_01M42ZJR5YZDC8N65KEZ6X56QB: no reducer named "inc"
+  diff at:  episodes
+```
+
+replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。入口の reducer がまったくない episode は reducer が 1 つも走らなかった episode であり、クリーンに replay される。その理由はランタイム §10.5.3 にある。
+
 ## 8.7 ランナー
 
 ```bash
