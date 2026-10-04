@@ -953,11 +953,13 @@ export type RoutingImpl = {
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;
   matchPattern(pattern: string, path: string): Record<string, string> | null;
   /**
-   * Resolve any static redirect (`->>`) that applies to the current location —
-   * top-level entry, or one under a matched parent's `subRoutes`. Returns the
-   * redirect target path, or `null` if no redirect applies. The runtime then
-   * `router.replace`s before parsing so the URL bar stays in sync with what is
-   * rendered.
+   * Resolve the static redirects (`->>`) that apply to the current location —
+   * a top-level entry, or one under a matched parent's `subRoutes` — with what
+   * the source binds put into each target, and a target that is redirected in
+   * turn followed to the end of the chain. Returns the path the chain lands on,
+   * or `null` if no redirect applies or the chain loops (reported). The runtime
+   * then `router.replace`s once before parsing so the URL bar stays in sync
+   * with what is rendered.
    */
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** The URL a parsed route was read from: its path, query and hash. */

@@ -1,0 +1,51 @@
+# Feature (routing.md §3.10): a redirect's target can itself be redirected,
+# and a target names what its source binds. `/v1` passes through `/v2` and
+# lands on `/`. `/old/42` lands on `/items/42`, where `route.params.id` is
+# "42", and `/docs/a/b` carries the rest of its path to `/help/a/b`. A
+# redirect inside a `sub-routes` map follows the same rules: `/account/u/5`
+# passes through `/account/people/5` and lands on `/account/users/5`. The URL
+# is replaced once, with the path the chain lands on, so Back returns to the
+# page before the redirect rather than to a path that redirects again.
+#
+# Check refuses a target that names a parameter its source does not bind
+# (`"/old/:id" ->> "/items/:key"`, E0125), and static redirects that send a
+# path back to itself (`"/a" ->> "/b"` with `"/b" ->> "/a"`, E0010).
+
+reducer back on=ui.click(BackBtn) do= emit navigate-back()
+
+tile BackBtn  = button(text="Back", onClick=back)
+tile Where    = column(
+                  text("[at " + route.path + "]"),
+                  text("[id " + route.params.get-or("id", "-") + "]"),
+                  BackBtn)
+
+tile Home     = page(heading("Home page"), Where)
+tile Item     = page(heading("Item page"), Where)
+tile Help     = page(heading("Help page"), Where)
+tile Profile  = page(heading("Profile page"), Where)
+tile AHome    = page(heading("Account home"), Where)
+tile NotFound = page(heading("Not found"), Where)
+
+tile Account
+    sub-routes = {
+        "/account/u/:id"      ->> "/account/people/:id",
+        "/account/people/:id" ->> "/account/users/:id",
+        "/account/users/:id"  -> Profile,
+        "/account"            -> AHome
+    }
+    = page(route-outlet())
+
+app RedirectChain
+    caps   = [nav.push, nav.back]
+    routes = {
+        "/v1"        ->> "/v2",
+        "/v2"        ->> "/",
+        "/old/:id"   ->> "/items/:id",
+        "/docs/*"    ->> "/help/*",
+        "/"          -> Home,
+        "/items/:id" -> Item,
+        "/help/*"    -> Help,
+        "/account/*" -> Account,
+        "/404"       -> NotFound
+    }
+    init   = []

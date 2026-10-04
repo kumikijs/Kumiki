@@ -70,6 +70,7 @@ import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
+import { type RouteMapEntry, redirectCycles, unboundRedirectNames } from "./redirects.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
@@ -868,6 +869,32 @@ function checkRouteTargetArity(
   });
 }
 
+/**
+ * What the redirects of one route map — the app's `routes`, or one tile's
+ * `sub-routes` — have to answer for from the table alone (routing.md §3.10),
+ * reported at the entry: a target that names a `:name` or `*` its source does
+ * not bind (E0125), and static redirects that send a path back to itself
+ * (E0010). A loop through a parameter or a wildcard is the runtime's to stop.
+ */
+function checkRedirects(entries: readonly RouteMapEntry[], errors: KumikiError[]): void {
+  for (const { entry, target, name } of unboundRedirectNames(entries)) {
+    errors.push({
+      code: "E0125",
+      kind: "redirect-unbound-param",
+      message: `Redirect "${entry.path}" ->> "${target}" names "${name}", which "${entry.path}" does not bind`,
+      pos: entry.pathPos,
+    });
+  }
+  for (const { first, loop } of redirectCycles(entries)) {
+    errors.push({
+      code: "E0010",
+      kind: "redirect-cycle",
+      message: `Redirect "${first.path}" comes back to itself (${loop.join(" ->> ")})`,
+      pos: first.pathPos,
+    });
+  }
+}
+
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
@@ -900,6 +927,8 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: dup.pos,
     });
   }
+  // A redirect in this map answers to the rules of one in the app's routes.
+  checkRedirects(subRoutes, errors);
   // Parent pattern must be a wildcard ("/foo/*"); otherwise sub-routes can
   // never match because the runtime only looks them up after the parent
   // wildcard matches the path. If the tile isn't a route target at all,
@@ -6684,6 +6713,7 @@ function checkApp(
     }
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
   }
+  checkRedirects(app.routes, errors);
   if (!servesNotFound(app.routes)) {
     errors.push({
       code: "E0001",

@@ -44,7 +44,7 @@ import {
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
-import { splitPath } from "./router.ts";
+import { followRedirects, splitPath } from "./router.ts";
 import { renderTileToString } from "./ssr-render.ts";
 
 export type RenderToStringOptions = {
@@ -53,9 +53,10 @@ export type RenderToStringOptions = {
    * carry a query and a hash (e.g. `"/posts/abc?tab=2#top"`, or a request's
    * `url` passed through as is). It is split the way the client's router reads
    * a location, with the pathname kept as written (`//foo` and `/a/../b` are
-   * not normalized, as a browser's `location.pathname` does not). A static
-   * redirect (`->>`) that applies to it is resolved first, and the target is
-   * what is rendered and what `snapshot.route` names. When `routing` is provided,
+   * not normalized, as a browser's `location.pathname` does not). The static
+   * redirects (`->>`) that apply to it are resolved first, a chain of them
+   * followed to its end, and the path they land on is what is rendered and what
+   * `snapshot.route` names. When `routing` is provided,
    * dynamic patterns (`/posts/:id`) match this path via
    * `RoutingImpl.parseLocation`; otherwise the path is compared to declared
    * route patterns verbatim (so only static routes match without routing).
@@ -125,17 +126,22 @@ export async function renderToString(
   const live = app.live;
   for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
 
-  // §3.10: a static redirect is resolved before anything is rendered, the way
-  // `mount` resolves it before its first route sync (same `findRedirect`, so
+  // §3.10: the redirects are resolved before anything is rendered, the way
+  // `mount` resolves them before its first route sync (same `findRedirect`, so
   // server and client agree on where a path lands). Without a routing module
-  // only a redirect written for exactly this path applies, matching the
-  // literal-string fallback below.
+  // only a redirect written for exactly the path at hand applies, matching the
+  // literal-string fallback below, and a chain of them is followed by the loop
+  // `findRedirect` follows its own with.
   const requested = splitPath(routePath);
+  const routes = app.routes ?? [];
   const redirectTo = options.routing
     ? options.routing.findRedirect(app.routes, requested)
-    : (app.routes?.find(
-        (r): r is RedirectEntry => "redirectTo" in r && r.pattern === requested.pathname,
-      )?.redirectTo ?? null);
+    : followRedirects(
+        requested.pathname,
+        (path) =>
+          routes.find((r): r is RedirectEntry => "redirectTo" in r && r.pattern === path)
+            ?.redirectTo ?? null,
+      );
   const servedPath = redirectTo ?? routePath;
 
   // Dynamic-route matching when the host hands us a routing implementation.

@@ -10,6 +10,7 @@ import {
   NONE,
   overridableInvoke,
   type ParsedRoute,
+  type RedirectEntry,
   type Router,
   type RoutingImpl,
   someOf,
@@ -142,7 +143,49 @@ function parentBare(pattern: string): string | null {
 }
 
 /**
- * The redirect target for the given location, or `null` if nothing redirects.
+ * Where the redirects send the given location, or `null` if none applies
+ * (spec §3.10). A redirect does what a `navigate-replace` to its target would,
+ * so a target that is itself redirected is redirected again: the chain is
+ * followed, one `redirectStep` at a time, to a path no redirect owns, and that
+ * path is the answer — the caller replaces the URL once, with it.
+ */
+function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
+  if (!routes) return null;
+  return followRedirects(loc.pathname || "/", (path) => redirectStep(routes, path));
+}
+
+/** The most redirects one chain may take — the limit browsers put on an HTTP redirect chain. */
+const MAX_REDIRECTS = 20;
+
+/**
+ * Follow `step` from `start` until it answers `null`, and return the last path
+ * it named — `null` if it named none. A chain that comes back to a path it has
+ * already visited, or that needs more than `MAX_REDIRECTS` redirects, would
+ * never end: it is reported on `console.error` (which the smoke and scenario
+ * tiers fail on) and answers `null`, so no redirect applies to `start`.
+ *
+ * Exported for the SSR pass, which follows its literal redirects without a
+ * routing module through this same loop.
+ */
+export function followRedirects(
+  start: string,
+  step: (path: string) => string | null,
+): string | null {
+  const chain = [start];
+  for (let next = step(start); next !== null; next = step(next)) {
+    const looped = chain.includes(next);
+    chain.push(next);
+    if (looped || chain.length > MAX_REDIRECTS + 1) {
+      const what = looped ? "redirect loop" : `more than ${MAX_REDIRECTS} redirects`;
+      console.error(`[kumiki] ${what}: ${chain.join(" ->> ")} — stopped, no redirect applied`);
+      return null;
+    }
+  }
+  return chain.length > 1 ? (chain[chain.length - 1] ?? null) : null;
+}
+
+/**
+ * Where one redirect sends `path`, or `null` if no redirect owns it.
  * Redirects and rendering routes share one order (§3.1.2): the first entry of
  * `ranked(routes)` that matches the path owns it. If that entry is a `->>`,
  * its target is the answer; if it is a page, nothing redirects — unless the
@@ -150,15 +193,42 @@ function parentBare(pattern: string): string | null {
  * child `->>` applies only when it is the child that owns the path
  * (spec §3.6 + §3.10).
  */
-function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
-  if (!routes) return null;
-  const path = loc.pathname || "/";
+function redirectStep(routes: RouteList, path: string): string | null {
   const owner = firstMatch(routes, path);
-  if (!owner) return null;
-  if ("redirectTo" in owner) return owner.redirectTo;
-  if (!owner.subRoutes || owner.subRoutes.length === 0) return null;
-  const child = firstMatch(owner.subRoutes, path);
-  return child && "redirectTo" in child ? child.redirectTo : null;
+  const entry =
+    owner && !("redirectTo" in owner) && owner.subRoutes?.length
+      ? firstMatch(owner.subRoutes, path)
+      : owner;
+  return entry && "redirectTo" in entry ? landing(entry, path) : null;
+}
+
+/**
+ * The path `r` sends `path` to, given that `r.pattern` matches it: each `:name`
+ * segment of the target takes the segment the same parameter matched in the
+ * path, and a `*` segment takes the rest of the path the source's wildcard
+ * matched — nothing at all when it matched none, so a `/help/*` target reached
+ * from `/docs` is `/help`, and a `/*` target reached the same way is `/`.
+ * Nothing in the source after a `*` binds, as nothing there is matched. A
+ * segment is carried as the path has it, so the target's own match decodes it
+ * once, as it would decode the same URL asked for directly. Every other segment
+ * is kept as written; check reports a `:name` or `*` the source does not bind
+ * (E0125).
+ */
+function landing(r: RedirectEntry, path: string): string {
+  const segs = path.split("/").filter(Boolean);
+  const bound = new Map<string, string>();
+  for (const [i, p] of r.pattern.split("/").filter(Boolean).entries()) {
+    if (p === "*") {
+      bound.set(p, segs.slice(i).join("/"));
+      break;
+    }
+    if (p.startsWith(":")) bound.set(p, segs[i] ?? "");
+  }
+  const out = r.redirectTo.split("/").flatMap((s) => {
+    const v = bound.get(s);
+    return v === undefined ? [s] : v === "" ? [] : [v];
+  });
+  return out.join("/") || "/";
 }
 
 /** The entry of `list` that owns `path`: its first match in §3.1.2's order. */

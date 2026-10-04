@@ -224,6 +224,16 @@ A name that denotes no `type` definition ends the chain rather than closing it: 
 
 **Fix**: Give one name on the chain a body. A type that was meant to be recursive wants a record or a union at the point it names itself (`type A = {next: A}`); a type that was meant to be an alias wants the definition it was aliasing.
 
+### E0010 `redirect-cycle`
+
+Redirects send a path back to itself ([Routing §3.10](./routing.md#_3-10-redirects-static)): followed from target to target within one route map — the app's `routes`, or one tile's `sub-routes` — they return to a path the chain has already left. `"/a" ->> "/b"` with `"/b" ->> "/a"` is the shape, and `"/a" ->> "/a"` the shortest. The runtime follows a target that is redirected in turn, as a `navigate-replace` to it would be, so such a chain never reaches a page: the runtime would stop it with a `[kumiki] redirect loop` report and render the requested path as if no redirect matched it. Reported once per cycle, at the entry on it declared first — the one the message names, with the cycle read from there.
+
+> `Redirect "<path>" comes back to itself (<a> ->> <b> ->> <a>)`
+
+Check follows a target only where the table alone decides which entry owns it: a static path (no `:name`, no `*`) that a redirect in the same map is written for exactly. A static pattern outranks every parameter and wildcard that matches the same path ([Routing §3.1.2](./routing.md#_3-1-2-match-order)), so that redirect is the one that applies; of two entries for one pattern ([E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) / [E0112](#e0112-duplicate-sub-route)) the first owns it, as at run time. A redirect written at `/404` owns nothing — `/404` is the fallback and is never matched — so no chain passes through it. A loop that runs through a parameter or a wildcard (`"/p/:x" ->> "/q/:x"` with `"/q/:x" ->> "/p/:x"`), or between the app's `routes` and a `sub-routes` map, depends on which entry owns a URL, and is the runtime's to stop.
+
+**Fix**: Point one redirect on the cycle at a path a route renders.
+
 ## E01xx — Name Resolution
 
 ### E0102 `undef-reducer`
@@ -499,6 +509,16 @@ A type-member call — `T.fresh()`, `T.parse(t)`, `T.show(v)` — is qualified b
 The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee is one of the type members, so [E0116](#e0116-undef-call) does not either; and there is no type for the call to have, so nothing reaches [E0201](#e0201-type-mismatch). Each check was right on its own terms, and the call fell between them: `slot n : Int = Box.fresh()` stored a uuid string in an `Int` slot with nothing reported. On `parse` this is the one report, ahead of [E0802](#e0802-unimplemented-function): a qualifier that is no type has no reading to ask about.
 
 **Fix**: Name the application as a type and qualify the call with that — `type OrderId = Tagged(Int)` for a `type Tagged(T) = nominal Text`, then `OrderId.fresh()`. For `fresh`, the applied type has to be one a `Text` goes into ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation)): `type IntBox = Box(Int)` for a `type Box(T) = nominal List(T)` names a type, and `IntBox.fresh()` is then [E0802](#e0802-unimplemented-function). For `parse`, the applied type also needs a base with a reading of a text ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)): `type Tagged(T) = nominal Text` then `type OrderId = Tagged(Int)` reads by `Text`, but a container never has one — `type IntList = List(Int)` then `IntList.parse(t)` is [E0802](#e0802-unimplemented-function) — so for `List.parse`, `Map.parse` and the like, parse the parts into `Int`, `Text`, … and build the value in a `fn`. `kumiki fix` does not repair this: which arguments to apply is the author's choice, and the skip reason says so.
+
+### E0125 `redirect-unbound-param`
+
+A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike.
+
+> `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
+
+A source binds each `:name` segment it writes, and `*` when it has a wildcard. Nothing written after a `*` binds: the wildcard has taken the rest of the path by then. Names are compared as written, so `"/old/:id" ->> "/items/:key"` is this error although the source binds a parameter — not the one the target asks for.
+
+**Fix**: Name in the target what the source binds (`"/old/:id" ->> "/items/:id"`), or bind in the source what the target needs — a `*` in the target wants a wildcard source (`"/docs/*" ->> "/help/*"`). A target meant to be the same for every path the source matches names nothing: `"/old/:id" ->> "/items"`.
 
 ### E0127 `fn-as-value`
 
