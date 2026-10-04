@@ -47,7 +47,7 @@ describe("a source that does not parse", () => {
 
   it("reports the position the parser stopped at", async () => {
     const r = await failureOf(BAD_PARSE, "/abs/bad.kumiki");
-    expect(r.loc).toEqual({ file: "/abs/bad.kumiki", line: 2, column: 1 });
+    expect(r.loc).toEqual({ file: "/abs/bad.kumiki", line: 2, column: 0 });
     expect(r.id).toBe("/abs/bad.kumiki");
   });
 

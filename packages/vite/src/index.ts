@@ -127,6 +127,20 @@ function pluginLocalRuntime(ctx: Rollup.PluginContext): string | null {
 }
 
 /**
+ * Where a diagnostic sits, in the form Rollup and Vite read it. The compiler
+ * counts columns from 1, as `kumiki check` prints them; Rollup's `loc.column`
+ * counts from 0 (its `line` counts from 1), and Vite's code frame adds it to the
+ * offset of the line's start. Every located report goes through here so the
+ * overlay's caret lands on the character the compiler named.
+ */
+function locOf(
+  file: string,
+  pos: { line: number; col: number },
+): { file: string; line: number; column: number } {
+  return { file, line: pos.line, column: pos.col - 1 };
+}
+
+/**
  * Render a failure about the author's source that reached us as an exception —
  * a lex or parse error, which carry a position, or a malformed capability
  * manifest, which names a file — as a diagnostic Vite can place. A stack of
@@ -142,7 +156,7 @@ function reportThrown(ctx: Rollup.PluginContext, e: unknown, file: string): neve
   const message = `Kumiki compile failed (${file}):\n  ${(e as Error).message}`;
   if (located) {
     const pos = (e as ParseError | LexError).pos;
-    ctx.error({ message, id: file, loc: { file, line: pos.line, column: pos.col } });
+    ctx.error({ message, id: file, loc: locOf(file, pos) });
   }
   ctx.error({ message, id: file });
 }
@@ -225,7 +239,7 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       for (const w of first.warnings) {
         this.warn({
           message: `${w.code} ${w.kind}: ${w.message}`,
-          loc: { file, line: w.pos.line, column: w.pos.col },
+          loc: locOf(file, w.pos),
         });
       }
       if (first.kind !== "ok") {
@@ -237,17 +251,12 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
           : "";
         const message = `Kumiki compile failed (${file}):\n${detail}${note}`;
         // Hand the first error's source position to Rollup so Vite's overlay
-        // links straight to the offending line instead of just naming the
-        // file. `loc.column` is 1-based in the parser; Rollup expects the
-        // same here. `first.errors` is non-empty here (kind !== "ok" ⇒
+        // links straight to the offending character instead of just naming
+        // the file. `first.errors` is non-empty here (kind !== "ok" ⇒
         // errors.length > 0) but TS can't infer that.
         const head = first.errors[0];
         if (head) {
-          this.error({
-            message,
-            id: file,
-            loc: { file, line: head.pos.line, column: head.pos.col },
-          });
+          this.error({ message, id: file, loc: locOf(file, head.pos) });
         } else {
           this.error(message);
         }
