@@ -1090,7 +1090,7 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label prop`
+> `button must have a text= argument or aria-label`
 
 ### E0702 `a11y-image`
 
@@ -1099,6 +1099,8 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 ### E0703 `a11y-link`
 
 > `link must have inner text or aria-label`
+
+`aria-label` and `alt` count in either spelling, a named argument (`button(aria-label="Close")`) or the props block (`button() {aria-label: "Close"}`): a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)), and both put the attribute on the element. The check reads whether one is written, not its value, so one read from a slot counts too. A tile written as the argument (`button(aria-label=CloseIcon)`) is not prop data and renders no attribute, so it does not count.
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
 

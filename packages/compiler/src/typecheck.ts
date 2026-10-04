@@ -1390,6 +1390,14 @@ function checkIconName(
   });
 }
 
+/**
+ * The `--strict-a11y` checks. The props they look for — `for`, `aria-label`,
+ * `alt` — are read through `writtenValue`, in either spelling: a named argument
+ * is a prop wherever it is written (language.md §1.7.1) and reaches the element
+ * exactly as the block form does, so a check that saw only one spelling would
+ * reject a labelled control or bless an unlabelled one. A control's visible
+ * text is read where its lowering reads it.
+ */
 function checkA11y(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -1398,10 +1406,8 @@ function checkA11y(
   if (t.name === "label") {
     // A `for` that names nothing is a label that labels nothing: clicking it
     // focuses no control, and a screen reader announces the field unnamed.
-    // Read from both spellings, the same two `collectElementIds` gathers ids
-    // from — a `for` written as an argument reaches the DOM exactly as the
-    // block form does, so a check that saw only one would bless the other.
-    // Only a literal is resolvable; see `collectElementIds`.
+    // The ids it resolves against are gathered from both spellings too. Only a
+    // literal is resolvable; see `collectElementIds`.
     const forProp = writtenValue(t, "for");
     if (forProp?.kind === "Str" && !sym.elementIds.has(forProp.value)) {
       errors.push({
@@ -1414,19 +1420,17 @@ function checkA11y(
   }
   if (t.name === "button") {
     const hasText = t.args.some((a) => a.name === "text");
-    const hasAria = t.props.some((p) => p.name === "aria-label");
-    if (!hasText && !hasAria) {
+    if (!hasText && writtenValue(t, "aria-label") === undefined) {
       errors.push({
         code: "E0701",
         kind: "a11y-button",
-        message: `button must have a text= argument or aria-label prop`,
+        message: `button must have a text= argument or aria-label`,
         pos: t.pos,
       });
     }
   }
   if (t.name === "image") {
-    const hasAlt = t.args.some((a) => a.name === "alt") || t.props.some((p) => p.name === "alt");
-    if (!hasAlt) {
+    if (writtenValue(t, "alt") === undefined) {
       errors.push({
         code: "E0702",
         kind: "a11y-image",
@@ -1437,8 +1441,7 @@ function checkA11y(
   }
   if (t.name === "link") {
     const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
-    const hasAria = t.props.some((p) => p.name === "aria-label");
-    if (!hasText && !hasAria) {
+    if (!hasText && writtenValue(t, "aria-label") === undefined) {
       errors.push({
         code: "E0703",
         kind: "a11y-link",
@@ -2058,6 +2061,21 @@ function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
 }
 
 /**
+ * A value a tile-call was given under `name`, in either form it accepts: the
+ * props block (`{for: "x"}`) or a named argument (`for="x"`). The block form
+ * wins, matching what codegen emits when a tile writes both. An argument that
+ * parsed as a tile (`button(aria-label=Mark)`) is not a value: codegen lowers
+ * no prop from it, so the element never carries it and this returns
+ * `undefined`.
+ */
+function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
+  const fromProp = t.props.find((p) => p.name === name)?.value;
+  if (fromProp !== undefined) return fromProp;
+  const fromArg = t.args.find((a) => a.name === name)?.value;
+  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
+}
+
+/**
  * Every id declared as a literal, in either form a tile accepts — `{id: "x"}`
  * or `id="x"`. This is the domain `E0705` resolves a `label {for: …}` against.
  *
@@ -2068,18 +2086,6 @@ function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
  * along with the fix. The same literal-only discipline `E0704` applies to icon
  * names.
  */
-/**
- * A value a tile-call was given under `name`, in either form it accepts: the
- * props block (`{for: "x"}`) or a named argument (`for="x"`). The block form
- * wins, matching what codegen emits when a tile writes both.
- */
-function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
-  const fromProp = t.props.find((p) => p.name === name)?.value;
-  if (fromProp !== undefined) return fromProp;
-  const fromArg = t.args.find((a) => a.name === name)?.value;
-  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
-}
-
 function collectElementIds(expr: TileExpr, out: Set<string>): void {
   switch (expr.kind) {
     case "TileFor":

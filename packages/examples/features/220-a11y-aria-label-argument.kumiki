@@ -1,0 +1,36 @@
+# Feature (lifecycle.md §7.8): under `--strict-a11y`, a `button` or a `link`
+# whose only name is `aria-label` passes E0701 / E0703 in either spelling —
+#
+#   button(aria-label="Close")          a named argument
+#   button() {aria-label: "Dismiss"}    the props block
+#
+# A named argument is a prop wherever it is written (language.md §1.7.1), and
+# both spellings put the attribute on the element, so the checks read both:
+# `aria-label` here the way E0702 reads `alt` and E0705 reads `for`.
+#
+# None of these controls shows any text. The scenario reaches each one through
+# its `aria-label` attribute, the name a screen reader announces for it.
+
+slot closed : Int = 0
+
+reducer close   on=ui.click(CloseArg)  do= closed := closed + 1
+reducer dismiss on=ui.click(CloseProp) do= closed := closed + 10
+
+tile CloseArg  = button(aria-label="Close")
+tile CloseProp = button() {aria-label: "Dismiss"}
+tile AboutArg  = link(to="/about", aria-label="About")
+tile BackProp  = link(to="/") {aria-label: "Back"}
+
+tile Home = column(
+  CloseArg,
+  CloseProp,
+  AboutArg,
+  text("closed: " + closed.show))
+  {pad: "lg", gap: "md"}
+
+tile About = column(text("About this app"), BackProp) {pad: "lg", gap: "md"}
+
+app A11yAriaLabelArgument
+  caps   = []
+  routes = {"/" -> Home, "/about" -> About, "/404" -> Home}
+  init   = []
