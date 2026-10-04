@@ -14,20 +14,91 @@ import { _stdlibCore } from "./stdlib.ts";
 type Backend = "localStorage" | "sessionStorage";
 
 /**
+ * The first character of a stored text in the tagged form (http.md §6.7.2).
+ * No JSON text starts with it, so a text stored as plain JSON, whichever build
+ * wrote it, never reads as tagged.
+ */
+const TAGGED = "~";
+
+/**
+ * The tag a value JSON has no form for is written as in the tagged form — a
+ * `Bytes` as its base64, a non-finite number as its name — or `v` itself.
+ */
+function tagOf(v: unknown): unknown {
+  if (v instanceof Uint8Array) {
+    return { $bytes: btoa(Array.from(v, (b) => String.fromCharCode(b)).join("")) };
+  }
+  if (typeof v === "number" && !Number.isFinite(v)) return { $float: String(v) };
+  return v;
+}
+
+/**
+ * `v` with one `$` added to (`shift` 1) or taken from (`shift` -1) each of its
+ * own keys that starts with `$`, or `v` itself when it is not a plain object
+ * or has no such key. A Map's `Text` key may start with `$`; escaped, it
+ * starts with `$$`, so in the tagged form only a tag has a key that starts
+ * with a single `$`.
+ */
+function shiftKeys(v: unknown, shift: 1 | -1): unknown {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
+  const entries = Object.entries(v);
+  if (!entries.some(([k]) => k.startsWith("$"))) return v;
+  const shifted = (k: string) => (shift === 1 ? `$${k}` : k.slice(1));
+  return Object.fromEntries(entries.map(([k, x]) => [k.startsWith("$") ? shifted(k) : k, x]));
+}
+
+/**
+ * The text `value` is stored as, or `undefined` when it has none (`undefined`
+ * itself, a function). A value JSON holds is its JSON text. A value holding a
+ * `Bytes` or a non-finite number anywhere is `~` followed by its JSON with
+ * each of those written as its tag and each `$` key escaped.
+ */
+function encodeStored(value: unknown): string | undefined {
+  let tagged = false;
+  let escaped = false;
+  const text = JSON.stringify(value, (_key, v: unknown) => {
+    const tag = tagOf(v);
+    if (tag !== v) {
+      tagged = true;
+      return tag;
+    }
+    const shifted = shiftKeys(v, 1);
+    escaped ||= shifted !== v;
+    return shifted;
+  });
+  if (tagged) return TAGGED + text;
+  return escaped ? JSON.stringify(value) : text;
+}
+
+/** `JSON.parse`'s reviver for the tagged form: `tagOf` and the escape, undone. */
+function untag(_key: string, v: unknown): unknown {
+  if (v !== null && typeof v === "object" && Object.keys(v).length === 1) {
+    const { $bytes, $float } = v as { $bytes?: unknown; $float?: unknown };
+    if (typeof $bytes === "string") return Uint8Array.from(atob($bytes), (c) => c.charCodeAt(0));
+    if (typeof $float === "string") return Number($float);
+  }
+  return shiftKeys(v, -1);
+}
+
+/** The value a stored text holds, in the tagged form or as plain JSON. */
+function decodeStored(raw: string): unknown {
+  return raw.startsWith(TAGGED) ? JSON.parse(raw.slice(TAGGED.length), untag) : JSON.parse(raw);
+}
+
+/**
  * The read of http.md §6.7.2. Everything that can throw is inside the `try`:
  * the backend's getter (it throws `SecurityError` in an opaque-origin
- * sandbox) and the request itself (an `in=Unit` read with no `map-request` has
- * none), so a failure is always the `Text` err and never a rejection. A stored
- * value is JSON, so it is always parsed; a `Decoder.Json(T)` whose `T` refuses
- * what it parsed to makes the read an `err`, the same way a value that does not
- * parse does.
+ * sandbox), the request itself (an `in=Unit` read with no `map-request` has
+ * none) and a stored text that does not decode, so a failure is always the
+ * `Text` err and never a rejection. A `Decoder.Json(T)` whose `T` refuses the
+ * decoded value makes the read an `err` too.
  */
 async function readFrom(backend: Backend, input: unknown): Promise<EffectResult> {
   try {
     const { key, decode } = input as { key: string; decode?: Decode };
     const raw = globalThis[backend].getItem(key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
-    const value = JSON.parse(raw);
+    const value = decodeStored(raw);
     const refused = decodeRefusal(decode, value);
     if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
@@ -61,8 +132,8 @@ function attempt(backend: Backend, call: string, run: (s: Storage) => void): Eff
  * empty list is still a write — and one without removes the key. The clear is
  * not decided here: codegen calls `storageClear` / `sessionClear` for an effect
  * declared `in=Unit` with no `map-request`. A request that is not a record (an
- * empty one included), a key that is not a non-empty text, and a value JSON
- * cannot encode are each an `err` that touches nothing.
+ * empty one included), a key that is not a non-empty text, and a value with no
+ * stored form are each an `err` that touches nothing.
  */
 function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   if (typeof input !== "object" || input === null) {
@@ -75,13 +146,9 @@ function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   }
   const at = JSON.stringify(key);
   if (!("value" in req)) return attempt(backend, `removeItem(${at})`, (s) => s.removeItem(key));
-  // `JSON.stringify` answers `undefined` (not a string) for `undefined`, a
-  // function or a symbol; stored, that would read back as something else.
-  const raw: string | undefined = JSON.stringify(req.value);
+  const raw = encodeStored(req.value);
   if (raw === undefined) {
-    return failed(
-      `${cap}: the value for ${at} cannot be stored as JSON (got ${String(req.value)})`,
-    );
+    return failed(`${cap}: the value for ${at} cannot be stored (got ${String(req.value)})`);
   }
   return attempt(backend, `setItem(${at})`, (s) => s.setItem(key, raw));
 }
