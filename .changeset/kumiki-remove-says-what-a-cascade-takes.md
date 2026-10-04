@@ -1,6 +1,6 @@
 ---
 "@kumikijs/mcp": patch
-"@kumikijs/cli": patch
+"@kumikijs/cli": minor
 ---
 
 `kumiki_remove` says a cascade takes the definitions that reference the target
