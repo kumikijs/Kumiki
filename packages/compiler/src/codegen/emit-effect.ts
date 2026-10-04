@@ -106,8 +106,9 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   const invokeBody = `async (${params}) => { ${body} }`;
   // The same `_errText`, on the spec: a result that takes the place of
   // `invoke` — a scenario script, a test mock, `replay --mock`, a replayed
-  // effect-end — reads its err through it (`standInValue`, runtime testkit.ts)
-  // rather than a copy.
+  // effect-end, the aborted err of a request cancelled between retry attempts
+  // — reads its err through it (`standInValue`, runtime core.ts) rather than a
+  // copy.
   const errText = failsWithText(eff.cap) ? "\n    errText: _errText," : "";
 
   return `{
@@ -168,8 +169,9 @@ export function policyJs(gen: GenCtx, p?: PolicyExpr): string {
  * sentence rather than a second throw, which would reach the dispatcher. Each
  * such effect's spec also carries it as `errText`, which is how every result
  * that stands in for the invoke — a scenario script, a test mock, `replay
- * --mock`, a replayed effect-end — reads its err the same way (`standInValue`,
- * runtime testkit.ts).
+ * --mock`, a replayed effect-end, the aborted err of a request cancelled
+ * between retry attempts — reads its err the same way (`standInValue`, runtime
+ * core.ts).
  */
 export const TEXT_FAILURE_HELPER = `function _errText(v) {
   try {

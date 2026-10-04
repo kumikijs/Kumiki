@@ -692,10 +692,10 @@ export type EffectSpec = {
    * on an effect whose capability fails with `Text` (storage / session /
    * indexed; http.md §6.7, stdlib.md §2.5). Codegen sets it to the same
    * function the generated invoke calls, so a result that takes the place of
-   * `invoke` — a scenario script, a test mock, a replayed effect-end — reads
-   * its err exactly as the real one would, without a second copy of the rule
-   * or of the list. Every such stand-in reads it through `standInValue`
-   * (testkit.ts).
+   * `invoke` — a scenario script, a test mock, a replayed effect-end, the
+   * aborted err of a request cancelled between retry attempts — reads its err
+   * exactly as the real one would, without a second copy of the rule or of the
+   * list. Every such stand-in reads it through {@link standInValue}.
    */
   errText?: (value: unknown) => string;
 };
@@ -4116,10 +4116,42 @@ export function readStatus(value: unknown): number | null {
 }
 
 /**
+ * The `HttpError` a cancelled request delivers to its `.err` (http.md §6.4.1):
+ * no response arrived, so its status is 0. `httpFetch` answers with it for a
+ * request aborted in flight, and `runWithRetry` for one cancelled while it
+ * waits between attempts.
+ */
+export function abortedHttpError(): { status: number; message: string; body: string } {
+  return { status: 0, message: "aborted", body: "" };
+}
+
+/**
+ * The value `.ok` / `.err` receives from a result that stands in for `eff`'s
+ * invoke instead of running it — a scenario script, a `reducer-test` /
+ * `episode-test` mock, a `kumiki replay --mock`, a replayed effect-end
+ * (stdlib.md §2.5, testing.md §8.5), the aborted err of a request cancelled
+ * between retry attempts (http.md §6.5). An err on an effect that fails with
+ * `Text` is read through the spec's own `errText`, as the invoke reads a
+ * provider's err. A missing err value there is a provider's err with no
+ * `value`, not `null`: `errText(undefined)` is the `Text` `"undefined"`. Any
+ * other value — an ok, an `HttpError`, a custom capability's `E` — is
+ * delivered as written, with a missing one as `null`. `eff` is undefined for a
+ * name the app declares no effect for.
+ */
+export function standInValue(
+  eff: Pick<EffectSpec, "errText"> | undefined,
+  outcome: "ok" | "err",
+  value: unknown,
+): unknown {
+  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
+}
+
+/**
  * Run an effect with its retry policy (#83). Spec http.md §6.5: only 5xx
  * responses and connection errors (status 0) retry — 4xx and ok results are
  * final. `n` in the policy is the **maximum total attempts**, matching the
- * docs' "Up to N times" wording.
+ * docs' "Up to N times" wording. A request cancelled while it waits between
+ * attempts stops there: the wait ends at once and no further attempt is made.
  */
 async function runWithRetry(
   eff: EffectSpec,
@@ -4133,20 +4165,41 @@ async function runWithRetry(
   for (let attempt = 1; attempt < policy.n; attempt++) {
     if (last.kind !== "err" || last.final) return last;
     // §6.4.1: abort short-circuits retries — re-issuing a cancelled request
-    // would defeat the cancel intent.
+    // would defeat the cancel intent. This attempt's result is delivered as it
+    // is: an invoke that saw the abort has answered it there (`httpFetch` as
+    // `aborted`, a provider in its own err type).
     if (signal?.aborted) return last;
     const status = readStatus(last.value);
     const retriable = status === null || status === 0 || status >= 500;
     if (!retriable) return last;
     const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
-    await sleep(delay);
+    // An abort during the wait has no attempt running to answer it, so the
+    // aborted err comes from here — as the `Text` `"aborted"` on an effect
+    // that fails with `Text`.
+    if (!(await sleep(delay, signal))) {
+      return { kind: "err", value: standInValue(eff, "err", abortedHttpError()) };
+    }
     last = await eff.invoke(input, caps, signal);
   }
   return last;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+/**
+ * Wait `ms`, or until `signal` aborts, whichever comes first: `true` when the
+ * wait ran its course, `false` when the abort ended it.
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    const h = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(h);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /**

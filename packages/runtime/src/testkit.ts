@@ -17,6 +17,7 @@ import {
   type RefinementNaming,
   type RefinementRejection,
   reportRejectedBatch,
+  standInValue,
   withEnvReplay,
 } from "./core.ts";
 import { valueEqual } from "./stdlib.ts";
@@ -679,26 +680,6 @@ export type ReplayApp = {
   reducers: ReducerSpec[];
   effects: Record<string, Pick<EffectSpec, "errText">>;
 };
-
-/**
- * The value `.ok` / `.err` receives from a result that stands in for `eff`'s
- * invoke instead of running it — a scenario script, a `reducer-test` /
- * `episode-test` mock, a `kumiki replay --mock`, a replayed effect-end
- * (stdlib.md §2.5, testing.md §8.5). An err on an effect that fails with
- * `Text` is read through the spec's own `errText`, as the invoke reads a
- * provider's err. A missing err value there is a provider's err with no
- * `value`, not `null`: `errText(undefined)` is the `Text` `"undefined"`. Any
- * other value — an ok, an `HttpError`, a custom capability's `E` — is
- * delivered as written, with a missing one as `null`. `eff` is undefined for a
- * name the app declares no effect for.
- */
-export function standInValue(
-  eff: Pick<EffectSpec, "errText"> | undefined,
-  outcome: "ok" | "err",
-  value: unknown,
-): unknown {
-  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
-}
 
 /**
  * Observer event for a single replay step (spec/runtime.md §10.5.1 step kinds,

@@ -1,7 +1,7 @@
 // http.* built-in capability handler (#71): shipped only when an app declares
 // an HTTP-backed effect.
 
-import type { EffectResult } from "./core.ts";
+import { abortedHttpError, type EffectResult } from "./core.ts";
 import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
@@ -134,9 +134,7 @@ export async function httpFetch(
     // `{status:0, message:"aborted"}` so reducers see the same HttpError
     // shape for manual cancel, `policy=latest` auto-cancel, and timeout.
     const aborted = externallyAborted || isAbortError(e);
-    if (aborted) {
-      return { kind: "err", value: { status: 0, message: "aborted", body: "" } };
-    }
+    if (aborted) return { kind: "err", value: abortedHttpError() };
     return { kind: "err", value: { status: 0, message: String(e), body: "" } };
   } finally {
     clearTimeout(timer);

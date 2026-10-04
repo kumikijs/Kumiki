@@ -1,0 +1,56 @@
+{
+  "effects": {
+    "loadQuote": [
+      {
+        "outcome": "err",
+        "value": { "status": 503, "message": "Service Unavailable", "body": "" }
+      },
+      { "outcome": "ok", "value": { "text": "Fresh quote", "author": "B" } },
+      { "outcome": "err", "value": { "status": 503, "message": "Service Unavailable", "body": "" } }
+    ]
+  },
+  "steps": [
+    {
+      "label": "nothing loaded yet",
+      "expect": { "noErrors": true, "state": { "quote": "none", "log": "" } }
+    },
+    {
+      "label": "the first attempt answers 503, so the request waits 500ms before its second",
+      "do": { "click": "#load" },
+      "expect": { "noErrors": true, "state": { "quote": "none", "log": "" } }
+    },
+    {
+      "label": "Load inside the wait ends it: the first request's .err fires with aborted, before the second request's .ok",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "quote": "Fresh quote", "log": "aborted;ok;" },
+        "domIncludes": ["quote: Fresh quote", "log: aborted;ok;"]
+      }
+    },
+    {
+      "label": "past the end of the wait, the cancelled request has made no second attempt",
+      "do": { "wait": 700 },
+      "expect": { "noErrors": true, "state": { "quote": "Fresh quote", "log": "aborted;ok;" } }
+    },
+    {
+      "label": "a third request answers 503 and waits",
+      "do": { "click": "#load" },
+      "expect": { "noErrors": true, "state": { "log": "aborted;ok;" } }
+    },
+    {
+      "label": "Stop inside the wait ends it the same way, through http.cancel",
+      "do": { "click": "#stop" },
+      "expect": { "noErrors": true, "state": { "log": "aborted;ok;aborted;" } }
+    },
+    {
+      "label": "and that request makes no second attempt either",
+      "do": { "wait": 700 },
+      "expect": {
+        "noErrors": true,
+        "state": { "quote": "Fresh quote", "log": "aborted;ok;aborted;" },
+        "domIncludes": ["log: aborted;ok;aborted;"]
+      }
+    }
+  ]
+}

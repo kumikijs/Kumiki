@@ -290,6 +290,8 @@ effect loadCritical cap=http.get
 
 リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文が JSON として壊れている 2xx、および decode した値を `T` が拒否した 2xx（[6.1.4](#_6-1-4-decoder-型)）もリトライしない。サーバーはすでにリクエストを受理しているので、リトライは同じ副作用をもう一度起こすだけになる。
 
+試行と試行の間の待機中にキャンセルされたリクエスト（`http.cancel`（[6.4](#_6-4-cancellation)）、または `policy=latest` / `policy=latest-per-key` のもとでの新しい emit による）は、その場で待機を終える。その `.err` は [6.4.1](#_6-4-1-挙動) の `aborted` な `HttpError` で直ちに発火し、後から emit されたリクエストが自分の結果を届けるより先に届く。それ以上の試行は行わない。`policy=queue` のチェーンは残りの間隔を待たずに次のエントリへ進む。err が `Text` の capability（[6.7](#_6-7-storage-effects)）では、この err は `Text` の `"aborted"` である。キャンセルされないリクエストは各間隔を最後まで待つ。
+
 ---
 
 ## 6.6 高レベルラッパ {#_6-6-high-level-wrappers}
