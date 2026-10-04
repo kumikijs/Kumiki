@@ -4680,6 +4680,9 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // declared type, and `()` runs as `null`.
       return prim("Unit", e.pos);
     case "Ref": {
+      // A bind with no type is still a bind (`bindLocal`): it shadows a slot
+      // of its name, so its reads are undecidable rather than the slot's.
+      if (ctx.localBinds.has(e.name) && !ctx.localTypes.has(e.name)) return null;
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
       return sym.slots.get(e.name)?.type ?? null;
@@ -4809,6 +4812,9 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         sym,
       );
     }
+    case "LetIn":
+      // The body is the value, read in the scope `checkExpr` checks it in.
+      return inferType(e.body, sym, letInScope(e, sym, ctx));
     case "EmitExpr":
       // spec http.md §6.4 / stdlib §2.1.1.1: `emit X(...)` as an expression
       // yields the dispatched effect's EffectId.

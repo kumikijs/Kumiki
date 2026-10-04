@@ -174,12 +174,17 @@ describe("a match with no declared destination has its arms' common type", () =>
   });
 
   it("has no type when one arm's value is undecidable, rather than the other arm's", () => {
-    // `inferType` gives a `let` expression no type, so the `None` arm is
-    // undecidable and so is the whole `match`. Its value is a `PostId`, so
-    // were it decidable the `match` would be `Text` (above) and `p := v` would
-    // pass; answering the `Some` arm's `UserId` instead would report it.
+    // `.map` with a fragment answers no type, so the `None` arm is undecidable
+    // and so is the whole `match`. Its value is a `PostId`, so were it
+    // decidable the `match` would be `Text` (above) and `p := v` would pass;
+    // answering the `Some` arm's `UserId` instead would report it.
+    const undecided = "Some(p).map($1).get-or(p)";
     expect(
-      inReducer(`let v = match ou with | Some(id) -> id | None -> (let w = p in w); p := v`),
+      inReducer(`let v = match ou with | Some(id) -> id | None -> ${undecided}; p := v`),
+    ).toEqual([]);
+    // Undecidable rather than `Text`: an `Int` destination is not reported either.
+    expect(
+      inReducer(`let v = match ou with | Some(id) -> id | None -> ${undecided}; n := v`),
     ).toEqual([]);
   });
 });

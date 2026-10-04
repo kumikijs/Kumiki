@@ -1,0 +1,49 @@
+# Feature (language.md §1.9): `let x = v in body` is a value of its body's type.
+#
+#   fn label(n: Int) -> Text = let m = n + 1 in m.show
+#
+# The body is the value, read with `x` bound to `v`'s type, so the body is what
+# lands where the expression is written: ending `label` with `in m` instead is
+# E0201 at that `m` — an `Int` where the `-> Text` promises a `Text`. Where
+# nothing declares a type, the expression has its body's type too, and a member
+# read off it is that type's member: `(let inner = b in inner).size` is the
+# record's own `size` field, and `.keys` of a `let` over a `Map(Int, Text)` are
+# its `Int` keys.
+
+type Box = {size: Int, label: Text}
+
+fn label(n: Int) -> Text = let m = n + 1 in m.show
+fn sizeOf(b: Box) -> Int = (let inner = b in inner).size
+fn keySum(m: Map(Int, Text)) -> Int = (let c = m in c).keys.fold(0, $1 + $2)
+
+slot name   : Text           = "start"
+slot size   : Int            = 0
+slot boxed  : Int            = 0
+slot sum    : Int            = 0
+slot box    : Box            = {size: 7, label: "seven"}
+slot counts : Map(Int, Text) = {1: "one", 20: "twenty"}
+
+reducer go on=ui.click(Go)
+    do= name := label(41)
+
+reducer measure on=ui.click(Measure)
+    do= size := name.length
+        boxed := sizeOf(box)
+        sum := keySum(counts)
+
+tile Go      = button(text="go")      {id: "go"}
+tile Measure = button(text="measure") {id: "measure"}
+
+tile App = column(
+    Go,
+    Measure,
+    text("name: " + name.upper),
+    text("size: " + size.show),
+    text("boxed: " + boxed.show),
+    text("sum: " + sum.show)
+)
+
+app LetInTyped
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
