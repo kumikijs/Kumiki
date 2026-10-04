@@ -8,6 +8,7 @@ import { check } from "../src/typecheck.ts";
 import {
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
+  labelWrappedUnreached,
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
 } from "../src/ui-lifts.ts";
@@ -56,6 +57,36 @@ describe("UI_LIFTS", () => {
     expect(byEv.get("key")?.tiles).toEqual(new Set([...focusable, "check", "radio", "switch"]));
     expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
     expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
+  });
+});
+
+describe("labelWrappedUnreached", () => {
+  const LABEL_WRAPPED = ["check", "radio", "switch"];
+
+  it("answers focus and blur, which fire on the <input> and do not bubble to the <label>", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => labelWrappedUnreached(ev, LABEL_WRAPPED).length > 0,
+    );
+    expect(answered.sort()).toEqual(["blur", "focus"]);
+    expect(labelWrappedUnreached("focus", LABEL_WRAPPED)).toEqual(LABEL_WRAPPED);
+    expect(labelWrappedUnreached("blur", LABEL_WRAPPED)).toEqual(LABEL_WRAPPED);
+  });
+
+  it("names only kinds the event's row leaves out, so W0212 can give it as the reason", () => {
+    for (const ev of ALL_UI_EVENT_KINDS) {
+      const row = UI_EVENT_TILE_KINDS[ev];
+      for (const kind of labelWrappedUnreached(ev, LABEL_WRAPPED)) {
+        expect(row?.has(kind), `${kind} in the ${ev} row`).toBe(false);
+      }
+    }
+  });
+
+  it("keeps the label-wrapped kinds of a body and drops the rest, sorted", () => {
+    expect(labelWrappedUnreached("focus", ["text", "switch", "box", "check"])).toEqual([
+      "check",
+      "switch",
+    ]);
+    expect(labelWrappedUnreached("focus", ["box", "text"])).toEqual([]);
   });
 });
 

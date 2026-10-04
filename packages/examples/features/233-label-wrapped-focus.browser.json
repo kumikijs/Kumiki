@@ -1,0 +1,73 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired, and the check is what the reason assumes — a <label> around a checkbox",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ""
+        },
+        "elementState": {
+          "#agree": {
+            "tagName": "LABEL"
+          },
+          "#agree input": {
+            "tagName": "INPUT",
+            "type": "checkbox"
+          }
+        }
+      }
+    },
+    {
+      "label": "a real focus() lands on the checkbox, and the onFocus= on its label does not run: focus does not bubble",
+      "do": {
+        "focus": "#agree input"
+      },
+      "expect": {
+        "noErrors": true,
+        "focused": "#agree input",
+        "state": {
+          "log": ""
+        }
+      }
+    },
+    {
+      "label": "a real blur() reaches the label no more than focus did",
+      "do": {
+        "blur": "#agree input"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ""
+        }
+      }
+    },
+    {
+      "label": "a real click ticks it and runs its ui.change reducer",
+      "do": {
+        "click": "#agree input"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "agreed": true,
+          "log": "ac "
+        }
+      }
+    },
+    {
+      "label": "an input takes focus itself, so its ui.focus reducer runs",
+      "do": {
+        "focus": "#note"
+      },
+      "expect": {
+        "noErrors": true,
+        "focused": "#note",
+        "state": {
+          "log": "ac nf "
+        }
+      }
+    }
+  ]
+}

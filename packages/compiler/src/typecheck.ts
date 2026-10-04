@@ -107,6 +107,7 @@ import {
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
   handlerReducerName,
+  labelWrappedUnreached,
   UI_EVENT_TILE_KINDS,
 } from "./ui-lifts.ts";
 import {
@@ -2293,22 +2294,32 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   // suppresses false positives for the cascade pattern where a focusable
   // child IS in the body (e.g. `TodoRow = row(check(...))` + `ui.click`).
   // Wildcard `_` selectors are skipped (no tile to resolve); undeclared
-  // selectors are already covered by E0211.
+  // selectors are already covered by E0211. A label-wrapped control in the
+  // body (`labelWrappedUnreached`) does fire `focus` / `blur` from its
+  // `<input>`, so for those the reason given is that the event does not bubble
+  // to the `<label>` the listener is on, not that nothing fires it.
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
-    const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
+    const { ev, selector } = r.on;
+    const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const descendants = collectTileBuiltinKinds(selector.tile, sym);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       // Empty set = unresolvable (cycle / undeclared / dynamic-only body) →
       // conservative skip, no warning.
       if (descendants.size > 0 && !hasMatch) {
+        const unreached = labelWrappedUnreached(ev, descendants);
+        const reason =
+          unreached.length > 0
+            ? `"${ev}" never reaches a listener in tile "${selector.tile}": ` +
+              `a ${unreached.join(" / ")} listens on the <label> around its <input>, ` +
+              `and the "${ev}" that <input> fires does not bubble to the <label>`
+            : `tile "${selector.tile}" has no descendant that fires "${ev}"`;
         errors.push({
           code: "W0212",
           kind: "ui-event-tile-mismatch",
           severity: "warning",
           message:
-            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) ` +
-            `but tile "${r.on.selector.tile}" has no descendant that fires "${r.on.ev}" ` +
+            `Reducer "${r.name}" subscribes to ui.${ev}(${selector.tile}) but ${reason} ` +
             `(DOM-allowed: ${[...allowed].join(", ")}; observed in body: ${[...descendants].sort().join(", ")}). ` +
             `The handler is silently dropped.`,
           pos: r.on.pos,

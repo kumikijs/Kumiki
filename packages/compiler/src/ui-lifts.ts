@@ -12,21 +12,22 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *   For `key` / `focus` / `blur` the runtime attaches the listener to
  *   whatever element a renderer returned, so which kinds a selector reaches
  *   is decided by where those events arrive at that element — see
- *   `FOCUSABLE_ROOT` and `LABEL_WRAPPED_CONTROL`, which the three rows are
- *   built from. For `click` / `submit` / `change` / `input` each kind's
- *   renderer decides whether it calls the handler, and an absence there
- *   records that decision. Some are facts about the element (`editable` fires
- *   no `change`); some are runtime policy (`link` reserves `click` for
- *   navigation, and `slider` listens for `input` only to write its bind,
- *   never calling `onInput`). The comment on each row says which.
+ *   `FOCUSABLE_ROOT`, `LABEL_WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`,
+ *   which the three rows are built from. For `click` / `submit` / `change` /
+ *   `input` each kind's renderer decides whether it calls the handler, and an
+ *   absence there records that decision. Some are facts about the element
+ *   (`editable` fires no `change`); some are runtime policy (`link` reserves
+ *   `click` for navigation, and `slider` listens for `input` only to write its
+ *   bind, never calling `onInput`). The comment on each row says which.
  *
  * Consumers:
  *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
  *    an enclosing tile of an allowed kind has matching reducers, and captures
  *    explicit `onX=r` wirings so they are not re-emitted as data props.
  *  - `typecheck.ts#checkReducer` — emits W0212 when a reducer's selector
- *    targets a tile not listed in `tiles`; `checkTile` resolves an explicit
- *    handler's value as a reducer name rather than an expression.
+ *    targets a tile not listed in `tiles`, giving the reason
+ *    `labelWrappedUnreached` names when it names one; `checkTile` resolves an
+ *    explicit handler's value as a reducer name rather than an expression.
  *  - `references.ts` — the same resolution for the AI-editing verbs, so
  *    `refs` / `rename` / `remove --cascade` see the handler → reducer edge.
  *  - `docs/spec/errors.md` §W0212 — published version of this table.
@@ -50,7 +51,8 @@ export type UiLift = {
  * Kinds whose rendered element is itself focusable, so `focus`, `blur` and
  * `keydown` all arrive at the element the runtime attaches its listeners to
  * (`applyUiEventHandlers`). The `key` / `focus` / `blur` rows are built from
- * this list and `LABEL_WRAPPED_CONTROL`, so the three rows cannot drift apart.
+ * this list, `LABEL_WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`, so the three
+ * rows cannot drift apart.
  *
  * - `input` / `textarea` / `button` / `select` / `slider`: form controls (a
  *   `slider` is a bare `<input type="range">`, operated with arrow keys).
@@ -81,15 +83,59 @@ const FOCUSABLE_ROOT = [
 /**
  * Kinds rendered as a `<label>` wrapping their focusable `<input>`, so the
  * runtime's listeners sit on the label and not on the control that takes
- * focus. The two kinds of event reach the label differently: `keydown`
+ * focus. Which events reach the label is `ROOT_LISTENED_BUBBLES`: `keydown`
  * BUBBLES from the inner `<input>` to the label, so a `ui.key` selector lands;
  * `focus` and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on
- * the label ever runs, and W0212 is correct to emit for them. (Its message
- * says no descendant fires the event, which overstates it: the `<input>` does
- * fire, the event just never reaches the listener.) These three look like one case with
- * the focusable controls and are two.
+ * the label ever runs, and W0212 is correct to emit for them. The `<input>`
+ * does fire them, so W0212 gives that reason (`labelWrappedUnreached`) rather
+ * than saying no descendant fires the event. These three look like one case
+ * with the focusable controls and are two.
  */
 const LABEL_WRAPPED_CONTROL = ["check", "radio", "switch"] as const;
+
+/**
+ * The three events the runtime listens for on the element a renderer returned
+ * (`applyUiEventHandlers`; its fourth listener, `mouseenter`, is the `hover`
+ * row, which any tile takes), and whether each bubbles. A `FOCUSABLE_ROOT`
+ * kind receives all three on that element. A `LABEL_WRAPPED_CONTROL` kind
+ * receives only the ones that bubble from its `<input>` to its `<label>`.
+ *
+ * The `key` / `focus` / `blur` rows are built from this, and so is the reason
+ * W0212 gives for a label-wrapped kind a row leaves out, so the row and the
+ * reason cannot disagree.
+ */
+const ROOT_LISTENED_BUBBLES = { key: true, focus: false, blur: false } as const;
+
+type RootListened = keyof typeof ROOT_LISTENED_BUBBLES;
+
+function isRootListened(ev: UiEventKind): ev is RootListened {
+  return Object.hasOwn(ROOT_LISTENED_BUBBLES, ev);
+}
+
+/** The kinds a `key` / `focus` / `blur` selector reaches. */
+function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
+  const reached: readonly string[] = ROOT_LISTENED_BUBBLES[ev]
+    ? [...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]
+    : FOCUSABLE_ROOT;
+  return new Set(reached);
+}
+
+const LABEL_WRAPPED: ReadonlySet<string> = new Set(LABEL_WRAPPED_CONTROL);
+
+/**
+ * The label-wrapped kinds among `kinds` whose `<input>` fires `ev` where their
+ * listener never receives it: `ev` is one the runtime listens for on the
+ * `<label>` and it does not bubble there. Sorted. Empty when that is not why
+ * `ev` misses these kinds: for an event the label receives (`key`), and for
+ * one the `<input>` does not fire at all (`submit`).
+ *
+ * W0212 reads it to say so. For these kinds "no descendant fires it" is
+ * untrue, because the `<input>` does.
+ */
+export function labelWrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): string[] {
+  if (!isRootListened(ev) || ROOT_LISTENED_BUBBLES[ev]) return [];
+  return [...kinds].filter((k) => LABEL_WRAPPED.has(k)).sort();
+}
 
 export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
@@ -116,14 +162,10 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   // an `<input type="range">` fires `input`, and the renderer listens to it
   // to write the bind but never calls `onInput`.
   { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea", "editable"]) },
-  {
-    ev: "key",
-    handler: "onKeyDown",
-    tiles: new Set([...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]),
-  },
+  { ev: "key", handler: "onKeyDown", tiles: rootListenedTiles("key") },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
-  { ev: "focus", handler: "onFocus", tiles: new Set(FOCUSABLE_ROOT) },
-  { ev: "blur", handler: "onBlur", tiles: new Set(FOCUSABLE_ROOT) },
+  { ev: "focus", handler: "onFocus", tiles: rootListenedTiles("focus") },
+  { ev: "blur", handler: "onBlur", tiles: rootListenedTiles("blur") },
 ];
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */

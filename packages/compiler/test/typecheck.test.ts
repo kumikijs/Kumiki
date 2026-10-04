@@ -1241,6 +1241,86 @@ describe("typecheck", () => {
       expect(w).toBeDefined();
       expect(w?.message).toContain("link");
     });
+
+    // `check` / `radio` / `switch` render a `<label>` around their `<input>`,
+    // and the listener sits on the label. The `<input>` does fire `focus` and
+    // `blur`; neither bubbles, so neither reaches the label. "No descendant
+    // fires it" would be untrue for these, so the message says what is true.
+    describe("on a label-wrapped control, says the event does not bubble to the label", () => {
+      const w0212 = (ev: string, tiles: string) => {
+        const src = `
+          slot done : Bool = false
+          slot hits : Int = 0
+          reducer r on=ui.${ev}(D) do= hits := hits + 1
+          ${tiles}
+          tile App = column(D)
+          app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+        `;
+        const found = checkSrc(src).filter((e) => e.code === "W0212");
+        expect(found).toHaveLength(1);
+        return found[0]!.message;
+      };
+
+      it("names the <input>, the event and the <label> for ui.focus on a check", () => {
+        expect(w0212("focus", "tile D = check(value=done)")).toBe(
+          `Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": ` +
+            `a check listens on the <label> around its <input>, and the "focus" that <input> fires ` +
+            `does not bubble to the <label> ` +
+            `(DOM-allowed: input, textarea, button, select, slider, editable, link; observed in body: check). ` +
+            `The handler is silently dropped.`,
+        );
+      });
+
+      const TILES = {
+        check: "check(value=done)",
+        radio: 'radio(group="g", selected=done)',
+        switch: "switch(value=done)",
+      } as const;
+      for (const [kind, tile] of Object.entries(TILES)) {
+        for (const ev of ["focus", "blur"]) {
+          it(`gives that reason for ui.${ev} on ${kind}`, () => {
+            const message = w0212(ev, `tile D = ${tile}`);
+            expect(message).toContain(
+              `a ${kind} listens on the <label> around its <input>, and the "${ev}" that <input> fires does not bubble to the <label>`,
+            );
+            expect(message).not.toContain("has no descendant");
+          });
+        }
+      }
+
+      it("gives it when the control is reached through another tile", () => {
+        const message = w0212("focus", "tile Inner = check(value=done)\ntile D = box(Inner)");
+        expect(message).toContain(`a check listens on the <label> around its <input>`);
+        expect(message).toContain("observed in body: box, check");
+      });
+
+      it("names every label-wrapped kind in the body, beside kinds that fire nothing", () => {
+        const message = w0212(
+          "blur",
+          'tile D = row(check(value=done), switch(value=done), text("x"))',
+        );
+        expect(message).toContain(
+          `a check / switch listens on the <label> around its <input>, and the "blur" that <input> fires`,
+        );
+      });
+
+      it("keeps 'no descendant fires it' for a tile with nothing focusable in it", () => {
+        // The control: the reason above is for label-wrapped kinds only.
+        expect(w0212("focus", 'tile D = box(text("hi"))')).toBe(
+          `Reducer "r" subscribes to ui.focus(D) but tile "D" has no descendant that fires "focus" ` +
+            `(DOM-allowed: input, textarea, button, select, slider, editable, link; observed in body: box, text). ` +
+            `The handler is silently dropped.`,
+        );
+      });
+
+      it("keeps 'no descendant fires it' for an event the control does not fire at all", () => {
+        // A checkbox fires no `submit`, so nothing about bubbling is the reason.
+        expect(w0212("submit", "tile D = check(value=done)")).toBe(
+          `Reducer "r" subscribes to ui.submit(D) but tile "D" has no descendant that fires "submit" ` +
+            `(DOM-allowed: form; observed in body: check). The handler is silently dropped.`,
+        );
+      });
+    });
   });
 
   // #149 — a typo in the `#id` portion of a `ui.<ev>(Tile#id)` selector was
