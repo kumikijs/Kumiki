@@ -312,16 +312,18 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
           name: "onInput",
           event: { kind: "ui", ev: "input" },
           selector: { tile: "Q" },
+          // The id this emit yields, as a reducer body's `emit` expression
+          // stamps it, so `kill` can name it.
           apply: (_l, p) => ({
             slots: { q: p.value as string },
-            emits: [{ effect: "search", args: [{ q: p.value }] }],
+            emits: [{ effect: "search", args: [{ q: p.value }], id: "search#1" }],
           }),
         },
         {
           name: "kill",
           event: { kind: "ui", ev: "click" },
           selector: { tile: "Kill" },
-          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["search:_"] }] }),
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["search#1"] }] }),
         },
       ],
     };
@@ -358,7 +360,7 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
       expect(clickEp).toBeDefined();
       const clickCancels = clickEp!.steps.filter((s) => s.kind === "effect-cancel");
       expect(clickCancels).toHaveLength(1);
-      expect(clickCancels[0]).toMatchObject({ kind: "effect-cancel", targetId: "search:_" });
+      expect(clickCancels[0]).toMatchObject({ kind: "effect-cancel", targetId: "search#1" });
       dispose();
     } finally {
       root.remove();

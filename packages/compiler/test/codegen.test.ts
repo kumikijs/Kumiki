@@ -633,10 +633,12 @@ describe("codegen", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // The let rhs is an IIFE that pushes the emit AND yields its id: with no
-    // `latest-per-key` policy the key is `_`.
-    expect(result.js).toContain('_emits.push({ effect: "search"');
-    expect(result.js).toContain('return "search:_";');
+    // The let rhs is an IIFE that pushes the emit AND yields its id, which the
+    // runtime's `emitId` answers for the record just pushed — the rule the
+    // dispatcher runs the request under — and which the record then carries.
+    expect(result.js).toContain(
+      'const __e = { effect: "search", args: ["q"] }; _emits.push(__e); return (__e.id = _s.emitId(_effects["search"], __e));',
+    );
     // EffectId.none lowers to the empty-string sentinel.
     expect(result.js).toContain('"stored": { value: "" }');
   });
@@ -665,8 +667,9 @@ describe("codegen", () => {
     // (which the id is built from) both reuse that local.
     expect(result.js).toMatch(/const __a0 = _s\.now\(\);/);
     expect(result.js).toMatch(/const __k = \(\(\w+\) => String\(\w+\)\)\(__a0\);/);
-    expect(result.js).toContain('_emits.push({ effect: "search", args: [__a0], key: __k })');
-    expect(result.js).toContain('return "search:" + __k;');
+    expect(result.js).toContain(
+      'const __e = { effect: "search", args: [__a0], key: __k }; _emits.push(__e); return (__e.id = _s.emitId(_effects["search"], __e));',
+    );
     // _s.now() must appear exactly once in the generated reducer body —
     // double-eval would surface as two occurrences.
     const occurrences = (result.js.match(/_s\.now\(\)/g) ?? []).length;

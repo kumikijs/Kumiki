@@ -360,12 +360,14 @@ describe("policy=queue runs one at a time", () => {
           name: "go",
           selector: { tile: "Go" },
           event: { kind: "ui", ev: "click" },
+          // Each emit carries the id it yields, as a reducer body's `emit`
+          // expression stamps it, so `kill` can name one of them.
           apply: () => ({
             slots: {},
             emits: [
-              { effect: "work", args: ["a"] },
-              { effect: "work", args: ["b"] },
-              { effect: "work", args: ["c"] },
+              { effect: "work", args: ["a"], id: "work#a" },
+              { effect: "work", args: ["b"], id: "work#b" },
+              { effect: "work", args: ["c"], id: "work#c" },
             ],
           }),
         },
@@ -373,8 +375,7 @@ describe("policy=queue runs one at a time", () => {
           name: "kill",
           selector: { tile: "Kill" },
           event: { kind: "ui", ev: "click" },
-          // Every `work` emit here shares the key `_`, so this id is the queue.
-          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["work:_"] }] }),
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["work#b"] }] }),
         },
       ],
       root: (): TileNode => ({ kind: "column", children: [btn({ text: "go" })] }),
@@ -400,11 +401,12 @@ describe("policy=queue runs one at a time", () => {
     }
   });
 
-  it("releases a queued launch that http.cancel cancelled", async () => {
+  it("releases the queued launch that http.cancel cancelled, and only that one", async () => {
     // `dispose()` is not the only path that ends a pending launch. Cancelling
     // by id aborts what is in flight and drops a pending debounce timer; a
     // queued entry is the same debt — without this it runs after the user
     // pressed Cancel, on an episode the log already recorded a cancel for.
+    // The id names one entry, so the entries around it still run.
     const { app, log } = makeQueueApp();
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -415,8 +417,8 @@ describe("policy=queue runs one at a time", () => {
       await new Promise((r) => setTimeout(r, 5));
       dispatch("kill", {});
       await new Promise((r) => setTimeout(r, 120));
-      // `a` was already running when the cancel landed; `b` and `c` never do.
-      expect(log.filter((l) => l.startsWith("start"))).toEqual(["start a"]);
+      // `a` was already running when the cancel landed; `b` never starts.
+      expect(log.filter((l) => l.startsWith("start"))).toEqual(["start a", "start c"]);
     } finally {
       dispose();
       host.remove();

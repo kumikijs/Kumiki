@@ -341,7 +341,8 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
       const args = s.args.map((a) => jsOfConfirmArg(a, ctx)).join(", ");
       return `_emits.push({ effect: "confirm", args: [${args}] });`;
     }
-    return `{ ${reducerEmitJs(s.effect, s.args, ctx).stmts} }`;
+    const { binds, record } = reducerEmitJs(s.effect, s.args, ctx);
+    return `{ ${binds}_emits.push(${record}); }`;
   }
   if (s.kind === "StopTimer") {
     return `_stops.push(${JSON.stringify(s.name)});`;

@@ -208,6 +208,34 @@ export function readEnv<T>(kind: EnvReadKind, live: () => T): T {
   return live();
 }
 
+type PlatformCrypto = {
+  randomUUID?: () => string;
+  getRandomValues?: (bytes: Uint8Array) => Uint8Array;
+};
+
+/**
+ * A new id from the platform's generator: what a `fresh-id` read answers live,
+ * for `<T>.fresh()` and for an emit's own `EffectId` ({@link emitId}).
+ * `crypto.randomUUID` exists only in a secure context, so a page on plain http
+ * falls back to a v4 uuid built here. The result has to pass the `uuid`
+ * refinement like any other id `fresh()` returns. `getRandomValues` has no
+ * secure-context requirement; `Math.random` is the last resort whenever that
+ * is missing too, `crypto` itself or not. That branch is not cryptographically
+ * random, which is acceptable because a fresh id only has to be distinct among
+ * the ids one app mints, never unguessable — nothing may treat it as a secret.
+ */
+export function newId(): string {
+  const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (c?.getRandomValues) c.getRandomValues(bytes);
+  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /**
  * SSR slot snapshot — the non-`volatile` slot values an SSR pass produces.
  * Hydration overlays this on `app.live` BEFORE wiring effect dispatchers or
@@ -665,8 +693,12 @@ export type ReducerSpec = {
  * keyed effect, and the dispatcher runs the request under it. Absent — an
  * `app.init` entry, a hand-written `apply`, an effect with no key — the
  * dispatcher evaluates the effect's own `keyOf` against the live slots.
+ *
+ * `id` is the `EffectId` a reducer body's `emit` expression yielded for this
+ * emit: codegen sets it to what {@link emitId} answered there, so the
+ * dispatcher runs the request under the id the body kept.
  */
-export type EmitSpec = { effect: string; args: unknown[]; key?: string };
+export type EmitSpec = { effect: string; args: unknown[]; key?: string; id?: string };
 
 export type EffectSpec = {
   name: string;
@@ -699,6 +731,29 @@ export type EffectSpec = {
    */
   errText?: (value: unknown) => string;
 };
+
+/**
+ * The `EffectId` of an emit (http.md §6.4), and the id the dispatcher runs its
+ * request under: one rule, asked by a reducer body where its `emit` expression
+ * runs, and by the dispatcher.
+ *
+ * `latest` and `latest-per-key` run one request per key, and the id names it:
+ * `<effect>:<key>`, with the key `_` under `latest` and, under
+ * `latest-per-key`, the one the emit carries, or `keyOf` of its input when it
+ * carries none. Under every other policy each emit is a request of its own,
+ * with an id of its own: the one the record carries, which is the id the
+ * reducer body's `emit` expression yielded, or for a record that carries none
+ * — a statement-form `emit`, an `app.init` entry — `<effect>#` and a new id
+ * from the platform's generator. That is read through the journal as a
+ * `fresh-id` (runtime.md §10.5.1), so a replayed reducer body yields the id
+ * the recorded one did.
+ */
+export function emitId(eff: Pick<EffectSpec, "policy"> | undefined, emit: EmitSpec): string {
+  const p = eff?.policy;
+  if (p?.kind === "latest") return `${emit.effect}:_`;
+  if (p?.kind === "latest-per-key") return `${emit.effect}:${emit.key ?? p.keyOf(emit.args[0])}`;
+  return emit.id ?? `${emit.effect}#${readEnv("fresh-id", newId)}`;
+}
 
 /**
  * What an invoke resolves to. `final` marks an `err` the retry policy must not
@@ -3369,22 +3424,28 @@ function makeEffectDispatcher(
     // throttle window and let an immediate next emit slip past.
     kind: "debounce" | "throttle";
     h: ReturnType<typeof setTimeout>;
-    // debounce only: token + name claimed at dispatch time so the eventual
-    // `launch` lands `effect-start`/`effect-end` on the originating episode
-    // (spec §10.5.1), and any path that drops the pending launch (timer
-    // replace, `http.cancel` clearing the timer, `dispose()` drain) can mark
-    // that episode's pending start as cancelled via `onPolicyCancel`.
+    // debounce only: the id of the emit waiting on the timer, which is what
+    // `http.cancel` names it by, and the token + name claimed at dispatch time
+    // so the eventual `launch` lands `effect-start`/`effect-end` on the
+    // originating episode (spec §10.5.1), and any path that drops the pending
+    // launch (timer replace, `http.cancel` clearing the timer, `dispose()`
+    // drain) can mark that episode's pending start as cancelled via
+    // `onPolicyCancel`.
+    id?: string;
     token?: string;
     effectName?: string;
   };
-  // `policy=queue` (§10.4.3): one chain per effect id. `tail` is the promise
-  // every new dispatch appends to, so at most one invocation of that id is in
-  // flight; `pending` is the entries that have not started yet, which is what
-  // `dispose()` has to release — each already claimed an episode token.
-  type QueueEntry = { token: string; effectName: string };
+  // `policy=queue` (§10.4.3): one chain per effect. `tail` is the promise
+  // every new dispatch appends to, so at most one invocation of that effect is
+  // in flight; `pending` is the entries that have not started yet, which is
+  // what `dispose()` and `http.cancel` release — each already claimed an
+  // episode token.
+  type QueueEntry = { id: string; token: string; effectName: string };
   type Queue = { tail: Promise<void>; pending: QueueEntry[] };
   type RunState = {
+    // Keyed by `EffectId`: what `http.cancel` names and `latest` replaces.
     inflight: Map<string, AbortController>;
+    // Keyed by effect name: a debounce or throttle window is the effect's.
     timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
     queues: Map<string, Queue>;
@@ -3399,7 +3460,7 @@ function makeEffectDispatcher(
   const launch = async (
     eff: EffectSpec,
     input: unknown,
-    key: string,
+    id: string,
     presetToken?: string,
   ): Promise<void> => {
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
@@ -3435,7 +3496,6 @@ function makeEffectDispatcher(
     // effect-start; reusing it keeps the causal chain on the originating
     // episode (spec §10.5.1).
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
-    const id = `${eff.name}:${key}`;
     // Every in-flight effect gets its own AbortController so `http.cancel`
     // (spec http.md §6.4) — and the existing `policy=latest`/`latest-per-key`
     // paths — can abort the actual `fetch`, not just delete a map entry. The
@@ -3457,12 +3517,13 @@ function makeEffectDispatcher(
       const eff = app.effects[emit.effect];
       if (!eff) return;
       // §6.4: `cap=http.cancel` is a meta-effect — its `input` IS an
-      // `EffectId` (the `${name}:${key}` string produced by codegen and the
-      // launch path). Abort the matching in-flight controller AND clear any
-      // pending debounce/throttle timer, then surface the cancel intent to
-      // the episode log. Unknown / already-completed ids are a silent no-op
-      // (cancellation is an idempotent intent, not a contract violation —
-      // user code shouldn't have to guard a rapidly-clicked Cancel button).
+      // `EffectId` ({@link emitId}). Abort the in-flight request it names, or
+      // drop the pending launch it names — a queued entry that has not
+      // started, or an emit waiting on its debounce timer — then surface the
+      // cancel intent to the episode log. Unknown / already-completed ids are
+      // a silent no-op (cancellation is an idempotent intent, not a contract
+      // violation — user code shouldn't have to guard a rapidly-clicked
+      // Cancel button).
       if (eff.cap === "http.cancel") {
         const target = String(emit.args[0] ?? "");
         if (target.length > 0) {
@@ -3473,22 +3534,23 @@ function makeEffectDispatcher(
           }
           // A queued entry that has not started is the same pending launch as
           // a debounce timer: it holds an episode token and would run after
-          // the user pressed Cancel unless it is released here.
-          const q = state.queues.get(target);
-          if (q) {
-            const waiting = q.pending.splice(0, q.pending.length);
-            for (const e of waiting) {
-              if (e.token) onPolicyCancel?.(e.token, e.effectName);
-            }
+          // the user pressed Cancel unless it is released here. Only that
+          // entry: the queue goes on with the ones around it.
+          for (const q of state.queues.values()) {
+            const i = q.pending.findIndex((e) => e.id === target);
+            if (i === -1) continue;
+            const [e] = q.pending.splice(i, 1);
+            if (e?.token) onPolicyCancel?.(e.token, e.effectName);
+            break;
           }
-          const t = state.timers.get(target);
           // Only debounce timers represent a pending launch we want to drop.
           // A throttle timer is the open-window marker for an already-issued
           // launch — clearing it would let the very next emit slip through
           // ahead of the rate limit (spec §6.4.1).
-          if (t !== undefined && t.kind === "debounce") {
+          for (const [name, t] of state.timers) {
+            if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
-            state.timers.delete(target);
+            state.timers.delete(name);
             // The pending debounce already claimed an effect-start on its
             // originating episode. Without releasing the token here, that
             // episode stays in `closedAwaiting` forever — symmetric with the
@@ -3496,6 +3558,7 @@ function makeEffectDispatcher(
             if (t.token && t.effectName) {
               onPolicyCancel?.(t.token, t.effectName);
             }
+            break;
           }
           onCancel?.(target);
         }
@@ -3503,22 +3566,21 @@ function makeEffectDispatcher(
       }
       const input = emit.args[0];
       const policy = eff.policy ?? { kind: "default" as const };
-      // A key evaluated at the emit wins: the reducer may have written the
-      // slot it reads after emitting, and the id `emit` yielded was built
-      // from the value before that write (http.md §6.4).
-      const key = policy.kind === "latest-per-key" ? (emit.key ?? policy.keyOf(input)) : "_";
-      const id = `${eff.name}:${key}`;
+      // The id the reducer body yielded, when its `emit` was an expression —
+      // under `latest-per-key` built from the key evaluated at the emit,
+      // before any later write to the slot it reads (http.md §6.4).
+      const id = emitId(eff, emit);
       if (policy.kind === "once") {
         const seen = state.onceSeen.get(eff.name) ?? new Set<string>();
         const k = JSON.stringify(input ?? null);
         if (seen.has(k)) return;
         seen.add(k);
         state.onceSeen.set(eff.name, seen);
-        void launch(eff, input, key);
+        void launch(eff, input, id);
         return;
       }
       if (policy.kind === "debounce") {
-        const prev = state.timers.get(id);
+        const prev = state.timers.get(eff.name);
         if (prev) {
           clearTimeout(prev.h);
           // The prior dispatch already claimed an episode token + recorded
@@ -3536,10 +3598,10 @@ function makeEffectDispatcher(
         // when the timer fires later.
         const token = onLaunch?.(eff.name, input) ?? "";
         const h = setTimeout(() => {
-          state.timers.delete(id);
-          void launch(eff, input, key, token);
+          state.timers.delete(eff.name);
+          void launch(eff, input, id, token);
         }, policy.ms);
-        state.timers.set(id, { kind: "debounce", h, token, effectName: eff.name });
+        state.timers.set(eff.name, { kind: "debounce", h, id, token, effectName: eff.name });
         return;
       }
       if (policy.kind === "queue") {
@@ -3548,8 +3610,8 @@ function makeEffectDispatcher(
         // attach the effect-start to whatever episode is on top by that point
         // rather than to the one that emitted (spec §10.5.1).
         const token = onLaunch?.(eff.name, input) ?? "";
-        const entry: QueueEntry = { token, effectName: eff.name };
-        const q = state.queues.get(id) ?? { tail: Promise.resolve(), pending: [] };
+        const entry: QueueEntry = { id, token, effectName: eff.name };
+        const q = state.queues.get(eff.name) ?? { tail: Promise.resolve(), pending: [] };
         q.pending.push(entry);
         const runNext = async (): Promise<void> => {
           const idx = q.pending.indexOf(entry);
@@ -3558,11 +3620,11 @@ function makeEffectDispatcher(
           // to run.
           if (idx === -1) return;
           q.pending.splice(idx, 1);
-          await launch(eff, input, key, token);
+          await launch(eff, input, id, token);
         };
         // Both arms, so a rejection anywhere in the chain does not skip every
-        // later `onFulfilled` — that would leave this id's queue dead for the
-        // rest of the mount, with each stranded entry still holding the
+        // later `onFulfilled` — that would leave this effect's queue dead for
+        // the rest of the mount, with each stranded entry still holding the
         // episode token it claimed.
         //
         // No test reaches it: `launch` catches its own failures, and every
@@ -3571,14 +3633,14 @@ function makeEffectDispatcher(
         // mode is silent and permanent, resting on a property of code three
         // layers away that nothing states.
         q.tail = q.tail.then(runNext, runNext);
-        state.queues.set(id, q);
+        state.queues.set(eff.name, q);
         return;
       }
       if (policy.kind === "throttle") {
-        if (state.timers.has(id)) return;
-        const h = setTimeout(() => state.timers.delete(id), policy.ms);
-        state.timers.set(id, { kind: "throttle", h });
-        void launch(eff, input, key);
+        if (state.timers.has(eff.name)) return;
+        const h = setTimeout(() => state.timers.delete(eff.name), policy.ms);
+        state.timers.set(eff.name, { kind: "throttle", h });
+        void launch(eff, input, id);
         return;
       }
       if (policy.kind === "latest" || policy.kind === "latest-per-key") {
@@ -3590,10 +3652,10 @@ function makeEffectDispatcher(
           ic.abort();
           state.inflight.delete(id);
         }
-        void launch(eff, input, key);
+        void launch(eff, input, id);
         return;
       }
-      void launch(eff, input, key);
+      void launch(eff, input, id);
     },
     dispose(): void {
       // Pending debounce timers hold a claimed effect-start on an episode

@@ -1,0 +1,40 @@
+# Feature: under a policy other than `latest` / `latest-per-key`, every `emit`
+# yields an `EffectId` of its own (http.md §6.4), so two requests of one effect
+# that are in flight together can be cancelled one at a time.
+#
+# `load` declares no policy, so the two requests `start` emits run in parallel,
+# and `start` keeps both ids. `Cancel a` hands `idA` to `http.cancel`: request
+# `a` is aborted and its `.err` fires with `aborted`, while request `b` runs to
+# completion. The scenario pins that the two ids differ; the abort is pinned
+# with both requests held in flight in `packages/tests`.
+
+slot idA    : EffectId = EffectId.none
+slot idB    : EffectId = EffectId.none
+slot status : Text     = ""
+
+effect load cap=http.get
+            in=Text
+            out=Result(Text, HttpError)
+            map-request={url: "/api/parts/" + $1, decode: Decoder.Text}
+
+effect cancelLoad cap=http.cancel in=EffectId out=Unit
+
+reducer start   on=ui.click(StartBtn)   do= idA := emit load("a")
+                                            idB := emit load("b")
+reducer cancelA on=ui.click(CancelABtn) do= emit cancelLoad(idA)
+reducer onOk    on=load.ok($body, _)    do= status := status + " [" + $body + "]"
+reducer onErr   on=load.err($err, $part) do= status := status + " [" + $part + " " + $err.message + "]"
+
+tile StartBtn   = button(text="Start", onClick=start)      {id: "start"}
+tile CancelABtn = button(text="Cancel a", onClick=cancelA) {id: "cancel-a"}
+tile App = column(
+             StartBtn,
+             CancelABtn,
+             text("same id: " + (idA == idB).show),
+             text("status:" + status))
+           {pad: "lg", gap: "md"}
+
+app EmitIdPerRequest
+    caps   = [http.get, http.cancel]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
