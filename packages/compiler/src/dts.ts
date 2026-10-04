@@ -11,16 +11,17 @@
 
 import type { EffectDef, Program, SlotDef, TypeDef, TypeExpr } from "./ast.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
-import { type PrimName, STDLIB_TYPES } from "./stdlib-types.ts";
+import { FILE_FIELDS, type PrimName, STDLIB_TYPES } from "./stdlib-types.ts";
 
 /**
  * Keyed by `PrimName` rather than `string`, so adding a primitive to the
  * grammar is a compile error here instead of a silent `unknown` in the
- * generated declaration. `File` and `Bytes` are the runtime shapes the
- * capability boundary actually carries; `EffectId` is the opaque handle
- * codegen lowers to a string (`EffectId.none` is `""`).
+ * generated declaration. `Bytes` is the runtime shape the capability boundary
+ * actually carries; `EffectId` is the opaque handle codegen lowers to a string
+ * (`EffectId.none` is `""`). `File` is the record of its fields, declared from
+ * `FILE_FIELDS` — the table the checker reads a field from — in `tsOfType`.
  */
-const PRIM_TS: Record<PrimName, string> = {
+const PRIM_TS: Record<Exclude<PrimName, "File">, string> = {
   Int: "number",
   Float: "number",
   Time: "number",
@@ -28,7 +29,6 @@ const PRIM_TS: Record<PrimName, string> = {
   Bool: "boolean",
   Unit: "null",
   Bytes: "Uint8Array",
-  File: "{ name: string; size: number; type: string }",
   EffectId: "string",
 };
 
@@ -53,7 +53,7 @@ type Ctx = {
 function tsOfType(t: TypeExpr, ctx: Ctx): string {
   switch (t.kind) {
     case "TypePrim":
-      return PRIM_TS[t.name];
+      return t.name === "File" ? tsOfType(FILE_FIELDS, ctx) : PRIM_TS[t.name];
     case "TypeRef": {
       const local = ctx.typeParams.get(t.name) ?? ctx.userTypes.get(t.name);
       if (local) return local;

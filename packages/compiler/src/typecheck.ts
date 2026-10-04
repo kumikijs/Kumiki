@@ -82,7 +82,7 @@ import {
   receiversOf,
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
-import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import { FILE_FIELDS, isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -4287,21 +4287,13 @@ const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
 // name-based shortcut dispatch with no diagnostic.
 
 /**
- * Structural fields exposed by built-in prim types. `File` is treated as a
- * scalar at the type system level (its handle is opaque, never inspected by
- * the compiler) but the runtime stores it as a record so Kumiki expressions
- * can read its metadata — `f.name : Text`, `f.size : Int`, `f.type : Text`
- * (docs/spec/stdlib.md §2.1). Without this table classifyFieldAccess would
- * emit E0108 on every legitimate File field read.
+ * The type of a structural field of a built-in prim type, or `null` when the
+ * prim has no field by that name. `File` is the one prim with fields: a scalar
+ * to the type system, but the runtime hands a program a record per picked file,
+ * and the fields it reads are the ones stdlib.md §2.1.3 lists (`FILE_FIELDS`).
  */
-const PRIM_FIELDS: Record<string, Record<string, "Text" | "Int">> = {
-  File: { name: "Text", size: "Int", type: "Text" },
-};
-
-function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | null {
-  const name = PRIM_FIELDS[primName]?.[field];
-  if (!name) return null;
-  return { kind: "TypePrim", name, pos };
+function primFieldType(primName: PrimName, field: string): TypeExpr | null {
+  return primName === "File" ? recordFieldType(FILE_FIELDS, field) : null;
 }
 
 const prim = (name: PrimName, pos: Pos): TypeExpr => ({ kind: "TypePrim", name, pos });
@@ -4689,7 +4681,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       if (!base) return null;
       if (base.kind === "TypeRecord") return recordFieldType(base, e.field);
       if (base.kind === "TypePrim") {
-        const t = primFieldType(base.name, e.field, e.pos);
+        const t = primFieldType(base.name, e.field);
         if (t) return t;
       }
       // The parenthesis-free spelling (§2.2.3) is the same member written with
@@ -4976,8 +4968,8 @@ function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolTable): 
 
   // A prim's structural field (`File.name`) — a field the type system does not
   // see in the type, because `File` is a scalar to it and a record to the
-  // runtime (stdlib.md §2.1).
-  if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[field]) return "field";
+  // runtime (stdlib.md §2.1.3).
+  if (t.kind === "TypePrim" && primFieldType(t.name, field) !== null) return "field";
 
   return receivers.some((r) => hasMember(r, field)) ? "member" : "unknown";
 }

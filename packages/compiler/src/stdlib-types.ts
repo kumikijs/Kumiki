@@ -27,7 +27,9 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
   args,
   pos: NO_POS,
 });
-const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
+type RecordType = Extract<TypeExpr, { kind: "TypeRecord" }>;
+
+const record = (fields: Record<string, TypeExpr>): RecordType => ({
   kind: "TypeRecord",
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
@@ -57,8 +59,8 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
  * Domain types provided by the standard library (docs/spec/stdlib.md §2.1.3).
  *
  * `File` is absent on purpose: the grammar makes it a primitive type name, so a
- * program can never reach a definition under that name. Its fields live in the
- * checker's `PRIM_FIELDS` instead.
+ * program can never reach a definition under that name. Its fields are
+ * `FILE_FIELDS` instead.
  *
  * A program that declares its own `type Route = …` shadows the entry here —
  * these are seeded before the program's definitions, not after.
@@ -123,6 +125,22 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
     pos: NO_POS,
   }),
 ];
+
+/**
+ * The fields a program reads on a `File` (stdlib §2.1.3): what a file input
+ * reports about each picked file. `File` stays a primitive to the type system —
+ * a value of it is never a `TypeRecord` — so the checker looks a field read up
+ * here, and `dts.ts` declares a `File` at a capability boundary as this record.
+ *
+ * The file's bytes are not a field: a browser reads them only asynchronously,
+ * so the record the `change` event delivers cannot hold them. They reach a
+ * server as a `FileV` part of a `Multipart` body.
+ */
+export const FILE_FIELDS: RecordType = record({
+  name: prim("Text"),
+  size: prim("Int"),
+  type: prim("Text"),
+});
 
 /**
  * Generic type constructors with no definition to look up (stdlib §2.1.2), and

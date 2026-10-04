@@ -81,9 +81,9 @@ export const inputTile: TileRenderer<"input"> = (node) => {
     if (!state?.onChange) return;
     if (inp.type === "file") {
       // FileList → plain records the Kumiki layer can read: name / size /
-      // type are visible to Kumiki expressions; `_file` keeps the original
-      // DOM File so `file-url()` can hand it to URL.createObjectURL and a
-      // future http effect can wrap it in Multipart.
+      // type are a `File`'s fields (stdlib §2.1.3); `_file` keeps the
+      // original DOM File, which `file-url()` hands to URL.createObjectURL and
+      // a `FileV` part of a `Multipart` body sends.
       const list = inp.files;
       const files: Array<{ name: string; size: number; type: string; _file: File }> = [];
       if (list) {
