@@ -1,0 +1,41 @@
+# Feature (stdlib.md §2.2.8): `a.diff(b)` is `a` minus `b`.
+#
+#   diff(other) : Duration   ; the receiver minus `other`
+#
+# The result is positive when the receiver is the later instant, negative
+# when it is the earlier one, and zero when both are the same instant, so
+# `b.plus(a.diff(b))` is `a` whichever of the two comes first. A due date has
+# passed when `due.diff(now)` is negative — `status` below reads it that way —
+# and `.to-ms.abs` is the distance between two instants when the order does
+# not matter.
+#
+# Both instants are parsed from fixed strings rather than read from `now`, so
+# what renders does not depend on the clock.
+
+type DueStatus = Overdue | DueToday | DueSoon | DueUpcoming
+
+slot early : Time = Time.parse("2026-08-12T10:00Z").get-or(now)
+slot late  : Time = Time.parse("2026-08-14T10:00Z").get-or(now)
+
+fn status(due: Time, seen: Time) -> DueStatus
+   = let ms = due.diff(seen).to-ms
+     in if ms < 0 then Overdue
+        else if ms < 86400000 then DueToday
+        else if ms < 259200000 then DueSoon
+        else DueUpcoming
+
+fn roundTrip(a: Time, b: Time) -> Bool = b.plus(a.diff(b)) == a
+
+tile App = column(
+  text("early.diff(late) = " + early.diff(late).to-ms.show),
+  text("late.diff(early) = " + late.diff(early).to-ms.show),
+  text("early.diff(early) = " + early.diff(early).to-ms.show),
+  text("distance = " + early.diff(late).to-ms.abs.show),
+  text("round trip = " + roundTrip(early, late).show + " " + roundTrip(late, early).show),
+  text("due early, seen late: " + status(early, late).show),
+  text("due late, seen early: " + status(late, early).show))
+
+app TimeDiffSign
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

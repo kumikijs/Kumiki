@@ -842,10 +842,15 @@ export const _stdlibCore = {
     }
     return r;
   },
-  /** Polymorphic `.diff`: numeric magnitude (Time/Duration) or Set difference. */
+  /**
+   * Polymorphic `.diff`, shared by `Time` and `Set(T)`. A `Time` is a number,
+   * and its `diff` is the receiver minus the argument: negative when the
+   * receiver is the earlier instant. A `Set` is a record, and its `diff` is
+   * the set difference.
+   */
   diff(a: unknown, b: unknown): unknown {
     if (typeof a === "number" || typeof b === "number") {
-      return Math.abs((a as number) - (b as number));
+      return (a as number) - (b as number);
     }
     return _stdlibCore.setDiff(a as Record<string, true>, b as Record<string, true>);
   },

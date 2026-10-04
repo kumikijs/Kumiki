@@ -257,10 +257,12 @@ Time.now                    : Time
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
-diff(other)                 : Duration
+diff(other)                 : Duration        ; レシーバから other を引いた値
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 to-ms                       : Int             ; Unix エポックからのミリ秒
 ```
+
+`a.diff(b)` は `a` から `b` を引いたもの、すなわち `b` から `a` までの時間である。`a` の方が後の時刻なら正、前の時刻なら負、同じ時刻なら 0 になるので、どちらが先でも `b.plus(a.diff(b))` は `a` である。`due.diff(now)` は `due` を過ぎると負になり、`now.diff(start)` は `start` からの経過時間である（[§2.2.9](#_2-2-9-duration)）。どちらが後かを問わない 2 つの時刻の隔たりは `a.diff(b).to-ms.abs` である。
 
 `format` は以下のトークンをその時刻のフィールドに置き換え、パターンの残りはそのまま出力する。したがって `"dd/MM/yyyy"` も `"[on] dd"` もパターンである。
 
