@@ -294,6 +294,37 @@ function loadScenario(path: string): Scenario {
   return doc as Scenario;
 }
 
+/**
+ * An episode logger that appends every episode the run commits to `path`, one
+ * JSON object per line, as it commits. The file holds the whole run; the
+ * logger's in-memory store, which `list()` reads, keeps only the most recent N
+ * (§10.5.2).
+ *
+ * A failed write is held for `rethrow` instead of thrown from the hook. The
+ * hook runs inside the runtime's commit, where a throw is reported as an error
+ * of the app on whichever step was running. Nothing is written after a failed
+ * write, so the file holds the run's first episodes without a gap.
+ */
+function fileEpisodeLogger(path: string): { logger: EpisodeLogger; rethrow: () => void } {
+  let failure: { error: unknown } | null = null;
+  const logger = createEpisodeLogger({
+    onEpisode: (ep) => {
+      if (failure) return;
+      try {
+        appendFileSync(path, `${JSON.stringify(ep)}\n`);
+      } catch (error) {
+        failure = { error };
+      }
+    },
+  });
+  return {
+    logger,
+    rethrow: () => {
+      if (failure) throw failure.error;
+    },
+  };
+}
+
 /** CLI entry: run a scenario JSON file against a .kumiki file; print the trace. */
 export async function runCmd(
   kumikiPath: string,
@@ -306,12 +337,11 @@ export async function runCmd(
   // `--episode-log <file>` flag or the `KUMIKI_EPISODE_LOG` env var. This keeps
   // example runs from littering sidecar JSONL next to every .kumiki file. When
   // enabled, the §10.5 runtime episode logger records each trigger → reducer →
-  // effect-start → effect-end → signal-update chain into memory; we flush the
-  // entire ring to disk after the scenario completes.
+  // effect-start → effect-end → signal-update chain into the file.
   const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
-  const episodeLogger = logFile ? createEpisodeLogger() : null;
+  const log = logFile ? fileEpisodeLogger(logFile) : null;
   const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
-    episodeLogger,
+    episodeLogger: log?.logger ?? null,
     sourcePath: kumikiPath,
   });
   for (let i = 0; i < report.steps.length; i++) {
@@ -338,11 +368,7 @@ export async function runCmd(
     for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
-  if (episodeLogger && logFile) {
-    for (const ep of episodeLogger.list()) {
-      appendFileSync(logFile, `${JSON.stringify(ep)}\n`);
-    }
-  }
+  log?.rethrow();
   if (!report.ok) process.exit(1);
 }
 

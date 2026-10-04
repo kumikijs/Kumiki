@@ -1,0 +1,35 @@
+# Feature (runtime.md §10.5.2): the `--episode-log` file holds every episode
+# the run commits, one JSON object per line.
+#
+#   kumiki run 191-episode-log-keeps-every-episode.kumiki \
+#       191-episode-log-keeps-every-episode.scenario.json --episode-log run.log.jsonl
+#   kumiki replay 191-episode-log-keeps-every-episode.kumiki --from-log run.log.jsonl
+#
+# The file and the runtime's in-memory store are separate stores. The memory
+# keeps the most recent 100 episodes; the file is not bounded by that. Each
+# click below commits one episode whose `slot-diffs` move `count` by one, so a
+# run of N clicks writes N lines, the first going 0 -> 1 and the last going
+# N-1 -> N. Replay starts from slot defaults, and it reaches the state the run
+# ended in only because the first line is the run's first episode.
+#
+# The scenario clicks three times. `packages/cli/test/run-episode-log.test.ts`
+# drives this app for 105 clicks, past the in-memory store's 100, under both
+# `--episode-log` and `KUMIKI_EPISODE_LOG`.
+
+slot count : Int = 0
+
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+
+tile IncBtn = button(text="+1") {id: "inc"}
+
+tile App
+    = column(
+        heading("every committed episode is in the log"),
+        IncBtn,
+        text("count=" + count.show))
+      {pad: "lg", gap: "md"}
+
+app EpisodeLogKeepsEveryEpisode
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
