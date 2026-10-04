@@ -540,9 +540,8 @@ function replaceDefLocked(path: string, qname: string, body: string): string {
 /**
  * What `cascade` adds to a remove (§9.4.1), in the words both surfaces use: the
  * `--cascade` help of `kumiki remove` and the `kumiki_remove` description. One
- * string, because the two stated opposite relations — the MCP description said
- * the cascade took the definitions the target referenced, while `removeDef`
- * walks the other way, from the target out to whatever references it.
+ * string, so the two state the relation `removeDef` walks, from the target out
+ * to whatever references it, and cannot state different ones.
  */
 export const CASCADE_HELP =
   "also remove its dependents: every definition that references it, directly or transitively, which can include the app";

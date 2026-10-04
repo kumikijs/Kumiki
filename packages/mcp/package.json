@@ -52,7 +52,7 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "catalog:",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
     "zod": "^4.4.3"

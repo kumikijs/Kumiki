@@ -17,7 +17,6 @@
     "@kumikijs/mcp": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
     "@kumikijs/syntax": "workspace:*",
-    "@modelcontextprotocol/sdk": "catalog:",
     "@types/node": "catalog:",
     "happy-dom": "catalog:",
     "kumiki": "workspace:*",

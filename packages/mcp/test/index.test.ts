@@ -3,7 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lockDef } from "@kumikijs/cli";
+import { CASCADE_HELP, lockDef } from "@kumikijs/cli";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1047,6 +1047,18 @@ describe("what an edit tool reports about the edit it made", () => {
       // The requested definition is the headline, not one of its own casualties.
       expect(cascaded(out)).not.toContain("slot.count");
       expect(out).toMatch(OP_ID);
+    });
+  });
+
+  // The cascade above takes what references `slot.count`, out to the `app`,
+  // and the description an agent reads before calling the tool says so.
+  it("describes the cascade as taking the target's dependents", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const remove = tools.find((t) => t.name === "kumiki_remove");
+      const description = (remove?.description ?? "").replace(/\s+/g, " ");
+      expect(description).toContain(CASCADE_HELP);
+      expect(description).toContain("every definition that references it");
     });
   });
 
