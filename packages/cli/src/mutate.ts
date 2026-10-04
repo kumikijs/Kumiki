@@ -762,7 +762,9 @@ function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
  *   { "body:<line>": "replace 'a' -> 'b'" }       — per-line replacement
  *
  * The edit is confined to the target definition's source range; matches
- * outside the range are not touched.
+ * outside the range are not touched. Either shape is rejected, with nothing
+ * written, when the text it replaces is not where it says: in the definition
+ * for `find`, on line `<line>` of it for a per-line patch.
  */
 export function editDef(path: string, qname: string, patch: unknown): string {
   enforceLock(path, qname);
@@ -782,13 +784,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   let updated: string[];
   if (isFindReplacePatch(patch)) {
     const joined = target.join("\n");
-    if (!joined.includes(patch.find)) {
-      throw new Error(`edit rejected: "find" pattern not present in ${qname}`);
-    }
-    // Function replacer so that `$&` / `$$` / `` $` `` / `$'` in the replacement
-    // string aren't interpreted by String.prototype.replace.
-    const replaceWith = patch.replace;
-    updated = joined.replace(patch.find, () => replaceWith).split("\n");
+    updated = replaceFirst(joined, patch.find, patch.replace, `in ${qname}`).split("\n");
   } else if (isPerLinePatch(patch)) {
     updated = target.slice();
     for (const [key, instruction] of Object.entries(patch)) {
@@ -801,8 +797,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
       const cur = updated[lineIdx];
       if (cur === undefined)
         throw new Error(`edit rejected: body line ${lineIdx + 1} out of range`);
-      const toStr = to!;
-      updated[lineIdx] = cur.replace(from!, () => toStr);
+      updated[lineIdx] = replaceFirst(cur, from!, to!, `on body line ${lineIdx + 1} of ${qname}`);
     }
   } else {
     throw new Error(
@@ -832,6 +827,21 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
       ...(newBody !== undefined ? { body: newBody } : {}),
     });
   });
+}
+
+/**
+ * `text` with its first `from` replaced by `to`, for both `edit` patch shapes.
+ * Throws when `from` is not in `text`: there is nothing to replace, and an edit
+ * that went ahead without it would be reported and logged as applied. `where`
+ * names the text searched, for the message.
+ */
+function replaceFirst(text: string, from: string, to: string, where: string): string {
+  if (!text.includes(from)) {
+    throw new Error(`edit rejected: ${JSON.stringify(from)} not present ${where}`);
+  }
+  // Function replacer so that `$&` / `$$` / `` $` `` / `$'` in the replacement
+  // string aren't interpreted by String.prototype.replace.
+  return text.replace(from, () => to);
 }
 
 /**
