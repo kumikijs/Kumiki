@@ -125,6 +125,29 @@ export function valueEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * Ascending order — the one comparator `sort` on a list of numbers and
+ * `sort-by` on its keys share (stdlib.md §2.2.3). It is the order `<` gives
+ * (language.md §1.9.4): numbers numerically, `-Infinity` and `Infinity`
+ * included, and `Text` by UTF-16 code unit. It asks `<` rather than
+ * subtracting: two `Text`s subtract to `NaN`, which a sort reads as "equal".
+ *
+ * A value `<` orders against nothing — absent (`undefined` / `null`) or
+ * `NaN` — sorts after every other value, and two of them compare equal, so a
+ * stable sort keeps them in their order. Compared as "equal" to every value
+ * instead, a single one would stop the rest from sorting. Any other pair `<`
+ * cannot order (a record, a number against a non-numeric `Text`) compares as
+ * equal.
+ */
+function ascending(a: unknown, b: unknown): number {
+  const na = a == null || Number.isNaN(a);
+  const nb = b == null || Number.isNaN(b);
+  if (na || nb) return na === nb ? 0 : na ? 1 : -1;
+  const x = a as number | string;
+  const y = b as number | string;
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/**
  * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
  *
  * A blank — `null`, `undefined`, `""`, whitespace — is not zero here. `Number`
@@ -481,43 +504,32 @@ export const _stdlibCore = {
   },
   /**
    * `List(T).sort-by(expr)` (stdlib.md §2.2.3): ascending by the key, in the
-   * order `<` gives it (language.md §1.9.4) — a number, a `Time` (a number at
-   * runtime) or a `Text`, which is all the checker accepts for a key whose type
-   * it knows (a fragment, or a `fn` passed by name with a declared return
-   * type). JavaScript's `<` orders both, so the comparator asks it rather than
-   * subtracting, which answered `NaN` — "equal" — for every pair of Text keys.
+   * order `ascending` gives — a number, a `Time` (a number at runtime) or a
+   * `Text`, which is all the checker accepts for a key whose type it knows (a
+   * fragment, or a `fn` passed by name with a declared return type).
    * `Array.prototype.sort` is stable, so equal keys keep their order.
    *
-   * A key the checker could not type reaches here as whatever it is. One that
-   * `<` orders against nothing — absent (`undefined` / `null`) or `NaN` — sorts
-   * after every other key, keeping its order: compared as "equal" to every
-   * key, a single missing one would stop the rest from sorting. Any other
-   * pair `<` cannot order (a record, a number against a non-numeric `Text`)
-   * compares as equal, and a numeric key that arrives as `Text` is ordered as
-   * `Text`.
+   * A key the checker could not type reaches here as whatever it is, and is
+   * ordered as that: absent sorts last, as `NaN` does, and a numeric key that
+   * arrives as `Text` is ordered as `Text`.
    */
   listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
-    const absent = (k: unknown): boolean => k == null || Number.isNaN(k);
-    return [...(xs ?? [])].sort((a, b) => {
-      const ka = keyOf(a) as number | string;
-      const kb = keyOf(b) as number | string;
-      const na = absent(ka);
-      const nb = absent(kb);
-      if (na || nb) return na === nb ? 0 : na ? 1 : -1;
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
+    return [...(xs ?? [])].sort((a, b) => ascending(keyOf(a), keyOf(b)));
   },
   /**
-   * `List(T).sort` — polymorphic. Numeric elements sort numerically (so
-   * `[3,1,2,10].sort` → `[1,2,3,10]`, not the JS default `[1,10,2,3]`); any
-   * other element type falls back to a stable string comparison. Mixed lists
-   * are sorted as strings so the result stays well-defined.
+   * `List(T).sort` — polymorphic. A list of numbers sorts in the order
+   * `ascending` gives, the one `sort-by` orders its keys in: numerically (so
+   * `[3,1,2,10].sort` → `[1,2,3,10]`, not the JS default `[1,10,2,3]`), an
+   * infinity where `<` puts it, and `NaN` after every other number. Which
+   * path a list takes is decided by its elements' type, not their values, so
+   * `Infinity` and `NaN` — `Float` values (stdlib.md §2.2.7) — keep a
+   * `List(Float)` numeric. Any other element type falls back to a stable
+   * string comparison. Mixed lists are sorted as strings so the result stays
+   * well-defined.
    */
   listSort(xs: unknown[] | undefined | null): unknown[] {
     const arr = [...(xs ?? [])];
-    if (arr.length === 0) return arr;
-    const allNumbers = arr.every((x) => typeof x === "number" && Number.isFinite(x));
-    if (allNumbers) return (arr as number[]).sort((a, b) => a - b);
+    if (arr.every((x) => typeof x === "number")) return arr.sort(ascending);
     return arr.sort((a, b) => {
       const sa = String(a);
       const sb = String(b);

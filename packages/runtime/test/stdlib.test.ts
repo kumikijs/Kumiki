@@ -49,7 +49,7 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
 // Issue #92 review: previously `.sort()` lowered inline to JS's default
 // (string-comparator) sort, so `[3,1,2,10].sort` → `[1,10,2,3]` for a
 // `List(Int)`. The fix routes both forms through `_stdlibCore.listSort`
-// which sorts numerically when every element is a finite number.
+// which sorts numerically when every element is a number.
 // `sort-by` subtracted its keys, and two Text keys subtract to `NaN`, which
 // `Array.prototype.sort` reads as "equal": a list sorted by a name came back
 // in the order it went in.
@@ -161,12 +161,50 @@ describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
     expect(_stdlibCore.listSort(null)).toEqual([]);
   });
 
+  // `Infinity`, `-Infinity` and `NaN` are `Float` values (stdlib.md §2.2.7),
+  // so a list holding one is still a list of numbers.
+  it("sorts a list holding an infinity numerically", () => {
+    expect(_stdlibCore.listSort([10, 9, 1.5, Number.POSITIVE_INFINITY])).toEqual([
+      1.5,
+      9,
+      10,
+      Number.POSITIVE_INFINITY,
+    ]);
+    expect(_stdlibCore.listSort([10, Number.NEGATIVE_INFINITY, 9, 1.5])).toEqual([
+      Number.NEGATIVE_INFINITY,
+      1.5,
+      9,
+      10,
+    ]);
+  });
+
+  it("sorts NaN after every other number and the rest numerically", () => {
+    const { NaN: nan, POSITIVE_INFINITY: inf, NEGATIVE_INFINITY: ninf } = Number;
+    expect(_stdlibCore.listSort([nan, 10, 9, inf, nan, ninf, 1.5])).toEqual([
+      ninf,
+      1.5,
+      9,
+      10,
+      inf,
+      nan,
+      nan,
+    ]);
+  });
+
+  it("orders numbers as sort-by orders the same numbers as keys", () => {
+    // One rule for both members (stdlib.md §2.2.3): `<`, and NaN last.
+    const xs = [Number.NaN, 10, 2, Number.POSITIVE_INFINITY, -0.5, Number.NEGATIVE_INFINITY, 2];
+    expect(_stdlibCore.listSort(xs)).toEqual(_stdlibCore.listSortBy(xs, (x) => x));
+  });
+
   it("sorts a text list as strings", () => {
     expect(_stdlibCore.listSort(["banana", "apple", "cherry"])).toEqual([
       "apple",
       "banana",
       "cherry",
     ]);
+    // Text that spells a number is still Text.
+    expect(_stdlibCore.listSort(["9", "10", "Z", "a"])).toEqual(["10", "9", "Z", "a"]);
   });
 
   it("does not mutate the input list", () => {
