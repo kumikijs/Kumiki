@@ -457,8 +457,8 @@ slot y : C = 2`),
   // never reached by the chain. Each of these stays legal, and comparing two of
   // them terminates — not because their values are finite (`type Node = {value:
   // Int, next: Node}` has none at all, its `next` being neither optional nor a
-  // container) but because `relate` keys `seen` on the types **as written**
-  // (`assignable.ts:276-289`), which is finite either way.
+  // container) but because `relate` keys the pairs it is comparing on the
+  // types **as written** (`assignable.ts#Path`), which is finite either way.
   const recursive: [string, string][] = [
     ["a record naming itself", `type Node = {value: Int, next: Node}`],
     ["a record reaching itself through a container", `type Tree = {children: List(Tree)}`],

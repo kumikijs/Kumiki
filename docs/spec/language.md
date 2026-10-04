@@ -284,6 +284,14 @@ type Shape = Leaf | Branch(Shape, Shape)
 
 Each reaches a structural type before it reaches itself, by invariant 3. Comparing two of them terminates because the relation is read **co-inductively** over the types *as written*: re-entering a pair already being compared answers yes, which is sound because the finite part of the comparison has been checked on the way down. Termination does not depend on the values being finite — `Node` above has none, its `next` being neither optional nor a container — and it is still a legal type.
 
+A generic may apply itself to something other than its own parameters:
+
+```kumiki fragment
+type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
+```
+
+It reaches a union before it reaches itself, and is as legal as the three above. Written out it is not finite — each level is a type of its own, `Nest(List(Int))`, then `Nest(List(List(Int)))` — so unfolding two of them never re-enters a pair. Two applications of **one generic** are compared by their arguments instead, each read the way unfolding the body would read that parameter: not at all when the body never compares it (a parameter only handed back to its own position in the recursion, or passed to a generic that ignores it), past its own nominal where a `nominal` wraps the parameter (`type Tagged(T) = nominal T` compares `Tagged(Yen)` with `Tagged(Cents)` as `Int` with `Int`), and as written otherwise. So `Nest(Int)` is accepted where `Nest(Int)` or `Nest(Float)` is required and refused where `Nest(Text)` is — the answers unfolding gives for a regular generic such as `type Box(T) = Empty | Full(T)`. Two **different** generics whose arguments keep growing are unfolded side by side, and nothing repeats: one comparison re-enters a pair of definitions with new arguments at most 64 times, and past that a re-entry answers yes, as a repeated pair does. The bound can let a mismatch past, never report one that is not there.
+
 5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
 
 ---

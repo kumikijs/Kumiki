@@ -416,37 +416,69 @@ export function assignable(
   declared: TypeExpr | null,
   env: TypeEnv,
 ): boolean {
-  return relate(actual, declared, env, new Set());
+  return relate(actual, declared, env, {
+    pairs: new Set(),
+    unfolded: new Set(),
+    budget: { reentries: REENTRY_LIMIT },
+  });
 }
 
 /**
- * Comparisons already in progress, keyed by the pair being compared as written.
+ * How far one comparison has got.
  *
- * `unaliasType`'s own guard covers one normalisation and nothing more: the
- * moment `relate` descends into a field or a payload it starts a fresh one, so
- * `type Node = {value: Int, next: Node}` recurses until the stack gives out.
- * A comment tree, a file tree and a nested todo are all this shape.
+ * `pairs` are the comparisons in progress on the way down, keyed by the pair
+ * being compared as written. `unaliasType`'s own guard covers one
+ * normalisation and nothing more: the moment `relate` descends into a field or
+ * a payload it starts a fresh one, so `type Node = {value: Int, next: Node}`
+ * recurses until the stack gives out. A comment tree, a file tree and a nested
+ * todo are all this shape.
  *
  * Re-entering a pair means the answer depends on itself, and the only
  * terminating answer that keeps the relation one-sided is "yes" — refusing
  * would reject every recursive type. That is the standard co-inductive reading
  * of structural equality on regular trees, and it is sound here because the
  * finite part of the comparison has already been checked on the way down.
+ *
+ * The key is the types *as written*, not the unaliased forms: a regular
+ * recursive type is finite as written (the cycle is a `TypeRef` back to its
+ * own name, or an application of its generic to its own parameters), so its
+ * key set is finite. Keying on the expansion would not be. A generic whose
+ * recursive occurrence wraps its argument — `type G(T) = Leaf(T) |
+ * Node(G(List(T)))` — is not finite as written either: every unfolding writes a
+ * new pair, `G(List(Int))`, then `G(List(List(Int)))`. So two applications of
+ * one generic are compared argument by argument (`argumentUses`), which never
+ * unfolds, and `unfolded` with `budget` ends the rest.
+ *
+ * `unfolded` names, by their heads, the pairs unfolded on the way down with
+ * an application of a generic on either side — the one kind of type whose
+ * unfolding is a type not written anywhere. Meeting one again is a re-entry
+ * with different arguments — the same arguments would have been a pair
+ * already in progress — and once the comparison has made `REENTRY_LIMIT` of
+ * them, a re-entry answers yes as a repeated pair does. That is what ends two
+ * different generics that both grow, `G` against
+ * `type H(T) = Leaf(T) | Node(H(List(T)))`. The budget is one count for the
+ * whole comparison rather than one per path, so a pair that grows two ways at
+ * each level stops as soon as one that grows one way.
  */
+type Path = {
+  readonly pairs: ReadonlySet<string>;
+  readonly unfolded: ReadonlySet<string>;
+  readonly budget: { reentries: number };
+};
+
+/** How many re-entries of a pair of definitions one comparison makes before it assumes the rest. */
+const REENTRY_LIMIT = 64;
+
 function relate(
   actual: TypeExpr | null,
   declared: TypeExpr | null,
   env: TypeEnv,
-  seen: ReadonlySet<string>,
+  path: Path,
 ): boolean {
   if (actual !== null && declared !== null) {
-    // Keyed on the types *as written*, not on the unaliased forms: a recursive
-    // type is finite as written (the cycle is a `TypeRef` back to its own
-    // name), so the key set is finite and this terminates. Keying on the
-    // expansion would not.
     const key = `${typeToString(actual)} ⇒ ${typeToString(declared)}`;
-    if (seen.has(key)) return true;
-    seen = new Set([...seen, key]);
+    if (path.pairs.has(key)) return true;
+    path = { ...path, pairs: new Set([...path.pairs, key]) };
   }
   // Asked before the wrappers come off, because taking them off is exactly what
   // loses the answer.
@@ -464,6 +496,21 @@ function relate(
   if (required !== undefined) {
     const declaredAs = nominalChain(actual, env);
     if (declaredAs.length > 0 && !declaredAs.includes(required)) return false;
+  }
+  // Two applications of one generic: their arguments, never their bodies.
+  if (actual?.kind === "TypeApp" && declared?.kind === "TypeApp") {
+    const uses = sharedGeneric(actual, declared, env);
+    if (uses) {
+      const [as, ds] = [actual.args, declared.args];
+      return uses.every((use, i) => relateArgument(use, as[i] ?? null, ds[i] ?? null, env, path));
+    }
+  }
+  // Any other application of a generic is unfolded, and may be a new pair at
+  // every level.
+  if (isGenericApplication(actual, env) || isGenericApplication(declared, env)) {
+    const heads = `${headName(actual)} ⇒ ${headName(declared)}`;
+    if (!path.unfolded.has(heads)) path = { ...path, unfolded: new Set([...path.unfolded, heads]) };
+    else if (--path.budget.reentries < 0) return true;
   }
   const a = unaliasType(actual, env);
   const d = unaliasType(declared, env);
@@ -484,7 +531,7 @@ function relate(
       // business; comparing the pairs we have keeps this from piling on.
       return d.args.every((darg, i) => {
         const aarg = a.args[i];
-        return aarg === undefined || relate(aarg, darg, env, seen);
+        return aarg === undefined || relate(aarg, darg, env, path);
       });
     }
 
@@ -493,7 +540,7 @@ function relate(
       for (const f of d.fields) {
         const got = recordFieldType(a, f.name);
         if (got === null) return false;
-        if (!relate(got, f.type, env, seen)) return false;
+        if (!relate(got, f.type, env, path)) return false;
       }
       return a.fields.every((f) => recordFieldType(d, f.name) !== null);
     }
@@ -503,13 +550,222 @@ function relate(
       return a.variants.every((av) => {
         const dv = d.variants.find((v) => v.name === av.name);
         if (!dv || dv.payloads.length !== av.payloads.length) return false;
-        return av.payloads.every((p, i) => relate(p, dv.payloads[i] ?? null, env, seen));
+        return av.payloads.every((p, i) => relate(p, dv.payloads[i] ?? null, env, path));
       });
     }
 
     default:
       return true;
   }
+}
+
+/**
+ * What comparing two applications of one generic reads of an argument: what
+ * unfolding the definition on both sides and comparing the bodies would.
+ *
+ * - `unread` — nothing. The parameter is not named, or is named only where the
+ *   comparison never looks: as the argument of a generic that ignores it, or
+ *   handed back to its own position in the recursion (`type S(T) = Leaf |
+ *   Node(S(T))`, where re-entering `S(A) ⇒ S(B)` answers yes before `A` ever
+ *   meets `B`).
+ * - `normal` — its normal form. Under a `nominal` the argument's own nominal
+ *   is not what is checked — a `nominal` generic's is (`type Tagged(T) =
+ *   nominal T`), and an inline `nominal T` declares none — and normalising
+ *   strips it, so `Tagged(Yen)` meets `Tagged(Cents)`.
+ * - `written` — the argument as written, nominal identity included: a field, a
+ *   payload, a container's element, or the parameter of a generic that hands
+ *   it straight back with no `nominal` on the way (`type Same(T) = T`).
+ *
+ * A parameter named in several places is read the strictest way any of them
+ * reads it, since `written` checks everything `normal` does. So in
+ * `type W(T) = Leaf | Node(Tagged(T), W(List(T)))` the argument is `written`:
+ * the next level holds it in a `List`, and a `List` compares its element as
+ * written.
+ */
+type ArgumentUse = "unread" | "normal" | "written";
+
+const STRICTNESS: Readonly<Record<ArgumentUse, number>> = { unread: 0, normal: 1, written: 2 };
+
+const stricter = (a: ArgumentUse, b: ArgumentUse): ArgumentUse =>
+  STRICTNESS[a] >= STRICTNESS[b] ? a : b;
+
+function relateArgument(
+  use: ArgumentUse,
+  actual: TypeExpr | null,
+  declared: TypeExpr | null,
+  env: TypeEnv,
+  path: Path,
+): boolean {
+  switch (use) {
+    case "unread":
+      return true;
+    case "normal":
+      return relate(unaliasType(actual, env), unaliasType(declared, env), env, path);
+    case "written":
+      return relate(actual, declared, env, path);
+  }
+}
+
+/** Each generic's `ArgumentUse`s, one per parameter, per table as `forwardedByTable` is. */
+const argumentUsesByTable = new WeakMap<
+  TypeEnv["types"],
+  ReadonlyMap<string, readonly ArgumentUse[]>
+>();
+
+/**
+ * How `actual` and `declared` read their arguments, when both apply one
+ * generic to an argument for each of its parameters; `null` otherwise. A
+ * generic applied to the wrong number of arguments is E0210's to report, and is
+ * unfolded like any other application.
+ */
+function sharedGeneric(
+  actual: TypeExpr & { kind: "TypeApp" },
+  declared: TypeExpr & { kind: "TypeApp" },
+  env: TypeEnv,
+): readonly ArgumentUse[] | null {
+  if (actual.name !== declared.name || !isGenericApplication(actual, env)) return null;
+  let table = argumentUsesByTable.get(env.types);
+  if (!table) {
+    table = argumentUses(env);
+    argumentUsesByTable.set(env.types, table);
+  }
+  const uses = table.get(actual.name);
+  if (!uses || actual.args.length !== uses.length || declared.args.length !== uses.length) {
+    return null;
+  }
+  return uses;
+}
+
+/** An application of a generic definition — the one kind of type that unfolds into a new one. */
+function isGenericApplication(t: TypeExpr | null, env: TypeEnv): boolean {
+  return t?.kind === "TypeApp" && (env.types.get(t.name)?.params.length ?? 0) > 0;
+}
+
+/** What `unfolded` calls a type: its definition's name, or its kind when it names none. */
+function headName(t: TypeExpr | null): string {
+  if (t === null) return "";
+  return t.kind === "TypeRef" || t.kind === "TypeApp" ? t.name : t.kind;
+}
+
+/**
+ * Every generic's `ArgumentUse`s, as the least answer that agrees with itself.
+ *
+ * A generic that applies itself, or applies one that applies it, reads its
+ * arguments through its own answer. So every answer starts at `unread` and is
+ * raised until none changes, and starting low is what keeps a parameter that
+ * is only handed back into the recursion `unread` — the answer the co-inductive
+ * guard gives when the bodies are unfolded. A change re-reads only the
+ * generics that apply the one that changed, and an answer only ever rises, so
+ * the work is bounded by the table rather than by how its definitions chain.
+ */
+function argumentUses(env: TypeEnv): ReadonlyMap<string, readonly ArgumentUse[]> {
+  const { stop, through } = forwardedIn(env);
+  const generics = [...env.types.values()].filter((d) => d.params.length > 0);
+  const uses = new Map<string, readonly ArgumentUse[]>(
+    generics.map((d) => [d.name, d.params.map((): ArgumentUse => "unread")]),
+  );
+  const strictest = (reads: ArgumentUse[]): ArgumentUse => reads.reduce(stricter, "unread");
+
+  // How the parameter `p`, written at `t`, is read when `t` is read as `as`.
+  const readOf = (t: TypeExpr, p: string, as: ArgumentUse): ArgumentUse => {
+    switch (t.kind) {
+      case "TypeRef":
+        return t.name === p ? as : "unread";
+      case "TypePrim":
+        return "unread";
+      case "TypeRecord":
+        return strictest(t.fields.map((f) => readOf(f.type, p, "written")));
+      case "TypeUnion":
+        return strictest(t.variants.flatMap((v) => v.payloads.map((x) => readOf(x, p, "written"))));
+      // An inline `nominal` declares no name, so no nominal check reads it:
+      // what is compared is the type under it, normalised.
+      case "TypeNominal":
+        return readOf(t.inner, p, "normal");
+      case "TypeRefinement":
+        return readOf(t.inner, p, as);
+      case "TypeApp": {
+        const def = env.types.get(t.name);
+        // A constructor (`List`, `Option`, …) compares each argument as written.
+        if (!def) return strictest(t.args.map((a) => readOf(a, p, "written")));
+        const own = uses.get(def.name);
+        // Arguments to a definition with no parameters are E0210's, and its
+        // body is what is compared.
+        if (!own) return "unread";
+        // Normalising an application that hands an argument back is
+        // normalising that argument.
+        const handed = as === "normal" ? through(def) : null;
+        if (handed !== null) {
+          const arg = t.args[handed];
+          return arg ? readOf(arg, p, "normal") : "unread";
+        }
+        return strictest(
+          t.args.map((a, i) => {
+            const use = own[i] ?? "unread";
+            return use === "unread" ? "unread" : readOf(a, p, use);
+          }),
+        );
+      }
+    }
+  };
+
+  // Comparing two applications checks the nominal identity first, and that
+  // check reads the argument's own declaration through a generic that hands it
+  // straight back with no `nominal` on the way — so that argument is
+  // `written`. Every other application is compared on its normal form.
+  const classify = (d: TypeDef): readonly ArgumentUse[] => {
+    const handed = stop(d);
+    if (handed !== null) return d.params.map((_, i) => (i === handed ? "written" : "unread"));
+    return d.params.map((p) => readOf(d.body, p, "normal"));
+  };
+
+  // Which generics apply each one, so a change re-reads only those.
+  const readers = new Map<string, TypeDef[]>();
+  for (const d of generics) {
+    for (const name of appliedNames(d.body)) {
+      if (!uses.has(name)) continue;
+      const list = readers.get(name);
+      if (list) list.push(d);
+      else readers.set(name, [d]);
+    }
+  }
+  const pending = [...generics];
+  const queued = new Set(generics.map((d) => d.name));
+  for (let d = pending.pop(); d !== undefined; d = pending.pop()) {
+    queued.delete(d.name);
+    const next = classify(d);
+    const prev = uses.get(d.name);
+    if (prev && next.every((u, i) => u === prev[i])) continue;
+    uses.set(d.name, next);
+    for (const r of readers.get(d.name) ?? []) {
+      if (queued.has(r.name)) continue;
+      queued.add(r.name);
+      pending.push(r);
+    }
+  }
+  return uses;
+}
+
+/** The names applied anywhere in `t`, at any depth. */
+function appliedNames(t: TypeExpr, out: Set<string> = new Set()): Set<string> {
+  switch (t.kind) {
+    case "TypeApp":
+      out.add(t.name);
+      for (const a of t.args) appliedNames(a, out);
+      break;
+    case "TypeRecord":
+      for (const f of t.fields) appliedNames(f.type, out);
+      break;
+    case "TypeUnion":
+      for (const v of t.variants) for (const x of v.payloads) appliedNames(x, out);
+      break;
+    case "TypeNominal":
+    case "TypeRefinement":
+      appliedNames(t.inner, out);
+      break;
+    default:
+      break;
+  }
+  return out;
 }
 
 /**

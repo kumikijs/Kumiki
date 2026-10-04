@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "label": "the slot starts at the level that holds an Int",
+      "expect": { "noErrors": true, "domIncludes": ["flat 7"] }
+    },
+    {
+      "label": "a value two levels down passes through fn same and is written into the slot",
+      "do": { "click": "#pick" },
+      "expect": { "noErrors": true, "domIncludes": ["two levels down, 2 lists"] }
+    }
+  ]
+}
