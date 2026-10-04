@@ -811,16 +811,39 @@ describe("failure reporting", () => {
 
   it("refs and view give the same answer for a name that is not defined", async () => {
     await withClient(async (client) => {
-      for (const name of ["kumiki_refs", "kumiki_view"]) {
+      const calls = [
+        { name: "kumiki_refs", arguments: {} },
+        { name: "kumiki_view", arguments: {} },
+        { name: "kumiki_view", arguments: { withDeps: true } },
+      ];
+      for (const call of calls) {
+        const label = `${call.name} ${JSON.stringify(call.arguments)}`;
         const res = await client.callTool({
-          name,
-          arguments: { path: FIX_COUNTER_TESTS, name: "slot.nope" },
+          name: call.name,
+          arguments: { path: FIX_COUNTER_TESTS, name: "slot.nope", ...call.arguments },
         });
-        expect(res.isError, name).toBe(true);
+        expect(res.isError, label).toBe(true);
         const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
         const parsed = JSON.parse(body) as { error: { message: string } };
-        expect(parsed.error.message, name).toBe('Definition "slot.nope" not found');
+        expect(parsed.error.message, label).toBe('Definition "slot.nope" not found');
       }
+    });
+  });
+
+  it("view with withDeps returns a defined name after its dependencies", async () => {
+    await withClient(async (client) => {
+      const res = await client.callTool({
+        name: "kumiki_view",
+        arguments: { path: FIX_COUNTER_TESTS, name: "reducer.inc", withDeps: true },
+      });
+      expect(res.isError).not.toBe(true);
+      expect((res.content as TextContent[]).map((c) => c.text).join("\n")).toBe(
+        [
+          "slot count : Int = 0",
+          'tile IncBtn = button(text="+1", onClick=inc)',
+          "reducer inc on=ui.click(IncBtn) do= count := count + 1",
+        ].join("\n\n"),
+      );
     });
   });
 });

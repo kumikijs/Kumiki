@@ -109,9 +109,7 @@ export function viewDef(store: Store, qname: string): string | null {
 /**
  * The definition at `qname` preceded by everything it depends on, directly or
  * not: each once, a dependency before what reads it. `null` when `qname` names
- * no definition, the answer `viewDef` gives, so a caller asks one question of
- * either. Without the check the walk below still starts from the undefined
- * name, finds nothing to print, and returns an empty string.
+ * no definition, as `viewDef`.
  */
 export function viewWithDeps(store: Store, qname: string): string | null {
   if (!store.byQName.has(qname)) return null;
