@@ -1,14 +1,16 @@
 // The names a test body writes (testing.md §8.1.1) are references like any
-// other: `refs` lists the test, and `rename` rewrites the name where the test
-// wrote it (ai-edit.md §9.2). An `expect.effects` entry is the effect, at its
-// callee; a fn called in a `given` value is the fn; and a `<slots.X>` wildcard
-// is the slot, at `X`.
+// other, so `kumiki refs` lists the test, and `kumiki rename` rewrites a name
+// the test wrote as an identifier: a call, an `expect.effects` entry, a
+// `<slots.X>`. A name written as a record key has no position of its own, and
+// `rename` refuses it (ai-edit.md §9.2).
 //
-// Each case renames one of the three in the example and asks what the example
-// promises: the test was a referrer, the new name now stands where the test
-// wrote the old one, and the file still checks with a test that still passes.
+// Each case renames one of the three identifiers in the example and asks what
+// the example promises: the test was a referrer, the new name now stands where
+// the test wrote the old one, and the file still checks with a test that still
+// passes. The last gives the test a `mocks` key for an effect it also names as
+// an identifier, and asks that the rename is refused rather than half done.
 
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,4 +57,27 @@ describe("a name a test body writes", () => {
       expect((await testFile(path)).map((r) => `${r.name}:${r.pass}`)).toEqual([`${TEST}:true`]);
     });
   }
+
+  it("effect.persist, also a `mocks` key: rename refuses it and leaves the file as it was", () => {
+    // With the mock, the test writes `persist` twice: as an `expect.effects`
+    // entry, which has a position, and as a `mocks` key, which has none.
+    // Rewriting the one without the other would leave a mock for an effect
+    // that no longer exists.
+    const source = readFileSync(path, "utf8").replace(
+      "target: AddForm}}",
+      'target: AddForm}, mocks: {persist: err("disk full")}}',
+    );
+    writeFileSync(path, source);
+    expect(testDef(source)).toContain('mocks: {persist: err("disk full")}');
+    const errors = check(parse(lex(source))).filter((e) => e.severity !== "warning");
+    expect(errors.map((e) => `${e.code} ${e.message}`)).toEqual([]);
+    expect(findReferences(load(path), "effect.persist").map((r) => r.qname)).toContain(
+      `test.${TEST}`,
+    );
+
+    expect(() => renameDef(path, "effect.persist", "save")).toThrow(
+      `Cannot rename effect.persist: it is named in a position with no rewritable identifier (test.${TEST}).`,
+    );
+    expect(readFileSync(path, "utf8")).toBe(source);
+  });
 });

@@ -85,6 +85,7 @@ import {
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import {
   bareNameAt,
+  eventParts,
   fitsRecordPosition,
   type GivenSection,
   givenSection,
@@ -93,10 +94,12 @@ import {
   nearestSection,
   notARecordMessage,
   type RecordPosition,
+  recordFieldsOf,
   type SectionName,
   sectionNames,
   type TestKind,
   type TestPart,
+  testSections,
 } from "./test-sections.ts";
 // One handler-name set for the whole compiler. A local copy here had drifted
 // from the lifted set — it was missing `onKeyDown` and `onMouseEnter`, so
@@ -6188,9 +6191,9 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
  * wrong wherever it is written — a wildcard in a `given` is E0109 in any
  * section, and survives fixing the section name.
  *
- * `kind` is passed rather than read off `t` so the returned names are the ones
- * that kind actually has: the caller's `switch` is then exhaustive over the
- * table rather than over `string`.
+ * The reading itself is `testSections`, which the reference walk shares, so a
+ * section this answers is one `kumiki refs` reads, and a key this reports is
+ * one it reads nothing under.
  */
 function sectionsOf<K extends TestKind, P extends TestPart>(
   t: TestDef,
@@ -6198,20 +6201,14 @@ function sectionsOf<K extends TestKind, P extends TestPart>(
   part: P,
   errors: KumikiError[],
 ): { section: SectionName<K, P>; value: Expr }[] {
-  const out: { section: SectionName<K, P>; value: Expr }[] = [];
-  for (const f of recordFieldsOf(part === "given" ? t.given : t.expect)) {
-    if (isSectionName(kind, part, f.name)) {
-      out.push({ section: f.name, value: f.value });
-      continue;
-    }
+  return testSections(t, kind, part, (f) => {
     errors.push({
       code: "E0714",
       kind: "test-section-unknown",
       message: unknownSectionMessage(kind, part, f.name),
       pos: f.pos,
     });
-  }
-  return out;
+  });
 }
 
 /**
@@ -6263,12 +6260,6 @@ function requireRecord(
   return false;
 }
 
-/** The fields of `e` when it is a record literal, and none when it is not. */
-function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: Expr; pos: Pos }[] {
-  if (e === undefined || isTileExpr(e) || e.kind !== "RecordLit") return [];
-  return e.fields;
-}
-
 /**
  * `{<slot>: <expr>}` — the shape of a `given.slots` / `expect.slots` /
  * `slots-equal`, once `requireRecord` has said it fits and the caller has
@@ -6299,45 +6290,26 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
 }
 
 /**
- * `{type: <event>, target: <tile>, ...}` — the event a test drives with.
+ * `{type: <event>, target: <tile>, ...}` — the event a test drives with, read
+ * as `eventParts` reads it: the tile a `ui.*` event is aimed at, and the
+ * payload.
  *
  * The lowering reads neither `type` nor `target`: `eventPayloadJs` filters both
  * out, and the reducer the runner applies comes from the test's own target. So
  * the `target` rule below is about what the test *says* rather than what it
- * does — and it only says a tile when the trigger is a `ui.*` one. A reducer
- * driven by a timer names the timer, and one driven by an effect outcome or a
- * lifecycle event has no name to give at all.
+ * does — and it only says a tile when the trigger is a `ui.*` one.
  */
 function checkTestEvent(event: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  const uiEvent = isUiEventType(recordFieldsOf(event).find((f) => f.name === "type")?.value);
-  for (const f of recordFieldsOf(event)) {
-    // `type` names an event, whose vocabulary is the trigger grammar's, not an
-    // expression's.
-    if (f.name === "type") continue;
-    if (f.name === "target") {
-      const target = f.value;
-      const name =
-        target.kind === "Variant" ? target.name : target.kind === "Ref" ? target.name : undefined;
-      if (uiEvent && name !== undefined && !BUILTIN_TILES.has(name) && !sym.tiles.has(name)) {
-        errors.push({
-          code: "E0105",
-          kind: "undef-tile",
-          message: `Reference to undefined tile "${name}"`,
-          pos: target.pos,
-        });
-      }
-      continue;
-    }
-    checkExpr(f.value, sym, errors, ctx);
+  const { tile, payload } = eventParts(event);
+  if (tile && !BUILTIN_TILES.has(tile.name) && !sym.tiles.has(tile.name)) {
+    errors.push({
+      code: "E0105",
+      kind: "undef-tile",
+      message: `Reference to undefined tile "${tile.name}"`,
+      pos: tile.pos,
+    });
   }
-}
-
-/** Whether `given.event.type` names a `ui.*` trigger — the ones aimed at a tile. */
-function isUiEventType(type: Expr | undefined): boolean {
-  if (type === undefined) return false;
-  // `ui.click` parses as a field read on the name `ui`.
-  if (type.kind === "FieldAccess") return type.base.kind === "Ref" && type.base.name === "ui";
-  return false;
+  for (const f of payload) checkExpr(f.value, sym, errors, ctx);
 }
 
 /** `[persist(x), other]` — the effects a reducer-test expects to have been emitted. */

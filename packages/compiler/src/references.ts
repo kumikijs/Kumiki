@@ -32,8 +32,8 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
-import { isSectionName } from "./test-sections.ts";
+import { assertNever, isTileExpr } from "./ast.ts";
+import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -162,11 +162,13 @@ class Walker {
     private readonly out: Reference[],
     /**
      * Whether a `<slots.X>` wildcard is an edge to slot `X`. In a test body it
-     * is: there it stands for the slot's post-execution value (testing
-     * §8.2.2). Outside one it is E0109 and lowers to a sentinel that reads
-     * nothing, so an edge would be a read that does not happen — and
-     * `typecheck` reports a slot initializer's slot edges as reads (E0304),
-     * which would name the one mistake twice.
+     * is: in a reducer-test `expect` it stands for the slot's post-execution
+     * value (testing §8.2.2), and anywhere else in the body it is E0109 but
+     * still spells that slot, so a rename keeps the two in step. Outside a test
+     * body it is E0109 and lowers to a sentinel that reads nothing, so an edge
+     * would be a read that does not happen — and `typecheck` reports a slot
+     * initializer's slot edges as reads (E0304), which would name the one
+     * mistake twice.
      */
     private readonly wildcardsNameSlots: boolean,
   ) {}
@@ -507,131 +509,134 @@ class Walker {
 
   /**
    * A `test` names the reducer or tile it drives, and its `given` / `expect`
-   * blocks name slots, effects, tiles and fns. The checker resolves each of
-   * those positions as what testing §8.1.1 says it is, and this walk reads them
-   * the same way: a name it missed is one `refs` does not list and `rename`
-   * leaves behind, to be rejected on the diagnostic the old name then raises.
+   * name slots, effects, tiles and fns. This walk reads them as the checker
+   * does (testing §8.1.1): section by section, through the one reading of a
+   * test body's top level (`testSections`) and of its event (`eventParts`),
+   * with the `for-all` names bound throughout. A section name is read as one
+   * only at the top of a `given` or `expect`, and only for a kind that has
+   * that section; one level down it is a slot, or a field of a slot's value,
+   * like any other key. A key that names no section of the kind (E0714), and a
+   * section value of the wrong shape (E0713), are not read at all: nothing
+   * evaluates them, and a name written there is no reference. A name this walk
+   * missed would be one `refs` does not list and `rename` leaves behind, to be
+   * rejected on the diagnostic the old name then raises.
+   *
+   * A name a test writes as a record key — a slot in `{slots: {count: 0}}`, an
+   * effect in `{mocks: {persist: …}}` — is reported as an edge (which `refs`
+   * and `remove --cascade` need) without a position, since the key has no
+   * identifier of its own, so `rename` refuses that name rather than rewriting
+   * the rest of the program around it.
    */
   test(t: TestDef): void {
     if (t.testKind === "reducer-test") this.add("reducer", t.target ?? "", t.targetPos);
     if (t.testKind === "tile-test") this.add("tile", t.target ?? "", t.targetPos);
-    this.testRecord(t.given);
-    if (t.expect) {
-      if (isTileExpr(t.expect)) this.tileExpr(t.expect, new Set());
-      else this.testRecord(t.expect, isSectionName(t.testKind, "expect", "effects"));
-    }
     for (const v of t.forAll ?? []) this.typeExpr(v.type);
     const generated = new Set((t.forAll ?? []).map((v: { name: string }) => v.name));
+    for (const { section, value } of testSections(t, t.testKind, "given")) {
+      switch (section) {
+        case "slots":
+          this.slotValues(value, generated);
+          break;
+        case "event": {
+          const { tile, payload } = eventParts(value);
+          if (tile) this.add("tile", tile.name, tile.pos);
+          for (const f of payload) this.expr(f.value, generated);
+          break;
+        }
+        case "mocks":
+          this.mocks(value, generated);
+          break;
+        case "in":
+          this.expr(value, generated);
+          break;
+        default:
+          assertNever(section);
+      }
+    }
+    // A tile-test's `expect` is a tile expression, with no sections.
+    if (t.expect && isTileExpr(t.expect)) this.tileExpr(t.expect, new Set());
+    for (const { section, value } of testSections(t, t.testKind, "expect")) {
+      switch (section) {
+        case "slots":
+        case "slots-equal":
+          this.slotValues(value, generated);
+          break;
+        case "effects":
+          this.expectedEffects(value, generated);
+          break;
+        case "panic":
+        case "no-panics":
+        case "no-errors":
+          this.expr(value, generated);
+          break;
+        default:
+          assertNever(section);
+      }
+    }
     if (t.invariant) this.expr(t.invariant, generated);
-    if (t.mocks) this.mocks(t.mocks);
+    if (t.mocks) this.mocks(t.mocks, generated);
   }
 
   /**
-   * A test's `given` / `expect` / `mocks` records are keyed BY definition name —
-   * `{slots: {count: 0}}`, `{mocks: {persist: …}}`, `{event: {target: Btn}}` —
-   * which is the opposite of an ordinary record literal, where the keys are
-   * field names and only the values are expressions. Keys are reported as
-   * edges (which `refs` and `remove --cascade` need) without a position, so
-   * `rename` refuses a name a test writes as a key rather than rewriting the
-   * rest of the program around it.
-   *
-   * The values under those keys are expressions, and resolve as the expression
-   * layer resolves them: `{draft: shout("x")}` calls the fn `shout`.
-   *
-   * `listsEffects` is set for the top of an `expect` whose kind has an
-   * `effects` section, the one place a list holds effect names; a slot that
-   * happens to be called `effects` holds a value like any other.
+   * `{<slot>: <value>}` — a `given.slots`, an `expect.slots`, or an
+   * episode-test's `expect.slots-equal`. A key names a slot, without a
+   * position; a value is an expression, so `{draft: shout("x")}` calls the fn
+   * `shout`. `slots-equal`'s bare `from-log` is no record, and has neither.
    */
-  private testRecord(e: Expr | undefined, listsEffects = false): void {
-    if (!e) return;
-    if (e.kind === "RecordLit") {
-      for (const f of e.fields) {
-        if (listsEffects && f.name === "effects") {
-          this.expectedEffects(f.value);
-          continue;
-        }
-        if (f.name === "mocks") {
-          this.mocks(f.value);
-          continue;
-        }
-        if (f.name === "slots" && f.value.kind === "RecordLit") {
-          for (const slot of f.value.fields) this.addUnpositioned("slot", slot.name);
-        }
-        if (f.name === "target") {
-          // A tile name is capitalised, so it parses as a `Variant`, not a `Ref`.
-          if (f.value.kind === "Variant") this.add("tile", f.value.name, f.value.pos);
-          else if (f.value.kind === "Ref") this.add("tile", f.value.name, f.value.pos);
-        }
-        this.testRecord(f.value);
-      }
-      return;
+  private slotValues(rec: Expr, locals: ReadonlySet<string>): void {
+    for (const f of recordFieldsOf(rec)) {
+      this.addUnpositioned("slot", f.name);
+      this.expr(f.value, locals);
     }
-    if (e.kind === "ListLit" || e.kind === "TupleLit") {
-      for (const i of e.items) this.testRecord(i);
-      return;
-    }
-    this.expr(e, new Set());
   }
 
   /**
    * `[persist(x), toast]` — the effects a reducer-test expects. An entry names
    * an effect whether it is a call or a bare name, and is never the fn of the
    * same name; a call's arguments are the values it was emitted with. Each
-   * name is reported at its own identifier.
-   * A value that is not a list is a diagnostic, and is walked as the
-   * expression it is.
+   * name is reported at its own identifier. Any other entry matches no effect,
+   * and names nothing.
    */
-  private expectedEffects(list: Expr): void {
-    if (list.kind !== "ListLit") {
-      this.expr(list, new Set());
-      return;
-    }
+  private expectedEffects(list: Expr, locals: ReadonlySet<string>): void {
+    if (list.kind !== "ListLit") return;
     for (const entry of list.items) {
       if (entry.kind === "Call") {
         this.add("effect", entry.callee, entry.pos);
-        for (const a of entry.args) this.expr(a, new Set());
+        for (const a of entry.args) this.expr(a, locals);
       } else if (entry.kind === "Ref") {
         this.add("effect", entry.name, entry.pos);
-      } else {
-        this.expr(entry, new Set());
       }
     }
   }
 
   /**
    * `{<effect>: <script>}` — a reducer-test's `given.mocks`, or an
-   * episode-test's `mocks`. A key names an effect (without a position, as
-   * `testRecord` explains). A value is a script rather than a call: `ok(v)`,
-   * `err(e)`, `delay(ms, ok(v))`, or an episode's `from-log` / `ignore`. Those
-   * names are the mock's own vocabulary, so a `fn ok` in scope is not what
-   * `ok(v)` calls; only the payload and the delay are expressions, which is how
-   * `checkTestMockValues` reads them. A `mocks` that is not a record is a
-   * diagnostic, and is walked as the expression it is.
+   * episode-test's `mocks`. A key names an effect, without a position. A value
+   * is a script rather than a call: `ok(v)`, `err(e)`, `delay(ms, ok(v))`,
+   * `from-log` or `ignore`. Those names are the mock's own vocabulary, so a
+   * `fn ok` in scope is not what `ok(v)` calls; only the payload and the delay
+   * are expressions. The walk accepts a superset of the checker's forms: it
+   * reads every one of them in either kind, where the checker takes `delay`
+   * only in a reducer-test and `from-log` / `ignore` only in an episode-test (a
+   * form of the other kind is E0712 / E0713 there). A value that is none of
+   * them is not read.
    */
-  private mocks(rec: Expr): void {
-    if (rec.kind !== "RecordLit") {
-      this.expr(rec, new Set());
-      return;
-    }
-    for (const m of rec.fields) {
+  private mocks(rec: Expr, locals: ReadonlySet<string>): void {
+    for (const m of recordFieldsOf(rec)) {
       this.addUnpositioned("effect", m.name);
-      this.mockScript(m.value);
+      this.mockScript(m.value, locals);
     }
   }
 
-  private mockScript(v: Expr): void {
-    if (v.kind === "Ref" && (v.name === "from-log" || v.name === "ignore")) return;
-    if (v.kind === "Call" && (v.callee === "ok" || v.callee === "err")) {
-      for (const a of v.args) this.expr(a, new Set());
-      return;
-    }
-    if (v.kind === "Call" && v.callee === "delay") {
+  private mockScript(v: Expr, locals: ReadonlySet<string>): void {
+    if (v.kind !== "Call") return;
+    if (v.callee === "ok" || v.callee === "err") {
+      for (const a of v.args) this.expr(a, locals);
+    } else if (v.callee === "delay") {
       const [ms, outcome] = v.args;
-      this.expr(ms, new Set());
-      if (outcome) this.mockScript(outcome);
-      return;
+      this.expr(ms, locals);
+      if (outcome) this.mockScript(outcome, locals);
     }
-    this.expr(v, new Set());
   }
 
   /**

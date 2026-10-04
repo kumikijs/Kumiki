@@ -1,5 +1,5 @@
 import { levenshtein } from "@kumikijs/runtime/text-distance";
-import { type Expr, isTileExpr, type TestDef, type TileExpr } from "./ast.ts";
+import { type Expr, isTileExpr, type Pos, type TestDef, type TileExpr } from "./ast.ts";
 
 /**
  * The section vocabulary of a test body, per test kind (spec §8.1.1).
@@ -187,6 +187,83 @@ export function isSectionName<K extends TestKind, P extends TestPart>(
 ): written is SectionName<K, P> {
   const names: readonly string[] = TEST_SECTIONS[kind][part];
   return names.includes(written);
+}
+
+/** One `name: value` field of a record literal, at the position of its name. */
+export type RecordField = (Expr & { kind: "RecordLit" })["fields"][number];
+
+/** The fields of `e` when it is a record literal, and none when it is not. */
+export function recordFieldsOf(e: Expr | TileExpr | undefined): RecordField[] {
+  if (e === undefined || isTileExpr(e) || e.kind !== "RecordLit") return [];
+  return e.fields;
+}
+
+/**
+ * The sections of a test's `given` / `expect`, each under the name the lowering
+ * reads it by, in the order they are written. This is the one reading of a
+ * test body's top level: the checker resolves the names in each section it
+ * answers, and so does the reference walk (`references.ts`).
+ *
+ * Only the top level of the part holds sections, and only the ones `kind` has:
+ * one level down, `mocks` is a slot, or a field of a slot's value, like any
+ * other key. A key at the top that names none of `kind`'s sections is handed
+ * to `unknown` rather than answered — nothing reads it, which the checker
+ * reports as E0714 — and a part that is not a record literal has no sections
+ * at all.
+ *
+ * `kind` is passed rather than read off `t` so the answered names are the ones
+ * that kind actually has: a caller's `switch` over them is then exhaustive over
+ * the table rather than over `string`.
+ */
+export function testSections<K extends TestKind, P extends TestPart>(
+  t: TestDef,
+  kind: K,
+  part: P,
+  unknown?: (field: RecordField) => void,
+): { section: SectionName<K, P>; value: Expr }[] {
+  const out: { section: SectionName<K, P>; value: Expr }[] = [];
+  for (const f of recordFieldsOf(part === "given" ? t.given : t.expect)) {
+    if (isSectionName(kind, part, f.name)) out.push({ section: f.name, value: f.value });
+    else unknown?.(f);
+  }
+  return out;
+}
+
+/**
+ * How a `given.event` — `{type: <event>, target: <tile>, ...}` — is read: the
+ * checker resolves these parts, and the reference walk reads the same ones.
+ *
+ * `type` names an event, whose vocabulary is the trigger grammar's rather than
+ * an expression's, so it is neither of the two answers. `target` is the tile a
+ * `ui.*` event is aimed at, and the only tile the event names: a reducer driven
+ * by a timer names the timer, and one driven by an effect outcome or a
+ * lifecycle event has no name to give, so on any other event `target` is
+ * answered as neither. A `target` that is not a name names no tile either.
+ * Every other field is an expression, the event's payload.
+ */
+export function eventParts(event: Expr): {
+  tile: { name: string; pos: Pos } | undefined;
+  payload: RecordField[];
+} {
+  const fields = recordFieldsOf(event);
+  const aimed = isUiEventType(fields.find((f) => f.name === "type")?.value);
+  const target = aimed ? fields.find((f) => f.name === "target")?.value : undefined;
+  return {
+    // A capitalised tile name parses as a `Variant`, a lowercase one as a `Ref`.
+    tile:
+      target?.kind === "Variant" || target?.kind === "Ref"
+        ? { name: target.name, pos: target.pos }
+        : undefined,
+    payload: fields.filter((f) => f.name !== "type" && f.name !== "target"),
+  };
+}
+
+/** Whether `given.event.type` names a `ui.*` trigger — the ones aimed at a tile. */
+function isUiEventType(type: Expr | undefined): boolean {
+  if (type === undefined) return false;
+  // `ui.click` parses as a field read on the name `ui`.
+  if (type.kind === "FieldAccess") return type.base.kind === "Ref" && type.base.name === "ui";
+  return false;
 }
 
 /**

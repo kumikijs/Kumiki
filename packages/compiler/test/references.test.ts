@@ -288,6 +288,20 @@ ${decls}test t =
       expect(named("shout", slotNamedEffects)).toEqual(["fn.shout@13:37"]);
     });
 
+    it("reads an `effects` key as a list of effects only in a kind whose expect has it", () => {
+      // An episode-test's expect has no `effects` section, so the key is E0714
+      // and nothing in it is read: not `persist` as the effect, not as the fn,
+      // and not the slot in its argument. Its `slots-equal` is read.
+      const episode = `${decls}test t =
+    episode-test
+        load   = "log.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {items: []}, effects: [persist(items)]}
+`;
+      expect(refsOf(episode, "test.t")).toEqual(["slot.items@-"]);
+      expect(check(parse(lex(episode))).map((e) => e.code)).toContain("E0714");
+    });
+
     // `delay` / `ok` / `err` / `ignore` are the mock's own vocabulary, even
     // with a fn or a slot of that name in scope; only the delay and the
     // payloads are expressions.
@@ -324,6 +338,122 @@ tile B = button(text="b", onClick=inc)
         expect = {no-errors: true}
 `;
         expect(mockRefs(src)).toEqual(["effect.persist@-", "fn.twice@14:32", "effect.load@-"]);
+      });
+    });
+
+    // A section name is a section only where the test's kind has it, at the
+    // top of the `given` or `expect` it belongs to: one level down it is a
+    // slot, or a field of a slot's value, like any other key.
+    describe("section by section", () => {
+      it("reads a slot named `mocks` as a slot, and the call in its value as a fn", () => {
+        const src = `effect save cap=storage.write in=Int out=Result(Int, Text)
+slot mocks : {save: Int} = {save: 0}
+fn ok(x: Int) -> Int = x
+reducer r on=ui.click(B) do= mocks := {save: mocks.save + 1}
+tile B = button(text="b", onClick=r)
+test t =
+    reducer-test r
+        given  = {slots: {mocks: {save: ok(1)}}, event: {type: ui.click, target: B}}
+        expect = {slots: {mocks: {save: 2}}, effects: []}
+`;
+        expect(refsOf(src, "test.t")).toEqual([
+          "reducer.r@7:18",
+          "slot.mocks@-",
+          "fn.ok@8:41",
+          "tile.B@8:82",
+          "slot.mocks@-",
+        ]);
+      });
+
+      it("reads nothing under a key that names no section of the test's kind", () => {
+        // `mocks` is a section of a reducer-test's given only. In its expect,
+        // and in a property-test's given, it is E0714, and neither its key nor
+        // its value is read.
+        const decls = `effect save cap=storage.write in=Int out=Result(Int, Text)
+slot n : Int = 0
+fn twice(x: Int) -> Int = x * 2
+reducer r on=ui.click(B) do= n := n + 1
+tile B = button(text="b", onClick=r)
+`;
+        const inExpect = `${decls}test t =
+    reducer-test r
+        given  = {event: {type: ui.click, target: B}}
+        expect = {slots: {n: 1}, mocks: {save: ok(twice(1))}}
+`;
+        expect(refsOf(inExpect, "test.t")).toEqual(["reducer.r@7:18", "tile.B@8:51", "slot.n@-"]);
+        const inPropertyGiven = `${decls}test t =
+    property-test
+        for-all   = {k: Int}
+        given     = {slots: {n: k}, mocks: {save: ok(twice(1))}}
+        invariant = run-reducer(r).slots.n == k + 1
+`;
+        expect(refsOf(inPropertyGiven, "test.t")).toEqual(["slot.n@-", "reducer.r@10:33"]);
+        for (const src of [inExpect, inPropertyGiven]) {
+          expect(check(parse(lex(src))).map((e) => e.code)).toContain("E0714");
+        }
+      });
+
+      it("reads an episode-test's `slots-equal` keys as slots", () => {
+        const src = `slot seen : Text = ""
+fn root() -> Text = "/"
+test replay =
+    episode-test
+        load   = "log.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {seen: root()}, no-panics: true}
+`;
+        expect(refsOf(src, "test.replay")).toEqual(["slot.seen@-", "fn.root@7:39"]);
+      });
+
+      it("binds the `for-all` names in the given, as it does in the invariant", () => {
+        // `size` is a fn and `total` a slot, and in this test both are the
+        // generated values: neither is a reference where the test reads it.
+        const src = `slot total : Int = 0
+fn size(x: Int) -> Int = x
+reducer r on=ui.click(B) do= total := total + 1
+tile B = button(text="b", onClick=r)
+test p =
+    property-test
+        for-all   = {size: Int where between(0, 5), total: Int}
+        given     = {slots: {total: size + total}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(r).slots.total == size + total + 1
+`;
+        expect(refsOf(src, "test.p")).toEqual(["slot.total@-", "tile.B@8:84", "reducer.r@9:33"]);
+      });
+
+      it("reads an event's `type` as no name, and its `target` as a tile only for a ui event", () => {
+        // `ui` is a slot, and `ui.click` still names the event. A timer's
+        // event is aimed at no tile, whatever its `target` says.
+        const src = `slot ui : Int = 0
+reducer r on=ui.click(B) do= ui := ui + 1
+reducer tick on=timer(1s) do= ui := ui + 1
+tile B = button(text="b", onClick=r)
+test t =
+    reducer-test r
+        given  = {event: {type: ui.click, target: B}}
+        expect = {slots: {ui: 1}}
+test timed =
+    reducer-test tick
+        given  = {event: {type: timer, target: B}}
+        expect = {slots: {ui: 1}}
+`;
+        expect(refsOf(src, "test.t")).toEqual(["reducer.r@6:18", "tile.B@7:51", "slot.ui@-"]);
+        expect(refsOf(src, "test.timed")).toEqual(["reducer.tick@10:18", "slot.ui@-"]);
+      });
+
+      it("reads a `target` field inside a slot's value as the value it is", () => {
+        // `Home` is a variant of `Screen` here, and a tile as well.
+        const src = `type Screen = Home | Settings
+slot nav : {target: Screen} = {target: Settings}
+tile Home = text("home")
+reducer go on=ui.click(B) do= nav := {target: Home}
+tile B = button(text="b", onClick=go)
+test t =
+    reducer-test go
+        given  = {event: {type: ui.click, target: B}}
+        expect = {slots: {nav: {target: Home}}}
+`;
+        expect(refsOf(src, "test.t")).toEqual(["reducer.go@7:18", "tile.B@8:51", "slot.nav@-"]);
       });
     });
   });
