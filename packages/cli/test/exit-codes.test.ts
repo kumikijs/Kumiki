@@ -186,15 +186,11 @@ app Demo
     expect(after.code).toBe(0);
   });
 
-  it("reports the parser's message when a patch breaks the file", SPAWN, () => {
-    // The `}` inside the route string is what makes this reachable: the
-    // missing-404 patch finds the end of the routes map by scanning for the
-    // first `}`, so here it splices its entry into the middle of a string
-    // literal and the result no longer parses. Nothing is written.
-    //
-    // A broken patch sets `regressionBlocked` too, so asking about the
-    // rollback first told the reader the patch "would have introduced new
-    // errors" and never that it had made the file unparseable.
+  it("exits 0 when the missing-404 patch repairs a routes map with a `}` in a route", SPAWN, () => {
+    // The patch used to end the routes map at the first `}`, so here it spliced
+    // its entry into the middle of the string literal, the result no longer
+    // parsed, and `fix` exited 1 with the parser's message. It finds the map's
+    // own closing brace from the tokens now.
     const src = `slot count : Int = 0
 tile App = column(heading("Count: " + count.show))
 app Demo
@@ -202,12 +198,11 @@ app Demo
     routes = {"/a}b" -> App}
     init   = []
 `;
-    const file = write("fix-breaks.kumiki", src);
+    const file = write("fix-brace-in-route.kumiki", src);
     const { stdout, code } = runCli(["fix", file, "--apply"]);
-    expect(stdout).toContain("fixes broke the file:");
-    expect(stdout).not.toContain("rolled back");
-    expect(readFileSync(file, "utf8")).toBe(src);
-    expect(code).toBe(1);
+    expect(stdout).toContain("file now clean");
+    expect(readFileSync(file, "utf8")).toContain('routes = {"/a}b" -> App, "/404" -> NotFound}');
+    expect(code).toBe(0);
   });
 
   it("holds --auto-patch to the same rule as the diagnostic path", SPAWN, () => {

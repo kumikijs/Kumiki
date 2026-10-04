@@ -3,11 +3,12 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lockDef } from "@kumikijs/cli";
+import { gateComposed, lockDef } from "@kumikijs/cli";
+import { check, lex, parse } from "@kumikijs/compiler";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createServer } from "../src/index.ts";
+import { createServer, serialiseFixFromTest } from "../src/index.ts";
 
 // Re-materialize the `node:fs` namespace as a plain object so per-test
 // `vi.spyOn(fs, ...)` works — see the same pattern in packages/cli/test/ai-edit.test.ts.
@@ -330,6 +331,52 @@ describe("kumiki_auto_patch", () => {
       expect(parsed.compileFixes).toBeUndefined();
     });
     expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("serialises a refusal over unparseable source as compile-blocked, with the parser's message", () => {
+    // No repair rule writes unparseable source, so no file reaches this
+    // refusal. The outcome is built from the gate's verdict on hand-written
+    // broken text instead: a composed routes map that lost its closing brace.
+    const source = [
+      'tile App = column(heading("hi"))',
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App}',
+      "    init   = []",
+      "",
+    ].join("\n");
+    const errors = check(parse(lex(source))).filter((e) => e.severity !== "warning");
+    const broken = source.replace('{"/" -> App}', '{"/" -> App, "/404" -> NotFound');
+    let message = "";
+    try {
+      parse(lex(broken));
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toMatch(/^Parse error at /);
+    const verdict = gateComposed(errors, broken);
+    if (verdict.blocked === undefined) throw new Error("the gate passed text that does not parse");
+    const wire = serialiseFixFromTest({
+      ok: false,
+      status: "compile-blocked",
+      compileErrors: errors,
+      blocked: verdict.blocked,
+      warnings: [],
+    });
+    expect(wire).toEqual({
+      ok: false,
+      status: "compile-blocked",
+      compileErrors: [
+        {
+          code: "E0001",
+          kind: "missing-404",
+          message: 'app.routes must include a "/404" entry',
+          line: 2,
+          col: 1,
+        },
+      ],
+      blocked: { reason: "parse-error", message },
+    });
   });
 
   it("dry-run reports 'proposed' (or already-pass) without writing", {
