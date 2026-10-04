@@ -241,11 +241,16 @@ describe("patch revert of a cascade", () => {
 
   it("reads a prior body from a restore's `with` list", () => {
     // `tile.Show` predates the log, so the only op that ever recorded its body
-    // is the restore, in `with`. Reverting a later replace must find it there.
+    // is the restore, in `with`. Reverting a later replace that records no
+    // replaced body of its own, as one logged before `prev` was, must find it
+    // there.
     const file = seed("slot a : Int = 0\nslot b : Int = 1\ntile Show = text(b.show)\n");
     const { opId } = removeDef(file, "slot.b", true);
     patchRevert(file, opId);
-    const replaceId = replaceDef(file, "tile.Show", 'text("replaced")');
+    const replaceId = replaceDef(file, "tile.Show", 'text("replaced")').opId;
+    rewriteLogEntry(file, replaceId, (e) => {
+      delete e.prev;
+    });
 
     patchRevert(file, replaceId);
 
