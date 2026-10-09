@@ -61,7 +61,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 |---|---|---|
 | `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
-| `E0103` | yes | Close-name suggestion against known slot / binding names. |
+| `E0103` | yes | Close-name suggestion against known slot / binding names. No patch for a name read after the `if` branch, `for` body or match arm that declared it (the diagnostic's `endedScope` is set): the read is out of scope, not misspelled, and a renamed read type-checks and reads a different value. Whether to move the declaration or the read is user intent. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
 | `E0105` | yes | Close-name suggestion against known tile names. |
 | `E0107` | yes | Close-name suggestion against declared motion names. |
@@ -256,6 +256,12 @@ That holds anywhere inside the fragment, a `$2` in another method's argument inc
 > `"$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
 
 A `let` is declared for the scope it is written in ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), and each branch of an `if`, a `for` body and each match arm is a scope of its own. So a name one `if` branch declares is undefined in the other branch and on every statement after the `if`, just as one a `for` body or match arm declares is undefined after it. To choose the value by the condition, declare it once before the `if` with an `if` expression — `let n = if c then "a" else "b"` — or move the read into the branch.
+
+When the name was declared in such a body earlier in the same reducer — a `let` in it, a `for` bind, a match-arm pattern — the message names the body, and the diagnostic's `endedScope` field says which kind it is: `if`, `for` or `match`.
+
+> `Reference to undefined name "idx" — it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body (see docs/spec/language.md §1.6.7)`
+
+The body is named however close another name in scope is: the read is out of scope, not misspelled, so `kumiki fix` proposes no rename for it. A read of `idx` after `for idx in xs` renamed to a slot `id` would type-check and read the slot.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
 

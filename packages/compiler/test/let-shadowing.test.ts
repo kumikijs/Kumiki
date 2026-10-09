@@ -369,6 +369,118 @@ describe("the checker scopes each `if` branch as codegen does", () => {
   });
 });
 
+describe("an E0103 for a name a nested body declared names the body", () => {
+  // A read after the `if` branch, `for` body or match arm that declared the
+  // name is E0103 like a misspelling, but renaming it to a close name is not
+  // the repair: the renamed read type-checks and reads another value. So the
+  // diagnostic says which body it was, in `endedScope` for a reader such as
+  // `kumiki fix`, and in the message for the author.
+  const undefinedNames = (source: string) =>
+    check(parse(lex(source)))
+      .filter((e) => e.code === "E0103")
+      .map((e) => ({ endedScope: e.endedScope, message: e.message }));
+  const HINTS: Record<string, string> = {
+    if: 'it is scoped to an "if" branch, which ends with it: declare it before the "if", or move the read into the branch',
+    for: 'it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body',
+    match:
+      'it is scoped to a match arm, which ends with it: declare it before the "match", or move the read into the arm',
+  };
+  const hinted = (name: string, scope: string) => ({
+    endedScope: scope,
+    message: `Reference to undefined name "${name}" — ${HINTS[scope]} (see docs/spec/language.md §1.6.7)`,
+  });
+
+  it("names the `for` body for a loop variable read after the loop", () => {
+    const src = program("app.start", "for idx in [1] { () }\n        total := idx");
+    expect(undefinedNames(src)).toEqual([hinted("idx", "for")]);
+  });
+
+  it("names the `for` body for a `let` it declared", () => {
+    const src = program("app.start", "for x in [1] { let n = x }\n        total := n");
+    expect(undefinedNames(src)).toEqual([hinted("n", "for")]);
+  });
+
+  it("names the `if` branch for a `let` read after the `if`", () => {
+    const src = program("app.start", "if flag then { let n = 1 } else { () }\n        total := n");
+    expect(undefinedNames(src)).toEqual([hinted("n", "if")]);
+  });
+
+  it("names the `if` branch for a `let` the `else` branch declared", () => {
+    const src = program("app.start", "if flag then { () } else { let n = 1 }\n        total := n");
+    expect(undefinedNames(src)).toEqual([hinted("n", "if")]);
+  });
+
+  it("names the `if` branch for a read in the other branch", () => {
+    const src = program("app.start", "if flag then { let n = 1 } else { total := n }");
+    expect(undefinedNames(src)).toEqual([hinted("n", "if")]);
+  });
+
+  it("names the match arm for a pattern variable read after the match", () => {
+    const src = program(
+      "app.start",
+      "match Some(1) with\n          | Some(v) -> { () }\n          | None    -> { () }\n        total := v",
+    );
+    expect(undefinedNames(src)).toEqual([hinted("v", "match")]);
+  });
+
+  it("names the match arm for a `let` a catch-all arm declared", () => {
+    const src = program(
+      "app.start",
+      "match Some(1) with\n          | Some(v) -> { () }\n          | _       -> { let n = 2 }\n        total := n",
+    );
+    expect(undefinedNames(src)).toEqual([hinted("n", "match")]);
+  });
+
+  it("names the innermost body when the one that declared it is nested", () => {
+    const src = program(
+      "app.start",
+      "for x in [1] {\n          if flag then { let n = x } else { () }\n        }\n        total := n",
+    );
+    expect(undefinedNames(src)).toEqual([hinted("n", "if")]);
+  });
+
+  it("names a body nested in a branch for a read later in that branch", () => {
+    const src = program(
+      "app.start",
+      "if flag then {\n          for i in [1] { () }\n          total := i\n        } else { () }",
+    );
+    expect(undefinedNames(src)).toEqual([hinted("i", "for")]);
+  });
+
+  it("keeps the hint when a name in scope is one edit away", () => {
+    // `seed` is one edit from the slot `seen`, which is the case the
+    // arithmetic hint stands down for. This one does not: the checker knows
+    // the name was declared and has ended, so a rename is wrong regardless.
+    const src = program("app.start", 'for seed in ["a"] { () }\n        seen := seed');
+    expect(undefinedNames(src)).toEqual([hinted("seed", "for")]);
+  });
+
+  it("keeps the message of a misspelling no body declared", () => {
+    const src = program("app.start", "for x in [1] { () }\n        total := totl");
+    expect(undefinedNames(src)).toEqual([
+      { endedScope: undefined, message: 'Reference to undefined name "totl"' },
+    ]);
+  });
+
+  it("does not carry a body's names into another reducer", () => {
+    const src = program("app.start", "for idx in [1] { () }").replace(
+      "tile Page",
+      "reducer other on=app.stop do= total := idx\n\ntile Page",
+    );
+    expect(undefinedNames(src)).toEqual([
+      { endedScope: undefined, message: 'Reference to undefined name "idx"' },
+    ]);
+  });
+
+  it("reads the slot a branch's `let` shadowed once the branch ends", () => {
+    const src = program(
+      "app.start",
+      "if flag then { let total = 5\n                       seen := total.show } else { () }\n        total := total + 1",
+    );
+    expect(codes(src)).toEqual([]);
+  });
+});
+
 describe("a branch's `let` leaves the type of the name after the `if` alone", () => {
   // A scope carries the names it binds and the types it gives them, and both
   // end with the branch. The outer `n` is an Int and the branch's is Text, so a

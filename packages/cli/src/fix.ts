@@ -389,7 +389,8 @@ function append404Route(text: string): string | null {
  * Diagnostic codes whose message shape is `... "<name>" ...` and whose repair
  * is "replace the misspelled name with a close top-level definition name".
  * `planFixes` extracts the quoted name and consults `suggestName` (which pulls
- * from `listDefs(store)`) for every code in this set.
+ * from `listDefs(store)`) for every code in this set — except an E0103 with
+ * `endedScope` set, which is a read out of scope rather than a misspelling.
  *
  * Handled with a *scoped* candidate set in their own branch below (not in this
  * set, because top-level defs would produce wrong suggestions):
@@ -451,6 +452,15 @@ export function planFixesExplained(
     const beforePatches = patches.length;
     const beforeSkipped = skipped.length;
     if (NAME_SUGGEST_CODES.has(err.code)) {
+      // A name read after the `if` branch, `for` body or match arm that
+      // declared it is out of scope, not misspelled. A close name is the one
+      // repair that cannot be right: the renamed read type-checks, the gate
+      // counts it as resolved, and the program reads a different value. Moving
+      // the declaration or the read is the author's call.
+      if (err.endedScope !== undefined) {
+        skip(err.code, "e0103-read-after-scope-ended", err.message);
+        continue;
+      }
       // Most diagnostics quote a single name; E0211 quotes the reducer name
       // *and then* the tile name — the tile is what needs suggesting, so pick
       // the last quoted name for that code specifically.

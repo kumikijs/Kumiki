@@ -140,7 +140,20 @@ export type KumikiError = {
    *   positional argument, which is the one rendered — `label(text="A", "B")`.
    */
   unrendered?: "positional" | "text-prop" | "text-shadowed";
+  /**
+   * E0103 only: the nested statement body that declared the name and ended
+   * before this read (language.md §1.6.7) — so the read is out of scope, not
+   * misspelled, and a reader (`kumiki fix`) tells the two apart without
+   * matching the message. Set exactly when the message carries the scope hint.
+   */
+  endedScope?: StatementScope;
 };
+
+/**
+ * The nested statement bodies of a reducer, each a scope of its own: an `if`
+ * branch, a `for` body, a match arm (language.md §1.6.7).
+ */
+type StatementScope = "if" | "for" | "match";
 
 /**
  * The accessibility band, which `--strict-a11y` turns on. Exported so a caller
@@ -1065,6 +1078,16 @@ type Ctx = {
    * same reason.
    */
   undeclaredInputReads?: Pos[];
+  /**
+   * The names a reducer's nested statement bodies took with them when they
+   * ended, each with the kind of body that declared it — written by
+   * `checkBody`, read by the undefined-name report, which says the read is out
+   * of scope rather than only that the name is undefined. Only names the
+   * enclosing scope did not bind: a body's shadow hands the outer name back,
+   * and a read of that resolves. Set by `checkReducer`, so each reducer starts
+   * with none; nested reads reach it the way they reach `routeReadsSeen`.
+   */
+  endedScopes?: Map<string, StatementScope>;
   /**
    * Set inside the fragment of a list method handed one value per call
    * (`fragmentShape` answered `"value"`): that method's name, and whether the
@@ -2163,6 +2186,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
+    endedScopes: new Map(),
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
@@ -2337,13 +2361,13 @@ function checkStmt(
   if (s.kind === "ForStmt") {
     checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
-    const inner = innerScope(ctx);
-    bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
     // A loop body executes multiple times; track writes inside its own scope
     // so the same slot can be assigned once per iteration. After the loop,
     // propagate the write set up to the parent (the slot WAS written).
     const bodyWrites = new Set<string>(writtenRoots);
-    for (const st of s.body) checkStmt(st, sym, errors, inner, bodyWrites);
+    checkBody("for", s.body, sym, errors, ctx, bodyWrites, (inner) =>
+      bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx)),
+    );
     for (const r of bodyWrites) writtenRoots.add(r);
     return;
   }
@@ -2356,11 +2380,9 @@ function checkStmt(
     // set. A slot written in only one branch (or both) counts as "written" for
     // the parent, so subsequent code can't re-write it.
     const thenWrites = new Set<string>(writtenRoots);
-    const thenScope = innerScope(ctx);
-    for (const st of s.consequent) checkStmt(st, sym, errors, thenScope, thenWrites);
+    checkBody("if", s.consequent, sym, errors, ctx, thenWrites);
     const elseWrites = new Set<string>(writtenRoots);
-    const elseScope = innerScope(ctx);
-    for (const st of s.alternate) checkStmt(st, sym, errors, elseScope, elseWrites);
+    checkBody("if", s.alternate, sym, errors, ctx, elseWrites);
     for (const r of thenWrites) writtenRoots.add(r);
     for (const r of elseWrites) writtenRoots.add(r);
     return;
@@ -2371,11 +2393,11 @@ function checkStmt(
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
-      const inner = innerScope(ctx);
       checkPatternBindsAreDistinct(arm.pattern, errors);
-      checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
       const armWrites = new Set<string>(writtenRoots);
-      for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
+      checkBody("match", arm.body, sym, errors, ctx, armWrites, (inner) =>
+        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner),
+      );
       armSets.push(armWrites);
     }
     for (const set of armSets) for (const r of set) writtenRoots.add(r);
@@ -2460,6 +2482,31 @@ function checkStmt(
   checkLvalue(s.lvalue, sym, errors, ctx);
   checkExpr(s.rhs, sym, errors, ctx);
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
+}
+
+/**
+ * Check one nested statement body — an `if` branch, a `for` body or a match
+ * arm, as `kind` says — in a scope of its own, and end that scope (language.md
+ * §1.6.7). `bind` puts the body's own binds into the scope first: the loop
+ * variable, the arm's pattern. The names the body declared that `ctx` does not
+ * bind go out of scope with it, and are recorded in `endedScopes` under
+ * `kind`, so a read of one later in the reducer says why it is undefined.
+ */
+function checkBody(
+  kind: StatementScope,
+  body: Statement[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  writtenRoots: Set<string>,
+  bind?: (inner: Ctx) => void,
+): void {
+  const inner = innerScope(ctx);
+  bind?.(inner);
+  for (const st of body) checkStmt(st, sym, errors, inner, writtenRoots);
+  for (const name of inner.localBinds) {
+    if (!ctx.localBinds.has(name)) ctx.endedScopes?.set(name, kind);
+  }
 }
 
 function lvalueShape(lv: Lvalue): string {
@@ -2911,6 +2958,29 @@ function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string {
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
+/** How the hint below names each nested statement body, and the inside of it. */
+const ENDED_SCOPE_WORDS: Record<StatementScope, { body: string; inside: string }> = {
+  if: { body: 'an "if" branch', inside: "branch" },
+  for: { body: 'a "for" body', inside: "body" },
+  match: { body: "a match arm", inside: "arm" },
+};
+
+/**
+ * The sentence to add when an unresolved name was declared in a nested
+ * statement body that has ended (`endedScopes`). The read is out of scope, not
+ * misspelled, so the repair moves the declaration or the read; renaming it to
+ * a close name would make it read a different value, and `kumiki fix` offers
+ * no rename for a diagnostic carrying this (its `endedScope`).
+ *
+ * Not withheld when a name in scope is one edit away, as `arithmeticHint` is:
+ * a hyphen only looks like subtraction, but that this name was declared and
+ * has ended is known.
+ */
+function endedScopeHint(scope: StatementScope): string {
+  const { body, inside } = ENDED_SCOPE_WORDS[scope];
+  return ` — it is scoped to ${body}, which ends with it: declare it before the "${scope}", or move the read into the ${inside} (see docs/spec/language.md §1.6.7)`;
+}
+
 /**
  * Is some name in scope within one edit of `name`? Deliberately cheaper than
  * `kumiki fix`'s suggester, which ranks candidates — here the only question is
@@ -3062,6 +3132,17 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
             : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
           pos: e.pos,
+        });
+        return;
+      }
+      const endedScope = ctx.endedScopes?.get(e.name);
+      if (endedScope !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(endedScope)}`,
+          pos: e.pos,
+          endedScope,
         });
         return;
       }

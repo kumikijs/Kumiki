@@ -28,12 +28,20 @@ import {
   renameDef,
   replaceDef,
   runFixFromTest,
+  type Store,
   unlockDef,
   viewDef,
   viewHash,
   viewHistory,
 } from "@kumikijs/cli";
-import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
+import {
+  check,
+  collectTimerNames,
+  type KumikiError,
+  lex,
+  parse,
+  variantTagsOf,
+} from "@kumikijs/compiler";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Re-materialize the `node:fs` namespace as a plain object so per-test
@@ -430,6 +438,78 @@ app A
     expect(patched).toContain("seen := route.path");
     expect(check(parse(lex(patched)))).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  describe("a read after the body that declared it (E0103)", () => {
+    // `idx` is one edit from the slot `id`, so a rename type-checks and the
+    // file comes out clean — reading `id` where the author wrote `idx`. The
+    // read is out of scope rather than misspelled, so nothing is proposed.
+    const scoped = (body: string): string => `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+slot flag  : Bool = true
+reducer tally on=ui.click(Btn)
+    do= ${body}
+tile Btn = button(text="go")
+tile App = column(Btn, text(total.show))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const FORMS = {
+      "a `for` body": "for idx in [1] { () }\n        total := idx",
+      "an `if` branch": "if flag then { let idx = 1 } else { () }\n        total := idx",
+      "a match arm":
+        "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+    };
+    function plan(source: string) {
+      const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-scope-"));
+      const file = join(dir, "scope.kumiki");
+      writeFileSync(file, source);
+      const store = load(file);
+      rmSync(dir, { recursive: true, force: true });
+      return { store, errors: check(store.program) };
+    }
+
+    for (const [form, body] of Object.entries(FORMS)) {
+      it(`proposes no rename for a name ${form} declared`, () => {
+        const { store, errors } = plan(scoped(body));
+        const { patches, skipped } = planFixesExplained(store, errors);
+        expect(patches).toEqual([]);
+        expect(skipped.map((s) => [s.code, s.reason])).toEqual([
+          ["E0103", "e0103-read-after-scope-ended"],
+        ]);
+      });
+    }
+
+    // Beside the read out of scope, a misspelling the rename does repair.
+    const withMisspelling = scoped(`${FORMS["a `for` body"]}\n        count := cont`);
+    const outcome = (store: Store, errors: KumikiError[]) => {
+      const { patches, skipped } = planFixesExplained(store, errors);
+      return { patches: patches.map((p) => p.description), skipped: skipped.map((s) => s.reason) };
+    };
+    const ONE_OF_EACH = {
+      patches: ['replace "cont" with "count" at 8:18'],
+      skipped: ["e0103-read-after-scope-ended"],
+    };
+
+    it("still renames a misspelling beside it", () => {
+      const { store, errors } = plan(withMisspelling);
+      expect(outcome(store, errors)).toEqual(ONE_OF_EACH);
+    });
+
+    it("tells the two apart by the diagnostic's field, not its message", () => {
+      // The rename reads the name out of the message, so the reworded messages
+      // keep it; what they drop is the hint.
+      const { store, errors } = plan(withMisspelling);
+      const reworded = errors.map((e) => ({ ...e, message: e.message.replace(/ — .*/, "") }));
+      expect(reworded.map((e) => e.message)).toEqual([
+        'Reference to undefined name "idx"',
+        'Reference to undefined name "cont"',
+      ]);
+      expect(outcome(store, reworded)).toEqual(ONE_OF_EACH);
+    });
   });
 
   it("lands both repairs when one line holds two, and the first shifts the second", () => {
