@@ -10,7 +10,7 @@ export type GenCtx = {
   reducers: ReducerDef[];
   effects: EffectDef[];
   types: Map<string, TypeDef>;
-  /** Built-in tile kinds the generated code emits (filled during generation, #71). */
+  /** Built-in tile kinds the generated code emits (filled during generation). */
   usedTiles: Set<string>;
   usedIcons: Set<string>;
   refinements: NestedRefinements;

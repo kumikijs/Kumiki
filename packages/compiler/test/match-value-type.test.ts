@@ -1,17 +1,8 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
-const errsOf = (src: string) => check(parse(lex(src)));
-const app = (defs: string): string =>
-  `${defs}
-tile B = button(text="x")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-
-const diagnostics = (src: string) => errsOf(app(src)).map((e) => `${e.code} ${e.message}`);
+const diagnostics = (src: string) => summariesOf(withButtonApp(src));
 
 const IDS = `type PostId = nominal Text where uuid
 type UserId = nominal Text where uuid
@@ -32,7 +23,7 @@ describe("a match assigned to a declared destination", () => {
 
   it("reports at each arm that does not fit, not at the match", () => {
     const line = `reducer r on=ui.click(B) do= p := match ou with | Some(id) -> id | None -> u`;
-    const errs = errsOf(app(`${IDS}\n${line}`));
+    const errs = checkSource(withButtonApp(`${IDS}\n${line}`));
     // Columns are 1-based: each report sits on the arm's value, after its `-> `.
     const someArm = line.indexOf("-> id") + 4;
     const noneArm = line.indexOf("-> u") + 4;
@@ -86,7 +77,7 @@ slot f  : Float          = 0.0`;
 
   it("reads an arm's bind over an outer name of the same spelling", () => {
     const line = `reducer r on=ui.click(B) do= let id = p; p := match ou with | Some(id) -> id | None -> id`;
-    const errs = errsOf(app(`${IDS}\n${line}`));
+    const errs = checkSource(withButtonApp(`${IDS}\n${line}`));
     expect(errs.map((e) => [e.code, e.message, e.pos.col])).toEqual([
       ["E0201", "Expected PostId but got UserId", line.indexOf("-> id") + 4],
     ]);
@@ -183,10 +174,10 @@ describe("a name or tuple pattern binds the type as written", () => {
 
   const reportsAt = (body: string, message: string, at: string, offset = 0) => {
     const line = `reducer r on=ui.click(B) do= ${body}`;
-    const src = app(`${TUPLE}\nslot b : Bool = false\n${line}`);
+    const src = withButtonApp(`${TUPLE}\nslot b : Bool = false\n${line}`);
     const lineNo = src.split("\n").indexOf(line) + 1;
     // Columns are 1-based.
-    expect(errsOf(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
+    expect(checkSource(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
       ["E0201", message, lineNo, line.indexOf(at) + offset + 1],
     ]);
   };

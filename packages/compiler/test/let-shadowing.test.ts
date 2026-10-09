@@ -1,23 +1,9 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { jsBinding } from "../src/codegen/context.ts";
 import { RESERVED_BIND_NAMES } from "../src/reserved-binds.ts";
-
-const RUNTIME = { runtimeSpecifier: "@kumikijs/runtime", exportApp: true } as const;
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
-
-type ReducerShape = {
-  name: string;
-  apply: (
-    live: Record<string, unknown>,
-    payload: Record<string, unknown>,
-  ) => { slots: Record<string, unknown> };
-};
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { LOADABLE, loadReducer } from "./helpers/module.ts";
 
 function program(on: string, body: string): string {
   const usesEffect = on.startsWith("ping.");
@@ -51,17 +37,7 @@ async function apply(
   source: string,
   payload: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
-  const result = compile(source, RUNTIME);
-  if (result.kind !== "ok")
-    expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-  const dir = mkdtempSync(join(TMP_ROOT, "let-shadow-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
-  const mod: { createApp: () => { reducers: ReducerShape[] } } = await import(
-    `${pathToFileURL(file).href}?t=${Date.now()}`
-  );
-  const reducer = mod.createApp().reducers.find((r) => r.name === "subject");
-  if (!reducer) expect.fail("the compiled module has no reducer named subject");
+  const reducer = await loadReducer(source, "subject");
   return reducer.apply({ seen: "", after: "" }, payload).slots;
 }
 
@@ -84,7 +60,7 @@ describe("a top-level `let` over a positional binding", () => {
   it("leaves one declaration of each reserved name in the emitted module", LOADS, async () => {
     const result = compile(
       program("app.start", 'let $route = "x"\n        seen := $route'),
-      RUNTIME,
+      LOADABLE,
     );
     if (result.kind !== "ok") expect.fail(result.errors.map((e) => e.code).join("\n"));
     for (const name of RESERVED_BIND_NAMES.keys()) {
@@ -221,12 +197,10 @@ app A
 `;
 }
 
-const codes = (source: string): string[] => check(parse(lex(source))).map((e) => e.code);
-
 describe("a pattern's binds are peers, not a shadowing pair", () => {
   it("reports a name bound twice in one variant pattern", () => {
     expect(
-      codes(
+      codesOf(
         matching(`match p with
           | Both(a, a) -> { note := a }
           | Neither    -> { note := "none" }`),
@@ -236,7 +210,7 @@ describe("a pattern's binds are peers, not a shadowing pair", () => {
 
   it("reports one bound twice across a tuple pattern's items", () => {
     expect(
-      codes(
+      codesOf(
         matching(`match pair with
           | (dup, dup) -> { note := dup }`),
       ),
@@ -245,7 +219,7 @@ describe("a pattern's binds are peers, not a shadowing pair", () => {
 
   it("leaves `_` alone, however many times it is written", () => {
     expect(
-      codes(
+      codesOf(
         matching(`match p with
           | Both(_, _) -> { note := "both" }
           | Neither    -> { note := "none" }`),
@@ -255,7 +229,7 @@ describe("a pattern's binds are peers, not a shadowing pair", () => {
 
   it("leaves a bind that shadows a name outside the pattern alone", () => {
     expect(
-      codes(
+      codesOf(
         matching(`let outer = "x"
         match p with
           | Both(outer, b) -> { note := outer + b }
@@ -266,7 +240,7 @@ describe("a pattern's binds are peers, not a shadowing pair", () => {
 
   it("leaves two arms that bind the same name alone", () => {
     expect(
-      codes(
+      codesOf(
         matching(`match p with
           | Both(a, _) -> { note := a }
           | Neither    -> { note := "none" }`),
@@ -277,7 +251,7 @@ describe("a pattern's binds are peers, not a shadowing pair", () => {
 
 function diagnostics(source: string): { code: string; name: string; at: string }[] {
   const lines = source.split("\n");
-  return check(parse(lex(source))).map((e) => ({
+  return checkSource(source).map((e) => ({
     code: e.code,
     name: /"([^"]+)"/.exec(e.message)?.[1] ?? "",
     at: e.pos ? (lines[e.pos.line - 1]?.slice(e.pos.col - 1) ?? "") : "",
@@ -311,12 +285,12 @@ describe("the checker scopes each `if` branch as codegen does", () => {
       "app.start",
       'if flag then { seen := "a" } else { seen := "b" }\n        seen := "c"',
     );
-    expect(codes(src)).toEqual(["E0601"]);
+    expect(codesOf(src)).toEqual(["E0601"]);
   });
 
   it("still lets each branch write the slot the other one writes", () => {
     const src = program("app.start", 'if flag then { seen := "a" } else { seen := "b" }');
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 
@@ -329,7 +303,7 @@ describe("a branch's `let` leaves the type of the name after the `if` alone", ()
 
   it("accepts the outer Int written to an Int slot after the `if`", LOADS, async () => {
     const src = shadowed("total := n");
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
     expect(await apply(src)).toMatchObject({ seen: "s", total: 5 });
   });
 
@@ -342,6 +316,6 @@ describe("a branch's `let` leaves the type of the name after the `if` alone", ()
       "app.start",
       'if flag then { let $route = "x"\n                       seen := $route }\n                else { () }\n        after := $route',
     );
-    expect(codes(src)).toEqual(["E0119"]);
+    expect(codesOf(src)).toEqual(["E0119"]);
   });
 });

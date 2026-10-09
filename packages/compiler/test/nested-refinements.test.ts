@@ -1,13 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import { type AppShape, type BindSegment, type SlotMeta, slotAccepts } from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
 
 const SRC = `
 type Contact = {email: Text where email, age: Int where between(0, 120)}
@@ -47,12 +42,7 @@ app Nested
 
 /** Compile `src`, import the module, and hand back its slot table. */
 async function load(src: string): Promise<Record<string, SlotMeta>> {
-  const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
-  const dir = mkdtempSync(join(TMP_ROOT, "nested-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
-  const mod: { default: AppShape } = await import(`${pathToFileURL(file).href}?t=${Date.now()}`);
+  const mod = await importModule<{ default: AppShape }>(compileOrFail(src, LOADABLE), "nested");
   return mod.default.slots;
 }
 

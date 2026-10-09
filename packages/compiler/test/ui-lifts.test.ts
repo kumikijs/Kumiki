@@ -4,13 +4,13 @@ import { compile } from "../src/compile.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { buildDefIndex, referencesIn } from "../src/references.ts";
-import { check } from "../src/typecheck.ts";
 import {
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
 } from "../src/ui-lifts.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const ALL_UI_EVENT_KINDS: ReadonlyArray<UiEventKind> = [
   "click",
@@ -98,7 +98,7 @@ tile App = column(T, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-  const codesFor = (tile: string) => check(parse(lex(source(tile)))).map((e) => e.code);
+  const codesFor = (tile: string) => codesOf(source(tile));
 
   const neighbour = (tile: string) => `slot n : Int = 0
 reducer bump on=app.start do= n := 1
@@ -110,7 +110,7 @@ tile App = column(T, Other, Fires, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-  const errorsForNeighbour = (tile: string) => check(parse(lex(neighbour(tile))));
+  const errorsForNeighbour = (tile: string) => checkSource(neighbour(tile));
   const codesForNeighbour = (tile: string) => errorsForNeighbour(tile).map((e) => e.code);
 
   function jsFor(tile: string): string {
@@ -222,7 +222,7 @@ tile T = ${tile}
 tile App = column(T, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    const codes = (tile: string) => check(parse(lex(withTile(tile)))).map((e) => e.code);
+    const codes = (tile: string) => codesOf(withTile(tile));
     const js = (tile: string) => {
       const r = compile(withTile(tile), { runtimeSpecifier: "./runtime.js" });
       if (r.kind !== "ok")
@@ -249,7 +249,7 @@ tile T = box(text("x"), onClick=Bump)
 tile App = column(T, Bump, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual(["W0213"]);
+    expect(codesOf(src)).toEqual(["W0213"]);
     const program = parse(lex(src));
     const def = program.defs.find((d) => d.kind === "TileDef" && d.name === "T");
     if (!def) throw new Error("fixture has no tile T");
@@ -275,7 +275,7 @@ ${tiles}
 tile App = column(${call}, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-  const diags = (tiles: string, call: string) => check(parse(lex(app(tiles, call))));
+  const diags = (tiles: string, call: string) => checkSource(app(tiles, call));
   const codes = (tiles: string, call: string) => diags(tiles, call).map((e) => e.code);
 
   const INERT = 'tile Inner = box(text("clickme"))';

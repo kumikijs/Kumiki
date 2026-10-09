@@ -1,5 +1,6 @@
-import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
+import { codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const COMPLETE = `slot n : Int = 0
 tile App = column(text(n.show))
@@ -17,11 +18,9 @@ app First  caps=[] routes={"/" -> App,    "/404" -> App}   init=[]
 app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
 `;
 
-const checkSrc = (src: string, opts?: Parameters<typeof check>[1]) => check(parse(lex(src)), opts);
-
 describe("E0003 missing-app", () => {
   it("reports a program that declares definitions but no entry point", () => {
-    expect(checkSrc(NO_APP)).toEqual([
+    expect(checkSource(NO_APP)).toEqual([
       {
         code: "E0003",
         kind: "missing-app",
@@ -32,40 +31,40 @@ describe("E0003 missing-app", () => {
   });
 
   it("reports an empty file", () => {
-    expect(checkSrc("").map((e) => e.code)).toEqual(["E0003"]);
+    expect(checkSource("").map((e) => e.code)).toEqual(["E0003"]);
   });
 
   it("reports a file that is only whitespace and comments", () => {
-    expect(checkSrc("\n   \n# nothing here\n\n").map((e) => e.code)).toEqual(["E0003"]);
+    expect(checkSource("\n   \n# nothing here\n\n").map((e) => e.code)).toEqual(["E0003"]);
   });
 
   it("says nothing about a program that has an app", () => {
-    expect(checkSrc(COMPLETE)).toEqual([]);
+    expect(checkSource(COMPLETE)).toEqual([]);
   });
 
   describe("requireApp: false — a program under construction", () => {
     it("suppresses E0003", () => {
-      expect(checkSrc(NO_APP, { requireApp: false })).toEqual([]);
+      expect(checkSource(NO_APP, { requireApp: false })).toEqual([]);
     });
 
     it("leaves every other diagnostic in place", () => {
       const src = `slot n : Int = 0
 tile App = column(text(missing.show))
 `;
-      const codes = checkSrc(src, { requireApp: false }).map((e) => e.code);
+      const codes = checkSource(src, { requireApp: false }).map((e) => e.code);
       expect(codes).toContain("E0103");
       expect(codes).not.toContain("E0003");
     });
 
     it("still reports E0004 — one app too many is not an unfinished program", () => {
-      expect(checkSrc(TWO_APPS, { requireApp: false }).map((e) => e.code)).toEqual(["E0004"]);
+      expect(checkSource(TWO_APPS, { requireApp: false }).map((e) => e.code)).toEqual(["E0004"]);
     });
   });
 });
 
 describe("E0004 duplicate-app", () => {
   it("names each app past the first, at its own definition", () => {
-    expect(checkSrc(TWO_APPS)).toEqual([
+    expect(checkSource(TWO_APPS)).toEqual([
       {
         code: "E0004",
         kind: "duplicate-app",
@@ -78,11 +77,11 @@ describe("E0004 duplicate-app", () => {
   it("reports every extra, not just the second", () => {
     const src = `${TWO_APPS}app Third caps=[] routes={"/y" -> Other, "/404" -> Other} init=[]
 `;
-    expect(checkSrc(src).map((e) => `${e.code}@${e.pos.line}`)).toEqual(["E0004@5", "E0004@6"]);
+    expect(checkSource(src).map((e) => `${e.code}@${e.pos.line}`)).toEqual(["E0004@5", "E0004@6"]);
   });
 
   it("says nothing about a program with exactly one app", () => {
-    expect(checkSrc(COMPLETE)).toEqual([]);
+    expect(checkSource(COMPLETE)).toEqual([]);
   });
 });
 
@@ -105,7 +104,7 @@ describe("check and build agree on what is buildable", () => {
     expect(result.kind).toBe("fail");
     if (result.kind !== "fail") return;
     expect(result.errors.map((e) => e.code)).toEqual(["E0004"]);
-    // What the artifact used to be: `First`'s routes, silently.
+    // Codegen alone still takes the last app's routes.
     const emitted = codegen(parse(lex(TWO_APPS)), { runtimeSpecifier: "./runtime.js" }).js;
     expect(emitted).toContain('"/404"');
     expect(emitted).not.toContain('"/x"');

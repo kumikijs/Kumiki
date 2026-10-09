@@ -1,5 +1,7 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
 const APP = `
 tile App = column(text("hi"))
@@ -9,9 +11,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 /** Diagnostics, or the parse/lex error as a single `THROW <message>` entry. */
 function outcome(src: string, capabilities: string[] = []): string[] {
   try {
-    return check(parse(lex(src)), { capabilities }).map(
-      (e) => `${e.code} ${e.pos.line}:${e.pos.col}`,
-    );
+    return checkSource(src, { capabilities }).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`);
   } catch (e) {
     return [`THROW ${(e as Error).message}`];
   }
@@ -19,10 +19,6 @@ function outcome(src: string, capabilities: string[] = []): string[] {
 
 const clean = (src: string, capabilities: string[] = []) =>
   expect(outcome(src, capabilities)).toEqual([]);
-
-/** The diagnostics themselves, for a test that reads a message or a position. */
-const diags = (src: string) => check(parse(lex(src)));
-const codes = (src: string) => diags(src).map((e) => e.code);
 
 describe("comments and the selector #", () => {
   const trailing: [string, string][] = [
@@ -90,7 +86,7 @@ app A
   });
 
   it("stays quiet when a declared name is one edit away", () => {
-    const err = diags(
+    const err = checkSource(
       `slot page : Int = 1
 slot page-sizes : Int = 2
 fn f() -> Int = page-size${APP}`,
@@ -99,7 +95,7 @@ fn f() -> Int = page-size${APP}`,
   });
 
   it("says what to write when a name that reads as arithmetic resolves to nothing", () => {
-    const errs = check(parse(lex(`fn f(count: Int) -> Int = count-1${APP}`)));
+    const errs = checkSource(`fn f(count: Int) -> Int = count-1${APP}`);
     const err = errs.find((e) => e.code === "E0103");
     expect(err, "no E0103").toBeDefined();
     expect(err?.message).toContain("count-1");
@@ -128,12 +124,10 @@ describe("string escapes", () => {
 
 describe("what a tuple lowers to", () => {
   it("is the array a tuple pattern destructures", () => {
-    const out = compile(`fn pair(a: Int, b: Text) -> Tuple(Int, Text) = (a, b)${APP}`, {
+    const js = compileOrFail(`fn pair(a: Int, b: Text) -> Tuple(Int, Text) = (a, b)${APP}`, {
       runtimeSpecifier: "@kumikijs/runtime",
     });
-    expect(out.kind).toBe("ok");
-    if (out.kind !== "ok") return;
-    expect(out.js).toContain("[a, b]");
+    expect(js).toContain("[a, b]");
   });
 });
 
@@ -164,7 +158,7 @@ motion Fade = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}, duration: 200}
 });
 
 describe("expressions the spec writes but the parser rejected", () => {
-  it("builds a tuple, which §1.8.4's own example matches on", () => {
+  it("builds a tuple", () => {
     clean(
       `type LoadResult = Loading | Loaded(Int)
 fn pick(lr: LoadResult, tag: Option(Text)) -> Bool
@@ -241,12 +235,14 @@ ${APP}`)[0];
 
 describe("a tuple's arity is its type", () => {
   it("reports a literal with too many items", () => {
-    const err = diags(`slot p : Tuple(Int, Int) = (1, 2, 3)${APP}`).find((d) => d.code === "E0201");
+    const err = checkSource(`slot p : Tuple(Int, Int) = (1, 2, 3)${APP}`).find(
+      (d) => d.code === "E0201",
+    );
     expect(err?.message).toContain("tuple of 3 item(s)");
   });
 
   it("reports a literal with too few", () => {
-    const err = diags(`slot p : Tuple(Int, Int, Int) = (1, 2)${APP}`).find(
+    const err = checkSource(`slot p : Tuple(Int, Int, Int) = (1, 2)${APP}`).find(
       (d) => d.code === "E0201",
     );
     expect(err?.message).toContain("tuple of 2 item(s)");
@@ -254,11 +250,11 @@ describe("a tuple's arity is its type", () => {
 
   it("reports one at a call site too, not only at a declaration", () => {
     const src = `fn f(p: Tuple(Int, Text)) -> Int = 1\nslot s : Int = f((1, "a", 2))${APP}`;
-    expect(codes(src)).toContain("E0201");
+    expect(codesOf(src)).toContain("E0201");
   });
 
   it("names the item whose type is wrong, not the whole tuple", () => {
-    const found = diags(`slot p : Tuple(Int, Text) = ("a", 1)${APP}`).filter(
+    const found = checkSource(`slot p : Tuple(Int, Text) = ("a", 1)${APP}`).filter(
       (d) => d.code === "E0201",
     );
     expect(found.map((d) => `${d.pos.col} ${d.message}`)).toEqual([
@@ -325,8 +321,8 @@ app A caps=[] routes={"/" -> App2, "/404" -> App2} init=[]
 `;
 
   it("requires the message to be Text", () => {
-    expect(codes(panicking("42"))).toContain("E0201");
-    expect(codes(panicking("{code: 1}"))).toContain("E0201");
+    expect(codesOf(panicking("42"))).toContain("E0201");
+    expect(codesOf(panicking("{code: 1}"))).toContain("E0201");
   });
 
   it("accepts a Text message", () => {
@@ -370,5 +366,32 @@ app A caps=[] routes={"/" -> App2, "/404" -> App2} init=[]
 `,
       )[0],
     ).toContain("THROW");
+  });
+
+  it("has no literal match pattern", () => {
+    const src = `slot status : Text = "open"
+fn label(s: Text) -> Text = match s with
+  | "open" -> "Open"
+  | "closed" -> "Closed"
+tile App = text(label(status))
+app T caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+    expect(outcome(src)[0]).toContain("THROW");
+  });
+
+  it("takes only key: value pairs in a props block, never a tile", () => {
+    const props = `tile App = link(to="/x") {text("Home")}
+app T caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+    expect(outcome(props)[0]).toContain("THROW");
+    clean(`tile App = link(to="/x", text="Home")
+app T caps=[] routes={"/" -> App, "/404" -> App} init=[]`);
+  });
+
+  it("gives $1 no meaning in a tile with no in=, and says to declare one", () => {
+    const src = `slot items : List(Text) = []
+tile Row = card(text($1))
+tile App = column(for x in items Row())
+app T caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+    const e = checkSource(src).find((x) => x.code === "E0103");
+    expect(e?.message).toContain("in=");
   });
 });

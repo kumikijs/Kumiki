@@ -1,5 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const TAIL = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 const SLOTS = `
@@ -19,7 +19,7 @@ slot c : Cents = 0
 slot o : Order = {qty: 1, note: ""}
 slot k : Text = "number"
 `;
-const diagsOf = (input: string) => check(parse(lex(`${SLOTS}\ntile App = ${input}\n${TAIL}`)));
+const diagsOf = (input: string) => checkSource(`${SLOTS}\ntile App = ${input}\n${TAIL}`);
 const e0226 = (input: string) => diagsOf(input).filter((d) => d.code === "E0226");
 
 describe("an input's field kind has to go with the bound type (E0226)", () => {
@@ -56,21 +56,21 @@ describe("an input's field kind has to go with the bound type (E0226)", () => {
   it("names the field kinds the bound base goes with, at the type= it disagrees with", () => {
     const [d] = e0226(`input(bind=t, type="time")`);
     expect(d?.message).toBe(
-      `input(bind=…) with type="time" cannot bind a value of type Time: a Time binds with type="date" / type="datetime-local" (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) with type="time" cannot bind a value of type Time: a Time binds with type="date" / type="datetime-local" (see docs/spec/forms.md)`,
     );
     expect(d?.pos.col).toBe(`tile App = input(bind=t, type=`.length + 1);
     const [none] = e0226(`input(bind=n)`);
     expect(none?.message).toBe(
-      `input(bind=…) with no type= (a "text" field) cannot bind a value of type Int: an Int binds with type="number" (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) with no type= (a "text" field) cannot bind a value of type Int: an Int binds with type="number" (see docs/spec/forms.md)`,
     );
   });
 
   it("points an Option or Result bound whole at its payload", () => {
     expect(e0226(`input(bind=oi, type="number")`)[0]?.message).toBe(
-      `input(bind=…) cannot bind a value of type Option(Int): an input binds a Text, Int, Float or Time — bind its payload with ".get" (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) cannot bind a value of type Option(Int): an input binds a Text, Int, Float or Time — bind its payload with ".get" (see docs/spec/forms.md)`,
     );
     expect(e0226(`input(bind=b)`)[0]?.message).toBe(
-      `input(bind=…) cannot bind a value of type Bool: an input binds a Text, Int, Float or Time (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) cannot bind a value of type Bool: an input binds a Text, Int, Float or Time (see docs/spec/forms.md)`,
     );
   });
 

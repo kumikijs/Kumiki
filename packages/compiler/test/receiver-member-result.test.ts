@@ -1,5 +1,7 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
 const DECLS = `slot xs   : List(Int)         = []
 slot ts   : List(Text)        = []
@@ -43,8 +45,6 @@ const withSink = (sinkType: string, expr: string): string =>
   program(`slot sink : ${sinkType} = ${DEFAULTS[sinkType]}
 reducer act on=ui.click(Btn)
     do= sink := ${expr}`);
-
-const codesOf = (src: string): string[] => check(parse(lex(src))).map((e) => e.code);
 
 /** The member resolved to something, and that something is not `sinkType`. */
 const rejects = (sinkType: string, expr: string): boolean =>
@@ -163,7 +163,7 @@ describe("a member whose result the receiver decides resolves to that result", (
   });
 });
 
-describe("every entry answers the exact type stdlib §2.2 gives it", () => {
+describe("every entry answers its member's exact type", () => {
   it.each([
     // Text
     ["Int", "txt.length"],
@@ -299,7 +299,7 @@ reducer act on=ui.click(Btn)
 
 describe("the receiver decides how many arguments .get takes", () => {
   const messages = (expr: string): string[] =>
-    check(parse(lex(withSink("Text", expr)))).map((e) => e.message);
+    checkSource(withSink("Text", expr)).map((e) => e.message);
 
   it("reports an argument passed to the unwrapping reading", () => {
     expect(codesOf(withSink("Text", "opt.get(1)"))).toEqual(["E0213"]);
@@ -352,11 +352,8 @@ describe("what stays undecidable", () => {
   });
 });
 
-const app = (defs: string): string =>
-  `${defs}\ntile B = button(text="x")\ntile App = column(B)\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
-
 /** Three results, each written into a slot of another type. */
-const WRONG_SLOT_WRITES = app(`slot xs  : List(Int)   = []
+const WRONG_SLOT_WRITES = withButtonApp(`slot xs  : List(Int)   = []
 slot opt : Option(Int) = None
 slot n   : Int         = 0
 slot t   : Text        = ""
@@ -366,7 +363,7 @@ reducer c on=ui.click(B) do= n := xs.get(0)`);
 
 describe("a receiver-decided result lands in a slot of its own type", () => {
   it("check reports all three writes", () => {
-    const codes = check(parse(lex(WRONG_SLOT_WRITES))).map((e) => e.code);
+    const codes = codesOf(WRONG_SLOT_WRITES);
     expect(codes.filter((c) => c === "E0201")).toHaveLength(3);
   });
 
@@ -375,12 +372,6 @@ describe("a receiver-decided result lands in a slot of its own type", () => {
     expect(r.kind).toBe("fail");
     if (r.kind !== "fail") return;
     expect(r.errors.map((e) => e.code)).toContain("E0201");
-  });
-
-  it("reports .get on a List", () => {
-    const src = app(`slot xs : List(Int) = []\nslot n : Int = 0
-reducer a on=ui.click(B) do= n := xs.get(0)`);
-    expect(check(parse(lex(src))).map((e) => e.code)).toContain("E0201");
   });
 });
 
@@ -432,12 +423,13 @@ describe("what must keep compiling", () => {
       "n := o.get",
     ],
   ])("accepts %s", (_label, decls, body) => {
-    const src = app(`${decls}\nreducer a on=ui.click(B) do= ${body}`);
-    expect(check(parse(lex(src)))).toEqual([]);
+    const src = withButtonApp(`${decls}\nreducer a on=ui.click(B) do= ${body}`);
+    expect(checkSource(src)).toEqual([]);
   });
 
   it("still emits a program built from these shapes", () => {
-    const src = app(`slot m : Map(Text, Int) = {}\nslot xs : List(Int) = []\nslot n : Int = 0
+    const src =
+      withButtonApp(`slot m : Map(Text, Int) = {}\nslot xs : List(Int) = []\nslot n : Int = 0
 reducer a on=ui.click(B) do= n := m.get("k").get-or(xs.length)`);
     const r = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(r.kind).toBe("ok");

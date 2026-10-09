@@ -1,3 +1,4 @@
+import { compile } from "@kumikijs/compiler";
 import { parseEpisodeLogText } from "@kumikijs/compiler/node";
 import { describe, expect, it } from "vitest";
 
@@ -48,5 +49,33 @@ describe("parseEpisodeLogText", () => {
     expect(step).not.toHaveProperty("stack");
     expect(step).not.toHaveProperty("cause");
     expect(step).not.toHaveProperty("category");
+  });
+});
+
+describe("an episode-test's log, read at build time", () => {
+  const src = `slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="+", onClick=inc)
+tile App = column(B)
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test replay =
+    episode-test
+        load   = "log.jsonl"
+        mocks  = {}
+        expect = {no-panics: true}`;
+  const build = (log: string) =>
+    compile(src, {
+      runtimeSpecifier: "./runtime.js",
+      includeTests: true,
+      readEpisodeLog: () => log,
+    });
+
+  it("inlines the parsed episodes into the generated test", () => {
+    const r = build('{"id":"ep_0001","steps":[]}');
+    expect(r.kind === "ok" && r.js).toContain('"id":"ep_0001"');
+  });
+
+  it("reads the log the way the CLI does, naming the line that is not JSON", () => {
+    expect(() => build('{"id":"ep_0001"}\n{nope')).toThrow(/episode log: invalid JSON at line 2/);
   });
 });

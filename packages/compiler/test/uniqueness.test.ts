@@ -1,11 +1,9 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 const APP = `tile App = column(text("x"))\n`;
-const diags = (src: string) => check(parse(lex(src)));
-const codes = (src: string) => diags(src).map((e) => e.code);
 
 describe("a definition declared twice in one layer", () => {
   const layers: [string, string][] = [
@@ -38,7 +36,7 @@ motion M = {keyframes: {from: {opacity: 1}, to: {opacity: 0}}, duration: 100}`,
   ];
   for (const [layer, defs] of layers) {
     it(`reports a duplicate ${layer}`, () => {
-      expect(codes(`${defs}\n${APP}${TAIL}`)).toContain("E0007");
+      expect(codesOf(`${defs}\n${APP}${TAIL}`)).toContain("E0007");
     });
   }
 
@@ -47,24 +45,26 @@ motion M = {keyframes: {from: {opacity: 1}, to: {opacity: 0}}, duration: 100}`,
 slot a : Int = 1
 slot a : Int = 2
 ${APP}${TAIL}`;
-    const found = diags(src).filter((e) => e.code === "E0007");
+    const found = checkSource(src).filter((e) => e.code === "E0007");
     expect(found.map((e) => `${e.pos.line}:${e.pos.col}`)).toEqual(["2:1", "3:1"]);
     expect(found[0]?.message).toContain(`slot "a"`);
   });
 
   it("leaves the same name in two different layers alone", () => {
-    expect(codes(`slot leaf : Int = 1\ntile leaf = column(text("l"))\n${APP}${TAIL}`)).toEqual([]);
+    expect(codesOf(`slot leaf : Int = 1\ntile leaf = column(text("l"))\n${APP}${TAIL}`)).toEqual(
+      [],
+    );
   });
 
   it("leaves a program's own definition shadowing the standard library alone", () => {
-    expect(codes(`type Route = Text\nslot r : Route = "x"\n${APP}${TAIL}`)).toEqual([]);
+    expect(codesOf(`type Route = Text\nslot r : Route = "x"\n${APP}${TAIL}`)).toEqual([]);
   });
 
   it("leaves a second app to E0004", () => {
     const src = `${APP}app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(codes(src)).toEqual(["E0004"]);
+    expect(codesOf(src)).toEqual(["E0004"]);
   });
 });
 
@@ -166,7 +166,7 @@ ${APP}${TAIL}`,
   ];
   for (const [what, kind, src] of shapes) {
     it(`reports ${what}`, () => {
-      const found = diags(src).filter((e) => e.code === "E0008");
+      const found = checkSource(src).filter((e) => e.code === "E0008");
       expect(found.length, `no E0008 for ${what}`).toBeGreaterThan(0);
       expect(found[0]?.kind).toBe(kind);
     });
@@ -212,21 +212,21 @@ ${APP}${TAIL}`,
   ];
   for (const [what, says, defs] of messages) {
     it(`names what was duplicated for ${what}`, () => {
-      const err = diags(`${defs}\n${APP}${TAIL}`).find((e) => e.code === "E0008");
+      const err = checkSource(`${defs}\n${APP}${TAIL}`).find((e) => e.code === "E0008");
       expect(err, `no E0008 for ${what}`).toBeDefined();
       expect(err?.message).toContain(says);
     });
   }
 
   it("points at the later occurrence, which is the one to delete", () => {
-    const err = diags(`type R = {a: Int, a: Text}\n${APP}${TAIL}`)[0];
+    const err = checkSource(`type R = {a: Int, a: Text}\n${APP}${TAIL}`)[0];
     expect(err?.code).toBe("E0008");
     expect(err?.message).toContain(`"a"`);
     expect(`${err?.pos.line}:${err?.pos.col}`).toBe("1:19");
   });
 
   it("reports once per occurrence past the first, like E0007 does", () => {
-    const found = diags(`type R = {a: Int, a: Text, a: Bool}\n${APP}${TAIL}`).filter(
+    const found = checkSource(`type R = {a: Int, a: Text, a: Bool}\n${APP}${TAIL}`).filter(
       (e) => e.code === "E0008",
     );
     expect(found.map((e) => `${e.pos.line}:${e.pos.col}`)).toEqual(["1:19", "1:28"]);
@@ -253,26 +253,28 @@ ${APP}${TAIL}`,
   ];
   for (const [what, src, at] of recorded) {
     it(`points at the later occurrence of ${what}`, () => {
-      const err = diags(src).find((e) => e.code === "E0008");
+      const err = checkSource(src).find((e) => e.code === "E0008");
       expect(err, `no E0008 for ${what}`).toBeDefined();
       expect(`${err?.pos.line}:${err?.pos.col}`).toBe(at);
     });
   }
 
   it("compares map keys by kind, not by their text", () => {
-    expect(codes(`slot s : Map(Text, Int) = {"1": 1, 1: 2}\n${APP}${TAIL}`)).not.toContain("E0008");
-    expect(codes(`slot s : Map(Int, Int) = {-1: 1, -1: 2}\n${APP}${TAIL}`)).toContain("E0008");
+    expect(codesOf(`slot s : Map(Text, Int) = {"1": 1, 1: 2}\n${APP}${TAIL}`)).not.toContain(
+      "E0008",
+    );
+    expect(codesOf(`slot s : Map(Int, Int) = {-1: 1, -1: 2}\n${APP}${TAIL}`)).toContain("E0008");
   });
 
   it("says nothing about two computed keys", () => {
     const src = `slot k : Text = "a"
 slot m : Map(Text, Int) = {k.trim(): 1, k.trim(): 2}
 ${APP}${TAIL}`;
-    expect(codes(src)).not.toContain("E0008");
+    expect(codesOf(src)).not.toContain("E0008");
   });
 
   it("does not lose a __proto__ key to the object it is accumulated in", () => {
-    expect(codes(`theme T = {c: {__proto__: "a", __proto__: "b"}}\n${APP}${TAIL}`)).toContain(
+    expect(codesOf(`theme T = {c: {__proto__: "a", __proto__: "b"}}\n${APP}${TAIL}`)).toContain(
       "E0008",
     );
   });
@@ -283,7 +285,7 @@ tile A = page(heading("a"))
 tile L sub-routes = { "/x" -> A, "/x" -> A } = page(route-outlet())
 app M caps=[] routes={"/*" -> L, "/404" -> NotFound} init=[]
 `;
-    const found = diags(src);
+    const found = checkSource(src);
     expect(found.map((e) => e.code)).toEqual(["E0112"]);
     expect(`${found[0]?.pos.line}:${found[0]?.pos.col}`).toBe("3:34");
   });
@@ -296,10 +298,10 @@ theme T = {gap: "1", pad: "2"}
 slot s : R = {a: 1, b: "x"}
 ${APP}app A caps=[nav.push] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 
   it("leaves one key per record in sibling records alone", () => {
-    expect(codes(`theme T = {space: {sm: "1"}, size: {sm: "2"}}\n${APP}${TAIL}`)).toEqual([]);
+    expect(codesOf(`theme T = {space: {sm: "1"}, size: {sm: "2"}}\n${APP}${TAIL}`)).toEqual([]);
   });
 });

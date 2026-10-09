@@ -1,8 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const diags = (src: string) => check(parse(lex(src)));
-const codes = (src: string) => diags(src).map((e) => e.code);
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `
 tile App = column(Panel)
@@ -13,7 +10,7 @@ const PANEL = `slot n : Int = 0\ntile Panel = column(text("hi"))\n`;
 describe("lifecycle selectors (E0211)", () => {
   for (const ev of ["mount", "unmount"]) {
     it(`reports an undeclared tile in tile.${ev}`, () => {
-      const err = diags(`${PANEL}reducer r on=tile.${ev}(Pannel) do= n := 1${TAIL}`).find(
+      const err = checkSource(`${PANEL}reducer r on=tile.${ev}(Pannel) do= n := 1${TAIL}`).find(
         (e) => e.code === "E0211",
       );
       expect(err, `no E0211 for tile.${ev}`).toBeDefined();
@@ -22,21 +19,21 @@ describe("lifecycle selectors (E0211)", () => {
     });
 
     it(`accepts a declared tile in tile.${ev}`, () => {
-      expect(codes(`${PANEL}reducer r on=tile.${ev}(Panel) do= n := 1${TAIL}`)).not.toContain(
+      expect(codesOf(`${PANEL}reducer r on=tile.${ev}(Panel) do= n := 1${TAIL}`)).not.toContain(
         "E0211",
       );
     });
   }
 
   it("has no wildcard to exempt", () => {
-    expect(codes(`${PANEL}reducer r on=tile.mount(_) do= n := 1${TAIL}`)).toContain("E0211");
+    expect(codesOf(`${PANEL}reducer r on=tile.mount(_) do= n := 1${TAIL}`)).toContain("E0211");
   });
 });
 
 describe("effect-event selectors (E0104)", () => {
   for (const outcome of ["ok", "err"]) {
     it(`reports an undeclared effect in .${outcome}`, () => {
-      const err = diags(
+      const err = checkSource(
         `${PANEL}reducer r on=noSuchEffect.${outcome}($v, _) do= n := 1${TAIL}`,
       ).find((e) => e.code === "E0104");
       expect(err, `no E0104 for .${outcome}`).toBeDefined();
@@ -49,13 +46,13 @@ describe("effect-event selectors (E0104)", () => {
   it("accepts a declared effect", () => {
     const src = `${PANEL}effect load cap=http.get in=Unit out=Result(Text, HttpError)
 reducer r on=load.ok($v, _) do= n := 1${TAIL}`;
-    expect(codes(src)).not.toContain("E0104");
+    expect(codesOf(src)).not.toContain("E0104");
   });
 
   for (const outcome of ["ok", "err"]) {
     it(`accepts a built-in effect's .${outcome}`, () => {
       expect(
-        codes(`${PANEL}reducer r on=navigate.${outcome}(_, _) do= n := 1${TAIL}`),
+        codesOf(`${PANEL}reducer r on=navigate.${outcome}(_, _) do= n := 1${TAIL}`),
       ).not.toContain("E0104");
     });
   }
@@ -77,14 +74,16 @@ app A
 `;
 
   it("reports each undeclared handler at its own name", () => {
-    const found = diags(app("noSuchA", "noSuchB", "noSuchC")).filter((e) => e.code === "E0102");
+    const found = checkSource(app("noSuchA", "noSuchB", "noSuchC")).filter(
+      (e) => e.code === "E0102",
+    );
     expect(
       found.map((e) => `${e.pos.line}:${e.pos.col} ${e.message.match(/"(.+)"/)?.[1]}`),
     ).toEqual(["10:23 noSuchA", "11:23 noSuchB", "12:23 noSuchC"]);
   });
 
   it("accepts declared reducers", () => {
-    expect(codes(app("known", "known", "known"))).not.toContain("E0102");
+    expect(codesOf(app("known", "known", "known"))).not.toContain("E0102");
   });
 });
 
@@ -103,18 +102,18 @@ ${extra}app A
 `;
 
   it("reports a name that is neither a theme nor a slot", () => {
-    const err = diags(app("NoSuchTheme")).find((e) => e.code === "E0118");
+    const err = checkSource(app("NoSuchTheme")).find((e) => e.code === "E0118");
     expect(err, "no E0118").toBeDefined();
     expect(err?.message).toContain("NoSuchTheme");
     expect(err?.pos.col).toBe(14);
   });
 
   it("accepts a declared theme", () => {
-    expect(codes(app("Light", THEMES))).not.toContain("E0118");
+    expect(codesOf(app("Light", THEMES))).not.toContain("E0118");
   });
 
   it("accepts a slot the theme name is read from", () => {
-    expect(codes(app("themeName", `${THEMES}slot themeName : Text = "Light"\n`))).not.toContain(
+    expect(codesOf(app("themeName", `${THEMES}slot themeName : Text = "Light"\n`))).not.toContain(
       "E0118",
     );
   });
@@ -127,7 +126,7 @@ tile Btn = button(text="t", onClick=pick)
 reducer pick on=ui.click(Btn) do= themeName := "Ligth"
 `,
     );
-    expect(codes(src)).not.toContain("E0118");
+    expect(codesOf(src)).not.toContain("E0118");
   });
 });
 
@@ -137,6 +136,6 @@ describe("app.init effect calls (E0104)", () => {
 tile App = column(text("hi"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[noSuchEffect()]
 `;
-    expect(codes(src)).toContain("E0104");
+    expect(codesOf(src)).toContain("E0104");
   });
 });

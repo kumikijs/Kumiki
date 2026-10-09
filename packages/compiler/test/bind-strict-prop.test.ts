@@ -1,8 +1,8 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const TAIL = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-const errorsOf = (tiles: string) => check(parse(lex(`${tiles}\n${TAIL}`)));
+const errorsOf = (tiles: string) => checkSource(`${tiles}\n${TAIL}`);
 
 describe("strict on a bind control kind is E0219, bound or not", () => {
   const bad: [string, string][] = [
@@ -40,7 +40,7 @@ describe("strict on a bind control kind is E0219, bound or not", () => {
       `slot s : Text where nonempty = "a"\ntile App = input(bind=s, strict=false)`,
     ).filter((x) => x.code === "E0219");
     expect(e?.message).toBe(
-      `"strict" is not a prop of input: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`,
+      `"strict" is not a prop of input: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md)`,
     );
   });
 });

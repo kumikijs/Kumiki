@@ -1,5 +1,6 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { codesOf } from "./helpers/diagnostics.ts";
+import { fnLowering } from "./helpers/module.ts";
 
 /** The generated body of `fn probe`, which is where the expression lands. */
 function loweringOf(expr: string): string {
@@ -9,13 +10,7 @@ function loweringOf(expr: string): string {
 tile App = column(text(probe(7, 2.25)))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-  const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-  if (result.kind !== "ok") {
-    throw new Error(`compile failed: ${result.errors.map((e) => e.code).join(", ")}`);
-  }
-  const body = result.js.split("\n").find((l) => l.includes("function probe"));
-  if (body === undefined) throw new Error("no `function probe` in the generated module");
-  return body;
+  return fnLowering(src);
 }
 
 /** `expr` in a reducer, on a program with a Text slot and a record slot too. */
@@ -29,7 +24,7 @@ tile B = button(text="b")
 tile App = column(B, text(dst.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-  return check(parse(lex(src))).map((e) => e.code);
+  return codesOf(src);
 }
 
 /** `expr` assigned to a slot of type `slotType`, checked. */
@@ -43,7 +38,7 @@ tile B = button(text="b")
 tile App = column(B, text(dst.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-  return check(parse(lex(src))).map((e) => e.code);
+  return codesOf(src);
 }
 
 const METHODS: { expr: string; js: string }[] = [
@@ -113,7 +108,7 @@ tile B = button(text="b")
 tile App = column(B, text(dst.length.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 
@@ -161,7 +156,7 @@ tile B = button(text="b")
 tile App = column(B, text(dst.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 

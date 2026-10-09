@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { UiEventKind } from "../src/ast.ts";
-import { compile } from "../src/compile.ts";
-import { lex } from "../src/lexer.ts";
-import { parse } from "../src/parser.ts";
-import { check } from "../src/typecheck.ts";
 import { UI_LIFTS } from "../src/ui-lifts.ts";
+import { codesOf } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
 const LEAF: Record<UiEventKind, string> = {
   click: 'button(text="go")',
@@ -34,17 +32,9 @@ tile App   = column(Outer, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-function jsOf(src: string): string {
-  const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-  if (result.kind !== "ok") {
-    throw new Error(`compile failed: ${result.errors.map((e) => e.code).join(", ")}`);
-  }
-  return result.js;
-}
-
 /** How many listeners the program wires for `bump` under `handler`. */
 function wirings(src: string, handler: string): number {
-  return jsOf(src).split(`${handler}: _h("bump")`).length - 1;
+  return compileOrFail(src).split(`${handler}: _h("bump")`).length - 1;
 }
 
 describe("ui.<ev>(Container) whose body is a tile reference", () => {
@@ -59,8 +49,8 @@ describe("ui.<ev>(Container) whose body is a tile reference", () => {
     });
 
     it(`reports nothing for either form of ui.${ev}(Outer)`, () => {
-      expect(check(parse(lex(referenced(ev)))).map((e) => e.code)).toEqual([]);
-      expect(check(parse(lex(inlined(ev)))).map((e) => e.code)).toEqual([]);
+      expect(codesOf(referenced(ev))).toEqual([]);
+      expect(codesOf(inlined(ev))).toEqual([]);
     });
   }
 
@@ -73,8 +63,8 @@ tile Outer  = box(Middle) {id: "outer"}
 tile App    = column(Outer, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
-    expect(jsOf(src)).toContain(`onKeyDown: _h("bump")`);
+    expect(codesOf(src)).toEqual([]);
+    expect(compileOrFail(src)).toContain(`onKeyDown: _h("bump")`);
   });
 
   it("keeps a selector on the inner tile working alongside the outer one", () => {
@@ -86,8 +76,8 @@ tile Outer = box(Leaf) {id: "outer"}
 tile App   = column(Outer, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
-    expect(jsOf(src)).toContain(`onKeyDown: _h("outer", "inner")`);
+    expect(codesOf(src)).toEqual([]);
+    expect(compileOrFail(src)).toContain(`onKeyDown: _h("outer", "inner")`);
   });
 
   it("wires only the call sites under the container, not every use of the tile", () => {
@@ -98,7 +88,7 @@ tile Outer = box(Leaf) {id: "outer"}
 tile App   = column(Outer, Leaf, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    const js = jsOf(src);
+    const js = compileOrFail(src);
     // Two routes render `App`, each with one wired `Leaf` and one bare one.
     expect(js.split(`onKeyDown: _h("bump")`).length - 1).toBe(2);
     expect(js.split(`kind: "input"`).length - 1).toBe(4);
@@ -112,8 +102,8 @@ tile Outer = box(Leaf) {id: "outer"}
 tile App   = column(Outer, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual(["W0212"]);
-    expect(jsOf(src)).not.toContain("onKeyDown");
+    expect(codesOf(src)).toEqual(["W0212"]);
+    expect(compileOrFail(src)).not.toContain("onKeyDown");
   });
   it("reaches an error-boundary fallback rendered where the panicking tile was", () => {
     const src = `slot n : Int = 0
@@ -128,8 +118,8 @@ tile Outer = box(Risky) {id: "outer"}
 tile App   = column(Outer, text(n.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
-    const js = jsOf(src);
+    expect(codesOf(src)).toEqual([]);
+    const js = compileOrFail(src);
     const fallback = js.slice(js.indexOf("boundaryPanic"));
     expect(fallback).toContain(`onKeyDown: _h("bump")`);
     // Two routes, each wiring the risky input AND its fallback.
@@ -154,8 +144,8 @@ reducer btnOwn   on=ui.click(Btn) do= n := n + 100
 tile Btn = button(text="x")
 tile Row = row(Btn {onClick: btnOwn})
 tile App = column(Row, text(n.show))`);
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
-    expect(onClicks(jsOf(src))).toEqual(['"rowClick", "btnOwn"', '"rowClick", "btnOwn"']);
+    expect(codesOf(src)).toEqual([]);
+    expect(onClicks(compileOrFail(src))).toEqual(['"rowClick", "btnOwn"', '"rowClick", "btnOwn"']);
   });
 
   it("joins a reducer that only the call site names", () => {
@@ -165,7 +155,7 @@ tile Btn   = button(text="x")
 tile Row   = row(Btn {onClick: extra})
 tile Other = button(text="other")
 tile App   = column(Row, Other, text(n.show))`);
-    expect(onClicks(jsOf(src))).toEqual([
+    expect(onClicks(compileOrFail(src))).toEqual([
       '"rowClick", "extra"',
       '"extra"',
       '"rowClick", "extra"',
@@ -178,7 +168,7 @@ tile App   = column(Row, Other, text(n.show))`);
 reducer outer on=app.start do= n := n + 2
 tile Btn = button(text="x", onClick=own)
 tile App = column(Btn {onClick: outer}, text(n.show))`);
-    expect(onClicks(jsOf(src))).toEqual(['"own", "outer"', '"own", "outer"']);
+    expect(onClicks(compileOrFail(src))).toEqual(['"own", "outer"', '"own", "outer"']);
   });
 
   const ordered = (reducers: string) =>
@@ -192,12 +182,12 @@ tile App   = column(Row, Other, text(n.show))`);
 
   it("runs the call site's reducer last when it is defined last", () => {
     // Explicit-first would run `btnOwn` first.
-    expect(onClicks(jsOf(ordered(`${ROW}\n${OWN}`)))[0]).toBe('"rowClick", "btnOwn"');
+    expect(onClicks(compileOrFail(ordered(`${ROW}\n${OWN}`)))[0]).toBe('"rowClick", "btnOwn"');
   });
 
   it("runs the call site's reducer first when it is defined first", () => {
     // Lifted-first would run `rowClick` first.
-    expect(onClicks(jsOf(ordered(`${OWN}\n${ROW}`)))[0]).toBe('"btnOwn", "rowClick"');
+    expect(onClicks(compileOrFail(ordered(`${OWN}\n${ROW}`)))[0]).toBe('"btnOwn", "rowClick"');
   });
 
   it("orders an explicit handler on a builtin by definition too", () => {
@@ -205,7 +195,7 @@ tile App   = column(Row, Other, text(n.show))`);
 reducer own    on=app.start      do= n := n + 2
 tile Row = row(button(text="x", onClick=own))
 tile App = column(Row, text(n.show))`);
-    expect(onClicks(jsOf(src))).toEqual(['"lifted", "own"', '"lifted", "own"']);
+    expect(onClicks(compileOrFail(src))).toEqual(['"lifted", "own"', '"lifted", "own"']);
   });
 
   it("carries a handler through every call site the node is the root of", () => {
@@ -214,7 +204,7 @@ reducer b on=app.start do= n := n + 2
 tile Btn   = button(text="x")
 tile Inner = Btn {onClick: a}
 tile App   = column(Inner {onClick: b}, text(n.show))`);
-    expect(onClicks(jsOf(src))).toEqual(['"a", "b"', '"a", "b"']);
+    expect(onClicks(compileOrFail(src))).toEqual(['"a", "b"', '"a", "b"']);
   });
 
   it("carries it into a tile that takes a positional input", () => {
@@ -223,7 +213,7 @@ reducer btnOwn   on=app.start      do= n := n + 100
 tile Btn in=Text = button(text=$1)
 tile Row = row(Btn("x") {onClick: btnOwn})
 tile App = column(Row, text(n.show))`);
-    expect(onClicks(jsOf(src))).toEqual(['"rowClick", "btnOwn"', '"rowClick", "btnOwn"']);
+    expect(onClicks(compileOrFail(src))).toEqual(['"rowClick", "btnOwn"', '"rowClick", "btnOwn"']);
   });
 
   it("reaches the root of each branch an if can take", () => {
@@ -234,7 +224,7 @@ tile Btn = if lit then button(text="on") else button(text="off")
 tile Row = row(Btn {onClick: btnOwn})
 tile App = column(Row, text(n.show))`);
     // Two branches in each of two routes, every one the union.
-    expect(onClicks(jsOf(src))).toEqual(Array(4).fill('"rowClick", "btnOwn"'));
+    expect(onClicks(compileOrFail(src))).toEqual(Array(4).fill('"rowClick", "btnOwn"'));
   });
 
   it("reaches the root of each arm a match can take", () => {
@@ -249,7 +239,7 @@ tile Btn = match mode with
 tile Row = row(Btn {onClick: btnOwn})
 tile App = column(Row, text(n.show))`);
     // A tag arm, a tag arm that binds and a wildcard, in each of two routes.
-    expect(onClicks(jsOf(src))).toEqual(Array(6).fill('"rowClick", "btnOwn"'));
+    expect(onClicks(compileOrFail(src))).toEqual(Array(6).fill('"rowClick", "btnOwn"'));
   });
 
   it("reaches the body of a when", () => {
@@ -259,7 +249,7 @@ reducer btnOwn   on=app.start      do= n := n + 100
 tile Btn = when(lit, button(text="on"))
 tile Row = row(Btn {onClick: btnOwn})
 tile App = column(Row, text(n.show))`);
-    expect(onClicks(jsOf(src))).toEqual(Array(2).fill('"rowClick", "btnOwn"'));
+    expect(onClicks(compileOrFail(src))).toEqual(Array(2).fill('"rowClick", "btnOwn"'));
   });
 
   it("reaches every node a for renders, and the root of a branch that is one", () => {
@@ -270,7 +260,7 @@ reducer btnOwn   on=app.start      do= n := n + 100
 tile Btn = if lit then button(text="one") else for x in xs button(text=x)
 tile Row = row(Btn {onClick: btnOwn})
 tile App = column(Row, text(n.show))`);
-    const js = jsOf(src);
+    const js = compileOrFail(src);
     // The single button and the one the loop builds per item, in each route.
     expect(onClicks(js)).toEqual(Array(4).fill('"rowClick", "btnOwn"'));
     expect(js.match(/onClick:/g)).toHaveLength(4);
@@ -285,7 +275,7 @@ tile Form  = form(button(text="go", type="submit"))
 tile Field = input(placeholder="p")
 tile Outer = column(Form {onSubmit: ownSub}, Field {onChange: ownChg})
 tile App   = column(Outer, text(n.show))`);
-    const js = jsOf(src);
+    const js = compileOrFail(src);
     expect(wired(js, "onSubmit")).toEqual(Array(2).fill('"sent", "ownSub"'));
     expect(wired(js, "onChange")).toEqual(Array(2).fill('"changed", "ownChg"'));
   });
@@ -296,13 +286,13 @@ reducer outer on=app.start do= open := false
 reducer own   on=app.start do= n := n + 1
 tile Dlg = modal(text("hi"), open=open, title="t", onClose=own)
 tile App = column(Dlg {onClose: outer}, text(n.show))`);
-    expect(wired(jsOf(src), "onClose")).toEqual(Array(2).fill('"outer", "own"'));
+    expect(wired(compileOrFail(src), "onClose")).toEqual(Array(2).fill('"outer", "own"'));
   });
 
   it("wires a reducer once, on one node, when the call site and the body both name it", () => {
     const src = app(`reducer hit on=ui.click(Btn) do= n := n + 1
 tile Btn = button(text="x", onClick=hit)
 tile App = column(Btn {onClick: hit}, text(n.show))`);
-    expect(onClicks(jsOf(src))).toEqual(['"hit"', '"hit"']);
+    expect(onClicks(compileOrFail(src))).toEqual(['"hit"', '"hit"']);
   });
 });

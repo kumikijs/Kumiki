@@ -1,7 +1,7 @@
 import { typeToString } from "./assignable.ts";
 import type { Refinement, TypeExpr } from "./ast.ts";
 
-/** A literal a refinement can be written with (language.md §1.3.1). */
+/** A literal a refinement can be written with. */
 export type RefinementArg = number | string;
 
 type ArgKind = "number" | "count" | "text" | "literal";

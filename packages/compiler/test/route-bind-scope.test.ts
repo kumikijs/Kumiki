@@ -1,18 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-function diagnose(source: string): { code: string; message: string; line: number; col: number }[] {
-  return check(parse(lex(source))).map((e) => ({
-    code: e.code,
-    message: e.message,
-    line: e.pos.line,
-    col: e.pos.col,
-  }));
-}
-
-function codes(source: string): string[] {
-  return diagnose(source).map((e) => e.code);
-}
+import { codesOf, locatedOf } from "./helpers/diagnostics.ts";
 
 function program(trigger: string, body: string, extra = ""): string {
   return `slot seen : Text = ""
@@ -39,19 +26,19 @@ app A
 
 describe("$route outside a route lifecycle reducer", () => {
   it("is reported on a ui event", () => {
-    expect(codes(program("ui.click(Btn)", "seen := $route.path"))).toEqual(["E0119"]);
+    expect(codesOf(program("ui.click(Btn)", "seen := $route.path"))).toEqual(["E0119"]);
   });
 
   it("is reported on an effect event", () => {
-    expect(codes(program("ping.ok(_, _)", "seen := $route.pattern"))).toEqual(["E0119"]);
+    expect(codesOf(program("ping.ok(_, _)", "seen := $route.pattern"))).toEqual(["E0119"]);
   });
 
   it("is reported on an app lifecycle event", () => {
-    expect(codes(program("app.start", "seen := $route.path"))).toEqual(["E0119"]);
+    expect(codesOf(program("app.start", "seen := $route.path"))).toEqual(["E0119"]);
   });
 
   it("is reported on a timer", () => {
-    expect(codes(program("timer(1s)", "seen := $route.path"))).toEqual(["E0119"]);
+    expect(codesOf(program("timer(1s)", "seen := $route.path"))).toEqual(["E0119"]);
   });
 
   it("gives the app.init answer there, not this one", () => {
@@ -69,22 +56,22 @@ app A
     routes = {"/" -> Page, "/404" -> Page}
     init   = [ping($route.path)]
 `;
-    expect(codes(src)).toEqual(["E0120"]);
+    expect(codesOf(src)).toEqual(["E0120"]);
   });
 
   it("is not reported when an enclosing bind owns the name", () => {
-    expect(codes(program("app.start", 'seen := let $route = "x" in $route'))).toEqual([]);
-    expect(codes(program("app.start", "seen := match seen with | $route -> $route"))).toEqual([]);
+    expect(codesOf(program("app.start", 'seen := let $route = "x" in $route'))).toEqual([]);
+    expect(codesOf(program("app.start", "seen := match seen with | $route -> $route"))).toEqual([]);
   });
 
   it("names the slot that reads the same route, because it is in scope here", () => {
-    const [d] = diagnose(program("ui.click(Btn)", "seen := $route.path"));
+    const [d] = locatedOf(program("ui.click(Btn)", "seen := $route.path"));
     expect(d?.message).toContain('"route"');
     expect(d?.message).toContain("route.enter");
   });
 
   it("points at the bind, not at the reducer", () => {
-    const [d] = diagnose(program("ui.click(Btn)", "seen := $route.path"));
+    const [d] = locatedOf(program("ui.click(Btn)", "seen := $route.path"));
     expect([d?.line, d?.col]).toEqual([10, 17]);
   });
 });
@@ -92,12 +79,12 @@ app A
 describe("where $route really is bound", () => {
   for (const ev of ['route.enter("/posts/:id")', 'route.leave("/posts/:id")']) {
     it(`accepts it under ${ev}`, () => {
-      expect(codes(program(ev, "seen := $route.path"))).toEqual([]);
+      expect(codesOf(program(ev, "seen := $route.path"))).toEqual([]);
     });
   }
 
   it("accepts it under route.error, which the runtime binds the same way", () => {
-    expect(codes(program('route.error("/posts/:id")', "seen := $route.path"))).toEqual([]);
+    expect(codesOf(program('route.error("/posts/:id")', "seen := $route.path"))).toEqual([]);
   });
 
   it("accepts it in the reducer a link prefetches, which is normally a route reducer too", () => {
@@ -106,7 +93,7 @@ describe("where $route really is bound", () => {
       'seen := $route.params.get-or("id", "")',
       'tile Ahead = link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}}\n',
     ).replace("tile Page = column(Btn, Other)", "tile Page = column(Btn, Other, Ahead)");
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 
@@ -119,7 +106,7 @@ describe("the prefetch exemption is by name, so it covers the reducer's other tr
 
   it("finds a bare-ident target", () => {
     expect(
-      codes(
+      codesOf(
         prefetching(
           'tile Ahead = link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}}',
         ),
@@ -129,7 +116,7 @@ describe("the prefetch exemption is by name, so it covers the reducer's other tr
 
   it("finds the string form of the same prop", () => {
     expect(
-      codes(
+      codesOf(
         prefetching(
           'tile Ahead = link(to="/posts/7") {text: "7", prefetch: "subject", prefetch-args: {"id": "7"}}',
         ),
@@ -167,7 +154,7 @@ tile Ahead = column(match pick with
   ];
   for (const [where, tile] of wrapped) {
     it(`descends into ${where}`, () => {
-      expect(codes(prefetching(tile))).toEqual([]);
+      expect(codesOf(prefetching(tile))).toEqual([]);
     });
   }
 });
@@ -179,7 +166,7 @@ describe("every position the bind can hide in", () => {
       "seen := label($route)",
       "fn label(r: Route) -> Text = r.path\n",
     );
-    expect(codes(src)).toEqual(["E0119"]);
+    expect(codesOf(src)).toEqual(["E0119"]);
   });
 
   it("finds it as a match scrutinee", () => {
@@ -189,23 +176,23 @@ describe("every position the bind can hide in", () => {
             | Some(v) -> seen := v
             | None    -> ()`,
     );
-    expect(codes(src)).toEqual(["E0119"]);
+    expect(codesOf(src)).toEqual(["E0119"]);
   });
 
   it("reports each occurrence, because each one is separately wrong", () => {
     const src = program("ui.click(Btn)", "seen := $route.path + $route.pattern");
-    expect(codes(src)).toEqual(["E0119", "E0119"]);
+    expect(codesOf(src)).toEqual(["E0119", "E0119"]);
   });
 });
 
 describe("what the rule does not touch", () => {
   it("leaves the route slot alone — it is readable from any reducer", () => {
-    expect(codes(program("ui.click(Btn)", "seen := route.path"))).toEqual([]);
+    expect(codesOf(program("ui.click(Btn)", "seen := route.path"))).toEqual([]);
   });
 
   it("still reports an undefined name in a fn as an undefined name", () => {
     const src = program("ui.click(Btn)", "seen := viaFn()", "fn viaFn() -> Text = $route.path\n");
-    expect(codes(src)).toEqual(["E0103"]);
+    expect(codesOf(src)).toEqual(["E0103"]);
   });
 
   it("still reports it in a tile body as an undefined name", () => {
@@ -213,6 +200,6 @@ describe("what the rule does not touch", () => {
       'tile Other = button(text="b")',
       "tile Other = button(text=$route.path)",
     );
-    expect(codes(src)).toEqual(["E0103"]);
+    expect(codesOf(src)).toEqual(["E0103"]);
   });
 });

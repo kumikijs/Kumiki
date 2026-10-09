@@ -203,7 +203,6 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
     for (const b of r.on.binds) if (b.name !== "_") locals.add(b.name);
   const ctx = makeEvalCtx(gen, locals, true);
 
-  // event descriptor
   let eventJs: string;
   let selectorJs = "undefined";
   if (r.on.kind === "UiEvent") {
@@ -218,7 +217,6 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
     eventJs = `{ kind: "lifecycle", name: ${JSON.stringify(r.on.name)} }`;
   }
 
-  // emits collection
   const stmtLines: string[] = [];
   stmtLines.push(`const _next = {};`);
   stmtLines.push(`const _emits = [];`);

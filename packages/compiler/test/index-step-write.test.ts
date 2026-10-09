@@ -1,9 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
+import { importModule } from "./helpers/module.ts";
 
 const SRC = `type Todo = { title: Text, done: Bool }
 type Cell = { n: Int }
@@ -31,24 +30,11 @@ app A
     init   = []`;
 
 // Under the package dir so the generated `import "@kumikijs/runtime"` resolves.
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
-
 /** The generated module, mounting nothing (`exportApp`), or the reason it failed. */
 function jsOf(exportApp: boolean): string {
   const result = compile(SRC, { runtimeSpecifier: "@kumikijs/runtime", exportApp });
   if (result.kind !== "ok") throw new Error(JSON.stringify(result));
   return result.js;
-}
-
-async function load(js: string): Promise<AppShape> {
-  const dir = mkdtempSync(join(TMP_ROOT, "index-step-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, js);
-  const mod = (await import(`${pathToFileURL(file).href}?t=${Date.now()}`)) as {
-    default: AppShape;
-  };
-  return mod.default;
 }
 
 /** The slot writes of one run of reducer `name` against `live`. */
@@ -63,7 +49,7 @@ describe("genSlotAssign encodes an index step as {at: key}", () => {
   const js = jsOf(false);
 
   it("checks clean", () => {
-    expect(check(parse(lex(SRC)))).toEqual([]);
+    expect(checkSource(SRC)).toEqual([]);
   });
 
   it("wraps each `[…]` key and leaves field and `.get` steps as they were", () => {
@@ -77,7 +63,7 @@ describe("genSlotAssign encodes an index step as {at: key}", () => {
 });
 
 describe("the emitted write, run", () => {
-  const appP = load(jsOf(true));
+  const appP = importModule<{ default: AppShape }>(jsOf(true), "index-step").then((m) => m.default);
   const todo = { title: "a", done: false };
 
   it("writes a field of the entry at a held key, and nothing at an absent one", async () => {

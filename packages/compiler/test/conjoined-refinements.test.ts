@@ -1,7 +1,3 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { compile } from "@kumikijs/compiler";
 import type { AppShape, SlotMeta } from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { TypeDef } from "../src/ast.ts";
@@ -9,9 +5,7 @@ import { refinementsOf } from "../src/codegen/emit-type.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { defined } from "./helpers/defined.ts";
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
 
 const SRC = `
 type Handle  = nominal Text where len-gt(3) where len-lt(9)
@@ -58,12 +52,7 @@ app Refined
 let slots: Record<string, SlotMeta>;
 
 beforeAll(async () => {
-  const result = compile(SRC, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
-  const dir = mkdtempSync(join(TMP_ROOT, "refine-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
-  const mod: { default: AppShape } = await import(`${pathToFileURL(file).href}?t=${Date.now()}`);
+  const mod = await importModule<{ default: AppShape }>(compileOrFail(SRC, LOADABLE), "refine");
   slots = mod.default.slots;
 }, 30_000);
 
@@ -75,7 +64,6 @@ describe("a type's predicates conjoin", () => {
   it("tests every `where` a type carries, not just the outermost", () => {
     const refine = refineOf("h");
     expect(refine("kumiki")).toBe(true);
-    // The inner predicate is the one that used to be dropped.
     expect(refine("ab")).toBe(false);
     expect(refine("kumikijs!")).toBe(false);
   });

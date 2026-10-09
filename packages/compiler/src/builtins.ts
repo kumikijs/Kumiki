@@ -1,7 +1,7 @@
 import type { TileArg, TileExpr } from "./ast.ts";
 
 export const BUILTIN_TILES = new Set<string>([
-  // §2.3.1 Structural
+  // Structural
   "page",
   "region",
   "row",
@@ -14,17 +14,17 @@ export const BUILTIN_TILES = new Set<string>([
   "panel",
   "divider",
   "scroll",
-  // §2.3.2 Text
+  // Text
   "text",
   "heading",
   "link",
   "code",
   "markdown",
-  // §2.3.3 Media
+  // Media
   "image",
   "icon",
   "video",
-  // §2.3.4 Input
+  // Input
   "button",
   "input",
   "textarea",
@@ -34,12 +34,12 @@ export const BUILTIN_TILES = new Set<string>([
   "slider",
   "switch",
   "editable",
-  // §2.3.5 Forms
+  // Forms
   "form",
   "label",
   "fieldset",
   "error",
-  // §2.3.6 Lists / Tables
+  // Lists / Tables
   "list",
   "list-item",
   "table",
@@ -47,18 +47,18 @@ export const BUILTIN_TILES = new Set<string>([
   "table-body",
   "table-row",
   "table-cell",
-  // §2.3.7 Overlays
+  // Overlays
   "modal",
   "drawer",
   "tooltip",
   "popover",
   "toast",
   "details",
-  // §2.3.8 Feedback
+  // Feedback
   "spinner",
   "progress",
   "skeleton",
-  // §2.3.9 Control
+  // Control
   "route-outlet",
 ]);
 

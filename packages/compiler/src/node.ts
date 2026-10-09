@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseCapabilityManifest } from "./capabilities.ts";
 
+export { parseEpisodeLogText } from "./episode-log.ts";
+
 export function nodeRuntimeBundleReader(): string {
   const require = createRequire(import.meta.url);
   const runtimeBundlePath = require.resolve("@kumikijs/runtime/bundle");
@@ -13,28 +15,6 @@ export function nodeRuntimeBundleReader(): string {
 export function nodeEpisodeLogReader(kumikiFilePath: string): (relPath: string) => string {
   const baseDir = dirname(kumikiFilePath);
   return (relPath: string) => readFileSync(join(baseDir, relPath), "utf8");
-}
-
-export function parseEpisodeLogText(raw: string): unknown[] {
-  const trimmed = raw.trim();
-  if (!trimmed) return [];
-  if (trimmed.startsWith("[")) {
-    const arr = JSON.parse(trimmed);
-    if (!Array.isArray(arr)) throw new Error("episode log: JSON root must be an array");
-    return arr;
-  }
-  const out: unknown[] = [];
-  const lines = raw.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const s = lines[i]?.trim() ?? "";
-    if (!s) continue;
-    try {
-      out.push(JSON.parse(s));
-    } catch (e) {
-      throw new Error(`episode log: invalid JSON at line ${i + 1}: ${(e as Error).message}`);
-    }
-  }
-  return out;
 }
 
 /** Thrown when a `kumiki.caps.json` exists but is malformed. */

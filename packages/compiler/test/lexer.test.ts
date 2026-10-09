@@ -74,7 +74,7 @@ describe("lexer", () => {
     expect(tokenSummary("a.b")).toEqual(["ident(a)", "op(.)", "ident(b)"]);
   });
 
-  it("emits `@` as a single-char op for theme-token references (style.md §4.3)", () => {
+  it("emits `@` as a single-char op for theme-token references", () => {
     expect(tokenSummary("@colors.surface")).toEqual([
       "op(@)",
       "ident(colors)",

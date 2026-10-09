@@ -185,7 +185,7 @@ class Walker {
         this.expr(e.index, locals);
         return;
       case "Call":
-        // `run-reducer(name)` (§8.3) takes a reducer NAME, not a value.
+        // `run-reducer(name)` takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
           return;
@@ -350,7 +350,7 @@ class Walker {
             }
           }
           if (t.name === "link" && p.name === "prefetch") {
-            // §3.8: a bare ident or a string literal, both naming a reducer.
+            // A bare ident or a string literal, both naming a reducer.
             if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
             else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
             continue;

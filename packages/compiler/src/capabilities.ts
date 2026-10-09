@@ -58,13 +58,11 @@ export const REDUCER_REF: TypeExpr = refType("ReducerRef");
 export type BuiltinEffect = {
   /** `null` for the one that needs none. */
   readonly cap: string | null;
-  /** Its `in=`, as stdlib.md §2.6 declares it. */
   readonly inType: TypeExpr;
   readonly defaulted?: readonly string[];
 };
 
 export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map<string, BuiltinEffect>([
-  // `query` is routing.md §3.7's extension of the §2.6.1 `in=`.
   ["navigate", { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] }],
   ["navigate-replace", { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] }],
   ["navigate-back", { cap: "nav.back", inType: primType("Unit") }],
@@ -80,7 +78,7 @@ export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map<strin
     "confirm",
     {
       cap: "notification.show",
-      // `message` is lifecycle.md §7.6's; left out, the dialog shows the title.
+      // Left out, `message` shows the title.
       inType: recordType({ title: text, message: text, onYes: REDUCER_REF, onNo: REDUCER_REF }),
       defaulted: ["message"],
     },

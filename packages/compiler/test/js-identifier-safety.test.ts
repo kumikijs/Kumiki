@@ -1,20 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { EMITTED_MODULE_BINDINGS, jsBinding } from "../src/codegen/context.ts";
+import { compileOrFail, importModule, LOADABLE, type ReducerShape } from "./helpers/module.ts";
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
-
-type ReducerShape = {
-  name: string;
-  apply: (
-    live: Record<string, unknown>,
-    payload: Record<string, unknown>,
-  ) => { slots: Record<string, unknown> };
-};
 type Provider = (req: { url: string }) => { kind: string; value: unknown };
 type EffectShape = {
   name: string;
@@ -32,18 +20,10 @@ type GeneratedApp = {
 
 /** Compile, load the emitted module, and hand back a fresh app instance. */
 async function build(src: string): Promise<{ js: string; app: GeneratedApp }> {
-  const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok") {
-    expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-  }
-  const dir = mkdtempSync(join(TMP_ROOT, "ident-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
+  const js = compileOrFail(src, LOADABLE);
   // A reserved word in a binding position makes this import throw at parse time.
-  const mod: { createApp: () => GeneratedApp } = await import(
-    `${pathToFileURL(file).href}?t=${Date.now()}`
-  );
-  return { js: result.js, app: mod.createApp() };
+  const mod = await importModule<{ createApp: () => GeneratedApp }>(js, "ident");
+  return { js, app: mod.createApp() };
 }
 
 /** Run one reducer and return the slot patch it produced. */

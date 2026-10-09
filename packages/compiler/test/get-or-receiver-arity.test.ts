@@ -1,19 +1,16 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const app = (defs: string): string =>
-  `${defs}\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
+import { withApp } from "./helpers/programs.ts";
 
 /** The call under test, wrapped in the smallest program that parses. */
 const withCall = (decls: string, call: string): string =>
-  app(`${decls}
+  withApp(`${decls}
 reducer act on=ui.click(Btn)
     do= sink := ${call}
 tile Btn = button(text="go")
 tile App = column(Btn)`);
-
-const errsOf = (src: string) => check(parse(lex(src)));
-const codesOf = (src: string): string[] => errsOf(src).map((e) => e.code);
 
 const MAP = `slot m : Map(Text, Int) = {}\nslot sink : Int = 0`;
 const OPT = `slot o : Option(Int) = None\nslot sink : Int = 0`;
@@ -21,7 +18,7 @@ const RES = `slot r : Result(Int, Text) = Err("e")\nslot sink : Int = 0`;
 
 describe("the receiver decides how many arguments .get-or takes", () => {
   it("rejects the Option reading on a Map, naming both readings", () => {
-    const errs = errsOf(withCall(MAP, `m.get-or("k")`));
+    const errs = checkSource(withCall(MAP, `m.get-or("k")`));
     const e = errs.find((x) => x.code === "E0213");
     expect(e).toBeDefined();
     expect(e?.kind).toBe("call-arity-mismatch");
@@ -34,7 +31,7 @@ describe("the receiver decides how many arguments .get-or takes", () => {
     ["Option", OPT, `o.get-or("k", 0)`],
     ["Result", RES, `r.get-or("k", 0)`],
   ])("rejects the Map reading on %s", (name, decls, call) => {
-    const errs = errsOf(withCall(decls, call));
+    const errs = checkSource(withCall(decls, call));
     const e = errs.find((x) => x.code === "E0213");
     expect(e).toBeDefined();
     expect(e?.message).toContain(name);
@@ -54,10 +51,10 @@ describe("the receiver decides how many arguments .get-or takes", () => {
   });
 
   it("names the receiver when it knows it, and both readings when it does not", () => {
-    const known = errsOf(withCall(MAP, `m.get-or("k", 0, 1)`)).find((e) => e.code === "E0213");
+    const known = checkSource(withCall(MAP, `m.get-or("k", 0, 1)`)).find((e) => e.code === "E0213");
     expect(known?.message).toContain('on "Map"');
 
-    const dynamic = errsOf(withCall(`slot sink : Int = 0`, `$event.get-or("k", 0, 1)`)).find(
+    const dynamic = checkSource(withCall(`slot sink : Int = 0`, `$event.get-or("k", 0, 1)`)).find(
       (e) => e.code === "E0213",
     );
     expect(dynamic?.message).not.toContain('on "');
@@ -72,11 +69,11 @@ describe("what stays legal", () => {
     ["the Option reading on an Option", OPT, `o.get-or(0)`],
     ["the Option reading on a Result", RES, `r.get-or(0)`],
   ])("accepts %s", (_label, decls, call) => {
-    expect(errsOf(withCall(decls, call))).toEqual([]);
+    expect(checkSource(withCall(decls, call))).toEqual([]);
   });
 
   it("accepts the Option reading on a member that answers one", () => {
-    const errs = errsOf(
+    const errs = checkSource(
       withCall(`slot xs : List(Int) = []\nslot sink : Int = 0`, `xs.head.get-or(0)`),
     );
     expect(errs).toEqual([]);
@@ -85,7 +82,7 @@ describe("what stays legal", () => {
 
 describe("a receiver the checker cannot decide stays silent", () => {
   it("says nothing about a lambda parameter whose type is undecided", () => {
-    const errs = errsOf(
+    const errs = checkSource(
       withCall(
         `slot xs : List(Int) = []\nslot sink : List(Int) = []`,
         `xs.fold([], $1.push($2)).map($1.get-or(0))`,
@@ -108,49 +105,26 @@ describe("a receiver the checker cannot decide stays silent", () => {
 const FILLED_MAP = `slot m : Map(Text, Int) = {"k": 7}\nslot sink : Int = 0`;
 const FILLED_OPT = `slot o : Option(Int) = Some(5)\nslot sink : Int = 0`;
 
-describe("the receiver decides .get-or's arity, and check and build agree", () => {
+describe("the build agrees with check about .get-or's arity", () => {
   it.each([
     ["the Option reading on a Map", FILLED_MAP, `m.get-or("k")`],
     ["the Map reading on an Option", FILLED_OPT, `o.get-or("k", 0)`],
-  ])("check reports %s", (_label, decls, call) => {
-    const codes = check(parse(lex(withCall(decls, call)))).map((e) => e.code);
-    expect(codes).toContain("E0213");
-  });
-
-  it.each([
-    ["the Option reading on a Map", FILLED_MAP, `m.get-or("k")`],
-    ["the Map reading on an Option", FILLED_OPT, `o.get-or("k", 0)`],
-  ])("build refuses to emit %s", (_label, decls, call) => {
+    [
+      "a third argument on a receiver it cannot decide",
+      `slot sink : Int = 0`,
+      `$event.get-or("k", 0, 99)`,
+    ],
+  ])("refuses to emit %s", (_label, decls, call) => {
     const r = compile(withCall(decls, call), { runtimeSpecifier: "./runtime.js" });
-    expect(r.kind).toBe("fail");
-    if (r.kind !== "fail") return;
-    expect(r.errors.map((e) => e.code)).toContain("E0213");
+    expect(r.kind === "fail" && r.errors.map((e) => e.code)).toContain("E0213");
   });
 
-  it("check and build both refuse a third argument on a receiver they cannot decide", () => {
-    const src = withCall(`slot sink : Int = 0`, `$event.get-or("k", 0, 99)`);
-    expect(check(parse(lex(src))).map((e) => e.code)).toContain("E0213");
-    const r = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(r.kind).toBe("fail");
-    if (r.kind !== "fail") return;
-    expect(r.errors.map((e) => e.code)).toContain("E0213");
-  });
-
-  it("still lowers the Map reading to mapGetOr", () => {
-    const r = compile(withCall(FILLED_MAP, `m.get-or("k", 0)`), {
-      runtimeSpecifier: "./runtime.js",
-    });
-    expect(r.kind).toBe("ok");
-    if (r.kind !== "ok") return;
-    expect(r.js).toContain("_s.mapGetOr(");
-    expect(r.js).not.toContain("_s.getOr(");
-  });
-
-  it("still lowers the Option reading to getOr", () => {
-    const r = compile(withCall(FILLED_OPT, `o.get-or(0)`), { runtimeSpecifier: "./runtime.js" });
-    expect(r.kind).toBe("ok");
-    if (r.kind !== "ok") return;
-    expect(r.js).toContain("_s.getOr(");
-    expect(r.js).not.toContain("_s.mapGetOr(");
+  it.each([
+    ["the Map reading to mapGetOr", FILLED_MAP, `m.get-or("k", 0)`, "_s.mapGetOr(", "_s.getOr("],
+    ["the Option reading to getOr", FILLED_OPT, `o.get-or(0)`, "_s.getOr(", "_s.mapGetOr("],
+  ])("lowers %s", (_label, decls, call, helper, other) => {
+    const js = compileOrFail(withCall(decls, call));
+    expect(js).toContain(helper);
+    expect(js).not.toContain(other);
   });
 });

@@ -4,7 +4,7 @@ import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
 
-/** Translate a type into a property-test generation descriptor (spec §8.3.2). */
+/** Translate a type into a property-test generation descriptor. */
 export function typeToGenDesc(t: TypeExpr, gen: GenCtx, seen: Set<string>): GenDescData {
   switch (t.kind) {
     case "TypePrim":

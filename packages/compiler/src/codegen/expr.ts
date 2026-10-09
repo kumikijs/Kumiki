@@ -130,16 +130,12 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "entries") return `_s.mapEntries(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "size") return `_s.mapSize(${baseJs})`;
       if (e.field === "to-ms" || e.field === "ms") return `(${baseJs})`;
-      // .show on values (variants → _tag, numbers/strings → String)
       if (e.field === "show") return `_s.show(${baseJs})`;
-      // .length on text/list/string
       if (e.field === "length") return `((${baseJs}) ?? "").length`;
       if (e.field === "is-empty") return `_s.isEmpty(${baseJs})`;
-      // .lower / .upper on Text
       if (e.field === "lower") return `(String((${baseJs}) ?? "")).toLowerCase()`;
       if (e.field === "upper") return `(String((${baseJs}) ?? "")).toUpperCase()`;
       if (e.field === "trim") return `(String((${baseJs}) ?? "")).trim()`;
-      // Zero-arg list / string method shorthands (callable without parens)
       if (e.field === "unique") return `_s.listUnique(${baseJs})`;
       if (e.field === "reverse") return `[...((${baseJs}) ?? [])].reverse()`;
       if (e.field === "sort") return `_s.listSort(${baseJs})`;
@@ -171,7 +167,6 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "run-reducer") {
         return `_s.runReducerStep(App, _init, ${JSON.stringify(reducerNameArg(e.args[0]))}, _event)`;
       }
-      // Module calls like TodoId.fresh, now, etc.
       if (cn === "now") return `_s.now()`;
       if (/^[A-Z][A-Za-z0-9_]*\.fresh$/.test(cn)) return `_s.freshId()`;
       if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) return parseJs(cn, e.args, e.pos, ctx);
@@ -210,7 +205,6 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "random") return "_s.random()";
       if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, e.pos, ctx)})`;
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
-      // Otherwise treat as user-defined fn
       return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
@@ -584,48 +578,38 @@ export function methodCallJs(
     case "diff":
       // Polymorphic: Time/Duration → numeric magnitude; Set(T) → set difference.
       return `_s.diff(${recvJs}, ${argRaw(args[0]!)})`;
-    // ----- Issue #5: previously-missing stdlib methods -----
     case "concat":
-      // List(T).concat(other)
       return `[...((${recvJs}) ?? []), ...((${argRaw(args[0]!)}) ?? [])]`;
     case "prepend":
-      // List(T).prepend(x)
       return `[${argRaw(args[0]!)}, ...((${recvJs}) ?? [])]`;
     case "chunk":
-      // List(T).chunk(n) → List(List(T))
       return `_s.listChunk(${recvJs}, ${argRaw(args[0]!)})`;
     case "zip":
-      // List(T).zip(other) → List(Tuple(T, U))
       return `_s.listZip(${recvJs}, ${argRaw(args[0]!)})`;
     case "merge":
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
-      // Map(K,V).update(k, expr) — within expr, $1 is the current value.
+      // Within expr, $1 is the current value.
       return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, one)})))`;
     case "add":
-      // Set(T).add(x)
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
     case "union":
-      // Set(T).union(other)
       return `_s.setUnion(${recvJs}, ${argRaw(args[0]!)})`;
     case "intersect":
-      // Set(T).intersect(other)
       return `_s.setIntersect(${recvJs}, ${argRaw(args[0]!)})`;
     case "or":
-      // Option(T).or(other) / Result(T,E).or(other)
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
-      // Result(T,E).map-err(expr) — within expr, $1 is the current Err payload.
+      // Within expr, $1 is the current Err payload.
       return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
     case "replace":
-      // Text.replace(from, to) — replaces every occurrence.
+      // Every occurrence, not only the first.
       return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;
     case "min":
       return `Math.min((${recvJs}), (${argRaw(args[0]!)}))`;
     case "max":
       return `Math.max((${recvJs}), (${argRaw(args[0]!)}))`;
     case "clamp":
-      // Int/Float.clamp(lo, hi)
       return `Math.min(Math.max((${recvJs}), (${argRaw(args[0]!)})), (${argRaw(args[1]!)}))`;
     case "is-ok":
       return `(_s.variantIs(${recvJs}, "Ok"))`;
@@ -741,7 +725,6 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
 
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
   const sc = jsOfExpr(e.scrutinee, ctx);
-  // Generate an IIFE that destructures the scrutinee and matches each arm.
   const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
   return `((_v) => { ${armsJs} else { return undefined; } })(${sc})`;
 }
@@ -758,7 +741,6 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     const { guard, binds, inner } = tupleArm(p, ctx, scVar);
     return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
-  // PVariant
   const tag = p.name;
   const inner = childCtx(ctx);
   const bindAssigns: string[] = [];

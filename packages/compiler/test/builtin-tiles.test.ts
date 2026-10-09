@@ -38,7 +38,7 @@ function program(call: string): string {
   ].join("\n");
 }
 
-describe("builtin tile registry (issue #61)", () => {
+describe("builtin tile registry", () => {
   for (const name of BUILTIN_TILES) {
     it(`codegen handles "${name}"`, () => {
       const src = program(callFor(name));

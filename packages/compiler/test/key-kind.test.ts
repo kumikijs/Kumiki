@@ -1,8 +1,6 @@
 import { check, compile, type Expr, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const app = (defs: string): string =>
-  `${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
+import { withButtonApp } from "./helpers/programs.ts";
 
 /** An initial value a slot of `type` accepts, so the case checks clean. */
 const emptyOf = (type: string): string =>
@@ -13,7 +11,7 @@ type Reader = Extract<Expr, { kind: "FieldAccess" } | { kind: "MethodCall" }>;
 
 /** Every reader node in the checked program, a receiver before a fragment argument. */
 function readersOf(defs: string): Reader[] {
-  const program = parse(lex(app(defs)));
+  const program = parse(lex(withButtonApp(defs)));
   const errors = check(program).filter((e) => e.severity !== "warning");
   if (errors.length > 0) throw new Error(errors.map((e) => `${e.code} ${e.message}`).join("\n"));
   const found: Reader[] = [];
@@ -35,7 +33,7 @@ function readersOf(defs: string): Reader[] {
 function kindOf(decls: string, resType: string, rhs: string): string | undefined {
   const last = readersOf(`${decls}
 slot res : ${resType} = ${emptyOf(resType)}
-reducer act on=ui.click(Btn)
+reducer act on=ui.click(B)
     do= res := ${rhs}`).at(-1);
   if (!last) throw new Error(`no reader in ${rhs}`);
   return last.keyKind;
@@ -147,12 +145,12 @@ describe("the receiver's type is followed wherever it comes from", () => {
 
   it("the slots a property-test invariant reads through run-reducer", () => {
     const readers = readersOf(`slot st : Set(Int) = {}
-reducer add on=ui.click(Btn)
+reducer add on=ui.click(B)
     do= st := st.add(7)
 test adds-seven =
     property-test
         for-all   = {n: Int}
-        given     = {slots: {st: {}}, event: {type: ui.click, target: Btn}}
+        given     = {slots: {st: {}}, event: {type: ui.click, target: B}}
         invariant = run-reducer(add).slots.st.to-list.contains(7)`);
     expect(readers.map((r) => r.keyKind)).toEqual(["number"]);
   });
@@ -163,13 +161,13 @@ describe("the state run-reducer answers", () => {
     check(
       parse(
         lex(
-          app(`slot st : Set(Int) = {}
-reducer add on=ui.click(Btn)
+          withButtonApp(`slot st : Set(Int) = {}
+reducer add on=ui.click(B)
     do= st := st.add(7)
 test t =
     property-test
         for-all   = {n: Int}
-        given     = {slots: {st: {}}, event: {type: ui.click, target: Btn}}
+        given     = {slots: {st: {}}, event: {type: ui.click, target: B}}
         invariant = ${invariant}`),
         ),
       ),
@@ -213,9 +211,9 @@ describe("Map.map is a key reader too", () => {
 describe("the recorded kind reaches the emitted call", () => {
   /** The emitted module for one reducer that writes `rhs` into `res`. */
   function jsFor(decls: string, resType: string, rhs: string): string {
-    const src = app(`${decls}
+    const src = withButtonApp(`${decls}
 slot res : ${resType} = ${emptyOf(resType)}
-reducer act on=ui.click(Btn)
+reducer act on=ui.click(B)
     do= res := ${rhs}`);
     const r = compile(src, { runtimeSpecifier: "./runtime.js" });
     if (r.kind !== "ok") throw new Error(r.errors.map((e) => `${e.code} ${e.message}`).join("\n"));

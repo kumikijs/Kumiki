@@ -111,7 +111,7 @@ export type TileDef = {
   errorBoundary?: string;
   errorBoundaryPos?: Pos;
   subRoutes?: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
-  /** §3.9 scroll-restoration. Absent ≡ default (true). `false` opts the tile out of automatic restore. */
+  /** Absent ≡ default (true). `false` opts the tile out of automatic restore. */
   scrollRestoration?: boolean;
   /** Clauses written more than once — the later one won silently. */
   duplicateClauses?: DuplicateName[];

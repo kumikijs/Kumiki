@@ -1,5 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const program = (fallbackIn: string, body = `column(text("recovered"))`): string =>
   `slot secret : Option(Text) = None
@@ -9,10 +9,10 @@ tile Home = column(Risky)
 app M caps=[] routes={"/" -> Home, "/404" -> Home} init=[]`;
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
 // Order-free: which diagnostic comes first follows definition order, not a rule.
-const codeSet = (src: string) => [...new Set(check(parse(lex(src))).map((e) => e.code))].sort();
+const codeSet = (src: string) => [...new Set(codesOf(src))].sort();
 
 describe("an error-boundary fallback takes a PanicInfo", () => {
   it("a fallback declaring another in= is E0220 at the clause", () => {
@@ -72,7 +72,7 @@ tile D error-boundary=Spelled = column(text("d"))
 tile E error-boundary=Wrong   = column(text("e"))
 tile Home = column(A, B, C, D, E)
 app M caps=[] routes={"/" -> Home, "/404" -> Home} init=[]`;
-    expect(check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
+    expect(checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
       "E0220 12:23",
     ]);
   });
@@ -96,7 +96,7 @@ tile A error-boundary=Fb = column(text("a"))
 tile B error-boundary=Fb = column(text("b"))
 tile Home = column(A, B)
 app M caps=[] routes={"/" -> Home, "/404" -> Home} init=[]`;
-    expect(check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
+    expect(checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
       "E0220 2:23",
       "E0220 3:23",
     ]);

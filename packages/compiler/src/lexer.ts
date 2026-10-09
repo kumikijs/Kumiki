@@ -130,7 +130,6 @@ export function lex(source: string): Token[] {
 
     const startPos = pos();
 
-    // String literal
     if (c === '"') {
       let value = "";
       advance(); // skip opening quote
@@ -179,7 +178,7 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    // Number literal (integer or float). Supports unary minus only when not adjacent to identifier (handled in parser).
+    // Unary minus is the parser's: here a number never carries a sign.
     if (isDigit(c)) {
       let raw = "";
       while (i < source.length && isDigit(source[i] as string)) {
@@ -204,7 +203,6 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    // Positional binding: $identifier or $digits (e.g. $1, $el, $event, $route)
     if (c === "$") {
       advance();
       const raw = `$${readIdentBody()}`;
@@ -213,7 +211,6 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    // Identifier or keyword
     if (isIdentStart(c)) {
       const raw = readIdentBody();
       if (raw.length > MAX_IDENT_LEN) {
@@ -227,7 +224,6 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    // Multi-character operators
     let matched: string | undefined;
     for (const op of MULTI_CHAR_OPS) {
       if (source.startsWith(op, i)) {
@@ -241,7 +237,6 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    // Single-character operators
     if (SINGLE_CHAR_OPS.has(c)) {
       tokens.push({ kind: "op", value: c, pos: startPos });
       advance();

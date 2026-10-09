@@ -58,18 +58,16 @@ ${TAIL}`,
 ];
 
 describe("a definition written in terms of itself never reaches code generation", () => {
-  for (const { what, code, source } of REJECTED) {
-    it(`refuses to build ${what}`, () => {
-      const result = outcome(source);
-      expect(result.kind, `${what} produced an artifact`).toBe("fail");
-      if (result.kind !== "fail") return;
-      expect(result.errors.map((e) => e.code)).toContain(code);
-      for (const e of result.errors) {
-        expect(e.pos.line).toBeGreaterThanOrEqual(1);
-        expect(e.pos.col).toBeGreaterThanOrEqual(1);
-      }
-    });
-  }
+  it.each(REJECTED)("refuses to build $what", ({ code, source }) => {
+    const result = outcome(source);
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toContain(code);
+    for (const e of result.errors) {
+      expect(e.pos.line).toBeGreaterThanOrEqual(1);
+      expect(e.pos.col).toBeGreaterThanOrEqual(1);
+    }
+  });
 
   it("builds the accepted forms of all four", () => {
     const source = `type Thread = {label: Text, replies: List(Thread)}

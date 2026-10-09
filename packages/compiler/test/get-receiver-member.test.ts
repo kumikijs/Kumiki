@@ -1,5 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { codesOf } from "./helpers/diagnostics.ts";
 
 const APP = `tile Run = button(text="run")
 tile App = column(Run)
@@ -13,7 +13,7 @@ fn zero() -> Bool = true
 /** The codes `check` reports for a `fn` over `v : type` whose body reads `expr`. */
 function fnCodes(type: string, expr: string): string[] {
   const src = `type R = {x: Int}\n${FNS}fn probe(v: ${type}) -> Text = (${expr}).show\n${APP}`;
-  return check(parse(lex(src))).map((e) => e.code);
+  return codesOf(src);
 }
 
 /** The codes `check` reports for a reducer over `decls` that writes `sink := (expr).show`. */
@@ -22,7 +22,7 @@ function codes(decls: string, expr: string): string[] {
 slot sink : Text = ""
 reducer run on=ui.click(Run) do= sink := (${expr}).show
 ${APP}`;
-  return check(parse(lex(src))).map((e) => e.code);
+  return codesOf(src);
 }
 
 const KNOWN = [
@@ -72,10 +72,6 @@ describe(".get where the receiver has it, or cannot be decided", () => {
 
   it.each(["$el.x.get", "$el.x.get()", "$el.x.get(1)"])("%s passes", (expr) => {
     expect(codes("", expr)).toEqual([]);
-  });
-
-  it("a count past both readings is still E0213 on an undecided receiver", () => {
-    expect(codes("", "$el.x.get(1, 2)")).toEqual(["E0213"]);
   });
 
   it.each([

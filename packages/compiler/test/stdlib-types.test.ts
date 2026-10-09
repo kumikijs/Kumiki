@@ -1,22 +1,21 @@
-import { check, generateDts, lex, parse } from "@kumikijs/compiler";
+import { generateDts, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { BUILTIN_TYPE_CONSTRUCTORS, STDLIB_TYPES } from "../src/stdlib-types.ts";
+import { codesOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
 
-/** A type name only Kumiki source can carry — every entry must be spellable. */
 describe("every stdlib type resolves in the checker", () => {
   for (const t of STDLIB_TYPES) {
     it(`resolves "${t.name}"`, () => {
-      expect(codes(`slot v : ${t.name} = 1\n${TAIL}`)).not.toContain("E0117");
+      expect(codesOf(`slot v : ${t.name} = 1\n${TAIL}`)).not.toContain("E0117");
     });
   }
 
   it("reports a name that is not one of them", () => {
-    expect(codes(`slot v : HttpErrror = 1\n${TAIL}`)).toEqual(["E0117"]);
+    expect(codesOf(`slot v : HttpErrror = 1\n${TAIL}`)).toEqual(["E0117"]);
   });
 });
 
@@ -57,29 +56,29 @@ describe("the built-in type constructors", () => {
     if (arity === null) continue;
     it(`accepts "${name}" with ${arity} argument(s) and reports any other count`, () => {
       const args = Array.from({ length: arity }, () => "Int").join(", ");
-      expect(codes(`slot v : ${name}(${args}) = 1\n${TAIL}`)).not.toContain("E0210");
-      expect(codes(`slot v : ${name}(${args}, Int) = 1\n${TAIL}`)).toContain("E0210");
+      expect(codesOf(`slot v : ${name}(${args}) = 1\n${TAIL}`)).not.toContain("E0210");
+      expect(codesOf(`slot v : ${name}(${args}, Int) = 1\n${TAIL}`)).toContain("E0210");
     });
   }
 
   it("accepts Tuple at any arity", () => {
     for (const args of ["Int", "Int, Text", "Int, Text, Bool"]) {
-      expect(codes(`slot v : Tuple(${args}) = 1\n${TAIL}`)).not.toContain("E0210");
+      expect(codesOf(`slot v : Tuple(${args}) = 1\n${TAIL}`)).not.toContain("E0210");
     }
   });
 
   it("reports a constructor that is not one of them", () => {
-    expect(codes(`slot v : Lst(Int) = 1\n${TAIL}`)).toContain("E0117");
+    expect(codesOf(`slot v : Lst(Int) = 1\n${TAIL}`)).toContain("E0117");
   });
 });
 
 describe("a program's own definition shadows the standard library's", () => {
   it("takes the program's Route over the built-in one", () => {
-    expect(codes(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([]);
-    expect(codes(`type Route = Text\nslot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
+    expect(codesOf(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([]);
+    expect(codesOf(`type Route = Text\nslot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
   });
 
   it("checks against the built-in when the program declares nothing", () => {
-    expect(codes(`slot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
+    expect(codesOf(`slot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
   });
 });

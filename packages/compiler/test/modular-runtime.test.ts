@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { compile } from "@kumikijs/compiler";
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
+import { compileOrFail } from "./helpers/module.ts";
 
 const COUNTER_PATH = app("01-counter");
 
@@ -39,7 +40,7 @@ function modular(src: string) {
   return result;
 }
 
-describe("modular runtime emission (#71)", () => {
+describe("modular runtime emission", () => {
   it("counter imports only core + stdlib + the tiles it renders", () => {
     const r = modular(COUNTER);
     expect(r.js).toContain('import { mountCore } from "./runtime/core.js"');
@@ -64,7 +65,6 @@ describe("modular runtime emission (#71)", () => {
       "tiles-text-heading",
       "tiles-input-shared",
     ]);
-    // mounts through the granular core with the assembled registry
     expect(r.js).toContain("const _s = _stdlibCore;");
     expect(r.js).toMatch(/mountCore\(App, document\.getElementById\("root"\), \{ tiles: _tiles/);
   });
@@ -101,7 +101,7 @@ describe("modular runtime emission (#71)", () => {
     expect(r.runtimeModules).toContain("effects-storage");
   });
 
-  it("a session app ships sessionWrite from the same effects-storage module (#84)", () => {
+  it("a session app ships sessionWrite from the same effects-storage module", () => {
     const r = modular(SESSIONED);
     expect(r.js).toContain('import { sessionWrite } from "./runtime/effects-storage.js"');
     expect(r.js).not.toContain("sessionRead");
@@ -140,29 +140,23 @@ app A caps=[${cap}] routes={"/" -> App, "/404" -> App} init=[]
   }
 
   it("monolith mode pulls storageClear through the one import", () => {
-    const result = compile(clearing("storage.write", "in=Unit"), {
+    const js = compileOrFail(clearing("storage.write", "in=Unit"), {
       runtimeSpecifier: "./runtime.js",
     });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    const importLines = result.js.split("\n").filter((l) => l.startsWith("import "));
+    const importLines = js.split("\n").filter((l) => l.startsWith("import "));
     expect(importLines).toEqual(['import { mount, _stdlib, storageClear } from "./runtime.js";']);
   });
 
   it("monolith mode keeps the single-import shape for the inlining path", () => {
-    const result = compile(COUNTER, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    const importLines = result.js.split("\n").filter((l) => l.startsWith("import "));
+    const js = compileOrFail(COUNTER);
+    const importLines = js.split("\n").filter((l) => l.startsWith("import "));
     expect(importLines).toHaveLength(1);
     expect(importLines[0]).toBe('import { mount, _stdlib } from "./runtime.js";');
   });
 
   it("monolith mode pulls the bare effect handler names through the one import", () => {
-    const result = compile(STORED, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    const importLines = result.js.split("\n").filter((l) => l.startsWith("import "));
+    const js = compileOrFail(STORED);
+    const importLines = js.split("\n").filter((l) => l.startsWith("import "));
     expect(importLines).toHaveLength(1);
     expect(importLines[0]).toBe('import { mount, _stdlib, storageWrite } from "./runtime.js";');
   });

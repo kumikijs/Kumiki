@@ -1,5 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const HEAD = `type NonEmpty(T) = T where nonempty
 type Short       = Text where len-lt(7)
@@ -13,7 +13,7 @@ app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
 const diags = (decl: string, write: string) =>
-  check(parse(lex(`${HEAD}${decl}\nreducer w on=ui.click(B) do= ${write}\n${TAIL}`))).map(
+  checkSource(`${HEAD}${decl}\nreducer w on=ui.click(B) do= ${write}\n${TAIL}`).map(
     (e) => `${e.code} ${e.message}`,
   );
 
@@ -284,7 +284,7 @@ describe("a generic that closes on itself", () => {
   const APP = `tile App = column(text("a"))
 app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-  const codes = (src: string) => check(parse(lex(`${src}\n${APP}`))).map((e) => e.code);
+  const codes = (src: string) => codesOf(`${src}\n${APP}`);
 
   it("terminates on a generic that forwards to itself", () => {
     expect(codes(`type Loop(T) = Loop(T) where nonempty\nslot l : Loop(Text) = "a"`)).toContain(

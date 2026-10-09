@@ -1,37 +1,15 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
-
-function diagnose(source: string): { code: string; message: string; line: number; col: number }[] {
-  return check(parse(lex(source))).map((e) => ({
-    code: e.code,
-    message: e.message,
-    line: e.pos.line,
-    col: e.pos.col,
-  }));
-}
-
-function codes(source: string): string[] {
-  return diagnose(source).map((e) => e.code);
-}
+import { codesOf, type Located, locatedOf, textAt } from "./helpers/diagnostics.ts";
+import { loadApp } from "./helpers/module.ts";
 
 /** The one diagnostic a source is expected to draw, so a position can be read off it. */
-function only(source: string): { code: string; message: string; line: number; col: number } {
-  const found = diagnose(source);
+function only(source: string): Located {
+  const found = locatedOf(source);
   expect(found).toHaveLength(1);
   const first = found[0];
   if (!first) throw new Error("expected one diagnostic");
   return first;
-}
-
-/** The text at a diagnostic's own line and column, so a position is read rather than counted. */
-function textAt(source: string, at: { line: number; col: number }): string {
-  return (source.split("\n")[at.line - 1] ?? "").slice(at.col - 1);
 }
 
 /** A program whose only variable is the effect's `policy=` key. */
@@ -81,7 +59,7 @@ describe("an effect's latest-per-key key is checked", () => {
     ["a slot", "query"],
     ["an expression over both", "$1 + query"],
   ])("accepts %s in the key", (_what, key) => {
-    expect(codes(app(key))).toEqual([]);
+    expect(codesOf(app(key))).toEqual([]);
   });
 
   it("accepts a fn call in the key", () => {
@@ -92,11 +70,11 @@ effect load cap=http.get in=Text out=Result(Text, HttpError)
 tile B = button(text="b")
 tile Home = column(B)
 app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
-    expect(codes(source)).toEqual([]);
+    expect(codesOf(source)).toEqual([]);
   });
 
   it("reports $route in the key as an undefined name", () => {
-    expect(codes(app("$route.path"))).toEqual(["E0103"]);
+    expect(codesOf(app("$route.path"))).toEqual(["E0103"]);
   });
 
   // Every other policy carries no expression, so nothing new is walked.
@@ -105,7 +83,7 @@ app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
 tile B = button(text="b")
 tile Home = column(B)
 app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
-    expect(codes(source)).toEqual([]);
+    expect(codesOf(source)).toEqual([]);
   });
 });
 
@@ -120,11 +98,11 @@ describe("an effect's map-request is checked in the same scope", () => {
     ["the effect input", "$1"],
     ["a slot", "query"],
   ])("accepts %s", (_what, expr) => {
-    expect(codes(mapRequestApp(expr))).toEqual([]);
+    expect(codesOf(mapRequestApp(expr))).toEqual([]);
   });
 
   it("reports $route as an undefined name", () => {
-    expect(codes(mapRequestApp("$route.path"))).toEqual(["E0103"]);
+    expect(codesOf(mapRequestApp("$route.path"))).toEqual(["E0103"]);
   });
 });
 
@@ -141,16 +119,7 @@ type LoadedApp = {
 
 /** Compile `source`, import the module from disk, and build one app instance. */
 async function load(source: string): Promise<LoadedApp> {
-  const result = compile(source, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok")
-    expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-  const dir = mkdtempSync(join(TMP_ROOT, "policy-key-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
-  const mod: { createApp: () => LoadedApp } = await import(
-    `${pathToFileURL(file).href}?t=${Date.now()}`
-  );
-  return mod.createApp();
+  return loadApp<LoadedApp>(source, "policy-key");
 }
 
 /** A `latest-per-key(noteKey)` effect and one reducer `go` whose body is `body`. */
@@ -177,7 +146,7 @@ async function runGo(body: string[]): Promise<{ id: unknown; key: unknown }> {
   return { id: slots.lastId, key: emits[0]?.key };
 }
 
-describe("a `latest-per-key` key is evaluated at the emit (http.md §6.4)", () => {
+describe("a `latest-per-key` key is evaluated at the emit", () => {
   const EMIT = `lastId := emit load("x")`;
 
   it.each([

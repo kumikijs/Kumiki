@@ -1,16 +1,14 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-const diags = (src: string) => check(parse(lex(src)));
-const codes = (src: string) => diags(src).map((e) => e.code);
 
 describe("a tile that expands into itself", () => {
   it("reports direct self-expansion and names the path", () => {
     const src = `tile App = column(text("a"), App)
 ${TAIL}`;
-    const [err, ...rest] = diags(src);
+    const [err, ...rest] = checkSource(src);
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0005");
     expect(err?.message).toContain("App → App");
@@ -21,7 +19,7 @@ ${TAIL}`;
 tile B = column(text("b"), A)
 tile App = column(A)
 ${TAIL}`;
-    const [err, ...rest] = diags(src);
+    const [err, ...rest] = checkSource(src);
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0005");
     expect(err?.message).toContain("A → B → A");
@@ -54,7 +52,7 @@ tile App = column(A())`,
   ];
   for (const [what, defs, at] of positions) {
     it(`points at ${what}`, () => {
-      const err = diags(`${defs}\n${TAIL}`)[0];
+      const err = checkSource(`${defs}\n${TAIL}`)[0];
       expect(err?.code).toBe("E0005");
       expect(`${err?.pos.line}:${err?.pos.col}`).toBe(at);
     });
@@ -67,15 +65,15 @@ tile C = column(A)
 tile D = column(B)
 tile App = column(C, D)
 ${TAIL}`;
-    expect(codes(src)).toEqual(["E0005"]);
+    expect(codesOf(src)).toEqual(["E0005"]);
   });
 
   it("reports a cycle once however many edges close it", () => {
     expect(
-      codes(`tile A = column(B)\ntile B = column(A, A)\ntile App = column(A)\n${TAIL}`),
+      codesOf(`tile A = column(B)\ntile B = column(A, A)\ntile App = column(A)\n${TAIL}`),
     ).toEqual(["E0005"]);
     expect(
-      codes(
+      codesOf(
         `tile A = column(B)
 tile B = if true then column(A) else column(A)
 tile App = column(A)
@@ -86,7 +84,7 @@ ${TAIL}`,
 
   it("reports two loops through one tile separately", () => {
     expect(
-      codes(
+      codesOf(
         `tile A = column(B, C)
 tile B = column(A)
 tile C = column(A)
@@ -103,7 +101,7 @@ tile C = column(D)
 tile D = column(C)
 tile App = column(A, C)
 ${TAIL}`;
-    expect(codes(src)).toEqual(["E0005", "E0005"]);
+    expect(codesOf(src)).toEqual(["E0005", "E0005"]);
   });
 
   it("follows a bare identifier standing in for a tile", () => {
@@ -113,7 +111,7 @@ tile leaf = column(text("l"), other)
 tile other = column(text("o"), leaf)
 tile App = column(leaf)
 ${TAIL}`;
-    const [err, ...rest] = diags(src);
+    const [err, ...rest] = checkSource(src);
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0005");
     expect(err?.message).toContain("leaf → other → leaf");
@@ -135,7 +133,7 @@ tile A = match o with | Some(n) -> column(B) | None -> column(text("x"))`,
   ];
   for (const [what, tileA] of nesting) {
     it(`follows the cycle through ${what}`, () => {
-      expect(codes(`${tileA}\ntile B = column(A)\ntile App = column(A)\n${TAIL}`)).toEqual([
+      expect(codesOf(`${tileA}\ntile B = column(A)\ntile App = column(A)\n${TAIL}`)).toEqual([
         "E0005",
       ]);
     });
@@ -143,7 +141,7 @@ tile A = match o with | Some(n) -> column(B) | None -> column(text("x"))`,
 
   it("resolves a name a program redeclares to that program's tile", () => {
     expect(
-      codes(`tile column = column(text("x"))
+      codesOf(`tile column = column(text("x"))
 tile App = column(text("y"))
 ${TAIL}`),
     ).toEqual(["E0213", "E0213", "E0005"]);
@@ -155,7 +153,7 @@ tile Inner sub-routes = { "/b/x" -> Outer } = page(heading("inner"), route-outle
 tile Outer sub-routes = { "/a/x" -> Inner } = page(heading("outer"), route-outlet())
 app SubCycle caps=[] routes={"/a/*" -> Outer, "/b/*" -> Inner, "/404" -> NotFound} init=[]
 `;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 
   it("follows error-boundary", () => {
@@ -163,7 +161,7 @@ app SubCycle caps=[] routes={"/a/*" -> Outer, "/b/*" -> Inner, "/404" -> NotFoun
 tile B = column(text("b"), A())
 tile App = column(A())
 ${TAIL}`;
-    const [err, ...rest] = diags(src);
+    const [err, ...rest] = checkSource(src);
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0005");
     expect(err?.message).toContain("A → B → A");
@@ -173,7 +171,7 @@ ${TAIL}`;
     const src = `tile Wrap = column(text("w"))
 tile App = column(Wrap(c=when(true, App())))
 ${TAIL}`;
-    expect(codes(src)).toEqual(["E0201"]);
+    expect(codesOf(src)).toEqual(["E0201"]);
   });
 
   it("leaves an acyclic chain alone", () => {
@@ -182,7 +180,7 @@ tile B = column(C)
 tile A = column(B, C)
 tile App = column(A)
 ${TAIL}`;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 
@@ -192,7 +190,7 @@ describe("a slot initializer that reads a slot", () => {
 slot a : Int = b + 1
 tile App = column(text(a.show))
 ${TAIL}`;
-    const [err, ...rest] = diags(src);
+    const [err, ...rest] = checkSource(src);
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0304");
     expect(err?.message).toContain(`slot "b"`);
@@ -212,7 +210,7 @@ ${TAIL}`;
   for (const [where, decl] of readSites) {
     it(`reports a slot read in ${where}`, () => {
       expect(
-        codes(`slot b : Int = 1
+        codesOf(`slot b : Int = 1
 ${decl}
 tile App = column(text("x"))
 ${TAIL}`),
@@ -225,14 +223,14 @@ ${TAIL}`),
 slot b : Int = 1
 tile App = column(text(a.show))
 ${TAIL}`;
-    expect(codes(src)).toEqual(["E0304"]);
+    expect(codesOf(src)).toEqual(["E0304"]);
   });
 
   it("reports a slot that reads itself", () => {
     const src = `slot a : Int = a + 1
 tile App = column(text(a.show))
 ${TAIL}`;
-    expect(codes(src)).toEqual(["E0304"]);
+    expect(codesOf(src)).toEqual(["E0304"]);
   });
 
   it("does not report a local binding that shadows a slot name", () => {
@@ -240,7 +238,7 @@ ${TAIL}`;
 slot a : Int = let b = 2 in b + 1
 tile App = column(text(a.show))
 ${TAIL}`;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 
   it("does not report a fn call", () => {
@@ -248,7 +246,7 @@ ${TAIL}`;
 slot a : Int = double(21)
 tile App = column(text(a.show))
 ${TAIL}`;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 
   it("does not report a literal initializer", () => {
@@ -257,7 +255,7 @@ slot b : Text = "x"
 slot c : List(Int) = [1, 2]
 tile App = column(text(a.show))
 ${TAIL}`;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 
@@ -266,7 +264,7 @@ describe("a fn that calls itself", () => {
     const src = `fn fact(n: Int) -> Int = if n <= 1 then 1 else n * fact(n - 1)
 tile App = column(text(fact(5).show))
 ${TAIL}`;
-    const [err, ...rest] = diags(src);
+    const [err, ...rest] = checkSource(src);
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0006");
     expect(err?.message).toContain("fact → fact");
@@ -280,7 +278,7 @@ fn g(n: Int) -> Int = h(n)
 fn h(n: Int) -> Int = f(n)
 tile App = column(text("x"))
 ${TAIL}`;
-    const err = diags(src)[0];
+    const err = checkSource(src)[0];
     expect(err?.message).toContain("f → g → h → f");
     expect(`${err?.pos.line}:${err?.pos.col}`).toBe("1:23");
   });
@@ -290,7 +288,7 @@ ${TAIL}`;
 fn odd(n: Int) -> Bool = if n == 0 then false else even(n - 1)
 tile App = column(text("x"))
 ${TAIL}`;
-    const [err, ...rest] = diags(src);
+    const [err, ...rest] = checkSource(src);
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0006");
     expect(err?.message).toContain("even → odd → even");
@@ -301,7 +299,7 @@ ${TAIL}`;
 fn nine(n: Int) -> Int = triple(triple(n))
 tile App = column(text(nine(1).show))
 ${TAIL}`;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 
   it("does not confuse a parameter that shadows a fn name for a call", () => {
@@ -309,13 +307,13 @@ ${TAIL}`;
 fn use(twice: Int) -> Int = twice + 1
 tile App = column(text(use(1).show))
 ${TAIL}`;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 
 describe("a type that resolves to itself", () => {
   const TILE = `tile App = column(text("x"))\n`;
-  const typeDiags = (defs: string) => diags(`${defs}\n${TILE}${TAIL}`);
+  const typeDiags = (defs: string) => checkSource(`${defs}\n${TILE}${TAIL}`);
   const typeCodes = (defs: string) => typeDiags(defs).map((e) => e.code);
 
   it("reports a type whose body is its own name", () => {

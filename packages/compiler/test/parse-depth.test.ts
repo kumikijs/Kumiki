@@ -1,7 +1,7 @@
 import { compile, lex, ParseError, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-/** The bound recorded in language.md §1.2.3. */
+/** The parser's nesting limit. */
 const MAX_DEPTH = 256;
 
 const nest = (open: string, close: string, inner: string, depth: number) =>

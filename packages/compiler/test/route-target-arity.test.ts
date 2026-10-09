@@ -1,29 +1,6 @@
-import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
+import { codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-function diagnose(source: string): { code: string; message: string; line: number; col: number }[] {
-  return check(parse(lex(source))).map((e) => ({
-    code: e.code,
-    message: e.message,
-    line: e.pos.line,
-    col: e.pos.col,
-  }));
-}
-
-function codes(source: string): string[] {
-  return diagnose(source).map((e) => e.code);
-}
-
-function messages(source: string): string[] {
-  return diagnose(source)
-    .map((e) => e.message)
-    .sort();
-}
-
-/** The text at a diagnostic's own line and column, so a position is read rather than counted. */
-function textAt(source: string, at: { line: number; col: number }): string {
-  return (source.split("\n")[at.line - 1] ?? "").slice(at.col - 1);
-}
+import { codesOf, locatedOf, messagesOf, textAt } from "./helpers/diagnostics.ts";
 
 /** A program whose whole `routes` map is under test. */
 function app(routes: string, defs: string): string {
@@ -42,38 +19,40 @@ const REFUSAL = "expects 1 argument(s) — a route target is rendered with none"
 
 describe("a route target is rendered with no argument", () => {
   it("refuses a target that declares in=", () => {
-    expect(codes(app('{"/" -> Panel, "/404" -> Host}', TAKES_INPUT))).toEqual(["E0213"]);
+    expect(codesOf(app('{"/" -> Panel, "/404" -> Host}', TAKES_INPUT))).toEqual(["E0213"]);
   });
 
   it("reports at the tile name in the entry, not at the app", () => {
     const src = app('{"/" -> Panel, "/404" -> Host}', TAKES_INPUT);
-    const d = diagnose(src)[0];
+    const d = locatedOf(src)[0];
     expect(d && textAt(src, d)).toMatch(/^Panel\b/);
   });
 
   it("names the route and the tile", () => {
-    expect(messages(app('{"/" -> Panel, "/404" -> Host}', TAKES_INPUT))).toEqual([
+    expect(messagesOf(app('{"/" -> Panel, "/404" -> Host}', TAKES_INPUT))).toEqual([
       `Route "/" targets tile "Panel", which ${REFUSAL}`,
     ]);
   });
 
   it("checks the /404 entry the same way", () => {
-    expect(messages(app('{"/" -> Host, "/404" -> Panel}', TAKES_INPUT))).toEqual([
+    expect(messagesOf(app('{"/" -> Host, "/404" -> Panel}', TAKES_INPUT))).toEqual([
       `Route "/404" targets tile "Panel", which ${REFUSAL}`,
     ]);
   });
 
   it("accepts a target that declares none, and leaves it callable from a tile body", () => {
     // `Host` renders `Panel("a")`: only the route position is refused.
-    expect(diagnose(app('{"/" -> Host, "/404" -> Host}', TAKES_INPUT))).toEqual([]);
+    expect(locatedOf(app('{"/" -> Host, "/404" -> Host}', TAKES_INPUT))).toEqual([]);
   });
 
   it("says nothing about a redirect entry", () => {
-    expect(diagnose(app('{"/" -> Host, "/old" ->> "/", "/404" -> Host}', TAKES_INPUT))).toEqual([]);
+    expect(locatedOf(app('{"/" -> Host, "/old" ->> "/", "/404" -> Host}', TAKES_INPUT))).toEqual(
+      [],
+    );
   });
 
   it("leaves an undefined target to E0105 alone", () => {
-    expect(codes(app('{"/" -> Missing, "/404" -> Host}', TAKES_INPUT))).toEqual(["E0105"]);
+    expect(codesOf(app('{"/" -> Missing, "/404" -> Host}', TAKES_INPUT))).toEqual(["E0105"]);
   });
 
   it("answers with the diagnostic rather than output", () => {
@@ -123,14 +102,14 @@ tile Home = column(text("h"))`;
   const ROUTES = '{"/" -> Home, "/s/*" -> Layout, "/404" -> Home}';
 
   it("refuses a sub-route target that declares in=", () => {
-    expect(messages(app(ROUTES, NESTED))).toEqual([
+    expect(messagesOf(app(ROUTES, NESTED))).toEqual([
       `Sub-route "/s/child" in tile "Layout" targets tile "Panel", which ${REFUSAL}`,
     ]);
   });
 
   it("reports at the sub-route entry", () => {
     const src = app(ROUTES, NESTED);
-    const d = diagnose(src)[0];
+    const d = locatedOf(src)[0];
     expect(d && textAt(src, d)).toMatch(/^Panel\b/);
   });
 
@@ -142,12 +121,12 @@ tile Home = column(text("h"))`;
         '"/s/child" -> Child',
       ),
     );
-    expect(diagnose(src)).toEqual([]);
+    expect(locatedOf(src)).toEqual([]);
   });
 
   it("reports once per entry when a route and a sub-route name the same tile", () => {
     const src = app('{"/" -> Panel, "/s/*" -> Layout, "/404" -> Home}', NESTED);
-    expect(messages(src)).toEqual([
+    expect(messagesOf(src)).toEqual([
       `Route "/" targets tile "Panel", which ${REFUSAL}`,
       `Sub-route "/s/child" in tile "Layout" targets tile "Panel", which ${REFUSAL}`,
     ]);
@@ -155,7 +134,7 @@ tile Home = column(text("h"))`;
 
   it("leaves an undefined sub-route target to E0105 alone", () => {
     const src = app(ROUTES, NESTED.replace('"/s/child" -> Panel', '"/s/child" -> Missing'));
-    expect(codes(src)).toEqual(["E0105"]);
+    expect(codesOf(src)).toEqual(["E0105"]);
   });
 
   it("reports a parent that declares in= once, at its route entry", () => {
@@ -168,7 +147,7 @@ tile Parent
     = column(text($1), route-outlet())
 tile Home = column(text("h"))`,
     );
-    expect(messages(src)).toEqual([`Route "/s/*" targets tile "Parent", which ${REFUSAL}`]);
+    expect(messagesOf(src)).toEqual([`Route "/s/*" targets tile "Parent", which ${REFUSAL}`]);
   });
 
   it("reports an orphaned parent for both mistakes at once", () => {
@@ -180,6 +159,6 @@ tile Layout
     = column(route-outlet())
 tile Home = column(text("h"))`,
     );
-    expect(codes(src).sort()).toEqual(["E0111", "E0213"]);
+    expect(codesOf(src).sort()).toEqual(["E0111", "E0213"]);
   });
 });

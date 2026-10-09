@@ -4,7 +4,7 @@ import type { Program, TypeDef } from "../src/ast.ts";
 import { aliasTarget } from "../src/def-graph.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
-import { check } from "../src/typecheck.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const typesOf = (src: string): Map<string, TypeDef> => {
   const program: Program = parse(lex(src));
@@ -125,7 +125,7 @@ describe("the edge relation and unaliasType agree about which names have no mean
           return unaliasType({ kind: "TypeRef", name, pos: def.pos }, { types }) === null;
         })
         .sort();
-      const reported = check(parse(lex(`${defs}\n${TAIL}`)))
+      const reported = checkSource(`${defs}\n${TAIL}`)
         .filter((e) => e.code === "E0009")
         .map((e) => e.message.replace(/^type "([^"]+)".*$/, "$1"));
       for (const name of meaningless) {

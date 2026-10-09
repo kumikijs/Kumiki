@@ -1,11 +1,6 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const compileOk = (src: string): string => {
-  const r = compile(src, { runtimeSpecifier: "./runtime.js" });
-  if (r.kind !== "ok") throw new Error(`compile failed: ${JSON.stringify(r)}`);
-  return r.js;
-};
+import { checkSource } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
 // One slot per receiver type so each method's call sites have a sensible base.
 const APP_SHELL = `slot r : Result(Int, Text) = Ok(0)
@@ -28,39 +23,38 @@ const METHODS: ReadonlyArray<{
   no: string;
   paren: string;
   expect: string;
-  spec: string;
 }> = [
-  { recv: "r", no: ".is-ok", paren: ".is-ok()", expect: `_s.variantIs(`, spec: "§2.2.5" },
-  { recv: "r", no: ".is-err", paren: ".is-err()", expect: `_s.variantIs(`, spec: "§2.2.5" },
-  { recv: "m", no: ".values", paren: ".values()", expect: "_s.mapValues(", spec: "§2.2.1" },
-  { recv: "m", no: ".entries", paren: ".entries()", expect: "_s.mapEntries(", spec: "§2.2.1" },
-  { recv: "t", no: ".lower", paren: ".lower()", expect: ".toLowerCase()", spec: "§2.2.6" },
-  { recv: "t", no: ".upper", paren: ".upper()", expect: ".toUpperCase()", spec: "§2.2.6" },
-  { recv: "xs", no: ".sort", paren: ".sort()", expect: "_s.listSort(", spec: "§2.2.3" },
-  { recv: "m", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.1" },
-  { recv: "xs", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.3" },
-  { recv: "t", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(", spec: "§2.2.6" },
+  { recv: "r", no: ".is-ok", paren: ".is-ok()", expect: `_s.variantIs(` },
+  { recv: "r", no: ".is-err", paren: ".is-err()", expect: `_s.variantIs(` },
+  { recv: "m", no: ".values", paren: ".values()", expect: "_s.mapValues(" },
+  { recv: "m", no: ".entries", paren: ".entries()", expect: "_s.mapEntries(" },
+  { recv: "t", no: ".lower", paren: ".lower()", expect: ".toLowerCase()" },
+  { recv: "t", no: ".upper", paren: ".upper()", expect: ".toUpperCase()" },
+  { recv: "xs", no: ".sort", paren: ".sort()", expect: "_s.listSort(" },
+  { recv: "m", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(" },
+  { recv: "xs", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(" },
+  { recv: "t", no: ".is-empty", paren: ".is-empty()", expect: "_s.isEmpty(" },
 ];
 
-describe("Issue #92: paren-form stdlib methods do not fall through to native JS", () => {
+describe("paren-form stdlib methods do not fall through to native JS", () => {
   it("every paren-form call type-checks (no E0801)", () => {
     const body = METHODS.map((m) => `heading((${m.recv}${m.paren}).show)`).join(", ");
-    const errs = check(parse(lex(appWith(body))));
+    const errs = checkSource(appWith(body));
     expect(errs.filter((e) => e.code === "E0801")).toEqual([]);
   });
 
   for (const m of METHODS) {
-    it(`${m.spec} ${m.recv}${m.paren} lowers to the runtime helper, not native JS`, () => {
-      const jsNoParen = compileOk(appWith(`heading((${m.recv}${m.no}).show)`));
-      const jsParen = compileOk(appWith(`heading((${m.recv}${m.paren}).show)`));
+    it(`${m.recv}${m.paren} lowers to the runtime helper, not native JS`, () => {
+      const jsNoParen = compileOrFail(appWith(`heading((${m.recv}${m.no}).show)`));
+      const jsParen = compileOrFail(appWith(`heading((${m.recv}${m.paren}).show)`));
       expect(jsNoParen, "no-paren form must use the runtime helper").toContain(m.expect);
       expect(jsParen, "paren form must use the SAME runtime helper").toContain(m.expect);
     });
   }
 
-  it("§2.2.9 du.to-ms and du.to-ms() lower identically (Duration → ms identity)", () => {
-    const jsNoParen = compileOk(appWith(`heading((du.to-ms).show)`));
-    const jsParen = compileOk(appWith(`heading((du.to-ms()).show)`));
+  it("du.to-ms and du.to-ms() lower identically (Duration → ms identity)", () => {
+    const jsNoParen = compileOrFail(appWith(`heading((du.to-ms).show)`));
+    const jsParen = compileOrFail(appWith(`heading((du.to-ms()).show)`));
     const onlyDuLines = (js: string): string[] =>
       js.split("\n").filter((line) => line.includes('"du"'));
     expect(onlyDuLines(jsParen)).toEqual(onlyDuLines(jsNoParen));
@@ -70,7 +64,7 @@ describe("Issue #92: paren-form stdlib methods do not fall through to native JS"
 
   it("no listed method falls through to the native-JS fallback shape", () => {
     const body = METHODS.map((m) => `heading((${m.recv}${m.paren}).show)`).join(", ");
-    const js = compileOk(appWith(body));
+    const js = compileOrFail(appWith(body));
     expect(js, "is-ok must not fall through").not.toMatch(/\)(\.is_ok|\["is-ok"\])\(/);
     expect(js, "is-err must not fall through").not.toMatch(/\)(\.is_err|\["is-err"\])\(/);
     expect(js, "is-empty must not fall through").not.toMatch(/\)(\.is_empty|\["is-empty"\])\(/);
@@ -81,7 +75,7 @@ describe("Issue #92: paren-form stdlib methods do not fall through to native JS"
   });
 });
 
-describe("Issue #92: Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
+describe("Bytes constructors", () => {
   function bytesAppWith(expr: string): string {
     return `slot b : Bytes = ${expr}
 tile App = column(heading("ok"))
@@ -92,17 +86,17 @@ app A
   }
 
   it("Bytes.from-text(text) lowers to _s.bytesFromText", () => {
-    const js = compileOk(bytesAppWith(`Bytes.from-text("hi")`));
+    const js = compileOrFail(bytesAppWith(`Bytes.from-text("hi")`));
     expect(js).toContain("_s.bytesFromText(");
   });
 
   it("Bytes.from-base64(text) lowers to _s.bytesFromBase64", () => {
-    const js = compileOk(bytesAppWith(`Bytes.from-base64("aGk=")`));
+    const js = compileOrFail(bytesAppWith(`Bytes.from-base64("aGk=")`));
     expect(js).toContain("_s.bytesFromBase64(");
   });
 
   it("Bytes.from-bytes(list) lowers to _s.bytesFromBytes", () => {
-    const js = compileOk(bytesAppWith(`Bytes.from-bytes([1, 2, 3])`));
+    const js = compileOrFail(bytesAppWith(`Bytes.from-bytes([1, 2, 3])`));
     expect(js).toContain("_s.bytesFromBytes(");
   });
 });

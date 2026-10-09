@@ -1,17 +1,9 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp, withReducer, withRoot } from "./helpers/programs.ts";
 
-const TAIL = `tile B = button(text="b")
-tile App = column(B)
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`;
-
-const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
-/** Definitions plus the minimum an app needs, so `check` sees a whole program. */
-const prog = (defs: string) => codes(`${defs}\n${TAIL}`);
-/** `defs` plus a reducer whose body is `body`. */
-const inReducer = (defs: string, body: string) =>
-  prog(`${defs}\nreducer r on=ui.click(B) do= ${body}`);
+const appCodes = (defs: string) => codesOf(withButtonApp(defs));
+const reducerCodes = (defs: string, body: string) => codesOf(withReducer(defs, body));
 
 describe("the code ⇆ kind pairing of every diagnostic this adds", () => {
   const PAIRS: [string, string, string][] = [
@@ -26,7 +18,7 @@ describe("the code ⇆ kind pairing of every diagnostic this adds", () => {
 
   for (const [code, kind, src] of PAIRS) {
     it(`emits ${code} as "${kind}"`, () => {
-      const found = check(parse(lex(`${src}\n${TAIL}`))).filter((e) => e.code === code);
+      const found = checkSource(withButtonApp(src)).filter((e) => e.code === code);
       expect(found.length, `no ${code} from this program`).toBeGreaterThan(0);
       expect(found[0]?.kind).toBe(kind);
     });
@@ -39,504 +31,33 @@ tile B = button(text="b")
 tile App = column(B)
 app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    const found = check(parse(lex(src))).filter((e) => e.code === "E0202");
+    const found = checkSource(src).filter((e) => e.code === "E0202");
     expect(found.length).toBeGreaterThan(0);
     expect(found[0]?.kind).toBe("emit-arg-type-mismatch");
   });
 });
 
-describe("assignability — prims", () => {
-  it("reports a Text literal in an Int slot", () => {
-    expect(check(parse(lex(`slot n : Int = "hello"\n${TAIL}`)))).toEqual([
-      {
-        code: "E0201",
-        kind: "type-mismatch",
-        message: "Expected Int but got Text",
-        pos: { line: 1, col: 16 },
-      },
-    ]);
-  });
-
-  it("reports an Int literal in a Text slot", () => {
-    expect(prog(`slot t : Text = 1`)).toEqual(["E0201"]);
-  });
-
-  it("reports a Bool literal in a Text slot", () => {
-    expect(prog(`slot t : Text = true`)).toEqual(["E0201"]);
-  });
-
-  it("widens Int to Float", () => {
-    expect(prog(`slot f : Float = 0`)).toEqual([]);
-  });
-
-  it("does not narrow Float to Int", () => {
-    expect(prog(`slot n : Int = 0.5`)).toEqual(["E0201"]);
-  });
-
-  it("accepts a Float literal in a Float slot", () => {
-    expect(prog(`slot f : Float = 0.5`)).toEqual([]);
-  });
-
-  it("accepts matching prims", () => {
-    expect(prog(`slot n : Int = 1\nslot t : Text = "a"\nslot b : Bool = false`)).toEqual([]);
-  });
-});
-
-describe("assignability — nominal, refinement and aliases", () => {
-  it("accepts the underlying prim through a nominal wrapper", () => {
-    expect(prog(`type N = nominal Int where between(0, 999)\nslot c : N = 0`)).toEqual([]);
-  });
-
-  it("reports the wrong prim through a nominal wrapper", () => {
-    expect(prog(`type N = nominal Int where between(0, 999)\nslot c : N = "0"`)).toEqual(["E0201"]);
-  });
-
-  it("follows an alias chain", () => {
-    expect(prog(`type A = Int\ntype B = A\nslot n : B = "x"`)).toEqual(["E0201"]);
-  });
-
-  it("accepts anything for a type name that resolves to nothing", () => {
-    // The name itself is reported (E0117); the value is not double-reported.
-    expect(prog(`slot v : NoSuchType = 1`)).toEqual(["E0117"]);
-  });
-});
-
-describe("assignability — a nominal type is distinct from every other one", () => {
-  const MONEY = `type Cents = nominal Int where positive
-type Yen   = nominal Int where positive
-slot c : Cents = 1
-slot y : Yen   = 2
-slot n : Int   = 3`;
-
-  it("reports one nominal assigned to another over the same base", () => {
-    const errs = check(parse(lex(`${MONEY}\nreducer r on=ui.click(B) do= c := y\n${TAIL}`)));
-    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
-    expect(errs[0]?.message).toBe("Expected Cents but got Yen");
-  });
-
-  it("accepts a base literal in a nominal slot", () => {
-    expect(prog(MONEY)).toEqual([]);
-  });
-
-  it("accepts the base in a nominal position and the nominal in a base position", () => {
-    expect(inReducer(MONEY, `c := n`)).toEqual([]);
-    expect(inReducer(MONEY, `n := c`)).toEqual([]);
-  });
-
-  it("accepts arithmetic on a nominal, which yields its base", () => {
-    expect(inReducer(MONEY, `c := c + 1`)).toEqual([]);
-  });
-
-  it("still accepts a value outside the refinement", () => {
-    expect(
-      inReducer(`type Volume = nominal Int where between(0, 11)\nslot v : Volume = 5`, `v := 50`),
-    ).toEqual([]);
-    expect(prog(`slot e : Email = "not-an-email"`)).toEqual([]);
-  });
-
-  it("treats an alias to a nominal as the same type", () => {
-    const src = `type Cents = nominal Int where positive
-type Money = Cents
-type Kept  = Cents where positive
-slot c : Cents = 1
-slot m : Money = 2
-slot k : Kept  = 3`;
-    expect(prog(src)).toEqual([]);
-    expect(inReducer(src, `m := c`)).toEqual([]);
-    expect(inReducer(src, `c := m`)).toEqual([]);
-    // A refinement on the way to the nominal does not hide it either.
-    expect(inReducer(src, `k := c`)).toEqual([]);
-    expect(
-      inReducer(`${src}\ntype Yen = nominal Int where positive\nslot y : Yen = 4`, `k := y`),
-    ).toEqual(["E0201"]);
-  });
-
-  it("terminates on an alias cycle", () => {
-    const src = `type A = B\ntype B = A\nslot x : A = 1\nslot n : Int = 0`;
-    expect(inReducer(src, `n := [x, x].length`)).toEqual(["E0009"]);
-    const rec = `${src}\ntype R = {v: Int}\nslot r : R = {v: 0}`;
-    expect(inReducer(rec, `r := {v: x}`)).toEqual(["E0009"]);
-
-    const nominalCycle = `type A2 = nominal B2
-type B2 = nominal A2
-slot p : A2 = 1
-slot q : B2 = 2
-slot n : Int = 0`;
-    expect(inReducer(nominalCycle, `n := [p, q].length`)).toEqual(["E0009"]);
-  });
-
-  it("resolves a generic alias with its argument, not with a name that shadows it", () => {
-    const shadow = `type Cents = nominal Int where positive
-type Yen   = nominal Int where positive
-type Alias(Cents) = Cents
-slot y : Yen = 1
-slot a : Alias(Yen) = 2`;
-    expect(inReducer(shadow, `y := a`)).toEqual([]);
-
-    const wrapped = `type Cents = nominal Int where positive
-type Yen   = nominal Int where positive
-type Validated(T) = T where positive
-slot w : Validated(Cents) = 1
-slot y : Yen = 2`;
-    expect(inReducer(wrapped, `y := w`)).toEqual(["E0201"]);
-    expect(inReducer(wrapped, `w := w`)).toEqual([]);
-  });
-
-  it("keeps the identity when a second refinement wraps the nominal", () => {
-    const src = `type Cents = nominal Int where between(0, 100) where positive
-type Yen   = nominal Int where positive
-slot c : Cents = 1
-slot y : Yen   = 2`;
-    expect(inReducer(src, `c := y`)).toEqual(["E0201"]);
-    expect(inReducer(src, `c := 1`)).toEqual([]);
-  });
-
-  it("accepts a nominal where one it is declared over is required, but not the reverse", () => {
-    const src = `type Cents = nominal Int where positive
-type Deep  = nominal Cents
-slot c : Cents = 1
-slot d : Deep  = 2
-slot n : Int   = 3`;
-    expect(prog(src)).toEqual([]);
-    expect(inReducer(src, `c := d`)).toEqual([]);
-    expect(inReducer(src, `d := c`)).toEqual(["E0201"]);
-    // The structural base still meets both, in both directions.
-    expect(inReducer(src, `d := n`)).toEqual([]);
-    expect(inReducer(src, `n := d`)).toEqual([]);
-  });
-
-  it("takes no identity from a nominal written inline at a use site", () => {
-    const src = `type Yen = nominal Int where positive
-slot y : Yen = 1
-slot x : nominal Int = 2`;
-    expect(inReducer(src, `x := y`)).toEqual([]);
-  });
-
-  it("reports one standard-library nominal assigned to another", () => {
-    const src = `slot u : Url   = "https://example.com"
-slot e : Email = "a@example.com"`;
-    const errs = check(parse(lex(`${src}\nreducer r on=ui.click(B) do= e := u\n${TAIL}`)));
-    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
-    expect(errs[0]?.message).toBe("Expected Email but got Url");
-  });
-
-  it("compares the arguments of a generic nominal, which shares its name", () => {
-    const src = `type Box(T) = nominal List(T)
-slot bi : Box(Int)  = [1]
-slot bt : Box(Text) = ["a"]`;
-    expect(prog(src)).toEqual([]);
-    expect(inReducer(src, `bi := bt`)).toEqual(["E0201"]);
-    expect(inReducer(src, `bi := bi`)).toEqual([]);
-  });
-
-  it("reports a nominal element inside a container", () => {
-    const src = `${MONEY}\nslot l : List(Cents) = []`;
-    expect(inReducer(src, `l := [y]`)).toEqual(["E0201"]);
-    expect(inReducer(src, `l := [c]`)).toEqual([]);
-    expect(inReducer(`${MONEY}\nslot o : Option(Cents) = None`, `o := Some(y)`)).toEqual(["E0201"]);
-    expect(inReducer(`${MONEY}\nslot m : Map(Text, Cents) = {}`, `m := {"a": y}`)).toEqual([
-      "E0201",
-    ]);
-    const boxes = `${MONEY}\ntype Box(T) = nominal List(T)\nslot bc : Box(Cents) = []\nslot by : Box(Yen) = []`;
-    const errs = check(parse(lex(`${boxes}\nreducer r on=ui.click(B) do= bc := by\n${TAIL}`)));
-    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
-    expect(errs[0]?.message).toBe("Expected Box(Cents) but got Box(Yen)");
-  });
-
-  it("answers the shared base when two nominals meet in one expression", () => {
-    expect(
-      inReducer(`${MONEY}\nslot flag : Bool = true`, `n := (if flag then c else y).abs`),
-    ).toEqual([]);
-    expect(
-      inReducer(
-        `${MONEY}\nslot t : Text = ""\nslot flag : Bool = true`,
-        `t := (if flag then c else y).noSuchMember`,
-      ),
-    ).toEqual(["E0108"]);
-    // Order-independent, which is the same property said the other way.
-    expect(inReducer(`${MONEY}\nslot t : Text = ""`, `t := [n, c, y].length.show`)).toEqual([]);
-    expect(inReducer(`${MONEY}\nslot t : Text = ""`, `t := [c, y, n].length.show`)).toEqual([]);
-    expect(
-      inReducer(
-        `${MONEY}\nslot t : Text = ""\nslot s : Text = ""\nslot flag : Bool = true`,
-        `t := (if flag then c else s).noSuchMember`,
-      ),
-    ).toEqual([]);
-  });
-
-  it("reports a nominal in each assignment, call, emit and tile-argument position", () => {
-    const POSITIONS = `type Cents = nominal Int where positive
-type Yen   = nominal Int where positive
-type Wallet = {balance: Cents}
-slot y : Yen = 1
-slot w : Wallet = {balance: 0}
-fn add(a: Cents) -> Cents = a
-effect save cap=storage.write in=Cents out=Result(Unit, Text)
-tile Amount in=Cents = box(text($1.show))`;
-    const app = `tile B = button(text="b")
-tile App = column(B)
-app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
-`;
-    const withBody = (body: string) =>
-      codes(`${POSITIONS}\nreducer r on=ui.click(B) do= ${body}\n${app}`);
-
-    expect(withBody(`w.balance := y`)).toEqual(["E0201"]);
-    expect(withBody(`w.balance := add(y)`)).toEqual(["E0201"]);
-    expect(withBody(`emit save(y)`)).toEqual(["E0202"]);
-    expect(codes(`${POSITIONS}\ntile Home = Amount(y)\n${app}`)).toEqual(["E0201"]);
-    expect(codes(`${POSITIONS}\nfn wrong(a: Yen) -> Cents = a\n${app}`)).toEqual(["E0201"]);
-  });
-
-  it("stays silent when either side is undecidable", () => {
-    expect(prog(`type Cents = nominal Int where positive\nslot q : Q = 1`)).toEqual(["E0117"]);
-    expect(
-      inReducer(
-        `type PostId = nominal Text where uuid
-slot p : PostId = "a"
-slot q : Q = "b"`,
-        `p := q`,
-      ),
-    ).toEqual(["E0117"]);
-  });
-
-  it("reports a comparison across two nominals over one base", () => {
-    for (const op of ["==", "!=", "<", "<=", ">", ">="]) {
-      const errs = check(
-        parse(
-          lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c ${op} y then 1 else 2\n${TAIL}`),
-        ),
-      );
-      expect(
-        errs.map((e) => e.code),
-        op,
-      ).toEqual(["E0201"]);
-      expect(errs[0]?.message, op).toBe(`Operator "${op}" cannot compare Cents with Yen`);
-    }
-    const IDS = `type PostId = nominal Text where uuid
-type UserId = nominal Text where uuid
-slot p : PostId = "a"
-slot u : UserId = "b"
-slot n : Int = 0`;
-    expect(inReducer(IDS, `n := if p == u then 1 else 2`)).toEqual(["E0201"]);
-    expect(inReducer(IDS, `n := if p < u then 1 else 2`)).toEqual(["E0201"]);
-  });
-
-  it("reports an equality once, where ordering already reported", () => {
-    const at = (op: string) =>
-      check(
-        parse(
-          lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c ${op} y then 1 else 2\n${TAIL}`),
-        ),
-      )[0]?.pos;
-    const reducerLine = MONEY.split("\n").length + 1;
-    expect(at("==")).toEqual({ line: reducerLine, col: 38 });
-    expect(at("<")).toEqual(at("=="));
-    // One, not one per side — the half of this that is not the column.
-    expect(
-      check(
-        parse(lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c == y then 1 else 2\n${TAIL}`)),
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("does not read the identity below the top level, as an assignment does", () => {
-    const LISTS = `${MONEY}\nslot lc : List(Cents) = []\nslot ly : List(Yen) = []`;
-    expect(inReducer(LISTS, `n := if lc == ly then 1 else 2`)).toEqual([]);
-    expect(inReducer(LISTS, `lc := ly`)).toEqual(["E0201"]);
-  });
-
-  it("compares a nominal with its base, as it assigns", () => {
-    expect(inReducer(MONEY, `n := if c == 0 then 1 else 2`)).toEqual([]);
-    expect(inReducer(MONEY, `n := if 0 == c then 1 else 2`)).toEqual([]);
-    expect(inReducer(MONEY, `n := if c < n then 1 else 2`)).toEqual([]);
-    expect(inReducer(MONEY, `n := if c == c then 1 else 2`)).toEqual([]);
-    expect(
-      inReducer(
-        `type PostId = nominal Text where uuid\nslot p : PostId = "a"\nslot n : Int = 0`,
-        `n := if p == "" then 1 else 2`,
-      ),
-    ).toEqual([]);
-  });
-
-  it("compares a nominal declared over another with the one it was declared as", () => {
-    const DEEP = `${MONEY}\ntype Deep = nominal Cents\nslot d : Deep = 4`;
-    expect(inReducer(DEEP, `n := if d == c then 1 else 2`)).toEqual([]);
-    expect(inReducer(DEEP, `n := if c == d then 1 else 2`)).toEqual([]);
-    expect(inReducer(DEEP, `n := if d == y then 1 else 2`)).toEqual(["E0201"]);
-  });
-
-  it("stays silent when either side of a comparison is undecidable", () => {
-    expect(inReducer(`${MONEY}\nslot q : Q = 1`, `n := if c == q then 1 else 2`)).toEqual([
-      "E0117",
-    ]);
-  });
-
-  it("leaves an unrelated pair of shapes to the operator that already judges it", () => {
-    expect(
-      inReducer(`slot o : Option(Int) = None\nslot n : Int = 0`, `n := if o == None then 1 else 2`),
-    ).toEqual([]);
-    expect(
-      inReducer(`slot t : Text = ""\nslot n : Int = 0`, `n := if t == 1 then 1 else 2`),
-    ).toEqual([]);
-    const errs = check(
-      parse(
-        lex(
-          `slot t : Text = ""\nslot n : Int = 0\nreducer r on=ui.click(B) do= n := if t < 1 then 1 else 2\n${TAIL}`,
-        ),
-      ),
-    );
-    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
-    expect(errs[0]?.message).toBe(`Operator "<" cannot compare Text with Int`);
-  });
-
-  it("reports a nominal over a base no ordering is defined on once", () => {
-    const FLAGS = `type Flag = nominal Bool
-type Mark = nominal Bool
-slot f : Flag = true
-slot m : Mark = false
-slot n : Int = 0`;
-    const errs = check(
-      parse(lex(`${FLAGS}\nreducer r on=ui.click(B) do= n := if f < m then 1 else 2\n${TAIL}`)),
-    );
-    expect(errs.map((e) => e.code)).toEqual(["E0201"]);
-    expect(errs[0]?.message).toBe(`Operator "<" cannot compare Flag with Mark`);
-  });
-});
-
-describe("assignability — containers", () => {
-  it("reports the mismatched element of a list literal, at the element", () => {
-    const errs = check(parse(lex(`slot l : List(Int) = [1, "a", true]\n${TAIL}`)));
-    expect(errs.map((e) => e.code)).toEqual(["E0201", "E0201"]);
-    expect(errs[0]?.pos).toEqual({ line: 1, col: 26 });
-    expect(errs[1]?.pos).toEqual({ line: 1, col: 31 });
-  });
-
-  it("accepts a homogeneous list literal", () => {
-    expect(prog(`slot l : List(Int) = [1, 2, 3]`)).toEqual([]);
-  });
-
-  it("accepts an empty list literal for any element type", () => {
-    expect(prog(`slot l : List(Text) = []`)).toEqual([]);
-  });
-
-  it("checks Map keys and values separately", () => {
-    expect(prog(`slot m : Map(Text, Int) = {"a": 1, "b": "no"}`)).toEqual(["E0201"]);
-    expect(prog(`slot m : Map(Text, Int) = {1: 1}`)).toEqual(["E0201"]);
-  });
-
-  it("accepts an empty map literal", () => {
-    expect(prog(`slot m : Map(Text, Int) = {}`)).toEqual([]);
-  });
-
-  it("reports a scalar where a container is declared", () => {
-    expect(prog(`slot l : List(Int) = 1`)).toEqual(["E0201"]);
-  });
-
-  it("does not descend into an element whose type is an unresolved type parameter", () => {
-    expect(prog(`type Box(T) = {v: List(T)}\nslot b : Box(Int) = {v: [1, 2]}`)).toEqual([]);
-  });
-});
-
-describe("assignability — Option and Result", () => {
-  it("reports a bare value where Option is declared", () => {
-    expect(prog(`slot o : Option(Int) = 5`)).toEqual(["E0201"]);
-  });
-
-  it("accepts None", () => {
-    expect(prog(`slot o : Option(Int) = None`)).toEqual([]);
-  });
-
-  it("accepts Some of the right type", () => {
-    expect(prog(`slot o : Option(Int) = Some(5)`)).toEqual([]);
-  });
-
-  it("reports Some of the wrong type", () => {
-    expect(prog(`slot o : Option(Int) = Some("5")`)).toEqual(["E0201"]);
-  });
-
-  it("checks Ok against the success argument and Err against the error argument", () => {
-    expect(prog(`slot r : Result(Int, Text) = Ok(1)`)).toEqual([]);
-    expect(prog(`slot r : Result(Int, Text) = Err("boom")`)).toEqual([]);
-    expect(prog(`slot r : Result(Int, Text) = Ok("1")`)).toEqual(["E0201"]);
-    expect(prog(`slot r : Result(Int, Text) = Err(1)`)).toEqual(["E0201"]);
-  });
-});
-
-describe("assignability — records", () => {
-  const P = `type P = {id: Int, name: Text, age: Int}`;
-
-  it("reports every mistyped field", () => {
-    expect(prog(`${P}\nslot p : P = {id: 1, name: 2, age: "x"}`)).toEqual(["E0201", "E0201"]);
-  });
-
-  it("reports each missing field", () => {
-    expect(prog(`${P}\nslot q : P = {id: 1}`)).toEqual(["E0214", "E0214"]);
-  });
-
-  it("reports an undeclared field", () => {
-    expect(prog(`${P}\nslot r : P = {id: 1, name: "n", age: 3, extra: true}`)).toEqual(["E0215"]);
-  });
-
-  it("accepts a complete, correctly typed record", () => {
-    expect(prog(`${P}\nslot p : P = {id: 1, name: "n", age: 3}`)).toEqual([]);
-  });
-
-  it("checks a nested record field", () => {
-    expect(
-      prog(`type Inner = {n: Int}\ntype Outer = {i: Inner}\nslot o : Outer = {i: {n: "x"}}`),
-    ).toEqual(["E0201"]);
-  });
-
-  it("reports a record literal where a prim is declared", () => {
-    expect(prog(`slot n : Int = {a: 1}`)).toEqual(["E0201"]);
-  });
-});
-
-describe("assignability — unions", () => {
-  const S = `type S = Idle | Busy(Int)`;
-
-  it("accepts a declared tag", () => {
-    expect(prog(`${S}\nslot s : S = Idle`)).toEqual([]);
-  });
-
-  it("reports an undeclared tag", () => {
-    expect(prog(`${S}\nslot s : S = Zork`)).toEqual(["E0216"]);
-  });
-
-  it("reports a payload arity mismatch", () => {
-    expect(prog(`${S}\nslot s : S = Busy`)).toEqual(["E0213"]);
-    expect(prog(`${S}\nslot s : S = Idle(1)`)).toEqual(["E0213"]);
-  });
-
-  it("checks the payload type", () => {
-    expect(prog(`${S}\nslot s : S = Busy("x")`)).toEqual(["E0201"]);
-    expect(prog(`${S}\nslot s : S = Busy(1)`)).toEqual([]);
-  });
-
-  it("reports a tag assigned to a slot in a reducer", () => {
-    expect(inReducer(`${S}\nslot s : S = Idle`, `s := Zork`)).toEqual(["E0216"]);
-  });
-});
-
 describe("slot assignment", () => {
   it("reports a Text rhs for an Int slot", () => {
-    expect(inReducer(`slot n : Int = 0`, `n := "not a number"`)).toEqual(["E0201"]);
+    expect(reducerCodes(`slot n : Int = 0`, `n := "not a number"`)).toEqual(["E0201"]);
   });
 
   it("checks through a record field path", () => {
-    expect(inReducer(`type P = {id: Int}\nslot p : P = {id: 1}`, `p.id := "x"`)).toEqual(["E0201"]);
+    expect(reducerCodes(`type P = {id: Int}\nslot p : P = {id: 1}`, `p.id := "x"`)).toEqual([
+      "E0201",
+    ]);
   });
 
   it("checks through a list index path", () => {
-    expect(inReducer(`slot l : List(Int) = []`, `l[0] := "x"`)).toEqual(["E0201"]);
+    expect(reducerCodes(`slot l : List(Int) = []`, `l[0] := "x"`)).toEqual(["E0201"]);
   });
 
   it("checks through a map index path", () => {
-    expect(inReducer(`slot m : Map(Text, Int) = {}`, `m["k"] := "x"`)).toEqual(["E0201"]);
+    expect(reducerCodes(`slot m : Map(Text, Int) = {}`, `m["k"] := "x"`)).toEqual(["E0201"]);
   });
 
   it("accepts a correctly typed assignment", () => {
-    expect(inReducer(`slot n : Int = 0`, `n := 1`)).toEqual([]);
+    expect(reducerCodes(`slot n : Int = 0`, `n := 1`)).toEqual([]);
   });
 });
 
@@ -544,23 +65,23 @@ describe("fn application", () => {
   const F = `fn double(x: Int) -> Int = x * 2`;
 
   it("reports a Text argument for an Int parameter", () => {
-    expect(inReducer(`slot n : Int = 0\n${F}`, `n := double("hello")`)).toEqual(["E0201"]);
+    expect(reducerCodes(`slot n : Int = 0\n${F}`, `n := double("hello")`)).toEqual(["E0201"]);
   });
 
   it("accepts a correctly typed argument", () => {
-    expect(inReducer(`slot n : Int = 0\n${F}`, `n := double(n)`)).toEqual([]);
+    expect(reducerCodes(`slot n : Int = 0\n${F}`, `n := double(n)`)).toEqual([]);
   });
 
   it("reports a return type the body cannot produce", () => {
-    expect(prog(`fn label(x: Int) -> Text = x`)).toEqual(["E0201"]);
+    expect(appCodes(`fn label(x: Int) -> Text = x`)).toEqual(["E0201"]);
   });
 
   it("accepts a body that matches the return type", () => {
-    expect(prog(`fn label(x: Int) -> Text = x.show`)).toEqual([]);
+    expect(appCodes(`fn label(x: Int) -> Text = x.show`)).toEqual([]);
   });
 
   it("still reports arity separately from types", () => {
-    expect(inReducer(`slot n : Int = 0\n${F}`, `n := double()`)).toEqual(["E0213"]);
+    expect(reducerCodes(`slot n : Int = 0\n${F}`, `n := double()`)).toEqual(["E0213"]);
   });
 });
 
@@ -571,7 +92,7 @@ tile App = column(B)
 app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
 `;
   const withEffect = (body: string) =>
-    check(parse(lex(`${E}\nreducer r on=ui.click(B) do= ${body}\n${caps}`))).map((e) => e.code);
+    codesOf(`${E}\nreducer r on=ui.click(B) do= ${body}\n${caps}`);
 
   it("reports a missing argument", () => {
     expect(withEffect(`emit save()`)).toEqual(["E0213"]);
@@ -593,52 +114,54 @@ app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
     const src = `effect ping cap=storage.write in=Unit out=Result(Unit, Text)
 reducer r on=ui.click(B) do= emit ping()
 ${caps}`;
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 });
 
 describe("tile in=", () => {
   it("reports a call with no argument to a tile that declares in=", () => {
-    expect(prog(`tile Row in=Text = box(text($1))\ntile Home = Row()`)).toEqual(["E0213"]);
+    expect(appCodes(`tile Row in=Text = box(text($1))\ntile Home = Row()`)).toEqual(["E0213"]);
   });
 
   it("reports an argument of the wrong type", () => {
-    expect(prog(`tile Row in=Text = box(text($1))\ntile Home = Row(1)`)).toEqual(["E0201"]);
+    expect(appCodes(`tile Row in=Text = box(text($1))\ntile Home = Row(1)`)).toEqual(["E0201"]);
   });
 
   it("accepts a correctly typed argument", () => {
-    expect(prog(`tile Row in=Text = box(text($1))\ntile Home = Row("a")`)).toEqual([]);
+    expect(appCodes(`tile Row in=Text = box(text($1))\ntile Home = Row("a")`)).toEqual([]);
   });
 
   it("reports an argument passed to a tile that declares no in=", () => {
-    expect(prog(`tile Row = box(text("x"))\ntile Home = Row("a")`)).toEqual(["E0213"]);
+    expect(appCodes(`tile Row = box(text("x"))\ntile Home = Row("a")`)).toEqual(["E0213"]);
   });
 });
 
 describe("undefined type names (E0117)", () => {
   it("reports an unknown name in a slot type", () => {
-    expect(prog(`slot v : NoSuchType = 1`)).toEqual(["E0117"]);
+    expect(appCodes(`slot v : NoSuchType = 1`)).toEqual(["E0117"]);
   });
 
   it("reports an unknown name in a fn parameter and return type", () => {
-    expect(prog(`fn f(x: Nope) -> AlsoNope = x`)).toEqual(["E0117", "E0117"]);
+    expect(appCodes(`fn f(x: Nope) -> AlsoNope = x`)).toEqual(["E0117", "E0117"]);
   });
 
   it("reports an unknown name in an effect signature", () => {
-    expect(prog(`effect e cap=storage.write in=Nope out=Result(Unit, Text)`)).toEqual(["E0117"]);
+    expect(appCodes(`effect e cap=storage.write in=Nope out=Result(Unit, Text)`)).toEqual([
+      "E0117",
+    ]);
   });
 
   it("keeps a type parameter of the enclosing type definition in scope", () => {
-    expect(prog(`type Box(T) = {v: T}\nslot b : Box(Int) = {v: 1}`)).toEqual([]);
+    expect(appCodes(`type Box(T) = {v: T}\nslot b : Box(Int) = {v: 1}`)).toEqual([]);
   });
 
   it("reports a name that is not a parameter of the enclosing type definition", () => {
-    expect(prog(`type Box(T) = {v: U}\nslot b : Box(Int) = {v: 1}`)).toEqual(["E0117"]);
+    expect(appCodes(`type Box(T) = {v: U}\nslot b : Box(Int) = {v: 1}`)).toEqual(["E0117"]);
   });
 
   it("accepts the stdlib containers without a type definition", () => {
     expect(
-      prog(
+      appCodes(
         `slot a : List(Int) = []\nslot b : Map(Text, Int) = {}\nslot c : Set(Int) = []\nslot d : Option(Int) = None\nslot e : Result(Int, Text) = Ok(1)`,
       ),
     ).toEqual([]);
@@ -647,19 +170,19 @@ describe("undefined type names (E0117)", () => {
 
 describe("Int literal precision (E0217)", () => {
   it("reports a literal JavaScript cannot represent exactly", () => {
-    expect(prog(`slot s : Int = 123456789012345678901234567890`)).toEqual(["E0217"]);
+    expect(appCodes(`slot s : Int = 123456789012345678901234567890`)).toEqual(["E0217"]);
   });
 
   it("reports the first integer past the safe range", () => {
-    expect(prog(`slot s : Int = 9007199254740993`)).toEqual(["E0217"]);
+    expect(appCodes(`slot s : Int = 9007199254740993`)).toEqual(["E0217"]);
   });
 
   it("accepts the largest safe integer", () => {
-    expect(prog(`slot s : Int = 9007199254740991`)).toEqual([]);
+    expect(appCodes(`slot s : Int = 9007199254740991`)).toEqual([]);
   });
 
   it("reports a fractional literal as a type mismatch, not a precision loss", () => {
-    expect(prog(`slot s : Int = 0.5`)).toEqual(["E0201"]);
+    expect(appCodes(`slot s : Int = 0.5`)).toEqual(["E0201"]);
   });
 });
 
@@ -667,15 +190,15 @@ describe(".copy()", () => {
   const P = `type P = {id: Int, name: Text}\nslot p : P = {id: 1, name: "n"}`;
 
   it("reports an undeclared field", () => {
-    expect(inReducer(P, `p := p.copy(nosuchfield=1)`)).toEqual(["E0215"]);
+    expect(reducerCodes(P, `p := p.copy(nosuchfield=1)`)).toEqual(["E0215"]);
   });
 
   it("checks the replacement value against the declared field type", () => {
-    expect(inReducer(P, `p := p.copy(id="x")`)).toEqual(["E0201"]);
+    expect(reducerCodes(P, `p := p.copy(id="x")`)).toEqual(["E0201"]);
   });
 
   it("accepts a well-typed patch", () => {
-    expect(inReducer(P, `p := p.copy(id=2)`)).toEqual([]);
+    expect(reducerCodes(P, `p := p.copy(id=2)`)).toEqual([]);
   });
 });
 
@@ -683,90 +206,90 @@ describe("operators", () => {
   const S = `slot n : Int = 0\nslot t : Text = "a"\nslot bl : Bool = true`;
 
   it("reports Text on the left of a subtraction", () => {
-    expect(inReducer(S, `n := t - 1`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `n := t - 1`)).toEqual(["E0201"]);
   });
 
   it("reports Bool in a multiplication", () => {
-    expect(inReducer(S, `n := bl * 2`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `n := bl * 2`)).toEqual(["E0201"]);
   });
 
   it("accepts Text concatenation with a stringified operand", () => {
-    expect(inReducer(S, `t := "count: " + n`)).toEqual([]);
+    expect(reducerCodes(S, `t := "count: " + n`)).toEqual([]);
   });
 
   it("reports a Bool operand of +", () => {
-    expect(inReducer(S, `n := n + bl`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `n := n + bl`)).toEqual(["E0201"]);
   });
 
   it("reports a non-Bool operand of &", () => {
-    expect(inReducer(S, `bl := n & t`)).toEqual(["E0201", "E0201"]);
+    expect(reducerCodes(S, `bl := n & t`)).toEqual(["E0201", "E0201"]);
   });
 
   it("reports an ordering comparison across incomparable types", () => {
-    expect(inReducer(S, `bl := n < t`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `bl := n < t`)).toEqual(["E0201"]);
   });
 
   it("accepts ordering on two Texts", () => {
-    expect(inReducer(S, `bl := t < "b"`)).toEqual([]);
+    expect(reducerCodes(S, `bl := t < "b"`)).toEqual([]);
   });
 
   it("reports a non-Bool if condition in a reducer", () => {
-    expect(inReducer(S, `if n then n := 1 else n := 2`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `if n then n := 1 else n := 2`)).toEqual(["E0201"]);
   });
 
   it("reports a non-Bool if condition in an expression", () => {
-    expect(inReducer(S, `n := if t then 1 else 2`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `n := if t then 1 else 2`)).toEqual(["E0201"]);
   });
 
   it("reports a non-Bool operand of !", () => {
-    expect(inReducer(S, `bl := !n`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `bl := !n`)).toEqual(["E0201"]);
   });
 
   it("reports a negation of a non-numeric", () => {
-    expect(inReducer(S, `n := -t`)).toEqual(["E0201"]);
+    expect(reducerCodes(S, `n := -t`)).toEqual(["E0201"]);
   });
 });
 
-describe("division yields Float (language.md §1.9.4)", () => {
+describe("division yields Float", () => {
   it("reports an Int slot assigned a quotient", () => {
-    expect(inReducer(`slot n : Int = 0`, `n := 5 / 2`)).toEqual(["E0201"]);
+    expect(reducerCodes(`slot n : Int = 0`, `n := 5 / 2`)).toEqual(["E0201"]);
   });
 
   it("accepts a Float slot assigned a quotient", () => {
-    expect(inReducer(`slot f : Float = 0.0`, `f := 5 / 2`)).toEqual([]);
+    expect(reducerCodes(`slot f : Float = 0.0`, `f := 5 / 2`)).toEqual([]);
   });
 
   it("accepts a quotient in an Int position once converted", () => {
-    expect(inReducer(`slot n : Int = 0`, `n := (5 / 2).to-int`)).toEqual([]);
+    expect(reducerCodes(`slot n : Int = 0`, `n := (5 / 2).to-int`)).toEqual([]);
   });
 
   it("keeps the other arithmetic operators at Int", () => {
-    expect(inReducer(`slot n : Int = 0`, `n := 5 * 2 + 1 - 3 % 2`)).toEqual([]);
+    expect(reducerCodes(`slot n : Int = 0`, `n := 5 * 2 + 1 - 3 % 2`)).toEqual([]);
   });
 
   it("reports a fn that returns Int from a division", () => {
-    expect(prog(`fn half(x: Int) -> Int = x / 2`)).toEqual(["E0201"]);
+    expect(appCodes(`fn half(x: Int) -> Int = x / 2`)).toEqual(["E0201"]);
   });
 });
 
 describe("undecidable types stay silent", () => {
   it("says nothing about a value whose type cannot be inferred", () => {
-    expect(inReducer(`slot n : Int = 0`, `n := $event.head`)).toEqual([]);
+    expect(reducerCodes(`slot n : Int = 0`, `n := $event.head`)).toEqual([]);
   });
 
   it("says nothing about a member whose result a lambda body decides", () => {
-    expect(inReducer(`slot n : Int = 0\nslot l : List(Int) = []`, `n := l.map($1 + 1)`)).toEqual(
+    expect(reducerCodes(`slot n : Int = 0\nslot l : List(Int) = []`, `n := l.map($1 + 1)`)).toEqual(
       [],
     );
   });
 
   it("says nothing about an opaque type parameter", () => {
-    expect(prog(`type Box(T) = {v: T}\ntype Pair(T) = {a: Box(T), b: T}`)).toEqual([]);
+    expect(appCodes(`type Box(T) = {v: T}\ntype Pair(T) = {a: Box(T), b: T}`)).toEqual([]);
   });
 
   it("does not carry an outer $1 into a method-call argument", () => {
     expect(
-      prog(
+      appCodes(
         `type Id = nominal Text where uuid
 slot due : Map(Id, Option(Time)) = {}
 fn formatDate(t: Time) -> Text = t.show
@@ -777,7 +300,7 @@ tile Due in=Id = text(due[$1].map(formatDate($1)).get-or(""))`,
 
   it("says nothing about a match arm binding", () => {
     expect(
-      inReducer(
+      reducerCodes(
         `slot o : Option(Int) = None\nslot n : Int = 0`,
         `match o with | Some(v) -> n := v | None -> n := 0`,
       ),
@@ -785,117 +308,8 @@ tile Due in=Id = text(due[$1].map(formatDate($1)).get-or(""))`,
   });
 });
 
-describe("the assignability relation itself", () => {
-  const assign = (defs: string, lhs: string, rhs: string) => inReducer(defs, `${lhs} := ${rhs}`);
-
-  it("refuses a record missing a declared field", () => {
-    expect(
-      assign(
-        `type P = {a: Int, b: Int}\ntype Q = {a: Int}\nslot p : P = {a: 1, b: 2}\nslot q : Q = {a: 1}`,
-        "p",
-        "q",
-      ),
-    ).toEqual(["E0201"]);
-  });
-
-  it("refuses a record carrying a field the target does not declare", () => {
-    expect(
-      assign(
-        `type P = {a: Int}\ntype Q = {a: Int, b: Int}\nslot p : P = {a: 1}\nslot q : Q = {a: 1, b: 2}`,
-        "p",
-        "q",
-      ),
-    ).toEqual(["E0201"]);
-  });
-
-  it("refuses a container whose element type differs", () => {
-    expect(assign(`slot li : List(Int) = []\nslot lt : List(Text) = []`, "li", "lt")).toEqual([
-      "E0201",
-    ]);
-  });
-
-  it("refuses a different container of the same element type", () => {
-    expect(assign(`slot li : List(Int) = []\nslot si : Set(Int) = {}`, "li", "si")).toEqual([
-      "E0201",
-    ]);
-  });
-
-  it("refuses a union whose variant payloads differ", () => {
-    expect(
-      assign(
-        `type A = Idle | Busy(Int)\ntype B = Idle | Busy(Text)\nslot a : A = Idle\nslot b : B = Idle`,
-        "a",
-        "b",
-      ),
-    ).toEqual(["E0201"]);
-  });
-
-  it("refuses a scalar where a tuple is declared", () => {
-    expect(
-      assign(`slot t : Tuple(Int, Text) = [1].zip(["a"])\nslot n : Int = 0`, "t", "n"),
-    ).toEqual(["E0201"]);
-  });
-
-  it("accepts a container of the same shape", () => {
-    expect(assign(`slot a : List(Int) = []\nslot b : List(Int) = []`, "a", "b")).toEqual([]);
-  });
-});
-
-describe("recursive types terminate", () => {
-  const RECURSIVE: [string, string][] = [
-    ["a record naming itself", `type Node = {value: Int, next: Node}\nfn f(n: Node) -> Node = n`],
-    ["two records naming each other", `type A = {b: B}\ntype B = {a: A}\nfn f(x: A) -> A = x`],
-    ["a union naming itself", `type Tree = Leaf | Branch(Tree, Tree)\nfn f(t: Tree) -> Tree = t`],
-    [
-      "a record reaching itself through a container",
-      `type Comment = {id: Int, body: Text, replies: List(Comment)}\nfn f(c: Comment) -> Comment = c`,
-    ],
-  ];
-
-  for (const [label, src] of RECURSIVE) {
-    it(`checks ${label} without exhausting the stack`, () => {
-      expect(() => prog(src)).not.toThrow();
-      expect(prog(src)).toEqual([]);
-    });
-  }
-
-  it("still reports a mismatch inside a recursive type", () => {
-    expect(
-      prog(
-        `type Node = {value: Int, next: Option(Node)}\nslot n : Node = {value: "x", next: None}`,
-      ),
-    ).toEqual(["E0201"]);
-  });
-});
-
-describe("generic instantiation", () => {
-  it("checks a field against the instantiated parameter", () => {
-    expect(prog(`type Box(T) = {v: T}\nslot b : Box(Int) = {v: "x"}`)).toEqual(["E0201"]);
-  });
-
-  it("checks through a container of the parameter", () => {
-    expect(prog(`type Box(T) = {v: List(T)}\nslot b : Box(Int) = {v: ["a"]}`)).toEqual(["E0201"]);
-  });
-
-  it("checks a nested instantiation", () => {
-    expect(
-      prog(
-        `type Box(T) = {v: T}\ntype Pair(A) = {l: Box(A), r: Box(A)}\nslot p : Pair(Int) = {l: {v: 1}, r: {v: "x"}}`,
-      ),
-    ).toEqual(["E0201"]);
-  });
-
-  it("accepts a correct instantiation", () => {
-    expect(prog(`type Box(T) = {v: T}\nslot b : Box(Int) = {v: 1}`)).toEqual([]);
-  });
-
-  it("reports a generic named without its arguments", () => {
-    expect(prog(`type Box(T) = {v: T}\nslot b : Box = {v: 1}`)).toEqual(["E0210"]);
-  });
-});
-
 describe("diagnostic messages", () => {
-  const firstMessage = (src: string) => check(parse(lex(`${src}\n${TAIL}`)))[0]?.message;
+  const firstMessage = (src: string) => checkSource(withButtonApp(src))[0]?.message;
 
   it("names the literal as written and the value it became", () => {
     expect(firstMessage(`slot n : Int = 9007199254740993`)).toBe(
@@ -922,13 +336,13 @@ describe("diagnostic messages", () => {
 describe("more that stays silent", () => {
   it("says nothing about a refinement, which the runtime evaluates instead", () => {
     expect(
-      inReducer(`type N = nominal Int where between(0, 999)\nslot c : N = 0`, `c := 5000`),
+      reducerCodes(`type N = nominal Int where between(0, 999)\nslot c : N = 0`, `c := 5000`),
     ).toEqual([]);
   });
 
   it("does not carry an outer $2 into a method-call argument", () => {
     expect(
-      prog(
+      appCodes(
         `slot rows : List(Int) = []
 fn pick(a: Int, b: Int) -> Int = a + b
 tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
@@ -937,12 +351,12 @@ tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
   });
 
   it("says nothing about an operator with one unresolved side", () => {
-    expect(inReducer(`slot t : Text = ""`, `t := $event.head + "x"`)).toEqual([]);
+    expect(reducerCodes(`slot t : Text = ""`, `t := $event.head + "x"`)).toEqual([]);
   });
 
   it("does not yet report an Option operand of +", () => {
     expect(
-      inReducer(`slot t : Text = ""\nslot l : List(Text) = []`, `t := l.head + "x"`),
+      reducerCodes(`slot t : Text = ""\nslot l : List(Text) = []`, `t := l.head + "x"`),
     ).not.toContain("E0201");
   });
 });
@@ -950,7 +364,7 @@ tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
 describe("a re-binding does not inherit the outer type", () => {
   it("for-bind over a let of a different type", () => {
     expect(
-      inReducer(
+      reducerCodes(
         `slot names : List(Text) = ["a"]\nslot total : Text = ""`,
         `let x = 5\n  for x in names\n    total := x`,
       ),
@@ -959,7 +373,7 @@ describe("a re-binding does not inherit the outer type", () => {
 
   it("match-bind over a let of a different type", () => {
     expect(
-      inReducer(
+      reducerCodes(
         `slot o : Option(Text) = None\nslot t : Text = ""`,
         `let v = 5\n  match o with | Some(v) -> t := v | None -> t := ""`,
       ),
@@ -968,7 +382,101 @@ describe("a re-binding does not inherit the outer type", () => {
 
   it("still types the for-bind from its own container", () => {
     expect(
-      inReducer(`slot names : List(Text) = ["a"]\nslot n : Int = 0`, `for x in names\n    n := x`),
+      reducerCodes(
+        `slot names : List(Text) = ["a"]\nslot n : Int = 0`,
+        `for x in names\n    n := x`,
+      ),
     ).toEqual(["E0201"]);
+  });
+});
+
+describe("for over a Map or a Set is E0218", () => {
+  const MAP = "slot names : Map(Text, Text) = {}";
+  const SET = "slot tags : Set(Text) = {}";
+
+  it("reports the tile form", () => {
+    const src = `${MAP}
+tile App = column(for k in names text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codesOf(src)).toEqual(["E0218"]);
+  });
+
+  it("reports the reducer form, which is a different node", () => {
+    const src = withRoot(
+      'text("x")',
+      `${MAP}
+slot n : Int = 0
+reducer count on=app.start do=
+    for k in names
+        n := n + 1`,
+    );
+    expect(codesOf(src)).toEqual(["E0218"]);
+  });
+
+  it("reports a Set, which is a keyed object too", () => {
+    const src = `${SET}
+tile App = column(for t in tags text(t))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const diags = checkSource(src);
+    expect(diags.map((d) => d.code)).toEqual(["E0218"]);
+    expect(diags[0]?.message).toContain(".to-list");
+  });
+
+  it("sees through a type alias", () => {
+    const src = `type Names = Map(Text, Text)
+slot names : Names = {}
+tile App = column(for k in names text(k))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codesOf(src)).toEqual(["E0218"]);
+  });
+
+  it("accepts the two forms the spec names, and a plain List", () => {
+    const src = `${MAP}
+${SET}
+slot xs : List(Text) = []
+tile App = column(
+             for k in names.keys text(k),
+             for t in tags.to-list text(t),
+             for x in xs text(x))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codesOf(src)).toEqual([]);
+  });
+
+  it("stays silent when the type cannot be determined", () => {
+    const src = `tile App = column(for r in nope text(r))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codesOf(src)).toEqual(["E0103"]);
+  });
+
+  it("accepts a List that comes back from a fn", () => {
+    const src = `slot xs : List(Text) = []
+fn rows(ys: List(Text)) -> List(Text) = ys
+tile App = column(for r in rows(xs) text(r))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    expect(codesOf(src)).toEqual([]);
   });
 });

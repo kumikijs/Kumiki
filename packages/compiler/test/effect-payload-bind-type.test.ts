@@ -1,5 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const app = (defs: string): string =>
   `type Session = {email: Text}
@@ -19,7 +19,7 @@ reducer boot-${name} on=app.start do= emit ${name}()`;
 const LOAD = effect("loadSession", "Result(Option(Session), Text)");
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line} ${e.message}`);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line} ${e.message}`);
 
 describe("the Ok payload of a Result out=", () => {
   it("is the Ok type: a slot of another type is a mismatch, a slot of that type is not", () => {

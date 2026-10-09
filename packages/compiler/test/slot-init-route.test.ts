@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { check } from "../src/typecheck.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 /** An app whose first definitions are the parameter; `App` reads nothing of them. */
 const program = (defs: string) => `${defs}
@@ -9,7 +10,7 @@ tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-const diagnostics = (defs: string) => check(parse(lex(program(defs))));
+const diagnostics = (defs: string) => checkSource(program(defs));
 const codes = (defs: string) => diagnostics(defs).map((e) => e.code);
 
 /** Where `needle` is written on the line of `slot <slot>`, 1-based. */
@@ -179,7 +180,7 @@ app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[load(here())]
   };
   for (const [order, src] of layouts) {
     it(`reports each call in its own position's code, with ${order}`, () => {
-      const errs = check(parse(lex(src)));
+      const errs = checkSource(src);
       expect(errs.map((e) => e.code).sort()).toEqual(["E0120", "E0304"]);
       const slotHop = errs.find((e) => e.code === "E0304");
       const initHop = errs.find((e) => e.code === "E0120");

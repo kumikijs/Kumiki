@@ -86,7 +86,6 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // The bound-input readers go here once the body below has said which it uses.
   const readersAt = lines.length;
 
-  // fn definitions
   for (const fn of fns) {
     lines.push(genFn(fn, ctx));
   }
@@ -97,7 +96,6 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push(indexedDbConfigJs(app.indexedDb));
   lines.push("");
 
-  // effect handlers (per capability, statically dispatched)
   if (effects.some((e) => failsWithText(e.cap))) lines.push(TEXT_FAILURE_HELPER);
   lines.push("const _effects = {");
   for (const eff of effects) {
@@ -106,16 +104,13 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("};");
   lines.push("");
 
-  // Slots
   for (const line of emitSlots(slots, ctx)) lines.push(line);
   lines.push("");
 
-  // Live slot values
   lines.push("const _live = {};");
   lines.push("for (const [k, v] of Object.entries(_slots)) _live[k] = v.value;");
   lines.push("");
 
-  // Reducers
   lines.push("const _reducers = [");
   for (const r of reducers) lines.push(genReducer(r, ctx));
   lines.push("];");
@@ -223,7 +218,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push("App._tests = [");
     for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
-    // Static coverage for `kumiki test --coverage` (§8.7).
+    // Static coverage for `kumiki test --coverage`.
     lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
   }
 

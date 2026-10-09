@@ -120,7 +120,6 @@ export function propsFor(
     if (emittedHandlers.has(handlerName)) continue;
     entries.push(`${handlerName}: ${handlerRef(inDefinitionOrder(names, ctx))}`);
   }
-  // Build `el` from explicit {name: expr} that aren't handlers
   const elProps: string[] = [];
   for (const p of block) {
     if (isNotPropData(t.name, p.name, true)) continue;

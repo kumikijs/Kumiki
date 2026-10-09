@@ -1,23 +1,12 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const errsOf = (src: string) => check(parse(lex(src)));
-const app = (defs: string): string =>
-  `${defs}
-tile B = button(text="x")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-
-const diagnostics = (src: string) => errsOf(src).map((e) => `${e.code} ${e.message}`);
+import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
 describe("what .get-or answers", () => {
   it("assigning an unwrapped Option back to the Option slot is a mismatch", () => {
     expect(
-      diagnostics(
-        app(`type S = {a: Text}
+      summariesOf(
+        withButtonApp(`type S = {a: Text}
 slot opt : Option(S) = None
 slot fb : S = {a: ""}
 reducer keep on=ui.click(B) do= opt := opt.get-or(fb)`),
@@ -27,8 +16,8 @@ reducer keep on=ui.click(B) do= opt := opt.get-or(fb)`),
 
   it("assigning it to a slot of the unwrapped type stays clean", () => {
     expect(
-      errsOf(
-        app(`type S = {a: Text}
+      checkSource(
+        withButtonApp(`type S = {a: Text}
 slot opt : Option(S) = None
 slot cur : S = {a: ""}
 reducer keep on=ui.click(B) do= cur := opt.get-or(cur)`),
@@ -38,8 +27,8 @@ reducer keep on=ui.click(B) do= cur := opt.get-or(cur)`),
 
   it("a Result unwraps to its ok type, and assigning it back is a mismatch", () => {
     expect(
-      diagnostics(
-        app(`slot res : Result(Int, Text) = Ok(1)
+      summariesOf(
+        withButtonApp(`slot res : Result(Int, Text) = Ok(1)
 reducer keep on=ui.click(B) do= res := res.get-or(0)`),
       ),
     ).toEqual(["E0201 Expected Result(Int, Text) but got Int"]);
@@ -47,8 +36,8 @@ reducer keep on=ui.click(B) do= res := res.get-or(0)`),
 
   it("a Result's unwrapped value lands in a slot of the ok type", () => {
     expect(
-      errsOf(
-        app(`slot res : Result(Int, Text) = Ok(1)
+      checkSource(
+        withButtonApp(`slot res : Result(Int, Text) = Ok(1)
 slot n : Int = 0
 reducer keep on=ui.click(B) do= n := res.get-or(0)`),
       ),
@@ -57,8 +46,8 @@ reducer keep on=ui.click(B) do= n := res.get-or(0)`),
 
   it("a Map answers its value type, not an Option of it", () => {
     expect(
-      diagnostics(
-        app(`slot m : Map(Text, Int) = {}
+      summariesOf(
+        withButtonApp(`slot m : Map(Text, Int) = {}
 slot o : Option(Int) = None
 reducer keep on=ui.click(B) do= o := m.get-or("k", 0)`),
       ),
@@ -67,8 +56,8 @@ reducer keep on=ui.click(B) do= o := m.get-or("k", 0)`),
 
   it("a Map lookup with a fallback lands in a slot of the value type", () => {
     expect(
-      errsOf(
-        app(`slot m : Map(Text, Int) = {}
+      checkSource(
+        withButtonApp(`slot m : Map(Text, Int) = {}
 slot n : Int = 0
 reducer keep on=ui.click(B) do= n := m.get-or("k", 0)`),
       ),
@@ -77,8 +66,8 @@ reducer keep on=ui.click(B) do= n := m.get-or("k", 0)`),
 
   it("an Int fallback still widens into a Float slot", () => {
     expect(
-      errsOf(
-        app(`slot maybeN : Option(Int) = None
+      checkSource(
+        withButtonApp(`slot maybeN : Option(Int) = None
 slot f : Float = 0.0
 reducer keep on=ui.click(B) do= f := maybeN.get-or(0)`),
       ),
@@ -88,8 +77,8 @@ reducer keep on=ui.click(B) do= f := maybeN.get-or(0)`),
 
 describe("the fallback carries the same type", () => {
   it("None as the fallback of an Option(record) is reported at the argument", () => {
-    const errs = errsOf(
-      app(`type S = {a: Text}
+    const errs = checkSource(
+      withButtonApp(`type S = {a: Text}
 slot opt : Option(S) = None
 reducer keep on=ui.click(B) do= opt := opt.get-or(None)`),
     );
@@ -104,7 +93,7 @@ reducer keep on=ui.click(B) do= opt := opt.get-or(None)`),
 
   it("inside an emit argument it is still E0201, not the effect's own code", () => {
     expect(
-      diagnostics(
+      summariesOf(
         `slot m : Map(Text, Int) = {}
 effect saveN cap=storage.write
              in=Int
@@ -123,8 +112,8 @@ app A
 
   it("a fallback of the wrong primitive is reported", () => {
     expect(
-      diagnostics(
-        app(`slot m : Map(Text, Int) = {}
+      summariesOf(
+        withButtonApp(`slot m : Map(Text, Int) = {}
 slot n : Int = 0
 reducer keep on=ui.click(B) do= n := m.get-or("k", "none")`),
       ),
@@ -135,8 +124,8 @@ reducer keep on=ui.click(B) do= n := m.get-or("k", "none")`),
 describe("what stays undecidable", () => {
   it("an argument count that does not fit the receiver decides no result type", () => {
     expect(
-      diagnostics(
-        app(`slot opt : Option(Int) = None
+      summariesOf(
+        withButtonApp(`slot opt : Option(Int) = None
 slot n : Int = 0
 reducer keep on=ui.click(B) do= n := opt.get-or("k", "none")`),
       ),
@@ -144,8 +133,8 @@ reducer keep on=ui.click(B) do= n := opt.get-or("k", "none")`),
       'E0213 Method ".get-or" on "Option" expects 1 argument(s) (default) but got 2 — ".get-or(key, default)" is the "Map" reading',
     ]);
     expect(
-      diagnostics(
-        app(`slot m : Map(Text, Int) = {}
+      summariesOf(
+        withButtonApp(`slot m : Map(Text, Int) = {}
 slot o : Option(Int) = None
 reducer keep on=ui.click(B) do= o := m.get-or("k")`),
       ),
@@ -156,8 +145,8 @@ reducer keep on=ui.click(B) do= o := m.get-or("k")`),
 
   it("a None with no element type decides neither the fallback nor the result", () => {
     expect(
-      errsOf(
-        app(`slot n : Int = 0
+      checkSource(
+        withButtonApp(`slot n : Int = 0
 reducer keep on=ui.click(B) do= n := let o = None in o.get-or("not an Int")`),
       ),
     ).toEqual([]);
@@ -165,8 +154,8 @@ reducer keep on=ui.click(B) do= n := let o = None in o.get-or("not an Int")`),
 
   it("an untyped payload receiver says nothing", () => {
     expect(
-      errsOf(
-        app(`slot n : Int = 0
+      checkSource(
+        withButtonApp(`slot n : Int = 0
 reducer keep on=ui.click(B) do= n := $event.get-or("not an Int")`),
       ),
     ).toEqual([]);
@@ -174,7 +163,7 @@ reducer keep on=ui.click(B) do= n := $event.get-or("not an Int")`),
 
   it("an effect payload bind is a receiver like a slot: unwrapping one is the same pair", () => {
     expect(
-      diagnostics(
+      summariesOf(
         `type Session = {email: Text}
 slot session : Option(Session) = None
 effect loadSession cap=storage.read

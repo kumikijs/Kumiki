@@ -1,8 +1,8 @@
 import type { MotionDef } from "@kumikijs/compiler";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const checkSrc = (src: string) => check(parse(lex(src)));
+import { checkSource } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
 const APP_TAIL = `
 tile App = box(Spinner) {motion: "Spin"}
@@ -24,14 +24,14 @@ describe("motion layer", () => {
   });
 
   it("accepts a valid motion definition + reference", () => {
-    expect(checkSrc(`${SPIN}${APP_TAIL}`)).toEqual([]);
+    expect(checkSource(`${SPIN}${APP_TAIL}`)).toEqual([]);
   });
 
   it("rejects an unknown keyframe property (E0401)", () => {
     const src = `motion Bad = {keyframes: {from: {wobble: 0}, to: {wobble: 1}}}
 tile App = box() {motion: "Bad"}
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    const errs = checkSrc(src);
+    const errs = checkSource(src);
     expect(errs.some((e) => e.code === "E0401")).toBe(true);
   });
 
@@ -39,7 +39,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     const src = `motion Bad = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}, easing: "bouncy"}
 tile App = box() {motion: "Bad"}
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    const errs = checkSrc(src);
+    const errs = checkSource(src);
     expect(errs.some((e) => e.code === "E0402")).toBe(true);
   });
 
@@ -47,7 +47,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     const src = `motion Ok = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}, duration: 250}
 tile App = box() {motion: "Ok"}
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    expect(checkSrc(src)).toEqual([]);
+    expect(checkSource(src)).toEqual([]);
   });
 
   it("rejects a non-positive-integer duration / iteration (E0402)", () => {
@@ -57,7 +57,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 tile App = box() {motion: "Bad"}
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
       expect(
-        checkSrc(src).some((e) => e.code === "E0402"),
+        checkSource(src).some((e) => e.code === "E0402"),
         timing,
       ).toBe(true);
     }
@@ -67,23 +67,21 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     const src = `motion Bad = {keyframes: {from: {opacity: 0}}}
 tile App = box() {motion: "Bad"}
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    const errs = checkSrc(src);
+    const errs = checkSource(src);
     expect(errs.some((e) => e.code === "E0403")).toBe(true);
   });
 
   it("rejects a tile referencing an undefined motion (E0107)", () => {
     const src = `tile App = box() {motion: "Ghost"}
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    const errs = checkSrc(src);
+    const errs = checkSource(src);
     expect(errs.some((e) => e.code === "E0107")).toBe(true);
   });
 
   it("emits the motion into an `_motions` registry on App (excluded from logic layers)", () => {
-    const result = compile(`${SPIN}${APP_TAIL}`, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain("const _motions = {");
-    expect(result.js).toContain('"Spin"');
-    expect(result.js).toContain("motions: _motions,");
+    const js = compileOrFail(`${SPIN}${APP_TAIL}`);
+    expect(js).toContain("const _motions = {");
+    expect(js).toContain('"Spin"');
+    expect(js).toContain("motions: _motions,");
   });
 });

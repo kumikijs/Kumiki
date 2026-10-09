@@ -1,10 +1,11 @@
-import { check, compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { lex } from "../src/lexer.ts";
 import { ParseError, parse } from "../src/parser.ts";
 import { defined } from "./helpers/defined.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
-describe("parser: app.http (#78)", () => {
+describe("parser: app.http", () => {
   it("captures base-url, headers, on-401, timeout, credentials", () => {
     const src = `
       slot tag : Text = ""
@@ -85,7 +86,7 @@ describe("parser: app.http (#78)", () => {
   });
 });
 
-describe("codegen: app.http (#78)", () => {
+describe("codegen: app.http", () => {
   it("emits _http config and threads it to httpFetch", () => {
     const src = `
       slot tag : Text = ""
@@ -105,16 +106,14 @@ describe("codegen: app.http (#78)", () => {
           credentials: "include"
         }
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain('get baseUrl() { return "https://api.example.com"; }');
-    expect(result.js).toContain('on401: "handleUnauthorized"');
-    expect(result.js).toContain("headers: () =>");
-    expect(result.js).toContain("get timeout() { return 5000; }");
-    expect(result.js).toContain('get credentials() { return "include"; }');
-    expect(result.js).toContain("http: _http,");
-    expect(result.js).toMatch(/httpFetch\("GET", \w+, _http, _signal\)/);
+    const js = compileOrFail(src);
+    expect(js).toContain('get baseUrl() { return "https://api.example.com"; }');
+    expect(js).toContain('on401: "handleUnauthorized"');
+    expect(js).toContain("headers: () =>");
+    expect(js).toContain("get timeout() { return 5000; }");
+    expect(js).toContain('get credentials() { return "include"; }');
+    expect(js).toContain("http: _http,");
+    expect(js).toMatch(/httpFetch\("GET", \w+, _http, _signal\)/);
   });
 
   it("lowers a slot reference inside the getter body, in the non-reducer scope", () => {
@@ -131,14 +130,12 @@ describe("codegen: app.http (#78)", () => {
         init = []
         http = { base-url: endpoint, timeout: timeoutMs, credentials: sendCookies }
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain('get baseUrl() { return _live["endpoint"]; }');
-    expect(result.js).toContain('get timeout() { return _live["timeoutMs"]; }');
-    expect(result.js).toContain('get credentials() { return _live["sendCookies"]; }');
+    const js = compileOrFail(src);
+    expect(js).toContain('get baseUrl() { return _live["endpoint"]; }');
+    expect(js).toContain('get timeout() { return _live["timeoutMs"]; }');
+    expect(js).toContain('get credentials() { return _live["sendCookies"]; }');
     const config = defined(
-      result.js.split("\n").find((l) => l.startsWith("const _http = ")),
+      js.split("\n").find((l) => l.startsWith("const _http = ")),
       "the emitted _http line",
     );
     expect(config).not.toContain("_next");
@@ -156,7 +153,7 @@ describe("codegen: app.http (#78)", () => {
         init = []
         http = { base-url: endpointt }
     `;
-    const errs = check(parse(lex(src)));
+    const errs = checkSource(src);
     expect(errs.map((e) => `${e.code} ${e.message}`)).toEqual([
       'E0103 Reference to undefined name "endpointt"',
     ]);
@@ -168,9 +165,7 @@ describe("codegen: app.http (#78)", () => {
       tile Home = column(B)
       app App caps=[] routes={"/" -> Home, "/404" -> Home} init=[]
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain("const _http = undefined;");
+    const js = compileOrFail(src);
+    expect(js).toContain("const _http = undefined;");
   });
 });

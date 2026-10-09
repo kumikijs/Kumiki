@@ -1,8 +1,8 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 function codes(source: string, strictA11y = true): string[] {
-  return check(parse(lex(source)), { strictA11y }).map((e) => e.code);
+  return checkSource(source, { strictA11y }).map((e) => e.code);
 }
 
 function program(body: string): string {

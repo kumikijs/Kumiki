@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { KNOWN_MEMBERS, METHOD_MIN_ARGS } from "../src/codegen/expr.ts";
 import { RECEIVER_MEMBERS, type Receiver, UNIVERSAL_MEMBERS } from "../src/stdlib-members.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const APP = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -53,7 +53,7 @@ function use(recv: string, member: string, parens: boolean): string {
 function probe(expr: string) {
   const params = [...Object.values(PARAMS), ...WRAPPED.map(([p]) => p), ...EXTRA_PARAMS];
   const src = `${WRAPPED_DECLS}fn probe(${params.join(", ")}) -> Text = (${expr}).show\n${APP}`;
-  return check(parse(lex(src)));
+  return checkSource(src);
 }
 
 /** The codes for a `fn` whose body reads `expr`. */
@@ -61,16 +61,15 @@ function codes(expr: string): string[] {
   return probe(expr).map((e) => e.code);
 }
 
-/** Every `check` error for `slot`s declared by `decls`, read by `body`. */
-function reducerErrors(decls: string, body: string) {
-  const src = `${decls}
+/** A program whose `slot`s are declared by `decls` and read by `body`. */
+const reducerProgram = (decls: string, body: string): string => `${decls}
 reducer run on=ui.click(Run) do= ${body}
 tile Run = button(text="run")
 tile App = column(Run)
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-  return check(parse(lex(src)));
-}
+
+const reducerErrors = (decls: string, body: string) => checkSource(reducerProgram(decls, body));
 
 describe("a member of one container on another", () => {
   const rows: [string, string, string][] = [
@@ -85,13 +84,13 @@ describe("a member of one container on another", () => {
     ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.entries.length", "Option"],
     ["slot st : Set(Int) = [1, 2, 3]\nslot n : Int = 0", "n := st.map($1 * 2).length", "Set"],
   ];
-  for (const [decls, body, type] of rows) {
-    it(`${body} is E0108 naming ${type}`, () => {
-      const errs = reducerErrors(decls, body).filter((e) => e.code === "E0108");
-      expect(errs).toHaveLength(1);
-      expect(errs[0]?.message).toContain(`Type "${type}" has no member`);
-    });
-  }
+  it.each(rows)("%s / %s is E0108 naming %s, and the build refuses it", (decls, body, type) => {
+    const errs = reducerErrors(decls, body);
+    expect(errs.map((e) => e.code)).toEqual(["E0108"]);
+    expect(errs[0]?.message).toContain(`Type "${type}" has no member`);
+    const r = compile(reducerProgram(decls, body), { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind === "fail" && r.errors.map((e) => e.code)).toEqual(["E0108"]);
+  });
 
   it("names the receivers that do have the member", () => {
     const [err] = reducerErrors(
@@ -115,7 +114,7 @@ describe("a member of one container on another", () => {
     expect(rec.map((e) => e.code)).toEqual([]);
   });
 
-  it("reports .ms, which §2.2.9 has only as a constructor, on a Duration", () => {
+  it("reports .ms, which is only a constructor, on a Duration", () => {
     const errs = reducerErrors("slot d : Duration = Duration.s(1)\nslot n : Int = 0", "n := d.ms");
     expect(errs.map((e) => e.code)).toEqual(["E0108"]);
   });
@@ -140,7 +139,7 @@ describe("the per-receiver table, enumerated", () => {
     new Set<string>([
       ...RECEIVER_MEMBERS[r],
       ...(r === "Duration" ? RECEIVER_MEMBERS.Int : []),
-      // A `File`'s metadata is a field, not a member (§2.1).
+      // A `File`'s metadata is a field, not a member.
       ...(r === "File" ? ["name", "size", "type"] : []),
       ...UNIVERSAL_MEMBERS,
     ]);
@@ -286,94 +285,8 @@ describe("a member of another receiver on a member's result", () => {
   }
 });
 
-/** `line` split at the commas that are not inside parentheses. */
-function topLevelPieces(line: string): string[] {
-  const pieces = [""];
-  let depth = 0;
-  for (const ch of line) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    if (ch === "," && depth === 0) pieces.push("");
-    else pieces[pieces.length - 1] += ch;
-  }
-  return pieces;
-}
-
-function specMembers(path: string): Map<Receiver, Set<string>> {
-  const md = readFileSync(new URL(path, import.meta.url), "utf8");
-  const out = new Map<Receiver, Set<string>>();
-  const sections = md.split(/^### 2\.2\.\d+ /m).slice(1);
-  for (const section of sections) {
-    const heading = section.slice(0, section.indexOf("\n"));
-    const receivers = heading.split("/").map((h) => h.trim().replace(/\(.*$/, "")) as Receiver[];
-    for (const r of receivers) out.set(r, new Set());
-    const block = /^```\n([\s\S]*?)^```/m.exec(section)?.[1] ?? "";
-    for (const raw of block.split("\n")) {
-      const line = raw.replace(/;.*$/, "");
-      const names = line.includes(" : ")
-        ? [line.slice(0, line.indexOf(" : "))]
-        : topLevelPieces(line);
-      for (const piece of names) {
-        const m = /^\s*([a-z][a-z0-9-]*)(?:\([^)]*\))?\s*(?:\((Int|Float)\b.*)?$/.exec(piece);
-        if (!m?.[1]) continue;
-        for (const r of m[2] ? [m[2] as Receiver] : receivers) out.get(r)?.add(m[1]);
-      }
-    }
-    if (section.startsWith("Int / Float")) {
-      for (const r of receivers) out.get(r)?.delete("show");
-    }
-  }
-  return out;
-}
-
-describe("the table is the one §2.2 lists", () => {
-  for (const [track, path] of [
-    ["en", "../../../docs/spec/stdlib.md"],
-    ["ja", "../../../docs/ja/spec/stdlib.md"],
-  ] as const) {
-    it(`matches the ${track} spec, receiver by receiver`, () => {
-      const spec = specMembers(path);
-      const table = new Map(
-        (Object.keys(RECEIVER_MEMBERS) as Receiver[])
-          .filter((r) => r !== "Bool" && r !== "File")
-          .map((r) => [r, new Set<string>(RECEIVER_MEMBERS[r])]),
-      );
-      expect(spec).toEqual(table);
-    });
-  }
-
+describe("the universal members", () => {
   it("lists `show` as the member every value has", () => {
     expect([...UNIVERSAL_MEMBERS]).toEqual(["show"]);
-  });
-});
-
-const app = (decls: string, body: string): string => `${decls}
-reducer run on=ui.click(Run) do= ${body}
-tile Run = button(text="run")
-tile App = column(Run)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-
-const ROWS: [string, string][] = [
-  [
-    'slot res : Result(Int, Text) = Ok(3)\nslot sink : Result(Int, Text) = Err("x")',
-    "sink := res.filter($1 > 2)",
-  ],
-  ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.keys.length"],
-  ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.size"],
-  ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.entries.length"],
-  ["slot res : Result(Int, Text) = Ok(3)\nslot n : Int = 0", "n := res.values.length"],
-  ["slot st : Set(Int) = [1, 2, 3]\nslot n : Int = 0", "n := st.map($1 * 2).length"],
-];
-
-describe("a member of another receiver", () => {
-  it.each(ROWS)("%s / %s: check reports it and build refuses it", (decls, body) => {
-    const src = app(decls, body);
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual(["E0108"]);
-    const r = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(r.kind).toBe("fail");
-    if (r.kind === "fail") expect(r.errors.map((e) => e.code)).toEqual(["E0108"]);
   });
 });

@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const program = (home: string) => `tile Card in={label: Text} = text($1.label)
 tile Home = ${home}
@@ -15,9 +15,9 @@ app R
 `;
 
 const diagnostics = (home: string) =>
-  check(parse(lex(program(home)))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(program(home)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const codes = (home: string) => check(parse(lex(program(home)))).map((e) => e.code);
+const codes = (home: string) => codesOf(program(home));
 
 const message = (builtin: string) =>
   `A value is not a tile: ${builtin} renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — \`text(…)\` — or, for a \`let\`, write the value where it is used or compute it in a \`fn\``;

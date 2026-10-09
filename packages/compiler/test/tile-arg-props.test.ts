@@ -1,5 +1,8 @@
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { loweredOf } from "./helpers/module.ts";
+import { withRoot } from "./helpers/programs.ts";
 
 function emit(tile: string, extra = ""): string {
   const source = `${extra}
@@ -34,7 +37,7 @@ app P
     routes = {"/" -> Probe, "/404" -> Probe}
     init   = []
 `;
-  return check(parse(lex(source)))
+  return checkSource(source)
     .filter((e) => e.severity !== "warning")
     .map((e) => e.code);
 }
@@ -46,7 +49,7 @@ function propsOf(js: string): string {
   return js.slice(at, js.indexOf("\n", at));
 }
 
-describe("a named argument reaches props (#251)", () => {
+describe("a named argument reaches props", () => {
   it("carries an argument the kind does not lift", () => {
     const js = propsOf(emit('image(src="/a.png", alt="A cat", width=120, loading="lazy")'));
     expect(js).toContain('alt: "A cat"');
@@ -163,5 +166,36 @@ describe("which argument a builtin takes as its content", () => {
     expect(js).toContain('_s.show("Title")');
     expect(js).not.toContain("_s.show(2)");
     expect(propsOf(js)).toContain("level: 2");
+  });
+});
+
+describe("button(type=…) reaches the tile node", () => {
+  it("emits the type when the tile says one", () => {
+    const js = loweredOf(withRoot("Send", 'tile Send = button(text="send", type="submit")'));
+    expect(js).toContain('type: "submit"');
+  });
+
+  it("emits nothing when the tile does not, leaving the HTML default", () => {
+    const js = loweredOf(withRoot("Plain", 'tile Plain = button(text="plain")'));
+    const node = js.slice(js.indexOf('kind: "button"'));
+    expect(node.slice(0, node.indexOf("props:"))).not.toContain("type");
+  });
+
+  it("rejects a literal type that is not one of the three", () => {
+    const src = withRoot("Bad", 'tile Bad = button(text="x", type="submmit")');
+    expect(codesOf(src)).toEqual(["E0201"]);
+    for (const ok of ["submit", "button", "reset"]) {
+      expect(codesOf(withRoot("Ok", `tile Ok = button(text="x", type="${ok}")`)), ok).toEqual([]);
+    }
+  });
+
+  it("takes an expression, not only a literal", () => {
+    const src = withRoot(
+      "Send",
+      `slot mode : Text = "button"
+tile Send = button(text="send", type=mode)`,
+    );
+    expect(loweredOf(src)).toContain('type: _live["mode"]');
+    expect(codesOf(src)).toEqual([]);
   });
 });

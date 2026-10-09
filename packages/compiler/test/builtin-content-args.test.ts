@@ -1,5 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const program = (tile: string) => `slot title : Text = "Title"
 tile App = column(${tile})
@@ -7,12 +7,12 @@ app P caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
 const diagnostics = (tile: string) =>
-  check(parse(lex(program(tile)))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(program(tile)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const codes = (tile: string) => check(parse(lex(program(tile)))).map((e) => e.code);
+const codes = (tile: string) => codesOf(program(tile));
 
 const shapes = (tile: string) =>
-  check(parse(lex(program(tile))))
+  checkSource(program(tile))
     .filter((e) => e.code === "E0129")
     .map((e) => e.unrendered);
 

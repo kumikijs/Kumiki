@@ -1,18 +1,17 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
+import { withApp } from "./helpers/programs.ts";
 
-const app = (defs: string, caps = "[]"): string =>
-  `${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)\napp A\n    caps   = ${caps}\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
+const app = (defs: string, caps?: string): string =>
+  withApp(`${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)`, { caps });
 
-function js(defs: string, caps?: string): string {
-  const r = compile(app(defs, caps), { runtimeSpecifier: "./runtime.js", includeTests: true });
-  if (r.kind !== "ok") throw new Error(r.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-  return r.js;
-}
+const js = (defs: string, caps?: string): string =>
+  compileOrFail(app(defs, caps), { runtimeSpecifier: "./runtime.js", includeTests: true });
 
 /** Every diagnostic as `code line:col message`, in report order. */
 function diagnostics(defs: string, caps?: string): string[] {
-  return check(parse(lex(app(defs, caps)))).map(
+  return checkSource(app(defs, caps)).map(
     (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
   );
 }
@@ -151,7 +150,7 @@ test t = reducer-test go
 test u = reducer-test go
     given  = {event: {type: ui.click, target: Btn}, mocks: {save: delay(5, err([7]))}}
     expect = {slots: {}}`,
-      "[http.post]",
+      "http.post",
     );
     expect(out).toContain('_s.setOf(["m"])');
     expect(out).toContain('_s.setOf(["e"])');
@@ -254,7 +253,7 @@ test t = reducer-test go
 test u = reducer-test go
     given  = {event: {type: ui.click, target: Btn}, mocks: {save: err(5)}}
     expect = {slots: {}}`,
-        "[storage.write]",
+        "storage.write",
       ),
     ).toEqual([
       "E0201 5:71 Expected Int but got Text",

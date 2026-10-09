@@ -1,17 +1,9 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
-const errsOf = (src: string) => check(parse(lex(src)));
-const app = (defs: string): string =>
-  `${defs}
-tile B = button(text="x")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-
-const diagnostics = (src: string) => errsOf(app(src)).map((e) => `${e.code} ${e.message}`);
+const diagnostics = (src: string) => summariesOf(withButtonApp(src));
 
 const IDS = `type PostId = nominal Text where uuid
 type UserId = nominal Text where uuid
@@ -251,10 +243,10 @@ type Tally = nominal Cents`;
   it("builds every qualifier check accepts", () => {
     let clean = 0;
     for (const q of QUALIFIERS) {
-      const src = app(
+      const src = withButtonApp(
         `${DEFS}\nslot o : Text = ""\nreducer r on=ui.click(B) do= o := ${q}.parse("x").show`,
       );
-      if (errsOf(src).some((e) => e.severity !== "warning")) continue;
+      if (checkSource(src).some((e) => e.severity !== "warning")) continue;
       clean += 1;
       expect(compile(src, { runtimeSpecifier: "./runtime.js" }).kind, q).toBe("ok");
     }
@@ -322,7 +314,7 @@ describe("where the minted type is read", () => {
     expect(diagnostics(`${IDS}\nfn mint() -> PostId = PostId.fresh()`)).toEqual([]);
   });
 
-  it("reaches the comparison operators, which is the #347 path", () => {
+  it("reaches the comparison operators", () => {
     expect(
       inReducer(`${IDS}\nslot n : Int = 0`, `n := if p == UserId.fresh() then 1 else 2`),
     ).toEqual(['E0201 Operator "==" cannot compare PostId with UserId']);

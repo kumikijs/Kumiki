@@ -1,11 +1,7 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { generateDts, lex, parse } from "@kumikijs/compiler";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+import { writeTmpFile } from "./helpers/module.ts";
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -13,9 +9,7 @@ const dtsOf = (src: string): string => generateDts(parse(lex(src)));
 
 /** Type-check one generated module in isolation; returns formatted diagnostics. */
 function tscDiagnostics(source: string): string[] {
-  const dir = mkdtempSync(join(TMP_ROOT, "dts-"));
-  const file = join(dir, "gen.ts");
-  writeFileSync(file, source);
+  const file = writeTmpFile("dts", "gen.ts", source);
   const program = ts.createProgram([file], {
     noEmit: true,
     strict: true,

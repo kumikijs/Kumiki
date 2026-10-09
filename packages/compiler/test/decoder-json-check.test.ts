@@ -1,12 +1,6 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { compile } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
 
 const TYPES = `
 type NoteId = nominal Text where uuid
@@ -32,20 +26,14 @@ app D
     init   = []
 `;
 
-function js(src: string): string {
-  const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
-  return result.js;
-}
-
 type Check = (v: unknown) => { kind: string; args: unknown[]; path: unknown[] } | undefined;
 
 /** The `decode` the compiled `load` effect hands its capability. */
 async function decodeOf(decoder: string): Promise<unknown> {
-  const dir = mkdtempSync(join(TMP_ROOT, "decoder-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, js(program(decoder)));
-  const mod: { default: AppShape } = await import(`${pathToFileURL(file).href}?t=${Date.now()}`);
+  const mod = await importModule<{ default: AppShape }>(
+    compileOrFail(program(decoder), LOADABLE),
+    "decoder",
+  );
   const load = mod.default.effects.load;
   if (!load) throw new Error("the program no longer declares `load`");
   let seen: { decode?: unknown } | undefined;
@@ -100,7 +88,7 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
   });
 
   it("is the same helper as a slot of the same type, not a second copy", () => {
-    const out = js(
+    const out = compileOrFail(
       program("Decoder.Json(Map(NoteId, Note))", "slot notes : Map(NoteId, Note) = {}"),
     );
     const helper = /"decode": (_rq\d+)/.exec(out)?.[1];

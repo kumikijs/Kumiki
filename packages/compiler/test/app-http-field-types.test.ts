@@ -1,5 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const app = (slots: string, http: string): string =>
   `${slots}
@@ -13,7 +13,7 @@ app Types
     init   = []`;
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
 describe("app.http value fields are checked against their types", () => {
   it("reports each field at its own position, in the order they are written", () => {

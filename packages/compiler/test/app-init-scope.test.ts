@@ -3,6 +3,8 @@ import { compile } from "../src/compile.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { check } from "../src/typecheck.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
 const appWith = (defs: string, init: string) => `slot n : Int = 0
 slot key : Text = "k"
@@ -25,10 +27,9 @@ const callPosition = (src: string, call: string): { line: number; col: number } 
   return { line: line + 1, col: col + 1 };
 };
 
-const diagnostics = (init: string) => check(parse(lex(app(init))));
+const diagnostics = (init: string) => checkSource(app(init));
 const codes = (init: string) => diagnostics(init).map((e) => e.code);
-const codesWith = (defs: string, init: string) =>
-  check(parse(lex(appWith(defs, init)))).map((e) => e.code);
+const codesWith = (defs: string, init: string) => codesOf(appWith(defs, init));
 
 describe("route in an app.init argument", () => {
   it("is reported, and only once", () => {
@@ -64,12 +65,10 @@ describe("route in an app.init argument", () => {
   });
 
   it("lowers a shadowed read to the binding, not to the runtime's route", () => {
-    const result = compile(app('load(let route = "x" in route)'), {
+    const js = compileOrFail(app('load(let route = "x" in route)'), {
       runtimeSpecifier: "./runtime.js",
     });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    const init = result.js.split(/\r?\n/).find((l) => l.includes("init: ["));
+    const init = js.split(/\r?\n/).find((l) => l.includes("init: ["));
     expect(init).toBeDefined();
     expect(init).not.toContain('_live["route"]');
   });
@@ -80,7 +79,7 @@ fn pathOf(r: Route) -> Text = r.path
 tile App = column(text(pathOf(route)))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src)))).toEqual([]);
+    expect(checkSource(src)).toEqual([]);
   });
 });
 
@@ -105,31 +104,27 @@ reducer got on=load.ok(_, _) do= n := 1
 tile App = column(text(n.show))
 app A caps=[storage.read, log.write] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src)))).toEqual([]);
+    expect(checkSource(src)).toEqual([]);
   });
 });
 
 describe("what a valid app.init lowers to", () => {
   it("evaluates its arguments against the slot defaults, once", () => {
-    const result = compile(app("load(key)"), { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain('init: [{ effect: "load", args: [_live["key"]] }]');
-    expect(result.js).not.toContain('init: [{ effect: "load", args: [((_next');
+    const js = compileOrFail(app("load(key)"));
+    expect(js).toContain('init: [{ effect: "load", args: [_live["key"]] }]');
+    expect(js).not.toContain('init: [{ effect: "load", args: [((_next');
   });
 
   it("captures `now` at construction too, which is the whole point of the rule", () => {
-    const result = compile(app("load(now.show)"), { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    const init = result.js.split(/\r?\n/).find((l) => l.includes("init: ["));
+    const js = compileOrFail(app("load(now.show)"));
+    const init = js.split(/\r?\n/).find((l) => l.includes("init: ["));
     expect(init).toContain("_s.now()");
   });
 });
 
 describe("route reached through a fn call in an app.init argument", () => {
   it("is reported at the call, with the chain that reaches the route", () => {
-    const errs = check(parse(lex(appWith("fn here() -> Text = route.path", "load(here())"))));
+    const errs = checkSource(appWith("fn here() -> Text = route.path", "load(here())"));
     expect(errs.map((e) => e.code)).toEqual(["E0120"]);
     expect(errs[0]?.message).toContain("here → route");
   });
@@ -140,7 +135,7 @@ describe("route reached through a fn call in an app.init argument", () => {
 fn inner() -> Text = route.path`,
       "load(outer())",
     );
-    const errs = check(parse(lex(src)));
+    const errs = checkSource(src);
     expect(errs.map((e) => e.code)).toEqual(["E0120"]);
     expect(errs[0]?.message).toContain("outer → inner → route");
     expect(errs[0]?.pos).toEqual(callPosition(src, "outer()"));
@@ -176,7 +171,7 @@ fn d() -> Text = route.path`,
 fn inner() -> Text = route.path`,
       "load(wrap(inner()))",
     );
-    const errs = check(parse(lex(src)));
+    const errs = checkSource(src);
     expect(errs.map((e) => e.code)).toEqual(["E0120"]);
     expect(errs[0]?.pos).toEqual(callPosition(src, "inner()"));
   });
@@ -212,7 +207,7 @@ fn two() -> Text = route.pattern`,
 fn two() -> Text = route.pattern`,
       "load(one() + two())",
     );
-    const errs = check(parse(lex(src)));
+    const errs = checkSource(src);
     expect(errs.map((e) => e.pos)).toEqual([
       callPosition(src, "one()"),
       callPosition(src, "two()"),
@@ -258,7 +253,7 @@ tile B = button(text="go", onClick=go)
 tile App = column(B, text(here()))
 app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(check(parse(lex(src)))).toEqual([]);
+    expect(checkSource(src)).toEqual([]);
   });
 
   it("leaves a `map-request` that calls the same fn alone, init included", () => {
@@ -269,7 +264,7 @@ reducer got on=load.ok(_, _) do= n := 1
 tile App = column(text(n.show))
 app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[load()]
 `;
-    expect(check(parse(lex(src)))).toEqual([]);
+    expect(checkSource(src)).toEqual([]);
   });
 
   it("honours a binding inside the fn that shadows the name", () => {

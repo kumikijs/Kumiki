@@ -226,7 +226,7 @@ reducer onErr on=route.error("/p") do= s := true`;
     ]);
   });
 
-  it("parses `@colors.surface` inside a style block as a TokenRef expression (§4.3)", () => {
+  it("parses `@colors.surface` inside a style block as a TokenRef expression", () => {
     const src = `tile Card = box() {style: {background: @colors.surface}}`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
@@ -242,7 +242,7 @@ reducer onErr on=route.error("/p") do= s := true`;
     });
   });
 
-  it("parses nested token paths like `@typography.size.lg` (§4.3)", () => {
+  it("parses nested token paths like `@typography.size.lg`", () => {
     const src = `tile Card = box() {style: {font-size: @typography.size.lg}}`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
@@ -287,7 +287,7 @@ reducer bad on=route.bogus("/p") do= s := 1`),
     ).toThrow(/Unknown route lifecycle event/);
   });
 
-  it("parses ui.key(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.key(Tile) event pattern", () => {
     const src = `slot k : Text = ""
 reducer onKey on=ui.key(Box) do= k := "hit"
 tile Box = input(bind=k)`;
@@ -298,7 +298,7 @@ tile Box = input(bind=k)`;
     expect(r.on.selector.tile).toBe("Box");
   });
 
-  it("parses ui.hover(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.hover(Tile) event pattern", () => {
     const src = `slot h : Bool = false
 reducer onHover on=ui.hover(Card) do= h := true
 tile Card = box() {}`;
@@ -309,7 +309,7 @@ tile Card = box() {}`;
     expect(r.on.selector.tile).toBe("Card");
   });
 
-  it("parses ui.focus(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.focus(Tile) event pattern", () => {
     const src = `slot f : Text = ""
 reducer onFocus on=ui.focus(InputX) do= f := "focused"
 tile InputX = input(bind=f)`;
@@ -320,7 +320,7 @@ tile InputX = input(bind=f)`;
     expect(r.on.selector.tile).toBe("InputX");
   });
 
-  it("parses ui.blur(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.blur(Tile) event pattern", () => {
     const src = `slot b : Int = 0
 reducer onBlur on=ui.blur(InputX) do= b := b + 1
 tile InputX = input(bind=b)`;
@@ -331,7 +331,7 @@ tile InputX = input(bind=b)`;
     expect(r.on.selector.tile).toBe("InputX");
   });
 
-  it("parses a tuple pattern `(x, y)` in a match arm (§1.9)", () => {
+  it("parses a tuple pattern `(x, y)` in a match arm", () => {
     const src = `type Light = Red | Green
 fn f(p: Tuple(Light, Light)) -> Text = match p with
   | (Red, Green) -> "rg"
@@ -351,7 +351,7 @@ fn f(p: Tuple(Light, Light)) -> Text = match p with
     expect(() => parse(lex(src))).toThrow(/Tuple pattern requires at least 2 items/);
   });
 
-  it("parses `let id = emit X(...)` as a LetStmt with an EmitExpr rhs (#102)", () => {
+  it("parses `let id = emit X(...)` as a LetStmt with an EmitExpr rhs", () => {
     const src = `slot id : EffectId = EffectId.none
 effect fetchQuote cap=http.get in=Unit out=Result(Text, HttpError)
 reducer load on=ui.click(Btn) do= let h = emit fetchQuote()
@@ -373,7 +373,7 @@ app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]`;
     });
   });
 
-  it("parses `EffectId` as a primitive type and `EffectId.none` as a Call (#102)", () => {
+  it("parses `EffectId` as a primitive type and `EffectId.none` as a Call", () => {
     const src = `slot id : EffectId = EffectId.none
 tile App = text("x")
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;

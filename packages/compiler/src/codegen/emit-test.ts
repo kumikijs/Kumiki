@@ -8,6 +8,7 @@ import {
   type TileExpr,
 } from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
+import { parseEpisodeLogText } from "../episode-log.ts";
 import {
   bareNameAt,
   expectSection,
@@ -110,7 +111,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     let episodesJs = "[]";
     if (opts.readEpisodeLog && t.load) {
       const raw = opts.readEpisodeLog(t.load);
-      const parsed = parseEpisodeLog(raw);
+      const parsed = parseEpisodeLogText(raw);
       episodesJs = JSON.stringify(parsed);
     }
     const mocksJsStr = t.mocks ? episodeMockJs(t.mocks, ctx) : "{}";
@@ -207,7 +208,6 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     },
   },`;
   }
-  // tile-test
   const slots = givenSection<"tile-test">(t, "slots");
   const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
   const inField = givenSection<"tile-test">(t, "in");
@@ -251,23 +251,6 @@ function effectListJs(e: Expr, ctx: EvalCtx): string {
     return `{ effect: "?", args: [], argsSpecified: false }`;
   });
   return `[${items.join(", ")}]`;
-}
-
-function parseEpisodeLog(raw: string): unknown[] {
-  const trimmed = raw.trim();
-  if (!trimmed) return [];
-  if (trimmed.startsWith("[")) {
-    const arr = JSON.parse(trimmed);
-    if (!Array.isArray(arr)) throw new Error("episode log: JSON root must be an array");
-    return arr;
-  }
-  const out: unknown[] = [];
-  for (const line of trimmed.split(/\r?\n/)) {
-    const s = line.trim();
-    if (!s) continue;
-    out.push(JSON.parse(s));
-  }
-  return out;
 }
 
 function episodeMockJs(e: Expr, ctx: EvalCtx): string {

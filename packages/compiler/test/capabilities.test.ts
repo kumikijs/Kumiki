@@ -1,8 +1,9 @@
 import { check, lex, parse, parseCapabilityManifest } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const checkSrc = (src: string, capabilities?: string[]) =>
-  check(parse(lex(src)), capabilities ? { capabilities } : {});
+  checkSource(src, capabilities ? { capabilities } : {});
 
 const appWith = (caps: string): string => `
   slot x : Int = 0

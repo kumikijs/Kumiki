@@ -1,26 +1,6 @@
-import { check, codegen, lex, parse } from "@kumikijs/compiler";
+import { codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-function diagnose(source: string): { code: string; message: string; line: number; col: number }[] {
-  return check(parse(lex(source)))
-    .filter((e) => e.severity !== "warning")
-    .map((e) => ({ code: e.code, message: e.message, line: e.pos.line, col: e.pos.col }));
-}
-
-function codes(source: string): string[] {
-  return diagnose(source).map((e) => e.code);
-}
-
-function messages(source: string): string[] {
-  return diagnose(source)
-    .map((e) => e.message)
-    .sort();
-}
-
-/** The text at a diagnostic's own line and column, so a position is read rather than counted. */
-function textAt(source: string, at: { line: number; col: number }): string {
-  return (source.split("\n")[at.line - 1] ?? "").slice(at.col - 1);
-}
+import { errorCodesOf, errorsOf, locatedOf, messagesOf, textAt } from "./helpers/diagnostics.ts";
 
 /** A program whose `test` definitions are what is under test. */
 function app(tests: string, defs = DEFS): string {
@@ -45,8 +25,10 @@ describe("a tile-test supplies the argument its target declares", () => {
     tile-test Card
         given  = {slots: {count: 0}}
         expect = text("x")`);
-    expect(codes(src)).toEqual(["E0213"]);
-    expect(messages(src)).toEqual([`Tile "Card" expects 1 argument(s) but got 0`]);
+    expect(errorCodesOf(src)).toEqual(["E0213"]);
+    expect(messagesOf(src, { warnings: false })).toEqual([
+      `Tile "Card" expects 1 argument(s) but got 0`,
+    ]);
   });
 
   it("reports the missing argument at the test", () => {
@@ -54,7 +36,7 @@ describe("a tile-test supplies the argument its target declares", () => {
     tile-test Card
         given  = {slots: {count: 0}}
         expect = text("x")`);
-    const d = diagnose(src)[0];
+    const d = locatedOf(src, { warnings: false })[0];
     expect(d && textAt(src, d)).toMatch(/^test t\b/);
   });
 
@@ -63,8 +45,10 @@ describe("a tile-test supplies the argument its target declares", () => {
     tile-test Host
         given  = {slots: {count: 0}, in: "x"}
         expect = column(text("x"))`);
-    expect(codes(src)).toEqual(["E0213"]);
-    expect(messages(src)).toEqual([`Tile "Host" expects 0 argument(s) but got 1`]);
+    expect(errorCodesOf(src)).toEqual(["E0213"]);
+    expect(messagesOf(src, { warnings: false })).toEqual([
+      `Tile "Host" expects 0 argument(s) but got 1`,
+    ]);
   });
 
   it("reports the unwanted `in` at the section, which is the text to delete", () => {
@@ -72,13 +56,13 @@ describe("a tile-test supplies the argument its target declares", () => {
     tile-test Host
         given  = {slots: {count: 0}, in: "x"}
         expect = column(text("x"))`);
-    const d = diagnose(src)[0];
+    const d = locatedOf(src, { warnings: false })[0];
     expect(d && textAt(src, d)).toMatch(/^in: "x"/);
   });
 
   it("accepts the two pairings that agree", () => {
     expect(
-      diagnose(
+      errorsOf(
         app(`test with-in =
     tile-test Card
         given  = {slots: {}, in: "x"}
@@ -103,12 +87,14 @@ test without-in =
 tile Card in={label: Text} = text($1.label)
 tile Host = column(Card({label: "x"}))`,
     );
-    expect(messages(src)).toEqual([`Tile "Card" expects 1 argument(s) but got 0`]);
+    expect(messagesOf(src, { warnings: false })).toEqual([
+      `Tile "Card" expects 1 argument(s) but got 0`,
+    ]);
   });
 
   it("reads the `in` of a given written in any order", () => {
     expect(
-      diagnose(
+      errorsOf(
         app(`test t =
     tile-test Card
         given  = {in: "x", slots: {}}
@@ -119,18 +105,19 @@ tile Host = column(Card({label: "x"}))`,
 
   it("still reports when the given names nothing at all", () => {
     expect(
-      messages(
+      messagesOf(
         app(`test t =
     tile-test Card
         given  = {}
         expect = text("x")`),
+        { warnings: false },
       ),
     ).toEqual([`Tile "Card" expects 1 argument(s) but got 0`]);
   });
 
   it("leaves an undefined target to E0105 alone", () => {
     expect(
-      codes(
+      errorCodesOf(
         app(`test t =
     tile-test Nope
         given  = {slots: {}}
@@ -144,15 +131,15 @@ tile Host = column(Card({label: "x"}))`,
     tile-test text
         given  = {slots: {}}
         expect = text("x")`);
-    expect(codes(src)).toEqual(["E0105"]);
-    expect(messages(src)).toEqual([
+    expect(errorCodesOf(src)).toEqual(["E0105"]);
+    expect(messagesOf(src, { warnings: false })).toEqual([
       `Tile-test target "text" is a built-in tile — a tile-test can only name a tile the program defines`,
     ]);
   });
 
   it("says nothing more about a built-in target that is also given an `in`", () => {
     expect(
-      codes(
+      errorCodesOf(
         app(`test t =
     tile-test text
         given  = {slots: {}, in: "x"}
@@ -166,7 +153,7 @@ tile Host = column(Card({label: "x"}))`,
     tile-test Card
         given  = {slots: {}, input: "x"}
         expect = text("x")`);
-    expect(codes(src)).toEqual(["E0714"]);
+    expect(errorCodesOf(src)).toEqual(["E0714"]);
   });
 
   it("reports an `in` the target does not declare whatever else the given misspells", () => {
@@ -174,12 +161,12 @@ tile Host = column(Card({label: "x"}))`,
     tile-test Host
         given  = {slotz: {}, in: "x"}
         expect = column(text("x"))`);
-    expect(codes(src).sort()).toEqual(["E0213", "E0714"]);
+    expect(errorCodesOf(src).sort()).toEqual(["E0213", "E0714"]);
   });
 
   it("leaves a given that is not a record at all to E0713", () => {
     expect(
-      codes(
+      errorCodesOf(
         app(`test t =
     tile-test Card
         given  = 42
@@ -190,7 +177,7 @@ tile Host = column(Card({label: "x"}))`,
 
   it("reports a non-record given to a target that declares no in=, too", () => {
     expect(
-      codes(
+      errorCodesOf(
         app(`test t =
     tile-test Host
         given  = 42
@@ -201,7 +188,7 @@ tile Host = column(Card({label: "x"}))`,
 
   it("checks a reducer-test's target with none of this — it has no in= to declare", () => {
     expect(
-      diagnose(`slot count : Int = 0
+      errorsOf(`slot count : Int = 0
 
 reducer inc on=ui.click(Btn) do= count := count + 1
 
@@ -227,7 +214,7 @@ describe("the `in` is compared with what the target declares", () => {
     tile-test Card
         given  = {slots: {}, in: 42}
         expect = text("42")`);
-    expect(codes(src)).toEqual(["E0201"]);
+    expect(errorCodesOf(src)).toEqual(["E0201"]);
   });
 
   it("reports it at the value, which is the text to change", () => {
@@ -235,7 +222,7 @@ describe("the `in` is compared with what the target declares", () => {
     tile-test Card
         given  = {slots: {}, in: 42}
         expect = text("42")`);
-    const d = diagnose(src)[0];
+    const d = locatedOf(src, { warnings: false })[0];
     expect(d && textAt(src, d)).toMatch(/^42/);
   });
 
@@ -250,12 +237,12 @@ describe("the `in` is compared with what the target declares", () => {
 tile Card in={label: Text} = text($1.label)
 tile Host = column(Card({label: "x"}))`,
     );
-    expect(codes(src).sort()).toEqual(["E0214", "E0215"]);
+    expect(errorCodesOf(src).sort()).toEqual(["E0214", "E0215"]);
   });
 
   it("accepts the value the target's in= does accept", () => {
     expect(
-      diagnose(
+      errorsOf(
         app(`test t =
     tile-test Card
         given  = {slots: {}, in: "Ada"}
@@ -266,7 +253,7 @@ tile Host = column(Card({label: "x"}))`,
 
   it("says nothing about a value a target declaring no in= was never given", () => {
     expect(
-      diagnose(
+      errorsOf(
         app(`test t =
     tile-test Host
         given  = {slots: {}}
@@ -286,7 +273,7 @@ tile Host = column(Card({label: "x"}))`,
 tile Card in={label: Text} = text($1.label)
 tile Host = column(Card({label: "x"}))`,
     );
-    const d = diagnose(src);
+    const d = locatedOf(src, { warnings: false });
     expect(d.map((e) => `${e.code} ${e.message}`)).toEqual([
       "E0201 Expected {label: Text} but got Unit",
     ]);
@@ -295,7 +282,7 @@ tile Host = column(Card({label: "x"}))`,
 
   it("leaves the count to E0213 rather than typing an argument that is not there", () => {
     expect(
-      codes(
+      errorCodesOf(
         app(`test t =
     tile-test Card
         given  = {slots: {}}
