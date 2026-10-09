@@ -58,9 +58,10 @@ export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
  * A `TypeRef` that names nothing is returned as-is, which is how a type
  * parameter and a misspelling both become opaque. An application of a name
  * that is no type at all (`isKnownTypeName`) — `Foo(Int)`, a misspelt
- * `Lst(Int)`, a parameter applied to arguments — reduces to that name as a
- * `TypeRef` and is opaque the same way: arguments to no type describe nothing
- * to compare against.
+ * `Lst(Int)` — reduces to that name as a `TypeRef` and is opaque the same way:
+ * arguments to no type describe nothing to compare against. A parameter
+ * applied to arguments is made opaque where its generic is instantiated
+ * (`substituteType`), before any name it shares is looked up here.
  *
  * An alias that resolves to itself returns `null` rather than looping:
  * reporting the cycle is a separate check, and normalisation has to terminate
@@ -363,11 +364,23 @@ export function paramSubstitution(params: string[], args: TypeExpr[]): Map<strin
   return sub;
 }
 
+/**
+ * `t` with each name in `sub` replaced by the type it maps to — a generic's
+ * body with its parameters bound to the arguments it is applied to.
+ *
+ * A parameter at the head of an application is replaced too, and there it
+ * leaves nothing to apply: a parameter stands for a type, not a type
+ * constructor, so the application is opaque — E0210's to report where it is
+ * written. Left in place, the head would resolve against whatever top-level
+ * type shares the parameter's name, which is the capture `applyDef` substitutes
+ * to avoid.
+ */
 export function substituteType(t: TypeExpr, sub: ReadonlyMap<string, TypeExpr>): TypeExpr {
   switch (t.kind) {
     case "TypeRef":
       return sub.get(t.name) ?? t;
     case "TypeApp":
+      if (sub.has(t.name)) return unknownType(t.pos);
       return { ...t, args: t.args.map((a) => substituteType(a, sub)) };
     case "TypeRecord":
       return {

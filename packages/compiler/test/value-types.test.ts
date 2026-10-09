@@ -1092,6 +1092,112 @@ describe("generic instantiation", () => {
 });
 
 /**
+ * A type parameter names a type, not a type constructor: it stands for the one
+ * type its generic is applied to, and there is nothing to apply that to. So a
+ * parameter written with arguments is one mistake, reported where it is
+ * written, and past that report the application is opaque — a value written
+ * against an instantiation is not blamed for it.
+ */
+describe("a type parameter applied to arguments (E0210)", () => {
+  /** Each diagnostic as `code line:col message`. */
+  const reports = (defs: string) =>
+    check(parse(lex(`${defs}\n${TAIL}`))).map(
+      (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
+    );
+
+  it("reports the application, naming the parameter and its definition", () => {
+    expect(reports(`type H(T) = {v: T(Int)}`)).toEqual([
+      'E0210 1:17 Type parameter "T" of "H" takes no type arguments, but is written "T(Int)"',
+    ]);
+    expect(reports(`type H(T) = {v: T(Int, Text)}`)).toEqual([
+      'E0210 1:17 Type parameter "T" of "H" takes no type arguments, but is written "T(Int, Text)"',
+    ]);
+    expect(reports(`type H(K, V) = {v: List(V(K))}`)).toEqual([
+      'E0210 1:25 Type parameter "V" of "H" takes no type arguments, but is written "V(K)"',
+    ]);
+  });
+
+  it("reports the parameter written with empty parentheses as applied", () => {
+    expect(reports(`type H(T) = {v: T()}`)).toEqual([
+      'E0210 1:17 Type parameter "T" of "H" takes no type arguments, but is written "T()"',
+    ]);
+  });
+
+  it("emits it as type-arity-mismatch", () => {
+    const found = check(parse(lex(`type H(T) = {v: T(Int)}\n${TAIL}`)));
+    expect(found.map((e) => [e.code, e.kind])).toEqual([["E0210", "type-arity-mismatch"]]);
+  });
+
+  // Each program writes a value the application could be blamed for.
+  const APPLIED: [string, string][] = [
+    ["in a record field", `type H(T) = {v: T(Int)}\nslot h : H(Text) = {v: 1}`],
+    ["to two arguments", `type H(T) = {v: T(Int, Text)}\nslot h : H(Text) = {v: 1}`],
+    ["to no arguments", `type H(T) = {v: T()}\nslot h : H(Text) = {v: 1}`],
+    ["as the whole body", `type H(T) = T(Int)\nslot h : H(Text) = 1`],
+    ["in a List element", `type H(T) = {v: List(T(Int))}\nslot h : H(Text) = {v: [1]}`],
+    ["in an Option payload", `type H(T) = {v: Option(T(Int))}\nslot h : H(Text) = {v: Some(1)}`],
+    ["in a variant payload", `type H(T) = Has(T(Int)) | Empty\nslot h : H(Text) = Has(1)`],
+    ["in a nominal", `type H(T) = nominal T(Int)\nslot h : H(Text) = 1`],
+    ["in a refinement", `type H(T) = T(Int) where positive\nslot h : H(Text) = 1`],
+    [
+      "in a declared generic's argument",
+      `type NE(X) = X where nonempty\ntype H(T) = {v: NE(T(Int))}\nslot h : H(Text) = {v: 1}`,
+    ],
+    ["to another parameter", `type H(A, B) = {v: B(A)}\nslot h : H(Text, Int) = {v: 1}`],
+    [
+      "under an alias of an instantiation",
+      `type H(T) = {v: T(Int)}\ntype J = H(Text)\nslot j : J = {v: 1}`,
+    ],
+    [
+      "under an instantiation a fn takes",
+      `type H(T) = {v: T(Int)}\nfn f(x: H(Text)) -> Int = 1\nslot s : Int = f({v: 1})`,
+    ],
+  ];
+  for (const [where, defs] of APPLIED) {
+    it(`reports a parameter applied ${where} once`, () => {
+      expect(prog(defs)).toEqual(["E0210"]);
+    });
+  }
+
+  // The parameter shadows a top-level name (language.md §1.3.6, inv. 5), so
+  // whatever else the name means does not come back through the application.
+  const SHADOWING: [string, string][] = [
+    ["a program type", `type T = Int\ntype H(T) = {v: T(Int)}\nslot h : H(Text) = {v: "x"}`],
+    ["a stdlib constructor", `type H(List) = {v: List(Int)}\nslot h : H(Text) = {v: ["x"]}`],
+    [
+      "a program generic",
+      `type NE(X) = X where nonempty\ntype H(NE, A) = {v: NE(A)}\nslot h : H(Text, Int) = {v: 1}`,
+    ],
+  ];
+  for (const [what, defs] of SHADOWING) {
+    it(`reports a parameter that shadows ${what} once`, () => {
+      expect(prog(defs)).toEqual(["E0210"]);
+    });
+  }
+
+  it("reports nothing more where a value of the instantiation is used", () => {
+    const H = `type H(T) = {v: T(Int)}\nslot h : H(Text) = {v: 1}\nslot n : Int = 0`;
+    expect(inReducer(H, `n := h.v`)).toEqual(["E0210"]);
+    expect(inReducer(H, `n := h.v + 1`)).toEqual(["E0210"]);
+  });
+
+  it("still resolves the arguments it is written with", () => {
+    expect(prog(`type H(T) = {v: T(Foo)}\nslot h : H(Text) = {v: 1}`)).toEqual(["E0210", "E0117"]);
+  });
+
+  it("still accepts a bare parameter, and a generic applied to one", () => {
+    expect(prog(`type H(T) = {v: T}\nslot h : H(Text) = {v: "x"}`)).toEqual([]);
+    expect(prog(`type H(T) = {v: T}\nslot h : H(Text) = {v: 1}`)).toEqual(["E0201"]);
+    expect(prog(`type T = Int\ntype H(T) = {v: T}\nslot h : H(Text) = {v: "x"}`)).toEqual([]);
+    expect(prog(`type H(T) = {v: List(T)}\nslot h : H(Text) = {v: [1]}`)).toEqual(["E0201"]);
+    const G = `type G(U) = {u: U}\ntype W(T) = {v: G(T), w: List(G(T))}`;
+    expect(prog(`${G}\nslot w : W(Int) = {v: {u: 1}, w: [{u: 2}]}`)).toEqual([]);
+    expect(prog(`${G}\nslot w : W(Int) = {v: {u: "x"}, w: []}`)).toEqual(["E0201"]);
+    expect(prog(`${G}\nslot w : W(Int) = {v: {u: 1}, w: [{u: "x"}]}`)).toEqual(["E0201"]);
+  });
+});
+
+/**
  * `fix.ts` parses these with regexes and the debug skill quotes them, so the
  * wording is an interface. `spec-drift` compares codes and `spec-index`
  * compares the two documents to each other; neither reads a message.

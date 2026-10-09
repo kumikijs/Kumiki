@@ -6862,7 +6862,7 @@ function checkAppTheme(app: AppDef, sym: SymbolTable, errors: KumikiError[]): vo
  * Walk a type written in the program and report the names in it that resolve to
  * nothing.
  *
- * `typeParams` is what makes this possible without false positives: the body of
+ * `scope` is what makes this possible without false positives: the body of
  * `type Box(T) = {v: T}` may name `T`, and nothing else may. Every other
  * declaration site — `slot`, `fn`, `effect`, `tile in=` — has no type
  * parameters, so it passes an empty scope and every unresolved name there is a
@@ -6874,8 +6874,9 @@ function resolveType(
   t: TypeExpr,
   sym: SymbolTable,
   errors: KumikiError[],
-  typeParams: ReadonlySet<string> = EMPTY_SCOPE,
+  scope: TypeScope = EMPTY_SCOPE,
 ): void {
+  const typeParams = scope.params;
   switch (t.kind) {
     case "TypePrim":
       return;
@@ -6898,33 +6899,42 @@ function resolveType(
       return;
     }
     case "TypeApp": {
-      if (!typeParams.has(t.name)) {
-        if (!isKnownTypeName(t.name, sym)) {
-          errors.push({
-            code: "E0117",
-            kind: "undef-type",
-            message: `Reference to undefined type "${t.name}"`,
-            pos: t.pos,
-          });
-        } else {
-          checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
-          checkApplication(t, sym, typeParams, errors);
-        }
+      if (typeParams.has(t.name)) {
+        // A parameter names a type, not a type constructor: it stands for the
+        // one type its generic is applied to, which takes no arguments, so the
+        // parentheses are the mistake whatever they hold — `T()` included.
+        // Substitution leaves such an application opaque, so this is its one
+        // report.
+        errors.push({
+          code: "E0210",
+          kind: "type-arity-mismatch",
+          message: `Type parameter "${t.name}" of "${scope.owner}" takes no type arguments, but is written "${t.name}(${t.args.map(typeToString).join(", ")})"`,
+          pos: t.pos,
+        });
+      } else if (!isKnownTypeName(t.name, sym)) {
+        errors.push({
+          code: "E0117",
+          kind: "undef-type",
+          message: `Reference to undefined type "${t.name}"`,
+          pos: t.pos,
+        });
+      } else {
+        checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+        checkApplication(t, sym, typeParams, errors);
       }
-      for (const a of t.args) resolveType(a, sym, errors, typeParams);
+      for (const a of t.args) resolveType(a, sym, errors, scope);
       return;
     }
     case "TypeRecord":
-      for (const f of t.fields) resolveType(f.type, sym, errors, typeParams);
+      for (const f of t.fields) resolveType(f.type, sym, errors, scope);
       return;
     case "TypeUnion":
-      for (const v of t.variants)
-        for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
+      for (const v of t.variants) for (const p of v.payloads) resolveType(p, sym, errors, scope);
       return;
     case "TypeNominal":
     case "TypeRefinement":
       checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
-      resolveType(t.inner, sym, errors, typeParams);
+      resolveType(t.inner, sym, errors, scope);
       return;
   }
 }
@@ -7203,9 +7213,13 @@ function appliedBaseProblems(
       case "TypeRef":
         return;
       case "TypeApp": {
-        const nested = t.args.map((a) => substituteType(a, applied));
-        const nestedBefore = t.args.map((a) => substituteType(a, before));
-        appliedBaseProblems(t.name, nested, nestedBefore, run, inside);
+        // Substituted whole, so that a parameter at the head leaves no
+        // application to enter rather than naming a top-level generic.
+        const nested = substituteType(t, applied);
+        if (nested.kind === "TypeApp") {
+          const nestedBefore = t.args.map((a) => substituteType(a, before));
+          appliedBaseProblems(t.name, nested.args, nestedBefore, run, inside);
+        }
         for (const a of t.args) walk(a);
         return;
       }
@@ -7261,8 +7275,14 @@ function checkTypeArity(
   });
 }
 
-const EMPTY_SCOPE: ReadonlySet<string> = new Set();
+/**
+ * The type parameters in scope where a type is written: inside the body of
+ * `type owner(…)`, the ones it declares. Everywhere else there are none.
+ */
+type TypeScope = { readonly owner: string; readonly params: ReadonlySet<string> };
+
+const EMPTY_SCOPE: TypeScope = { owner: "", params: new Set() };
 
 function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
-  resolveType(def.body, sym, errors, new Set(def.params));
+  resolveType(def.body, sym, errors, { owner: def.name, params: new Set(def.params) });
 }
