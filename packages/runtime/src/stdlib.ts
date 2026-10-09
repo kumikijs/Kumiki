@@ -584,11 +584,23 @@ export const _stdlibCore = {
       return `${loop}|${n}|${shown}`;
     });
   },
+  /**
+   * `.show` (stdlib.md §2.2.7), and the text every other rendering of a value
+   * asks for: `T.show(v)`, `+` with a `Text` side, `fmt`, a tile's text. A
+   * nullish is the empty string, a variant its tag, and a `Bytes` its padded
+   * standard base64 (§2.2.10), which `bytesFromBase64` reads back whatever the
+   * bytes hold. Anything else is `String(v)`.
+   */
   show(v: unknown): string {
     if (v === null || v === undefined) return "";
     if (typeof v === "object" && v && "_tag" in v) {
       const obj = v as { _tag: string };
       return obj._tag;
+    }
+    if (v instanceof Uint8Array) {
+      let bin = "";
+      for (const byte of v) bin += String.fromCharCode(byte);
+      return btoa(bin);
     }
     return String(v);
   },

@@ -135,6 +135,53 @@ describe("the standard library's Duration and Bytes parse to their own represent
   });
 });
 
+// `Bytes.show` is base64 (stdlib §2.2.10), the text `Bytes.from-base64` reads
+// back for every byte sequence. `Bytes.parse` reads its text as UTF-8, so it is
+// not `show`'s inverse; §2.4.3 says so beside the reading.
+describe("Bytes.show is the base64 that Bytes.from-base64 reads back", () => {
+  const SLOTS = `slot raw  : Bytes = Bytes.from-bytes([255, 0, 128])
+slot hi   : Bytes = Bytes.from-text("hi")
+slot none : Bytes = Bytes.from-bytes([])`;
+
+  it("shows bytes that are not UTF-8, UTF-8 bytes and no bytes as base64", async () => {
+    const live = await stateAfterGo(
+      app(
+        `${SLOTS}
+slot a : Text = "?"
+slot b : Text = "?"
+slot c : Text = "?"
+slot d : Text = "?"`,
+        `a := raw.show\n        b := Bytes.show(hi)\n        c := "[" + none + "]"\n        d := "b=" + Bytes.from-base64("aGk=")`,
+      ),
+    );
+    expect(live.a).toBe("/wCA");
+    expect(live.b).toBe("aGk=");
+    expect(live.c).toBe("[]");
+    expect(live.d).toBe("b=aGk=");
+  });
+
+  it("reads each one back through Bytes.from-base64, and not through Bytes.parse", async () => {
+    const live = await stateAfterGo(
+      app(
+        `${SLOTS}
+slot raw-back  : Bool = false
+slot hi-back   : Bool = false
+slot none-back : Bool = false
+slot hi-parsed : Bool = true`,
+        `raw-back  := Bytes.from-base64(raw.show) == raw
+        hi-back   := Bytes.from-base64(hi.show) == hi
+        none-back := Bytes.from-base64(none.show) == none
+        hi-parsed := Bytes.parse(hi.show) == Some(hi)`,
+      ),
+    );
+    expect(live["raw-back"]).toBe(true);
+    expect(live["hi-back"]).toBe(true);
+    expect(live["none-back"]).toBe(true);
+    // `Bytes.parse("aGk=")` is the four bytes of that text, not the two of "hi".
+    expect(live["hi-parsed"]).toBe(false);
+  });
+});
+
 describe("a parse reads through every alias and nominal on the way to the base", () => {
   it("reads a nominal over a nominal, and a plain alias, as their base", async () => {
     const live = await stateAfterGo(

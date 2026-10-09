@@ -27,9 +27,8 @@ slot from-method   : Text = ""
 reducer render on=ui.click(RenderBtn)
     # A `Duration` is milliseconds at runtime, so showing one shows that number.
     do= from-duration := Duration.show(Duration.s(seconds))
-        # The other qualifier that names a constructor. `Bytes` is a byte array,
-        # which `show` renders the way the language renders any value in a
-        # string — no special case, which is the point.
+        # The other qualifier that names a constructor. `Bytes.show(b)` is
+        # `b.show`, the bytes' base64 (stdlib.md §2.2.10).
         from-bytes    := Bytes.show(Bytes.from-text("hi"))
         # The qualifiers that were already right, kept alongside so the file
         # shows the four answers are the same answer.

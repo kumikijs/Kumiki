@@ -46,6 +46,40 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
   });
 });
 
+// `show` is the one place a value becomes display text: `.show`, `T.show(v)`,
+// `+` with a `Text` side, `fmt` and every text-taking tile prop go through it.
+describe("show on Bytes (docs/spec/stdlib.md §2.2.10)", () => {
+  const { show, eq, bytesFromBase64, bytesFromText, bytesFromBytes } = _stdlibCore;
+
+  it("renders the bytes as padded standard base64", () => {
+    expect(show(bytesFromText("hi"))).toBe("aGk=");
+    expect(show(bytesFromText("abc"))).toBe("YWJj");
+    expect(show(bytesFromBytes([0xff, 0x00, 0x80]))).toBe("/wCA");
+    expect(show(bytesFromBytes([0xfb, 0xff]))).toBe("+/8=");
+    expect(show(new Uint8Array())).toBe("");
+  });
+
+  it("is read back by Bytes.from-base64, whatever the bytes hold", () => {
+    // `Bytes.from-base64(b.show) == b`, through the language's `==`.
+    const cases = [
+      new Uint8Array(),
+      bytesFromBytes([0xff, 0xfe, 0x00]),
+      bytesFromText("あ"),
+      Uint8Array.from({ length: 256 }, (_, i) => i),
+      // Larger than any argument list a platform call can be spread into.
+      Uint8Array.from({ length: 1 << 18 }, (_, i) => (i * 7) & 0xff),
+    ];
+    for (const b of cases) expect(eq(bytesFromBase64(show(b)), b)).toBe(true);
+  });
+
+  it("is what `+` and `fmt` render a Bytes as", () => {
+    const b = bytesFromText("hi");
+    expect(_stdlibCore.add("b=", b)).toBe("b=aGk=");
+    expect(_stdlibCore.add(b, "!")).toBe("aGk=!");
+    expect(_stdlibCore.fmt("b={0}", b)).toBe("b=aGk=");
+  });
+});
+
 // Issue #92 review: previously `.sort()` lowered inline to JS's default
 // (string-comparator) sort, so `[3,1,2,10].sort` → `[1,10,2,3]` for a
 // `List(Int)`. The fix routes both forms through `_stdlibCore.listSort`
@@ -217,8 +251,8 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   });
 
   it("renders an argument through `show`", () => {
-    // `show`: a variant is its tag, a nullish is the empty string, everything
-    // else is `String(v)`.
+    // `show`: a variant is its tag, a nullish is the empty string, a `Bytes`
+    // is its base64, everything else is `String(v)`.
     expect(_stdlibCore.fmt("{0}", { _tag: "None" })).toBe("None");
     expect(_stdlibCore.fmt("[{0}]", null)).toBe("[]");
     expect(_stdlibCore.fmt("{0}", true)).toBe("true");
@@ -232,7 +266,17 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
     // `String(a) + String(b)`, which disagreed exactly here — `[object Object]`
     // for an absent Option, `"null"` for a nullish — so this is the assertion
     // that keeps the two halves of the promise from drifting apart again.
-    for (const v of [{ _tag: "None" }, { _tag: "Some", _0: 1 }, null, undefined, true, 1.5, "s"]) {
+    const values = [
+      { _tag: "None" },
+      { _tag: "Some", _0: 1 },
+      null,
+      undefined,
+      true,
+      1.5,
+      "s",
+      new Uint8Array([0x68, 0x69]),
+    ];
+    for (const v of values) {
       expect(_stdlibCore.fmt("{0}", v)).toBe(_stdlibCore.add("", v));
     }
   });

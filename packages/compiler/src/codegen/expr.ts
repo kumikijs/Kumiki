@@ -180,7 +180,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "entries") return `_s.mapEntries(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "size") return `_s.mapSize(${baseJs})`;
       if (e.field === "to-ms" || e.field === "ms") return `(${baseJs})`;
-      // .show on values (variants → _tag, numbers/strings → String)
+      // .show on values (variants → _tag, Bytes → base64, anything else → String)
       if (e.field === "show") return `_s.show(${baseJs})`;
       // .length on text/list/string
       if (e.field === "length") return `((${baseJs}) ?? "").length`;

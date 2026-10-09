@@ -342,6 +342,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,709 measured, from 63,597 on dev at f72685e): a `Bytes`
+    // shows as its padded standard base64, the text `Bytes.from-base64` reads
+    // back (stdlib.md §2.2.10). The 112 bytes are the `Uint8Array` branch in
+    // `_stdlibCore.show`. A counter shows no bytes and still ships it, because
+    // `show` sits in the stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

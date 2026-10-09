@@ -1,0 +1,47 @@
+# Feature (stdlib.md §2.2.10): `b.show` on a `Bytes` is its padded standard
+# base64, the text `Bytes.from-base64` reads back. That holds for every byte
+# sequence, including bytes that are not UTF-8 and no bytes at all, so
+# `Bytes.from-base64(b.show) == b` is always true.
+#
+#   Bytes.from-text("hi").show            "aGk="
+#   Bytes.from-bytes([255, 0, 128]).show  "/wCA"
+#   Bytes.from-bytes([]).show             ""
+#
+# `+` with a `Text` side, `fmt` and a `text` tile render a `Bytes` the same
+# way, since all of them go through `show`.
+#
+# `Bytes.parse(t)` reads `t` as UTF-8 (§2.4.3), so it is not `show`'s inverse:
+# `Bytes.parse(hi.show)` is the four bytes of "aGk=", not the two of "hi".
+# Read a shown `Bytes` back with `Bytes.from-base64`.
+
+slot hi  : Bytes = Bytes.from-text("hi")
+slot raw : Bytes = Bytes.from-bytes([255, 0, 128])
+
+slot shown     : Text = ""
+slot joined    : Text = ""
+slot formatted : Text = ""
+slot round     : Bool = false
+slot parsed    : Bool = true
+
+reducer show-them on=ui.click(ShowBtn)
+    do= shown     := raw.show
+        joined    := "hi=" + hi
+        formatted := fmt("raw={0}", raw)
+        round     := Bytes.from-base64(raw.show) == raw
+        parsed    := Bytes.parse(hi.show) == Some(hi)
+
+tile ShowBtn = button(text="show") {id: "show"}
+
+tile App
+    = column(
+        heading("Bytes.show"),
+        ShowBtn,
+        text(hi),
+        text("raw=" + raw),
+        text("shown=" + shown))
+      {pad: "lg", gap: "md"}
+
+app BytesShowBase64
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
