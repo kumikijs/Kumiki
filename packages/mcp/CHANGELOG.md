@@ -89,26 +89,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   The Vite plugin's `engines.node` moves to `>=20.6`, the release that made
   `import.meta.resolve` synchronous — the runtime fallback above is built on it.
 
-### Patch Changes
-
-- Updated dependencies [82cfa6c]
-- Updated dependencies [bf37539]
-- Updated dependencies [3b1f5e8]
-- Updated dependencies [7cce9ce]
-- Updated dependencies [f48fd58]
-- Updated dependencies [301b09a]
-- Updated dependencies [3e33233]
-- Updated dependencies [f04b1c5]
-- Updated dependencies [7a754ad]
-- Updated dependencies [c11152b]
-- Updated dependencies [d398cbc]
-- Updated dependencies [732cb16]
-- Updated dependencies [b8bd5d9]
-- Updated dependencies [4de2473]
-- Updated dependencies [db8e843]
-  - @kumikijs/compiler@0.13.0
-  - @kumikijs/cli@0.8.0
-
 ## 0.4.0
 
 ### Minor Changes
@@ -149,124 +129,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   - **Escape normalization.** `planPartialStringPatchExplained` compared decoded `TestResult.leaf` values (`\n` as a real newline, `\"` as a quote, …) against raw source-literal bodies (`\n` as two chars). Any Kumiki source literal spelling an escape — `\n \t \r \" \\` — could either silently bail with `no-string-literal-contains-mida` or, worse, splice the divergent middle into the raw body and re-encode, corrupting untouched escapes (e.g. an existing `\n` doubled to `\\n`). The tier now decodes each literal body via a private `decodeKumikiStringBody` helper (lockstep with the lexer's escape set) and does its `midA` comparison, splice, and `kumikiStringLit` re-encode entirely in decoded space, so escapes round-trip canonically.
   - **I/O error surface.** The three `writeFileSync` sites in `applyFixPlan` / `runFixFromTest` used to leak EACCES / ENOSPC / EBUSY as raw stacks — asymmetric with the same file's `parseError` / `regressionBlocked` / `testRunError` structured returns. Every write now goes through a new `atomicWriteFileSync` helper (`.kumiki-tmp` staging + `renameSync`) so a mid-write ENOSPC leaves the target byte-identical instead of truncating it. `FixApplyResult` gains an optional `writeError?: string` modifier; `FixFromTestOutcome` gains a `write-failed` variant with `phase: "compile" | "test"` discriminating the two write sites (and preserving the proposed `patch` on `phase: "test"`). `fixCmd` fails loudly on stderr and sets `process.exitCode = 1` on write failure. `kumiki_fix` (MCP) surfaces `writeError` / `regressionBlocked` on the wire alongside `parseError`. `kumiki_auto_patch` documents the new status. Both consumer switches gain `default: never` exhaustiveness guards.
 
-- Updated dependencies [35df48f]
-- Updated dependencies [46bee64]
-- Updated dependencies [46bee64]
-- Updated dependencies [75a809b]
-- Updated dependencies [46bee64]
-- Updated dependencies [46bee64]
-- Updated dependencies [88bd531]
-- Updated dependencies [5fb6fb6]
-- Updated dependencies [fb02913]
-- Updated dependencies [3d89383]
-- Updated dependencies [cad3f0c]
-- Updated dependencies [46bee64]
-- Updated dependencies [687ae40]
-- Updated dependencies [46bee64]
-- Updated dependencies [49cafdb]
-  - @kumikijs/cli@0.7.0
-  - @kumikijs/compiler@0.12.0
-
-## 0.3.9
-
-### Patch Changes
-
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-  - @kumikijs/compiler@0.11.0
-  - @kumikijs/cli@0.6.0
-
-## 0.3.8
-
-### Patch Changes
-
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-  - @kumikijs/compiler@0.10.0
-  - @kumikijs/cli@0.5.1
-
-## 0.3.7
-
-### Patch Changes
-
-- Updated dependencies [c40b121]
-- Updated dependencies [7e589bc]
-- Updated dependencies [a27e63c]
-  - @kumikijs/cli@0.5.0
-  - @kumikijs/compiler@0.9.0
-
-## 0.3.6
-
-### Patch Changes
-
-- Updated dependencies [3ee1a9a]
-  - @kumikijs/compiler@0.8.0
-  - @kumikijs/cli@0.4.1
-
-## 0.3.5
-
-### Patch Changes
-
-- Updated dependencies [afe1b15]
-- Updated dependencies [e92f5df]
-- Updated dependencies [33fc749]
-  - @kumikijs/compiler@0.7.0
-  - @kumikijs/cli@0.4.0
-
-## 0.3.4
-
-### Patch Changes
-
-- Updated dependencies [cd1e88a]
-  - @kumikijs/compiler@0.6.0
-  - @kumikijs/cli@0.3.4
-
-## 0.3.3
-
-### Patch Changes
-
-- Updated dependencies [20c8601]
-  - @kumikijs/compiler@0.5.0
-  - @kumikijs/cli@0.3.3
-
-## 0.3.2
-
-### Patch Changes
-
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-  - @kumikijs/compiler@0.4.0
-  - @kumikijs/cli@0.3.2
-
-## 0.3.1
-
-### Patch Changes
-
-- Updated dependencies [81d0791]
-  - @kumikijs/compiler@0.3.1
-  - @kumikijs/cli@0.3.1
-
 ## 0.3.0
 
 ### Minor Changes
@@ -295,20 +157,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   E0108 is a deliberate tightening (pre-1.0): a program that previously compiled
   `recv.bogus` to `undefined` now fails to compile.
 
-### Patch Changes
-
-- Updated dependencies [be38e20]
-  - @kumikijs/compiler@0.3.0
-  - @kumikijs/cli@0.3.0
-
-## 0.2.1
-
-### Patch Changes
-
-- Updated dependencies [c0c1708]
-  - @kumikijs/compiler@0.2.1
-  - @kumikijs/cli@0.2.1
-
 ## 0.2.0
 
 ### Minor Changes
@@ -322,9 +170,3 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   - **M5 `motion` layer** — reusable, closed-grammar, scoped animations referenced from a tile's `motion` prop; honors `prefers-reduced-motion`; errors E0107, E0401–E0403.
 
   See CHANGELOG.md for the full detail.
-
-### Patch Changes
-
-- Updated dependencies [77938ee]
-  - @kumikijs/cli@0.2.0
-  - @kumikijs/compiler@0.2.0

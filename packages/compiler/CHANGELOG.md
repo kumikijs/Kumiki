@@ -458,17 +458,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   The Vite plugin's `engines.node` moves to `>=20.6`, the release that made
   `import.meta.resolve` synchronous — the runtime fallback above is built on it.
 
-### Patch Changes
-
-- Updated dependencies [85a792b]
-- Updated dependencies [301b09a]
-- Updated dependencies [080f358]
-- Updated dependencies [d398cbc]
-- Updated dependencies [79b221e]
-- Updated dependencies [b8bd5d9]
-- Updated dependencies [4de2473]
-  - @kumikijs/runtime@0.13.0
-
 ## 0.12.0
 
 ### Minor Changes
@@ -642,22 +631,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   `packages/examples/features/58-unkeyed-conditional-rebuild.kumiki` showing the
   unkeyed shape that pays for a rebuild next to the keyed one that does not.
 
-- Updated dependencies [5fb6fb6]
-- Updated dependencies [353cd5c]
-- Updated dependencies [46bee64]
-- Updated dependencies [027a8af]
-- Updated dependencies [3d89383]
-- Updated dependencies [cad3f0c]
-- Updated dependencies [46bee64]
-- Updated dependencies [4a58f8f]
-- Updated dependencies [32dd683]
-- Updated dependencies [687ae40]
-- Updated dependencies [92ca76d]
-- Updated dependencies [6f3f3e3]
-- Updated dependencies [9ae4327]
-- Updated dependencies [49cafdb]
-  - @kumikijs/runtime@0.12.0
-
 ## 0.11.0
 
 ### Minor Changes
@@ -771,18 +744,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   - tests: new `packages/compiler/test/ui-lifts.test.ts` guards the table shape.
   - spec: `docs/spec/errors.md` cross-references the lift table anchor.
 
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-  - @kumikijs/runtime@0.11.0
-
 ## 0.10.0
 
 ### Minor Changes
@@ -847,17 +808,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   - runtime: unavailable backends keep returning a clean `err` (#37 contract), exercised by a SecurityError test.
   - examples: new `packages/examples/features/39-effect-session.kumiki` models both `.ok` and `.err` branches end-to-end.
 
-### Patch Changes
-
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-  - @kumikijs/runtime@0.10.0
-
 ## 0.9.0
 
 ### Minor Changes
@@ -879,13 +829,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   `route-outlet`, redirects, or routes beyond the `"/"` + `"/404"`
   boilerplate) — a static single-route app never reads the URL, so a deep
   link to an unknown path renders the root tile rather than the 404 tile.
-
-### Patch Changes
-
-- Updated dependencies [c40b121]
-- Updated dependencies [7e589bc]
-- Updated dependencies [c4833bd]
-  - @kumikijs/runtime@0.9.0
 
 ## 0.8.0
 
@@ -910,11 +853,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   `key: value` props block. `link` now accepts the canonical `text=` argument
   (consistent with `button`); the existing `{text: …}` prop form still compiles.
 
-### Patch Changes
-
-- Updated dependencies [3ee1a9a]
-  - @kumikijs/runtime@0.8.0
-
 ## 0.7.0
 
 ### Minor Changes
@@ -923,23 +861,11 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
 - e92f5df: v0.6 M3 (#51) — `property-test` (`spec/testing.md` §8.3). Generative testing of reducer invariants: `property-test for-all={n: T} given={…} invariant=<bool> (count=N)? (shrink=bool)?` generates `count` (default 100) cases per type (primitives, List/Map/Set/Option/Result, records, unions; refinements fold into the generator as bounds), checks the invariant, and shrinks a failing case to a minimal counterexample. `run-reducer(name)` chains apply reducers to the running state. Generation is seeded (reproducible). The runner reports `(N cases)`. `run-reducer` targets must be declared reducers (E0102).
 - 33fc749: v0.6 M4 (#52) — `kumiki test` runner polish (`spec/testing.md` §8.7). Per-test timings on every line (`(1ms)`; property-tests add `(100 cases, 23ms)`); `--coverage` reports per reducer/effect/tile what the suite exercises and lists the uncovered (computed statically by codegen into `globalThis.__kumikiCoverage`); `--watch` re-runs the filtered suite on `.kumiki` change (debounced, clean Ctrl-C exit). Completes the v0.6 testing-DSL milestone.
 
-### Patch Changes
-
-- Updated dependencies [afe1b15]
-- Updated dependencies [e92f5df]
-- Updated dependencies [33fc749]
-  - @kumikijs/runtime@0.7.0
-
 ## 0.6.0
 
 ### Minor Changes
 
 - cd1e88a: v0.6 M1 (#49) — `reducer-test` `expect` wildcards (`spec/testing.md` §8.2.2). `<any-id>` matches any generated value (and, as a map key, pairs with exactly one otherwise-unmatched entry), and `<slots.X>` matches slot X's post-execution value (e.g. `effects: [persist(<slots.todos>)]`). Matching is otherwise exact — wildcards only blank out non-deterministic holes. A wildcard outside a `reducer-test` `expect` is a compile error (new E0109 `test-wildcard-misuse`).
-
-### Patch Changes
-
-- Updated dependencies [cd1e88a]
-  - @kumikijs/runtime@0.6.0
 
 ## 0.5.0
 
@@ -960,12 +886,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   forwards the option to the Web Component. `runScenario` gained a
   `{ router, initialPath }` option. Backward-compatible (additive; defaults
   unchanged).
-
-### Patch Changes
-
-- Updated dependencies [20c8601]
-- Updated dependencies [20c8601]
-  - @kumikijs/runtime@0.5.0
 
 ## 0.4.0
 
@@ -1062,13 +982,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   (`_0`, `_1`, …) and nest correctly through `List` / `Option` so generated
   provider types match the values the runtime produces and consumes.
 
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-  - @kumikijs/runtime@0.4.0
-
 ## 0.3.1
 
 ### Patch Changes
@@ -1110,11 +1023,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   E0108 is a deliberate tightening (pre-1.0): a program that previously compiled
   `recv.bogus` to `undefined` now fails to compile.
 
-### Patch Changes
-
-- Updated dependencies [be38e20]
-  - @kumikijs/runtime@0.3.0
-
 ## 0.2.1
 
 ### Patch Changes
@@ -1124,9 +1032,6 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   Previously the parenthesis-free form the spec recommends (`list.head`) compiled clean but evaluated to `undefined` at runtime, and the parenthesized form (`list.head()`) was rejected with E0801. Both shapes now lower to runtime helpers and are recognized in `KNOWN_METHODS`. Follow-up to #5.
 
   Known limitation (deferred, needs receiver type inference): dispatch is name-only, so the no-paren form shadows a record/map field of the same name (e.g. `node.head` on a record `{head, tail}`).
-
-- Updated dependencies [c0c1708]
-  - @kumikijs/runtime@0.2.1
 
 ## 0.2.0
 
@@ -1141,8 +1046,3 @@ TilePatchers` alongside `{X}Tiles`. `reconcileNode` routes same-kind
   - **M5 `motion` layer** — reusable, closed-grammar, scoped animations referenced from a tile's `motion` prop; honors `prefers-reduced-motion`; errors E0107, E0401–E0403.
 
   See CHANGELOG.md for the full detail.
-
-### Patch Changes
-
-- Updated dependencies [77938ee]
-  - @kumikijs/runtime@0.2.0

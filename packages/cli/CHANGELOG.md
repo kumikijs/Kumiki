@@ -257,26 +257,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
     correctly — `SessionId.fresh()` with no `type SessionId` is the shape to
     expect.
 
-- Updated dependencies [82cfa6c]
-- Updated dependencies [85a792b]
-- Updated dependencies [3b1f5e8]
-- Updated dependencies [7cce9ce]
-- Updated dependencies [301b09a]
-- Updated dependencies [3e33233]
-- Updated dependencies [f04b1c5]
-- Updated dependencies [7a754ad]
-- Updated dependencies [c11152b]
-- Updated dependencies [080f358]
-- Updated dependencies [d398cbc]
-- Updated dependencies [79b221e]
-- Updated dependencies [732cb16]
-- Updated dependencies [b8bd5d9]
-- Updated dependencies [4de2473]
-- Updated dependencies [db8e843]
-  - @kumikijs/compiler@0.13.0
-  - @kumikijs/runtime@0.13.0
-  - @kumikijs/vite@0.6.0
-
 ## 0.7.0
 
 ### Minor Changes
@@ -510,26 +490,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   causes, and §10.3.13's non-plain-object and `NaN` rules link to it. The JA
   mirror gains both, including §10.3.13 itself, which had never been translated.
 
-- Updated dependencies [46bee64]
-- Updated dependencies [5fb6fb6]
-- Updated dependencies [353cd5c]
-- Updated dependencies [46bee64]
-- Updated dependencies [027a8af]
-- Updated dependencies [3d89383]
-- Updated dependencies [cad3f0c]
-- Updated dependencies [46bee64]
-- Updated dependencies [4a58f8f]
-- Updated dependencies [32dd683]
-- Updated dependencies [687ae40]
-- Updated dependencies [92ca76d]
-- Updated dependencies [6f3f3e3]
-- Updated dependencies [9ae4327]
-- Updated dependencies [46bee64]
-- Updated dependencies [49cafdb]
-  - @kumikijs/compiler@0.12.0
-  - @kumikijs/runtime@0.12.0
-  - @kumikijs/vite@0.5.1
-
 ## 0.6.0
 
 ### Minor Changes
@@ -584,39 +544,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   - runtime / cli / vite: no behavioural change; the diagnostic surfaces through the standard `check` gate and Vite overlay.
   - spec: `docs/spec/errors.md` and `docs/spec/stdlib.md` document `W0212`; `docs/spec/language.md` cross-links to the ui-event lift table.
 
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-  - @kumikijs/runtime@0.11.0
-  - @kumikijs/compiler@0.11.0
-  - @kumikijs/vite@0.5.0
-
-## 0.5.1
-
-### Patch Changes
-
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-  - @kumikijs/compiler@0.10.0
-  - @kumikijs/runtime@0.10.0
-
 ## 0.5.0
 
 ### Minor Changes
@@ -658,72 +585,12 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   `navigator` globals vs the DOM realm) that jsdom required. Verification behavior
   is unchanged — the whole example corpus passes check + build + smoke + scenario
   runs on the new environment.
-- Updated dependencies [c40b121]
-- Updated dependencies [7e589bc]
-- Updated dependencies [c4833bd]
-  - @kumikijs/runtime@0.9.0
-  - @kumikijs/compiler@0.9.0
-
-## 0.4.1
-
-### Patch Changes
-
-- Updated dependencies [3ee1a9a]
-  - @kumikijs/compiler@0.8.0
-  - @kumikijs/runtime@0.8.0
 
 ## 0.4.0
 
 ### Minor Changes
 
 - 33fc749: v0.6 M4 (#52) — `kumiki test` runner polish (`spec/testing.md` §8.7). Per-test timings on every line (`(1ms)`; property-tests add `(100 cases, 23ms)`); `--coverage` reports per reducer/effect/tile what the suite exercises and lists the uncovered (computed statically by codegen into `globalThis.__kumikiCoverage`); `--watch` re-runs the filtered suite on `.kumiki` change (debounced, clean Ctrl-C exit). Completes the v0.6 testing-DSL milestone.
-
-### Patch Changes
-
-- Updated dependencies [afe1b15]
-- Updated dependencies [e92f5df]
-- Updated dependencies [33fc749]
-  - @kumikijs/compiler@0.7.0
-  - @kumikijs/runtime@0.7.0
-
-## 0.3.4
-
-### Patch Changes
-
-- Updated dependencies [cd1e88a]
-  - @kumikijs/compiler@0.6.0
-  - @kumikijs/runtime@0.6.0
-
-## 0.3.3
-
-### Patch Changes
-
-- Updated dependencies [20c8601]
-- Updated dependencies [20c8601]
-  - @kumikijs/runtime@0.5.0
-  - @kumikijs/compiler@0.5.0
-
-## 0.3.2
-
-### Patch Changes
-
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-  - @kumikijs/runtime@0.4.0
-  - @kumikijs/compiler@0.4.0
-
-## 0.3.1
-
-### Patch Changes
-
-- Updated dependencies [81d0791]
-  - @kumikijs/compiler@0.3.1
 
 ## 0.3.0
 
@@ -753,20 +620,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   E0108 is a deliberate tightening (pre-1.0): a program that previously compiled
   `recv.bogus` to `undefined` now fails to compile.
 
-### Patch Changes
-
-- Updated dependencies [be38e20]
-  - @kumikijs/compiler@0.3.0
-  - @kumikijs/runtime@0.3.0
-
-## 0.2.1
-
-### Patch Changes
-
-- Updated dependencies [c0c1708]
-  - @kumikijs/compiler@0.2.1
-  - @kumikijs/runtime@0.2.1
-
 ## 0.2.0
 
 ### Minor Changes
@@ -780,9 +633,3 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   - **M5 `motion` layer** — reusable, closed-grammar, scoped animations referenced from a tile's `motion` prop; honors `prefers-reduced-motion`; errors E0107, E0401–E0403.
 
   See CHANGELOG.md for the full detail.
-
-### Patch Changes
-
-- Updated dependencies [77938ee]
-  - @kumikijs/compiler@0.2.0
-  - @kumikijs/runtime@0.2.0

@@ -1,6 +1,5 @@
 ---
 "@kumikijs/runtime": minor
-"@kumikijs/e2e": minor
 "@kumikijs/mcp": patch
 "@kumikijs/cli": patch
 ---
