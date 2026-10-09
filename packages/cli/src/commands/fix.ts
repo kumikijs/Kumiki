@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { fixCmd, fixFromTest } from "../fix.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 
 const USAGE =
   "Usage: kumiki fix <file> [--apply] [<code>]\n       kumiki fix <file> --auto-patch <test-name> [--apply]";
@@ -26,7 +26,7 @@ export function registerFix(program: Command): void {
           process.exit(2);
         }
         const apply = Boolean(options.apply);
-        const fixPath = resolve(process.cwd(), file);
+        const fixPath = sourceFileArg(file);
         if (options.autoPatch !== undefined) {
           const outcome = await fixFromTest(
             fixPath,

@@ -818,7 +818,7 @@ describe("failure reporting", () => {
     kumiki_episode: { episodeId: "ep_0001" },
   };
 
-  it("every tool that opens a file reports a missing one as an error", async () => {
+  it("every tool that opens a file reports a missing one as an error naming it", async () => {
     // Enumerated from the live server rather than listed here: a tool added
     // without the guard is the failure this is for, and a hand-written list
     // would not contain it.
@@ -835,16 +835,21 @@ describe("failure reporting", () => {
       );
       expect(withPath.map((t) => t.name)).toContain("kumiki_check");
       expect(withPath.length).toBeGreaterThan(14);
+      const missing = join(workdir, "does-not-exist.kumiki");
       for (const t of withPath) {
         const res = await client.callTool({
           name: t.name,
-          arguments: { path: join(workdir, "does-not-exist.kumiki"), ...(ARGS[t.name] ?? {}) },
+          arguments: { path: missing, ...(ARGS[t.name] ?? {}) },
         });
         expect(res.isError, `${t.name} reported a missing file as success`).toBe(true);
         const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
         expect(body.startsWith("{"), `${t.name} used a different envelope: ${body}`).toBe(true);
         const parsed = JSON.parse(body) as { error?: { kind: string; message: string } };
-        expect(parsed.error, `${t.name} used a different envelope`).toBeDefined();
+        // The message `kumiki` prints for the same path (§9.2.5).
+        expect(parsed.error, t.name).toEqual({
+          kind: "error",
+          message: `File "${missing}" not found`,
+        });
       }
     });
   });

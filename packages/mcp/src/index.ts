@@ -24,6 +24,7 @@ import {
   removeDef,
   renameDef,
   replaceDef,
+  requireSourceFile,
   runFixFromTest,
   runScenarioSource,
   runTests,
@@ -94,24 +95,9 @@ function failed(s: string) {
   return { ...text(s), isError: true };
 }
 
-/**
- * Resolve `path` for a tool that reads a sidecar rather than the file itself.
- *
- * The op-log and the episode log are separate files, so those tools never open
- * the `.kumiki` — and answered "(no history)" / "(no episode log)" for a path
- * that was never there, which is exactly what an app nobody has edited or run
- * yet looks like. The source file is required to exist; the sidecar's absence
- * stays an ordinary answer.
- */
-function requireSourceFile(path: string): string {
-  const abs = resolve(process.cwd(), path);
-  if (!existsSync(abs)) throw new Error(`File "${abs}" not found`);
-  return abs;
-}
-
 function readSource(input: { source?: string | undefined; path?: string | undefined }): string {
   if (typeof input.source === "string") return input.source;
-  if (input.path) return readFileSync(resolve(process.cwd(), input.path), "utf8");
+  if (input.path) return readFileSync(requireSourceFile(input.path), "utf8");
   throw new Error("provide either `source` or `path`");
 }
 
@@ -589,7 +575,7 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, layer }) => {
-      const store = load(resolve(process.cwd(), path));
+      const store = load(requireSourceFile(path));
       const entries = listDefs(store, layer).map(
         (e) => `${e.layer}.${e.name}  (lines ${e.range.startLine}-${e.range.endLine})`,
       );
@@ -610,7 +596,7 @@ export function createServer(): McpServer {
       },
     },
     async ({ path, name, withDeps }) => {
-      const store = load(resolve(process.cwd(), path));
+      const store = load(requireSourceFile(path));
       const out = withDeps ? viewWithDeps(store, name) : viewDef(store, name);
       if (out === null) throw new Error(`Definition "${name}" not found`);
       return text(out);
@@ -625,7 +611,7 @@ export function createServer(): McpServer {
       inputSchema: { path: z.string(), name: z.string() },
     },
     async ({ path, name }) => {
-      const store = load(resolve(process.cwd(), path));
+      const store = load(requireSourceFile(path));
       // "(no references)" for a name that is not defined reads as "safe to
       // delete", which is the opposite of what a typo'd name means. Same
       // answer as `kumiki_view` gives to the same question.
@@ -864,7 +850,7 @@ export function createServer(): McpServer {
       },
     },
     async (input) => {
-      const abs = resolve(process.cwd(), input.path);
+      const abs = requireSourceFile(input.path);
       const caps = capsForInput(input);
       if (input.apply) {
         const r = applyFixPlan(abs, input.only, caps);
@@ -946,7 +932,7 @@ export function createServer(): McpServer {
       },
     },
     async (input) => {
-      const abs = resolve(process.cwd(), input.path);
+      const abs = requireSourceFile(input.path);
       const caps = capsForInput(input);
       const apply = input.apply === true;
       const outcome = await runFixFromTest(abs, input.testName, apply, caps);
@@ -979,7 +965,7 @@ export function createServer(): McpServer {
       },
     },
     async (input) => {
-      const abs = resolve(process.cwd(), input.path);
+      const abs = requireSourceFile(input.path);
       const caps = capsForInput(input);
       const report = await runTests(abs, input.filter, caps);
       const body = JSON.stringify(

@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Command, OptionValues } from "commander";
 import type { DevCmdOptions } from "../dev.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 
 const USAGE =
   "Usage: kumiki dev <input.kumiki> [--port <n>] [--episode-log <file>] [--strict-a11y]";
@@ -46,7 +47,7 @@ export function registerDev(program: Command): void {
         console.error(USAGE);
         process.exit(2);
       }
-      const inputPath = resolve(process.cwd(), input);
+      const inputPath = sourceFileArg(input);
       const devOpts: DevCmdOptions = {
         ...(options.port !== undefined ? { port: options.port } : {}),
         ...(options.episodeLog !== undefined ? { episodeLog: options.episodeLog } : {}),

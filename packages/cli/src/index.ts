@@ -77,6 +77,7 @@ export {
   LAYERS,
   listDefs,
   load,
+  requireSourceFile,
   type Store,
   viewDef,
   viewWithDeps,

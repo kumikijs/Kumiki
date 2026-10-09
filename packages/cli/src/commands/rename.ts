@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { describeEdit, renameDef } from "../mutate.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 
 const USAGE = "Usage: kumiki rename <file> <qname> <new-name>";
 
@@ -17,8 +17,9 @@ export function registerRename(program: Command): void {
         console.error(USAGE);
         process.exit(2);
       }
+      const path = sourceFileArg(file);
       try {
-        const opId = renameDef(resolve(process.cwd(), file), qname, newName);
+        const opId = renameDef(path, qname, newName);
         console.log(describeEdit({ op: "rename", qname, newName, opId }));
       } catch (e) {
         console.error(String(e));

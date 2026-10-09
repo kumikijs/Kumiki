@@ -11,6 +11,7 @@ import {
   load,
   loadSource,
   referenceSites,
+  requireSourceFile,
   type Store,
   viewDef,
 } from "./store.ts";
@@ -566,6 +567,7 @@ export function describeEdit(report: EditReport): string {
 }
 
 export function addDef(path: string, layer: string, name: string, body: string): string {
+  requireSourceFile(path);
   enforceLock(path, `${layer}.${name}`);
   return withWriteLock(path, () => addDefs(path, [{ layer, name, body }]));
 }
@@ -639,6 +641,7 @@ export function replaceDef(
   qname: string,
   body: string,
 ): { opId: string; dropped: string[] } {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => replaceDefLocked(path, qname, body));
 }
@@ -800,6 +803,7 @@ export function removeDef(
   qname: string,
   cascade: boolean,
 ): { opId: string; removed: RemovedNames } {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => removeDefLocked(path, qname, cascade));
 }
@@ -916,6 +920,7 @@ function removeSet(
 }
 
 export function renameDef(path: string, qname: string, newName: string): string {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => renameDefLocked(path, qname, newName));
 }
@@ -1055,6 +1060,7 @@ function defNamePos(store: Store, entry: DefEntry, name: string): Pos | undefine
  * for `find`, on line `<line>` of it for a per-line patch.
  */
 export function editDef(path: string, qname: string, patch: unknown): string {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => editDefLocked(path, qname, patch));
 }
@@ -1181,6 +1187,7 @@ function isPerLinePatch(p: unknown): p is Record<string, string> {
  * before the call.
  */
 export function patchApplyFile(path: string, opsFile: string): string[] {
+  requireSourceFile(path);
   return withWriteLock(path, () => patchApplyFileLocked(path, opsFile));
 }
 
@@ -1250,6 +1257,7 @@ function applyOne(path: string, op: RawOp): string {
  * is the simplest correct strategy for the PoC; op volume is small.
  */
 export function patchRevert(path: string, opId: string): string {
+  requireSourceFile(path);
   return withWriteLock(path, () => patchRevertLocked(path, opId));
 }
 
@@ -1735,12 +1743,15 @@ export function lockPatternProblem(pattern: string): string | undefined {
 
 /**
  * Grant `agentId` the globs of `pattern`, or throw: when the pattern names no
- * glob (`lockPatternProblem`), or when one of its globs overlaps a pattern
- * another agent holds (`lockConflict`). A refusal leaves the lock file as it was.
+ * glob (`lockPatternProblem`), when there is no file at `path`
+ * (`requireSourceFile`), or when one of its globs overlaps a pattern another
+ * agent holds (`lockConflict`). A refusal leaves the lock file as it was, and
+ * writes none where there was none.
  */
 export function lockDef(path: string, agentId: string, pattern: string): void {
   const problem = lockPatternProblem(pattern);
   if (problem !== undefined) throw new Error(problem);
+  requireSourceFile(path);
   withWriteLock(path, () => lockDefLocked(path, agentId, pattern));
 }
 
@@ -1782,7 +1793,13 @@ function lockDefLocked(path: string, agentId: string, pattern: string): void {
   writeLocks(path, locks);
 }
 
+/**
+ * Release every pattern `agentId` holds, or throw: when there is no file at
+ * `path` (`requireSourceFile`), or when the agent holds none. A refusal leaves
+ * the lock file as it was, and writes none where there was none.
+ */
 export function unlockDef(path: string, agentId: string): void {
+  requireSourceFile(path);
   withWriteLock(path, () => unlockDefLocked(path, agentId));
 }
 

@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { check, type KumikiError } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
@@ -6,6 +5,7 @@ import { formatDiagnostic } from "../diagnostic.ts";
 import { plural } from "../fix.ts";
 import { load } from "../store.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { applyStrictFlags } from "./_shared/strict-flags.ts";
 
 const USAGE =
@@ -67,7 +67,7 @@ export async function checkCmd(
   strictSelectorId: boolean,
   scopes: readonly CheckScope[],
 ): Promise<void> {
-  const inputPath = resolve(process.cwd(), inputArg);
+  const inputPath = sourceFileArg(inputArg);
   const store = load(inputPath);
   let iconNames: string[] = [];
   if (strictIcons) {

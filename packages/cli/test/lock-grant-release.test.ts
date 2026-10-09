@@ -6,7 +6,7 @@
 // qualified name, could match as well. Granting an overlapping glob leaves each
 // agent refused by the other's lock on the names both cover, so nobody can
 // edit them. `unlock` releases what the agent holds, and refuses when that is
-// nothing.
+// nothing. Both refuse a path with no file at it.
 
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -225,6 +225,16 @@ describe("lock", () => {
     expect(() => replaceDef(file, "slot.count", "N = 2")).toThrowError(
       /lock violation: slot\.count is locked by agent:b/,
     );
+  });
+});
+
+describe("lock and unlock", () => {
+  it("refuse a file that does not exist, creating no lock file", () => {
+    const missing = join(dir, "missing.kumiki");
+    const refusal = `File "${missing}" not found`;
+    expect(() => lockDef(missing, "agent:a", "slot.*")).toThrowError(refusal);
+    expect(() => unlockDef(missing, "agent:a")).toThrowError(refusal);
+    expect(existsSync(`${missing}.kumiki-locks.json`)).toBe(false);
   });
 });
 

@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { patchApplyFile, patchRevert } from "../mutate.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 
 const APPLY_USAGE = "Usage: kumiki patch apply <file> <ops.jsonl>";
 const REVERT_USAGE = "Usage: kumiki patch revert <file> <op-id>";
@@ -30,8 +31,9 @@ export function registerPatch(program: Command): void {
         console.error(APPLY_USAGE);
         process.exit(2);
       }
+      const path = sourceFileArg(file);
       try {
-        const ids = patchApplyFile(resolve(process.cwd(), file), resolve(process.cwd(), opsFile));
+        const ids = patchApplyFile(path, resolve(process.cwd(), opsFile));
         console.log(`applied ${ids.length} ops: ${ids.join(", ")}`);
       } catch (e) {
         console.error(String(e));
@@ -50,8 +52,9 @@ export function registerPatch(program: Command): void {
         console.error(REVERT_USAGE);
         process.exit(2);
       }
+      const path = sourceFileArg(file);
       try {
-        const newId = patchRevert(resolve(process.cwd(), file), opId);
+        const newId = patchRevert(path, opId);
         console.log(`reverted ${opId}  (${newId})`);
       } catch (e) {
         console.error(String(e));

@@ -2,7 +2,8 @@
 // list / view / refs queries. Read-only on disk; mutations go through a
 // separate path that rewrites the file and appends to the op-log.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Def, Program, Token } from "@kumikijs/compiler";
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
 
@@ -57,6 +58,25 @@ const LAYER_OF = {
  * `list <label>` and `kumiki_list` accept as a filter.
  */
 export const LAYERS = Object.values(LAYER_OF);
+
+/**
+ * `path` resolved against the working directory, or a throw that names it
+ * when nothing is there. Every verb, mutator and MCP tool given a `.kumiki`
+ * file asks this before it reads the file or anything beside it (§9.2.5), so a
+ * mistyped path is refused by name and nothing is written beside it: no lock
+ * file for `lock`, no write lock for a write verb. It asks only whether the
+ * path exists, not whether the file parses: the history of a file that no
+ * longer parses is exactly when `view --history` is wanted.
+ */
+export function requireSourceFile(path: string): string {
+  const abs = resolve(process.cwd(), path);
+  // `undefined` is a path with no entry (ENOENT, ENOTDIR). Any other failure
+  // to look, such as a directory that may not be searched, throws as it is.
+  if (statSync(abs, { throwIfNoEntry: false }) === undefined) {
+    throw new Error(`File "${abs}" not found`);
+  }
+  return abs;
+}
 
 export function load(path: string): Store {
   return loadSource(readFileSync(path, "utf8"));

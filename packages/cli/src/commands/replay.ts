@@ -3,6 +3,7 @@ import type { EpisodeMockPolicy } from "@kumikijs/runtime";
 import type { Command } from "commander";
 import { parseMockArg, replayCmd } from "../replay.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { requireValue } from "./_shared/value.ts";
 
 const USAGE =
@@ -51,7 +52,6 @@ export function registerReplay(program: Command): void {
           console.error(USAGE);
           process.exit(2);
         }
-        const inputPath = resolve(process.cwd(), input);
         const mocks: Record<string, EpisodeMockPolicy> = {};
         for (const spec of options.mock) {
           try {
@@ -62,6 +62,7 @@ export function registerReplay(program: Command): void {
             process.exit(2);
           }
         }
+        const inputPath = sourceFileArg(input);
         await replayCmd(inputPath, capsFor(inputPath).capabilities, {
           fromLog: resolve(process.cwd(), options.fromLog),
           ...(episodeId !== undefined ? { episodeId } : {}),

@@ -1,11 +1,11 @@
-import { resolve } from "node:path";
 import { Argument, type Command } from "commander";
 import { LAYERS, listDefs, load } from "../store.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 
 const USAGE = "Usage: kumiki list <input.kumiki> [layer]";
 
 export function listCmd(inputArg: string, layer?: string): void {
-  const store = load(resolve(process.cwd(), inputArg));
+  const store = load(sourceFileArg(inputArg));
   const entries = listDefs(store, layer);
   for (const e of entries) {
     console.log(`${e.layer.padEnd(8)} ${e.name}  (${e.range.startLine}-${e.range.endLine})`);
