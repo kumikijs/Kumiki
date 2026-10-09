@@ -741,9 +741,15 @@ When `<ev>` is `key` and the body holds a `details`, the `keydown` its `<summary
 
 > `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since one there would also hear every "key" from the tiles inside it (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-Where a kind's element does fire `<ev>` and its renderer does something else with it than call the handler — runtime policy, not a fact about the element — the message says what the renderer does instead (`<instead>`), and which handler it never calls. Those absences are `link` under `click`, whose renderer keeps it for navigation (see the note on `link` below), and five under `input`, whose elements all fire it: `slider`, whose renderer listens for it only to write the bind, and `check`, `radio`, `switch` and `select`, whose renderers listen for `change` instead. Under `click` the default wording is not yet true of the other kinds either: every element fires `click`, and what keeps it from a reducer on a `text` or a `box` is that no renderer calls `onClick` — [#823](https://github.com/kumikijs/Kumiki/issues/823). Kinds whose renderers do the same are joined with ` / `, and the clauses for different ones with `; `:
+Where a kind's element does fire `<ev>` and its renderer never calls the handler — runtime policy, not a fact about the element — the message says so, and says what the renderer does instead (`<instead>`) where it records one. Every element fires `click`, so every kind the `click` row leaves out is one of these: `link`, whose renderer keeps it for navigation (see the note on `link` below), and every other kind, whose renderer never calls `onClick`. Under `input` there are five, whose elements all fire it: `slider`, whose renderer listens for it only to write the bind, and `check`, `radio`, `switch` and `select`, whose renderers listen for `change` instead. Kinds whose renderers do the same are joined with ` / `, after `a` or `an` as the first of them takes, and the clauses for different ones with `; `:
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+A kind under `click` with no `<instead>` gets the clause `a <kinds> fires "click", and its renderer never calls onClick`. For `tile Label = text("click me")`:
+
+> `Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.`
+
+The first form, that no descendant fires the event, is the message for kinds whose element fires nothing: `ui.focus` on a `box`, `ui.change` on an `editable`, `ui.input` on a `text`.
 
 The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`) and the W0212 check in `typecheck.ts` derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` — their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate — and the universal `applyUiEventHandlers` in `core.ts`):
 
@@ -931,9 +937,19 @@ A handler prop is written on a tile whose renderer never reads it — `row(text(
 
 > `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
+Where the tile's element does fire the handler's event and its renderer never calls the handler, the reason is the clause [W0212](#w0212-ui-event-tile-mismatch-warning) gives for that kind, read from the same record: every tile the `onClick` list above leaves out, since every element fires `click`, and `slider`, `check`, `radio`, `switch` and `select` under `onInput`:
+
+> `"onClick" on link() is dropped — a link fires "click", and its renderer keeps it for navigation, never calling onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+>
+> `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
 A **user tile** is asked the same question, and answered in a second form. A handler written on one is merged onto the node that tile renders ([§1.7.3](./language.md#_1-7-3-event-handler-props)), so what fires is decided by what it renders — `Inner(onClick=open)` over `tile Inner = box(text("clickme"))` renders, wires nothing, and is the failure this warning exists to name. Nothing else can: this warning is non-fatal, so `check` still exits 0 (`ok (1 warning)`) and `build` still emits, and `smoke` sees a tile that renders fine with nothing to click.
 
 > `"<handler>" on <tile>() is dropped — <tile> renders nothing that fires it (observed in body: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+Where kinds in its body fire the event and their renderers never call the handler, it gives W0212's clauses for them instead, joined with `; `. For `Inner(onClick=open)` over `tile Inner = box(text("clickme"))`:
+
+> `"onClick" on Inner() is dropped — Inner renders nothing that calls it: a box / text fires "click", and its renderer never calls onClick (observed in body: box, text). Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
 The kinds come from walking the tile's render tree, the same walk [W0212](#w0212-ui-event-tile-mismatch-warning) uses, and only a tree with no firing kind anywhere in it is reported. That is deliberately less than the whole truth: the prop lands on the tile's **root** node, so `tile Card = box(button(...))` drops the handler too and is *not* reported, because the walk does not distinguish a root from a descendant. Everything it does report is a certain drop.
 
@@ -941,7 +957,7 @@ When the walk finds no kind at all, nothing is reported — the tile's own root 
 
 `onKeyDown`, `onMouseEnter`, `onFocus` and `onBlur` are never reported: the runtime attaches those listeners to whatever element the tile produced. That is about the listener, not about the event reaching it — `focus` and `blur` do not bubble, so a container that is not focusable never fires them, and `keydown` reaches a container only from a focusable descendant. Reporting those would take a focusability analysis this check does not do.
 
-[W0212](#w0212-ui-event-tile-mismatch-warning) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target cannot fire `<ev>`. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
+[W0212](#w0212-ui-event-tile-mismatch-warning) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target hands `<ev>` to no reducer. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
 
 **Fix**: Move the handler onto the tile that fires the event, or wrap the content in a `button` — on a user tile, either at the call site or inside the tile itself, so its root is the tile that fires. To react to a click anywhere in a region, subscribe a reducer with `on=ui.click(<the clickable child>)`.
 

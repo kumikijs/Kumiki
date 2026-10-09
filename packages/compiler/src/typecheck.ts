@@ -109,6 +109,7 @@ import {
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
   handlerReducerName,
+  liftForHandler,
   UI_EVENT_TILE_KINDS,
   type WrappedUnreached,
   wrappedUnreached,
@@ -1823,8 +1824,14 @@ function checkHandlerBinding(
  * container with any clickable descendant satisfies it.
  *
  * A user tile is the same failure, and is asked with `collectTileBuiltinKinds`
- * — the walk W0212 already uses. Finding no kind that fires the handler
- * anywhere in the render tree is the answer that reports.
+ * — the walk W0212 already uses. Finding no kind whose renderer calls the
+ * handler anywhere in the render tree is the answer that reports.
+ *
+ * The reason given is the one W0212 gives for the same kinds under the
+ * handler's event (`firesUnheardClauses`). Where the element fires the event
+ * and its renderer never calls the handler (every kind under `onClick`, and
+ * the kinds the `input` row records), it says so. Otherwise it says the tile
+ * does not fire the event.
  *
  * That under-reports rather than over-reports, deliberately: codegen merges
  * these props onto the node the tile renders as its ROOT (`tileCallJs`), so
@@ -1844,9 +1851,13 @@ function checkHandlerTarget(
 ): void {
   const allowed = HANDLER_PROP_TILES[handler];
   if (allowed == null) return;
+  const ev = liftForHandler(handler)?.ev;
+  const unheard = (kinds: Iterable<string>): string[] =>
+    ev === undefined ? [] : firesUnheardClauses(ev, kinds);
   if (BUILTIN_TILES.has(tileName)) {
     if (allowed.has(tileName)) return;
-    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+    const [because = `${tileName} does not fire it`] = unheard([tileName]);
+    errors.push(inertHandler(tileName, handler, because, allowed, pos));
     return;
   }
   // An undeclared name is E0105's to report; guessing at what it renders would
@@ -1861,15 +1872,13 @@ function checkHandlerTarget(
   // E0105 / E0005 that names the unresolvable part.
   if (kinds.size === 0) return;
   if ([...kinds].some((k) => allowed.has(k))) return;
-  errors.push(
-    inertHandler(
-      tileName,
-      handler,
-      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
-      allowed,
-      pos,
-    ),
-  );
+  const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
+  const clauses = unheard(kinds);
+  const because =
+    clauses.length === 0
+      ? `${tileName} renders nothing that fires it ${observed}`
+      : `${tileName} renders nothing that calls it: ${clauses.join("; ")} ${observed}`;
+  errors.push(inertHandler(tileName, handler, because, allowed, pos));
 }
 
 /** One W0213, whichever side — builtin or user tile — asked for it. */
@@ -2343,15 +2352,12 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
  *  - a wrapped control's focused element (a check's `<input>`, a details'
  *    `<summary>`) fires `<ev>`, and no listener on its wrapper receives it
  *    from there alone (`wrappedUnreached`);
- *  - a kind's element fires `<ev>` and its renderer does something else with
- *    it than call the handler (`firesUnheardIn`, the row's `firesUnheard`).
+ *  - a kind's element fires `<ev>` and its renderer never calls the handler
+ *    (`firesUnheardClauses`).
  */
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
   const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
-  const unheard = firesUnheardIn(ev, kinds).map(
-    (g) =>
-      `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
-  );
+  const unheard = firesUnheardClauses(ev, kinds);
   if (unheard.length === 0) {
     if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
     return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
@@ -2365,13 +2371,31 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
  * other tiles the wrapper holds as well.
  */
 function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = g.kinds.join(" / ");
+  const kinds = kindsPhrase(g.kinds);
   const around = `the <${g.wrapper}> around its <${g.focused}>`;
   return g.bubbles
-    ? `a ${kinds} takes no "${ev}" listener on ${around}, ` +
+    ? `${kinds} takes no "${ev}" listener on ${around}, ` +
         `since one there would also hear every "${ev}" from the tiles inside it`
-    : `a ${kinds} listens on ${around}, ` +
+    : `${kinds} listens on ${around}, ` +
         `and the "${ev}" that <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
+}
+
+/**
+ * One clause per group `firesUnheardIn` finds among `kinds`: the element fires
+ * `ev`, and what its renderer does, ending in the handler it never calls.
+ * W0212 and W0213 both give these as their reason, so the two say the same of
+ * a kind.
+ */
+function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
+  return firesUnheardIn(ev, kinds).map(
+    (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
+  );
+}
+
+/** Kinds named as one subject, the article agreeing with the first: `an image / text`. */
+function kindsPhrase(kinds: readonly string[]): string {
+  const named = kinds.join(" / ");
+  return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
 }
 
 function checkStmt(

@@ -719,9 +719,15 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` が�
 
 > `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since one there would also hear every "key" from the tiles inside it (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-kind の要素が `<ev>` を発火するのに、そのレンダラがハンドラを呼ばずに別のことに使う場合 — 要素の性質ではなく runtime の方針である — メッセージはレンダラが代わりにすること（`<instead>`）と、呼ばないハンドラを述べる。この欠落は、`click` の `link`（レンダラがナビゲーションのために取っておく。下の `link` についての注記を参照）と、`input` の 5 つである。後者の要素はいずれも `input` を発火する：`slider` はレンダラが bind の書き込みのためだけに listen し、`check` / `radio` / `switch` / `select` はレンダラが代わりに `change` を listen する。`click` では、ほかの kind に対する既定の文言もまだ正しくない：どの要素も `click` を発火し、`text` や `box` でそれが reducer に届かないのは、`onClick` を呼ぶレンダラがないためである — [#823](https://github.com/kumikijs/Kumiki/issues/823)。レンダラが同じことをする kind は ` / ` で、異なるものの節は `; ` でつなぐ:
+kind の要素が `<ev>` を発火するのに、そのレンダラがハンドラを呼ばない場合 — 要素の性質ではなく runtime の方針である — メッセージはそう述べ、レンダラが代わりにすること（`<instead>`）が記録されていればそれも述べる。どの要素も `click` を発火するので、`click` の行に載らない kind はすべてこれに当たる：`link`（レンダラがナビゲーションのために取っておく。下の `link` についての注記を参照）と、レンダラが `onClick` を呼ばないそれ以外のすべての kind である。`input` では 5 つで、その要素はいずれも `input` を発火する：`slider` はレンダラが bind の書き込みのためだけに listen し、`check` / `radio` / `switch` / `select` はレンダラが代わりに `change` を listen する。レンダラが同じことをする kind は ` / ` でつなぎ、先頭の kind に合わせて `a` か `an` を前に置く。異なるものの節は `; ` でつなぐ:
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+`click` で `<instead>` の無い kind の節は `a <kinds> fires "click", and its renderer never calls onClick` である。`tile Label = text("click me")` なら:
+
+> `Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.`
+
+子孫がイベントを発火しないという最初の形は、要素が何も発火しない kind に対するメッセージである：`box` への `ui.focus`、`editable` への `ui.change`、`text` への `ui.input`。
 
 各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage。載っている kind にはいずれもそのイベントが届き、空白が規則であるのは下の注記がそう述べる箇所だけである。実装側の source of truth は `packages/compiler/src/ui-lifts.ts` の `UI_LIFTS` で、`packages/compiler/src/codegen/selector.ts` の `propsFor`（ハンドラ生成ゲート）と `typecheck.ts` の W0212 検査の両方がこれを参照する。runtime 側の DOM イベント面は `packages/runtime/src/tiles/input/` 配下の tile モジュール群が持ち、共有のリスナ登録は `_shared.ts`、`tiles-input.ts` はファミリの集約にすぎない。加えて `core.ts` の `applyUiEventHandlers` が普遍的に配線する）:
 
@@ -909,9 +915,19 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 > `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
+タイルの要素がハンドラのイベントを発火するのに、そのレンダラがハンドラを呼ばない場合、理由は [W0212](#w0212-ui-event-tile-mismatch-warning) がその kind について述べる節であり、同じ記録から読む。どの要素も `click` を発火するので `onClick` では上の一覧に無いすべてのタイルが、`onInput` では `slider` / `check` / `radio` / `switch` / `select` がこれに当たる:
+
+> `"onClick" on link() is dropped — a link fires "click", and its renderer keeps it for navigation, never calling onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+>
+> `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
 **user tile** にも同じ問いを立て、2 つ目の形で答える。user tile に書かれたハンドラは、その tile が描画するノードにマージされる（[§1.7.3](./language.md#_1-7-3-event-handler-props)）ので、発火するかどうかは何を描画するかで決まる — `tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` は、描画はされるが何も配線されない。まさにこの警告が存在する理由の失敗である。ほかに気づける層が無い：この警告は非致命なので `check` は 0 で終了し（`ok (1 warning)`）、`build` も emit を出し、`smoke` から見えるのは「正しく描画され、クリックする対象が無い」タイルでしかない。
 
 > `"<handler>" on <tile>() is dropped — <tile> renders nothing that fires it (observed in body: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+body の kind がイベントを発火するのに、そのレンダラがハンドラを呼ばない場合は、代わりにそれらについての W0212 の節を `; ` でつないで述べる。`tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` なら:
+
+> `"onClick" on Inner() is dropped — Inner renders nothing that calls it: a box / text fires "click", and its renderer never calls onClick (observed in body: box, text). Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
 `<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。報告するのは、そのツリーのどこにも発火する種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。逆に、報告するものはすべて確実に捨てられる。
 
@@ -919,7 +935,7 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 `onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付ける。ただしそれは「リスナが付く」ことであって「イベントが届く」ことではない — `focus` と `blur` はバブリングしないので、フォーカス可能でないコンテナでは発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
-[W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — `<ev>` を発火できないタイルを対象にした `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
+[W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — 対象のタイルが `<ev>` をどの reducer にも渡さない `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
 **修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む — user tile なら、呼び出し側でも、その tile の中で root が発火するタイルになるようにしてもよい。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。
 

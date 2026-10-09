@@ -1474,14 +1474,14 @@ describe("typecheck", () => {
       });
 
       it("keeps 'no descendant fires it' where the element fires nothing", () => {
-        // The controls: a `contenteditable` fires no `change`, and a `text`
-        // and a `button` have no reason recorded for the events below.
+        // The controls: a `contenteditable` fires no `change`, and a `<span>`
+        // and a `<button>` fire no `input`.
         expect(w0212("change", "tile D = editable(bind=note)")).toContain(
           `but tile "D" has no descendant that fires "change" (`,
         );
-        expect(w0212("click", 'tile D = text("hi")')).toBe(
-          `Reducer "r" subscribes to ui.click(D) but tile "D" has no descendant that fires "click" ` +
-            `(DOM-allowed: button, check, switch, radio; observed in body: text). ` +
+        expect(w0212("input", 'tile D = text("hi")')).toBe(
+          `Reducer "r" subscribes to ui.input(D) but tile "D" has no descendant that fires "input" ` +
+            `(DOM-allowed: input, textarea, editable; observed in body: text). ` +
             `The handler is silently dropped.`,
         );
         expect(w0212("input", 'tile D = button(text="b")')).toBe(
@@ -1489,6 +1489,141 @@ describe("typecheck", () => {
             `(DOM-allowed: input, textarea, editable; observed in body: button). ` +
             `The handler is silently dropped.`,
         );
+      });
+    });
+
+    // Every element fires `click`. What keeps it from a reducer on a kind the
+    // click row leaves out is that the kind's renderer never calls `onClick`,
+    // so that is the reason given; a `link`'s own reason stands beside it.
+    describe("under click, says the renderer never calls onClick", () => {
+      it("says so for a text", () => {
+        expect(w0212("click", 'tile D = text("hi")')).toBe(
+          `Reducer "r" subscribes to ui.click(D) but "click" never reaches a reducer in tile "D": ` +
+            `a text fires "click", and its renderer never calls onClick ` +
+            `(DOM-allowed: button, check, switch, radio; observed in body: text). ` +
+            `The handler is silently dropped.`,
+        );
+      });
+
+      it("says so for a box, naming the kinds in its body together", () => {
+        expect(w0212("click", 'tile D = box(text("hi"))')).toBe(
+          `Reducer "r" subscribes to ui.click(D) but "click" never reaches a reducer in tile "D": ` +
+            `a box / text fires "click", and its renderer never calls onClick ` +
+            `(DOM-allowed: button, check, switch, radio; observed in body: box, text). ` +
+            `The handler is silently dropped.`,
+        );
+      });
+
+      // Keyed by how the clause names the kind, article included.
+      const ELSEWHERE = {
+        "an image": 'image(src="/a.png", alt="a")',
+        "a heading": 'heading("Title")',
+        "an input": "input(bind=note)",
+        "a select": "select(bind=size, options=sizes())",
+        "a video": 'video(src="/a.mp4", controls=true)',
+      } as const;
+      for (const [named, tile] of Object.entries(ELSEWHERE)) {
+        it(`says so for ${named}`, () => {
+          const message = w0212("click", `tile D = ${tile}`);
+          expect(message).toContain(
+            `"click" never reaches a reducer in tile "D": ` +
+              `${named} fires "click", and its renderer never calls onClick (`,
+          );
+          expect(message).not.toContain("has no descendant");
+        });
+      }
+
+      it("takes its article from the first kind it names", () => {
+        expect(w0212("click", 'tile D = row(image(src="/a.png", alt="a"), text("x"))')).toContain(
+          `an image / row / text fires "click", and its renderer never calls onClick (`,
+        );
+      });
+
+      it("gives a link its own reason, and the other kinds the default", () => {
+        expect(w0212("click", 'tile D = row(link(to="/", text="home"), text("x"))')).toContain(
+          `"click" never reaches a reducer in tile "D": ` +
+            `a link fires "click", and its renderer keeps it for navigation, never calling onClick; ` +
+            `a row / text fires "click", and its renderer never calls onClick (`,
+        );
+      });
+    });
+
+    // A handler written on the tile is the same drop reached from the other
+    // side (W0213). It reads the same record, so what it says of a kind is the
+    // reason W0212 gives for that kind under the handler's event.
+    describe("W0213 gives the reason W0212 gives for the kind", () => {
+      /** The one W0213 that `tile D` draws, given its definition. */
+      const w0213 = (tiles: string) => {
+        const src = `
+          slot note : Text = ""
+          slot hits : Int = 0
+          reducer r on=app.start do= hits := hits + 1
+          ${tiles}
+          tile App = column(D)
+          app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+        `;
+        const found = checkSrc(src).filter((e) => e.code === "W0213");
+        expect(found).toHaveLength(1);
+        return found[0]!.message;
+      };
+      /** W0212's reason for `tiles` under `ev`: what follows `tile "D": `. */
+      const reasonOf = (ev: string, tiles: string) => {
+        const message = w0212(ev, tiles);
+        const start = message.indexOf(`tile "D": `) + `tile "D": `.length;
+        return message.slice(start, message.indexOf(" (DOM-allowed"));
+      };
+      const ONTO = "Put it on button / check / radio / switch";
+
+      it("says a link keeps click for navigation", () => {
+        const message = w0213('tile D = link(to="/", text="home", onClick=r)');
+        expect(message).toBe(
+          `"onClick" on link() is dropped — a link fires "click", and its renderer keeps it for ` +
+            `navigation, never calling onClick. ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+        );
+        expect(message).toContain(`— ${reasonOf("click", 'tile D = link(to="/", text="home")')}. `);
+      });
+
+      it("says a container's renderer never calls onClick", () => {
+        const message = w0213('tile D = row(text("x"), onClick=r)');
+        expect(message).toBe(
+          `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. ` +
+            `${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+        );
+        expect(w0213('tile D = text("x") {onClick: r}')).toContain(
+          `— ${reasonOf("click", 'tile D = text("x")')}. `,
+        );
+      });
+
+      it("says a slider listens for input only to write its bind", () => {
+        expect(w0213("tile D = slider(bind=hits, min=0, max=10, onInput=r)")).toContain(
+          `"onInput" on slider() is dropped — ` +
+            `${reasonOf("input", "tile D = slider(bind=hits, min=0, max=10)")}. `,
+        );
+      });
+
+      it("says it of a user tile's body, and names the body", () => {
+        const inner = 'tile Inner = box(text("clickme"))';
+        const message = w0213(`${inner}\ntile D = column(Inner(onClick=r))`);
+        expect(message).toBe(
+          `"onClick" on Inner() is dropped — Inner renders nothing that calls it: ` +
+            `a box / text fires "click", and its renderer never calls onClick ` +
+            `(observed in body: box, text). ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+        );
+        expect(message).toContain(
+          `calls it: ${reasonOf("click", 'tile D = box(text("clickme"))')} (`,
+        );
+      });
+
+      it("keeps 'does not fire it' where the element fires nothing", () => {
+        // A `<div>` fires no `change`, and the change row records no reason.
+        expect(w0213('tile D = row(text("x")) {onChange: r}')).toBe(
+          `"onChange" on row() is dropped — row does not fire it. ` +
+            `Put it on check / input / radio / select / slider / switch / textarea, ` +
+            `or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+        );
+        expect(
+          w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onChange: r})'),
+        ).toContain(`— Inner renders nothing that fires it (observed in body: box, text). `);
       });
     });
   });

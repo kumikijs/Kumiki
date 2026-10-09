@@ -19,11 +19,18 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *   (`editable` fires no `change`); some are runtime policy (`link` reserves
  *   `click` for navigation, and `slider` listens for `input` only to write its
  *   bind, never calling `onInput`). The comment on each row says which.
- * `firesUnheard`: the runtime-policy absences of that row — a kind left out of
+ * `firesUnheard`: runtime-policy absences of that row whose renderer does
+ *   something with the event other than call `handler` — a kind left out of
  *   `tiles` although its element fires `ev`, mapped to what its renderer does
- *   with the event instead of calling `handler`. W0212 gives that as its
- *   reason. For a left-out kind found neither here nor by `wrappedUnreached`,
- *   it says no descendant fires the event.
+ *   with the event instead.
+ * `everyElementFires`: every element fires `ev` (true of `click`), so every
+ *   kind left out of `tiles` is a runtime-policy absence: the row's default
+ *   reason, for a kind `firesUnheard` does not name, is that its renderer
+ *   never calls `handler`.
+ *
+ *   W0212 and W0213 give what these two say of a kind as their reason
+ *   (`firesUnheardIn`). For a left-out kind neither covers, and that
+ *   `wrappedUnreached` does not name, they say nothing there fires the event.
  *
  * Consumers:
  *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
@@ -33,7 +40,8 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *    targets a tile not listed in `tiles`, giving the reason
  *    `wrappedUnreached` or `firesUnheardIn` names when one names one;
  *    `checkTile` resolves an explicit handler's value as a reducer name
- *    rather than an expression.
+ *    rather than an expression, and `checkHandlerTarget` emits W0213 with the
+ *    reason `firesUnheardIn` names for the handler's row.
  *  - `references.ts` — the same resolution for the AI-editing verbs, so
  *    `refs` / `rename` / `remove --cascade` see the handler → reducer edge.
  *  - `docs/spec/errors.md` §W0212 — published version of this table.
@@ -52,6 +60,7 @@ export type UiLift = {
   readonly handler: string;
   readonly tiles: ReadonlySet<string> | null;
   readonly firesUnheard?: Readonly<Record<string, string>>;
+  readonly everyElementFires?: true;
 };
 
 /**
@@ -209,13 +218,14 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "click",
     handler: "onClick",
-    // `link` is intentionally omitted even though `<a>` fires click natively:
-    // the runtime's link renderer reserves the click event for navigation
-    // interception and does not invoke user `onClick` reducers
-    // (`packages/runtime/src/tiles/text/`). Lifting that requires a separate
-    // runtime change. Runtime policy, so it is recorded in `firesUnheard`.
+    // Every element fires `click`, so every kind absent here is absent by its
+    // renderer's choice: it never calls `onClick` (`everyElementFires`). The
+    // `link` renderer also reserves the click for navigation interception
+    // (`packages/runtime/src/tiles/text/`), which `firesUnheard` records.
+    // Lifting onto a link requires a separate runtime change.
     tiles: new Set(["button", "check", "switch", "radio"]),
     firesUnheard: { link: "keeps it for navigation" },
+    everyElementFires: true,
   },
   { ev: "submit", handler: "onSubmit", tiles: new Set(["form"]) },
   {
@@ -251,33 +261,43 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
 ];
 
 /**
- * The kinds among `kinds` that fire `ev` where no reducer hears it, from the
- * row's `firesUnheard`: grouped by what their renderer does with the event
- * instead, each group's kinds sorted, the groups in the order of their first
- * kind. Empty for a kind whose element fires nothing, and for every kind of
- * a row with no such record.
+ * Why `lift.ev` reaches no handler on `kind`, a kind the row leaves out whose
+ * element fires it: what its renderer does instead, ending in the handler it
+ * never calls (`keeps it for navigation, never calling onClick`), or, for a
+ * kind `firesUnheard` does not name on an `everyElementFires` row, that it
+ * never calls the handler. `null` for a kind the row lifts onto, and for one
+ * whose element the row records as firing nothing.
+ */
+function unheardReason(lift: UiLift, kind: string): string | null {
+  if (lift.tiles === null || lift.tiles.has(kind)) return null;
+  const record = lift.firesUnheard ?? {};
+  const instead = Object.hasOwn(record, kind) ? record[kind] : undefined;
+  if (instead !== undefined) return `${instead}, never calling ${lift.handler}`;
+  return lift.everyElementFires ? `never calls ${lift.handler}` : null;
+}
+
+/**
+ * The kinds among `kinds` that fire `ev` where no reducer hears it
+ * (`unheardReason`): grouped by that reason, each group's kinds sorted, the
+ * groups in the order of their first kind. Empty for a kind whose element
+ * fires nothing, for a kind the row lifts onto, and for an event no row has.
  *
- * W0212 reads it to say so. For these kinds "no descendant fires it" is
+ * W0212 and W0213 read it to say so. For these kinds "nothing fires it" is
  * untrue, because the element does.
  */
 export function firesUnheardIn(
   ev: UiEventKind,
   kinds: Iterable<string>,
-): Array<{ readonly kinds: string[]; readonly instead: string; readonly handler: string }> {
+): Array<{ readonly kinds: string[]; readonly reason: string }> {
   const lift = UI_LIFTS.find((l) => l.ev === ev);
-  const record = lift?.firesUnheard;
-  if (lift === undefined || record === undefined) return [];
-  const byInstead = new Map<string, string[]>();
+  if (lift === undefined) return [];
+  const byReason = new Map<string, string[]>();
   for (const kind of [...kinds].sort()) {
-    const instead = Object.hasOwn(record, kind) ? record[kind] : undefined;
-    if (instead === undefined) continue;
-    byInstead.set(instead, [...(byInstead.get(instead) ?? []), kind]);
+    const reason = unheardReason(lift, kind);
+    if (reason === null) continue;
+    byReason.set(reason, [...(byReason.get(reason) ?? []), kind]);
   }
-  return [...byInstead].map(([instead, grouped]) => ({
-    kinds: grouped,
-    instead,
-    handler: lift.handler,
-  }));
+  return [...byReason].map(([reason, grouped]) => ({ kinds: grouped, reason }));
 }
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */
@@ -285,9 +305,14 @@ export const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = O
   UI_LIFTS.map((l) => [l.ev, l.tiles]),
 );
 
+/** The row whose handler is `handler`, or `undefined` where no ui-event lifts to it (`onClose`). */
+export function liftForHandler(handler: string): UiLift | undefined {
+  return UI_LIFTS.find((l) => l.handler === handler);
+}
+
 /** The tile set a `ui.<ev>(Tile)` selector lifts to, looked up by handler name. */
 function liftTilesFor(handler: string): ReadonlySet<string> | null {
-  return UI_LIFTS.find((l) => l.handler === handler)?.tiles ?? null;
+  return liftForHandler(handler)?.tiles ?? null;
 }
 
 /**
