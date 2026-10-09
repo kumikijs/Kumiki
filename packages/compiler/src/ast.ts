@@ -282,6 +282,16 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
 }
 
 /**
+ * The number a numeric literal writes, or `null` for any other expression.
+ * `-1` parses as a negation of a literal, which is still a literal.
+ */
+export function numberLiteral(e: Expr): number | null {
+  if (e.kind === "Num") return e.value;
+  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") return -e.rhs.value;
+  return null;
+}
+
+/**
  * The end of an exhaustive `switch` over a node union.
  *
  * A walker whose `switch` ends in a bare `return` compiles unchanged when a

@@ -12,11 +12,14 @@ import { describe, expect, it } from "vitest";
 //   field.
 // - `timeout` takes anything assignable to `Int`, read as milliseconds — a
 //   `Duration` is one, and so is a user `nominal Int`. A `Float` is not: the
-//   field is an `Int`, the same boundary every other `Int` position draws.
+//   field is an `Int`, the same boundary every other `Int` position draws. Each
+//   literal that can reach the field must be positive.
 // - `credentials` takes anything assignable to `Text`, and each literal that
-//   can reach the field — the literal itself, or a literal branch of an `if` —
-//   must be one of the three Fetch modes. A value computed any other way is
-//   held to `Text` alone.
+//   can reach the field must be one of the three Fetch modes.
+//
+// A literal reaches the field as its value, or as what a branch of an `if`, an
+// arm of a `match` or the body of a `let … in` yields. A value computed any
+// other way is held to the field's type alone.
 //
 // Every case asserts the whole diagnostic list, so an extra report, a missing
 // one or one at the wrong position fails it. What must report and what must
@@ -35,6 +38,12 @@ app Types
 
 const diagnostics = (src: string) =>
   check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+
+const notPositive = (literal: string): string =>
+  `timeout ${literal} is not a positive number of milliseconds; every request is aborted before it can answer`;
+
+const BOGUS_MODE =
+  'credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request';
 
 describe("app.http value fields are checked against their types", () => {
   it("reports each field at its own position, in the order they are written", () => {
@@ -77,6 +86,7 @@ slot label : Text = "5s"`,
       "E0201 7:24 Expected Int but got Text",
     ]);
     expect(diagnostics(app("", `timeout: 5000`))).toEqual([]);
+    expect(diagnostics(app("", `timeout: Duration.s(5)`))).toEqual([]);
   });
 
   it("timeout takes a user nominal Int, since the boundary is assignable to Int", () => {
@@ -106,12 +116,50 @@ slot c : Cents = 5`,
     expect(diagnostics(app("", `timeout: 5.5`))).toEqual(["E0201 7:24 Expected Int but got Float"]);
   });
 
-  it("timeout does not check the value domain yet: 0 and a negative Int are accepted", () => {
-    // This pins today's boundary rather than a wanted one. `setTimeout(abort, 0)`
-    // aborts every request as soon as it is issued; refusing a non-positive
-    // literal is a separate change, and this test flips when it lands.
-    expect(diagnostics(app("", `timeout: 0`))).toEqual([]);
-    expect(diagnostics(app("", `timeout: -1`))).toEqual([]);
+  it("timeout refuses a literal that is not positive: 0 and a negative Int", () => {
+    // The runtime arms the abort with this value, and a delay of 0 or less
+    // fires it at once: every request is aborted before it can answer, the
+    // failure `timeout: "soon"` is refused for.
+    expect(diagnostics(app("", `timeout: 0`))).toEqual([`E0201 7:24 ${notPositive("0")}`]);
+    expect(diagnostics(app("", `timeout: -1`))).toEqual([`E0201 7:24 ${notPositive("-1")}`]);
+    expect(diagnostics(app("", `timeout: 1`))).toEqual([]);
+  });
+
+  it("timeout holds a literal to Int before holding it to positive: -5.5 is one report", () => {
+    expect(diagnostics(app("", `timeout: -5.5`))).toEqual([
+      "E0201 7:24 Expected Int but got Float",
+    ]);
+  });
+
+  it("timeout and credentials find the literals that reach them in one walk", () => {
+    // The literal is reported where it is written, at any depth, and the good
+    // literal beside it in the same shape is not.
+    const pre = `slot fast : Bool = true
+type Speed = Quick | Slow
+slot speed : Speed = Quick`;
+    const shapes = [
+      `X`,
+      `if fast then Y else X`,
+      `if fast then X else Y`,
+      `if fast then (if fast then Y else X) else Y`,
+      `match speed with | Quick -> Y | Slow -> X`,
+      `let n = 1 in X`,
+    ];
+    const fields = [
+      { field: "timeout", bad: "0", good: "5000", message: notPositive("0") },
+      { field: "credentials", bad: `"bogus"`, good: `"omit"`, message: BOGUS_MODE },
+    ];
+    for (const shape of shapes) {
+      for (const { field, bad, good, message } of fields) {
+        const before = shape.slice(0, shape.indexOf("X")).replaceAll("Y", good);
+        const value = shape.replaceAll("Y", good).replace("X", bad);
+        const col = `    http   = {${field}: ${before}`.length + 1;
+        expect([value, diagnostics(app(pre, `${field}: ${value}`))]).toEqual([
+          value,
+          [`E0201 9:${col} ${message}`],
+        ]);
+      }
+    }
   });
 
   it("timeout reports a wrong branch of an if, and a bare union tag, at the value", () => {

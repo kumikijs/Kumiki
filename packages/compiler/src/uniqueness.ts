@@ -34,7 +34,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
+import { isTileExpr, numberLiteral } from "./ast.ts";
 
 /**
  * What was written twice, and what to call it.
@@ -434,12 +434,8 @@ function walkStatement(s: Statement, f: Finder): void {
  */
 function literalKey(e: Expr): { compare: string; shown: string } | null {
   if (e.kind === "Str") return { compare: `s:${e.value}`, shown: e.value };
-  if (e.kind === "Num") return { compare: `n:${e.value}`, shown: String(e.value) };
-  // `-1` parses as a negation of a literal, which is still a literal key.
-  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
-    return { compare: `n:${-e.rhs.value}`, shown: String(-e.rhs.value) };
-  }
-  return null;
+  const n = numberLiteral(e);
+  return n === null ? null : { compare: `n:${n}`, shown: String(n) };
 }
 
 function walkExpr(e: Expr | undefined, f: Finder): void {

@@ -35,7 +35,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { assertNever, isTileExpr } from "./ast.ts";
+import { assertNever, isTileExpr, numberLiteral } from "./ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
@@ -3669,6 +3669,11 @@ const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]
  * `code` exists because `emit` reports its argument under its own code
  * (E0202) — the diagnostic that already told authors to look at the effect's
  * `in=` type.
+ *
+ * `domain` is a value-domain constraint the site adds to its type. It rides
+ * the same descent through `if`, `let … in` and `match` as the type does, and
+ * is asked about each leaf after the leaf's type is found right, so a literal
+ * the site cannot take is reported where it is written, and once.
  */
 function checkAgainst(
   e: Expr,
@@ -3678,6 +3683,7 @@ function checkAgainst(
   ctx: Ctx,
   code: MismatchCode = "E0201",
   omittable?: Omittable,
+  domain?: LiteralDomain,
 ): void {
   if (declared === null) return;
   if (declared === REDUCER_REF) {
@@ -3748,13 +3754,14 @@ function checkAgainst(
   if (e.kind === "IfExpr") {
     // Both branches land in this position, and reporting at the branch beats
     // reporting at the `if`.
-    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable);
-    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable);
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable, domain);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable, domain);
     return;
   }
   if (e.kind === "LetIn") {
     // The body is the value that lands here, read with the name bound.
-    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code, omittable);
+    const scope = letInScope(e, sym, ctx);
+    checkAgainst(e.body, declared, sym, errors, scope, code, omittable, domain);
     return;
   }
   if (e.kind === "MatchExpr") {
@@ -3767,7 +3774,7 @@ function checkAgainst(
     const scrutType = inferType(e.scrutinee, sym, ctx);
     for (const arm of e.arms) {
       const scope = armScope(arm, scrutType, sym, ctx);
-      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
+      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable, domain);
     }
     return;
   }
@@ -3796,8 +3803,20 @@ function checkAgainst(
   // comparison drops those fields when its type does — the message still
   // names the whole `in=`.
   const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
-  if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
+  if (!assignable(actual, want ?? declared, sym)) {
+    mismatch(e, actual);
+    return;
+  }
+  const outside = domain?.(e);
+  if (outside) pushMismatch(errors, code, outside, e.pos);
 }
+
+/**
+ * A value domain a site puts on the literals that land in it: the message for
+ * a literal it cannot take, or `null` — for a literal it can take, and for
+ * every other expression, whose value is decided at run time.
+ */
+type LiteralDomain = (e: Expr) => string | null;
 
 /**
  * `d` without the fields `omittable` allows `actual` to leave out and that it
@@ -6765,7 +6784,10 @@ function checkApp(
  * would pass check, build and smoke alike.
  *
  * All four also have a type (http.md §6.3.1), checked after the walk: a value
- * of the wrong one runs and does the wrong thing rather than failing.
+ * of the wrong one runs and does the wrong thing rather than failing. Two of
+ * them hold the literals that reach them to a value domain as well — `timeout`
+ * to positive milliseconds, `credentials` to the Fetch modes — since a literal
+ * outside it is the same failure as a value of the wrong type.
  */
 function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const http = app.http;
@@ -6799,40 +6821,41 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   // `Duration` is one, and so is a user `nominal Int`. It is not "assignable to
   // `Duration`", because a program's own `type Duration` shadows the stdlib one
   // and may be anything.
-  if (http.timeout !== undefined)
-    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
-  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+  if (http.timeout !== undefined) {
+    const int = prim("Int", http.timeout.pos);
+    checkAgainst(http.timeout, int, sym, errors, fieldCtx, "E0201", undefined, positiveMs);
+  }
+  if (http.credentials !== undefined) {
+    const text = prim("Text", http.credentials.pos);
+    checkAgainst(http.credentials, text, sym, errors, fieldCtx, "E0201", undefined, fetchMode);
+  }
 }
+
+/**
+ * The milliseconds of `app.http.timeout` are positive. The runtime arms the
+ * request's abort with them, and a delay of 0 or less fires it at once, so a
+ * literal of that kind aborts every request exactly as a `Text` does.
+ */
+const positiveMs: LiteralDomain = (e) => {
+  const ms = numberLiteral(e);
+  return ms === null || ms > 0
+    ? null
+    : `timeout ${ms} is not a positive number of milliseconds; every request is aborted before it can answer`;
+};
 
 /** The `RequestCredentials` modes of the Fetch standard (http.md §6.3.1). */
 const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
 
 /**
  * `app.http.credentials` is a `Text`, so a slot can select the mode per
- * request, and every literal that reaches the field — the field's own value, or
- * a literal branch of an `if`, at any depth — is also compared with the three
- * Fetch modes: a browser refuses a request whose init names any other, so a
- * misspelt mode is as wrong as an `Int`. Anything else (a slot, a call, a
- * concatenation) is held to `Text` alone; its value is decided at run time.
+ * request, and a literal is one of the three Fetch modes: a browser refuses a
+ * request whose init names any other, so a misspelt mode is as wrong as an
+ * `Int`.
  */
-function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (e.kind === "IfExpr") {
-    checkHttpCredentials(e.consequent, sym, errors, ctx);
-    checkHttpCredentials(e.alternate, sym, errors, ctx);
-    return;
-  }
-  if (e.kind === "Str") {
-    if (HTTP_CREDENTIALS.includes(e.value)) return;
-    pushMismatch(
-      errors,
-      "E0201",
-      `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`,
-      e.pos,
-    );
-    return;
-  }
-  checkAgainst(e, prim("Text", e.pos), sym, errors, ctx);
-}
+const fetchMode: LiteralDomain = (e) =>
+  e.kind !== "Str" || HTTP_CREDENTIALS.includes(e.value)
+    ? null
+    : `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`;
 
 /**
  * `app.theme = X`, where `X` is either a `theme` definition or the slot whose
