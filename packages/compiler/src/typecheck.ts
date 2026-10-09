@@ -72,7 +72,7 @@ import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
+import { GENERIC_SELF_NESTING_LIMIT, scanPositions, typeKey } from "./refinement-positions.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
 import {
@@ -7141,6 +7141,17 @@ function sameNodes(a: readonly TypeExpr[], b: readonly TypeExpr[]): boolean {
   return true;
 }
 
+/** Whether each of `a` reads as the type at the same place in `b`, source positions aside. */
+function readAlike(a: readonly TypeExpr[], b: readonly TypeExpr[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (x === undefined || y === undefined || typeKey(x) !== typeKey(y)) return false;
+  }
+  return true;
+}
+
 /** Whether `name` has been walked from `scope` with these very argument nodes. */
 function walkedFrom(
   scope: AppliedScope,
@@ -7237,6 +7248,13 @@ function enterApplied(
   if (!def || hasEntered(scope, name) || def.params.length !== work.args.length) return;
   const args = work.args.map((a) => forwardedHead(a, sym));
   const judged = work.judged.map((a) => forwardedHead(a, sym));
+  // Arguments that read the same as the judged ones make `applied` and
+  // `before` the same substitution. Every `was`/`now` pair in the body is then
+  // one type read twice, and so is every pair in an application nested under
+  // it, whose arguments are substituted the same way on both sides. A
+  // refinement is reported only when `now` has a problem `was` does not, which
+  // one type cannot, so the walk would report nothing and is not taken.
+  if (readAlike(args, judged)) return;
   // The walk of the body reads nothing but the argument nodes and the guard,
   // so a second walk with the same nodes from the same scope adds no message.
   if (walkedFrom(scope, name, args, judged)) return;

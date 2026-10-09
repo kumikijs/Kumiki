@@ -60,10 +60,26 @@ judges an application's arguments against the refinements its body puts over
 them (E0804) walked each body with a call per generic and per `where`. Before,
 2,000 such generics overflowed, as did 40 generics of 250 `where`s each; with
 one `where` per generic, the limit moved between about 1,300 and 2,000 from run
-to run. After, that walk keeps a list of what is left to do and takes it in the
-same order, so its messages are the same and come in the same order. Both chains
-compile. Checking a chain of generics still takes longer than its length alone
-accounts for: 10 to 20 s for 2,000.
+to run. Checking was slow as well: each definition's own application walked
+every generic below it, so 1,000 generics took about 2.7 s to compile.
+
+After, that walk keeps a list of what is left to do and takes it in the same
+order, so its messages are the same and come in the same order. An application
+whose arguments read the same as the ones it is judged against is not walked at
+all. Each refinement in it would be read over the same type twice, and a
+refinement is reported only when the application gives it a problem the
+judged arguments do not. A definition's own application, with its parameters
+opaque on both sides, is that case. So only an application that gives the
+chain an argument of its own, such as `slot x : G1999(Int)`, walks it. Both
+chains compile, and 40 generics of 250 `where`s each take about 0.3 s. Checking a chain of generics still takes longer than its
+length alone accounts for:
+
+| generics | compile before | compile after |
+| -------- | -------------- | ------------- |
+| 1,000    | 2.7 s          | 0.13 s        |
+| 2,000    | overflow       | 0.3 s         |
+| 4,000    | overflow       | 1.0 s         |
+| 8,000    | overflow       | 4.9 s         |
 
 A check carrying more than one predicate is emitted as one statement per
 predicate (`if (!(…)) return false;`) instead of one `&&` expression.

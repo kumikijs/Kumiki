@@ -220,7 +220,7 @@ test gen =
       const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime" });
       expect(result.kind === "fail" ? result.errors : []).toEqual([]);
     },
-    120_000,
+    30_000,
   );
 });
 
