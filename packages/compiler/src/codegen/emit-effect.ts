@@ -1,6 +1,6 @@
 import { type TypeEnv, unaliasType } from "../assignable.ts";
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
-import { failsWithText } from "../capabilities.ts";
+import { failsWithText, requestFields } from "../capabilities.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
 
@@ -49,7 +49,9 @@ export function builtinEffectCall(eff: EffectDef, reqVar: string, env: TypeEnv):
   // same names top-level for the monolith/inlining path (#71).
   const storage = storageHandlerOf(eff, env);
   if (storage?.endsWith("Read")) {
-    return `${storage}(${eff.mapRequest ? `{ key: ${reqVar}.key, decode: ${reqVar}.decode }` : reqVar})`;
+    // A read's handler takes the fields its request has (`requestFields`).
+    const fields = (requestFields(eff.cap) ?? []).map((f) => `${f}: ${reqVar}.${f}`);
+    return `${storage}(${eff.mapRequest ? `{ ${fields.join(", ")} }` : reqVar})`;
   }
   if (storage?.endsWith("Clear")) return `${storage}()`;
   // A write's request goes through whole, on both storage.write and

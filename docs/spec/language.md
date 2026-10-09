@@ -363,6 +363,9 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   a slot and a `fn` are readable, and `$route` is not a name here
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
+- A field a `map-request` record writes is held to the request of the effect's
+  capability ([http.md §6.6.1](./http.md#_6-6-1-request-fields)): one the request
+  does not have is [E0215](./errors.md#e0215-unknown-record-field)
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
   sees the reducer body's writes up to that statement and none after it
   ([http.md §6.4](./http.md#_6-4-cancellation))

@@ -23,6 +23,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { REQUEST_FIELDS } from "../src/capabilities.ts";
 import { REFINEMENT_PREDS, refinementBases } from "../src/refinements.ts";
 import { UI_LIFTS } from "../src/ui-lifts.ts";
 
@@ -264,6 +265,61 @@ describe("§E0804's base table matches the refinement table", () => {
         expect(table.get(pred), `${track} §E0804 row "${pred}"`).toEqual(
           new Set(refinementBases(pred)),
         );
+      }
+    });
+  }
+});
+
+// The same guard for http.md §6.6.1's request-field table, the published copy
+// of `REQUEST_FIELDS`: the fields an effect's `map-request` may write, which
+// E0215 holds it to. A field the spec lists and the table lacks is a request
+// the checker refuses; one the table has and the spec lacks is a field the
+// spec says no handler reads. Keyed off the backticks, so both tracks parse
+// alike, and a capability named in two rows fails rather than being merged.
+describe("§6.6.1's request-field table matches REQUEST_FIELDS", () => {
+  function section(file: string): string {
+    const source = readFileSync(file, "utf8");
+    const start = source.search(/^### 6\.6\.1\b/m);
+    expect(start, `${file} has no §6.6.1 heading`).toBeGreaterThanOrEqual(0);
+    // Past the heading's own line, up to the next heading of its level or above.
+    const rest = source.slice(source.indexOf("\n", start) + 1);
+    const end = rest.search(/^#{2,3} /m);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
+
+  /** The table as `capability -> fields`, one entry per capability a row names. */
+  function fieldTable(file: string): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    const backticked = (cell: string | undefined): string[] =>
+      [...(cell ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1] as string);
+    for (const line of section(file).split("\n")) {
+      if (!line.startsWith("|")) continue;
+      const cells = line.split("|").slice(1, -1);
+      if (cells.length !== 2) continue;
+      // The header and the separator name no capability.
+      const caps = backticked(cells[0]);
+      for (const cap of caps) {
+        expect(out.has(cap), `${file} lists "${cap}" in two rows`).toBe(false);
+        out.set(cap, backticked(cells[1]));
+      }
+    }
+    return out;
+  }
+
+  const TRACKS = {
+    en: path.join(repoRoot, "docs", "spec", "http.md"),
+    ja: path.join(repoRoot, "docs", "ja", "spec", "http.md"),
+  } as const;
+
+  for (const [track, file] of Object.entries(TRACKS)) {
+    it(`lists every capability with a request schema once on the ${track} track`, () => {
+      expect([...fieldTable(file).keys()].sort()).toEqual([...REQUEST_FIELDS.keys()].sort());
+    });
+
+    it(`lists each capability's request fields on the ${track} track`, () => {
+      const table = fieldTable(file);
+      for (const [cap, fields] of REQUEST_FIELDS) {
+        expect(table.get(cap), `${track} §6.6.1 row "${cap}"`).toEqual(fields);
       }
     });
   }

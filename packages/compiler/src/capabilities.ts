@@ -68,6 +68,40 @@ export function failsWithText(cap: string): boolean {
   return TEXT_FAILURE_CAPABILITIES.has(cap);
 }
 
+const HTTP_READ = ["url", "headers", "query", "decode"];
+const HTTP_SEND = ["url", "headers", "query", "body", "decode"];
+
+/**
+ * The fields of the request each capability's built-in handler reads
+ * (http.md §6.6.1, which publishes this table): the records §6.1.2, §6.7.2
+ * and §6.7.4 declare. A field outside its capability's set is a value no
+ * handler reads, so the checker refuses one that an effect's `map-request`
+ * writes (E0215), and a storage read hands its handler these fields.
+ *
+ * A capability not listed has no request schema: a custom capability, a
+ * standard one whose declared effects reach only a host provider, and
+ * `http.cancel`, which takes no `map-request` at all (E0303).
+ */
+export const REQUEST_FIELDS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["http.get", HTTP_READ],
+  ["http.post", HTTP_SEND],
+  ["http.put", HTTP_SEND],
+  ["http.patch", HTTP_SEND],
+  ["http.delete", HTTP_SEND],
+  ["storage.read", ["key", "decode"]],
+  ["storage.write", ["key", "value"]],
+  ["session.read", ["key", "decode"]],
+  ["session.write", ["key", "value"]],
+  ["indexed.read", ["store", "key", "decode", "index", "range"]],
+  ["indexed.write", ["store", "key", "value"]],
+  ["indexed.delete", ["store", "key"]],
+]);
+
+/** The fields a request on `cap` has, or `undefined` when `cap` has no request schema. */
+export function requestFields(cap: string): readonly string[] | undefined {
+  return REQUEST_FIELDS.get(cap);
+}
+
 /**
  * `confirm`'s `onYes` / `onNo` (stdlib.md §2.6.5, lifecycle.md §7.6): a
  * reducer's name, written bare, which the runtime dispatches by name. It is not
