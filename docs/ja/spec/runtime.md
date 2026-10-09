@@ -190,10 +190,10 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 
 ### 10.3.5 input/textarea/select の bind path
 
-`bind=draft.title` のように **nested lvalue path** に bind できる。ランタイムは：
-- 表示: `_live[root][...path]` を辿って初期値を読む
+`bind=draft.title` や `bind=rows[i].title` のように **nested lvalue path** に bind できる（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）。ランタイムは：
+- 表示: `_live[root][...path]` を辿って初期値を読む。インデックスのステップは読み出し `rows[i]` と同じく読み、そのキーは描画のたびに評価する
 - 変更: 入力イベントで `_setPath` を使い root slot を immutable に更新
-- focus 復元: `data-kumiki-bind` 属性に full path 文字列 (`"draft.title"`) を入れて識別
+- focus 復元: `data-kumiki-bind` 属性に full path 文字列 (`"draft.title"`、`"rows[0].title"` — インデックスのステップは指すキーで綴る) を入れて識別
 
 ### 10.3.6 動的 theme switching
 

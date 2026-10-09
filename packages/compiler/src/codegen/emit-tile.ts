@@ -1,4 +1,4 @@
-import { unaliasType } from "../assignable.ts";
+import { indexPlaceType, unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
@@ -16,7 +16,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
-import type { BindSegment } from "./path-segment.ts";
+import { type PathStep, segmentJs } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
 export function genTile(tile: TileDef, gen: GenCtx): string {
@@ -279,44 +279,53 @@ export function tileExprJs(
 }
 
 /**
- * A `bind=` target lowered: the root slot, the static path below it, and a JS
- * expression reading the value there. Each control decides how it shows that
- * value — `_s.show(…)` for the text controls, as-is for the others.
+ * A `bind=` target lowered: the root slot, the path below it, that path as
+ * the JS of the segments the setter receives, and a JS expression reading the
+ * value there. Each control decides how it shows that value — `_s.show(…)`
+ * for the text controls, as-is for the others.
  */
-export type BindInfo = { root: string; path: BindSegment[]; read: string };
+export type BindInfo = { root: string; path: PathStep[]; pathJs: string; read: string };
 
 /**
- * For `bind=draft` or `bind=draft.get.title`, extract the root slot name, the
- * static path, and a JS expression to read the value — the target as
- * `bindTarget` reads it, which is what the checker asks to be a slot (E0229).
- * Only static field-access paths are supported (no Index, no dynamic lookups).
- * Returns null if no `bind=` arg exists or the path isn't statically resolvable.
+ * For `bind=draft`, `bind=draft.get.title` or `bind=rows[i].title`, extract
+ * the root slot name, the path, and a JS expression to read the value — the
+ * target as `bindTarget` reads it, which is what the checker asks to be a slot
+ * (E0229). An index step's key is evaluated in `ctx`, the scope the control
+ * renders in, on every render: the path the control writes and the value it
+ * shows follow the key as a read of the same path does. Returns null if no
+ * `bind=` arg exists, or the target's root is not a name or a step is a call.
  */
-export function extractBindPath(args: { name?: string; value: unknown }[]): BindInfo | null {
+export function extractBindPath(
+  args: { name?: string; value: unknown }[],
+  ctx: EvalCtx,
+): BindInfo | null {
   const bindArg = args.find((a) => a.name === "bind");
   if (!bindArg) return null;
   const target = bindTarget(bindArg.value as Expr);
   if (target.root.kind !== "Ref" || target.path === null) return null;
   const root = target.root.name;
   const path = target.path;
-  // Build a safe reader: `((_live["root"] ?? {})["a"] ?? {})["b"] ...`.
+  const keyJs = (key: Expr): string => jsOfExpr(key, ctx);
+  // A field is read safely — `((_live["root"]) ?? {})["a"]` — and `.get` and
+  // an index as their reads are, so an empty Option or an index that names
+  // no element panics here as it does in `rows[i].title` (language.md §1.6.3).
   let readRaw = `_live[${JSON.stringify(root)}]`;
   for (const seg of path) {
-    readRaw =
-      typeof seg === "string"
-        ? `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`
-        : `_s.unwrap(${readRaw})`;
+    if (typeof seg === "string") readRaw = `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`;
+    else if ("at" in seg) readRaw = `_s.index(${readRaw}, ${keyJs(seg.at)})`;
+    else readRaw = `_s.unwrap(${readRaw})`;
   }
-  return { root, path, read: readRaw };
+  const pathJs = `[${path.map((seg) => segmentJs(seg, keyJs)).join(",")}]`;
+  return { root, path, pathJs, read: readRaw };
 }
 
 /**
  * The `bind` / `bindPath` fields of a bound control's node — every bound kind
  * goes through here, so `bindPath` is omitted for a bare slot in one place.
  */
-function bindFields(bindInfo: Pick<BindInfo, "root" | "path">): string[] {
+function bindFields(bindInfo: Pick<BindInfo, "root" | "path" | "pathJs">): string[] {
   const fields = [`bind: ${JSON.stringify(bindInfo.root)}`];
-  if (bindInfo.path.length > 0) fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
+  if (bindInfo.path.length > 0) fields.push(`bindPath: ${bindInfo.pathJs}`);
   return fields;
 }
 
@@ -331,7 +340,7 @@ function toggleJs(
   ctx: EvalCtx,
   propsObj: string,
 ): string {
-  const bindInfo = extractBindPath(t.args);
+  const bindInfo = extractBindPath(t.args, ctx);
   const fields = [`kind: ${JSON.stringify(kind)}`];
   if (bindInfo) {
     fields.push(...bindFields(bindInfo), `checked: !!(${bindInfo.read})`);
@@ -346,16 +355,16 @@ function toggleJs(
 /**
  * The reading an `input`'s text is parsed by before it is written to the slot
  * it binds (forms.md §5.1.1), decided by the bound position's type alone. That
- * type is followed from the slot through the path — a record field, an
- * `Option`'s or a `Result`'s payload — to the base it unaliases to, as
- * `T.parse` resolves its qualifier, so a `type Qty = Int where positive` or a
- * `nominal Int` reads as an `Int`. Which `type=` a base goes with is not asked
- * here: a field kind the base does not go with is E0226 at check time.
- * `null` for `Text`, which is written as typed, and for a position whose type
- * cannot be read.
+ * type is followed from the slot through the path — a record field, a List
+ * element or a Map value, an `Option`'s or a `Result`'s payload — to the base
+ * it unaliases to, as `T.parse` resolves its qualifier, so a
+ * `type Qty = Int where positive` or a `nominal Int` reads as an `Int`. Which
+ * `type=` a base goes with is not asked here: a field kind the base does not
+ * go with is E0226 at check time. `null` for `Text`, which is written as
+ * typed, and for a position whose type cannot be read.
  */
 function boundReading(
-  bindInfo: { root: string; path: BindSegment[] },
+  bindInfo: { root: string; path: PathStep[] },
   gen: GenCtx,
 ): "Int" | "Float" | "Time" | null {
   let t: TypeExpr | null = gen.slots.find((s) => s.name === bindInfo.root)?.type ?? null;
@@ -363,6 +372,8 @@ function boundReading(
     const u = unaliasType(t, gen);
     if (typeof seg === "string") {
       t = u?.kind === "TypeRecord" ? (u.fields.find((f) => f.name === seg)?.type ?? null) : null;
+    } else if ("at" in seg) {
+      t = indexPlaceType(u);
     } else {
       t =
         u?.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
@@ -545,7 +556,7 @@ function tileCallJs(
       }
       case "input": {
         const fields: string[] = [`kind: "input"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
@@ -572,7 +583,7 @@ function tileCallJs(
       }
       case "textarea": {
         const fields: string[] = [`kind: "textarea"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
@@ -590,7 +601,7 @@ function tileCallJs(
         return toggleJs(name, t, ctx, propsObj);
       case "select": {
         const fields: string[] = [`kind: "select"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
         } else {
@@ -613,7 +624,7 @@ function tileCallJs(
       }
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         let valueJs: string | undefined;
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
@@ -782,7 +793,7 @@ function tileCallJs(
       }
       case "slider": {
         const fields: string[] = [`kind: "slider"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
@@ -826,7 +837,7 @@ function tileCallJs(
         // `bind=` optionally writes back user edits. Mirrors the input /
         // textarea shape so codegen for text-in-bind is uniform.
         const fields: string[] = [`kind: "editable"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         const textJs = contentJs(t, ctx);
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `text: _s.show(${bindInfo.read})`);

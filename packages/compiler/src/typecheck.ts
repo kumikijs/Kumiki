@@ -3,6 +3,7 @@ import {
   constructorArity,
   elementType,
   forwardedHead,
+  indexPlaceType,
   isKnownTypeName,
   isOpaque,
   nominallyComparable,
@@ -1156,17 +1157,28 @@ const BIND_CONTROLS = new Set([
 ]);
 
 /**
- * E0602 on a `bind=` target: a step written as a call. A bind target is the
+ * E0602 on a `bind=` target: a step that names no place. A bind target is the
  * place the control writes to — a path (language.md §1.6.3, forms.md §5.1),
- * whose steps are written without parentheses. `bind=d.get().title` names the
- * value `.get()` answers, not a place in `d`, and the lowering, which reads
- * only paren-free steps, dropped the whole bind without a word: the input
- * rendered empty and wrote nowhere. The unwrap step is `.get`.
+ * whose steps are the ones `:=` writes through, written without parentheses.
+ * `bind=d.get().title` names the value `.get()` answers, not a place in `d`,
+ * and the lowering, which reads only paren-free steps, drops a bind with a
+ * call in it: the control would render empty and write nowhere. The unwrap
+ * step is `.get`. An index into a `Set` is refused as it is on the left of
+ * `:=` (`checkIndexIsPlace`).
  */
-function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+function checkBindTargetSteps(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
   const bind = t.args.find((a) => a.name === "bind");
   if (!bind || isTileExpr(bind.value)) return;
   for (const step of bindTarget(bind.value).steps) {
+    if (step.kind === "Index") {
+      const base = unaliasType(inferType(step.base, sym, ctx), sym);
+      checkIndexIsPlace(base, "bind", step.pos, sym, errors);
+    }
     if (step.kind !== "MethodCall") continue;
     const hint =
       step.method === "get" && step.args.length === 0
@@ -1208,7 +1220,7 @@ function checkBindTargetRoot(
   errors.push({
     code: "E0229",
     kind: "bind-target-not-slot",
-    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}, not a slot — a bind writes back to a slot or a field path into one. ${root.fix} (see docs/spec/forms.md §5.1)`,
+    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}, not a slot — a bind writes back to a slot or a path into one. ${root.fix} (see docs/spec/forms.md §5.1)`,
     pos: bindArg.value.pos,
   });
 }
@@ -1748,7 +1760,7 @@ function checkTileCall(
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
-  checkBindTargetSteps(t, errors);
+  checkBindTargetSteps(t, sym, errors, ctx);
   checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
   checkInputBindType(t, sym, errors, ctx);
@@ -2615,10 +2627,8 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
 
 /**
  * An index step on the left of `:=`. A `List` index names a position, so it is
- * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` has
- * membership and nothing else, so `s[x] := v` has no place to write — the same
- * refusal §1.6.3 gives a member, and reported by the same code. Membership is
- * changed through `.add` / `.remove` / `.toggle` (stdlib.md §2.2.2).
+ * an `Int` (`checkListIndex`). A `Map` index names an entry. A `Set` index
+ * names no place (`checkIndexIsPlace`).
  */
 function checkIndexLvalue(
   lv: Lvalue & { kind: "LIndex" },
@@ -2628,12 +2638,30 @@ function checkIndexLvalue(
 ): void {
   const base = unaliasType(lvalueType(lv.base, sym), sym);
   checkListIndex(base, lv.index, sym, errors, ctx);
+  checkIndexIsPlace(base, "assign", lv.pos, sym, errors);
+}
+
+/**
+ * An index step a write goes through — on the left of `:=`, or in a `bind=`
+ * target — into `base`, the receiver's type already unaliased. A `Set` has
+ * membership and nothing else, so `s[x] := v` and `bind=s[x]` have no place
+ * to write: the same refusal §1.6.3 gives a member, and reported by the same
+ * code. Membership is changed through `.add` / `.remove` / `.toggle`
+ * (stdlib.md §2.2.2).
+ */
+function checkIndexIsPlace(
+  base: TypeExpr | null,
+  verb: "assign" | "bind",
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
   if (base?.kind !== "TypeApp" || base.name !== "Set") return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
-    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
-    pos: lv.pos,
+    message: `Cannot ${verb} through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    pos,
   });
 }
 
@@ -4268,13 +4296,9 @@ function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     if (lv.field === "get") return unwrappedType(base);
     return null;
   }
-  if (base.kind === "TypeApp") {
-    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
-    // a right-hand side to be checked against.
-    if (base.name === "List") return base.args[0] ?? null;
-    if (base.name === "Map") return base.args[1] ?? null;
-  }
-  return null;
+  // A `Set` index is not a place (`checkIndexIsPlace`), so it has no type for
+  // a right-hand side to be checked against.
+  return indexPlaceType(base);
 }
 
 /**

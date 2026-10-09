@@ -342,6 +342,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,658 measured, from 63,597 on dev at f72685e): a `bind=`
+    // target steps through an index (forms.md §5.1). The 61 bytes are
+    // `bindLabel` spelling an index step as the key it names (`rows[0].title`),
+    // and the focus restore comparing markers as strings rather than through
+    // a selector, since a marker can hold a quoted key (`notes["a"]`). Both sit
+    // in core every app loads; a counter binds nothing and still ships them.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

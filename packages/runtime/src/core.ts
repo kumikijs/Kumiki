@@ -2436,11 +2436,11 @@ export function mountCore(
     // idempotent and cheap on the happy path, so keeping the layer active is a
     // strict simplification win over per-path gating.
     if (snap) {
-      // `snap.bind` comes from `data-kumiki-bind`, which is set from Kumiki
-      // slot / bind-path syntax — a whitelisted identifier grammar without
-      // ", ], or backslash — so it does not need attribute-value escaping
-      // here. `snap.id` may be user-authored (`{id: "..."}`) and IS routed
-      // through `CSS.escape` below.
+      // `snap.bind` comes from `data-kumiki-bind`, which spells an index
+      // step's key as JSON (`notes["a"]`, any text a Map key holds), so the
+      // markers are compared as strings rather than spliced into a selector.
+      // `snap.id` may be user-authored (`{id: "..."}`) and is routed through
+      // `CSS.escape` below.
       //
       // A marker names the control only when one control carries it. Every
       // radio of a bound group carries the same one, as do two controls bound
@@ -2448,7 +2448,9 @@ export function mountCore(
       // focused control — so a shared marker falls through to the id and the
       // DOM path, which tell the siblings apart.
       const byBind = snap.bind
-        ? target.querySelectorAll(`[data-kumiki-bind="${snap.bind}"]`)
+        ? [...target.querySelectorAll<HTMLElement>("[data-kumiki-bind]")].filter(
+            (e) => e.dataset.kumikiBind === snap.bind,
+          )
         : null;
       let sel: Element | null =
         byBind?.length === 1
@@ -3684,14 +3686,13 @@ function elementAtPath(path: number[], root: Element): Element | null {
  * data rather than as a closure because a `bind=` path travels to the client
  * as JSON inside the TileNode.
  *
- * A reducer's assignment can index by an arbitrary expression, so the numeric
- * (and, at runtime, any) case is reachable there. `bind=` resolves only static
- * field chains, which is why its own alphabet is narrower.
+ * An index step — of a reducer's assignment or of a `bind=` target — is
+ * `{at: key}`, its key whatever its expression evaluated to.
  */
 export type PathSegment = string | number | { get: true } | { at: unknown };
 
 /** The segments a `bind=` path can hold — what `TileNode.bindPath` carries. */
-export type BindSegment = Extract<PathSegment, string | { get: true }>;
+export type BindSegment = Extract<PathSegment, string | { get: true } | { at: unknown }>;
 
 /** `{get: true}` and nothing else. Asked only of a step that is not an index:
  * an index key that happens to have that shape (`Map({get: Bool}, V)`) is a
@@ -3835,14 +3836,23 @@ export function isEntryOf(m: unknown, key: unknown): boolean {
 }
 
 /**
- * The source spelling of a `bind=` target — `draft.get.title`. Written into
- * the `data-kumiki-bind` marker by both renderers, and used as the id
+ * The source spelling of a `bind=` target — `draft.get.title`, with an index
+ * step as the key it names: `rows[0].title`, `notes["a"]`. Written into the
+ * `data-kumiki-bind` marker by both renderers, and used as the id
  * `tileTouchedId` reports on an episode's `signal-update.binds-updated`. One
  * formatter, so none of those has to know how a segment is encoded.
  */
-export function bindLabel(bind: string, path?: readonly BindSegment[]): string {
-  if (!path || path.length === 0) return bind;
-  return [bind, ...path.map((seg) => (typeof seg === "string" ? seg : "get"))].join(".");
+export function bindLabel(bind: string, path: readonly BindSegment[] = []): string {
+  let label = bind;
+  for (const seg of path) {
+    label +=
+      typeof seg === "string"
+        ? `.${seg}`
+        : isIndexSegment(seg)
+          ? `[${JSON.stringify(seg.at)}]`
+          : ".get";
+  }
+  return label;
 }
 
 /**

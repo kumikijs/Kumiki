@@ -21,9 +21,20 @@ tile Compose = column(
 - User input updates the slot → the tile re-renders
 - Type and refinement are **checked on each input**
 
-A `bind=` target names the place the control writes back to: a slot, or a field path into one — `bind=form.email`, or `bind=draft.get.title` through the payload of an `Option` or a `Result` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). Its root has to be a slot where the target is written. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are values, not places — a local named like a slot hides the slot, as it does for any read — and a literal or any other expression names no place at all. Each is reported by `kumiki check` ([E0229](./errors.md#e0229-bind-target-not-slot)).
+A `bind=` target names the place the control writes back to: a slot, or a path into one whose steps are the ones an assignment writes through ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field (`bind=form.email`), `.get` through the payload of an `Option` or a `Result` (`bind=draft.get.title`), and an index (`bind=rows[i].title`). Its root has to be a slot where the target is written. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are values, not places — a local named like a slot hides the slot, as it does for any read — and a literal or any other expression names no place at all. Each is reported by `kumiki check` ([E0229](./errors.md#e0229-bind-target-not-slot)).
 
-So a row of a list is not bound through its loop variable. The row shows its value with `value=` and carries its key in its props, and a reducer on the row's event writes the list at that key:
+An index step names what it names on the left of `:=`: the element of a `List` at an `Int` position, the entry of a `Map` at a key. The control shows what the read `rows[i].title` reads and writes what `rows[i].title := v` writes, through the same setter, so the element is replaced in a new `List` of the same length and the other elements are left as they are. The key is any expression, read again on every render as a read of it is: when the slot `i` changes, the control shows and writes the element `i` then names. An index that names no element — a position past the end of the `List`, a key the `Map` does not hold — panics the render, as the read does ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). A `Set` has members and no places, so `bind=tags[x]` is [E0602](./errors.md#e0602-unassignable-member), as `tags[x] := v` is; so is a step written as a call, such as `bind=rows.get(0)`.
+
+So a row of a list is not bound through its loop variable but through the slot, by its key or its index. A `for` over a Map's keys binds each entry where it shows it:
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+
+tile Todos = column(for k in todos.keys input(bind=todos[k].text) {key: k})
+```
+
+A row can also show its value with `value=`, carry its key in its props, and leave the write to a reducer on the row's event, which writes the list at that key:
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -130,7 +141,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 | prop | Type | Meaning |
 |---|---|---|
-| `bind` | slot, or a field path into one ([§5.1](#_5-1-two-way-binding-of-individual-inputs)) | Two-way binding |
+| `bind` | slot, or a path into one ([§5.1](#_5-1-two-way-binding-of-individual-inputs)) | Two-way binding |
 | `value` | expr | One-way value (instead of `bind`; updated in a reducer) |
 | `onChange` | reducer name | Reducer called when the value changes |
 | `onInput` | reducer name | Called on the input event (more frequent than onChange) |

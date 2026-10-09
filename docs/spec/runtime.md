@@ -190,10 +190,10 @@ reducer clear on=ui.click(Btn) do= name := ""    # rejected — not allowed
 
 ### 10.3.5 The bind path of input/textarea/select
 
-You can bind to a **nested lvalue path** like `bind=draft.title`. The runtime:
-- Display: follows `_live[root][...path]` to read the initial value
+You can bind to a **nested lvalue path** like `bind=draft.title` or `bind=rows[i].title` ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)). The runtime:
+- Display: follows `_live[root][...path]` to read the initial value, an index step as the read `rows[i]` does, with its key evaluated on every render
 - Change: on an input event, uses `_setPath` to immutably update the root slot
-- Focus restoration: identifies it by putting the full path string (`"draft.title"`) in the `data-kumiki-bind` attribute
+- Focus restoration: identifies it by putting the full path string (`"draft.title"`, `"rows[0].title"` — an index step as the key it names) in the `data-kumiki-bind` attribute
 
 ### 10.3.6 Dynamic theme switching
 

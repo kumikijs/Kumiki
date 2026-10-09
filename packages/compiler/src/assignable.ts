@@ -385,6 +385,20 @@ export function recordFieldType(
 }
 
 /**
+ * The type of the place an index step names in a receiver of type `base`,
+ * already unaliased (language.md §1.6.3): a `List`'s element, a `Map`'s
+ * value. `null` for anything else — a `Set` has members and no places. The
+ * type a write through `xs[i]` is checked against and the one a control bound
+ * through it reads its text as.
+ */
+export function indexPlaceType(base: TypeExpr | null): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return base.args[0] ?? null;
+  if (base.name === "Map") return base.args[1] ?? null;
+  return null;
+}
+
+/**
  * What one iteration of `for x in <t>` binds, or `null` when the container's
  * element type is not decidable. `Map` is deliberately absent: what iterating a
  * Map yields is not settled anywhere in the spec, and a wrong answer here binds

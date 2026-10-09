@@ -299,5 +299,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `224-bind-root-is-a-slot.kumiki` | type, slot, reducer, tile | フォーム | [§5.1](./forms.md#_5-1-個別入力の双方向束縛) |
+| `238-bind-through-index.kumiki` | type, slot, reducer, tile | フォーム | [§5.1](./forms.md#_5-1-個別入力の双方向束縛) |
 <!-- examples:end -->
 :::

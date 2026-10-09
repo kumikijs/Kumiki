@@ -299,5 +299,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `224-bind-root-is-a-slot.kumiki` | type, slot, reducer, tile | forms | [§5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs) |
+| `238-bind-through-index.kumiki` | type, slot, reducer, tile | forms | [§5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs) |
 <!-- examples:end -->
 :::

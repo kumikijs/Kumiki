@@ -323,4 +323,11 @@ describe("the label a bind path renders as", () => {
     expect(bindLabel("note")).toBe("note");
     expect(bindLabel("note", [])).toBe("note");
   });
+
+  it("spells an index step as the key it names, as the source writes an index", () => {
+    expect(bindLabel("rows", [{ at: 0 }, "title"])).toBe("rows[0].title");
+    expect(bindLabel("notes", [{ at: "a" }])).toBe('notes["a"]');
+    // A key shaped like the unwrap is a key: the index step decides.
+    expect(bindLabel("m", [{ at: { get: true } }, { get: true }])).toBe('m[{"get":true}].get');
+  });
 });

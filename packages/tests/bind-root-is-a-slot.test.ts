@@ -1,4 +1,4 @@
-// A `bind=` target is a slot, or a field path into one (forms.md §5.1). The
+// A `bind=` target is a slot, or a path into one (forms.md §5.1). The
 // control writes back to the slot its target's root names, so a root that is
 // not a slot where the target is written — a `for` variable, a tile's `$1`, a
 // literal — is E0229 at the target: the lowering would write the root's name
@@ -34,7 +34,7 @@ tile P = column(
   text("title=" + title))
 ${APP}`;
     const reported = diagnostics(source).map((d) => [d.code, d.kind, d.pos, d.message]);
-    const tail = "a bind writes back to a slot or a field path into one";
+    const tail = "a bind writes back to a slot or a path into one";
     const see = "(see docs/spec/forms.md §5.1)";
     expect(reported).toEqual([
       [
