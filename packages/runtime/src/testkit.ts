@@ -1504,7 +1504,7 @@ export const _stdlibTest = {
    * play out. Effect outcomes come from the caller's `mocks` map: `from-log`
    * consumes the next recorded effect-end value in order; `ignore` skips
    * delivery; `fixed` injects an explicit `{outcome, value}`. After every
-   * episode replays, compare the live slots against `expect.slotsEqual` —
+   * episode replays, judge `noPanics` and `noErrors`, then `expect.slotsEqual` —
    * either a record literal or `"from-log"` (accumulated from each reducer
    * step's `slot-diffs`).
    *
@@ -1560,20 +1560,11 @@ export const _stdlibTest = {
       expectedSlots = expect.slotsEqual as Record<string, unknown>;
     }
 
-    if (expectedSlots) {
-      for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!valueEqual(app.live[k], v)) {
-          return {
-            name,
-            pass: false,
-            expected: _jsonStr(expectedSlots),
-            actual: _jsonStr(app.live),
-            diffAt: `slots.${k}`,
-            leaf: { expected: v, actual: app.live[k] },
-          };
-        }
-      }
-    }
+    // The checks run in this order, and the first that fails is the report
+    // (§8.6). A reducer that panicked wrote nothing and emitted nothing, and
+    // an err no `.err` reducer caught had nothing to write for it, so the
+    // slots either would have reached keep their old values: compared first,
+    // they would report that symptom in place of the panic or the dropped err.
     if (expect.noPanics && panics.length > 0) {
       return {
         name,
@@ -1591,6 +1582,20 @@ export const _stdlibTest = {
         actual: unhandledErrors.join(", "),
         diffAt: "errors",
       };
+    }
+    if (expectedSlots) {
+      for (const [k, v] of Object.entries(expectedSlots)) {
+        if (!valueEqual(app.live[k], v)) {
+          return {
+            name,
+            pass: false,
+            expected: _jsonStr(expectedSlots),
+            actual: _jsonStr(app.live),
+            diffAt: `slots.${k}`,
+            leaf: { expected: v, actual: app.live[k] },
+          };
+        }
+      }
     }
     return { name, pass: true };
   },
