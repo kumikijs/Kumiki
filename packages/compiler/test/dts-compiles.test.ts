@@ -5,14 +5,14 @@
 // looked right and failed the moment the project compiled. Every case here
 // ends at a real TypeScript program with zero diagnostics.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { generateDts, lex, parse } from "@kumikijs/compiler";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 // Every case here starts a TypeScript program, which is an order of magnitude
 // more work than the rest of this package's tests and past the 5 s default on a

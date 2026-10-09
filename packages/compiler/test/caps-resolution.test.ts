@@ -5,16 +5,16 @@
 // where the toolchain had looked.
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, parse, resolve } from "node:path";
+import { join, parse } from "node:path";
 import {
   CapabilityManifestError,
   resolveCapabilities,
   resolveCapabilityManifest,
 } from "@kumikijs/compiler/node";
 import { describe, expect, it } from "vitest";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 /** A throwaway `<root>/pkg/src/app.kumiki` tree; returns the directories. */
 function project(): { root: string; pkg: string; src: string; file: string } {

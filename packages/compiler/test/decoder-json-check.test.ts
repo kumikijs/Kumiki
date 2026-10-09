@@ -4,15 +4,15 @@
 // check a decoded value against. What the handlers do with the check is
 // `packages/tests/decode-refused-value.test.ts`; this pins what reaches them.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 const TYPES = `
 type NoteId = nominal Text where uuid

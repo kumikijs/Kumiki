@@ -10,15 +10,15 @@
 // actually loading and its reducers computing the right next state, not just
 // on the source text.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { EMITTED_MODULE_BINDINGS, jsBinding } from "../src/codegen/context.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 type ReducerShape = {
   name: string;

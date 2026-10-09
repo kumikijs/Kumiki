@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 // A `fn` is not a value in Kumiki — there are no lambdas (language.md §1.9.1)
 // — but a `fn` name written without its parentheses was accepted wherever a
@@ -14,6 +15,8 @@ import { describe, expect, it } from "vitest";
 // The one position that takes a fn name is the fragment argument of a
 // higher-order method — `items.map(double)`, §1.8.6 — which is a call the
 // method makes, not a value.
+
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 type Diagnostic = { code: string; message: string; text: string };
 
@@ -271,9 +274,7 @@ reducer subject on=ui.click(B) do= result := scale(5)`);
     const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
     if (result.kind !== "ok")
       expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-    const tmp = resolve(__dirname, "test-tmp");
-    mkdirSync(tmp, { recursive: true });
-    const file = join(mkdtempSync(join(tmp, "fn-name-")), "app.mjs");
+    const file = join(mkdtempSync(join(TMP_ROOT, "fn-name-")), "app.mjs");
     writeFileSync(file, result.js);
     const mod: {
       createApp: () => {

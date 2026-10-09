@@ -1,17 +1,15 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
 
-// Write under the package dir (not the OS temp dir) so the generated module's
-// `import "@kumikijs/runtime"` resolves via the workspace node_modules.
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 /** Write generated ESM to a temp file and import it. */
 async function importGenerated(

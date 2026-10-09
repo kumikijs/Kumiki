@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 // A reducer's `[…]` step reaches the runtime's setter as `{at: key}`, apart
 // from a field step (language.md §1.6.3): the two are both a string once
@@ -37,9 +38,7 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = []`;
 
-// Under the package dir so the generated `import "@kumikijs/runtime"` resolves.
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 /** The generated module, mounting nothing (`exportApp`), or the reason it failed. */
 function jsOf(exportApp: boolean): string {
@@ -84,7 +83,10 @@ describe("genSlotAssign encodes an index step as {at: key}", () => {
 });
 
 describe("the emitted write, run", () => {
-  const appP = load(jsOf(true));
+  let appP: Promise<AppShape>;
+  beforeAll(() => {
+    appP = load(jsOf(true));
+  });
   const todo = { title: "a", done: false };
 
   it("writes a field of the entry at a held key, and nothing at an absent one", async () => {

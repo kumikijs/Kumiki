@@ -4,11 +4,12 @@
 // threw `SyntaxError: Identifier 'dup' has already been declared` at load —
 // with `check` and `build` clean.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 function diagnose(source: string): { code: string; message: string; line: number; col: number }[] {
   return check(parse(lex(source))).map((e) => ({
@@ -123,14 +124,7 @@ describe("a bind list's names are distinct", () => {
 // nowhere.
 describe("the emitted module for a bind list", () => {
   const RUNTIME = { runtimeSpecifier: "@kumikijs/runtime", exportApp: true } as const;
-  const TMP_ROOT = resolve(__dirname, "test-tmp");
-  mkdirSync(TMP_ROOT, { recursive: true });
-  const made: string[] = [];
-  // Removed whatever the outcome: these directories accumulate otherwise, and
-  // enough of them time out the module-load tests in this package.
-  afterAll(() => {
-    for (const d of made) rmSync(d, { recursive: true, force: true });
-  });
+  const TMP_ROOT = scratchRoot(import.meta.url);
 
   type ReducerShape = {
     name: string;
@@ -146,7 +140,6 @@ describe("the emitted module for a bind list", () => {
     if (result.kind !== "ok")
       expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
     const dir = mkdtempSync(join(TMP_ROOT, "effect-bind-"));
-    made.push(dir);
     const file = join(dir, "app.mjs");
     writeFileSync(file, result.js);
     const mod: { createApp: () => { reducers: ReducerShape[] } } = await import(

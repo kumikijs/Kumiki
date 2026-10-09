@@ -10,18 +10,18 @@
 // These assert on the emitted module actually loading and its reducer computing
 // the right next state, because that is the half `check` and `build` never saw.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { jsBinding } from "../src/codegen/context.ts";
 import { RESERVED_BIND_NAMES } from "../src/reserved-binds.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 const RUNTIME = { runtimeSpecifier: "@kumikijs/runtime", exportApp: true } as const;
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 type ReducerShape = {
   name: string;

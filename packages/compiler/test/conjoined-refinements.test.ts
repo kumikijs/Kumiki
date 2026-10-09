@@ -12,8 +12,8 @@
 // named type reached through either. `assignable.ts` peels all of them to
 // answer "is this nominal"; these tests hold codegen to the same reading.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import type { AppShape, SlotMeta } from "@kumikijs/runtime";
@@ -23,9 +23,9 @@ import { refinementsOf } from "../src/codegen/emit-type.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { defined } from "./helpers/defined.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 // `Chained` is declared BEFORE the `Short` it is written over, so a walk that
 // read declaration order rather than the chain would order its predicates the
