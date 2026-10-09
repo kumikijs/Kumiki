@@ -7,6 +7,11 @@
 // table — so either could change and stay green while a `for-all` over `Email`
 // generated values the slot it is generating for would refuse. That is the
 // state testing.md §8.3.2 says cannot happen, stated here as an assertion.
+//
+// Shrinking a counterexample proposes values too, and is held to the same
+// check: every candidate it tries, and the value it settles on, has to pass
+// the predicate the generator honoured — or the counterexample reported is a
+// value no trial could have been generated with.
 
 import { applyRefine, type GenDescData, refinementToJs } from "@kumikijs/compiler";
 import { _stdlibTest, type GenDesc } from "@kumikijs/runtime";
@@ -92,4 +97,57 @@ describe("a generated value passes the check the runtime applies to a write", ()
       generatedValuesPass(descriptor({ t: "Text" }, "len-gt", [3]), predicate("len-gt", [3])),
     ).toBeUndefined();
   });
+});
+
+/**
+ * Every value a property over `desc` hands its trial — the generated ones and
+ * each candidate shrinking tries — that the predicate refuses, and the
+ * counterexample shrinking settles on. The trial fails every time, so
+ * shrinking runs all the way to the simplest value it will propose.
+ */
+function shrinkPath(
+  desc: GenDesc,
+  accepts: (v: unknown) => boolean,
+): { refused: unknown[]; settled: unknown } {
+  const refused: unknown[] = [];
+  const report = _stdlibTest.runPropertyTest({
+    name: `shrunk ${JSON.stringify(desc)}`,
+    vars: { v: desc },
+    trial: (binds) => {
+      if (!accepts(binds.v)) refused.push(binds.v);
+      return false;
+    },
+  });
+  const settled = /^counterexample \(case \d+\/\d+\): (.*)$/.exec(report.actual ?? "")?.[1];
+  if (settled === undefined) throw new Error(`not a counterexample: ${report.actual}`);
+  return { refused, settled: (JSON.parse(settled) as { v: unknown }).v };
+}
+
+describe("a shrunk value passes the check the generator honoured", () => {
+  const cases: [string, GenDescData, (number | string)[]][] = [
+    ["email", { t: "Text" }, []],
+    ["url", { t: "Text" }, []],
+    ["uuid", { t: "Text" }, []],
+    ["one-of", { t: "Text" }, ["sm", "md", "lg"]],
+    ["one-of", { t: "Int" }, [3, 5, 9]],
+    ["positive", { t: "Int" }, []],
+    ["positive", { t: "Float" }, []],
+    ["negative", { t: "Int" }, []],
+    ["negative", { t: "Float" }, []],
+    ["between", { t: "Int" }, [5, 11]],
+    ["between", { t: "Float" }, [-9, -2]],
+    ["nonempty", { t: "Text" }, []],
+    ["len-gt", { t: "Text" }, [3]],
+    ["len-eq", { t: "Text" }, [4]],
+    ["len-lt", { t: "Text" }, [6]],
+  ];
+  for (const [pred, base, args] of cases) {
+    const written = args.length > 0 ? `${pred}(${args.join(", ")})` : pred;
+    it(`shrinks a ${String(base.t)} where ${written} only through values it accepts`, () => {
+      const accepts = predicate(pred, args);
+      const { refused, settled } = shrinkPath(descriptor(base, pred, args), accepts);
+      expect(refused).toEqual([]);
+      expect(accepts(settled)).toBe(true);
+    });
+  }
 });

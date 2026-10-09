@@ -342,6 +342,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,658 measured, from 63,597 on dev at f72685e): a
+    // property-test counterexample whose `run-reducer` batch was refused is
+    // followed by the rejection (testing.md §8.3.2). The 61 bytes are
+    // `rejectedBatchText`, which that counterexample and the console report
+    // both say it through. It sits in core every app loads; a counter runs no
+    // property-test and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

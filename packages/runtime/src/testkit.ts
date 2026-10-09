@@ -16,6 +16,7 @@ import {
   type ReducerSpec,
   type RefinementNaming,
   type RefinementRejection,
+  rejectedBatchText,
   reportRejectedBatch,
   withEnvReplay,
 } from "./core.ts";
@@ -521,12 +522,65 @@ function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
   return `https://${word(6)}.example.com/${word(4)}`;
 }
 
-function genValue(desc: GenDesc, rng: () => number): unknown {
-  // `one-of` names the whole domain, whatever the base type is, so it is
-  // answered ahead of the type it refines.
-  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
-    return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
+/**
+ * The shape {@link genForm} builds each form in: its literal text, with a run
+ * of letters (or hex digits) wherever it draws a word. Every value in it passes
+ * the runtime's own check for the form — `packages/tests` holds the two to each
+ * other over what generation and shrinking produce — and a shrunk form stays in
+ * it, so a counterexample reads like the value it was shrunk from.
+ */
+const FORM_SHAPES: Record<"email" | "url" | "uuid", RegExp> = {
+  email: /^[a-z]+@[a-z]+\.example\.com$/,
+  url: /^https:\/\/[a-z]+\.example\.com\/[a-z]+$/,
+  uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+};
+
+/**
+ * The literals a `one-of` descriptor lists, or `undefined` when it lists none.
+ * They name the whole domain, whatever base type they refine, so generation,
+ * admission and shrinking all answer them ahead of the type.
+ */
+function choicesOf(desc: GenDesc): (number | string)[] | undefined {
+  return "oneOf" in desc && desc.oneOf && desc.oneOf.length > 0 ? desc.oneOf : undefined;
+}
+
+/** A descriptor whose values shrinking proposes directly, rather than out of parts. */
+type ScalarDesc = Extract<GenDesc, { t: "Int" | "Float" | "Text" }>;
+
+/**
+ * Whether `v` is in the domain `desc` declares — the constraints its
+ * refinements folded into it, read from the same fields {@link genValue}
+ * builds a value to: one of its `one-of` literals; an `Int` or `Float` within
+ * `min` / `max` (an `Int` whole); a `Text` within `minLen` / `maxLen` and, for
+ * a form, in the shape that form is generated in. The spans an unbounded type
+ * is sampled from (±1000, 50 characters) are where generation looks, not part
+ * of the domain.
+ *
+ * Every number and text {@link _shrink} proposes passes it, so a shrunk
+ * counterexample is one the `for-all` could have generated.
+ */
+function admits(desc: ScalarDesc, v: unknown): boolean {
+  const choices = choicesOf(desc);
+  if (choices) return choices.includes(v as number | string);
+  if (desc.t === "Text") {
+    return (
+      typeof v === "string" &&
+      v.length >= (desc.minLen ?? 0) &&
+      v.length <= (desc.maxLen ?? Number.POSITIVE_INFINITY) &&
+      (desc.form === undefined || FORM_SHAPES[desc.form].test(v))
+    );
   }
+  return (
+    typeof v === "number" &&
+    (desc.t === "Float" || Number.isInteger(v)) &&
+    v >= (desc.min ?? Number.NEGATIVE_INFINITY) &&
+    v <= (desc.max ?? Number.POSITIVE_INFINITY)
+  );
+}
+
+function genValue(desc: GenDesc, rng: () => number): unknown {
+  const choices = choicesOf(desc);
+  if (choices) return choices[Math.floor(rng() * choices.length)];
   switch (desc.t) {
     case "Int": {
       const lo = desc.min ?? -1000;
@@ -592,40 +646,85 @@ function genValue(desc: GenDesc, rng: () => number): unknown {
   }
 }
 
-/** Candidate values "simpler" than `v`, for shrinking a counterexample. */
-function _shrink(v: unknown): unknown[] {
-  if (typeof v === "number") {
-    if (v === 0) return [];
-    const half = Math.trunc(v / 2);
-    return half === 0 ? [0] : [0, half];
+/**
+ * Values of `desc` "simpler" than `v`, for shrinking a counterexample, simplest
+ * first — each one inside the domain `desc` declares, so the counterexample
+ * shrinking settles on is a value the generator could have produced.
+ *
+ * - A `one-of` value: the literals listed before it, the first one first.
+ * - A number: the value nearest zero the bounds allow (zero itself when they
+ *   hold it), and the point halfway there.
+ * - A text: its prefix of the shortest length allowed and its prefix of half
+ *   its length; a form's text also each text one character shorter, which is
+ *   how it shortens a word and keeps its literal parts.
+ * - A list, a set or a map: no elements, and each one element fewer.
+ * - `Some`: `None`.
+ * - A record: each field's own candidates, one field at a time.
+ *
+ * A number's and a text's candidates are the ones {@link admits} passes; a
+ * structure's are made of those, or of the parts it was generated with. A
+ * `Bool`, a `Result` and a union variant are left as generated.
+ */
+function _shrink(desc: GenDesc, v: unknown): unknown[] {
+  const choices = choicesOf(desc);
+  if (choices) {
+    const at = choices.indexOf(v as number | string);
+    return at > 0 ? choices.slice(0, at) : [];
   }
-  if (typeof v === "string") {
-    if (v === "") return [];
-    return ["", v.slice(0, Math.floor(v.length / 2))];
-  }
-  if (Array.isArray(v)) {
-    if (v.length === 0) return [];
-    const out: unknown[] = [[]];
-    for (let i = 0; i < v.length; i++) out.push([...v.slice(0, i), ...v.slice(i + 1)]);
-    return out;
-  }
-  if (v && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    if ("_tag" in o) return o._tag === "Some" ? [{ _tag: "None" }] : [];
-    const keys = Object.keys(o);
-    if (keys.length === 0) return [];
-    const out: unknown[] = [{}];
-    for (const k of keys) {
-      const cp = { ...o };
-      delete cp[k];
-      out.push(cp);
+  switch (desc.t) {
+    case "Int":
+    case "Float": {
+      if (typeof v !== "number") return [];
+      const target = Math.min(
+        Math.max(0, desc.min ?? Number.NEGATIVE_INFINITY),
+        desc.max ?? Number.POSITIVE_INFINITY,
+      );
+      if (v === target) return [];
+      const half = target + Math.trunc((v - target) / 2);
+      return (half === target ? [target] : [target, half]).filter((c) => admits(desc, c));
     }
-    return out;
+    case "Text": {
+      if (typeof v !== "string") return [];
+      const out = new Set([
+        v.slice(0, desc.minLen ?? 0),
+        v.slice(0, Math.max(desc.minLen ?? 0, Math.floor(v.length / 2))),
+      ]);
+      if (desc.form) for (let i = 0; i < v.length; i++) out.add(v.slice(0, i) + v.slice(i + 1));
+      out.delete(v);
+      return [...out].filter((c) => admits(desc, c));
+    }
+    case "List":
+      if (!Array.isArray(v) || v.length === 0) return [];
+      return [[], ...v.map((_, i) => [...v.slice(0, i), ...v.slice(i + 1)])];
+    case "Set":
+    case "Map": {
+      const keys = v && typeof v === "object" ? Object.keys(v) : [];
+      if (keys.length === 0) return [];
+      return [
+        {},
+        ...keys.map((k) =>
+          Object.fromEntries(Object.entries(v as object).filter(([j]) => j !== k)),
+        ),
+      ];
+    }
+    case "Option":
+      return (v as { _tag?: unknown } | null)?._tag === "Some" ? [{ _tag: "None" }] : [];
+    case "Record": {
+      if (!v || typeof v !== "object") return [];
+      const o = v as Record<string, unknown>;
+      return desc.fields.flatMap((f) =>
+        _shrink(f.desc, o[f.name]).map((c) => ({ ...o, [f.name]: c })),
+      );
+    }
+    default:
+      return [];
   }
-  return [];
 }
 
-/** Greedily minimize a failing binding set, holding each var's failure. */
+/**
+ * Greedily minimize a failing binding set, each var by its own descriptor:
+ * a candidate is taken when `fails` still holds for it.
+ */
 function shrinkCounterexample(
   vars: Record<string, GenDesc>,
   fails: (b: Record<string, unknown>) => boolean,
@@ -636,8 +735,8 @@ function shrinkCounterexample(
   let guard = 0;
   while (improved && guard++ < 1000) {
     improved = false;
-    for (const k of Object.keys(vars)) {
-      for (const cand of _shrink(cur[k])) {
+    for (const [k, desc] of Object.entries(vars)) {
+      for (const cand of _shrink(desc, cur[k])) {
         const next = { ...cur, [k]: cand };
         if (fails(next)) {
           cur = next;
@@ -649,6 +748,17 @@ function shrinkCounterexample(
   }
   return cur;
 }
+
+/** A `run-reducer` step whose batch a refinement refused (runtime.md §10.3.3). */
+type RefusedStep = { reducer: string; rejected: RefinementRejection[] };
+
+/**
+ * The refused steps of the property-test trial running now, or `undefined`
+ * outside one. `runReducerStep` adds to it and `runPropertyTest` reads it: the
+ * step is called from inside the generated trial, which answers only whether
+ * its invariant held.
+ */
+let trialRefusals: RefusedStep[] | undefined;
 
 // ----- shared per-episode executor (spec/testing.md §8.6 + runtime.md §10.5.3) -----
 // Drives the reducer queue, applies effect mocks, and emits observer events.
@@ -1286,6 +1396,10 @@ export const _stdlibTest = {
    * hide: `run-reducer(inc).run-reducer(dec)` reads its predecessor's output, so
    * a batch the app would refuse becomes the next step's starting state and the
    * invariant is checked against a world that cannot happen.
+   *
+   * A refused batch answers the state the step was given, and the trial it ran
+   * in is told so ({@link trialRefusals}): the invariant then reads a state the
+   * reducer did not commit, which `runPropertyTest` does not shrink toward.
    */
   runReducerStep(
     app: {
@@ -1305,6 +1419,7 @@ export const _stdlibTest = {
     const rejected = batchRejections(res, app.slots);
     if (rejected.length > 0) {
       reportRejectedBatch(name, rejected);
+      trialRefusals?.push({ reducer: name, rejected });
       return { slots: { ...slots } };
     }
     const next: Record<string, unknown> = { ...slots };
@@ -1316,6 +1431,11 @@ export const _stdlibTest = {
    * cases for the `vars` descriptors with a seeded PRNG (reproducible), check
    * `trial(binds) === true` each time, and on failure shrink to a minimal
    * counterexample (unless `shrink === false`).
+   *
+   * A trial in which a `run-reducer` batch was refused read a state the reducer
+   * did not commit. Shrinking takes no such candidate as a smaller
+   * counterexample; a generated case that is itself refused is reported as
+   * generated, followed by the refusal.
    */
   runPropertyTest(input: {
     name: string;
@@ -1329,24 +1449,41 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
-    const fails = (b: Record<string, unknown>): boolean => {
+    // Whether the invariant does NOT hold on `b` (a throw counts as a fail),
+    // and the first step of the trial whose batch was refused.
+    const attempt = (b: Record<string, unknown>): { fails: boolean; refused?: RefusedStep } => {
+      const outer = trialRefusals;
+      const refused: RefusedStep[] = [];
+      trialRefusals = refused;
       try {
-        return trial(b) !== true;
-      } catch {
-        return true;
+        let fails: boolean;
+        try {
+          fails = trial(b) !== true;
+        } catch {
+          fails = true;
+        }
+        return refused[0] ? { fails, refused: refused[0] } : { fails };
+      } finally {
+        trialRefusals = outer;
       }
+    };
+    const failsCommitted = (b: Record<string, unknown>): boolean => {
+      const r = attempt(b);
+      return r.fails && !r.refused;
     };
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
-      if (fails(binds)) {
-        const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
+      const { fails, refused } = attempt(binds);
+      if (fails) {
+        const minimal =
+          doShrink && !refused ? shrinkCounterexample(vars, failsCommitted, binds) : binds;
+        const note = refused ? ` — ${rejectedBatchText(refused.reducer, refused.rejected)}` : "";
         return {
           name,
           pass: false,
           expected: "invariant holds for all generated inputs",
-          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}`,
+          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}${note}`,
           diffAt: "(property)",
           cases: i + 1,
         };
