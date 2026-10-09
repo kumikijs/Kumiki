@@ -7008,14 +7008,21 @@ function checkRefinement(
   });
 }
 
-/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
+/**
+ * {@link refinementBaseProblem} for `r` over `inner`, as a checker problem.
+ *
+ * The base is `inner` normalised, the form every value check compares
+ * against. A chain that closes on itself has none (E0009's to report), and a
+ * name that resolves to nothing, bare or applied, normalises to an opaque
+ * name that `refinementBaseProblem` passes (E0117's).
+ */
 function baseProblem(
   r: Refinement,
   inner: TypeExpr,
   sym: SymbolTable,
   typeParams: ReadonlySet<string>,
 ): RefinementProblem | undefined {
-  const base = judgedBase(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const base = unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
   const message = base ? refinementBaseProblem(r, base) : undefined;
   return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
@@ -7023,19 +7030,6 @@ function baseProblem(
 /** Each of `params` mapped to the opaque type, so that nothing is concluded from it. */
 function opaqueParams(params: Iterable<string>, pos: Pos): Map<string, TypeExpr> {
   return new Map([...params].map((p) => [p, unknownType(pos)]));
-}
-
-/**
- * `t` in the form a refinement's base is judged against, or `undefined` when
- * nothing can be concluded from it: a chain that closes on itself (E0009's to
- * report), or an application of a name that resolves to nothing (E0117's) —
- * as opaque as the bare unresolved name `refinementBaseProblem` passes.
- */
-function judgedBase(t: TypeExpr, sym: SymbolTable): TypeExpr | undefined {
-  const base = unaliasType(t, sym);
-  if (base === null) return undefined;
-  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return undefined;
-  return base;
 }
 
 /**
@@ -7226,8 +7220,8 @@ function appliedBaseProblems(
         const r = t.refinement;
         // A problem with the arguments is the definition's, reported there.
         if (r && !refinementProblem(r)) {
-          const was = judgedBase(substituteType(t.inner, before), sym);
-          const now = judgedBase(substituteType(t.inner, applied), sym);
+          const was = unaliasType(substituteType(t.inner, before), sym);
+          const now = unaliasType(substituteType(t.inner, applied), sym);
           if (now && !(was && refinementBaseProblem(r, was))) {
             const over = `${run.shown} applies it over ${typeToString(now)}`;
             const message = refinementBaseProblem(r, now, over);

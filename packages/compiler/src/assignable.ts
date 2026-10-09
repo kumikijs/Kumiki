@@ -42,7 +42,10 @@ export type TypeEnv = { types: ReadonlyMap<string, TypeDef> };
  */
 export const unknownType = (pos: Pos): TypeExpr => ({ kind: "TypeRef", name: "?", pos });
 
-/** True when nothing can be concluded about `t` — an unresolved name, or absent. */
+/**
+ * True when nothing can be concluded about `t` — an unresolved name, bare or
+ * applied, or absent.
+ */
 export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
   const u = unaliasType(t, env);
   return u === null || u.kind === "TypeRef";
@@ -53,9 +56,15 @@ export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
  * generic definitions instantiated, `nominal` / `where` wrappers stripped.
  *
  * A `TypeRef` that names nothing is returned as-is, which is how a type
- * parameter and a misspelling both become opaque. An alias that resolves to
- * itself returns `null` rather than looping: reporting the cycle is a separate
- * check, and normalisation has to terminate whether or not one exists.
+ * parameter and a misspelling both become opaque. An application of a name
+ * that is no type at all (`isKnownTypeName`) — `Foo(Int)`, a misspelt
+ * `Lst(Int)`, a parameter applied to arguments — reduces to that name as a
+ * `TypeRef` and is opaque the same way: arguments to no type describe nothing
+ * to compare against.
+ *
+ * An alias that resolves to itself returns `null` rather than looping:
+ * reporting the cycle is a separate check, and normalisation has to terminate
+ * whether or not one exists.
  */
 export function unaliasType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
   return unaliasFrom(t, new Set(), newWalk(env));
@@ -205,10 +214,14 @@ function unaliasFrom(t: TypeExpr | null, outer: ReadonlySet<string>, walk: Walk)
   const seen = walk.origins.get(t) ?? outer;
   if (t.kind === "TypeRef" || t.kind === "TypeApp") {
     const def = walk.env.types.get(t.name);
-    // A `TypeRef` naming nothing is opaque; a stdlib constructor (`List`,
-    // `Option`, …) has no definition to expand into and is already in its
-    // comparison form.
-    if (!def) return t;
+    // A stdlib constructor (`List`, `Option`, …) has no definition to expand
+    // into and is already in its comparison form; any other name with no
+    // definition is opaque, applied or not.
+    if (!def) {
+      return t.kind === "TypeApp" && !isKnownTypeName(t.name, walk.env)
+        ? { kind: "TypeRef", name: t.name, pos: t.pos }
+        : t;
+    }
     // Re-entry answers `null` for both: the chain has closed on itself, so
     // there is no normal form to compare against. Returning the application
     // instead handed comparisons a type that looks usable and is not —

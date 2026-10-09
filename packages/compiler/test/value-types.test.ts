@@ -759,6 +759,53 @@ describe("undefined type names (E0117)", () => {
       ),
     ).toEqual([]);
   });
+
+  // An application of a name that resolves to nothing is as opaque as the
+  // bare name: the name is the one mistake, and E0117 the one report, wherever
+  // the application is written and whatever value meets it.
+  const UNDEFINED_APPLICATIONS: [string, string][] = [
+    ["a slot type", `slot y : Foo(Int) = 1`],
+    ["a fn parameter", `fn f(x: Foo(Int)) -> Int = 1\nslot s : Int = f(1)`],
+    ["a fn parameter used as its result", `fn f(x: Foo(Int)) -> Int = x`],
+    ["a fn result", `fn h() -> Foo(Int) = 1`],
+    ["a record field", `type R = {a: Foo(Int)}\nslot r : R = {a: 1}`],
+    ["a variant payload", `type U = Has(Foo(Int)) | Empty\nslot u : U = Has(1)`],
+    ["a List element", `slot l : List(Foo(Int)) = [1]`],
+    ["an Option payload", `slot o : Option(Foo(Int)) = Some(1)`],
+    ["an alias", `type A = Foo(Int)\nslot a : A = 1`],
+    ["a declared generic's argument", `type NE(T) = T where nonempty\nslot r : NE(Foo(Int)) = 1`],
+    ["two arguments", `slot y : Foo(Int, Text) = 1`],
+    ["a nominal", `type N = nominal Foo(Int)\nslot n : N = 1`],
+    ["an inline nominal", `slot n : nominal Foo(Int) = 1`],
+    ["a refinement", `slot r : Foo(Int) where positive = 1`],
+    ["a misspelt stdlib constructor", `slot l : Lst(Int) = [1]`],
+    ["a primitive written with arguments", `slot z : Int() = 1`],
+  ];
+  for (const [where, defs] of UNDEFINED_APPLICATIONS) {
+    it(`reports an undefined type applied in ${where} once`, () => {
+      expect(prog(defs)).toEqual(["E0117"]);
+    });
+  }
+
+  it("reports nothing more where a value of an undefined application is used", () => {
+    const Y = `slot y : Foo(Int) = 1\nslot n : Int = 0`;
+    expect(inReducer(Y, `n := y`)).toEqual(["E0117"]);
+    expect(inReducer(Y, `n := y + 1`)).toEqual(["E0117"]);
+    expect(inReducer(Y, `y := "x"`)).toEqual(["E0117"]);
+    expect(inReducer(Y, `n := match y with | Some(v) -> 1 | None -> 0`)).toEqual(["E0117"]);
+  });
+
+  // Opacity is for a name that is no type. A stdlib constructor and a
+  // program's own generic are types, and a value is still checked against
+  // their arguments.
+  it("still checks a value against a stdlib constructor or a declared generic", () => {
+    expect(prog(`slot l : List(Int) = ["x"]`)).toEqual(["E0201"]);
+    expect(prog(`slot l : List(Int) = "x"`)).toEqual(["E0201"]);
+    expect(prog(`slot o : Option(Text) = 1`)).toEqual(["E0201"]);
+    expect(prog(`slot o : Option(Text) = Some(1)`)).toEqual(["E0201"]);
+    expect(prog(`type G(T) = {v: T}\nslot g : G(Int) = {v: "x"}`)).toEqual(["E0201"]);
+    expect(prog(`type G(T) = {v: T}\nslot g : G(Int) = {v: 1}`)).toEqual([]);
+  });
 });
 
 describe("Int literal precision (E0217)", () => {

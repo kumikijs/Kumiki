@@ -403,8 +403,7 @@ describe("a predicate over a base type it cannot test is reported", () => {
     const codes = check(parse(lex(`slot x : Foo(Int) where nonempty = 1\n${TAIL}`))).map(
       (e) => e.code,
     );
-    expect(codes).toContain("E0117");
-    expect(codes).not.toContain("E0804");
+    expect(codes).toEqual(["E0117"]);
   });
 
   it("names what the predicate tests and the base it was written over", () => {
