@@ -1,7 +1,7 @@
 import { unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
-import { BUILTIN_TILES, contentArg } from "../builtins.ts";
+import { BUILTIN_TILES, contentArg, positionalIsTile } from "../builtins.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import {
@@ -506,6 +506,12 @@ function tileCallJs(
   // implicit key, without touching each individual case.
   gen.usedTiles.add(name);
   const propsObj = propsFor(t, ctx, enclosingTiles, explicitHandlers(t, rootHandlers));
+  // The positional arguments a builtin renders as children, read off the one
+  // set the checker reads too (`positionalIsTile`): what `check` accepts there
+  // is what renders, and a builtin outside the set lowers none of them.
+  const children = positionalIsTile(name)
+    ? `[${collectChildren(t.args, gen, ctx, enclosingTiles)}]`
+    : "[]";
   const emitBuiltin = (): string => {
     switch (name) {
       case "page":
@@ -518,17 +524,16 @@ function tileCallJs(
       case "overlay":
       case "region":
       case "scroll":
-      case "divider":
       case "fieldset":
       case "list-item":
       case "table":
       case "table-head":
       case "table-body":
       case "table-row":
-      case "panel": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        return `({ kind: ${JSON.stringify(name)}, children: [${children}], props: ${propsObj} })`;
-      }
+      case "panel":
+        return `({ kind: ${JSON.stringify(name)}, children: ${children}, props: ${propsObj} })`;
+      case "divider":
+        return `({ kind: "divider", props: ${propsObj} })`;
       case "heading": {
         const text = contentJs(t, ctx);
         return `({ kind: "heading", text: _s.show(${text}), props: ${propsObj} })`;
@@ -644,10 +649,8 @@ function tileCallJs(
       }
       case "spinner":
         return `({ kind: "spinner", props: ${propsObj} })`;
-      case "form": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        return `({ kind: "form", children: [${children}], props: ${propsObj} })`;
-      }
+      case "form":
+        return `({ kind: "form", children: ${children}, props: ${propsObj} })`;
       case "label": {
         const text = contentJs(t, ctx);
         return `({ kind: "label", text: _s.show(${text}), props: ${propsObj} })`;
@@ -727,14 +730,12 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "list": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const ordered = t.args.find((a) => a.name === "ordered");
         const ord = ordered ? `!!(${jsOfExpr(asExpr(ordered.value), ctx)})` : "false";
-        return `({ kind: "list", ordered: ${ord}, children: [${children}], props: ${propsObj} })`;
+        return `({ kind: "list", ordered: ${ord}, children: ${children}, props: ${propsObj} })`;
       }
       case "table-cell": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        const fields: string[] = [`kind: "table-cell"`, `children: [${children}]`];
+        const fields: string[] = [`kind: "table-cell"`, `children: ${children}`];
         const colspan = t.args.find((a) => a.name === "colspan");
         if (colspan) fields.push(`colspan: ${jsOfExpr(asExpr(colspan.value), ctx)}`);
         const rowspan = t.args.find((a) => a.name === "rowspan");
@@ -745,8 +746,7 @@ function tileCallJs(
       case "modal":
       case "drawer":
       case "popover": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        const fields: string[] = [`kind: ${JSON.stringify(name)}`, `children: [${children}]`];
+        const fields: string[] = [`kind: ${JSON.stringify(name)}`, `children: ${children}`];
         const open = t.args.find((a) => a.name === "open");
         fields.push(`open: ${open ? `!!(${jsOfExpr(asExpr(open.value), ctx)})` : "true"}`);
         for (const key of ["title", "side", "placement"]) {
@@ -757,8 +757,7 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "tooltip": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        const fields: string[] = [`kind: "tooltip"`, `children: [${children}]`];
+        const fields: string[] = [`kind: "tooltip"`, `children: ${children}`];
         const text = t.args.find((a) => a.name === "text");
         if (text) fields.push(`text: _s.show(${jsOfExpr(asExpr(text.value), ctx)})`);
         const placement = t.args.find((a) => a.name === "placement");
@@ -812,13 +811,12 @@ function tileCallJs(
         // <details>: `summary=` supplies the disclosure label; unnamed args
         // are the collapsed children. `open` is optional and defaults to
         // false so the panel starts collapsed (native browser default).
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const summaryArg = t.args.find((a) => a.name === "summary");
         const summary = summaryArg ? jsOfExpr(asExpr(summaryArg.value), ctx) : '""';
         const fields: string[] = [
           `kind: "details"`,
           `summary: _s.show(${summary})`,
-          `children: [${children}]`,
+          `children: ${children}`,
         ];
         const openArg = t.args.find((a) => a.name === "open");
         if (openArg) fields.push(`open: !!(${jsOfExpr(asExpr(openArg.value), ctx)})`);

@@ -1,6 +1,7 @@
-// A positional argument of a builtin that is not a value builtin renders only
-// when it is a tile: a tile call, `match` / control flow, or the name of a tile
-// the program defines (language.md §1.7.1). Codegen drops any other value
+// A positional argument of a builtin that renders its positional arguments as
+// children — a container: `column`, `row`, `card`, … — renders only when it is
+// a tile: a tile call, `match` / control flow, or the name of a tile the
+// program defines (language.md §1.7.1). Codegen drops any other value
 // there, so `column(text("a"), 42)` and `column(let x = 42 in Card(x))` passed
 // `check` and rendered as if the value were not written — and a slot named
 // there, `column(n)`, put a `null` into the child list. It is E0128 at the
@@ -81,13 +82,14 @@ describe("a value written as a child", () => {
     expect(diagnostics(home)).toEqual([E0128(home, "let", "card")]);
   });
 
-  it("is reported in any builtin that is not a value builtin", () => {
-    // `row` renders children; `button` reads no positional argument at all.
-    // A value is dropped by either.
+  it("is reported in any builtin that renders its children", () => {
+    // A builtin that renders no positional argument (`button`, `progress`, …)
+    // refuses a value there as it refuses a tile: E0129, in
+    // `unrendered-positional.test.ts`.
     const row = `row(text("a"), let x = 1 in Card({label: x.show}))`;
     expect(diagnostics(row)).toEqual([E0128(row, "let", "row")]);
-    const button = `column(button(42, text="go"))`;
-    expect(diagnostics(button)).toEqual([E0128(button, "42", "button")]);
+    const card = `column(card(text("a"), 42))`;
+    expect(diagnostics(card)).toEqual([E0128(card, "42", "card")]);
   });
 
   it("does not stop the rest of the check", () => {

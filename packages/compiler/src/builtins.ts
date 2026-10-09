@@ -79,15 +79,91 @@ export const BUILTIN_TILES = new Set<string>([
 ]);
 
 /**
- * Whether `name` renders a positional argument only when it is a tile: a
- * builtin that is not a value builtin. Codegen lowers a positional argument of
- * one as a child (`column`, `row`, `card`, …) or not at all (`button`,
- * `progress`, …), and in either case a value there renders nothing — the
- * checker reports it (E0128). A user tile's positional argument is its input,
- * a value.
+ * The containers: the builtins that render their positional arguments as
+ * children, in order (language.md §1.7.1). Every builtin is one of three
+ * kinds, by what it does with a positional argument — one of these; a value
+ * builtin, which reads its first one as content (`VALUE_BUILTIN_CONTENT`); or
+ * a builtin that renders none (`SHOWN_IN_PLACE_OF_POSITIONAL`) — and
+ * `builtin-tiles.test.ts` holds each to exactly one.
+ */
+const CHILD_BUILTINS: ReadonlySet<string> = new Set([
+  "page",
+  "region",
+  "row",
+  "column",
+  "stack",
+  "overlay",
+  "grid",
+  "box",
+  "card",
+  "panel",
+  "scroll",
+  "form",
+  "fieldset",
+  "list",
+  "list-item",
+  "table",
+  "table-head",
+  "table-body",
+  "table-row",
+  "table-cell",
+  "modal",
+  "drawer",
+  "tooltip",
+  "popover",
+  "details",
+]);
+
+/**
+ * Whether `name` renders its positional arguments as children, which it does
+ * for the ones that are tiles. Codegen lowers a builtin's positional arguments
+ * into its children exactly when this says so, and the checker reads the same
+ * answer: a value there renders nothing (E0128). On any other builtin a
+ * positional argument is a value builtin's content, or is never rendered
+ * (`shownInPlaceOfPositional`, E0129). A user tile's positional argument is
+ * its input, a value.
  */
 export function positionalIsTile(name: string): boolean {
-  return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
+  return CHILD_BUILTINS.has(name);
+}
+
+/**
+ * What each builtin that renders no positional argument, and is not a value
+ * builtin, shows instead: the named arguments its lowering reads what it
+ * renders from (stdlib.md §2.3). A builtin with none shows nothing an argument
+ * gives it.
+ */
+const SHOWN_IN_PLACE_OF_POSITIONAL = {
+  divider: [],
+  video: ["src"],
+  button: ["text"],
+  input: ["bind", "value", "placeholder"],
+  textarea: ["bind", "value", "placeholder"],
+  check: ["bind", "value"],
+  radio: ["bind", "selected"],
+  select: ["options", "bind", "value", "placeholder"],
+  slider: ["bind"],
+  switch: ["bind", "value"],
+  error: ["field"],
+  toast: ["text"],
+  spinner: [],
+  progress: ["value", "max"],
+  skeleton: [],
+  "route-outlet": [],
+} as const satisfies Record<string, readonly string[]>;
+
+/**
+ * The named arguments `name` shows when it renders no positional argument —
+ * `["text"]` for `button`, `["src"]` for `image` — and `undefined` when it
+ * renders one, as content or as a child, or is not a builtin. A positional
+ * argument written on such a builtin is E0129, which names these.
+ */
+export function shownInPlaceOfPositional(name: string): readonly string[] | undefined {
+  const content = contentReading(name);
+  if (content) return content.positional ? undefined : content.named ? [content.named] : [];
+  return Object.hasOwn(SHOWN_IN_PLACE_OF_POSITIONAL, name)
+    ? SHOWN_IN_PLACE_OF_POSITIONAL[name as keyof typeof SHOWN_IN_PLACE_OF_POSITIONAL]
+    : undefined;
 }
 
 /**
@@ -265,7 +341,9 @@ export function contentReading(name: string): ContentReading | undefined {
 
 /**
  * Built-in tiles whose positional argument is a *value* expression rather than
- * a child tile. Everything else treats positional args as child tiles.
+ * a child tile. Every other builtin's positional arguments parse as tiles,
+ * which a container renders as children (`positionalIsTile`) and the rest
+ * never render (`shownInPlaceOfPositional`).
  */
 export const VALUE_ARG_BUILTINS: ReadonlySet<string> = new Set(Object.keys(VALUE_BUILTIN_CONTENT));
 

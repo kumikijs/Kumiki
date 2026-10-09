@@ -45,7 +45,13 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./builtins.ts";
+import {
+  BUILTIN_TILES,
+  contentArg,
+  contentReading,
+  positionalIsTile,
+  shownInPlaceOfPositional,
+} from "./builtins.ts";
 import {
   BUILTIN_EFFECTS,
   builtinFieldOmittable,
@@ -133,7 +139,7 @@ export type KumikiError = {
    * tells the shapes apart without matching the message.
    *
    * - `positional`: a positional argument past the one the builtin reads, or
-   *   any on `image` / `icon` — `text("A", "B")`.
+   *   any on a builtin that renders none — `text("A", "B")`, `button("Go")`.
    * - `text-prop`: `text=` on a builtin that reads only a positional argument
    *   and has none written — `heading(text=title)`.
    * - `text-shadowed`: `text=` on `label` / `link` / `editable` beside a
@@ -1453,10 +1459,11 @@ function checkA11y(
  * A place a tile is written, which is what E0128 names when a value is
  * written there instead.
  *
- * `child` is a positional argument of a builtin that is not a value builtin
- * (§1.7.1), which renders it only when it is a tile. The others hold a whole
- * `tile-expr` — an arm of `when` / `if` / `for` / `match`, a tile's body, a
- * tile-test's `expect` — and there the parser reads any name as a tile call.
+ * `child` is a positional argument of a builtin that renders its positional
+ * arguments as children (§1.7.1), which it does only when one is a tile. The
+ * others hold a whole `tile-expr` — an arm of `when` / `if` / `for` /
+ * `match`, a tile's body, a tile-test's `expect` — and there the parser reads
+ * any name as a tile call.
  */
 type TilePlace =
   | { readonly kind: "child"; readonly of: string }
@@ -1697,15 +1704,23 @@ function checkTileInput(
   checkAgainst(value, def.in, sym, errors, ctx);
 }
 
+/** `a`, `a or b`, `a, b or c`: the items as a choice of one. */
+function alternatives(items: readonly string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} or ${items.at(-1)}` : items.join("");
+}
+
 /**
- * E0129 at every argument a value builtin is written with as content and
- * never renders, read off the same table the lowering reads its content from
- * (`VALUE_BUILTIN_CONTENT`), so the two cannot disagree about which one shows.
+ * E0129 at every argument a builtin is written with as content and never
+ * renders, read off the same tables the lowering reads its content and its
+ * children by (`VALUE_BUILTIN_CONTENT`, `positionalIsTile`), so the two cannot
+ * disagree about which one shows.
  *
  * Three shapes, each named in the diagnostic's `unrendered` field. A
- * positional argument past the one the builtin reads — the second of
- * `text("A", "B")`, or any on `image` / `icon`, which read `src=` / `name=`.
- * Content written as `text=` on a builtin that reads only a positional
+ * positional argument the builtin does not render: past the one it reads —
+ * the second of `text("A", "B")` — or any on a builtin that renders none,
+ * which names what that builtin shows instead (`shownInPlaceOfPositional`):
+ * `text=` for `button`, `src=` for `image`, nothing for `spinner`. Content
+ * written as `text=` on a builtin that reads only a positional
  * argument (`heading(text=title)`): `text=` is the label argument of `button`
  * / `link` / `label` / `editable`, and a prop anywhere else, so the call
  * rendered "" while every tier said ok. With a positional argument also
@@ -1713,26 +1728,39 @@ function checkTileInput(
  * `text=` beside a positional argument on `label` / `link` / `editable`,
  * which read `text=` only when no positional one is written.
  */
-function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const positional = t.args.filter((a) => a.name === undefined);
+  const shown = shownInPlaceOfPositional(t.name);
+  if (shown) {
+    for (const a of positional) {
+      errors.push({
+        code: "E0129",
+        kind: "unrendered-arg",
+        message:
+          `${t.name} renders no positional argument, so this one is never rendered. ` +
+          (shown.length > 0
+            ? `Write it as ${alternatives(shown.map((n) => `\`${n}=\``))}, or show it beside the ${t.name}`
+            : `Show it beside the ${t.name}`),
+        pos: a.value.pos,
+        unrendered: "positional",
+      });
+    }
+    return;
+  }
   const reading = contentReading(t.name);
   if (!reading) return;
-  const positional = t.args.filter((a) => a.name === undefined);
-  const read = reading.positional ? 1 : 0;
-  positional.slice(read).forEach((a, i) => {
+  positional.slice(1).forEach((a, i) => {
     errors.push({
       code: "E0129",
       kind: "unrendered-arg",
-      message: reading.positional
-        ? `${t.name} renders its first positional argument only — positional argument ` +
-          `${i + read + 1} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
-          `each its own ${t.name}`
-        : `${t.name} takes its ${reading.named} as \`${reading.named}=\` — a positional ` +
-          `argument is never rendered. Write \`${t.name}(${reading.named}=…)\``,
+      message:
+        `${t.name} renders its first positional argument only — positional argument ` +
+        `${i + 2} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
+        `each its own ${t.name}`,
       pos: a.value.pos,
       unrendered: "positional",
     });
   });
-  if (!reading.positional) return;
   const named = t.args.find((a) => a.name === "text");
   if (!named?.name) return;
   if (reading.named === "text" && positional.length > 0) {
@@ -1779,7 +1807,7 @@ function checkTileCall(
   const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
-  checkContentArgs(t, errors);
+  checkUnrenderedArgs(t, errors);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
@@ -1836,14 +1864,19 @@ function checkTileCall(
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
-    // A positional argument of a builtin that is not a value builtin renders
-    // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
-    // program defines, and drops anything else, so a value there renders
-    // nothing and a slot named there lowers to a `null` child. It is reported
-    // at the value, and nothing inside it is checked: a `let` is the one value
-    // that can hold a tile call, which reads as a `fn` call there and would be
-    // reported wrongly, so a correct diagnostic under it (an undefined name,
-    // say) waits until the value is moved too.
+    // A positional argument of a builtin that renders none is E0129
+    // (`checkUnrenderedArgs`), tile or value, and is moved or removed whole:
+    // as for a value in a container, nothing inside it is checked.
+    if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
+    // A positional argument of a builtin that renders its positional
+    // arguments as children renders only as a tile (§1.7.1): codegen keeps a
+    // tile, or the name of a tile the program defines, and drops anything
+    // else, so a value there renders nothing and a slot named there lowers to
+    // a `null` child. It is reported at the value, and nothing inside it is
+    // checked: a `let` is the one value that can hold a tile call, which reads
+    // as a `fn` call there and would be reported wrongly, so a correct
+    // diagnostic under it (an undefined name, say) waits until the value is
+    // moved too.
     const place: TilePlace | null =
       arg.name === undefined && positionalIsTile(t.name) ? { kind: "child", of: t.name } : null;
     if (isTileExpr(v)) {
