@@ -11,7 +11,7 @@
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { loadSource } from "./helpers/load.js";
+import { loadSource } from "./helpers/load.ts";
 
 const TAIL = `app M
     caps   = []
