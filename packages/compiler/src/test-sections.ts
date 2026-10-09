@@ -112,7 +112,6 @@ export function isSectionName<K extends TestKind, P extends TestPart>(
 
 export function givenSection<K extends TestKind>(
   t: TestDef,
-  kind: K,
   name: GivenSection<K>,
 ): Expr | undefined {
   return recordFieldsAt(t.given, "given").find((f) => f.name === name)?.value;
@@ -120,7 +119,6 @@ export function givenSection<K extends TestKind>(
 
 export function expectSection<K extends TestKind>(
   t: TestDef,
-  kind: K,
   name: ExpectSection<K>,
 ): Expr | undefined {
   return recordFieldsAt(t.expect, "expect").find((f) => f.name === name)?.value;

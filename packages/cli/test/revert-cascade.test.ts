@@ -58,18 +58,6 @@ const rewriteLogEntry = (
   writeFileSync(logPath(file), out.join("\n"));
 };
 
-/** Run `fn` as another agent, so a lock held by `agent:other` binds whoever runs next. */
-const asAgent = (agent: string, fn: () => void): void => {
-  const prev = process.env.KUMIKI_AUTHOR;
-  process.env.KUMIKI_AUTHOR = agent;
-  try {
-    fn();
-  } finally {
-    if (prev === undefined) delete process.env.KUMIKI_AUTHOR;
-    else process.env.KUMIKI_AUTHOR = prev;
-  }
-};
-
 /** `slot.b` with two tiles hanging off it, every body in the op log. */
 const cascadeFixture = (): { file: string; removeId: string } => {
   const file = seed("slot a : Int = 0\n");

@@ -29,9 +29,7 @@ describe("replayEpisodes panic emit", () => {
   const panicEpisode: EpisodeLogEntry = {
     id: "ep_panic",
     trigger: { kind: "ui.click", target: "BoomBtn", ts: 1 },
-    steps: [
-      { kind: "reducer", name: "boom", "slot-diffs": [], emits: [], ts: 2 },
-    ],
+    steps: [{ kind: "reducer", name: "boom", "slot-diffs": [], emits: [], ts: 2 }],
     status: "panic",
   };
 

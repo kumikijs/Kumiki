@@ -503,10 +503,7 @@ export type ReconcileFallback =
   | { reason: "wrapped-children"; index: number; childKind: string }
   | { reason: "unplaceable-insert"; index: number; childKind: string };
 
-export type NeverEqualCause =
-  | "non-plain-object"
-  | "nan"
-  | "function-identity";
+export type NeverEqualCause = "non-plain-object" | "nan" | "function-identity";
 
 export type RuntimeDiagnostic =
   | (DiagnosticSite & { kind: "reconcile-fallback" } & ReconcileFallback)

@@ -61,7 +61,7 @@ export function coverageJs(
   for (const t of tests) {
     if (t.testKind === "reducer-test") {
       if (t.target) markReducer(t.target);
-      const mocks = givenSection(t, "reducer-test", "mocks");
+      const mocks = givenSection<"reducer-test">(t, "mocks");
       if (mocks?.kind === "RecordLit") {
         for (const f of mocks.fields) {
           usedEffects.add(f.name);
@@ -136,11 +136,11 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     const binds = forAll
       .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)
       .join(" ");
-    const givenSlots = givenSection(t, "property-test", "slots");
+    const givenSlots = givenSection<"property-test">(t, "slots");
     const initSlotsJs = givenSlots
       ? jsOfExpr(recordValueAt(givenSlots, "given.slots"), pctx)
       : "({})";
-    const event = givenSection(t, "property-test", "event");
+    const event = givenSection<"property-test">(t, "event");
     const eventJs = eventPayloadJs(event, pctx);
     const invariantJs = t.invariant ? jsOfExpr(t.invariant, pctx) : "true";
     const runOpts = [
@@ -165,22 +165,22 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   },`;
   }
   if (t.testKind === "reducer-test") {
-    const slots = givenSection(t, "reducer-test", "slots");
-    const event = givenSection(t, "reducer-test", "event");
+    const slots = givenSection<"reducer-test">(t, "slots");
+    const event = givenSection<"reducer-test">(t, "event");
     const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
     const elJs = eventPayloadJs(event, ctx);
-    const panic = expectSection(t, "reducer-test", "panic");
+    const panic = expectSection<"reducer-test">(t, "panic");
     let expectJs: string;
     if (panic) {
       expectJs = `{ kind: "panic", message: ${jsOfExpr(panic, ctx)} }`;
     } else {
-      const xs = expectSection(t, "reducer-test", "slots");
-      const xe = expectSection(t, "reducer-test", "effects");
+      const xs = expectSection<"reducer-test">(t, "slots");
+      const xe = expectSection<"reducer-test">(t, "effects");
       const xsJs = xs ? jsOfExpr(recordValueAt(xs, "expect.slots"), ctx) : "({})";
       const effectsJs = xe ? effectListJs(xe, ctx) : "[]";
       expectJs = `{ kind: "state", slots: ${xsJs}, effects: ${effectsJs} }`;
     }
-    const mocks = givenSection(t, "reducer-test", "mocks");
+    const mocks = givenSection<"reducer-test">(t, "mocks");
     if (mocks) {
       return `  {
     name: ${nameJs},
@@ -208,9 +208,9 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   },`;
   }
   // tile-test
-  const slots = givenSection(t, "tile-test", "slots");
+  const slots = givenSection<"tile-test">(t, "slots");
   const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
-  const inField = givenSection(t, "tile-test", "in");
+  const inField = givenSection<"tile-test">(t, "in");
   const target = gen.tiles.find((x) => x.name === t.target);
   if (target) {
     const wants = target.in ? 1 : 0;

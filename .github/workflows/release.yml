@@ -28,7 +28,6 @@ jobs:
       - name: Cache Turborepo
         uses: actions/cache@v6
         with:
-          node-version: 24
           path: .turbo
           key: ${{ runner.os }}-turbo-${{ github.sha }}
           restore-keys: |

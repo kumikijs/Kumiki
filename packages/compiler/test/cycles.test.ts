@@ -43,11 +43,7 @@ tile C = column(A)
 tile App = column(A)`,
       "1:17",
     ],
-    [
-      "a self-loop, at its own back edge",
-      `tile App = column(text("a"), App)`,
-      "1:30",
-    ],
+    ["a self-loop, at its own back edge", `tile App = column(text("a"), App)`, "1:30"],
     [
       "a loop closed by an error-boundary, at the boundary clause",
       `tile A error-boundary=B = column(text("a"))

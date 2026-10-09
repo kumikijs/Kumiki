@@ -9,6 +9,6 @@ export default defineConfig({
   fixedExtension: false,
   outputOptions: publishedOutputOptions,
   deps: {
-    neverBundle: [/^@kumikijs\//, "vite"]
+    neverBundle: [/^@kumikijs\//, "vite"],
   },
 });

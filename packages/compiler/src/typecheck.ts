@@ -1498,7 +1498,7 @@ function effectPayloadType(
   const u = unaliasType(out, sym);
   const result = u?.kind === "TypeApp" && u.name === "Result" ? u : null;
   if (outcome === "err") {
-    if (!result || result.args.length !== 2 || !failsWithText(eff.cap)) return null;
+    if (result?.args.length !== 2 || !failsWithText(eff.cap)) return null;
     return { kind: "TypePrim", name: "Text", pos: eff.pos };
   }
   if (result) return result.args.length === 2 ? (result.args[0] ?? null) : null;
@@ -2232,8 +2232,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
           message: `Method ".${e.method}" is not implemented by the runtime`,
           pos: e.pos,
         });
-      }
-      else {
+      } else {
         const raw = inferType(e.receiver, sym, ctx);
         const rt = unaliasType(raw, sym);
         const recordUpdate = e.method === "copy" && rt?.kind === "TypeRecord";
@@ -4189,7 +4188,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
         pos: t.pos,
       });
     }
-    const mocks = isRecordValue(t.given) ? givenSection(t, "reducer-test", "mocks") : undefined;
+    const mocks = isRecordValue(t.given) ? givenSection<"reducer-test">(t, "mocks") : undefined;
     if (mocks?.kind === "RecordLit") {
       for (const m of mocks.fields) {
         if (!sym.effects.has(m.name)) {

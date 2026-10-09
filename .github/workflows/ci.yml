@@ -24,7 +24,6 @@ jobs:
       - name: Cache Turborepo
         uses: actions/cache@v6
         with:
-          node-version: 24
           path: .turbo
           key: ${{ runner.os }}-turbo-${{ github.sha }}
           restore-keys: |
@@ -42,7 +41,7 @@ jobs:
         run: pnpm test
 
       - name: Lint
-        run: pnpm exec turbo run lint
+        run: pnpm lint
 
   e2e:
     runs-on: ubuntu-latest
@@ -60,7 +59,6 @@ jobs:
       - name: Cache Turborepo
         uses: actions/cache@v6
         with:
-          node-version: 24
           path: .turbo
           key: ${{ runner.os }}-turbo-e2e-${{ github.sha }}
           restore-keys: |
@@ -73,7 +71,6 @@ jobs:
         id: pw-cache
         uses: actions/cache@v6
         with:
-          node-version: 24
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
