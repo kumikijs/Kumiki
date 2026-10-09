@@ -440,7 +440,7 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
-  describe("a read after the body that declared it (E0103)", () => {
+  describe("a read after the scope that declared it ended (E0103)", () => {
     // `idx` is one edit from the slot `id`, so a rename type-checks and the
     // file comes out clean — reading `id` where the author wrote `idx`. The
     // read is out of scope rather than misspelled, so nothing is proposed.
@@ -509,6 +509,39 @@ app A
         'Reference to undefined name "cont"',
       ]);
       expect(outcome(store, reworded)).toEqual(ONE_OF_EACH);
+    });
+
+    // An expression that binds a name ends it the same way: a `let … in` read
+    // in a later statement, a tile's `for` or `match` arm read in a sibling.
+    // `v` is one edit from the app's name `A`.
+    const inApp = (tile: string) => scoped("()").replace("column(Btn, text(total.show))", tile);
+    const EXPRESSIONS = {
+      "a `let … in`": scoped("id := let idx = 1 in idx\n        total := idx"),
+      "a tile's `for`": inApp("column(Btn, for idx in [1] text(idx.show), text(idx.show))"),
+      "a tile's `match` arm": inApp(
+        'column(Btn, match Some(1) with | Some(v) -> text(v.show) | None -> text("none"), text(v.show))',
+      ),
+    };
+
+    for (const [form, source] of Object.entries(EXPRESSIONS)) {
+      it(`proposes no rename for a name ${form} declared, read after it`, () => {
+        const { store, errors } = plan(source);
+        const { patches, skipped } = planFixesExplained(store, errors);
+        expect(patches).toEqual([]);
+        expect(skipped.map((s) => [s.code, s.reason])).toEqual([
+          ["E0103", "e0103-read-after-scope-ended"],
+        ]);
+      });
+    }
+
+    it("still renames a misspelling beside a sibling's read", () => {
+      const { store, errors } = plan(
+        inApp("column(Btn, for idx in [1] text(idx.show), text(idx.show), text(cont.show))"),
+      );
+      expect(outcome(store, errors)).toEqual({
+        patches: ['replace "cont" with "count" at 8:76'],
+        skipped: ["e0103-read-after-scope-ended"],
+      });
     });
   });
 

@@ -595,6 +595,8 @@ A name declared over one already in scope **shadows** it: every read below the d
 
 The scopes are the reducer body and every nested statement body inside it: a `for` body, each branch of an `if`, and each match arm including a catch-all `_`. A binding declared in one of those ends with it.
 
+An expression that binds a name is a scope of its own, wherever it is written: the body of a `let … in`, each arm of a `match` expression — a value's or a tile's — and the body of a tile's `for`. The binding ends with the expression, so a read after it — in a later statement or operand, or in a sibling argument of a tile — is [E0103](./errors.md#e0103-undef-ref-undef-slot). Move the read into the expression. The value a `let … in` binds can instead be bound where both reads see it: with a `let` statement in a reducer, one `let … in` around both reads in a `fn`, a tile's input in a tile.
+
 A declaration's own right-hand side is evaluated **before** the name it declares is in scope, so `let n = n + 1` reads the binding it shadows rather than the one being declared.
 
 Binds written **side by side** are peers rather than a shadowing pair, because nothing nests them: two binds of one pattern (`Both(a, a)`) are [E0122](./errors.md#e0122-duplicate-pattern-bind), and an `effect-event` bind list is the same shape ([E0123](./errors.md#e0123-duplicate-effect-bind)). A name repeated there is not a shadow — it is a value the pattern or the trigger has left with no name to read it by.

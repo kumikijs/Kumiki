@@ -141,19 +141,22 @@ export type KumikiError = {
    */
   unrendered?: "positional" | "text-prop" | "text-shadowed";
   /**
-   * E0103 only: the nested statement body that declared the name and ended
-   * before this read (language.md §1.6.7) — so the read is out of scope, not
-   * misspelled, and a reader (`kumiki fix`) tells the two apart without
-   * matching the message. Set exactly when the message carries the scope hint.
+   * E0103 only: the scope that declared the name and ended before this read
+   * (language.md §1.6.7) — so the read is out of scope, not misspelled, and a
+   * reader (`kumiki fix`) tells the two apart without matching the message.
+   * Set exactly when the message carries the scope hint.
    */
-  endedScope?: StatementScope;
+  endedScope?: EndedScope;
 };
 
 /**
- * The nested statement bodies of a reducer, each a scope of its own: an `if`
- * branch, a `for` body, a match arm (language.md §1.6.7).
+ * The scopes that end inside a definition (language.md §1.6.7). A reducer's
+ * nested statement bodies: an `if` branch, a `for` body, a match arm. And the
+ * expressions that bind a name for their own body, wherever they are written:
+ * a `let … in` (`let-in`), a tile's `for` (`for-expr`), and an arm of a
+ * `match` expression, a tile's or a value's (`match-expr`).
  */
-type StatementScope = "if" | "for" | "match";
+type EndedScope = "if" | "for" | "match" | "let-in" | "for-expr" | "match-expr";
 
 /**
  * The accessibility band, which `--strict-a11y` turns on. Exported so a caller
@@ -747,6 +750,7 @@ function checkSlot(
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);
@@ -758,6 +762,7 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
@@ -840,6 +845,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     undeclaredInputReads: seen,
   };
   checkTileExpr(tile.body, sym, [], ctx);
@@ -1079,15 +1085,16 @@ type Ctx = {
    */
   undeclaredInputReads?: Pos[];
   /**
-   * The names a reducer's nested statement bodies took with them when they
-   * ended, each with the kind of body that declared it — written by
-   * `checkBody`, read by the undefined-name report, which says the read is out
-   * of scope rather than only that the name is undefined. Only names the
-   * enclosing scope did not bind: a body's shadow hands the outer name back,
-   * and a read of that resolves. Set by `checkReducer`, so each reducer starts
-   * with none; nested reads reach it the way they reach `routeReadsSeen`.
+   * The names the scopes that ended so far took with them, each with the kind
+   * of scope that declared it — written by `endScope`, read by the
+   * undefined-name report, which says the read is out of scope rather than
+   * only that the name is undefined. Only names the enclosing scope did not
+   * bind: a scope's shadow hands the outer name back, and a read of that
+   * resolves. Required, so every definition's scope starts with a map of its
+   * own and none goes without; nested reads reach it the way they reach
+   * `routeReadsSeen`.
    */
-  endedScopes?: Map<string, StatementScope>;
+  endedScopes: Map<string, EndedScope>;
   /**
    * Set inside the fragment of a list method handed one value per call
    * (`fragmentShape` answered `"value"`): that method's name, and whether the
@@ -1480,6 +1487,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
       checkTileExpr(t.body, sym, errors, inner);
+      endScope("for-expr", inner, ctx);
       return;
     }
     case "TileWhen":
@@ -1501,6 +1509,7 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
+        endScope("match-expr", inner, ctx);
       }
       return;
     }
@@ -2486,14 +2495,12 @@ function checkStmt(
 
 /**
  * Check one nested statement body — an `if` branch, a `for` body or a match
- * arm, as `kind` says — in a scope of its own, and end that scope (language.md
- * §1.6.7). `bind` puts the body's own binds into the scope first: the loop
- * variable, the arm's pattern. The names the body declared that `ctx` does not
- * bind go out of scope with it, and are recorded in `endedScopes` under
- * `kind`, so a read of one later in the reducer says why it is undefined.
+ * arm, as `kind` says — in a scope of its own, and end that scope. `bind` puts
+ * the body's own binds into the scope first: the loop variable, the arm's
+ * pattern.
  */
 function checkBody(
-  kind: StatementScope,
+  kind: EndedScope,
   body: Statement[],
   sym: SymbolTable,
   errors: KumikiError[],
@@ -2504,8 +2511,18 @@ function checkBody(
   const inner = innerScope(ctx);
   bind?.(inner);
   for (const st of body) checkStmt(st, sym, errors, inner, writtenRoots);
+  endScope(kind, inner, ctx);
+}
+
+/**
+ * End `inner`, a scope of the kind `kind` opened in `ctx` (language.md
+ * §1.6.7). The names it declared that `ctx` does not bind go out of scope
+ * with it, and are recorded in `endedScopes` under `kind`, so a read of one
+ * later in the definition says why it is undefined.
+ */
+function endScope(kind: EndedScope, inner: Ctx, ctx: Ctx): void {
   for (const name of inner.localBinds) {
-    if (!ctx.localBinds.has(name)) ctx.endedScopes?.set(name, kind);
+    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, kind);
   }
 }
 
@@ -2958,27 +2975,48 @@ function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string {
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
-/** How the hint below names each nested statement body, and the inside of it. */
-const ENDED_SCOPE_WORDS: Record<StatementScope, { body: string; inside: string }> = {
-  if: { body: 'an "if" branch', inside: "branch" },
-  for: { body: 'a "for" body', inside: "body" },
-  match: { body: "a match arm", inside: "arm" },
+/**
+ * How the hint below names each scope, and the repair it offers. A name a
+ * statement body declares can be declared before the statement instead, and
+ * the value a `let … in` binds can be bound where both reads see it; a tile
+ * `for`'s variable and a `match` arm's pattern stand for one element, one
+ * case, so the read moves in.
+ */
+const ENDED_SCOPE_WORDS: Record<EndedScope, { scope: string; repair: string }> = {
+  if: {
+    scope: 'an "if" branch',
+    repair: 'declare it before the "if", or move the read into the branch',
+  },
+  for: {
+    scope: 'a "for" body',
+    repair: 'declare it before the "for", or move the read into the body',
+  },
+  match: {
+    scope: "a match arm",
+    repair: 'declare it before the "match", or move the read into the arm',
+  },
+  "let-in": {
+    scope: 'the body of a "let … in"',
+    repair: "move the read into that body, or bind it where both reads see it",
+  },
+  "for-expr": { scope: `a tile's "for" body`, repair: "move the read into the body" },
+  "match-expr": { scope: 'an arm of a "match" expression', repair: "move the read into the arm" },
 };
 
 /**
- * The sentence to add when an unresolved name was declared in a nested
- * statement body that has ended (`endedScopes`). The read is out of scope, not
- * misspelled, so the repair moves the declaration or the read; renaming it to
- * a close name would make it read a different value, and `kumiki fix` offers
- * no rename for a diagnostic carrying this (its `endedScope`).
+ * The sentence to add when an unresolved name was declared in a scope that has
+ * ended (`endedScopes`). The read is out of scope, not misspelled, so the
+ * repair moves the declaration or the read; renaming it to a close name would
+ * make it read a different value, and `kumiki fix` offers no rename for a
+ * diagnostic carrying this (its `endedScope`).
  *
  * Not withheld when a name in scope is one edit away, as `arithmeticHint` is:
  * a hyphen only looks like subtraction, but that this name was declared and
  * has ended is known.
  */
-function endedScopeHint(scope: StatementScope): string {
-  const { body, inside } = ENDED_SCOPE_WORDS[scope];
-  return ` — it is scoped to ${body}, which ends with it: declare it before the "${scope}", or move the read into the ${inside} (see docs/spec/language.md §1.6.7)`;
+function endedScopeHint(kind: EndedScope): string {
+  const { scope, repair } = ENDED_SCOPE_WORDS[kind];
+  return ` — it is scoped to ${scope}, which ends with it: ${repair} (see docs/spec/language.md §1.6.7)`;
 }
 
 /**
@@ -3135,7 +3173,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
         return;
       }
-      const endedScope = ctx.endedScopes?.get(e.name);
+      const endedScope = ctx.endedScopes.get(e.name);
       if (endedScope !== undefined) {
         errors.push({
           code: "E0103",
@@ -3406,6 +3444,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkExpr(arm.body, sym, errors, inner);
+        endScope("match-expr", inner, ctx);
       }
       return;
     }
@@ -3417,7 +3456,9 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
+      const inner = letInScope(e, sym, ctx);
+      checkExpr(e.body, sym, errors, inner);
+      endScope("let-in", inner, ctx);
       return;
     }
     case "TokenRef":
@@ -5376,6 +5417,7 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
     localBinds: new Set(scope.map((b) => b.name)),
     localTypes: new Map(scope.map((b) => [b.name, b.type])),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
   for (const p of fn.params) resolveType(p.type, sym, errors);
@@ -5480,6 +5522,7 @@ function pureScope(binds: string[]): Ctx {
     kind: "slot-init",
     localBinds: new Set(binds),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     localTypes: new Map(),
   };
 }
@@ -6036,6 +6079,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   });
 }
 
@@ -6084,6 +6128,7 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         localBinds: new Set(),
         localTypes: new Map(),
         routeBind: "no-payload",
+        endedScopes: new Map(),
         wildcardsReportedElsewhere: true,
       });
     }
@@ -6158,6 +6203,7 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   // `for-all` names are binds in `given` and in the invariant, with the type
   // the generator declares — codegen binds them the same way, one per trial.
@@ -6606,6 +6652,7 @@ function preMountProbe(
     localBinds: new Set(params.map((p) => p.name)),
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     routeReadsSeen: routeReads,
     fragmentFnCallsSeen: fragmentFnCalls,
   };
@@ -6788,6 +6835,7 @@ function checkApp(
     // what is true rather than to what is load-bearing, because the field is
     // required and every other value would be a lie about the payload.
     routeBind: "unbound",
+    endedScopes: new Map(),
   };
   for (const e of app.init) {
     // An init entry is an effect call by the grammar (§1.12). `checkExpr` would

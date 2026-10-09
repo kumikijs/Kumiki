@@ -369,12 +369,14 @@ describe("the checker scopes each `if` branch as codegen does", () => {
   });
 });
 
-describe("an E0103 for a name a nested body declared names the body", () => {
-  // A read after the `if` branch, `for` body or match arm that declared the
-  // name is E0103 like a misspelling, but renaming it to a close name is not
-  // the repair: the renamed read type-checks and reads another value. So the
-  // diagnostic says which body it was, in `endedScope` for a reader such as
-  // `kumiki fix`, and in the message for the author.
+describe("an E0103 for a name read after its scope ended names the scope", () => {
+  // A read after the scope that declared the name — a reducer's `if` branch,
+  // `for` body or match arm, or an expression's: a `let … in` body, a `match`
+  // expression's arm, a tile's `for` body — is E0103 like a misspelling, but
+  // renaming it to a close name is not the repair: the renamed read
+  // type-checks and reads another value. So the diagnostic says which scope it
+  // was, in `endedScope` for a reader such as `kumiki fix`, and in the message
+  // for the author.
   const undefinedNames = (source: string) =>
     check(parse(lex(source)))
       .filter((e) => e.code === "E0103")
@@ -384,7 +386,14 @@ describe("an E0103 for a name a nested body declared names the body", () => {
     for: 'it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body',
     match:
       'it is scoped to a match arm, which ends with it: declare it before the "match", or move the read into the arm',
+    "let-in":
+      'it is scoped to the body of a "let … in", which ends with it: move the read into that body, or bind it where both reads see it',
+    "for-expr": `it is scoped to a tile's "for" body, which ends with it: move the read into the body`,
+    "match-expr":
+      'it is scoped to an arm of a "match" expression, which ends with it: move the read into the arm',
   };
+  /** The program with `tile` as its page's body, beside a reducer that reads nothing. */
+  const page = (tile: string) => program("app.start", "()").replace("column(text(seen))", tile);
   const hinted = (name: string, scope: string) => ({
     endedScope: scope,
     message: `Reference to undefined name "${name}" — ${HINTS[scope]} (see docs/spec/language.md §1.6.7)`,
@@ -478,6 +487,73 @@ describe("an E0103 for a name a nested body declared names the body", () => {
       "if flag then { let total = 5\n                       seen := total.show } else { () }\n        total := total + 1",
     );
     expect(codes(src)).toEqual([]);
+  });
+
+  it("names the `let … in` body for its name read in a later statement", () => {
+    const src = program("app.start", 'seen := let n = "a" in n\n        after := n');
+    expect(undefinedNames(src)).toEqual([hinted("n", "let-in")]);
+  });
+
+  it("names the `let … in` body, not a statement body around it", () => {
+    const src = program(
+      "app.start",
+      'for x in [1] { seen := let n = "a" in n }\n        after := n',
+    );
+    expect(undefinedNames(src)).toEqual([hinted("n", "let-in")]);
+  });
+
+  it("names the `let … in` body for its name read after it in a `fn`", () => {
+    const src = program("app.start", "()").replace(
+      "tile Page",
+      "fn twice(x: Int) -> Int = (let n = x in n) + n\n\ntile Page",
+    );
+    expect(undefinedNames(src)).toEqual([hinted("n", "let-in")]);
+  });
+
+  it("names the `let … in` body in a slot initializer", () => {
+    const src = program("app.start", "()").replace(
+      'slot after : Text = ""',
+      'slot after : Text = (let n = "a" in n) + n',
+    );
+    expect(undefinedNames(src)).toEqual([hinted("n", "let-in")]);
+  });
+
+  it("names the arm of a `match` expression for its variable read in a later statement", () => {
+    const src = program(
+      "app.start",
+      'seen := match Some("a") with | Some(v) -> v | None -> ""\n        after := v',
+    );
+    expect(undefinedNames(src)).toEqual([hinted("v", "match-expr")]);
+  });
+
+  it("names a tile's `for` body for its variable read in a sibling", () => {
+    const src = page("column(for idx in [1] text(idx.show), text(idx.show))");
+    expect(undefinedNames(src)).toEqual([hinted("idx", "for-expr")]);
+  });
+
+  it("names the arm of a tile's `match` for its variable read in a sibling", () => {
+    const src = page(
+      'column(match Some(1) with | Some(v) -> text(v.show) | None -> text("none"), text(v.show))',
+    );
+    expect(undefinedNames(src)).toEqual([hinted("v", "match-expr")]);
+  });
+
+  it("keeps the message of a misspelling beside a sibling's read", () => {
+    const src = page("column(for idx in [1] text(idx.show), text(idx.show), text(sen))");
+    expect(undefinedNames(src)).toEqual([
+      hinted("idx", "for-expr"),
+      { endedScope: undefined, message: 'Reference to undefined name "sen"' },
+    ]);
+  });
+
+  it("does not carry an expression's names into another tile", () => {
+    const src = page("column(for idx in [1] text(idx.show))").replace(
+      "app A",
+      "tile Other = text(idx.show)\n\napp A",
+    );
+    expect(undefinedNames(src)).toEqual([
+      { endedScope: undefined, message: 'Reference to undefined name "idx"' },
+    ]);
   });
 });
 
