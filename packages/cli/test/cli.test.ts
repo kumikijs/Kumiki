@@ -342,10 +342,16 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // 65,000 from 64,000 with the owner's approval (63,597 measured on dev at
+    // f72685e): the open fixes for the P2 bugs each stay under 64,000 on their
+    // own, but together they add about 1,100 bytes and pass it. The budget moves
+    // up one step, as it did to 63,000 and 64,000, rather than holding each
+    // change at the line the one before it nearly reached.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(64_000);
+    expect(total).toBeLessThan(65_000);
     const core = readFileSync(join(outDir, "runtime", "core.js"), "utf8");
     expect(core).not.toContain(": AppShape"); // minified, types stripped
   });
