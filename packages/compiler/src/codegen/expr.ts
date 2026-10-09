@@ -1033,10 +1033,14 @@ export function reducerEmitJs(
  * name `_next`: true only for code placed inside a reducer body, where that
  * binding exists. The effect table's `keyOf` (`policyJs`) is built inside
  * `createApp()`, outside every reducer body, so it passes false.
+ *
+ * The text is the one a Map key is stored under (`_s.entryKey`), so two keys
+ * are one key exactly when a Map would hold them as one entry: when they are
+ * `==`, for every type E0233 lets a key have (language.md §1.5.2).
  */
 export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): string {
   const keyCtx = makeEvalCtx(gen, ["$1"], reducerScope);
-  return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
+  return `((${bindRef(keyCtx, "$1")}) => _s.entryKey(${jsOfExpr(key, keyCtx)}))`;
 }
 
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {

@@ -909,6 +909,24 @@ The bound type is unaliased first, so `type Qty = Int where positive` and a `nom
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
 
+### E0233 `policy-key-type`
+
+A `policy=latest-per-key(<key>)` key has a type whose values the key does not tell apart by `==` ([Language §1.5.2](./language.md#_1-5-2-semantics)).
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, whose NaN is not == to itself and whose NaN, Infinity and -Infinity are one key inside a record, tuple, List or variant (see docs/spec/language.md §1.5.2)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and every File is one key (see docs/spec/language.md §1.5.2)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md §1.5.2)`
+
+The dispatcher runs each request under its key and aborts an in-flight request when another starts under the same one ([HTTP §6.4](./http.md#_6-4-cancellation)). The key is written the way a Map key is stored ([Stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which makes two keys one key exactly when they are `==` for every type but three — and a key that is one key for two values `==` calls different aborts a request for no reason the program can see:
+
+- a `Float`: `NaN` is one key, yet `NaN == NaN` is `false`; and inside a record, a tuple, a `List` or a variant, `NaN`, `Infinity` and `-Infinity` are all one key
+- a `File`: every `File` is one key, while `==` holds only of a File and itself
+- a `Set`: its `==` depends on how it was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so its key does too
+
+The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload or a container element, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so is a `List(Set(Text))`. A key whose type the checker cannot decide is not reported.
+
+**Fix**: Key on a value of another type — a field of the input that identifies the request (`latest-per-key($1.id)`), a Float's `.show` or `.round`, a File's `.name`, or a record of such fields (`latest-per-key({user: $1.user, page: $1.page})`).
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.

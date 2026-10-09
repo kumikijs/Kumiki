@@ -1,0 +1,4 @@
+{
+  "GET /api/users/ada/pages/1": { "text": "page 1" },
+  "GET /api/users/ada/pages/2": { "text": "page 2" }
+}

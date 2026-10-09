@@ -68,7 +68,7 @@ import {
 } from "./def-graph.ts";
 import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
-import { keyRepresentation } from "./key-representation.ts";
+import { keyRepresentation, type UnkeyedPart, unkeyedPart } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
@@ -5350,7 +5350,38 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
   if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(input));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
-  if (eff.policy?.kind === "PolLatestKey") checkExpr(eff.policy.key, sym, errors, pureScope(input));
+  if (eff.policy?.kind === "PolLatestKey") {
+    const scope = pureScope(input);
+    checkExpr(eff.policy.key, sym, errors, scope);
+    checkPolicyKeyType(eff.policy.key, sym, scope, errors);
+  }
+}
+
+/** Why each {@link UnkeyedPart} is not keyed by its value, as E0233 words it. */
+const UNKEYED_PART_REASON: Record<UnkeyedPart["part"], string> = {
+  Float:
+    "a Float, whose NaN is not == to itself and whose NaN, Infinity and -Infinity are one key inside a record, tuple, List or variant",
+  File: "a File, and every File is one key",
+  Set: "a Set, whose == depends on how it was built",
+};
+
+/**
+ * E0233: a `latest-per-key` key of a type the runtime's key does not tell
+ * apart by `==` (language.md §1.5.2). The dispatcher aborts an in-flight
+ * request when another starts under the same key, so a key that is one key
+ * for two values `==` calls different aborts a request it has no reason to.
+ * A key whose type the checker cannot decide is not judged.
+ */
+function checkPolicyKeyType(key: Expr, sym: SymbolTable, scope: Ctx, errors: KumikiError[]): void {
+  const type = inferType(key, sym, scope);
+  const unkeyed = unkeyedPart(type, sym);
+  if (!type || !unkeyed) return;
+  errors.push({
+    code: "E0233",
+    kind: "policy-key-type",
+    message: `A latest-per-key key of type ${typeToString(type)} is not keyed by its value: ${unkeyed.whole ? "it is" : "it holds"} ${UNKEYED_PART_REASON[unkeyed.part]} (see docs/spec/language.md §1.5.2)`,
+    pos: key.pos,
+  });
 }
 
 /**

@@ -95,6 +95,9 @@ describe("`emit cancel(id)` aborts the request `id := emit …` started", () => 
     ["throttle", "policy=throttle(1000ms)", [EMIT]],
     ["debounce", "policy=debounce(5ms)", [EMIT]],
     ["latest-per-key on the input", "policy=latest-per-key($1)", [EMIT]],
+    ["a record key", "policy=latest-per-key({k: $1, at: noteKey})", [EMIT]],
+    ["a List key", "policy=latest-per-key([$1, noteKey])", [EMIT]],
+    ["an Option key", "policy=latest-per-key(Some($1))", [EMIT]],
     ["a key slot the reducer does not write", "policy=latest-per-key(noteKey)", [EMIT]],
     [
       "a key reading the input and a slot written before the emit",

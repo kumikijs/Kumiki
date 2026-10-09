@@ -664,7 +664,7 @@ describe("codegen", () => {
     // Each arg is lowered into a __a<i> binding once; the push and the key
     // (which the id is built from) both reuse that local.
     expect(result.js).toMatch(/const __a0 = _s\.now\(\);/);
-    expect(result.js).toMatch(/const __k = \(\(\w+\) => String\(\w+\)\)\(__a0\);/);
+    expect(result.js).toMatch(/const __k = \(\(\w+\) => _s\.entryKey\(\w+\)\)\(__a0\);/);
     expect(result.js).toContain('_emits.push({ effect: "search", args: [__a0], key: __k })');
     expect(result.js).toContain('return "search:" + __k;');
     // _s.now() must appear exactly once in the generated reducer body —
@@ -1167,7 +1167,7 @@ describe("expressions outside a reducer body still see the slot table", () => {
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
     const keyOf = emittedLine(result.js, "keyOf:");
-    expect(keyOf).toContain('String(_live["noteKey"])');
+    expect(keyOf).toContain('_s.entryKey(_live["noteKey"])');
   });
 
   // Not a regression guard for the bug above — `jsOfExpr` checks `localBinds`

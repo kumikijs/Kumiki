@@ -108,6 +108,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | ライフサイクル |
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
+| [E0233](./errors.md#e0233-policy-key-type) | `policy-key-type` | effect | コア |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
@@ -298,5 +299,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `213-effect-input-typed.kumiki` | type, slot, effect, reducer, tile | コア | [§1.5.2](./language.md#_1-5-2-意味) |
+| `241-latest-per-key-record-key.kumiki` | type, slot, effect, reducer, tile | コア | [§1.5.2](./language.md#_1-5-2-意味) |
 <!-- examples:end -->
 :::

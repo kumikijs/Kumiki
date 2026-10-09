@@ -3727,6 +3727,11 @@ function isIndexSegment(seg: PathSegment): seg is { at: unknown } {
  * container are all one type, so the two encodings never meet in it. The
  * readers turn a key back into a value through `restoreKey` in stdlib.ts,
  * which parses this JSON for a key the checker recorded as `"value"`.
+ *
+ * A `policy=latest-per-key` key is written by it too (language.md §1.5.2):
+ * the dispatcher runs a request under that text and the `EffectId` an `emit`
+ * yields ends in it, so two requests share a key — the second aborting the
+ * first — exactly when a Map would hold their keys as one entry.
  */
 export function entryKey(x: unknown): string {
   return x !== null && typeof x === "object" ? sortedJson(x) : String(x);

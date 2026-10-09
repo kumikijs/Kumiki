@@ -187,7 +187,9 @@ export const _stdlibCore = {
   /**
    * The object key a Map literal's key is stored under — the one encoder
    * every other member uses (`entryKey` in core.ts), so `{{x: 0, y: 0}: "o"}`
-   * holds the entry `insert({x: 0, y: 0}, "o")` would.
+   * holds the entry `insert({x: 0, y: 0}, "o")` would. A `latest-per-key`
+   * effect's key is written by it as well, both where an `emit` runs and in
+   * the effect table's `keyOf`.
    */
   entryKey,
   /**
