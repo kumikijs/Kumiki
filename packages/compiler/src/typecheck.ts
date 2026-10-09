@@ -2528,8 +2528,10 @@ function checkIndexLvalue(
 /**
  * A `List` index is an `Int`, in each form that takes one: the read `xs[i]`
  * and the write `xs[i] := v`, which name the same element (language.md
- * §1.6.3), and `xs.get(i)`, which reads that element as an `Option`
- * (stdlib.md §2.2.3). `base` is the receiver's type, already unaliased; any
+ * §1.6.3), `xs.get(i)`, which reads that element as an `Option`, and the
+ * other arguments that count a `List`'s elements — the bounds of
+ * `xs.slice(start, end)` and the size of `xs.chunk(n)` (stdlib.md §2.2.3,
+ * `listIndexArgs`). `base` is the receiver's type, already unaliased; any
  * other receiver is left alone.
  */
 function checkListIndex(
@@ -2541,6 +2543,26 @@ function checkListIndex(
 ): void {
   if (base?.kind !== "TypeApp" || base.name !== "List") return;
   checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
+}
+
+/**
+ * How many leading arguments of a call to `member` on a `List` are held to
+ * `checkListIndex`: the index of `get`, the start and end of `slice` — or its
+ * start alone, where only that is written — and the size of `chunk`. A `get`
+ * with any count but one is the E0213 `checkGetArity` reports, with no
+ * argument read as the index.
+ */
+function listIndexArgs(member: string, argCount: number): number {
+  switch (member) {
+    case "get":
+      return argCount === 1 ? 1 : 0;
+    case "slice":
+      return 2;
+    case "chunk":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 /**
@@ -3227,10 +3249,9 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             checkExpr(a, sym, errors, ctx);
             const declared = memberArgType(recvType, e.method, i, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
-            // `xs.get(i)` reads the element `xs[i]` names, so its index is
-            // held to the same rule by the same check. Any other count is the
-            // E0213 `checkGetArity` reports, with no argument read as the index.
-            if (e.method === "get" && e.args.length === 1) {
+            // `get`'s index, `slice`'s bounds and `chunk`'s size count a List's
+            // elements, so they are held to the rule `xs[i]` is, by its check.
+            if (i < listIndexArgs(e.method, e.args.length)) {
               checkListIndex(unaliasType(recvType, sym), a, sym, errors, ctx);
             }
             continue;

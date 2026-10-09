@@ -141,7 +141,7 @@ last                        : Option(T)
 push(x)                     : List(T)
 prepend(x)                  : List(T)
 concat(other)               : List(T)
-slice(start, end)           : List(T)
+slice(start, end)           : List(T)          ; start と end は Int
 reverse                     : List(T)
 sort                        : List(T)          ; T は Ord
 sort-by(expr)               : List(T)          ; expr の昇順（< の順）、安定
@@ -152,7 +152,7 @@ contains(x)                 : Bool
 find(pred)                  : Option(T)
 fold(init, expr)            : Acc              ; expr の中で $1=acc, $2=elem
 join(sep)                   : Text             ; T が Text
-chunk(n)                    : List(List(T))
+chunk(n)                    : List(List(T))    ; n は Int
 zip(other)                  : List(Tuple(T, U))
 ```
 
