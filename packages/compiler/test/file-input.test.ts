@@ -1,3 +1,4 @@
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { checkSource } from "./helpers/diagnostics.ts";
 
@@ -112,5 +113,30 @@ describe("forms — accept/multiple gated to file inputs (E0206)", () => {
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     `;
     expect(checkSource(src)).toEqual([]);
+  });
+});
+
+describe("the fields of a File", () => {
+  const source = (read: string) => `
+    slot picked : Option(File) = None
+    slot shown  : Text = ""
+    tile Picker = input(type="file", accept="image/*")
+    reducer pick on=ui.change(Picker) do= picked := $event.files.head
+    reducer show on=ui.click(Show) do= shown := ${read}
+    tile Show = button(text="show")
+    tile App = column(Picker, Show)
+    app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+  `;
+
+  it.each([
+    ["size", "picked.get.size.show"],
+    ["name", "picked.get.name"],
+    ["type", "picked.get.type"],
+  ])("reads .%s as the field, not a container member", (field, read) => {
+    const result = compile(source(read), { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind === "fail" ? result.errors : []).toEqual([]);
+    if (result.kind !== "ok") return;
+    expect(result.js).toContain(`["${field}"]`);
+    expect(result.js).not.toContain("_s.mapSize");
   });
 });

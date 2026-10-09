@@ -40,6 +40,14 @@ describe("keys read back as the declared key type", () => {
   });
 });
 
+describe(".size on a receiver only the runtime sees", () => {
+  it("is the byte size of a File, not its key count", () => {
+    const file = new File(["png"], "a.png", { type: "image/png" });
+    const picked = { name: file.name, size: file.size, type: file.type, _file: file };
+    expect(_stdlibCore.mapSize(picked)).toBe(3);
+  });
+});
+
 describe("one key per value", () => {
   const s = _stdlibCore;
   const red = () => ({ _tag: "Red" });

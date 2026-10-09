@@ -167,6 +167,8 @@ export const _stdlibCore = {
   },
   mapSize(m: unknown): number {
     if (m instanceof Map) return m.size;
+    // `.size` on a receiver the checker could not type, such as a File read off `$event`.
+    if (isFileValue(m)) return m.size;
     if (m && typeof m === "object") return Object.keys(m as object).length;
     return 0;
   },
@@ -635,6 +637,15 @@ export const _stdlibCore = {
     return out;
   },
 };
+
+function isFileValue(v: unknown): v is { size: number; _file: Blob } {
+  return (
+    typeof Blob !== "undefined" &&
+    !!v &&
+    typeof v === "object" &&
+    (v as { _file?: unknown })._file instanceof Blob
+  );
+}
 
 const _fileUrlCache: WeakMap<Blob, string> = new WeakMap();
 const _fileUrlRegistry: FinalizationRegistry<string> | null =

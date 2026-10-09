@@ -72,7 +72,7 @@ describe("file upload — input(type=file) + $event.files + file-url()", () => {
     }
   });
 
-  it("typechecks .name / .size / .type on a picked File, and reads .name / .type", async () => {
+  it("reads .name / .size / .type of a picked File", async () => {
     const app = await loadSource(`
 slot pickedName : Text = ""
 slot pickedSize : Int  = 0
@@ -98,7 +98,11 @@ app FileFields
     const { root, handle } = mountApp(app);
     try {
       pick(find<HTMLInputElement>(root, 'input[type="file"]'), avatar());
-      expect(app.live).toMatchObject({ pickedName: "avatar.png", pickedType: "image/png" });
+      expect(app.live).toMatchObject({
+        pickedName: "avatar.png",
+        pickedSize: avatar().size,
+        pickedType: "image/png",
+      });
     } finally {
       handle.dispose();
     }
