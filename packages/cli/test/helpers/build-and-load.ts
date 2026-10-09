@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
@@ -13,7 +13,8 @@ mkdirSync(TMP_ROOT, { recursive: true });
 
 /**
  * Compile a .kumiki file as a self-contained bundle, write it to a temp file,
- * and dynamic-import it. Sets `globalThis.__kumikiApp` and returns it.
+ * dynamic-import it and remove it, loaded or not. Sets `globalThis.__kumikiApp`
+ * and returns it.
  *
  * Each call uses a fresh temp file + query-string cache-bust so tests don't
  * share module state.
@@ -44,7 +45,12 @@ export async function buildAndLoad(kumikiPath: string, rootId: string): Promise<
   writeFileSync(file, patched);
 
   const url = `${pathToFileURL(file).href}?t=${Date.now()}_${Math.random()}`;
-  await import(/* @vite-ignore */ url);
+  try {
+    await import(/* @vite-ignore */ url);
+  } finally {
+    // The bundle imports nothing, so nothing reads the file once it has loaded.
+    rmSync(dir, { recursive: true, force: true });
+  }
 
   const app = (globalThis as unknown as { __kumikiApp?: AppShape }).__kumikiApp;
   if (!app) throw new Error("Generated bundle did not expose __kumikiApp");

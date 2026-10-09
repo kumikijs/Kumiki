@@ -2,15 +2,13 @@
 // runs a second codegen pass that bakes the referenced SVG paths into the
 // emitted module's App.icons (#101).
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
+const TMP = scratchRoot(import.meta.url);
 
 const ctx = {
   error(e: unknown): never {

@@ -16,12 +16,12 @@ import { fileURLToPath } from "node:url";
 import { build, createServer, type PluginOption } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.kumiki");
 const SOURCE = readFileSync(COUNTER, "utf8");
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
+const TMP = scratchRoot(import.meta.url);
 
 /** A throwaway project holding the counter app at `src/app.kumiki`. */
 function project(main = ""): string {

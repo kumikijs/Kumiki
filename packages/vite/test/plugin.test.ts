@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.kumiki");
@@ -12,8 +13,7 @@ const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.ku
 // resolveCapabilities wiring through the plugin).
 const CUSTOM_CAP = join(here, "..", "..", "examples", "features", "27-custom-capability.kumiki");
 
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
+const TMP = scratchRoot(import.meta.url);
 
 /** Vite's transform may be a function or an object hook; normalize to a callable. */
 function transformOf(opts?: KumikiPluginOptions) {

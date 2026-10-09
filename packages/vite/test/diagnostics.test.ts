@@ -8,14 +8,12 @@
 // says where it looked.
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
+const TMP = scratchRoot(import.meta.url);
 
 type Reported = {
   message: string;

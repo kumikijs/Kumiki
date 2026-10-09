@@ -4,17 +4,15 @@
 // dev server, so the assertion is on the frame an author actually sees, not on
 // an object the plugin built.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { createLogger, createServer, type ViteDevServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
+const TMP = scratchRoot(import.meta.url);
 
 const APP = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
