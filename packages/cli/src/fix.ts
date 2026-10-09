@@ -389,8 +389,8 @@ function append404Route(text: string): string | null {
  * Diagnostic codes whose message shape is `... "<name>" ...` and whose repair
  * is "replace the misspelled name with a close top-level definition name".
  * `planFixes` extracts the quoted name and consults `suggestName` (which pulls
- * from `listDefs(store)`) for every code in this set — except an E0103 with
- * `endedScope` set, which is a read out of scope rather than a misspelling.
+ * from `listDefs(store)`) for every code in this set — except an E0103 that
+ * `outOfScopeReason` reads as a read out of scope rather than a misspelling.
  *
  * Handled with a *scoped* candidate set in their own branch below (not in this
  * set, because top-level defs would produce wrong suggestions):
@@ -414,6 +414,21 @@ const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
   "E0107", // undef-motion
   "E0211", // undef-tile-in-selector
 ]);
+
+/**
+ * The skip reason for a name read outside the nested scope that declares it
+ * — after that scope ended (`endedScope`) or before it begins (`laterScope`)
+ * — or `undefined` when the diagnostic carries neither. Such a read is out of
+ * scope, not misspelled. A close name is the one repair that cannot be right:
+ * the renamed read type-checks, the gate counts it as resolved, and the
+ * program reads a different value. Moving the declaration or the read is the
+ * author's call.
+ */
+function outOfScopeReason(err: KumikiError): string | undefined {
+  if (err.endedScope !== undefined) return "e0103-read-after-scope-ended";
+  if (err.laterScope !== undefined) return "e0103-read-before-scope-begins";
+  return undefined;
+}
 
 /**
  * Explained variant of `planFixes`: returns the same auto-patches plus a
@@ -452,14 +467,9 @@ export function planFixesExplained(
     const beforePatches = patches.length;
     const beforeSkipped = skipped.length;
     if (NAME_SUGGEST_CODES.has(err.code)) {
-      // A name read after the scope that declared it ended — a statement
-      // body, a `let … in`, a tile `for`, a `match` expression's arm — is out
-      // of scope, not misspelled. A close name is the one repair that cannot
-      // be right: the renamed read type-checks, the gate counts it as
-      // resolved, and the program reads a different value. Moving the
-      // declaration or the read is the author's call.
-      if (err.endedScope !== undefined) {
-        skip(err.code, "e0103-read-after-scope-ended", err.message);
+      const outOfScope = outOfScopeReason(err);
+      if (outOfScope !== undefined) {
+        skip(err.code, outOfScope, err.message);
         continue;
       }
       // Most diagnostics quote a single name; E0211 quotes the reducer name

@@ -278,6 +278,31 @@ app Demo
     expect(code).toBe(1);
   });
 
+  // The read is before the scope this time: the first `text` reads the `for`'s
+  // variable ahead of the `for`, and renamed to `id` it would read the slot.
+  const BEFORE_SCOPE = `slot id : Int = 0
+slot xs : List(Int) = [1, 2]
+tile App = column(text(idx.show), for idx in xs text(idx.show))
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  it("exits 1 proposing nothing for a read before the scope that declares it", SPAWN, () => {
+    const { stdout, code } = runCli(["fix", write("before-dry.kumiki", BEFORE_SCOPE)]);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 under --apply with a read before the scope left as written", SPAWN, () => {
+    const file = write("before-apply.kumiki", BEFORE_SCOPE);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(BEFORE_SCOPE);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(stderr).toContain(
+      `E0103 Reference to undefined name "idx" — it is declared later, at 3:35, and scoped to a tile's "for" body`,
+    );
+    expect(code).toBe(1);
+  });
+
   it("applies a patch to a file that also has a warning", SPAWN, () => {
     // The regression gate compares the diagnostics before and after the patch.
     // Counting the pre-existing warning on one side only makes it look newly

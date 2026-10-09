@@ -440,7 +440,7 @@ app A
     rmSync(dir, { recursive: true, force: true });
   });
 
-  describe("a read after the scope that declared it ended (E0103)", () => {
+  describe("a read outside the scope that declares the name (E0103)", () => {
     // `idx` is one edit from the slot `id`, so a rename type-checks and the
     // file comes out clean — reading `id` where the author wrote `idx`. The
     // read is out of scope rather than misspelled, so nothing is proposed.
@@ -542,6 +542,55 @@ app A
         patches: ['replace "cont" with "count" at 8:76'],
         skipped: ["e0103-read-after-scope-ended"],
       });
+    });
+
+    // A read before the scope that declares the name is as far outside it:
+    // the definition declares `idx` (or `v`), later.
+    const BEFORE = {
+      "a `let … in`": scoped("total := idx\n        id := let idx = 1 in idx"),
+      "a `for` statement": scoped("total := idx\n        for idx in [1] { () }"),
+      "an `if` branch": scoped("total := idx\n        if flag then { let idx = 1 } else { () }"),
+      "a match arm": scoped(
+        "total := idx\n        match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }",
+      ),
+      "a tile's `for`": inApp("column(Btn, text(idx.show), for idx in [1] text(idx.show))"),
+      "a tile's `match` arm": inApp(
+        'column(Btn, text(v.show), match Some(1) with | Some(v) -> text(v.show) | None -> text("none"))',
+      ),
+    };
+
+    for (const [form, source] of Object.entries(BEFORE)) {
+      it(`proposes no rename for a name ${form} declares, read before it`, () => {
+        const { store, errors } = plan(source);
+        const { patches, skipped } = planFixesExplained(store, errors);
+        expect(patches).toEqual([]);
+        expect(skipped.map((s) => [s.code, s.reason])).toEqual([
+          ["E0103", "e0103-read-before-scope-begins"],
+        ]);
+      });
+    }
+
+    const misspeltBefore = scoped(
+      "total := idx\n        count := cont\n        for idx in [1] { () }",
+    );
+    const ONE_OF_EACH_BEFORE = {
+      patches: ['replace "cont" with "count" at 7:18'],
+      skipped: ["e0103-read-before-scope-begins"],
+    };
+
+    it("still renames a misspelling beside a read before the scope", () => {
+      const { store, errors } = plan(misspeltBefore);
+      expect(outcome(store, errors)).toEqual(ONE_OF_EACH_BEFORE);
+    });
+
+    it("tells a read before the scope apart by the diagnostic's field, not its message", () => {
+      const { store, errors } = plan(misspeltBefore);
+      const reworded = errors.map((e) => ({ ...e, message: e.message.replace(/ — .*/, "") }));
+      expect(reworded.map((e) => e.message)).toEqual([
+        'Reference to undefined name "idx"',
+        'Reference to undefined name "cont"',
+      ]);
+      expect(outcome(store, reworded)).toEqual(ONE_OF_EACH_BEFORE);
     });
   });
 

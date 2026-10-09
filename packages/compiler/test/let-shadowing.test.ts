@@ -369,18 +369,18 @@ describe("the checker scopes each `if` branch as codegen does", () => {
   });
 });
 
-describe("an E0103 for a name read after its scope ended names the scope", () => {
-  // A read after the scope that declared the name — a reducer's `if` branch,
+describe("an E0103 for a name read outside its scope names the scope", () => {
+  // A read outside the scope that declares the name — a reducer's `if` branch,
   // `for` body or match arm, or an expression's: a `let … in` body, a `match`
   // expression's arm, a tile's `for` body — is E0103 like a misspelling, but
   // renaming it to a close name is not the repair: the renamed read
   // type-checks and reads another value. So the diagnostic says which scope it
-  // was, in `endedScope` for a reader such as `kumiki fix`, and in the message
-  // for the author.
+  // was, in `endedScope` (a read after it) or `laterScope` (a read before it)
+  // for a reader such as `kumiki fix`, and in the message for the author.
   const undefinedNames = (source: string) =>
     check(parse(lex(source)))
       .filter((e) => e.code === "E0103")
-      .map((e) => ({ endedScope: e.endedScope, message: e.message }));
+      .map((e) => ({ endedScope: e.endedScope, laterScope: e.laterScope, message: e.message }));
   const HINTS: Record<string, string> = {
     if: 'it is scoped to an "if" branch, which ends with it: declare it before the "if", or move the read into the branch',
     for: 'it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body',
@@ -454,6 +454,16 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
       "if flag then {\n          for i in [1] { () }\n          total := i\n        } else { () }",
     );
     expect(undefinedNames(src)).toEqual([hinted("i", "for")]);
+  });
+
+  it("names the outer of two scopes that end together, when both declare the name", () => {
+    // The `else` branch's `n` shadows the loop variable and hands it back; the
+    // loop variable is the `n` that ends with the `for`.
+    const src = program(
+      "app.start",
+      "for n in [1] { if flag then { () } else { let n = 2 } }\n        total := n",
+    );
+    expect(undefinedNames(src)).toEqual([hinted("n", "for")]);
   });
 
   it("keeps the hint when a name in scope is one edit away", () => {
@@ -554,6 +564,189 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
     expect(undefinedNames(src)).toEqual([
       { endedScope: undefined, message: 'Reference to undefined name "idx"' },
     ]);
+  });
+
+  describe("before the scope that declares it", () => {
+    // A read before that scope begins is as far outside it as one after it
+    // ends, and no more misspelled: the definition declares the name, later.
+    // The message says where, and `laterScope` carries the kind of scope.
+    const SCOPES: Record<string, string> = {
+      if: 'an "if" branch',
+      for: 'a "for" body',
+      match: "a match arm",
+      "let-in": 'the body of a "let … in"',
+      "for-expr": `a tile's "for" body`,
+      "match-expr": 'an arm of a "match" expression',
+    };
+    const REPAIRS: Record<string, string> = {
+      if: "declare it before this read, or move the read into the branch",
+      for: "declare it before this read, or move the read into the body",
+      match: "declare it before this read, or move the read into the arm",
+      "let-in": "move the read into that body, or bind it where both reads see it",
+      "for-expr": "move the read into the body",
+      "match-expr": "move the read into the arm",
+    };
+    /** Where `text` first appears in `source`, written as a message writes a position. */
+    const where = (source: string, text: string): string => {
+      const lines = source.split("\n");
+      const line = lines.findIndex((l) => l.includes(text));
+      return `${line + 1}:${(lines[line] ?? "").indexOf(text) + 1}`;
+    };
+    /** The E0103 for `name`, read before the `scope` that `declaration` declares it in. */
+    const later = (source: string, name: string, scope: string, declaration: string) => ({
+      laterScope: scope,
+      message: `Reference to undefined name "${name}" — it is declared later, at ${where(source, declaration)}, and scoped to ${SCOPES[scope]}: ${REPAIRS[scope]} (see docs/spec/language.md §1.6.7)`,
+    });
+
+    it("names the `for` body for a loop variable read before the loop", () => {
+      const src = program("app.start", "total := idx\n        for idx in [1] { () }");
+      expect(undefinedNames(src)).toEqual([later(src, "idx", "for", "for idx")]);
+    });
+
+    it("names the `if` branch for a `let` read before the `if`", () => {
+      const src = program(
+        "app.start",
+        "total := n\n        if flag then { let n = 1 } else { () }",
+      );
+      expect(undefinedNames(src)).toEqual([later(src, "n", "if", "let n")]);
+    });
+
+    it("names the `if` branch for a read in the branch before it", () => {
+      const src = program("app.start", "if flag then { total := n } else { let n = 1 }");
+      expect(undefinedNames(src)).toEqual([later(src, "n", "if", "let n")]);
+    });
+
+    it("names the match arm for a pattern variable read before the match", () => {
+      const src = program(
+        "app.start",
+        "total := v\n        match Some(1) with\n          | Some(v) -> { () }\n          | None    -> { () }",
+      );
+      expect(undefinedNames(src)).toEqual([later(src, "v", "match", "Some(v)")]);
+    });
+
+    it("names the match arm for a read in an earlier arm", () => {
+      const src = program(
+        "app.start",
+        "match Some(1) with\n          | None    -> { total := v }\n          | Some(v) -> { () }",
+      );
+      expect(undefinedNames(src)).toEqual([later(src, "v", "match", "Some(v)")]);
+    });
+
+    it("names the `let … in` body for its name read in an earlier statement", () => {
+      const src = program("app.start", 'after := n\n        seen := let n = "a" in n');
+      expect(undefinedNames(src)).toEqual([later(src, "n", "let-in", "let n")]);
+    });
+
+    it("names the arm of a `match` expression for its variable read in an earlier statement", () => {
+      const src = program(
+        "app.start",
+        'after := v\n        seen := match Some("a") with | Some(v) -> v | None -> ""',
+      );
+      expect(undefinedNames(src)).toEqual([later(src, "v", "match-expr", "Some(v)")]);
+    });
+
+    it("names a tile's `for` body for its variable read in an earlier sibling", () => {
+      const src = page("column(text(idx.show), for idx in [1] text(idx.show))");
+      expect(undefinedNames(src)).toEqual([later(src, "idx", "for-expr", "for idx")]);
+    });
+
+    it("names the arm of a tile's `match` for its variable read in an earlier sibling", () => {
+      const src = page(
+        'column(text(v.show), match Some(1) with | Some(v) -> text(v.show) | None -> text("none"))',
+      );
+      expect(undefinedNames(src)).toEqual([later(src, "v", "match-expr", "Some(v)")]);
+    });
+
+    it("names the `let … in` body for its name read before it in a `fn`", () => {
+      const src = program("app.start", "()").replace(
+        "tile Page",
+        "fn twice(x: Int) -> Int = n + (let n = x in n)\n\ntile Page",
+      );
+      expect(undefinedNames(src)).toEqual([later(src, "n", "let-in", "let n")]);
+    });
+
+    it("names the `let … in` body for its name read before it in a test", () => {
+      const src = `${program("app.start", "()")}
+test probe =
+    property-test
+        for-all   = {k: Int}
+        given     = {slots: {total: k}}
+        invariant = m == (let m = k in m)
+`;
+      expect(undefinedNames(src)).toEqual([later(src, "m", "let-in", "let m")]);
+    });
+
+    it("names the innermost scope that declares it, nested in a later one", () => {
+      const src = program(
+        "app.start",
+        "total := n\n        for x in [1] {\n          if flag then { let n = x } else { () }\n        }",
+      );
+      expect(undefinedNames(src)).toEqual([later(src, "n", "if", "let n")]);
+    });
+
+    it("names no scope for a read ahead of its `let` in the same body, or in a `for`'s own list", () => {
+      // Neither read is outside the scope on one side of it: the first is in
+      // the body that declares `n`, the second in the `for` that declares
+      // `idx`, which reads its list before the name is in scope.
+      const src = program(
+        "app.start",
+        "for x in [1] { total := n\n                       let n = 1 }\n        for idx in [idx] { () }",
+      );
+      expect(undefinedNames(src)).toEqual([
+        {
+          endedScope: undefined,
+          laterScope: undefined,
+          message: 'Reference to undefined name "n"',
+        },
+        {
+          endedScope: undefined,
+          laterScope: undefined,
+          message: 'Reference to undefined name "idx"',
+        },
+      ]);
+    });
+
+    it("names the scope that ended when another declares the name later", () => {
+      const src = program(
+        "app.start",
+        "for idx in [1] { () }\n        total := idx\n        for idx in [2] { () }",
+      );
+      expect(undefinedNames(src)).toEqual([hinted("idx", "for")]);
+    });
+
+    it("keeps the message of a misspelling beside it", () => {
+      const src = program(
+        "app.start",
+        "total := idx\n        seen := sen\n        for idx in [1] { () }",
+      );
+      expect(undefinedNames(src)).toEqual([
+        later(src, "idx", "for", "for idx"),
+        {
+          endedScope: undefined,
+          laterScope: undefined,
+          message: 'Reference to undefined name "sen"',
+        },
+      ]);
+    });
+
+    it("reads the slot of the same name before a scope that shadows it", () => {
+      const src = page('column(text(seen), for seen in ["a"] text(seen))');
+      expect(codes(src)).toEqual([]);
+    });
+
+    it("does not carry a later definition's names into an earlier one", () => {
+      const src = page("column(for idx in [1] text(idx.show))").replace(
+        "tile Page",
+        "tile Other = text(idx.show)\n\ntile Page",
+      );
+      expect(undefinedNames(src)).toEqual([
+        {
+          endedScope: undefined,
+          laterScope: undefined,
+          message: 'Reference to undefined name "idx"',
+        },
+      ]);
+    });
   });
 });
 

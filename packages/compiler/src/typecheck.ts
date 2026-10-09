@@ -144,19 +144,28 @@ export type KumikiError = {
    * E0103 only: the scope that declared the name and ended before this read
    * (language.md §1.6.7) — so the read is out of scope, not misspelled, and a
    * reader (`kumiki fix`) tells the two apart without matching the message.
-   * Set exactly when the message carries the scope hint.
+   * Set exactly when the message carries the hint that the scope ended.
    */
-  endedScope?: EndedScope;
+  endedScope?: NestedScope;
+  /**
+   * E0103 only: the scope that declares the name later in the definition and
+   * begins after this read — `endedScope`'s counterpart for a read on the
+   * other side of the scope, out of scope and not misspelled for the same
+   * reason. Set exactly when the message carries the hint that the name is
+   * declared later; at most one of the two is set.
+   */
+  laterScope?: NestedScope;
 };
 
 /**
- * The scopes that end inside a definition (language.md §1.6.7). A reducer's
- * nested statement bodies: an `if` branch, a `for` body, a match arm. And the
- * expressions that bind a name for their own body, wherever they are written:
- * a `let … in` (`let-in`), a tile's `for` (`for-expr`), and an arm of a
- * `match` expression, a tile's or a value's (`match-expr`).
+ * The scopes nested inside a definition, each ending with itself (language.md
+ * §1.6.7). A reducer's nested statement bodies: an `if` branch, a `for` body,
+ * a match arm. And the expressions that bind a name for their own body,
+ * wherever they are written: a `let … in` (`let-in`), a tile's `for`
+ * (`for-expr`), and an arm of a `match` expression, a tile's or a value's
+ * (`match-expr`).
  */
-type EndedScope = "if" | "for" | "match" | "let-in" | "for-expr" | "match-expr";
+type NestedScope = "if" | "for" | "match" | "let-in" | "for-expr" | "match-expr";
 
 /**
  * The accessibility band, which `--strict-a11y` turns on. Exported so a caller
@@ -750,7 +759,7 @@ function checkSlot(
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(slot.init),
   };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);
@@ -762,7 +771,7 @@ function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(tile.body),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
@@ -845,7 +854,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(tile.body),
     undeclaredInputReads: seen,
   };
   checkTileExpr(tile.body, sym, [], ctx);
@@ -1085,16 +1094,16 @@ type Ctx = {
    */
   undeclaredInputReads?: Pos[];
   /**
-   * The names the scopes that ended so far took with them, each with the kind
-   * of scope that declared it — written by `endScope`, read by the
-   * undefined-name report, which says the read is out of scope rather than
-   * only that the name is undefined. Only names the enclosing scope did not
-   * bind: a scope's shadow hands the outer name back, and a read of that
-   * resolves. Required, so every definition's scope starts with a map of its
-   * own and none goes without; nested reads reach it the way they reach
-   * `routeReadsSeen`.
+   * Every name declared in a nested scope of what this scope is checked over
+   * — a definition, or the one expression a position or a probe checks — and
+   * where (`nestedScopes`). Read by the undefined-name report, which says a
+   * read outside such a scope is out of scope rather than only that the name
+   * is undefined. Built from the tree before the check, so a read before the
+   * scope is answered as surely as one after it. Required, so every scope
+   * that starts a check is built with the table of its own nodes and none
+   * goes without; nested reads reach it the way they reach `routeReadsSeen`.
    */
-  endedScopes: Map<string, EndedScope>;
+  nestedScopes: NestedScopes;
   /**
    * Set inside the fragment of a list method handed one value per call
    * (`fragmentShape` answered `"value"`): that method's name, and whether the
@@ -1487,7 +1496,6 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
       checkTileExpr(t.body, sym, errors, inner);
-      endScope("for-expr", inner, ctx);
       return;
     }
     case "TileWhen":
@@ -1509,7 +1517,6 @@ function checkTileExpr(t: TileExpr, sym: SymbolTable, errors: KumikiError[], ctx
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
-        endScope("match-expr", inner, ctx);
       }
       return;
     }
@@ -2195,7 +2202,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(r.do),
   };
   // event binds
   if (r.on.kind === "EffectEvent") {
@@ -2370,13 +2377,13 @@ function checkStmt(
   if (s.kind === "ForStmt") {
     checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
+    const inner = innerScope(ctx);
+    bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
     // A loop body executes multiple times; track writes inside its own scope
     // so the same slot can be assigned once per iteration. After the loop,
     // propagate the write set up to the parent (the slot WAS written).
     const bodyWrites = new Set<string>(writtenRoots);
-    checkBody("for", s.body, sym, errors, ctx, bodyWrites, (inner) =>
-      bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx)),
-    );
+    for (const st of s.body) checkStmt(st, sym, errors, inner, bodyWrites);
     for (const r of bodyWrites) writtenRoots.add(r);
     return;
   }
@@ -2389,9 +2396,11 @@ function checkStmt(
     // set. A slot written in only one branch (or both) counts as "written" for
     // the parent, so subsequent code can't re-write it.
     const thenWrites = new Set<string>(writtenRoots);
-    checkBody("if", s.consequent, sym, errors, ctx, thenWrites);
+    const thenScope = innerScope(ctx);
+    for (const st of s.consequent) checkStmt(st, sym, errors, thenScope, thenWrites);
     const elseWrites = new Set<string>(writtenRoots);
-    checkBody("if", s.alternate, sym, errors, ctx, elseWrites);
+    const elseScope = innerScope(ctx);
+    for (const st of s.alternate) checkStmt(st, sym, errors, elseScope, elseWrites);
     for (const r of thenWrites) writtenRoots.add(r);
     for (const r of elseWrites) writtenRoots.add(r);
     return;
@@ -2402,11 +2411,11 @@ function checkStmt(
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
+      const inner = innerScope(ctx);
       checkPatternBindsAreDistinct(arm.pattern, errors);
+      checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
       const armWrites = new Set<string>(writtenRoots);
-      checkBody("match", arm.body, sym, errors, ctx, armWrites, (inner) =>
-        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner),
-      );
+      for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
       armSets.push(armWrites);
     }
     for (const set of armSets) for (const r of set) writtenRoots.add(r);
@@ -2494,36 +2503,210 @@ function checkStmt(
 }
 
 /**
- * Check one nested statement body — an `if` branch, a `for` body or a match
- * arm, as `kind` says — in a scope of its own, and end that scope. `bind` puts
- * the body's own binds into the scope first: the loop variable, the arm's
- * pattern.
+ * One place a definition declares a name in a nested scope: the kind of
+ * scope, where the declaration is written (`at`), and the first and last
+ * positions written in the stretch of source it declares the name for
+ * (`from` … `to`). A read outside that stretch is outside the scope. One
+ * inside it is not, even when it does not resolve: a read before the `let`
+ * in the same body, or in the header of the `for` or `let … in` that declares
+ * the name — that declaration's own right-hand side (language.md §1.6.7).
  */
-function checkBody(
-  kind: EndedScope,
-  body: Statement[],
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-  writtenRoots: Set<string>,
-  bind?: (inner: Ctx) => void,
-): void {
-  const inner = innerScope(ctx);
-  bind?.(inner);
-  for (const st of body) checkStmt(st, sym, errors, inner, writtenRoots);
-  endScope(kind, inner, ctx);
+type ScopedDeclaration = { kind: NestedScope; at: Pos; from: Pos; to: Pos };
+
+/** Every name a definition declares in a nested scope, with each place it does. */
+type NestedScopes = ReadonlyMap<string, readonly ScopedDeclaration[]>;
+
+/** The first and last positions written in a stretch of source. */
+type Extent = { from: Pos; to: Pos };
+
+/** Negative when `a` is written before `b`, positive after, zero at the same place. */
+function comparePos(a: Pos, b: Pos): number {
+  return a.line - b.line || a.col - b.col;
+}
+
+/** The stretch from the first position of `a` and `b` to the last. */
+function spanning(a: Extent, b: Extent | null): Extent {
+  if (b === null) return a;
+  return {
+    from: comparePos(b.from, a.from) < 0 ? b.from : a.from,
+    to: comparePos(b.to, a.to) > 0 ? b.to : a.to,
+  };
+}
+
+function extentAt(pos: Pos): Extent {
+  return { from: pos, to: pos };
+}
+
+/** The first and last positions written in `e`, whichever of its nodes they are. */
+function exprExtent(e: Expr): Extent {
+  let over = extentAt(e.pos);
+  walkExpr(e, (n) => {
+    over = spanning(over, extentAt(n.pos));
+  });
+  return over;
 }
 
 /**
- * End `inner`, a scope of the kind `kind` opened in `ctx` (language.md
- * §1.6.7). The names it declared that `ctx` does not bind go out of scope
- * with it, and are recorded in `endedScopes` under `kind`, so a read of one
- * later in the definition says why it is undefined.
+ * Every name the definition made of `roots` declares in a nested scope
+ * (language.md §1.6.7), and where — the table the undefined-name report reads
+ * a read's position against. Each name is declared for a stretch of source: a
+ * statement body for a `let` written in it, an arm (from its pattern on) for
+ * the pattern's binds, and the whole `for` or `let … in` for the name it
+ * binds, whose list or value is written after the name and read before the
+ * name is in scope.
+ *
+ * Built from the tree before the check rather than as the check goes, because
+ * a scope the checker reaches after a read still declares the read's name.
+ * Each construct declares what the checker binds for it: a `for`'s variable,
+ * a body's `let` statements, a pattern's binds (`patternBinds`), a `let …
+ * in`'s name. The `let` statements of the definition's own body are not in a
+ * nested scope, so a statement list given as a root declares none.
  */
-function endScope(kind: EndedScope, inner: Ctx, ctx: Ctx): void {
-  for (const name of inner.localBinds) {
-    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, kind);
+function nestedScopes(...roots: (Expr | TileExpr | Statement[] | undefined)[]): NestedScopes {
+  const table = new Map<string, ScopedDeclaration[]>();
+  const declare = (kind: NestedScope, name: string, at: Pos, over: Extent): void => {
+    const declaration = { kind, at, ...over };
+    const known = table.get(name);
+    if (known) known.push(declaration);
+    else table.set(name, [declaration]);
+  };
+  const arm = (kind: NestedScope, pattern: Pattern, body: Extent | null): Extent => {
+    const over = spanning(extentAt(pattern.pos), body);
+    for (const b of patternBinds(pattern)) declare(kind, b.name, b.pos, over);
+    return over;
+  };
+  const expr = (e: Expr): Extent => {
+    walkExpr(e, (n) => {
+      if (n.kind === "LetIn") declare("let-in", n.name, n.pos, exprExtent(n));
+      if (n.kind === "MatchExpr") {
+        for (const a of n.arms) arm("match-expr", a.pattern, exprExtent(a.body));
+      }
+    });
+    return exprExtent(e);
+  };
+  const lvalue = (lv: Lvalue): Extent => {
+    if (lv.kind === "LSlot") return extentAt(lv.pos);
+    const base = spanning(extentAt(lv.pos), lvalue(lv.base));
+    return lv.kind === "LIndex" ? spanning(base, expr(lv.index)) : base;
+  };
+  const statements = (stmts: Statement[]): Extent | null =>
+    stmts.reduce<Extent | null>((over, s) => {
+      const next = statement(s);
+      return over === null ? next : spanning(over, next);
+    }, null);
+  // A nested statement body: the stretch each `let` written in it is declared for.
+  const body = (kind: NestedScope, stmts: Statement[]): Extent | null => {
+    const over = statements(stmts);
+    if (over !== null) {
+      for (const s of stmts) if (s.kind === "LetStmt") declare(kind, s.name, s.pos, over);
+    }
+    return over;
+  };
+  const statement = (s: Statement): Extent => {
+    const own = extentAt(s.pos);
+    switch (s.kind) {
+      case "SlotAssign":
+        return spanning(spanning(own, lvalue(s.lvalue)), expr(s.rhs));
+      case "LetStmt":
+        return spanning(own, expr(s.rhs));
+      case "Emit":
+        return s.args.reduce((over, a) => spanning(over, expr(a)), own);
+      case "PanicStmt":
+        return spanning(own, expr(s.message));
+      case "StopTimer":
+      case "NoopStmt":
+        return own;
+      case "ForStmt": {
+        const over = spanning(spanning(own, expr(s.iter)), body("for", s.body));
+        declare("for", s.bind, s.pos, over);
+        return over;
+      }
+      case "IfStmt": {
+        const consequent = spanning(spanning(own, expr(s.cond)), body("if", s.consequent));
+        return spanning(consequent, body("if", s.alternate));
+      }
+      case "MatchStmt":
+        return s.arms.reduce(
+          (over, a) => spanning(over, arm("match", a.pattern, body("match", a.body))),
+          spanning(own, expr(s.scrutinee)),
+        );
+      default:
+        assertNever(s);
+        return own;
+    }
+  };
+  const tile = (t: TileExpr): Extent => {
+    const own = extentAt(t.pos);
+    switch (t.kind) {
+      case "TileCall": {
+        let over = own;
+        for (const a of t.args) {
+          over = spanning(over, isTileExpr(a.value) ? tile(a.value) : expr(a.value));
+        }
+        for (const p of t.props) over = spanning(spanning(over, extentAt(p.pos)), expr(p.value));
+        return over;
+      }
+      case "TileFor": {
+        const over = spanning(spanning(own, expr(t.iter)), tile(t.body));
+        declare("for-expr", t.bind, t.pos, over);
+        return over;
+      }
+      case "TileWhen":
+        return spanning(spanning(own, expr(t.cond)), tile(t.body));
+      case "TileIf":
+        return spanning(
+          spanning(spanning(own, expr(t.cond)), tile(t.consequent)),
+          tile(t.alternate),
+        );
+      case "TileMatch":
+        return t.arms.reduce(
+          (over, a) => spanning(over, arm("match-expr", a.pattern, tile(a.body))),
+          spanning(own, expr(t.scrutinee)),
+        );
+      default:
+        assertNever(t);
+        return own;
+    }
+  };
+  for (const root of roots) {
+    if (root === undefined) continue;
+    if (Array.isArray(root)) statements(root);
+    else if (isTileExpr(root)) tile(root);
+    else expr(root);
   }
+  return table;
+}
+
+/**
+ * The nested scope that declares `name` and that a read of it at `pos`, bound
+ * by nothing in scope there, is outside of: the one that ended last before the
+ * read, or else the first to begin after it. Of two that end together, the
+ * outer one, which held the name the longer; of two that begin together, the
+ * earlier declaration. None when no nested scope of the definition declares
+ * the name, or each one that does holds the read (`ScopedDeclaration`).
+ */
+function scopeOutside(
+  scopes: NestedScopes,
+  name: string,
+  pos: Pos,
+): { side: "ended" | "later"; declaration: ScopedDeclaration } | undefined {
+  // Positive when `a` is the better answer than `b` on its side of the read.
+  const endsLater = (a: ScopedDeclaration, b: ScopedDeclaration): number =>
+    comparePos(a.to, b.to) || comparePos(b.from, a.from);
+  const beginsSooner = (a: ScopedDeclaration, b: ScopedDeclaration): number =>
+    comparePos(b.from, a.from) || comparePos(b.at, a.at);
+  let ended: ScopedDeclaration | undefined;
+  let later: ScopedDeclaration | undefined;
+  for (const d of scopes.get(name) ?? []) {
+    if (comparePos(d.to, pos) < 0) {
+      if (ended === undefined || endsLater(d, ended) > 0) ended = d;
+    } else if (comparePos(pos, d.from) < 0) {
+      if (later === undefined || beginsSooner(d, later) > 0) later = d;
+    }
+  }
+  if (ended !== undefined) return { side: "ended", declaration: ended };
+  if (later !== undefined) return { side: "later", declaration: later };
+  return undefined;
 }
 
 function lvalueShape(lv: Lvalue): string {
@@ -2975,48 +3158,76 @@ function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string {
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
+/** One repair for a read on either side of the scope. */
+const eitherSide = (repair: string): Record<"ended" | "later", string> => ({
+  ended: repair,
+  later: repair,
+});
+
 /**
- * How the hint below names each scope, and the repair it offers. A name a
- * statement body declares can be declared before the statement instead, and
- * the value a `let … in` binds can be bound where both reads see it; a tile
- * `for`'s variable and a `match` arm's pattern stand for one element, one
- * case, so the read moves in.
+ * How the hint below names each scope, and the repair it offers for a read
+ * after the scope ended and for one before it begins. A name a statement body
+ * declares can be declared outside the statement instead — before it, or
+ * before the read that comes first — and the value a `let … in` binds can be
+ * bound where both reads see it; a tile `for`'s variable and a `match` arm's
+ * pattern stand for one element, one case, so the read moves in.
  */
-const ENDED_SCOPE_WORDS: Record<EndedScope, { scope: string; repair: string }> = {
+const NESTED_SCOPE_WORDS: Record<
+  NestedScope,
+  { scope: string; repair: Record<"ended" | "later", string> }
+> = {
   if: {
     scope: 'an "if" branch',
-    repair: 'declare it before the "if", or move the read into the branch',
+    repair: {
+      ended: 'declare it before the "if", or move the read into the branch',
+      later: "declare it before this read, or move the read into the branch",
+    },
   },
   for: {
     scope: 'a "for" body',
-    repair: 'declare it before the "for", or move the read into the body',
+    repair: {
+      ended: 'declare it before the "for", or move the read into the body',
+      later: "declare it before this read, or move the read into the body",
+    },
   },
   match: {
     scope: "a match arm",
-    repair: 'declare it before the "match", or move the read into the arm',
+    repair: {
+      ended: 'declare it before the "match", or move the read into the arm',
+      later: "declare it before this read, or move the read into the arm",
+    },
   },
   "let-in": {
     scope: 'the body of a "let … in"',
-    repair: "move the read into that body, or bind it where both reads see it",
+    repair: eitherSide("move the read into that body, or bind it where both reads see it"),
   },
-  "for-expr": { scope: `a tile's "for" body`, repair: "move the read into the body" },
-  "match-expr": { scope: 'an arm of a "match" expression', repair: "move the read into the arm" },
+  "for-expr": { scope: `a tile's "for" body`, repair: eitherSide("move the read into the body") },
+  "match-expr": {
+    scope: 'an arm of a "match" expression',
+    repair: eitherSide("move the read into the arm"),
+  },
 };
 
 /**
- * The sentence to add when an unresolved name was declared in a scope that has
- * ended (`endedScopes`). The read is out of scope, not misspelled, so the
- * repair moves the declaration or the read; renaming it to a close name would
- * make it read a different value, and `kumiki fix` offers no rename for a
- * diagnostic carrying this (its `endedScope`).
+ * The sentence to add when an unresolved name is declared in a nested scope
+ * the read is outside of (`scopeOutside`): one that ended before the read, or
+ * one that begins after it, which the sentence places. The read is out of
+ * scope, not misspelled, so the repair moves the declaration or the read;
+ * renaming it to a close name would make it read a different value, and
+ * `kumiki fix` offers no rename for a diagnostic carrying this (its
+ * `endedScope` or `laterScope`).
  *
  * Not withheld when a name in scope is one edit away, as `arithmeticHint` is:
- * a hyphen only looks like subtraction, but that this name was declared and
- * has ended is known.
+ * a hyphen only looks like subtraction, but that this name is declared in a
+ * scope the read is outside of is known.
  */
-function endedScopeHint(kind: EndedScope): string {
-  const { scope, repair } = ENDED_SCOPE_WORDS[kind];
-  return ` — it is scoped to ${scope}, which ends with it: ${repair} (see docs/spec/language.md §1.6.7)`;
+function outOfScopeHint(side: "ended" | "later", declaration: ScopedDeclaration): string {
+  const { scope, repair } = NESTED_SCOPE_WORDS[declaration.kind];
+  const where =
+    side === "ended"
+      ? `it is scoped to ${scope}, which ends with it`
+      : `it is declared later, at ${declaration.at.line}:${declaration.at.col}, and scoped to ${scope}`;
+  return ` — ${where}: ${repair[side]} (see docs/spec/language.md §1.6.7)`;
 }
 
 /**
@@ -3173,14 +3384,17 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         });
         return;
       }
-      const endedScope = ctx.endedScopes.get(e.name);
-      if (endedScope !== undefined) {
+      const outside = scopeOutside(ctx.nestedScopes, e.name, e.pos);
+      if (outside !== undefined) {
+        const { side, declaration } = outside;
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `Reference to undefined name "${e.name}"${endedScopeHint(endedScope)}`,
+          message: `Reference to undefined name "${e.name}"${outOfScopeHint(side, declaration)}`,
           pos: e.pos,
-          endedScope,
+          ...(side === "ended"
+            ? { endedScope: declaration.kind }
+            : { laterScope: declaration.kind }),
         });
         return;
       }
@@ -3444,7 +3658,6 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkExpr(arm.body, sym, errors, inner);
-        endScope("match-expr", inner, ctx);
       }
       return;
     }
@@ -3456,9 +3669,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      const inner = letInScope(e, sym, ctx);
-      checkExpr(e.body, sym, errors, inner);
-      endScope("let-in", inner, ctx);
+      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
       return;
     }
     case "TokenRef":
@@ -5417,7 +5628,7 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
     localBinds: new Set(scope.map((b) => b.name)),
     localTypes: new Map(scope.map((b) => [b.name, b.type])),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(fn.body),
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
   for (const p of fn.params) resolveType(p.type, sym, errors);
@@ -5471,11 +5682,13 @@ function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): v
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+  if (eff.mapRequest) {
+    checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"], eff.mapRequest));
+  }
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey")
-    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"], eff.policy.key));
 }
 
 /**
@@ -5516,13 +5729,14 @@ function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[
  * separate pass over slot definitions — not a rule `Ctx.kind` carries.)
  *
  * Shared rather than repeated so the three positions cannot drift apart.
+ * `exprs` are the expressions checked in it, whose nested scopes it knows.
  */
-function pureScope(binds: string[]): Ctx {
+function pureScope(binds: string[], ...exprs: (Expr | undefined)[]): Ctx {
   return {
     kind: "slot-init",
     localBinds: new Set(binds),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(...exprs),
     localTypes: new Map(),
   };
 }
@@ -5550,30 +5764,7 @@ function wildcardText(e: Expr & { kind: "Wildcard" }): string {
  */
 function checkPatternBindsAreDistinct(pat: Pattern, errors: KumikiError[]): void {
   const seen = new Set<string>();
-  const walk = (p: Pattern): void => {
-    switch (p.kind) {
-      case "PWildcard":
-        return;
-      case "PBind":
-        report(p.name, p.pos);
-        return;
-      case "PVariant":
-        // `PVariant.binds` are bare names with no position of their own, so the
-        // report lands on the pattern that wrote them and names the bind.
-        for (const b of p.binds) report(b, p.pos);
-        return;
-      case "PTuple":
-        for (const it of p.items) walk(it);
-        return;
-      default: {
-        const exhaustive: never = p;
-        void exhaustive;
-        return;
-      }
-    }
-  };
-  const report = (name: string, pos: Pos): void => {
-    if (name === "_") return;
+  for (const { name, pos } of patternBinds(pat)) {
     if (seen.has(name)) {
       errors.push({
         code: "E0122",
@@ -5584,11 +5775,32 @@ function checkPatternBindsAreDistinct(pat: Pattern, errors: KumikiError[]): void
           `values the pattern names would be unreadable. Rename one`,
         pos,
       });
-      return;
+      continue;
     }
     seen.add(name);
-  };
-  walk(pat);
+  }
+}
+
+/**
+ * Each name `pat` binds, at the pattern that binds it: a tuple's items are
+ * walked, and a variant's binds — bare names with no position of their own —
+ * are placed at the variant pattern that writes them. `_` names nothing, so it
+ * is not one.
+ */
+function patternBinds(pat: Pattern): { name: string; pos: Pos }[] {
+  switch (pat.kind) {
+    case "PWildcard":
+      return [];
+    case "PBind":
+      return pat.name === "_" ? [] : [{ name: pat.name, pos: pat.pos }];
+    case "PVariant":
+      return pat.binds.filter((b) => b !== "_").map((name) => ({ name, pos: pat.pos }));
+    case "PTuple":
+      return pat.items.flatMap(patternBinds);
+    default:
+      assertNever(pat);
+      return [];
+  }
 }
 
 /**
@@ -6079,7 +6291,7 @@ function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(t.expect),
   });
 }
 
@@ -6128,7 +6340,7 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         localBinds: new Set(),
         localTypes: new Map(),
         routeBind: "no-payload",
-        endedScopes: new Map(),
+        nestedScopes: nestedScopes(written.value),
         wildcardsReportedElsewhere: true,
       });
     }
@@ -6203,7 +6415,7 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(t.given, t.invariant, t.expect, t.mocks),
   };
   // `for-all` names are binds in `given` and in the invariant, with the type
   // the generator declares — codegen binds them the same way, one per trial.
@@ -6652,7 +6864,7 @@ function preMountProbe(
     localBinds: new Set(params.map((p) => p.name)),
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(e),
     routeReadsSeen: routeReads,
     fragmentFnCallsSeen: fragmentFnCalls,
   };
@@ -6835,7 +7047,7 @@ function checkApp(
     // what is true rather than to what is load-bearing, because the field is
     // required and every other value would be a lie about the payload.
     routeBind: "unbound",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(...app.init),
   };
   for (const e of app.init) {
     // An init entry is an effect call by the grammar (§1.12). `checkExpr` would
@@ -6908,8 +7120,9 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
       pos: handler.pos,
     });
   }
-  const fieldCtx = pureScope([]);
-  for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
+  const fields = [http.baseUrl, http.headers, http.timeout, http.credentials];
+  const fieldCtx = pureScope([], ...fields);
+  for (const e of fields) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
   // In the order of the walk above and of the field table in §6.3.1.
