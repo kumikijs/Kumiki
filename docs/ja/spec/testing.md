@@ -340,6 +340,8 @@ compile failed (/path/to/app.kumiki):
 E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 
+警告を伴ってコンパイルできるファイルではテストが走る。各警告は同じ形でレポートより先に stderr へ出力され、レポートも終了コードも変えない。`kumiki smoke` と `kumiki run` も、最初に行うコンパイルの警告を同じように出力する。
+
 ### 8.7.2 失敗テストからの修正 {#_8-7-2-fixing-from-a-failing-test}
 
 `kumiki fix <file> --auto-patch <test-name>` は名前付きテストを実行し、失敗から**修正パッチを提案**する。`--apply` を付けると、テストを通し他のテストを壊さないと確かめたうえで書き込む。決定論的に証明できるものだけを修復する：

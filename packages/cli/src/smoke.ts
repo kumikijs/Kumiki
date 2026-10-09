@@ -68,11 +68,22 @@ async function registerDom(): Promise<void> {
  */
 export type LoadedApp = AppShape & { live: Record<string, unknown> };
 
+type LoadOptions = { includeTests?: boolean; sourcePath?: string; moduleDir?: string };
+
 export async function loadApp(
   source: string,
   capabilities: string[] = [],
-  opts: { includeTests?: boolean; sourcePath?: string; moduleDir?: string } = {},
+  opts: LoadOptions = {},
 ): Promise<LoadedApp> {
+  return (await compileForLoad(source, capabilities, opts)).app;
+}
+
+/** `loadApp`, with the warnings of the compile whose module it loaded. */
+async function compileForLoad(
+  source: string,
+  capabilities: string[],
+  opts: LoadOptions,
+): Promise<{ app: LoadedApp; warnings: KumikiError[] }> {
   const baseOpts = {
     runtimeSpecifier: "ignored",
     bundle: true,
@@ -116,7 +127,7 @@ export async function loadApp(
   await import(pathToFileURL(file).href);
   const app = (globalThis as unknown as { __kumikiApp?: LoadedApp }).__kumikiApp;
   if (!app) throw new Error("compiled module did not expose __kumikiApp");
-  return app;
+  return { app, warnings: result.warnings };
 }
 
 /**
@@ -136,7 +147,10 @@ function compileFailure(source: string, diagnostics: KumikiError[], sourcePath?:
   return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
 }
 
-/** Compile + mount + exercise a Kumiki source string; return the smoke report. */
+/**
+ * Compile + mount + exercise a Kumiki source string; return the smoke report,
+ * with the compile's warnings.
+ */
 export async function smokeSource(
   source: string,
   capabilities: string[] = [],
@@ -148,7 +162,7 @@ export async function smokeSource(
     /** Milliseconds to settle after each step. Default 20, as the CLI drives it. */
     settleMs?: number;
   } = {},
-): Promise<SmokeReport> {
+): Promise<SmokeReport & { warnings: KumikiError[] }> {
   await ensureDom();
   clearStorage();
   // Effects run for real here (unlike `runScenario`, which replaces every
@@ -162,15 +176,16 @@ export async function smokeSource(
         ? readHttpFixture(opts.sourcePath)
         : null,
   );
-  const app = await loadApp(source, capabilities, opts);
+  const { app, warnings } = await compileForLoad(source, capabilities, opts);
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
-    return await smoke(app, root, {
+    const report = await smoke(app, root, {
       settleMs: opts.settleMs ?? 20,
       diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
     });
+    return { ...report, warnings };
   } finally {
     root.remove();
   }
@@ -180,8 +195,17 @@ export async function smokeFile(
   path: string,
   capabilities: string[] = [],
   opts: { diagnosticsAsIssues?: boolean } = {},
-): Promise<SmokeReport> {
+): Promise<SmokeReport & { warnings: KumikiError[] }> {
   return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
+}
+
+/**
+ * Print the warnings of the compile a verb runs before it runs the file, as
+ * `kumiki build` prints them: on stderr, one line each, ahead of the verb's own
+ * output, which stays what it is for a file with no warning.
+ */
+function printWarnings(warnings: KumikiError[]): void {
+  for (const w of warnings) console.error(formatDiagnostic(w));
 }
 
 /** CLI entry: print a human-readable report and exit non-zero on failure. */
@@ -191,6 +215,7 @@ export async function smokeCmd(
   opts: { diagnosticsAsIssues?: boolean } = {},
 ): Promise<void> {
   const report = await smokeFile(path, capabilities, opts);
+  printWarnings(report.warnings);
   if (report.ok) {
     console.log(`ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`);
     printDiagnostics(report, console.log);
@@ -233,30 +258,31 @@ function printDiagnostics(report: SmokeReport, write: (line: string) => void): v
   write(`  reconcile diagnostics: ${summary}`);
 }
 
-/** Compile + mount + drive a scenario; return the structured trace. */
+/** Compile + mount + drive a scenario; return the structured trace, with the compile's warnings. */
 export async function runScenarioSource(
   source: string,
   scenario: Scenario,
   capabilities: string[] = [],
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
-): Promise<ScenarioReport> {
+): Promise<ScenarioReport & { warnings: KumikiError[] }> {
   await ensureDom();
   clearStorage();
   // A scenario scripts effects at the `invoke` boundary, so http never reaches
   // `fetch` — the fixture is here for a capability the runner does not wrap,
   // and to keep a stray request reported rather than live.
   useHttpFixture(opts.sourcePath ? readHttpFixture(opts.sourcePath) : null);
-  const app = await loadApp(source, capabilities, {
+  const { app, warnings } = await compileForLoad(source, capabilities, {
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
-    return await runScenario(app, root, scenario, {
+    const report = await runScenario(app, root, scenario, {
       settleMs: 20,
       episodeLogger: opts.episodeLogger ?? null,
     });
+    return { ...report, warnings };
   } finally {
     root.remove();
   }
@@ -314,6 +340,7 @@ export async function runCmd(
     episodeLogger,
     sourcePath: kumikiPath,
   });
+  printWarnings(report.warnings);
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];
     if (!s) continue;
@@ -356,17 +383,27 @@ export async function runTestsSource(
   capabilities: string[] = [],
   opts: { sourcePath?: string } = {},
 ): Promise<TestResult[]> {
+  return (await compileAndRunTests(source, capabilities, opts)).results;
+}
+
+/** `runTestsSource`, with the warnings of the compile that loaded the tests. */
+async function compileAndRunTests(
+  source: string,
+  capabilities: string[],
+  opts: { sourcePath?: string },
+): Promise<{ results: TestResult[]; warnings: KumikiError[] }> {
   await ensureDom();
-  await loadApp(source, capabilities, {
+  const { warnings } = await compileForLoad(source, capabilities, {
     includeTests: true,
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });
   const tests = (globalThis as unknown as { __kumikiTests?: TestRunner[] }).__kumikiTests ?? [];
-  return tests.map((t) => {
+  const results = tests.map((t) => {
     const t0 = performance.now();
     const r = t.run();
     return { ...r, ms: Math.round(performance.now() - t0) };
   });
+  return { results, warnings };
 }
 
 export async function testFile(path: string, capabilities: string[] = []): Promise<TestResult[]> {
@@ -419,13 +456,15 @@ export type TestReport = {
   failed: number;
   /** §8.7 coverage snapshot, populated only when `opts.coverage === true`. */
   coverage?: Coverage;
+  /** The warnings of the compile that loaded the tests. */
+  warnings: KumikiError[];
 };
 
 /**
  * Pure test runner: compile + mount + run every `test` in `path`, filter by
  * name/prefix, return a structured report. No stdout — printer lives in
  * `testCmd`. `coverage: true` snapshots the runtime coverage bookkeeping
- * (§8.7) that `testFile` populates on the global.
+ * (§8.7) that the run populates on the global.
  */
 export async function runTests(
   path: string,
@@ -433,7 +472,11 @@ export async function runTests(
   capabilities: string[] = [],
   opts: { coverage?: boolean } = {},
 ): Promise<TestReport> {
-  const all = await testFile(path, capabilities);
+  const { results: all, warnings } = await compileAndRunTests(
+    readFileSync(path, "utf8"),
+    capabilities,
+    { sourcePath: path },
+  );
   const results = all.filter((r) => matchesFilter(r.name, filter));
   const passed = results.filter((r) => r.pass).length;
   const cov =
@@ -447,6 +490,7 @@ export async function runTests(
     passed,
     failed: results.length - passed,
     ...(cov ? { coverage: cov } : {}),
+    warnings,
   };
 }
 
@@ -499,6 +543,7 @@ export async function testCmd(
 ): Promise<void> {
   const runOnce = async (): Promise<number> => {
     const report = await runTests(path, filter, capabilities, { coverage: opts.coverage ?? false });
+    printWarnings(report.warnings);
     return printTestReport(report);
   };
   if (opts.watch) {

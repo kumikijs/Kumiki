@@ -103,6 +103,8 @@ describe("the diagnostic wire shape", () => {
 
   type WireDiagnostic = { code: string; severity?: unknown };
   const pairs = (ds: WireDiagnostic[]) => ds.map((d) => [d.code, d.severity]);
+  const items = (res: Awaited<ReturnType<Client["callTool"]>>) =>
+    (res.content as TextContent[]).map((c) => c.text);
 
   /** W0212 (a `ui.focus` reducer on a tile nothing focusable is in) and E0103 (`totl`). */
   function writeMixed(): string {
@@ -190,8 +192,6 @@ describe("the diagnostic wire shape", () => {
     // succeeds too, and has to say the same about the file. The first item is
     // what it always is — the summary, or with `includeJs` the module itself,
     // which a client writes to disk as it stands — so the warnings come after.
-    const items = (res: Awaited<ReturnType<Client["callTool"]>>) =>
-      (res.content as TextContent[]).map((c) => c.text);
     const expected = compile(readFileSync(FIX_WARNING_ONLY, "utf8"), {
       runtimeSpecifier: "./runtime.js",
       bundle: true,
@@ -225,10 +225,159 @@ describe("the diagnostic wire shape", () => {
     });
   });
 
+  // The tools that compile a file before they run it answer as `kumiki_build`
+  // does: the first item is the tool's own answer, and a second item, there
+  // only when that compile reported warnings, holds them as the JSON list
+  // `kumiki_check` returns for the file. A warning fails no run, and a run that
+  // fails for its own reason still compiled with it, so both verdicts carry it.
+  describe("the tools that compile before they run hand that compile's warnings back", () => {
+    /** `kumiki_check`'s answer for `file`, which holds W0212 and nothing else. */
+    async function warningsOf(client: Client, file: string): Promise<string> {
+      const listed = await callTool(client, "kumiki_check", { path: file });
+      expect(pairs(JSON.parse(listed) as WireDiagnostic[])).toEqual([["W0212", "warning"]]);
+      return listed;
+    }
+
+    it("kumiki_smoke", { timeout: 30000 }, async () => {
+      // W0212 beside a button whose reducer panics, so the run fails.
+      const panics = join(workdir, "warned-panics.kumiki");
+      writeFileSync(
+        panics,
+        [
+          "slot count : Int = 0",
+          "reducer bump on=ui.focus(Card) do= count := count + 1",
+          'reducer boom on=ui.click(BoomBtn) do= panic("boom")',
+          'tile Card = box(heading("Count: " + count.show))',
+          'tile BoomBtn = button(text="go", onClick=boom)',
+          "tile App = column(Card, BoomBtn)",
+          "app WarnedPanics",
+          "    caps   = []",
+          '    routes = {"/" -> App, "/404" -> App}',
+          "    init   = []",
+          "",
+        ].join("\n"),
+      );
+      await withClient(async (client) => {
+        const passed = await client.callTool({
+          name: "kumiki_smoke",
+          arguments: { path: FIX_WARNING_ONLY },
+        });
+        expect(passed.isError ?? false).toBe(false);
+        expect(items(passed)).toEqual([
+          expect.stringMatching(
+            /^ok — mounted, rendered, \d+ interaction\(s\), no runtime errors$/,
+          ),
+          await warningsOf(client, FIX_WARNING_ONLY),
+        ]);
+
+        const failedRun = await client.callTool({
+          name: "kumiki_smoke",
+          arguments: { path: panics },
+        });
+        expect(failedRun.isError).toBe(true);
+        expect(items(failedRun)).toEqual([
+          expect.stringMatching(/^runtime smoke failed /),
+          await warningsOf(client, panics),
+        ]);
+
+        const clean = await client.callTool({
+          name: "kumiki_smoke",
+          arguments: { path: FIX_COUNTER_TESTS },
+        });
+        expect(items(clean)).toEqual([expect.stringMatching(/^ok — mounted, rendered, /)]);
+      });
+    });
+
+    it("kumiki_run_scenario", { timeout: 30000 }, async () => {
+      const passing = { steps: [{ expect: { noErrors: true } }] };
+      const failing = { steps: [{ expect: { state: { count: 99 } } }] };
+      await withClient(async (client) => {
+        const passed = await client.callTool({
+          name: "kumiki_run_scenario",
+          arguments: { path: FIX_WARNING_ONLY, scenario: passing },
+        });
+        expect(passed.isError ?? false).toBe(false);
+        expect(items(passed)).toEqual([
+          '[ok] step 0\n\nscenario passed\nfinal state: {"count":0}',
+          await warningsOf(client, FIX_WARNING_ONLY),
+        ]);
+
+        const failedRun = await client.callTool({
+          name: "kumiki_run_scenario",
+          arguments: { path: FIX_WARNING_ONLY, scenario: failing },
+        });
+        expect(failedRun.isError).toBe(true);
+        expect(items(failedRun)).toEqual([
+          expect.stringContaining("\nscenario FAILED\n"),
+          await warningsOf(client, FIX_WARNING_ONLY),
+        ]);
+
+        const clean = await client.callTool({
+          name: "kumiki_run_scenario",
+          arguments: { path: FIX_COUNTER_TESTS, scenario: passing },
+        });
+        expect(items(clean)).toEqual([expect.stringContaining("\nscenario passed\n")]);
+      });
+    });
+
+    it("kumiki_test", { timeout: 30000 }, async () => {
+      /** The warning-only fixture with a test of `bump` that expects `count`. */
+      function withTest(count: number): string {
+        const file = join(workdir, `warned-test-${count}.kumiki`);
+        writeFileSync(
+          file,
+          [
+            readFileSync(FIX_WARNING_ONLY, "utf8").trimEnd(),
+            "test bump-works =",
+            "    reducer-test bump",
+            "        given  = {slots: {count: 0}, event: {type: ui.focus, target: Card}}",
+            `        expect = {slots: {count: ${count}}, effects: []}`,
+            "",
+          ].join("\n"),
+        );
+        return file;
+      }
+      type Report = { passed: number; failed: number };
+      const report = (res: Awaited<ReturnType<Client["callTool"]>>) =>
+        JSON.parse(items(res)[0] ?? "") as Report;
+      await withClient(async (client) => {
+        const passing = withTest(1);
+        const passed = await client.callTool({ name: "kumiki_test", arguments: { path: passing } });
+        expect(passed.isError ?? false).toBe(false);
+        expect(report(passed)).toMatchObject({ passed: 1, failed: 0 });
+        expect(items(passed)).toEqual([expect.any(String), await warningsOf(client, passing)]);
+
+        const failing = withTest(7);
+        const failedRun = await client.callTool({
+          name: "kumiki_test",
+          arguments: { path: failing },
+        });
+        expect(failedRun.isError).toBe(true);
+        expect(report(failedRun)).toMatchObject({ passed: 0, failed: 1 });
+        expect(items(failedRun)).toEqual([expect.any(String), await warningsOf(client, failing)]);
+
+        const clean = await client.callTool({
+          name: "kumiki_test",
+          arguments: { path: FIX_COUNTER_TESTS },
+        });
+        expect(report(clean)).toMatchObject({ passed: 2, failed: 0 });
+        expect(items(clean)).toHaveLength(1);
+      });
+    });
+  });
+
   it("says what `severity` means in every tool that returns diagnostics", async () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
-      for (const name of ["kumiki_check", "kumiki_build", "kumiki_fix", "kumiki_auto_patch"]) {
+      for (const name of [
+        "kumiki_check",
+        "kumiki_build",
+        "kumiki_smoke",
+        "kumiki_run_scenario",
+        "kumiki_test",
+        "kumiki_fix",
+        "kumiki_auto_patch",
+      ]) {
         const description = tools.find((t) => t.name === name)?.description ?? "";
         expect(description, name).toContain('`severity` is `"error"`');
         expect(description, name).toContain('or `"warning"`');
@@ -240,9 +389,11 @@ describe("the diagnostic wire shape", () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
       const description = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
-      expect(description("kumiki_build")).toContain(
-        "a second content item holds them as a JSON list of diagnostics",
-      );
+      for (const name of ["kumiki_build", "kumiki_smoke", "kumiki_run_scenario", "kumiki_test"]) {
+        expect(description(name), name).toContain(
+          "a second content item holds them as a JSON list of diagnostics",
+        );
+      }
       expect(description("kumiki_build")).toContain("the warnings, then the errors that failed it");
       expect(description("kumiki_auto_patch")).toContain("Every outcome carries `warnings`");
     });

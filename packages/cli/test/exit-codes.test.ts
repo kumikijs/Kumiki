@@ -536,3 +536,74 @@ test inc-adds-two =
     expect(code).toBe(1);
   });
 });
+
+// `check` and `build` print each warning of the compile on stderr. The verbs
+// that compile a file before they run it print the same lines there, ahead of
+// their own output, and a warning changes neither that output nor the exit
+// code: stdout reads as it does for a file with no warning.
+describe("the warnings of the compile that smoke, run and test start with", () => {
+  // Three processes a case: `check`, then the verb on a file with a warning
+  // and on one without.
+  const THREE_SPAWNS = { timeout: 3 * CHILD_TIMEOUT_MS + 10_000 };
+
+  /** `WARN_ONLY` with a test of the reducer the warning is about. */
+  const WARN_WITH_TEST = `${WARN_ONLY}test bump-works =
+    reducer-test bump
+        given  = {slots: {count: 0}, event: {type: ui.focus, target: Card}}
+        expect = {slots: {count: 1}, effects: []}
+`;
+
+  /** What `check` prints on stderr for `file`: its one warning. */
+  function warningsOf(file: string): string {
+    const { stderr, code } = runCli(["check", file]);
+    expect(stderr).toMatch(/^[^\n]*\bW0212 ui-event-tile-mismatch at \d+:\d+: [^\n]+\n$/);
+    expect(code).toBe(0);
+    return stderr;
+  }
+
+  it("smoke prints them on stderr and its verdict as for a clean file", THREE_SPAWNS, () => {
+    const verdict = "ok — mounted, rendered, 0 interaction(s), no runtime errors\n";
+    const file = write("warned-smoke.kumiki", WARN_ONLY);
+    expect(runCli(["smoke", file])).toEqual({
+      stdout: verdict,
+      stderr: warningsOf(file),
+      code: 0,
+    });
+    expect(runCli(["smoke", write("clean-smoke.kumiki", CLEAN)])).toEqual({
+      stdout: verdict,
+      stderr: "",
+      code: 0,
+    });
+  });
+
+  it("run prints them on stderr and its trace as for a clean file", THREE_SPAWNS, () => {
+    const trace = "[ok] step 0\n\nscenario passed\n";
+    const scenario = write(
+      "warned-run.json",
+      JSON.stringify({ steps: [{ expect: { noErrors: true } }] }),
+    );
+    const file = write("warned-run.kumiki", WARN_ONLY);
+    expect(runCli(["run", file, scenario])).toEqual({
+      stdout: trace,
+      stderr: warningsOf(file),
+      code: 0,
+    });
+    expect(runCli(["run", write("clean-run.kumiki", CLEAN), scenario])).toEqual({
+      stdout: trace,
+      stderr: "",
+      code: 0,
+    });
+  });
+
+  it("test prints them on stderr and its report as for a clean file", THREE_SPAWNS, () => {
+    const file = write("warned-test.kumiki", WARN_WITH_TEST);
+    const warned = runCli(["test", file]);
+    expect(warned.stdout).toMatch(/^PASS {2}bump-works \(\d+ms\)\n\n1\/1 passed\n$/);
+    expect(warned.stderr).toBe(warningsOf(file));
+    expect(warned.code).toBe(0);
+    const clean = runCli(["test", write("clean-test.kumiki", WITH_TESTS)]);
+    expect(clean.stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)\n\n1\/1 passed\n$/);
+    expect(clean.stderr).toBe("");
+    expect(clean.code).toBe(0);
+  });
+});
