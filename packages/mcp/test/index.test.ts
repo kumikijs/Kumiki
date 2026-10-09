@@ -89,6 +89,108 @@ describe("kumiki_check strict options", () => {
   });
 });
 
+// `severity` is the field that says whether a diagnostic fails the file. The
+// `W` on a warning's code is a naming convention, not something the wire
+// promises, so an agent must be able to decide from `severity` alone — and it
+// can only do that if every tool that reports diagnostics puts it on each one.
+describe("the diagnostic wire shape", () => {
+  let workdir: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-diag-"));
+  });
+  afterEach(() => rmSync(workdir, { recursive: true, force: true }));
+
+  type WireDiagnostic = { code: string; severity?: unknown };
+  const pairs = (ds: WireDiagnostic[]) => ds.map((d) => [d.code, d.severity]);
+
+  /** W0212 (a `ui.focus` reducer on a tile nothing focusable is in) and E0103 (`totl`). */
+  function writeMixed(): string {
+    const file = join(workdir, "mixed.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot count : Int = 0",
+        "reducer bump on=ui.focus(Card) do= count := count + 1",
+        'tile Card = box(heading("Count: " + count.show))',
+        "tile App = column(Card, text(totl.show))",
+        "app Mixed",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    return file;
+  }
+
+  it("kumiki_check on a warning-only file says in its payload that nothing in it fails", async () => {
+    await withClient(async (client) => {
+      const res = await client.callTool({
+        name: "kumiki_check",
+        arguments: { path: FIX_WARNING_ONLY },
+      });
+      expect(res.isError ?? false).toBe(false);
+      const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+      const diagnostics = JSON.parse(body) as WireDiagnostic[];
+      // The question an agent asks — "does anything here fail the file?" —
+      // answered from `severity`, without reading a code.
+      expect(diagnostics.length).toBeGreaterThan(0);
+      expect(diagnostics.every((d) => d.severity === "warning")).toBe(true);
+    });
+  });
+
+  it("tells a warning from an error in one file by `severity`", async () => {
+    const file = writeMixed();
+    await withClient(async (client) => {
+      const res = await client.callTool({ name: "kumiki_check", arguments: { path: file } });
+      expect(res.isError).toBe(true);
+      const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+      expect(pairs(JSON.parse(body) as WireDiagnostic[])).toEqual([
+        ["W0212", "warning"],
+        ["E0103", "error"],
+      ]);
+    });
+  });
+
+  // `kumiki_auto_patch`'s `compileErrors` and `blocked.introduced` are asserted
+  // in its own block, beside the outcomes that carry them.
+  it("gives every diagnostic a severity, whichever tool reports it", async () => {
+    const file = writeMixed();
+    await withClient(async (client) => {
+      const built = await callTool(client, "kumiki_build", { path: file });
+      const [head, ...json] = built.split("\n");
+      expect(head).toBe("build failed:");
+      expect(pairs(JSON.parse(json.join("\n")) as WireDiagnostic[])).toEqual([["E0103", "error"]]);
+
+      // Nothing here has an auto-patch, so the apply envelope reports the file
+      // as it is: the error under `remaining`, the warning under `warnings`.
+      const fixed = JSON.parse(
+        await callTool(client, "kumiki_fix", { path: file, apply: true }),
+      ) as {
+        remaining: WireDiagnostic[];
+        warnings: WireDiagnostic[];
+      };
+      expect(pairs(fixed.remaining)).toEqual([["E0103", "error"]]);
+      expect(pairs(fixed.warnings)).toEqual([["W0212", "warning"]]);
+
+      // The parse failure `kumiki_check` turns into a diagnostic is an error too.
+      const unparsed = await callTool(client, "kumiki_check", { source: "tile App = column(" });
+      expect(pairs(JSON.parse(unparsed) as WireDiagnostic[])).toEqual([["E0000", "error"]]);
+    });
+  });
+
+  it("says what `severity` means in every tool that returns diagnostics", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      for (const name of ["kumiki_check", "kumiki_build", "kumiki_fix", "kumiki_auto_patch"]) {
+        const description = tools.find((t) => t.name === name)?.description ?? "";
+        expect(description, name).toContain('`severity` is `"error"`');
+        expect(description, name).toContain('or `"warning"`');
+      }
+    });
+  });
+});
+
 describe("kumiki_fix", () => {
   let workdir: string;
   beforeEach(() => {
@@ -315,19 +417,22 @@ describe("kumiki_auto_patch", () => {
         testName: "bumps",
         apply: true,
       });
+      type Wire = { code: string; severity: string };
       const parsed = JSON.parse(out) as {
         status: string;
         compileFixes?: number;
-        compileErrors?: { code: string }[];
-        blocked?: { reason: string; introduced?: { code: string }[] };
+        compileErrors?: Wire[];
+        blocked?: { reason: string; introduced?: Wire[] };
       };
       expect(parsed.status).toBe("compile-blocked");
       expect(parsed.blocked?.reason).toBe("introduced");
-      expect(parsed.blocked?.introduced?.map((d) => d.code)).toEqual(["E0201"]);
+      expect(parsed.blocked?.introduced?.map((d) => [d.code, d.severity])).toEqual([
+        ["E0201", "error"],
+      ]);
       // The file's own diagnostics, kept apart from what the refused patch
       // would have added — a client that merged them would report a
       // diagnostic that is not in the file.
-      expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+      expect(parsed.compileErrors?.map((d) => [d.code, d.severity])).toEqual([["E0103", "error"]]);
       expect(parsed.compileFixes).toBeUndefined();
     });
     expect(readFileSync(file, "utf8")).toBe(original);
@@ -373,6 +478,7 @@ describe("kumiki_auto_patch", () => {
           message: 'app.routes must include a "/404" entry',
           line: 2,
           col: 1,
+          severity: "error",
         },
       ],
       blocked: { reason: "parse-error", message },
@@ -498,7 +604,8 @@ describe("kumiki_auto_patch", () => {
       };
       expect(parsed.status).toBe("test-blocked");
       expect(parsed.blocked.reason).toBe("introduced");
-      // The wire `Diagnostic` shape — flat `line` / `col`, not the compiler's `pos`.
+      // The wire `Diagnostic` shape — flat `line` / `col`, not the compiler's
+      // `pos`, and a `severity` the compiler leaves out on an error.
       expect(parsed.blocked.introduced).toHaveLength(1);
       expect(Object.keys(parsed.blocked.introduced[0] ?? {}).sort()).toEqual([
         "code",
@@ -506,8 +613,13 @@ describe("kumiki_auto_patch", () => {
         "kind",
         "line",
         "message",
+        "severity",
       ]);
-      expect(parsed.blocked.introduced[0]).toMatchObject({ code: "E0804", line: 1 });
+      expect(parsed.blocked.introduced[0]).toMatchObject({
+        code: "E0804",
+        line: 1,
+        severity: "error",
+      });
     });
     expect(readFileSync(file, "utf8")).toBe(original);
   });

@@ -3,7 +3,16 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
-import { check, type Def, LexError, lex, type Pos, parse, type Token } from "@kumikijs/compiler";
+import {
+  check,
+  type Def,
+  LexError,
+  lex,
+  type Pos,
+  parse,
+  severityOf,
+  type Token,
+} from "@kumikijs/compiler";
 import {
   type DefEntry,
   directDeps,
@@ -297,7 +306,7 @@ function validate(
     // the first `add` into a new file, and every edit until the `app` lands,
     // would otherwise roll back with E0003. Whether the result is a complete
     // application is what `kumiki check` answers afterwards.
-    const errors = check(program, { requireApp: false }).filter((d) => d.severity !== "warning");
+    const errors = check(program, { requireApp: false }).filter((d) => severityOf(d) === "error");
     if (errors.length > 0) {
       const summary = errors
         .slice(0, 3)

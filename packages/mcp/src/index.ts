@@ -39,8 +39,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 type Scenario = Parameters<typeof runScenarioSource>[1];
 
 import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
-import type { KumikiError } from "@kumikijs/compiler";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import type { KumikiError, Severity } from "@kumikijs/compiler";
+import { check, compile, lex, parse, severityOf } from "@kumikijs/compiler";
 import {
   CapabilityManifestError,
   nodeRuntimeBundleReader,
@@ -50,7 +50,23 @@ import {
 import { z } from "zod";
 import { getSpecDoc, listSpecDocs, searchSpec } from "./spec.ts";
 
-type Diagnostic = { code: string; kind: string; message: string; line: number; col: number };
+/**
+ * One diagnostic as every tool puts it on the wire. `severity` is always
+ * present, so a client decides what fails the file from this field alone,
+ * never from the code's prefix. `DIAGNOSTIC_SHAPE` is the same shape in the
+ * words each tool's description gives it.
+ */
+type Diagnostic = {
+  code: string;
+  kind: string;
+  message: string;
+  line: number;
+  col: number;
+  severity: Severity;
+};
+
+const DIAGNOSTIC_SHAPE =
+  'Each diagnostic is `{code, kind, message, line, col, severity}`; `severity` is `"error"` (the file fails `check` and `build`) or `"warning"` (advisory: reported, but fails neither; docs/spec/errors.md).';
 
 /**
  * The shape of each scenario action, for the one surface an agent reads before
@@ -314,6 +330,7 @@ function buildEpisodeWarnings(
   ];
 }
 
+/** Every `Diagnostic` a tool returns is built here. */
 function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
   return errors.map((e) => ({
     code: e.code,
@@ -321,6 +338,7 @@ function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
     message: e.message,
     line: e.pos.line,
     col: e.pos.col,
+    severity: severityOf(e),
   }));
 }
 
@@ -337,32 +355,29 @@ function validate(
   capabilities: string[] = [],
   opts: StrictCheckOpts = {},
 ): { ok: boolean; failing: boolean; diagnostics: Diagnostic[] } {
+  let reported: KumikiError[];
   try {
-    const program = parse(lex(source));
-    const errors = check(program, { capabilities, ...opts });
-    return {
-      ok: errors.length === 0,
-      // A warning is reported and does not fail — the same split `kumiki
-      // check` makes when it prints `ok (1 warning)` and exits 0.
-      failing: errors.some((e) => e.severity !== "warning"),
-      diagnostics: toDiagnostics(errors),
-    };
+    reported = check(parse(lex(source)), { capabilities, ...opts });
   } catch (e) {
     const pe = e as { message?: string; pos?: { line: number; col: number } };
-    return {
-      ok: false,
-      failing: true,
-      diagnostics: [
-        {
-          code: "E0000",
-          kind: "parse-error",
-          message: pe.message ?? String(e),
-          line: pe.pos?.line ?? 0,
-          col: pe.pos?.col ?? 0,
-        },
-      ],
-    };
+    reported = [
+      {
+        code: "E0000",
+        kind: "parse-error",
+        message: pe.message ?? String(e),
+        pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+      },
+    ];
   }
+  const diagnostics = toDiagnostics(reported);
+  return {
+    ok: diagnostics.length === 0,
+    // A warning is reported and does not fail — the same split `kumiki check`
+    // makes when it prints `ok (1 warning)` and exits 0. Read off the field the
+    // payload carries, so `isError` and the payload cannot disagree.
+    failing: diagnostics.some((d) => d.severity === "error"),
+    diagnostics,
+  };
 }
 
 export function createServer(): McpServer {
@@ -401,8 +416,7 @@ export function createServer(): McpServer {
     "kumiki_check",
     {
       title: "Check Kumiki source",
-      description:
-        "Parse and typecheck a Kumiki program. Pass `source` (text) or `path` (file). Returns ok or a list of diagnostics with codes (see docs/spec/errors.md). The `strict*` toggles surface diagnostics that are hidden by default: `strictA11y` (E0701..E0703), `strictIcons` (E0704), `strictSelectorId` (E0212). With `path` + `strictIcons`, @kumikijs/icons is resolved to widen the icon-name domain; when the package isn't installed, only theme.icons is used.",
+      description: `Parse and typecheck a Kumiki program. Pass \`source\` (text) or \`path\` (file). Returns ok, or a JSON list of diagnostics (codes: docs/spec/errors.md) that is flagged \`isError\` only when one of them has \`severity\` \`"error"\`. ${DIAGNOSTIC_SHAPE} The \`strict*\` toggles surface diagnostics that are hidden by default: \`strictA11y\` (E0701..E0703), \`strictIcons\` (E0704), \`strictSelectorId\` (E0212). With \`path\` + \`strictIcons\`, @kumikijs/icons is resolved to widen the icon-name domain; when the package isn't installed, only theme.icons is used.`,
       inputSchema: {
         source: z.string().optional().describe("Full Kumiki source text"),
         path: z.string().optional().describe("Path to a .kumiki file (relative to cwd)"),
@@ -447,8 +461,7 @@ export function createServer(): McpServer {
     "kumiki_build",
     {
       title: "Build Kumiki source",
-      description:
-        "Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass `source` or `path`. Returns the generated JS, or diagnostics on failure.",
+      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. Returns the generated JS, or \`build failed:\` followed by a JSON list of the diagnostics that failed it. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -843,8 +856,7 @@ export function createServer(): McpServer {
     "kumiki_fix",
     {
       title: "Plan or apply rule-based auto-fixes",
-      description:
-        'Typecheck a file and either propose auto-patches for repairable errors (e.g. misspelled names) or write them to disk. Default is dry-run (`apply: false`); pass `apply: true` to close the loop and persist the fixes. On apply, returns `{ applied, before, after, remaining }` with the residual diagnostics after re-typechecking. Use `only` (e.g. "E0103") to restrict to a single diagnostic code.',
+      description: `Typecheck a file and either propose auto-patches for repairable errors (e.g. misspelled names) or write them to disk. Default is dry-run (\`apply: false\`); pass \`apply: true\` to close the loop and persist the fixes. On apply, returns \`{ applied, before, after, remaining, warnings }\`: after re-typechecking, \`remaining\` holds the diagnostics with \`severity\` \`"error"\` and \`warnings\` those with \`"warning"\`. ${DIAGNOSTIC_SHAPE} Use \`only\` (e.g. "E0103") to restrict to a single diagnostic code.`,
       inputSchema: {
         path: z.string(),
         apply: z
@@ -929,7 +941,8 @@ export function createServer(): McpServer {
     {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
-        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes and no test that passed before fails; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result) or `regressed` (with the test names). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay).",
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes and no test that passed before fails; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result) or `regressed` (with the test names). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay). " +
+        `\`compileErrors\` and \`blocked.introduced\` are lists of diagnostics. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),

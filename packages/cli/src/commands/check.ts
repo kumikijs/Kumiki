@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { check, type KumikiError } from "@kumikijs/compiler";
+import { check, type KumikiError, severityOf } from "@kumikijs/compiler";
 import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
 import { formatDiagnostic } from "../diagnostic.ts";
@@ -52,7 +52,7 @@ export function filterByScope(errors: KumikiError[], scopes: readonly CheckScope
   if (scopes.length === 0) return errors;
   const selected = new Set(scopes.flatMap((s) => SCOPE_BANDS[s]));
   return errors.filter((e) => {
-    if (e.severity === "warning") return true;
+    if (severityOf(e) === "warning") return true;
     if (STRICT_GATE_CODES.has(e.code)) return true;
     const band = e.code.slice(0, 3);
     if (!SCOPED_BANDS.has(band)) return true;
@@ -89,8 +89,8 @@ export async function checkCmd(
     capabilities: caps.capabilities,
   });
   const filtered = filterByScope(all, scopes);
-  const warnings = filtered.filter((d) => d.severity === "warning");
-  const errors = filtered.filter((d) => d.severity !== "warning");
+  const warnings = filtered.filter((d) => severityOf(d) === "warning");
+  const errors = filtered.filter((d) => severityOf(d) === "error");
   for (const d of [...warnings, ...errors]) {
     console.error(formatDiagnostic(d));
   }

@@ -2,7 +2,7 @@ import type { Program } from "./ast.ts";
 import { type CodegenOptions, codegen, RUNTIME_HELPERS } from "./codegen.ts";
 import { lex } from "./lexer.ts";
 import { parse } from "./parser.ts";
-import { check, type KumikiError } from "./typecheck.ts";
+import { check, type KumikiError, severityOf } from "./typecheck.ts";
 
 export type CompileOk = {
   kind: "ok";
@@ -118,8 +118,8 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
     ...(opts.strictSelectorId ? { strictSelectorId: true } : {}),
     ...(opts.iconNames ? { iconNames: opts.iconNames } : {}),
   });
-  const errors = diags.filter((d) => d.severity !== "warning");
-  const warnings = diags.filter((d) => d.severity === "warning");
+  const errors = diags.filter((d) => severityOf(d) === "error");
+  const warnings = diags.filter((d) => severityOf(d) === "warning");
   if (errors.length > 0) return { kind: "fail", errors, warnings };
 
   const generated = codegen(program, opts);

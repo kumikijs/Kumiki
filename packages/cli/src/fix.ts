@@ -13,6 +13,7 @@ import {
   ParseError,
   parse,
   servesNotFound,
+  severityOf,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
@@ -886,7 +887,7 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
  * printed from those says how many, and lists them under whatever it said.
  */
 function repairable(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity !== "warning");
+  return diagnostics.filter((d) => severityOf(d) === "error");
 }
 
 /**
@@ -944,7 +945,7 @@ function nothingWritten(
 
 /** The other half of the same split, kept beside it so neither drifts. */
 function advisory(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity === "warning");
+  return diagnostics.filter((d) => severityOf(d) === "warning");
 }
 
 /**

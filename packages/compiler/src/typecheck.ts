@@ -116,18 +116,21 @@ import {
   findDuplicateNames,
 } from "./uniqueness.ts";
 
+/**
+ * How much a diagnostic matters. `"error"` fails `compile()` and `kumiki
+ * check`. `"warning"` is non-fatal: still surfaced to stderr (CLI) / Rollup
+ * `this.warn` (Vite), but does not change the exit code. See
+ * `docs/spec/errors.md` for the W02xx band.
+ */
+export type Severity = "error" | "warning";
+
 export type KumikiError = {
   code: string;
   kind: string;
   message: string;
   pos: Pos;
-  /**
-   * Diagnostic severity. Omitted → "error" (default), failing `compile()` and
-   * `kumiki check`. `"warning"` is non-fatal: still surfaced to stderr (CLI) /
-   * Rollup `this.warn` (Vite), but does not change the exit code. See
-   * `docs/spec/errors.md` for the W02xx band.
-   */
-  severity?: "error" | "warning";
+  /** Omitted means `"error"`. Read it through `severityOf`, which says so once. */
+  severity?: Severity;
   /**
    * E0129 only: which argument is never rendered, so a reader (`kumiki fix`)
    * tells the shapes apart without matching the message.
@@ -141,6 +144,18 @@ export type KumikiError = {
    */
   unrendered?: "positional" | "text-prop" | "text-shadowed";
 };
+
+/**
+ * A diagnostic's severity, with the omitted field read as `"error"`.
+ *
+ * Every split of a diagnostic list into what fails and what is advisory goes
+ * through here — `compile()`, `kumiki check` / `fix`, the write-op rollback,
+ * and the MCP wire, which states the severity rather than leaving it out — so
+ * "no `severity` means an error" is decided in one place.
+ */
+export function severityOf(d: Pick<KumikiError, "severity">): Severity {
+  return d.severity ?? "error";
+}
 
 /**
  * The accessibility band, which `--strict-a11y` turns on. Exported so a caller
