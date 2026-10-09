@@ -18,6 +18,8 @@ type KumikiError = {
 
 `code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
+テキストでは、診断は重大度で始まる 1 行になる：`<severity> <code> <kind> at <line>:<col>: <message>`。たとえば `error E0103 undef-ref at 4:30: Reference to undefined name "totl"` や `warning W0212 ui-event-tile-mismatch at 2:17: …`。この語は `severity` フィールドそのものなので、読み手はコードの先頭文字が何を表すかを知らなくても、助言の診断と失敗とを見分けられる。`kumiki check` は各診断をこの形で出力し、`build`・`test`・`smoke`・`run`・`fix` と MCP の `kumiki_fix` のドライランも同じ形で診断を出力する。JSON で答える MCP ツールは、代わりに各診断に `severity` を載せる。
+
 パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。
 
 チェッカのコードは `packages/compiler/src/typecheck.ts` から発行され、`E0000` は上記 2 つのツールが付与する。機械化された spec-drift ガード（`packages/compiler/test/spec-drift.test.ts`）は、コードを付与するすべてのファイルから実装側の集合を抽出する — ツール側で発明されドキュメント化されていないコードは、チェッカ側で発明された場合とまったく同じように失敗する。

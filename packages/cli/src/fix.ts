@@ -18,6 +18,7 @@ import {
   variantTagsOf,
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
+import { formatDiagnostic, parseFailure } from "./diagnostic.ts";
 import { runTestsSource, testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
 import { atomicWriteFileSync } from "./write-lock.ts";
@@ -912,7 +913,7 @@ function verdict(headline: string, warnings: KumikiError[]): string {
 
 /** The warnings themselves, under whatever verdict or diagnostic list precedes them. */
 function reportWarnings(warnings: KumikiError[]): void {
-  for (const w of warnings) console.error(`${w.code} ${w.message}`);
+  for (const w of warnings) console.error(formatDiagnostic(w));
 }
 
 /**
@@ -1137,15 +1138,11 @@ export function gateComposed(
   try {
     parsed = parse(lex(after));
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    const pe = e as { pos?: { line: number; col: number } };
-    const synthetic: KumikiError = {
-      code: "E0000",
-      kind: "parse-error",
-      message,
-      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+    const synthetic = parseFailure(e);
+    return {
+      blocked: { reason: "parse-error", message: synthetic.message },
+      remaining: [...errors, synthetic],
     };
-    return { blocked: { reason: "parse-error", message }, remaining: [...errors, synthetic] };
   }
   // One typecheck, both halves. The errors decide the gate; the warnings are
   // what the file will be carrying once this write lands, which is not the set
@@ -1362,7 +1359,7 @@ export function fixCmd(
     }
     if (patches.length === 0) {
       console.log("(no auto-patches available)");
-      for (const e of errors) console.error(`${e.code} ${e.message}`);
+      for (const e of errors) console.error(formatDiagnostic(e));
       // Under the errors, not instead of them: a file with both is one `check`
       // reports both for, and the branch that has an error to report is no
       // more entitled to drop the rest than the clean one above.
@@ -1404,7 +1401,7 @@ export function fixCmd(
       return 0;
     }
     console.log(rollbackLine(result));
-    for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+    for (const e of result.remaining) console.error(formatDiagnostic(e));
     reportWarnings(result.warnings);
     return 1;
   }
@@ -1414,7 +1411,7 @@ export function fixCmd(
     return 0;
   }
   console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
-  for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+  for (const e of result.remaining) console.error(formatDiagnostic(e));
   reportWarnings(result.warnings);
   return 1;
 }
@@ -2547,7 +2544,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
           `(no auto-patch available) — test "${testName}" is blocked by ${outcome.compileErrors.length} compile error(s):`,
         );
         if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
-        for (const e of outcome.compileErrors) console.error(`  ${e.code} ${e.message}`);
+        for (const e of outcome.compileErrors) console.error(`  ${formatDiagnostic(e)}`);
         return;
       }
       if (outcome.testRunError) {
@@ -2584,7 +2581,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       console.log(
         `test "${testName}" is still blocked by ${outcome.compileErrors.length} compile error(s):`,
       );
-      for (const e of outcome.compileErrors) console.error(`  ${e.code} ${e.message}`);
+      for (const e of outcome.compileErrors) console.error(`  ${formatDiagnostic(e)}`);
       return;
     }
     case "compile-remaining": {
@@ -2626,7 +2623,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       console.log(`  reason: ${outcome.blocked.reason}`);
       const b = outcome.blocked;
       if (b.reason === "introduced")
-        for (const e of b.introduced) console.error(`  ${e.code} ${e.message}`);
+        for (const e of b.introduced) console.error(`  ${formatDiagnostic(e)}`);
       else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
         console.error(`  ${b.message}`);
       else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);

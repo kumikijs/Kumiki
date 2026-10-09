@@ -952,7 +952,7 @@ test starts-at-41 =
       expect(checked.status).toBe(1);
       const lines = checked.stderr.trim().split("\n");
       expect(lines).toEqual([
-        "E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
+        "error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
       ]);
 
       const tested = cli(["test", file]);
@@ -976,8 +976,8 @@ ${NOT_A_RECORD}`,
       expect(checked.status).toBe(1);
       const lines = checked.stderr.trim().split("\n");
       expect(lines).toEqual([
-        expect.stringMatching(/^W0212 /),
-        expect.stringMatching(/^E0713 test-shape-invalid at 11:26: /),
+        expect.stringMatching(/^warning W0212 /),
+        expect.stringMatching(/^error E0713 test-shape-invalid at 11:26: /),
       ]);
 
       const tested = cli(["test", file]);
@@ -1002,7 +1002,7 @@ ${NOT_A_RECORD}`,
       );
       const tested = cli(["test", file]);
       expect(tested.status).toBe(1);
-      expect(tested.stderr).toMatch(/E0103 \S+ at 4:27: /);
+      expect(tested.stderr).toMatch(/error E0103 \S+ at 4:27: /);
       expect(tested.stderr).not.toContain("in test");
     });
   });
@@ -1422,7 +1422,7 @@ describe("kumiki check (E0003 missing-app)", () => {
       const file = write("noapp.kumiki", source);
       const { stdout, stderr, code } = runCli(["check", file]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0003 missing-app at 1:1");
+      expect(stderr).toContain("error E0003 missing-app at 1:1");
       // `check` prints its summary and nothing else on stdout, so an empty
       // stdout is the precise statement that it did not call the file ok.
       expect(stdout.trim()).toBe("");
@@ -1435,7 +1435,7 @@ describe("kumiki check (E0003 missing-app)", () => {
     const file = write("noapp.kumiki", CASES[0]![1]);
     const { stderr, code } = runCli(["build", file, join(dir, "out")]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app at 1:1");
+    expect(stderr).toContain("error E0003 missing-app at 1:1");
     expect(stderr).not.toContain("No app definition found");
   });
 
@@ -1453,7 +1453,7 @@ describe("kumiki check (E0003 missing-app)", () => {
       const file = write("noapp.kumiki", CASES[0]![1]);
       const { stderr, code } = runCli(["check", file, scope]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0003 missing-app");
+      expect(stderr).toContain("error E0003 missing-app");
     });
   }
 
@@ -1466,7 +1466,7 @@ describe("kumiki check (E0003 missing-app)", () => {
     );
     const { stderr, code } = runCli(["check", file, "--types"]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0001 missing-404");
+    expect(stderr).toContain("error E0001 missing-404");
   });
 
   it("does not block an AI edit that leaves the program incomplete", {
@@ -1490,7 +1490,7 @@ describe("kumiki check (E0003 missing-app)", () => {
     expect(removed.stdout).toMatch(/\(op_/);
     const { stderr, code } = runCli(["check", file]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app");
+    expect(stderr).toContain("error E0003 missing-app");
   });
 
   // The mirror image: too many entry points reads as `ok` and then builds into
@@ -1507,7 +1507,7 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
       const file = write("two.kumiki", TWO_APPS);
       const { stdout, stderr, code } = runCli(["check", file]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0004 duplicate-app at 5:1");
+      expect(stderr).toContain("error E0004 duplicate-app at 5:1");
       expect(stderr).toContain("Second");
       expect(stdout.trim()).toBe("");
     });
@@ -1519,7 +1519,7 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
       const outDir = join(dir, "out-two");
       const { stderr, code } = runCli(["build", file, outDir]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0004 duplicate-app");
+      expect(stderr).toContain("error E0004 duplicate-app");
       expect(existsSync(join(outDir, "app.js"))).toBe(false);
     });
   });

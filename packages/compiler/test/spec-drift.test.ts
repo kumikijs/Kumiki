@@ -10,9 +10,10 @@
 //
 // Two tools nevertheless have to put a parse failure *into* a diagnostic list —
 // `kumiki fix`'s rollback report and the MCP tools' JSON envelope — and both
-// synthesize `E0000` for it. So the implementation side of this guard is every
-// file that emits a code, not the checker alone: a code invented in a tool and
-// documented nowhere is the same drift as one invented in the checker.
+// synthesize `E0000` for it, through the CLI's `parseFailure`. So the
+// implementation side of this guard is every file that emits a code, not the
+// checker alone: a code invented in a tool and documented nowhere is the same
+// drift as one invented in the checker.
 //
 // If a new code is introduced, add it to typecheck.ts AND to both errors.md
 // files in the same PR. If a code is removed from typecheck.ts, drop its
@@ -86,8 +87,7 @@ function report(label: string, implSide: Set<string>, specSide: Set<string>): st
 /** Every file that assigns a diagnostic code, checker and tools alike. */
 const EMITTERS = [
   ["packages", "compiler", "src", "typecheck.ts"],
-  ["packages", "cli", "src", "fix.ts"],
-  ["packages", "mcp", "src", "index.ts"],
+  ["packages", "cli", "src", "diagnostic.ts"],
 ];
 
 describe("spec ⇆ implementation diagnostic code-set drift", () => {

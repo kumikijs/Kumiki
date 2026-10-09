@@ -15,10 +15,12 @@ import {
   editDef,
   episodeLogPathFor,
   findReferences,
+  formatDiagnostic,
   HEADLESS_ACTION_KEYS,
   LAYERS,
   listDefs,
   load,
+  parseFailure,
   planFix,
   plural,
   removeDef,
@@ -359,15 +361,7 @@ function validate(
   try {
     reported = check(parse(lex(source)), { capabilities, ...opts });
   } catch (e) {
-    const pe = e as { message?: string; pos?: { line: number; col: number } };
-    reported = [
-      {
-        code: "E0000",
-        kind: "parse-error",
-        message: pe.message ?? String(e),
-        pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
-      },
-    ];
+    reported = [parseFailure(e)];
   }
   const diagnostics = toDiagnostics(reported);
   return {
@@ -906,7 +900,9 @@ export function createServer(): McpServer {
         return r.remaining.length > 0 ? failed(body) : text(body);
       }
       const plan = planFix(abs, input.only, caps);
-      const advisory = plan.warnings.map((w) => `${w.code} ${w.message}`);
+      // Each diagnostic as `kumiki check` prints it, so a line says whether it
+      // is an error or a warning.
+      const advisory = plan.warnings.map(formatDiagnostic);
       if (plan.errors.length === 0) {
         // The warnings come out with the verdict. `kumiki_check` on the same
         // file returns a JSON diagnostics array — non-`isError`, since nothing
@@ -919,13 +915,8 @@ export function createServer(): McpServer {
       // A dry run proposes and repairs nothing, so the file still has every
       // error it started with — which is what `isError` reports here.
       if (plan.patches.length === 0) {
-        return failed(
-          [
-            "(no auto-patches available)",
-            ...plan.errors.map((e) => `${e.code} ${e.message}`),
-            ...advisory,
-          ].join("\n"),
-        );
+        const errors = plan.errors.map(formatDiagnostic);
+        return failed(["(no auto-patches available)", ...errors, ...advisory].join("\n"));
       }
       // The unrepairable half goes out with the repairable half. An agent
       // that reads only the proposals treats the file as one patch away from

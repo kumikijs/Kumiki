@@ -251,6 +251,20 @@ test inc-works =
 });
 
 describe("kumiki check", () => {
+  it("names the severity of each diagnostic it prints, and exits 1 for the error", SPAWN, () => {
+    // W0212 from WARN_ONLY, and an E0103 (`totl`) beside it. Each line says
+    // which it is, so a reader tells the advisory one from the failure without
+    // knowing what the `W` and `E` on a code stand for.
+    const src = WARN_ONLY.replace("column(Card)", "column(Card, text(totl.show))");
+    const { stdout, stderr, code } = runCli(["check", write("severity.kumiki", src)]);
+    expect(stderr.trimEnd().split("\n")).toEqual([
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+    ]);
+    expect(stdout).toBe("");
+    expect(code).toBe(1);
+  });
+
   it("unions the scope flags instead of keeping the first", SPAWN, () => {
     // `--types --refs` used to keep `--types` and silently drop the reference
     // errors the user named in the same command line.

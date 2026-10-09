@@ -28,6 +28,19 @@ const FIX_WARNING_ONLY = resolve(here, "fixtures/warning-only.kumiki");
 const FIX_SMOKE_PANICS = resolve(here, "fixtures/smoke-panics.kumiki");
 const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
 
+/** W0212 (a `ui.focus` reducer on a tile nothing focusable is in) and E0103 (`totl`). */
+const MIXED = [
+  "slot count : Int = 0",
+  "reducer bump on=ui.focus(Card) do= count := count + 1",
+  'tile Card = box(heading("Count: " + count.show))',
+  "tile App = column(Card, text(totl.show))",
+  "app Mixed",
+  "    caps   = []",
+  '    routes = {"/" -> App, "/404" -> App}',
+  "    init   = []",
+  "",
+].join("\n");
+
 type TextContent = { type: "text"; text: string };
 
 async function withClient(fn: (client: Client) => Promise<void>): Promise<void> {
@@ -103,23 +116,9 @@ describe("the diagnostic wire shape", () => {
   type WireDiagnostic = { code: string; severity?: unknown };
   const pairs = (ds: WireDiagnostic[]) => ds.map((d) => [d.code, d.severity]);
 
-  /** W0212 (a `ui.focus` reducer on a tile nothing focusable is in) and E0103 (`totl`). */
   function writeMixed(): string {
     const file = join(workdir, "mixed.kumiki");
-    writeFileSync(
-      file,
-      [
-        "slot count : Int = 0",
-        "reducer bump on=ui.focus(Card) do= count := count + 1",
-        'tile Card = box(heading("Count: " + count.show))',
-        "tile App = column(Card, text(totl.show))",
-        "app Mixed",
-        "    caps   = []",
-        '    routes = {"/" -> App, "/404" -> App}',
-        "    init   = []",
-        "",
-      ].join("\n"),
-    );
+    writeFileSync(file, MIXED);
     return file;
   }
 
@@ -299,8 +298,27 @@ describe("kumiki_fix", () => {
     );
     await withClient(async (client) => {
       const out = await callTool(client, "kumiki_fix", { path: file });
-      expect(out).toContain("no errors");
-      expect(out).toContain("W0212");
+      expect(out.split("\n")).toEqual([
+        "no errors (1 warning)",
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:/),
+      ]);
+    });
+  });
+
+  it("names each diagnostic's severity when it lists an error it cannot repair and a warning", async () => {
+    // `totl` has no close name, so the dry run lists the error and the warning
+    // beside it. Each line leads with what it is, as `kumiki check` prints it.
+    const file = join(workdir, "mixed.kumiki");
+    writeFileSync(file, MIXED);
+    await withClient(async (client) => {
+      const res = await client.callTool({ name: "kumiki_fix", arguments: { path: file } });
+      expect(res.isError).toBe(true);
+      const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
+      expect(body.split("\n")).toEqual([
+        "(no auto-patches available)",
+        'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      ]);
     });
   });
 
