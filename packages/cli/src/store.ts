@@ -174,8 +174,9 @@ export function findReferences(store: Store, targetQname: string): RefSite[] {
       const key = `${from}:${r.pos?.line ?? 0}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      // A reference with no identifier of its own (a test's `{slots: {x: …}}`
-      // key) still counts — it is reported at the definition's first line.
+      // A reference with no position (a test's `{slots: {x}}` whose `x` is
+      // also a `for-all` name) still counts — it is reported at the
+      // definition's first line.
       out.push({
         qname: from,
         layer: e.layer,

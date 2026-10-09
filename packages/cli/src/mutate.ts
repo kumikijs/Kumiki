@@ -679,10 +679,11 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
   // word in a comment, a string literal and a loop variable that merely share
   // the spelling are left alone by construction rather than by a filter that has
   // to anticipate them.
-  // Some references have no identifier position of their own — a test's
-  // `{slots: {count: 0}}` key is a record key, not a token the AST points at.
-  // They are edges for `refs` and `remove --cascade` but nothing `rename` can
-  // rewrite, so refuse rather than half-rename the program.
+  // Some references have no position: a test's `{slots: {count}}`, say, where
+  // the one token `count` is the slot as the key and a `for-all` name as the
+  // value, so a rewrite for the slot would change the value too. They are
+  // edges for `refs` and `remove --cascade` but nothing `rename` can rewrite,
+  // so refuse rather than half-rename the program.
   const unpositioned = store.defs.filter((e) =>
     referenceSites(store, `${e.layer}.${e.name}`).some(
       (r) => r.layer === entry.layer && r.name === old && !r.pos,

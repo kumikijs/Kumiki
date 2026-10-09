@@ -33,7 +33,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
+import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -45,10 +45,12 @@ export type Reference = {
   /**
    * Position of the identifier token itself, so a rewrite can be exact.
    *
-   * Absent when the reference has no identifier of its own to point at — a
-   * test's `{slots: {count: 0}}` key, for instance, where the slot name is the
-   * key of a record. The edge is real (`refs` and `remove --cascade` must see
-   * it), but `rename` has nothing to rewrite and skips it rather than guessing.
+   * Absent when that token spells a second name as well, which a rewrite for
+   * this one would change with it: a test's `{slots: {count}}` whose value
+   * `count` is a `for-all` name, or `{mocks: {ignore}}`, whose value is the
+   * mock's script. The edge is real (`refs` and `remove --cascade` must see
+   * it), but `rename` has no token it can rewrite for this name alone, and
+   * refuses rather than guessing.
    */
   pos?: Pos;
 };
@@ -522,10 +524,8 @@ class Walker {
    * rejected on the diagnostic the old name then raises.
    *
    * A name a test writes as a record key — a slot in `{slots: {count: 0}}`, an
-   * effect in `{mocks: {persist: …}}` — is reported as an edge (which `refs`
-   * and `remove --cascade` need) without a position, since the key has no
-   * identifier of its own, so `rename` refuses that name rather than rewriting
-   * the rest of the program around it.
+   * effect in `{mocks: {persist: …}}` — is reported at the key, as `recordKey`
+   * says.
    */
   test(t: TestDef): void {
     if (t.testKind === "reducer-test") this.add("reducer", t.target ?? "", t.targetPos);
@@ -579,14 +579,13 @@ class Walker {
 
   /**
    * `{<slot>: <value>}` — a `given.slots`, an `expect.slots`, or an
-   * episode-test's `expect.slots-equal`. A key names a slot, without a
-   * position; a value is an expression, so `{draft: shout("x")}` calls the fn
-   * `shout`. `slots-equal`'s bare `from-log` is no record, and has neither.
+   * episode-test's `expect.slots-equal`. A key names a slot; a value is an
+   * expression, so `{draft: shout("x")}` calls the fn `shout`. `slots-equal`'s
+   * bare `from-log` is no record, and has neither.
    */
   private slotValues(rec: Expr, locals: ReadonlySet<string>): void {
     for (const f of recordFieldsOf(rec)) {
-      this.addUnpositioned("slot", f.name);
-      this.expr(f.value, locals);
+      this.recordKey("slot", f, () => this.expr(f.value, locals));
     }
   }
 
@@ -611,20 +610,19 @@ class Walker {
 
   /**
    * `{<effect>: <script>}` — a reducer-test's `given.mocks`, or an
-   * episode-test's `mocks`. A key names an effect, without a position. A value
-   * is a script rather than a call: `ok(v)`, `err(e)`, `delay(ms, ok(v))`,
-   * `from-log` or `ignore`. Those names are the mock's own vocabulary, so a
-   * `fn ok` in scope is not what `ok(v)` calls; only the payload and the delay
-   * are expressions. The walk accepts a superset of the checker's forms: it
-   * reads every one of them in either kind, where the checker takes `delay`
-   * only in a reducer-test and `from-log` / `ignore` only in an episode-test (a
-   * form of the other kind is E0712 / E0713 there). A value that is none of
-   * them is not read.
+   * episode-test's `mocks`. A key names an effect. A value is a script rather
+   * than a call: `ok(v)`, `err(e)`, `delay(ms, ok(v))`, `from-log` or
+   * `ignore`. Those names are the mock's own vocabulary, so a `fn ok` in scope
+   * is not what `ok(v)` calls; only the payload and the delay are expressions.
+   * The walk accepts a superset of the checker's forms: it reads every one of
+   * them in either kind, where the checker takes `delay` only in a
+   * reducer-test and `from-log` / `ignore` only in an episode-test (a form of
+   * the other kind is E0712 / E0713 there). A value that is none of them is
+   * not read.
    */
   private mocks(rec: Expr, locals: ReadonlySet<string>): void {
     for (const m of recordFieldsOf(rec)) {
-      this.addUnpositioned("effect", m.name);
-      this.mockScript(m.value, locals);
+      this.recordKey("effect", m, () => this.mockScript(m.value, locals));
     }
   }
 
@@ -640,14 +638,30 @@ class Walker {
   }
 
   /**
-   * An edge with no source position: `refs` and `remove --cascade` see it,
-   * `rename` cannot act on it. Better than dropping the edge (which is what
-   * made a renamed slot leave a passing test asserting about a slot that no
-   * longer exists) and better than inventing a position.
+   * One field of a test-body record whose key names a definition of `layer` —
+   * a slot in `{slots: {count: 0}}`, an effect in `{mocks: {persist: …}}` —
+   * with `walkValue` the reading of its value. The parser records a field at
+   * its key's own token, so the key is reported there, and `rename` rewrites
+   * it as it rewrites any identifier.
+   *
+   * `{count}` is one token that is both the key and its value. Where the
+   * value's reading names the same definition, it does so at that token, and
+   * that is the one reference. Where it does not — the value is a `for-all`
+   * name, or a mock's script (`{ignore}` for an effect named `ignore`) — the
+   * token spells two names, and a rewrite for the key would rewrite the value
+   * with it: the key is reported without a position, and `rename` refuses the
+   * name.
    */
-  private addUnpositioned(layer: RefLayer, name: string): void {
-    if (!this.index[layer].has(name)) return;
-    this.out.push({ layer, name });
+  private recordKey(layer: RefLayer, f: RecordField, walkValue: () => void): void {
+    if (!isWrittenAsItsValue(f)) {
+      this.add(layer, f.name, f.pos);
+      walkValue();
+      return;
+    }
+    const from = this.out.length;
+    walkValue();
+    if (this.out.slice(from).some((r) => r.layer === layer && r.name === f.name)) return;
+    if (this.index[layer].has(f.name)) this.out.push({ layer, name: f.name });
   }
 
   app(a: AppDef): void {
@@ -684,6 +698,15 @@ class Walker {
       }
     }
   }
+}
+
+/**
+ * Whether `f` is written `{name}`, its key standing for its value as well. The
+ * parser reads that as `{name: name}`, with the value a `Ref` at the key's own
+ * token; a value written after a `:` or `=` starts at a token of its own.
+ */
+function isWrittenAsItsValue(f: RecordField): boolean {
+  return f.value.kind === "Ref" && f.value.pos.line === f.pos.line && f.value.pos.col === f.pos.col;
 }
 
 function withPatternBinds(

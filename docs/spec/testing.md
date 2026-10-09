@@ -91,11 +91,13 @@ nothing under a key that names no section of the test's kind is one. A section
 name is a section only at the top of the `given` or `expect` it belongs to —
 under `slots`, `mocks` or `effects` is a slot like any other — and a `for-all`
 name is the generated value wherever the test reads it, never the `fn` or slot
-of the same name. `kumiki rename` rewrites a name the test wrote as an
-identifier: a call, an `expect.effects` entry, a `<slots.X>`, an event
-`target`. A name written as a record key — a `slots` / `slots-equal` key, a
-`mocks` key — has no position of its own, so `rename` refuses that name rather
-than leave the test naming a definition that no longer exists.
+of the same name. `kumiki rename` rewrites each of these names where the test
+wrote it: a call, an `expect.effects` entry, a `<slots.X>`, an event `target`,
+and a record key — a `slots` / `slots-equal` key, a `mocks` key. A key written
+as its own value, `{count}`, is one token for two names. When the value is the
+same slot, the rewrite renames both. When it is something else — a `for-all`
+name, or a mock's script (`{ignore}` for an effect named `ignore`) — `rename`
+refuses that name rather than change the value along with the key.
 
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
