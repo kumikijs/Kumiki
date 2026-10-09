@@ -150,16 +150,19 @@ describe("the shapes the built-ins take are still accepted", () => {
   });
 });
 
-describe("a declared effect of the same name is the one checked", () => {
-  // The declaration is what the program dispatches, so its `in=` is the one an
-  // argument is held to, not the standard effect's.
+describe("a declaration under a standard effect's name", () => {
+  // The declaration is E0234 (reserved-effect-name.test.ts): the runtime
+  // registers the standard effect under that name at mount. An argument is
+  // still held to the declaration's `in=`, the one the program wrote it for.
   const shadowed = `effect navigate cap=nav.push in=Text out=Unit\n`;
+  const reserved = `E0234 Effect "navigate" collides with the built-in effect navigate; emits of it never run this effect`;
   it("takes the declaration's in=", () => {
-    expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([]);
+    expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([reserved]);
   });
   it("and reports against it", () => {
     expect(diagnostics(`emit navigate({path: "/about"})\n${shadowed}`)).toEqual([
       "E0202 Expected Text but got {path: Text}",
+      reserved,
     ]);
   });
 });

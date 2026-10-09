@@ -145,6 +145,14 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
     expect(load(path).byQName.has("fn.matchFilter")).toBe(true);
   });
 
+  it("refuses a rename of an effect onto a standard effect's name", () => {
+    // `log` is no declaration's to take: the runtime registers its own under
+    // it at mount (E0234), so the renamed effect would never run.
+    const before = readFileSync(path, "utf8");
+    expect(() => renameDef(path, "effect.saveTodos", "log")).toThrowError(/E0234/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
   it("rename updates the def and every reference", () => {
     renameDef(path, "slot.draft", "newTodoText");
     const store = load(path);

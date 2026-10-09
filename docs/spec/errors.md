@@ -955,6 +955,20 @@ With a `bind=`, the bound value alone decides whether a box is ticked or a radio
 
 **Fix**: Remove the argument. To tick the box from an expression rather than from a slot it writes, drop the `bind=` instead and keep `value=` with an `onClick` / `onChange` reducer.
 
+### E0234 `reserved-effect-name`
+
+An `effect` is declared under the name of a [standard effect](./stdlib.md#_2-6-standard-effects) — `navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`, `confirm` or `log`. Reported at the declaration, once per declaration.
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+The runtime registers each standard effect under its own name when the app mounts, over the record the program's declaration compiled to — its capability, its request and its `policy` alike. A declared `effect log cap=http.get …` would never make its request: `emit log("x")` runs the built-in `log`, which needs `log.write` and writes to the console, and the `EffectId` the emit returns names a `policy` the running effect does not have.
+
+Every use of the name is still checked against the declaration — an `emit`'s argument against its `in=`, a `.ok` bind against its `out=`, the capability against its `cap=` — because those are the uses the program wrote for it. So this is the one report, and the rename below leaves nothing else to fix. This is [E0115](#e0115-reserved-slot-name)'s rule for the `route` slot, applied to effect names.
+
+Only an `effect` declaration is refused. Emitting a standard effect needs no declaration. A reducer, a slot or a `fn` spelled the same way is in another namespace, and an effect whose name merely starts or ends with one (`logger`, `toasts`, `navigate2`) is a name of its own.
+
+**Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead: the standard effect needs none.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`

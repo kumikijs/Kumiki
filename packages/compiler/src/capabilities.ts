@@ -4,6 +4,7 @@
 // Pure (no I/O) so it stays browser-safe; the file-resolving wrapper lives in
 // the node-only submodule (`@kumikijs/compiler/node`).
 
+import type { BuiltinEffectName } from "@kumikijs/runtime";
 import type { TypeExpr } from "./ast.ts";
 import { appType, primType, recordType, refType } from "./stdlib-types.ts";
 
@@ -95,31 +96,36 @@ export type BuiltinEffect = {
  * each is gated on and what it takes, in one table. They are not `effect`
  * declarations, so nothing in a program says either. An entry cannot have one
  * without the other.
+ *
+ * Keyed by the runtime's `BuiltinEffectName` — the names its installers write
+ * on `app.effects` at mount — so a name missing here, or one here the runtime
+ * does not list, is a type error. The runtime writes each over whatever a
+ * program compiled under its name, which is why an `effect` declared under one
+ * of these keys is E0234.
  */
-export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map<string, BuiltinEffect>([
+const BUILTIN_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: BuiltinEffect } = {
   // `query` is routing.md §3.7's extension of the §2.6.1 `in=`.
-  ["navigate", { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] }],
-  ["navigate-replace", { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] }],
-  ["navigate-back", { cap: "nav.back", inType: primType("Unit") }],
-  ["scroll-to", { cap: null, inType: recordType({ x: primType("Int"), y: primType("Int") }) }],
-  [
-    "toast",
-    {
-      cap: "notification.show",
-      inType: recordType({ kind: text, text, duration: appType("Option", refType("Duration")) }),
-    },
-  ],
-  [
-    "confirm",
-    {
-      cap: "notification.show",
-      // `message` is lifecycle.md §7.6's; left out, the dialog shows the title.
-      inType: recordType({ title: text, message: text, onYes: REDUCER_REF, onNo: REDUCER_REF }),
-      defaulted: ["message"],
-    },
-  ],
-  ["log", { cap: "log.write", inType: recordType({ level: text, message: text, data: textMap }) }],
-]);
+  navigate: { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] },
+  "navigate-replace": { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] },
+  "navigate-back": { cap: "nav.back", inType: primType("Unit") },
+  "scroll-to": { cap: null, inType: recordType({ x: primType("Int"), y: primType("Int") }) },
+  toast: {
+    cap: "notification.show",
+    inType: recordType({ kind: text, text, duration: appType("Option", refType("Duration")) }),
+  },
+  confirm: {
+    cap: "notification.show",
+    // `message` is lifecycle.md §7.6's; left out, the dialog shows the title.
+    inType: recordType({ title: text, message: text, onYes: REDUCER_REF, onNo: REDUCER_REF }),
+    defaulted: ["message"],
+  },
+  log: { cap: "log.write", inType: recordType({ level: text, message: text, data: textMap }) },
+};
+
+/** {@link BUILTIN_EFFECT_TABLE}, by name. */
+export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map(
+  Object.entries(BUILTIN_EFFECT_TABLE),
+);
 
 /**
  * Whether a call to the standard effect `builtin` may leave `field` out of its

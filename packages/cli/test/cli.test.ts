@@ -342,6 +342,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,605 measured, from 63,597 on dev at f72685e): each
+    // built-in effect installer writes `app.effects` through a view typed to
+    // the names the compiler's `BUILTIN_EFFECTS` is keyed by (`BuiltinEffects`,
+    // stdlib.md §2.6), so it can register no other name. The 8 bytes are the
+    // local `installLogEffect` holds that view in; it sits in core, which every
+    // app loads, and a counter that emits no `log` still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

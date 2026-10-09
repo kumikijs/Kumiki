@@ -4245,11 +4245,12 @@ function checkEmitTarget(
 type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;
 
 /**
- * The effect a name dispatches: its capability, its `in=`, and the fields a
- * call may leave out of it. A declaration wins over a standard effect of the
- * same name and leaves nothing out; a standard effect (stdlib.md §2.6) may
- * leave out what `builtinFieldOmittable` says. `undefined` when the name is
- * neither.
+ * The effect a name stands for: its capability, its `in=`, and the fields a
+ * call may leave out of it. A declared effect leaves nothing out; a standard
+ * effect (stdlib.md §2.6) may leave out what `builtinFieldOmittable` says. A
+ * declaration under a standard effect's name is E0234 (`checkEffect`), and is
+ * the one read here: the program's uses of the name were written for it.
+ * `undefined` when the name is neither.
  */
 function effectInput(
   name: string,
@@ -5304,6 +5305,19 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
 }
 
 function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
+  // The runtime registers each standard effect on `app.effects` at mount, over
+  // whatever codegen wrote under its name (`BUILTIN_EFFECTS`), so a declaration
+  // under one never runs. The program's uses of the name stay checked against
+  // the declaration they were written for (`effectInput`), so this is the one
+  // report, and renaming the declaration with its uses is the whole fix.
+  if (BUILTIN_EFFECTS.has(eff.name)) {
+    errors.push({
+      code: "E0234",
+      kind: "reserved-effect-name",
+      message: `Effect "${eff.name}" collides with the built-in effect ${eff.name}; emits of it never run this effect`,
+      pos: eff.pos,
+    });
+  }
   resolveType(eff.inType, sym, errors);
   resolveType(eff.outType, sym, errors);
   // §6.4: an effect bound to `cap=http.cancel` cancels an in-flight effect by

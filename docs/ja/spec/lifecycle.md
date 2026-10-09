@@ -281,6 +281,8 @@ reducer doDelete on=ui.click(_) do= ...     # ※ 実装上は別名 reducer を
 reducer noop     on=ui.click(_) do= ()
 ```
 
+`confirm` は[標準 effect](./stdlib.md#_2-6-標準-effect)である：`effect` の行はそのシグネチャであり、プログラムはそれを宣言せずに emit する（[E0234](./errors.md#e0234-reserved-effect-name)）。
+
 ランタイム実装ではこれは **モーダルダイアログ tile** として描画される（ネイティブ `confirm` ではない）。これにより UI スタイルが揃い、テストも容易になる。
 
 ---
@@ -296,6 +298,8 @@ reducer notifySave
     on=persist.ok(_, _)
     do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.s(3))})
 ```
+
+`toast` も標準 effect である：`effect` の行はそのシグネチャであり、プログラムはそれを宣言せずに emit する。
 
 `kind` は `info` / `success` / `warn` / `error` のいずれかで、DOM には `data-level` として載る — ランタイムは見た目を与えない。`duration` 未指定なら kind 別のデフォルト（info 3s, success 3s, warn 5s, error 0 = 閉じるまで残る）。`Some(Duration.ms(0))` は同じことを明示的に頼む書き方。
 

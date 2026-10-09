@@ -1,7 +1,7 @@
 // The `toast` built-in effect (#71): shipped only when an app can emit it
 // (declares the notification.show capability or emits `toast`).
 
-import { type BuiltinInstaller, overridableInvoke } from "./core.ts";
+import { type BuiltinEffects, type BuiltinInstaller, overridableInvoke } from "./core.ts";
 
 /**
  * How long a toast of each kind stays when the emitter does not say
@@ -31,7 +31,8 @@ function durationMs(raw: unknown, kind: string | undefined): number {
 }
 
 export const installToast: BuiltinInstaller = (app) => {
-  app.effects.toast = {
+  const effects: BuiltinEffects = app.effects;
+  effects.toast = {
     name: "toast",
     cap: "notification.show",
     invoke: overridableInvoke("notification.show", async (input) => {

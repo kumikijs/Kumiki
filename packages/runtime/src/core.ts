@@ -938,6 +938,33 @@ export type NavContext = {
 };
 
 /**
+ * The names the runtime registers its built-in effects under on `app.effects`
+ * (stdlib.md §2.6): `log` in core, `navigate`, `navigate-replace`,
+ * `navigate-back` and `scroll-to` in `router.ts`, and `toast` and `confirm` in
+ * their own modules. Each installer writes through {@link BuiltinEffects}, so
+ * it can register no other name.
+ *
+ * The compiler's `BUILTIN_EFFECTS` (`capabilities.ts`) is keyed by this type,
+ * so its checker knows exactly these: it types their emits, and it refuses an
+ * `effect` a program declares under one of them (E0234), since the installer
+ * writes over that declaration at mount.
+ */
+export type BuiltinEffectName =
+  | "navigate"
+  | "navigate-replace"
+  | "navigate-back"
+  | "scroll-to"
+  | "toast"
+  | "confirm"
+  | "log";
+
+/**
+ * `app.effects` as a built-in installer writes it: under a
+ * {@link BuiltinEffectName} only, each record named after the key it sits under.
+ */
+export type BuiltinEffects = { [N in BuiltinEffectName]?: EffectSpec & { name: N } };
+
+/**
  * Installs one or more built-in effects (e.g. `toast`) onto `app.effects` at
  * mount. Kept as a seam so `kumiki build` only ships the installers an app can
  * actually emit.
@@ -962,7 +989,7 @@ export type RoutingImpl = {
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** The URL a parsed route was read from: its path, query and hash. */
   href(route: ParsedRoute): string;
-  /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
+  /** Register navigate / navigate-replace / navigate-back / scroll-to on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
 
@@ -3643,7 +3670,8 @@ export function overridableInvoke(
 }
 
 function installLogEffect(app: AppShape): void {
-  app.effects.log = {
+  const effects: BuiltinEffects = app.effects;
+  effects.log = {
     name: "log",
     cap: "log.write",
     invoke: overridableInvoke("log.write", async (input) => {

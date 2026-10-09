@@ -933,6 +933,20 @@ bind していないトグルが選択状態を読む引数 — `check` / `switc
 
 **修正**：その引数を取り除く。書き戻す slot ではなく式からボックスのチェックを決めたいなら、代わりに `bind=` を外し、`value=` と `onClick` / `onChange` の reducer を使う。
 
+### E0234 `reserved-effect-name`
+
+[標準 effect](./stdlib.md#_2-6-標準-effect) — `navigate`・`navigate-replace`・`navigate-back`・`scroll-to`・`toast`・`confirm`・`log` — の名前で `effect` を宣言している。宣言の位置で、宣言ごとに 1 件報告する。
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+ランタイムはアプリのマウント時に各標準 effect をそれ自身の名前で登録し、プログラムの宣言からコンパイルされたレコードを上書きする — ケイパビリティもリクエストも `policy` もまとめて。宣言された `effect log cap=http.get …` はリクエストを一度も送らない：`emit log("x")` が実行するのは組み込みの `log` であり、それは `log.write` を必要とし、コンソールに書き出す。emit が返す `EffectId` は、実行される effect が持たない `policy` を名指す。
+
+名前の使用はすべて、引き続き宣言に対して検査される — `emit` の引数はその `in=` に、`.ok` の bind はその `out=` に、ケイパビリティはその `cap=` に。それらはプログラムがその宣言のために書いた使用だからである。したがって報告はこの 1 件であり、下の改名のあとに直すべきものは残らない。これは [E0115](#e0115-reserved-slot-name) が `route` slot に課す規則を effect 名に適用したものである。
+
+拒否されるのは `effect` 宣言だけである。標準 effect を emit するのに宣言は要らない。同じ綴りの reducer・slot・`fn` は別のネームスペースにあり、名前がこれらで始まる、あるいは終わるだけの effect（`logger`・`toasts`・`navigate2`）はそれ自身の名前である。
+
+**修正**：effect を、それを意図していたすべての `emit`・`app.init` のエントリ・`on=<name>.ok` / `.err` の reducer とともに改名する — `kumiki rename <file> effect.log logRequest` がそれらをすべて書き換える。組み込みを意図していた箇所では、標準 effect をそれ自身の名前で emit する。標準 effect を書き写しただけの宣言（`effect navigate cap=nav.push in={path: Text, …}`）は改名せずに削除する：標準 effect に宣言は要らない。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`

@@ -30,7 +30,15 @@ const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
   // `$1` used in tiles that declare no `in=` (E0103 ×23, the failure
   // `summary.md` records), plus the calls that pass an argument to one of
   // those tiles — accepted before value checking, dropped silently at render.
-  "learning-cost/v3-issue-tracker/results/Gemini/output.kumiki": ["E0103", "E0213", "W0212"],
+  // It also declares the standard `navigate` and `navigate-back` as effects of
+  // its own, restating their signatures (E0234 ×2): the runtime registers its
+  // own under those names at mount, so the declarations never run.
+  "learning-cost/v3-issue-tracker/results/Gemini/output.kumiki": [
+    "E0103",
+    "E0213",
+    "E0234",
+    "W0212",
+  ],
   // `Shell`'s `Text` input written as a child, `column(HeaderBar, $1)`: a
   // value there renders nothing (E0128).
   "learning-cost/v3-issue-tracker/results/Codex/output.kumiki": ["E0128"],

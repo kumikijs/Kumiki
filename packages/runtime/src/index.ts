@@ -66,6 +66,7 @@ export {
   applyContainerProps,
   applyTextProps,
   type BindSegment,
+  type BuiltinEffectName,
   type BuiltinInstaller,
   beginEnvRecord,
   beginEnvReplay,
