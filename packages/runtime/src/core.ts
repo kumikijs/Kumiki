@@ -927,7 +927,10 @@ export type DiagnosticSite = {
   tileKind: string;
   /** Same identifier the episode log uses: bind path, else key, else kind. */
   id: string;
-  /** The authored tile this node came from, when it came from one. */
+  /**
+   * The authored tile this node came from, when it came from one — the
+   * outermost, when the node is the whole tree of several (`tile Outer = Inner`).
+   */
   tile?: string | undefined;
 };
 
@@ -4087,20 +4090,30 @@ function formatStackForConsole(stack: string, message: string): string[] {
 }
 
 /**
+ * The user tiles a rendered node is the whole tree of, outermost first. Codegen
+ * marks each user tile's tree by attaching `_tile` to the node's props via
+ * `_named`: one name, or a list when a tile's whole body is another user tile
+ * (`tile Outer = Inner`), so this is the inverse of that marker. Builtin tiles
+ * (button, page, …) carry none. Both `tile.mount` / `tile.unmount` and the
+ * `tile` a diagnostic names read a node's tiles here.
+ */
+function tileNames(node: TileNode): string[] {
+  return [(node as { props?: Record<string, unknown> }).props?._tile]
+    .flat()
+    .filter((name): name is string => typeof name === "string");
+}
+
+/**
  * Walk a rendered TileNode tree and collect the names of every user-defined
- * tile boundary in it (lifecycle.md §7.1.6). Codegen marks each user-tile call
- * site by attaching `_tile: "Name"` to the produced node's props via `_named`,
- * so this walk is the inverse of that marker. Builtin tiles (button, page, …)
- * carry no marker — `tile.mount` only fires for *user-defined* tiles, matching
- * the spec example `tile.mount(SettingsPage)`.
+ * tile on screen in it (lifecycle.md §7.1.6), in tree order: a node's own
+ * tiles, outermost first, before its children's. `tile.mount` only fires for
+ * *user-defined* tiles, matching the spec example `tile.mount(SettingsPage)`.
  */
 function collectMountedTiles(root: TileNode): Set<string> {
   const out = new Set<string>();
   const visit = (n: TileNode | null | undefined): void => {
     if (!n || typeof n !== "object") return;
-    const props = (n as { props?: Record<string, unknown> }).props;
-    const tileName = props?._tile;
-    if (typeof tileName === "string") out.add(tileName);
+    for (const name of tileNames(n)) out.add(name);
     const children = (n as { children?: TileNode[] }).children;
     if (Array.isArray(children)) for (const c of children) visit(c);
   };
@@ -4258,10 +4271,6 @@ function makeReconcileDiag(
   options: MountOptions,
 ): ReconcileDiag {
   const hostKinds = options.hostTileKinds?.length ? new Set(options.hostTileKinds) : undefined;
-  const authored = (node: TileNode): string | undefined => {
-    const name = (node as { props?: Record<string, unknown> }).props?._tile;
-    return typeof name === "string" ? name : undefined;
-  };
   // A diagnostic must never be able to change the render it is observing. The
   // walker runs inside the reconcile bailout's try/catch, so a host sink that
   // throws would otherwise be recorded as a reconcile panic and trigger a
@@ -4305,7 +4314,7 @@ function makeReconcileDiag(
       const site: DiagnosticSite = {
         tileKind: newNode.kind,
         id: tileTouchedId(newNode),
-        tile: authored(newNode),
+        tile: tileNames(newNode)[0],
       };
       for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
         const d = hazard(site, field, oldValue, newValue);
@@ -4321,7 +4330,7 @@ function makeReconcileDiag(
         kind: "reconcile-fallback",
         tileKind: node.kind,
         id: tileTouchedId(node),
-        tile: authored(node),
+        tile: tileNames(node)[0],
         ...fallback,
       });
     },

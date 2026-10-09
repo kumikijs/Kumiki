@@ -949,6 +949,27 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
+  it("names the outermost tile of a node that is the whole tree of several", () => {
+    let extra = true;
+    const app = appOf(() => ({
+      kind: "column",
+      props: { _tile: ["Page", "Panel"] },
+      children: [
+        { kind: "input", bind: "note", value: "" },
+        ...(extra ? [{ kind: "text" as const, text: "hint" }] : []),
+      ],
+    }));
+    const { sink, seen } = collector();
+    const { dispose } = mount(app, root, { onDiagnostic: sink });
+
+    extra = false;
+    app._rerender?.();
+
+    const d = seen.find((x) => x.kind === "reconcile-fallback");
+    expect(d).toMatchObject({ tileKind: "column", tile: "Page", id: "column" });
+    dispose();
+  });
+
   it("reports keyed children the parent renderer wrapped out of reach", () => {
     // `overlay` puts children 1..N inside a positioning layer, so the elements
     // the walker has mapped are grandchildren of the overlay. The keyed pass

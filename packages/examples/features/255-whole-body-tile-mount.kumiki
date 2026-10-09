@@ -1,0 +1,40 @@
+# Feature: a tile whose whole body is another user tile puts both on screen
+# (spec/lifecycle.md §7.1.6).
+#
+# `SettingsPage` is `Panel` and nothing else, so the tree `Panel` renders is
+# the whole of both tiles. "open" shows it: `tile.mount(SettingsPage)` and
+# `tile.mount(Panel)` both fire, the outer tile first. "bump" re-renders the
+# open page, which keeps the tree, so nothing fires again. "close" takes the
+# tree away: both `tile.unmount`s fire, in the same order.
+
+slot open : Bool       = false
+slot n    : Int        = 0
+slot log  : List(Text) = []
+
+reducer doOpen  on=ui.click(OpenBtn)  do= open := true
+reducer doBump  on=ui.click(BumpBtn)  do= n := n + 1
+reducer doClose on=ui.click(CloseBtn) do= open := false
+
+reducer sawPage   on=tile.mount(SettingsPage)   do= log := log.push("mount SettingsPage")
+reducer sawPanel  on=tile.mount(Panel)          do= log := log.push("mount Panel")
+reducer lostPage  on=tile.unmount(SettingsPage) do= log := log.push("unmount SettingsPage")
+reducer lostPanel on=tile.unmount(Panel)        do= log := log.push("unmount Panel")
+
+tile Panel = column(heading("Settings"), text("bumped " + n.show)) {gap: "sm"}
+tile SettingsPage = Panel
+
+tile OpenBtn  = button(text="open", onClick=doOpen)
+tile BumpBtn  = button(text="bump", onClick=doBump)
+tile CloseBtn = button(text="close", onClick=doClose)
+
+tile App = column(
+    heading("Whole-body tile mount"),
+    row(OpenBtn, BumpBtn, CloseBtn) {gap: "sm"},
+    column(when(open, SettingsPage)),
+    text("log: " + log.join(", ")))
+  {pad: "lg", gap: "md"}
+
+app WholeBodyTileMount
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

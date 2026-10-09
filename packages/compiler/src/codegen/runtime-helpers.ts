@@ -24,11 +24,19 @@ function _attachProps(node, props) {
   if (Object.keys(props).length === 0) return node;
   return { ...node, props: { ...(node.props || {}), ...props } };
 }
+// _named — marks a user tile's rendered tree as that tile's, with the _tile
+// prop the runtime diffs tile.mount / tile.unmount against; a body that
+// renders a list gets it on every node. A node that is already marked is the
+// whole tree of another user tile (tile Outer = Inner), and both are on screen,
+// so it keeps that name after this one: _tile is one name, or the names of
+// every tile the node is the whole tree of, outermost first.
 function _named(node, name) {
   if (node === null || node === undefined) return node;
   if (Array.isArray(node)) return node.map((n) => _named(n, name));
   if (typeof node !== "object" || typeof node.kind !== "string") return node;
-  return { ...node, props: { ...(node.props || {}), _tile: name } };
+  const inner = node.props && node.props._tile;
+  const tile = inner === undefined ? name : [name].concat(inner);
+  return { ...node, props: { ...(node.props || {}), _tile: tile } };
 }
 // _wk (with-key) — stamps stable tile identity onto the emitted TileNode.
 // Used by codegen at every tile call site that either declared its own

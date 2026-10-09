@@ -112,6 +112,8 @@ When you want to target multiple tiles at once, define multiple reducers with th
 
 An `error-boundary` fallback ([§7.3](#_7-3-error-boundaries-per-tile)) is a tile on screen like any other, wherever the boundary is declared: `tile.mount(<fallback>)` fires when the boundary shows it, and `tile.unmount(<fallback>)` when it leaves — the tile renders again without panicking, or that tile itself leaves. A fallback that re-renders with the panic still there has not appeared again, and fires nothing. The tile that panicked is not what rendered, so its own `tile.mount` does not fire while the fallback stands in for it, and a mounted tile that starts panicking fires its `tile.unmount`.
 
+A tile whose whole body is another user tile — `tile Outer = Inner` — renders one tree that is all of both, so both are on screen: `tile.mount(Outer)` and `tile.mount(Inner)` both fire, `Outer`'s first, and when that tree leaves, both `tile.unmount`s fire in the same order. The same holds at any depth (`tile A = B` with `tile B = C` fires for `A`, `B` and `C`, in that order), for a body that is a `for`, `when` or `match` whose rows or branch call another user tile, and wherever the outer tile renders: at a call site, as a route or `sub-routes` target, or as an `error-boundary` fallback. A tile on screen in several places is one tile on screen: it mounts when the first appears and unmounts when the last leaves, so an `Inner` also shown on its own stays mounted while either remains.
+
 ---
 
 ## 7.2 Error Handling

@@ -75,6 +75,44 @@ describe("runtime: tile.mount / tile.unmount (#81)", () => {
     dispose();
   });
 
+  it("fires for each name a node carries, in the order it lists them", () => {
+    // A node that is the whole tree of several user tiles carries all their
+    // names, outermost first: each one mounts with it and unmounts with it.
+    const events: string[] = [];
+    let visible = true;
+    const record = (event: string): ReducerSpec =>
+      lifecycleReducer(event, (s) => {
+        events.push(event);
+        return { slots: s, emits: [] };
+      });
+    const app: AppShape = baseApp({
+      reducers: [
+        record('tile.mount("Outer")'),
+        record('tile.mount("Inner")'),
+        record('tile.unmount("Outer")'),
+        record('tile.unmount("Inner")'),
+      ],
+      root: () =>
+        ({
+          kind: "column",
+          children: visible
+            ? [{ kind: "text", text: "p", props: { _tile: ["Outer", "Inner"] } }]
+            : [],
+        }) as TileNode,
+    });
+    const { dispose } = mount(app, root);
+    expect(events).toEqual(['tile.mount("Outer")', 'tile.mount("Inner")']);
+    visible = false;
+    app._rerender?.();
+    expect(events).toEqual([
+      'tile.mount("Outer")',
+      'tile.mount("Inner")',
+      'tile.unmount("Outer")',
+      'tile.unmount("Inner")',
+    ]);
+    dispose();
+  });
+
   it("does not fire when only built-in tiles appear / disappear", () => {
     const events: string[] = [];
     let showCard = true;

@@ -41,9 +41,10 @@ function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles 
  *
  * - the `_named(…)` marker the runtime diffs `tile.mount` / `tile.unmount`
  *   against (lifecycle.md §7.1.6). Builtin tiles are not marked: only
- *   user-defined tiles fire mount / unmount. A node carries one marker and
- *   keeps the outermost: a tile whose whole tree is another user tile's marks
- *   that tree as its own.
+ *   user-defined tiles fire mount / unmount. A tile whose whole tree is
+ *   another user tile's (`tile Outer = Inner`) marks a tree that already
+ *   carries the inner name, and the node keeps both, outermost first: both
+ *   tiles are on screen, so both mount.
  * - the tile's own `error-boundary` (§7.3), around the marker. It belongs to
  *   the tile, so it holds wherever the tile renders — a fallback's boundary
  *   catches a panic in the fallback, as a call site's catches one in the tile.
