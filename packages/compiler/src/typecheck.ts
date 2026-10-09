@@ -1701,8 +1701,21 @@ function checkTileCall(
       continue;
     }
     // The name of a tile the program defines, written where a tile belongs,
-    // is that tile — not a value, however else the name is defined.
-    if (tileNamedAt(t.name, arg, (name) => sym.tiles.has(name))) continue;
+    // is that tile called with nothing passed — not a value, however else the
+    // name is defined — so a tile that declares `in=` is short its input there.
+    const named = tileNamedAt(t.name, arg, (name) => sym.tiles.has(name));
+    if (named) {
+      const def = sym.tiles.get(named.name);
+      const call: TileExpr & { kind: "TileCall" } = {
+        kind: "TileCall",
+        name: named.name,
+        args: [],
+        props: [],
+        pos: named.pos,
+      };
+      if (def) checkTileInput(call, def, sym, errors, ctx);
+      continue;
+    }
     // A positional argument of a builtin that is not a value builtin renders
     // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
     // program defines, and drops anything else — so a value there rendered

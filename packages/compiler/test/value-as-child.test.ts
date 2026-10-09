@@ -121,6 +121,22 @@ describe("the name of a tile in a child position is the tile", () => {
       "E0127 3:32",
     ]);
   });
+
+  // The name is the tile called with nothing passed, so a tile that declares
+  // `in=` is short its input there, as `column(Card)` is.
+  it.each([
+    ["alone", ""],
+    ["beside a slot of the same name", "slot needs : Int = 0\n"],
+  ])("is E0213 for a tile that declares `in=`, %s", (_, extra) => {
+    const src = `${extra}tile needs in=Int = text($1.show)\n${program("column(needs, Card)")}`;
+    const at = extra === "" ? 3 : 4;
+    expect(
+      check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
+    ).toEqual([
+      `E0213 ${at}:20 Tile "needs" expects 1 argument(s) but got 0`,
+      `E0213 ${at}:27 Tile "Card" expects 1 argument(s) but got 0`,
+    ]);
+  });
 });
 
 describe("a value where a value belongs is still a value", () => {

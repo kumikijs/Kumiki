@@ -100,10 +100,10 @@ export function positionalIsTile(name: string): boolean {
  * There the name is the tile, whatever else shares it — a slot, a `fn` or a
  * theme may (E0007 is per layer), and so may a local. Codegen lowers it as the
  * tile (a container renders it as a child; the builtins that read no
- * positional argument drop it, as they drop any tile), the checker takes the
- * name as the tile and checks nothing else about it, and `referencesIn` records
- * it as a reference to the tile, which `refs`, `rename` and `remove --cascade`
- * follow. Anywhere else the name is a value: a value builtin's content
+ * positional argument drop it, as they drop any tile), the checker checks it
+ * as that tile called with nothing passed (so a tile that declares `in=` is
+ * E0213 there, as `column(Card)` is), and `referencesIn` records it as a
+ * reference to the tile, which `refs`, `rename` and `remove --cascade` follow. Anywhere else the name is a value: a value builtin's content
  * (`text(leaf)`), a user tile's input (`Card(leaf)`), a named argument
  * (`column(gap=leaf)`).
  */
