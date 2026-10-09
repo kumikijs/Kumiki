@@ -71,19 +71,11 @@ describe("the key sort-by orders by", () => {
     // an Int at runtime and the program is clean; the silence is the contract.
     expect(diagnostics("users.sort-by($1.tags.fold(0, $1 + 1))")).toEqual([]);
   });
-
-  it("is left alone when it is a fn with no declared return type", () => {
-    // The key is a variant and will not sort, but with no `->` there is no
-    // type to read it from; until a fn's return type is inferred this stays a
-    // missing diagnostic rather than a wrong one.
-    expect(
-      diagnostics("users.sort-by(kindOf)", "fn kindOf(u: User) = u.kind").join("\n"),
-    ).not.toContain("E0201");
-  });
 });
 
 // A `fn` passed by name is applied to the element (`xs.sort-by(keyOf)` is
-// `xs.sort-by(keyOf($1))`), so the key is what the fn declares it returns.
+// `xs.sort-by(keyOf($1))`), so the key is what that call answers: the type the
+// fn's `->` declares, or without one the type of its body.
 describe("the key of sort-by given as a fn name", () => {
   it.each([
     ["Text", "fn nameOf(u: User) -> Text = u.name"],
@@ -102,6 +94,14 @@ describe("the key of sort-by given as a fn name", () => {
     expect(diagnostics(`users.sort-by(${name})`, decl)).toEqual([
       `E0201 ".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${shown}`,
     ]);
+  });
+
+  it("is E0201 when a fn with no -> has a body with no order, as with one", () => {
+    // `kindOf` declares nothing, and its body `u.kind` is a `Kind`.
+    expect(diagnostics("users.sort-by(kindOf)", "fn kindOf(u: User) = u.kind")).toEqual([
+      `E0201 ".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is Kind`,
+    ]);
+    expect(diagnostics("users.sort-by(nameOf)", "fn nameOf(u: User) = u.name")).toEqual([]);
   });
 
   it("reports only the arity of a fn that does not fit, not its key as well", () => {

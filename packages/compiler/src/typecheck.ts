@@ -282,7 +282,21 @@ type SymbolTable = {
    * see `collectElementIds`.
    */
   elementIds: Set<string>;
+  /** What a call to each `fn` declared without `->` answers — see `fnResultType`. */
+  fnResults: FnResults;
   app?: AppDef;
+};
+
+/**
+ * The results of the `fn`s declared without `->`, each read off its body once
+ * per check: `answers` holds the ones worked out, `reading` the `fn`s whose
+ * bodies are being read right now, innermost last, and `onLoop` every `fn`
+ * found calling back into one of those.
+ */
+type FnResults = {
+  answers: Map<string, TypeExpr | null>;
+  reading: string[];
+  onLoop: Set<string>;
 };
 
 function checkAll(
@@ -306,6 +320,7 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    fnResults: { answers: new Map(), reading: [], onLoop: new Set() },
   };
 
   for (const def of program.defs) {
@@ -3234,10 +3249,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
             if (lacksMember) continue;
             const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             // A bare `fn` name is a `Ref` with no type of its own (E0127 as a
-            // value), so the key it computes is what the fn declares it
-            // returns. A fn already refused for its arity is not checked again.
+            // value), so the key it computes is what a call to the fn
+            // answers. A fn already refused for its arity is not checked again.
             if (fits && e.method === "sort-by" && i === 0) {
-              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+              checkSortKey(fnResultType(a.name, sym), a.pos, recvType, sym, errors);
             }
             continue;
           }
@@ -3455,10 +3470,10 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
  * `Text` or `Time` (language.md §1.9.4). A record, a variant, a `Bool`, an
  * `Option` or a container has no such order, and the runtime would leave the
  * list as it found it; that is reported here as the comparison it stands for
- * would be. `t` is the key's type: the fragment's inferred type, or the
- * declared return type of a `fn` passed by name. A key whose type is unknown —
- * one the checker cannot infer, or a `fn` with no declared return type — is
- * left alone, as is any receiver not known to be a `List`.
+ * would be. `t` is the key's type: the fragment's inferred type, or what a
+ * call to a `fn` passed by name answers (`fnResultType`). A key whose type is
+ * unknown — one the checker cannot infer, a `fn` result included — is left
+ * alone, as is any receiver not known to be a `List`.
  */
 function checkSortKey(
   t: TypeExpr | null,
@@ -3724,10 +3739,24 @@ function checkAgainst(
     }
     return;
   }
+  if (e.kind === "MapLit" && e.entries.length === 0) {
+    // `{}` is the empty Map, the empty Set and the empty record at once, so it
+    // has no one type of its own (`inferType` answers `null`) and the declared
+    // type decides: any of the three holds it, and nothing else does.
+    if (refusesEmptyBraces(d)) {
+      pushMismatch(
+        errors,
+        code,
+        `Expected ${typeToString(declared)} but got {}, an empty Map, Set or record`,
+        e.pos,
+      );
+    }
+    return;
+  }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
-    // `{}` is both the empty Map and the empty Set, so the declared type
-    // decides. A non-empty Set is written as a list literal (the branch
-    // above); every entry here is a key and a value, which only a `Map` has.
+    // A non-empty Set is written as a list literal (the branch above); every
+    // entry here is a key and a value, which only a `Map` has. Entries
+    // written where a `Set` is declared are not judged.
     if (d.name === "Set") return;
     if (d.name === "Map") {
       for (const ent of e.entries) {
@@ -3798,6 +3827,29 @@ function checkAgainst(
   const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
   if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
 }
+
+/**
+ * Whether `{}` is no value of `d`, an already unaliased declared type. `{}` is
+ * an empty Map, an empty Set or an empty record, so a `Map`, a `Set` and every
+ * record type hold it, whatever fields the record declares. What refuses it
+ * is a type the checker reads whole that is none of the three: a primitive, a
+ * union, a `List`, `Option`, `Result` or `Tuple`. An application of a name
+ * that resolves to nothing is not read here: E0117 reports the name, and the
+ * value is not blamed for it.
+ */
+function refusesEmptyBraces(d: TypeExpr): boolean {
+  switch (d.kind) {
+    case "TypePrim":
+    case "TypeUnion":
+      return true;
+    case "TypeApp":
+      return REFUSES_EMPTY_BRACES.has(d.name);
+    default:
+      return false;
+  }
+}
+
+const REFUSES_EMPTY_BRACES: ReadonlySet<string> = new Set(["List", "Option", "Result", "Tuple"]);
 
 /**
  * `d` without the fields `omittable` allows `actual` to leave out and that it
@@ -4709,6 +4761,11 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
         if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
         if (base.name === "Map") return base.args[1] ?? null;
       }
+      // `cfg["label"]` reads the field the literal names, as `cfg.label`
+      // does. A key computed at runtime names no one field, so it has no type.
+      if (base?.kind === "TypeRecord" && e.index.kind === "Str") {
+        return recordFieldType(base, e.index.value);
+      }
       return null;
     }
     case "MethodCall": {
@@ -4860,7 +4917,7 @@ function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
       // narrower than the qualifier, because its lowering discards it —
       // `freshResultType` is where that is read.
       if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
-      return sym.fns.get(e.callee)?.ret ?? null;
+      return fnResultType(e.callee, sym);
     }
     default:
       return null;
@@ -5288,7 +5345,13 @@ function currentFnName(ctx: Ctx): string {
   return (ctx as Ctx & { fnName?: string }).fnName ?? "<fn>";
 }
 
-function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
+/**
+ * The scope a `fn` body is read in: its parameters, under their names and
+ * their positions (`fnScope`), each with its declared type. Shared by the
+ * check of the body and by `fnResultType`, so the type a call answers is the
+ * type the body has where it is checked.
+ */
+function fnBodyScope(fn: FnDef): Ctx {
   const scope = fnScope(fn);
   const ctx: Ctx = {
     kind: "fn",
@@ -5297,10 +5360,49 @@ function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
     routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
+  return ctx;
+}
+
+function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const ctx = fnBodyScope(fn);
   for (const p of fn.params) resolveType(p.type, sym, errors);
   if (fn.ret) resolveType(fn.ret, sym, errors);
   checkExpr(fn.body, sym, errors, ctx);
   checkAgainst(fn.body, fn.ret ?? null, sym, errors, ctx);
+}
+
+/**
+ * What a call to the `fn` named `name` answers (language.md §1.8.2): the type
+ * its `->` declares, and without one the type of its body — the one answer a
+ * call has, whichever position asks, a fragment's `fn` passed by name
+ * included. `null` for a name that is no `fn`, a body whose type cannot be
+ * decided, and a `fn` on a loop of calls (E0006): a body that reaches itself
+ * has no type to stop at, so every `fn` on the loop answers `null`, whichever
+ * of them is asked first, and a `fn` that calls one of them reads that `null`.
+ *
+ * Each body is read once per check and remembered, so a `fn` called from many
+ * places costs one reading.
+ */
+function fnResultType(name: string, sym: SymbolTable): TypeExpr | null {
+  const fn = sym.fns.get(name);
+  if (!fn) return null;
+  if (fn.ret) return fn.ret;
+  const memo = sym.fnResults;
+  const known = memo.answers.get(name);
+  if (known !== undefined) return known;
+  // Asked again while its own body is being read: every `fn` read since is a
+  // step on the way back here, so all of them are on the loop.
+  const at = memo.reading.indexOf(name);
+  if (at >= 0) {
+    for (const on of memo.reading.slice(at)) memo.onLoop.add(on);
+    return null;
+  }
+  memo.reading.push(name);
+  const body = inferType(fn.body, sym, fnBodyScope(fn));
+  memo.reading.pop();
+  const answer = memo.onLoop.has(name) ? null : body;
+  memo.answers.set(name, answer);
+  return answer;
 }
 
 function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {

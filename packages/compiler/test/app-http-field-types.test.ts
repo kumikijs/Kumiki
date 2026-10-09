@@ -131,10 +131,10 @@ type Speed = Quick | Slow`,
 
   it("timeout is held to Int exactly as base-url is held to Text, shape for shape", () => {
     // The two fields go through one check, so what one reports the other does
-    // too. Shapes whose type is not inferred at all (a call to a `fn` with no
-    // `->`, an empty `{}`, an index into a record) are silent in both, which is
-    // an inference gap shared with every other typed position, not a hole in
-    // either field.
+    // too: each shape below is the wrong type for the field it is written in,
+    // and is reported once in each — a call to a `fn` with no `->` by its
+    // body's type, an index into a record by the field's, and `{}` as no `Int`
+    // or `Text` at all.
     const pre = `slot fast : Bool = true
 type Speed = Quick | Slow
 slot cfg : {ms: Int, label: Text} = {ms: 5, label: "x"}
@@ -151,7 +151,7 @@ fn soon() = "soon"`;
     for (const [base, timeout] of shapes) {
       const b = diagnostics(app(pre, `base-url: ${base}`)).length;
       const t = diagnostics(app(pre, `timeout: ${timeout}`)).length;
-      expect([timeout, t]).toEqual([timeout, b]);
+      expect([base, timeout, b, t]).toEqual([base, timeout, 1, 1]);
     }
   });
 

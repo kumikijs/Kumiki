@@ -1,0 +1,56 @@
+# Feature (language.md §1.8.2): a `fn` that leaves out `->` returns the type
+# of its body.
+#
+#   fn-def ::= 'fn' identifier '(' fn-param* ')' ('->' type-expr)? '=' expr
+#
+# A call to one is held to every declared type it lands in, as a call to a
+# `fn` that declares the same type is: `slot n : Int = greeting()` is E0201,
+# `Expected Int but got Text`. A `fn` on a loop of calls (E0006), and one
+# whose body's type the checker cannot decide, have no result type, and their
+# calls are not checked.
+#
+# What is read off the call is decided by that type too. `withThree(names)` is
+# a `Map(Int, Text)`, so its `.keys` read back as `Int`s and add up to 6.
+#
+# Two neighbouring shapes are typed the same way: `cfg["ms"]` reads the field
+# the literal names, as `cfg.ms` does, and `{}` is an empty Map, Set or
+# record, so where none of those is declared — `slot n : Int = {}` — it is
+# E0201.
+
+type Config = {ms: Int, label: Text}
+
+fn greeting() = "hello"
+fn withThree(m: Map(Int, Text)) = m.insert(3, "c")
+fn doubled(n: Int) = n * 2
+
+slot names  : Map(Int, Text) = {1: "a", 2: "b"}
+slot cfg    : Config         = {ms: 250, label: "fast"}
+slot title  : Text           = greeting()
+slot ids    : List(Int)      = []
+slot total  : Int            = 0
+slot timing : {ms: Int}      = {ms: 0}
+slot label  : Text           = ""
+slot seen   : Set(Int)       = {}
+
+reducer run on=ui.click(Run)
+    do= ids    := withThree(names).keys
+        total  := withThree(names).keys.fold(0, $1 + $2)
+        timing := {ms: doubled(cfg["ms"])}
+        label  := cfg["label"]
+        seen   := seen.add(doubled(2))
+
+tile Run = button(text="run", id="run")
+
+tile App = column(
+  Run,
+  text("title: " + title),
+  text("ids: " + ids.map($1.show).join(",")),
+  text("total: " + total.show),
+  text("ms: " + timing.ms.show),
+  text("label: " + label),
+  text("seen: " + seen.size.show))
+
+app InferredFnResult
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
