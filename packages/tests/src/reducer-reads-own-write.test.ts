@@ -1,18 +1,19 @@
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { withRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
 /** A program whose `go` reducer runs `body`, one statement per line. */
 function programWith(body: string[], outType = "Text", outInit = '""'): string {
-  return `type Shape = Circle(Int) | Square(Int)
+  return withApp(`type Shape = Circle(Int) | Square(Int)
 slot noteKey : Text       = "a"
 slot names   : List(Text) = ["b", "b", "c"]
 slot shape   : Shape      = Circle(1)
 slot got     : ${outType} = ${outInit}
 reducer go on=ui.click(Go) do= ${body.join("\n                               ")}
 tile Go = button(text="go", onClick=go)
-tile App = column(Go, text("got=" + got.show))
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+tile App = column(Go, text("got=" + got.show))`);
 }
 
 /** A program whose `go` reducer writes `noteKey := "b"` and then `got := <read>`. */
@@ -23,17 +24,26 @@ function program(read: string, outType = "Text", outInit = '""'): string {
 /** Mount `source`, click `go` once, and return the slots. */
 async function clickOnce(source: string): Promise<Record<string, unknown>> {
   const app = await loadSource(source);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  try {
+  return withRoot(async (root) => {
     const { dispose } = mount(app, root);
     root.querySelector("button")?.click();
     const slots = { ...(app.live ?? {}) };
     dispose();
     return slots;
-  } finally {
-    root.remove();
-  }
+  });
+}
+
+/** Mount `source` and return the page text before and after one click on its button. */
+async function textBeforeAndAfterClick(source: string): Promise<[string, string]> {
+  const app = await loadSource(source);
+  return withRoot(async (root) => {
+    const { dispose } = mount(app, root);
+    const before = root.textContent ?? "";
+    root.querySelector("button")?.click();
+    const after = root.textContent ?? "";
+    dispose();
+    return [before, after];
+  });
 }
 
 describe("a slot read after the reducer's own write, in a nested form", () => {
@@ -49,8 +59,7 @@ describe("a slot read after the reducer's own write, in a nested form", () => {
   });
 
   it("reads the write in a method predicate", async () => {
-    // Before the fix the receiver saw the write and the predicate did not:
-    // `$1 == "a"` over ["b", "b", "c"] counts 0.
+    // A predicate that missed the write would count `$1 == "a"` over ["b", "b", "c"]: 0.
     const slots = await clickOnce(program("names.filter($1 == noteKey).length", "Int", "0"));
     expect(slots.got).toBe(2);
   });
@@ -93,15 +102,14 @@ describe("a read after a write whose value is undefined in JS", () => {
     ["directly in the body", "got"],
     ["in a match arm", "match 1 with | n -> got"],
   ])("reads what the batch commits, %s", async (_row, read) => {
-    const source = `type K = A | B
+    const source = withApp(`type K = A | B
 slot k    : K    = B
 slot got  : Text = "old"
 slot seen : Text = "unset"
 reducer go on=ui.click(Go) do= got := match k with | A -> "a"
                                seen := ${read}
 tile Go = button(text="go", onClick=go)
-tile App = column(Go)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+tile App = column(Go)`);
     const slots = await clickOnce(source);
     expect(slots.got).toBeUndefined();
     expect(slots.seen).toBe(slots.got);
@@ -128,7 +136,7 @@ describe("a nested read that runs before the write", () => {
 
 describe("a tile's nested forms still read the live slots", () => {
   it("renders a tile match arm and let body that read a slot", async () => {
-    const source = `type Shape = Circle(Int) | Square(Int)
+    const source = withApp(`type Shape = Circle(Int) | Square(Int)
 slot noteKey : Text  = "a"
 slot shape   : Shape = Circle(1)
 reducer flip on=ui.click(Flip) do= shape := Square(2)
@@ -137,20 +145,10 @@ tile Flip = button(text="flip", onClick=flip)
 tile Body = match shape with
     | Circle(r) -> text("circle=" + noteKey)
     | Square(s) -> text(let k = "x" in "square=" + noteKey)
-tile App = column(Flip, Body)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    const app = await loadSource(source);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    try {
-      const { dispose } = mount(app, root);
-      expect(root.textContent).toContain("circle=a");
-      root.querySelector("button")?.click();
-      expect(root.textContent).toContain("square=z");
-      dispose();
-    } finally {
-      root.remove();
-    }
+tile App = column(Flip, Body)`);
+    const [before, after] = await textBeforeAndAfterClick(source);
+    expect(before).toContain("circle=a");
+    expect(after).toContain("square=z");
   });
 
   it.each([
@@ -167,24 +165,14 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
       "hits=1",
     ],
   ])("renders %s that reads a slot, before and after a write", async (_row, body, before, after) => {
-    const source = `slot noteKey : Text       = "a"
+    const source = withApp(`slot noteKey : Text       = "a"
 slot names   : List(Text) = ["z", "y"]
 reducer flip on=ui.click(Flip) do= noteKey := "z"
 tile Flip = button(text="flip", onClick=flip)
 tile Body = ${body}
-tile App = column(Flip, Body)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    const app = await loadSource(source);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    try {
-      const { dispose } = mount(app, root);
-      expect(root.textContent).toContain(before);
-      root.querySelector("button")?.click();
-      expect(root.textContent).toContain(after);
-      dispose();
-    } finally {
-      root.remove();
-    }
+tile App = column(Flip, Body)`);
+    const [shownBefore, shownAfter] = await textBeforeAndAfterClick(source);
+    expect(shownBefore).toContain(before);
+    expect(shownAfter).toContain(after);
   });
 });

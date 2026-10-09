@@ -1,16 +1,16 @@
 import { check, lex, parse } from "@kumikijs/compiler";
-import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { mountApp } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
-const program = (home: string) => `tile Card in={label: Text} = text($1.label)
+const program = (home: string) =>
+  withApp(
+    `tile Card in={label: Text} = text($1.label)
 tile Home = ${home}
-slot n : Int = 0
-app R
-    caps   = []
-    routes = {"/" -> Home, "/404" -> Home}
-    init   = []
-`;
+slot n : Int = 0`,
+    "Home",
+  );
 
 describe("a value as a child is refused before it can render nothing", () => {
   it.each([
@@ -34,10 +34,7 @@ describe("a value where a value belongs mounts and shows the value", () => {
     [`column(Card(let x = "shown" in {label: x}))`, "shown"],
     [`column(button(text=let b = "shown" in b))`, "shown"],
   ])("%s", async (home, says) => {
-    const app = await loadSource(program(home));
-    const target = document.createElement("div");
-    document.body.appendChild(target);
-    mount(app, target);
-    expect(target.textContent).toBe(says);
+    const { root } = mountApp(await loadSource(program(home)));
+    expect(root.textContent).toBe(says);
   });
 });

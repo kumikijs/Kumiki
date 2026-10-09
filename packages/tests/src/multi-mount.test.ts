@@ -1,52 +1,33 @@
-import { join } from "node:path";
-import { examplesDir } from "@kumikijs/examples";
+import { feature } from "@kumikijs/examples";
 import { mount, runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { click, fill, freshRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
-const examples = examplesDir;
-const counter = join(examples, "features", "01-slot-and-reducer.kumiki");
-const binder = join(examples, "features", "13-text-input-bind.kumiki");
+const counter = feature("01-slot-and-reducer");
+const binder = feature("13-text-input-bind");
 
-function freshRoot(): HTMLElement {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
-}
-
-function clickButton(root: HTMLElement, text: string): void {
-  const btn = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === text);
-  if (!btn) throw new Error(`button "${text}" not found`);
-  btn.click();
-}
-
-function typeInto(root: HTMLElement, value: string): void {
-  const inp = root.querySelector("input");
-  if (!inp) throw new Error("input not found");
-  inp.value = value;
-  inp.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
-describe("multi-mount isolation (two compiled apps, one page)", () => {
-  it("keeps clicks and bind input isolated between two mounted apps", async () => {
+describe("two compiled apps mounted on one page", () => {
+  it("keeps clicks and bind input isolated between them", async () => {
     const counterApp = await loadApp(counter);
     const binderApp = await loadApp(binder);
     const counterRoot = freshRoot();
     const binderRoot = freshRoot();
     mount(counterApp, counterRoot);
-    mount(binderApp, binderRoot); // last mount must NOT capture the counter's events
+    // Mounted last, so a page-wide listener of its own would capture the counter's events.
+    mount(binderApp, binderRoot);
 
-    clickButton(counterRoot, "+1");
+    click(counterRoot, "+1");
     expect(counterApp.live?.count).toBe(1);
     expect(counterRoot.textContent ?? "").toContain("Count: 1");
     expect(binderApp.live?.name).toBe("");
 
-    typeInto(binderRoot, "ada");
+    fill(binderRoot, "input", "ada");
     expect(binderApp.live?.name).toBe("ada");
     expect(binderRoot.textContent ?? "").toContain("Hello, ada");
     expect(counterApp.live?.count).toBe(1);
 
-    clickButton(counterRoot, "+1");
+    click(counterRoot, "+1");
     expect(counterApp.live?.count).toBe(2);
     expect(binderApp.live?.name).toBe("ada");
   });
@@ -66,7 +47,7 @@ describe("multi-mount isolation (two compiled apps, one page)", () => {
     expect(report.ok).toBe(true);
     expect(binderApp.live?.name).toBe("");
 
-    typeInto(binderRoot, "grace");
+    fill(binderRoot, "input", "grace");
     expect(binderApp.live?.name).toBe("grace");
     expect(counterApp.live?.count).toBe(2);
   });

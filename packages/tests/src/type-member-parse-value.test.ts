@@ -1,25 +1,17 @@
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-function freshRoot(): HTMLElement {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
+import { failureDetail } from "./helpers/scenario.ts";
+import { withApp } from "./helpers/source.ts";
 
 /** One reducer, dispatched by name, whose writes are what the test reads. */
 function app(defs: string, body: string): string {
-  return `${defs}
+  return withApp(`${defs}
 reducer go on=ui.click(Go)
     do= ${body}
 tile Go = button(text="go")
-tile App = column(Go)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(Go)`);
 }
 
 async function stateAfterGo(source: string): Promise<Record<string, unknown>> {
@@ -27,7 +19,7 @@ async function stateAfterGo(source: string): Promise<Record<string, unknown>> {
   const report = await runScenario(shape, freshRoot(), {
     steps: [{ do: { dispatch: "go" }, expect: { noErrors: true } }],
   });
-  expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+  expect(report.ok, failureDetail(report)).toBe(true);
   return shape.live ?? {};
 }
 
@@ -204,12 +196,11 @@ describe("Int and Float read decimal text only", () => {
     return cases.map(([t], i) => [t, live[`s${i}`]]);
   }
 
-  it("reads an optional sign and digits as an Int, and nothing else", async () => {
-    expect(await readAll("Int", INTS)).toEqual(INTS);
-  });
-
-  it("reads a sign, digits, a fraction and an exponent as a Float, and nothing else", async () => {
-    expect(await readAll("Float", FLOATS)).toEqual(FLOATS);
+  it.each([
+    ["an optional sign and digits as an Int", "Int", INTS],
+    ["a sign, digits, a fraction and an exponent as a Float", "Float", FLOATS],
+  ] as const)("reads %s, and nothing else", async (_what, type, cases) => {
+    expect(await readAll(type, cases)).toEqual(cases);
   });
 
   it("reads a Duration as an Int", async () => {

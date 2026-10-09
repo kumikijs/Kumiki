@@ -1,28 +1,12 @@
 import { app } from "@kumikijs/examples";
-import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  clickByText,
-  type FetchCall,
-  type FetchDouble,
-  readHeader,
-  stubFetch,
-} from "./helpers/http-double.ts";
+import { clickContaining, fill, find, mountApp, tick, waitUntil } from "./helpers/dom.ts";
+import { type FetchCall, type FetchDouble, readHeader, stubFetch } from "./helpers/http-double.ts";
 import { loadApp } from "./helpers/load.ts";
 
 const APP_HTTP_EXAMPLE = app("07-app-http");
 
-const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-async function waitUntil(done: () => boolean, timeoutMs = 2000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
-    await tick(5);
-  }
-}
-
-describe("app.http — end-to-end", () => {
+describe("app.http", () => {
   let double: FetchDouble | undefined;
 
   afterEach(() => {
@@ -33,38 +17,31 @@ describe("app.http — end-to-end", () => {
   it("prepends base-url and merges the global header into outgoing requests", async () => {
     const app = await loadApp(APP_HTTP_EXAMPLE);
     double = stubFetch(() => new Response(JSON.stringify({ text: "hi", author: "k" })));
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    let dispose: (() => void) | undefined;
+    const { root, handle } = mountApp(app);
     try {
-      ({ dispose } = mount(app, root));
-      clickByText(root, "Load");
-      await tick();
+      clickContaining(root, "Load");
+      await tick(30);
       expect(double.calls.length).toBe(1);
       expect(double.calls[0]?.url).toBe("https://api.example.com/quote");
       expect(readHeader(double.calls[0]?.init.headers, "X-Session")).toBe("anon");
       expect(double.calls[0]?.init.credentials).toBe("include");
     } finally {
-      dispose?.();
+      handle.dispose();
       root.remove();
     }
   });
 
   it("routes a 401 response through app.http.on-401 even with no per-effect 401 handler", async () => {
     const app = await loadApp(APP_HTTP_EXAMPLE);
-    // Pre-set session so the on-401 reducer's `session := "anon"` is observable.
     (app.live as Record<string, unknown>).session = "carol";
     double = stubFetch(() => new Response("nope", { status: 401, statusText: "Unauthorized" }));
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    let dispose: (() => void) | undefined;
+    const { root, handle } = mountApp(app);
     try {
-      ({ dispose } = mount(app, root));
-      clickByText(root, "Load");
+      clickContaining(root, "Load");
       await tick(60);
       expect((app.live as Record<string, unknown>).session).toBe("anon");
     } finally {
-      dispose?.();
+      handle.dispose();
       root.remove();
     }
   });
@@ -100,8 +77,6 @@ describe("the blog app's Authorization header", () => {
       publishedAt: 1737018000000,
       tags: ["kumiki"],
     };
-    // What `loadSession` reads at boot: the storage handler JSON.parses the
-    // entry and hands it back as `Some(...)`, which `sessIn` writes to `session`.
     localStorage.setItem(
       "session",
       JSON.stringify({ userId: post.authorId, token: "session-token" }),
@@ -112,22 +87,17 @@ describe("the blog app's Authorization header", () => {
         ? new Response(JSON.stringify([postId]))
         : new Response(JSON.stringify(post)),
     );
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    let dispose: (() => void) | undefined;
+    const { root, handle } = mountApp(app);
     try {
-      ({ dispose } = mount(app, root));
       const isDetail = (c: FetchCall): boolean => c.url.endsWith(`/api/posts/${postId}`);
       await waitUntil(() => double?.calls.some(isDetail) === true);
       for (const call of double.calls.filter(isDetail)) {
         expect(readHeader(call.init.headers, "Authorization")).toBe("Bearer session-token");
       }
-      // The app also has to have worked: a decode failure or a thrown header
-      // expression would leave the request assertions above intact and the app
-      // broken, and `console.error` is where both of those land.
+      // A decode failure or a thrown header expression would pass the request assertions and land here.
       expect(errors).toEqual([]);
     } finally {
-      dispose?.();
+      handle.dispose();
       root.remove();
     }
   });
@@ -142,26 +112,17 @@ describe("the blog app's Authorization header", () => {
     );
     const mountAt = (path: string): { root: HTMLElement; dispose: () => void } => {
       history.pushState(null, "", path);
-      const root = document.createElement("div");
-      document.body.appendChild(root);
-      const { dispose } = mount(app, root);
-      return { root, dispose };
+      const { root, handle } = mountApp(app);
+      return { root, dispose: () => handle.dispose() };
     };
     const first = mountAt("/login");
     try {
       await waitUntil(() => first.root.querySelector("#loginEmail") !== null);
-      for (const [id, value] of [
-        ["loginEmail", "a@example.com"],
-        ["loginPw", "pw"],
-      ] as const) {
-        const input = first.root.querySelector<HTMLInputElement>(`#${id}`);
-        if (!input) throw new Error(`#${id} not found`);
-        input.value = value;
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      first.root
-        .querySelector("form")
-        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      fill(first.root, "#loginEmail", "a@example.com");
+      fill(first.root, "#loginPw", "pw");
+      find(first.root, "form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
       await waitUntil(() => localStorage.getItem("session") !== null);
       expect(JSON.parse(localStorage.getItem("session") ?? "null")).toEqual({
         userId,
@@ -175,9 +136,8 @@ describe("the blog app's Authorization header", () => {
     const second = mountAt("/posts");
     try {
       await waitUntil(() => (second.root.textContent ?? "").includes("Hi, 5c6d7e8f"));
-      // Logout removes the key (a key-only write, http.md §6.7.2) rather than
-      // storing a `None` the next boot's decode would refuse.
-      clickByText(second.root, "Logout");
+      // Logout removes the key rather than storing a `None` the next boot's decode would refuse.
+      clickContaining(second.root, "Logout");
       await waitUntil(() => localStorage.getItem("session") === null);
       expect(errors).toEqual([]);
     } finally {

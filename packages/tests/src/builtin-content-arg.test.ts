@@ -1,28 +1,18 @@
-import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { mountApp } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-function sourceOf(tile: string): string {
-  return [
-    "slot n : Int = 7",
-    'slot title : Text = "Title"',
-    "",
-    `tile Probe = ${tile}`,
-    "",
-    "app P",
-    "  caps   = []",
-    '  routes = {"/" -> Probe, "/404" -> Probe}',
-    "  init   = []",
-    "",
-  ].join("\n");
-}
+import { withApp } from "./helpers/source.ts";
 
 async function render(tile: string): Promise<HTMLElement> {
-  const app = await loadSource(sourceOf(tile));
-  const target = document.createElement("div");
-  document.body.appendChild(target);
-  mount(app, target);
-  const root = target.firstElementChild as HTMLElement | null;
+  const app = await loadSource(
+    withApp(
+      `slot n : Int = 7
+slot title : Text = "Title"
+tile Probe = ${tile}`,
+      "Probe",
+    ),
+  );
+  const root = mountApp(app).root.firstElementChild as HTMLElement | null;
   if (!root) throw new Error(`no element rendered for ${tile}`);
   return root;
 }
@@ -49,8 +39,6 @@ const rows: Row[] = [
   },
   {
     kind: "heading",
-    // The issue's own program: `level` is read as the element's tag, and
-    // `test-id`, written first as well, reaches its attribute.
     tile: 'heading(test-id="probe", level=2, title)',
     says: "Title",
     notSays: "probe",
@@ -61,7 +49,6 @@ const rows: Row[] = [
   },
   {
     kind: "heading, content first",
-    // The other order: a named argument after the content is a prop too.
     tile: 'heading(title, test-id="probe", level=2)',
     says: "Title",
     notSays: "probe",
@@ -109,7 +96,6 @@ const rows: Row[] = [
   },
 ];
 
-// The named forms `label` and `link` have always taken still render.
 describe("label and link still take their label as text=", () => {
   it.each([
     ['label(text="Named")', "Named"],
@@ -121,14 +107,17 @@ describe("label and link still take their label as text=", () => {
 });
 
 describe("a builtin's content is its first positional argument", () => {
-  for (const row of rows) {
-    it(`${row.kind}: the positional argument is the content, the named one is not`, async () => {
-      const el = await render(row.tile);
-      expect(el.textContent).toContain(row.says);
-      expect(el.textContent).not.toContain(row.notSays);
-      row.prop?.(el);
-    });
-  }
+  it.each(rows)("$kind: the positional argument is the content, the named one is not", async ({
+    tile,
+    says,
+    notSays,
+    prop,
+  }) => {
+    const el = await render(tile);
+    expect(el.textContent).toContain(says);
+    expect(el.textContent).not.toContain(notSays);
+    prop?.(el);
+  });
 
   it("text with only a test-id: the test-id is a prop, not the content", async () => {
     const el = await render('text(test-id="probe")');

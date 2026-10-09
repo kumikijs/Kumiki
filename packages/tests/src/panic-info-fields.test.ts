@@ -2,15 +2,14 @@ import { feature } from "@kumikijs/examples";
 import type { AppShape, EpisodeLogger, ScenarioReport } from "@kumikijs/runtime";
 import { createEpisodeLogger, panicInfo, runScenario, userPanicInfo } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
 const EXAMPLE = feature("93-panic-info");
 
-function freshRoot(): HTMLElement {
+function rootAtHome(): HTMLElement {
   window.history.replaceState(null, "", "/");
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
+  return freshRoot();
 }
 
 /** `Some(x)` unwrapped, or a failure naming what was there instead. */
@@ -36,7 +35,7 @@ async function breakIt(
   const app: AppShape = await loadApp(EXAMPLE);
   return runScenario(
     app,
-    freshRoot(),
+    rootAtHome(),
     { steps: [{ do: BREAK[how], expect: { errorIncludes: ["panic in"] } }] },
     logger ? { episodeLogger: logger } : {},
   );
@@ -48,7 +47,7 @@ describe("episode-id names the episode the panic happened in", () => {
     const report = await breakIt("reducer", logger);
     const id = some(report.steps[0]?.state.caughtEp);
     const ep = logger.list().find((e) => e.id === id);
-    // …and it is the episode that recorded THIS panic, not merely some episode.
+    // The episode that recorded this panic, not merely some episode.
     expect(ep, `no episode ${id} in the log`).toBeDefined();
     expect(ep?.status).toBe("panic");
     expect(ep?.steps.some((s) => s.kind === "panic")).toBe(true);
@@ -111,7 +110,7 @@ describe("the two payloads cannot drift apart", () => {
     const app: AppShape = await loadApp(EXAMPLE);
     const report = await runScenario(
       app,
-      freshRoot(),
+      rootAtHome(),
       {
         steps: [
           { do: BREAK.render },

@@ -1,27 +1,17 @@
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-function freshRoot(): HTMLElement {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
-
-const app = (defs: string): string => `${defs}
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+import { failureDetail } from "./helpers/scenario.ts";
+import { withApp } from "./helpers/source.ts";
 
 /** Mount the app and assert what its first render shows and does not show. */
 async function renders(src: string, domIncludes: string[], domExcludes: string[]): Promise<void> {
-  const shape = await loadSource(app(src));
+  const shape = await loadSource(withApp(src));
   const report = await runScenario(shape, freshRoot(), {
     steps: [{ expect: { noErrors: true, domIncludes, domExcludes } }],
   });
-  expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+  expect(report.ok, failureDetail(report)).toBe(true);
 }
 
 const SHOW = `slot label : Text       = "from-slot"
@@ -89,7 +79,7 @@ tile App = column(for label in names Each)`,
   it("where the call has props, they see the caller's binding while the body reads the slot", async () => {
     // Clicking the first button reports the `id` its call site gave it.
     const shape = await loadSource(
-      app(`slot label  : Text       = "from-slot"
+      withApp(`slot label  : Text       = "from-slot"
 slot names  : List(Text) = ["a", "b"]
 slot picked : Text       = "none"
 reducer pick on=ui.click(Show) do= picked := $el.id
@@ -107,6 +97,6 @@ tile App = column(text("picked: " + picked + ";"), for label in names Show {id: 
         },
       ],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
   });
 });

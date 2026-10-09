@@ -1,19 +1,14 @@
 import { feature } from "@kumikijs/examples";
 import { type SmokeReport, smoke } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { withRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
 async function smokeExample(name: string): Promise<SmokeReport> {
   const app = await loadApp(feature(name));
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  try {
-    const report = await smoke(app, root, { settleMs: 20 });
-    expect(report.ok).toBe(true);
-    return report;
-  } finally {
-    root.remove();
-  }
+  const report = await withRoot((root) => smoke(app, root, { settleMs: 20 }));
+  expect(report.ok).toBe(true);
+  return report;
 }
 
 const fallbacks = (report: SmokeReport) =>

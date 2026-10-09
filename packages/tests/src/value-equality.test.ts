@@ -2,7 +2,9 @@ import { testFile } from "@kumikijs/cli";
 import { feature } from "@kumikijs/examples";
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
 const EXAMPLE = feature("122-value-equality");
 
@@ -19,15 +21,10 @@ slot opts  : List(Option(Int)) = [Some(1), Some(1), None]`;
 /** Render each `label: expr` as `label: <shown>` and return the page text. */
 async function render(rows: Record<string, string>): Promise<string> {
   const texts = Object.entries(rows).map(([label, expr]) => `text("${label}: " + (${expr}).show)`);
-  const src = `${DEFS}
-tile App = column(${texts.join(", ")})
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const report = await runScenario(await loadSource(src), root, { steps: [{ expect: {} }] });
+  const src = withApp(`${DEFS}\ntile App = column(${texts.join(", ")})`);
+  const report = await runScenario(await loadSource(src), freshRoot(), {
+    steps: [{ expect: {} }],
+  });
   return report.steps[0]?.domText ?? "";
 }
 
@@ -101,7 +98,7 @@ describe("List.contains and unique ask the question == asks", () => {
 });
 
 describe("a property test comparing a List slot with ==", () => {
-  it("holds for a reducer that writes an equal List", { timeout: 30_000 }, async () => {
+  it("holds for a reducer that writes an equal List", async () => {
     const results = await testFile(EXAMPLE);
     expect(results.map((r) => `${r.name}:${r.pass}`)).toEqual(["add-appends-one:true"]);
   });

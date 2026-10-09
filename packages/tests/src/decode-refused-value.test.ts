@@ -1,22 +1,13 @@
 import { app, feature } from "@kumikijs/examples";
-import { type AppShape, mount } from "@kumikijs/runtime";
+import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { clickByText, type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import { clickContaining, mountApp, tick, waitUntil } from "./helpers/dom.ts";
+import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("164-decode-refused-value");
 const TODOMVC = app("02-todomvc");
-
-const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-async function waitUntil(done: () => boolean, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
-    await tick(5);
-  }
-}
 
 type Mounted = { root: HTMLElement; live: Record<string, unknown>; dispose: () => void };
 
@@ -24,25 +15,19 @@ async function mountUntil(
   app: AppShape,
   done: (m: Omit<Mounted, "dispose">) => boolean,
 ): Promise<Mounted> {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const { dispose } = mount(app, root);
+  const { root, handle } = mountApp(app);
   const live = defined(app.live, "the app's live map") as Record<string, unknown>;
+  const dispose = (): void => {
+    handle.dispose();
+    root.remove();
+  };
   try {
-    await waitUntil(() => done({ root, live }));
+    await waitUntil(() => done({ root, live }), { timeoutMs: 3000 });
   } catch (e) {
     dispose();
-    root.remove();
     throw e;
   }
-  return {
-    root,
-    live,
-    dispose: () => {
-      dispose();
-      root.remove();
-    },
-  };
+  return { root, live, dispose };
 }
 
 const UUID = "0b8f2c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d";
@@ -53,7 +38,7 @@ describe("a Decoder.Json(T) whose T refuses the stored value", () => {
     const m = await mountUntil(await loadApp(EXAMPLE), ({ live }) => live.status !== "loading");
     try {
       expect(m.live.status).toBe("started empty");
-      clickByText(m.root, "Add note");
+      clickContaining(m.root, "Add note");
       await tick(20);
       expect(m.root.textContent).toContain("notes: 1");
     } finally {
@@ -158,18 +143,18 @@ app H
   async function clickGo(body: string): Promise<Record<string, unknown>> {
     double = stubFetch(() => new Response(body, { status: 200 }));
     const app = await loadSource(PROGRAM);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    const { dispose } = mount(app, root);
+    const { root, handle } = mountApp(app);
     try {
-      clickByText(root, "Go");
+      clickContaining(root, "Go");
       const live = defined(app.live, "the app's live map") as Record<string, { _tag?: string }>;
-      await waitUntil(() => live.got?._tag === "Some" || live.err?._tag === "Some");
+      await waitUntil(() => live.got?._tag === "Some" || live.err?._tag === "Some", {
+        timeoutMs: 3000,
+      });
       // Longer than any backoff, so a retry would be seen.
       await tick(200);
       return live;
     } finally {
-      dispose();
+      handle.dispose();
       root.remove();
     }
   }

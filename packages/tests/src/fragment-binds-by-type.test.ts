@@ -1,30 +1,28 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { withRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
-const program = (slotDefs: string, resType: string, rhs: string): string => `${slotDefs}
+const program = (slotDefs: string, resType: string, rhs: string): string =>
+  withApp(`${slotDefs}
 slot res : ${resType} = ${resType.startsWith("Option") ? "None" : resType.startsWith("List") ? "[]" : resType === "Text" ? '""' : "0"}
 reducer run on=ui.click(Run) do= res := ${rhs}
 tile Run = button(text="run", onClick=run)
-tile App = column(Run)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+tile App = column(Run)`);
 
 /** Check, build and mount `source`, click `run` once, and return `res`. */
 async function run(source: string): Promise<unknown> {
   expect(codes(source)).toEqual([]);
   const app = await loadSource(source);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  try {
+  return withRoot(async (root) => {
     const { dispose } = mount(app, root);
     root.querySelector("button")?.click();
     const res = app.live?.res;
     dispose();
     return res;
-  } finally {
-    root.remove();
-  }
+  });
 }
 
 function codes(source: string): string[] {
@@ -159,7 +157,7 @@ describe("a fn named as a two-positional fragment where only one is bound", () =
   });
 });
 
-describe("the shapes §2.2.3 binds", () => {
+describe("the shapes a fragment takes apart", () => {
   it.each([
     [
       "an Option holding a pair is taken apart (map)",

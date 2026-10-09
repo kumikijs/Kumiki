@@ -1,24 +1,23 @@
-import { join } from "node:path";
-import { featuresDir } from "@kumikijs/examples";
-import { mount } from "@kumikijs/runtime";
+import { feature } from "@kumikijs/examples";
+import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mountApp, navigate, tick } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
-const features = featuresDir;
+const PREFETCH = feature("41-link-prefetch");
+const SCROLL = feature("42-scroll-restoration");
 
-function freshRoot(): HTMLElement {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
+/** Mount `file` under a memory router and let the mount's own reducers run. */
+async function mounted(file: string): Promise<{ app: AppShape; root: HTMLElement }> {
+  const app = await loadApp(file);
+  const { root } = mountApp(app, { router: "memory" });
+  await tick(0);
+  return { app, root };
 }
 
 describe("link prefetch", () => {
   it("dispatches the named reducer with $route.params on viewport entry", async () => {
-    const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
-    const root = freshRoot();
-    mount(app, root, { router: "memory" });
-    // Allow the synchronous IO callback's reducer dispatch + re-render to settle.
-    await new Promise((r) => setTimeout(r, 0));
+    const { app, root } = await mounted(PREFETCH);
     expect(app.live?.prefetched).toBe(1);
     expect(app.live?.lastId).toBe("abc-123");
     expect(root.textContent).toContain("prefetched: 1");
@@ -32,14 +31,10 @@ describe("link prefetch", () => {
     const original = g.IntersectionObserver;
     delete g.IntersectionObserver;
     try {
-      const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
-      const root = freshRoot();
-      mount(app, root, { router: "memory" });
-      await new Promise((r) => setTimeout(r, 0));
+      const { app } = await mounted(PREFETCH);
       expect(app.live?.prefetched).toBe(1);
       expect(app.live?.lastId).toBe("abc-123");
     } finally {
-      // Absent to begin with stays absent — the delete above already left it so.
       if (original) g.IntersectionObserver = original;
     }
   });
@@ -49,7 +44,7 @@ describe("scroll restoration", () => {
   let scrollSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    // happy-dom's window.scrollTo is a no-op; spy on it so we can assert the runtime's calls without relying on a real layout viewport.
+    // happy-dom does not scroll, so the runtime's calls are the observable.
     scrollSpy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
   });
 
@@ -57,42 +52,22 @@ describe("scroll restoration", () => {
     scrollSpy.mockRestore();
   });
 
-  it("emits scroll-to({0,0}) from a reducer and routes it to window.scrollTo", async () => {
-    const app = await loadApp(join(features, "42-scroll-restoration.kumiki"));
-    const root = freshRoot();
-    mount(app, root, { router: "memory" });
-    // `route.enter("/")` fires `emit scroll-to({x:0, y:0})` on mount, which the runtime's `scroll-to` effect dispatches to `window.scrollTo(0, 0)`.
-    await new Promise((r) => setTimeout(r, 0));
+  it("routes a reducer's scroll-to({0,0}) to window.scrollTo", async () => {
+    await mounted(SCROLL);
     expect(scrollSpy).toHaveBeenCalledWith(0, 0);
   });
 
   it("auto-scrolls to (0,0) on a push-style navigation into a standard tile", async () => {
-    const app = await loadApp(join(features, "41-link-prefetch.kumiki"));
-    const root = freshRoot();
-    mount(app, root, { router: "memory" });
-    await new Promise((r) => setTimeout(r, 0));
+    const { app } = await mounted(PREFETCH);
     scrollSpy.mockClear();
-
-    (app as typeof app & { _navigate: (path: string, replace?: boolean) => void })._navigate(
-      "/todos/abc-123",
-      false,
-    );
-    await new Promise((r) => setTimeout(r, 0));
+    await navigate(app, "/todos/abc-123");
     expect(scrollSpy).toHaveBeenCalledWith(0, 0);
   });
 
   it("skips automatic scroll on a tile with scroll-restoration = false", async () => {
-    const app = await loadApp(join(features, "42-scroll-restoration.kumiki"));
-    const root = freshRoot();
-    mount(app, root, { router: "memory" });
-    await new Promise((r) => setTimeout(r, 0));
+    const { app } = await mounted(SCROLL);
     scrollSpy.mockClear();
-
-    (app as typeof app & { _navigate: (path: string, replace?: boolean) => void })._navigate(
-      "/chat",
-      false,
-    );
-    await new Promise((r) => setTimeout(r, 0));
+    await navigate(app, "/chat");
     expect(scrollSpy).not.toHaveBeenCalled();
   });
 });

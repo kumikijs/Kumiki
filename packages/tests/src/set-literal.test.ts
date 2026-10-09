@@ -1,11 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { testFile } from "@kumikijs/cli";
 import { feature } from "@kumikijs/examples";
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { loadSource } from "./helpers/load.ts";
+import { freshRoot } from "./helpers/dom.ts";
+import { loadSource, writeSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
 const EXAMPLE = feature("124-set-literal");
 const SLOT_KEY_EXAMPLE = feature("170-slot-wildcard-key");
@@ -36,23 +35,16 @@ tile Go = button(text="go") {id: "go"}`;
 
 /** Render `shown` after `clicks` clicks on Go and return the page text. */
 async function render(shown: string, clicks = 0): Promise<string> {
-  const src = `${DEFS}
-tile App = column(Go, text(${shown}))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  const src = withApp(`${DEFS}\ntile App = column(Go, text(${shown}))`);
   const steps = [
     ...Array.from({ length: clicks }, () => ({ do: { click: "#go" }, expect: {} })),
     { expect: { noErrors: true } },
   ];
-  const report = await runScenario(await loadSource(src), root, { steps });
+  const report = await runScenario(await loadSource(src), freshRoot(), { steps });
   return report.steps.at(-1)?.domText ?? "";
 }
 
-describe("a literal-initialised Set, through each member of stdlib.md §2.2.2", () => {
+describe("a literal-initialised Set, through each Set member", () => {
   it.each([
     ["size", '"r=" + s.size.show', "r=1"],
     ["has", '"r=" + s.has(5).show', "r=true"],
@@ -93,13 +85,8 @@ describe("the literal is a Set wherever it is written", () => {
   });
 
   it("is the form add builds, not an array or a mix", async () => {
-    const shape = await loadSource(`${DEFS}
-tile App = column(Go)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`);
-    await runScenario(shape, document.body.appendChild(document.createElement("div")), {
+    const shape = await loadSource(withApp(`${DEFS}\ntile App = column(Go)`));
+    await runScenario(shape, freshRoot(), {
       steps: [{ expect: { noErrors: true } }],
     });
     expect(shape.live?.s).toEqual({ "5": true });
@@ -117,18 +104,19 @@ app A
     expect(text).toContain("r=truetruetrue");
   });
 
-  it("in a reducer-test's given and expect slots", { timeout: 30_000 }, async () => {
+  it("in a reducer-test's given and expect slots", async () => {
     const results = await testFile(EXAMPLE);
     expect(results.map((r) => `${r.name}:${r.pass}`)).toEqual(["rebuild-writes-a-set:true"]);
   });
 });
 
+let written = 0;
+
 /** Run every `test` in `defs` (plus a clickable `Go` and an app) and answer `name:pass`. */
 async function runTests(defs: string, caps = "[]"): Promise<string[]> {
-  const dir = mkdtempSync(join(tmpdir(), "kumiki-set-literal-"));
-  const file = join(dir, "app.kumiki");
-  writeFileSync(
-    file,
+  written += 1;
+  const file = writeSource(
+    `set-literal/tests-${written}`,
     `${defs}
 tile Go = button(text="go")
 tile App = column(Go)
@@ -137,19 +125,11 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = []`,
   );
-  try {
-    return (await testFile(file)).map(
-      (r) => `${r.name}:${r.pass}${r.diffAt ? ` @${r.diffAt}` : ""}`,
-    );
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  return (await testFile(file)).map((r) => `${r.name}:${r.pass}${r.diffAt ? ` @${r.diffAt}` : ""}`);
 }
 
 describe("a Set literal in a reducer-test", () => {
-  it("seeds the given slot as a Set, so a repeated member counts once", {
-    timeout: 30_000,
-  }, async () => {
+  it("seeds the given slot as a Set, so a repeated member counts once", async () => {
     expect(
       await runTests(`slot w    : Set(Text) = []
 slot seen : Int       = 0
@@ -160,7 +140,7 @@ test counts-members = reducer-test measure
     ).toEqual(["counts-members:true"]);
   });
 
-  it("is built as a Set in an expected effect's argument", { timeout: 30_000 }, async () => {
+  it("is built as a Set in an expected effect's argument", async () => {
     expect(
       await runTests(
         `effect save cap=storage.write in=Set(Text) out=Result(Unit, Text)
@@ -174,7 +154,7 @@ test emits-the-set = reducer-test emitSave
     ).toEqual(["emits-the-set:true"]);
   });
 
-  it("is built as a Set in a mocked result", { timeout: 30_000 }, async () => {
+  it("is built as a Set in a mocked result", async () => {
     expect(
       await runTests(
         `effect load cap=storage.read in=Unit out=Result(Set(Text), Text)
@@ -189,9 +169,7 @@ test loads-a-set = reducer-test ask
     ).toEqual(["loads-a-set:true"]);
   });
 
-  it("matches a generated member with <any-id>, one per wildcard", {
-    timeout: 30_000,
-  }, async () => {
+  it("matches a generated member with <any-id>, one per wildcard", async () => {
     expect(
       await runTests(`type ItemId = nominal Text where uuid
 slot sel : Set(ItemId) = {}
@@ -209,7 +187,7 @@ test one-is-not-two = reducer-test pickTwo
     ).toEqual(["one-generated:true", "two-generated:true", "one-is-not-two:false @slots.sel"]);
   });
 
-  it("matches the written members exactly beside a wildcard", { timeout: 30_000 }, async () => {
+  it("matches the written members exactly beside a wildcard", async () => {
     expect(
       await runTests(`type ItemId = nominal Text where uuid
 slot sel  : Set(ItemId) = {}
@@ -224,9 +202,7 @@ test names-a-member-it-lacks = reducer-test grow
     ).toEqual(["keeps-the-given:true", "names-a-member-it-lacks:false @slots.sel"]);
   });
 
-  it("resolves a <slots.X> member to the slot's value after the reducer", {
-    timeout: 30_000,
-  }, async () => {
+  it("resolves a <slots.X> member to the slot's value after the reducer", async () => {
     expect(
       await runTests(`slot tags : Set(Text) = []
 slot pick : Text      = ""
@@ -252,9 +228,7 @@ test one-is-not-two = reducer-test addTag
     ]);
   });
 
-  it("resolves a <slots.X> map key to the slot's value after the reducer", {
-    timeout: 30_000,
-  }, async () => {
+  it("resolves a <slots.X> map key to the slot's value after the reducer", async () => {
     expect(
       await runTests(`slot counts : Map(Text, Int) = {}
 slot pick   : Text           = ""
@@ -276,7 +250,7 @@ test wrong-value = reducer-test bump
     ]);
   });
 
-  it("passes the tests of the <slots.X> member and key example", { timeout: 30_000 }, async () => {
+  it("passes the tests of the <slots.X> member and key example", async () => {
     const results = await testFile(SLOT_KEY_EXAMPLE);
     expect(results.map((r) => `${r.name}:${r.pass}`)).toEqual([
       "a-slot-member:true",
@@ -284,9 +258,7 @@ test wrong-value = reducer-test bump
     ]);
   });
 
-  it("fails a <slots.X> member that is already one of the others, in either order", {
-    timeout: 30_000,
-  }, async () => {
+  it("fails a <slots.X> member that is already one of the others, in either order", async () => {
     // Each member the literal writes asks for one member of its own: a slot whose value is already written beside it must not merge with it and pass on a Set that holds one member fewer than the literal names.
     expect(
       await runTests(`slot tags  : Set(Text) = []
@@ -309,9 +281,7 @@ test two-slots = reducer-test addTag
     ]);
   });
 
-  it("fails a <slots.X> map key that is already one of the others, in either order", {
-    timeout: 30_000,
-  }, async () => {
+  it("fails a <slots.X> map key that is already one of the others, in either order", async () => {
     expect(
       await runTests(`slot counts : Map(Text, Int) = {}
 slot pick   : Text           = ""
@@ -333,9 +303,7 @@ test two-slots = reducer-test bump
     ]);
   });
 
-  it("keys a <slots.X> holding __proto__ as an own key, not the prototype", {
-    timeout: 30_000,
-  }, async () => {
+  it("keys a <slots.X> holding __proto__ as an own key, not the prototype", async () => {
     expect(
       await runTests(`slot tags   : Set(Text)      = []
 slot counts : Map(Text, Int) = {}
@@ -352,7 +320,7 @@ test map-key = reducer-test put
     ).toEqual(["set-member:true", "map-key:true"]);
   });
 
-  it("keys a <slots.X> holding a record the way add keys it", { timeout: 30_000 }, async () => {
+  it("keys a <slots.X> holding a record the way add keys it", async () => {
     expect(
       await runTests(`type P = {x: Int, y: Int}
 slot ps   : Set(P) = {}
@@ -364,9 +332,7 @@ test a-record-member = reducer-test addP
     ).toEqual(["a-record-member:true"]);
   });
 
-  it("pairs <any-id> with what is left once each <slots.X> has taken its own", {
-    timeout: 30_000,
-  }, async () => {
+  it("pairs <any-id> with what is left once each <slots.X> has taken its own", async () => {
     expect(
       await runTests(`type ItemId = nominal Text where uuid
 slot sel  : Set(ItemId)      = {}
@@ -400,9 +366,7 @@ test map-swapped = reducer-test grow
     ]);
   });
 
-  it("resolves a <slots.X> member in an expected effect's argument", {
-    timeout: 30_000,
-  }, async () => {
+  it("resolves a <slots.X> member in an expected effect's argument", async () => {
     expect(
       await runTests(
         `effect save cap=storage.write in=Set(Text) out=Result(Unit, Text)
@@ -420,7 +384,7 @@ test one-fewer = reducer-test emitSave
     ).toEqual(["emits-it:true", "one-fewer:false @effects[0].args"]);
   });
 
-  it("expects an empty Set with []", { timeout: 30_000 }, async () => {
+  it("expects an empty Set with []", async () => {
     expect(
       await runTests(`slot w : Set(Text) = ["a"]
 reducer clear on=ui.click(Go) do= w := []

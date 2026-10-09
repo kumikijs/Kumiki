@@ -1,25 +1,18 @@
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
+import { withApp } from "./helpers/source.ts";
 
-function freshRoot(): HTMLElement {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
-
-const app = (item: string): string => `slot picked  : Text = "-"
+const app = (item: string): string =>
+  withApp(`slot picked  : Text = "-"
 slot picked2 : Text = "-"
 slot names   : List(Text) = ["a", "b"]
 reducer pick  on=ui.click(Item) do= picked := $el.item-name
 reducer pick2 on=ui.click(Item) do= picked2 := $el.plain
 tile Item in=Text = ${item}
-tile App = column(text("picked: " + picked), column(for n in names Item(n)))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(text("picked: " + picked), column(for n in names Item(n)))`);
 
 describe("$el.<kebab-name> reads the prop the tile declared", () => {
   it.each([
@@ -39,22 +32,17 @@ describe("$el.<kebab-name> reads the prop the tile declared", () => {
         },
       ],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
   });
 });
 
-const inputApp = `slot typed   : Text = "-"
+const inputApp = withApp(`slot typed   : Text = "-"
 slot changed : Text = "-"
 slot names   : List(Text) = ["a", "b"]
 reducer typing on=ui.input(Field)  do= typed := $el.item-name + "=" + $el.value
 reducer commit on=ui.change(Field) do= changed := $el.item-name
 tile Field in=Text = input(placeholder=$1) {item-name: $1, id: $1}
-tile App = column(text("typed: " + typed), column(for n in names Field(n)))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(text("typed: " + typed), column(for n in names Field(n)))`);
 
 describe("$el.<kebab-name> reaches ui.input and ui.change reducers", () => {
   it("reads the prop in both reducers when the field is filled", async () => {
@@ -71,6 +59,6 @@ describe("$el.<kebab-name> reaches ui.input and ui.change reducers", () => {
         },
       ],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
   });
 });

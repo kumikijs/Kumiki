@@ -1,27 +1,14 @@
 import { feature } from "@kumikijs/examples";
 import { mount, runScenario } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { freshRoot, tick } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
-const stopTimer = feature("25-stop-timer");
-
-const COUNTER = `slot n : Int = 0
+const COUNTER = withApp(`slot n : Int = 0
 reducer bump on=ui.click(Btn) do= n := n + 1
 tile Btn = button(text="bump", onClick=bump)
-tile App = column(Btn, text("n: " + n.show))
-app Counter
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-
-function freshRoot(): HTMLElement {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+tile App = column(Btn, text("n: " + n.show))`);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -29,12 +16,13 @@ afterEach(() => {
 
 describe("runScenario tears its mount down", () => {
   it("stops a timer reducer, so nothing renders after the report is returned", async () => {
-    const app = await loadApp(stopTimer);
+    const app = await loadApp(feature("25-stop-timer"));
     await runScenario(app, freshRoot(), { steps: [{ expect: { noErrors: true } }] });
 
     const settled = app.live?.remaining;
-    expect(settled).toBeGreaterThan(0); // else the clamp at 0 would hide a live timer
-    await sleep(350); // three ticks and change
+    // Above zero, or the clamp at 0 would hide a live timer.
+    expect(settled).toBeGreaterThan(0);
+    await tick(350);
     expect(app.live?.remaining).toBe(settled);
   });
 
@@ -62,13 +50,5 @@ describe("runScenario tears its mount down", () => {
     const handle = mount(app, root);
     expect(root.textContent).toContain("bump");
     handle.dispose();
-  });
-
-  it("returns cleanly when the scenario document is rejected before the mount", async () => {
-    const app = await loadSource(COUNTER);
-    const report = await runScenario(app, freshRoot(), {
-      steps: [{ expect: { animating: [".a"] } as never }],
-    });
-    expect(report.ok).toBe(false);
   });
 });

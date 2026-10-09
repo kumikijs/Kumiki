@@ -1,18 +1,13 @@
-import { app } from "@kumikijs/examples";
-import type { AppShape } from "@kumikijs/runtime";
+import { app as appExample } from "@kumikijs/examples";
 import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime";
 import { describe, expect, it, vi } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
-function resetLive(app: AppShape): void {
-  delete app.live;
-}
-
-const ssrAppPath = app("10-ssr-hydration");
-
-describe("SSR hydration integration (issue#119)", () => {
+describe("SSR hydration", () => {
   it("renders HTML, ships a snapshot, and hydrates onto a fresh DOM root", async () => {
-    const app = await loadApp(ssrAppPath);
+    const app = await loadApp(appExample("10-ssr-hydration"));
 
     const httpProvider = vi.fn(async () => ({
       kind: "ok" as const,
@@ -30,10 +25,9 @@ describe("SSR hydration integration (issue#119)", () => {
 
     expect(rendered.html).toContain("Hi Yui");
 
-    resetLive(app);
-    const target = document.createElement("div");
+    Reflect.deleteProperty(app, "live");
+    const target = freshRoot();
     target.innerHTML = rendered.html;
-    document.body.appendChild(target);
     expect(target.children.length).toBeGreaterThanOrEqual(1);
 
     const logger = createEpisodeLogger();
@@ -42,17 +36,15 @@ describe("SSR hydration integration (issue#119)", () => {
       providers: { "http.get": httpProvider },
     });
 
-    // Snapshot reached signal graph (compiled reducer reads from `app.live`).
     expect((app.live?.user as { name: string } | undefined)?.name).toBe("Yui");
-    // Volatile slot stayed at its declared default.
+    // A slot left out of the snapshot starts at its declared default.
     expect(app.live?.draft).toBe("");
-    // `app.init` did NOT re-run on the client (provider stays at 1 call).
+    // `app.init` does not run again on the client.
     expect(httpProvider).toHaveBeenCalledTimes(1);
 
     const eps = handle.episodes();
     expect(eps[0]?.trigger.kind).toBe("ssr.hydrate");
     expect(eps[0]?.id).toBe(rendered.bootstrapEpisode.id);
-    // app.start has no user-declared lifecycle reducer in this fixture, so the next observable episode comes from user input (or stays absent).
     expect(eps[0]?.steps.map((s) => s.kind)).toEqual([
       "effect-start",
       "effect-end",
@@ -65,12 +57,9 @@ describe("SSR hydration integration (issue#119)", () => {
     expect(button).not.toBeNull();
     (button as HTMLButtonElement).click();
 
-    const afterClick = handle.episodes();
-    const triggerKinds = afterClick.map((e) => e.trigger.kind);
+    const triggerKinds = handle.episodes().map((e) => e.trigger.kind);
     expect(triggerKinds[0]).toBe("ssr.hydrate");
-    expect(triggerKinds).toContain("ui.click");
-    const clickIdx = triggerKinds.indexOf("ui.click");
-    expect(clickIdx).toBeGreaterThan(0);
+    expect(triggerKinds.indexOf("ui.click")).toBeGreaterThan(0);
     expect(app.live?.count).toBe(1);
 
     handle.dispose();
@@ -80,18 +69,12 @@ describe("SSR hydration integration (issue#119)", () => {
 
 describe("the served page carries what the client paints", () => {
   it("serves a markdown body as paragraphs and a closed surface as a hidden host", async () => {
-    const app = await loadSource(`
-slot shown : Bool = false
-
+    const app = await loadSource(
+      withApp(`slot shown : Bool = false
 tile Notes  = markdown("first line\\nsecond line\\n\\nnew paragraph")
 tile Dialog = modal(text("dialog body"), open=shown, title="Details")
-tile App    = column(Notes, Dialog)
-
-app SsrParity
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`);
+tile App    = column(Notes, Dialog)`),
+    );
     const { html } = await renderToString(app);
     const host = document.createElement("div");
     host.innerHTML = html;

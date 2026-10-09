@@ -1,6 +1,6 @@
 import type { AppShape } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { click, mountApp, typeInto } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
 
 const program = (lists: string, body: string) => `
@@ -24,9 +24,7 @@ afterEach(() => {
 
 async function mounted(src: string): Promise<{ root: HTMLElement; app: AppShape }> {
   const app = await loadSource(src);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const handle = mount(app, root);
+  const { root, handle } = mountApp(app);
   disposers.push(() => {
     handle.dispose();
     root.remove();
@@ -41,17 +39,6 @@ function errors(): string[] {
     seen.push(args.map(String).join(" "));
   });
   return seen;
-}
-
-function click(root: HTMLElement, text: string): void {
-  const btn = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === text);
-  if (!btn) throw new Error(`button "${text}" not found`);
-  btn.click();
-}
-
-function typeInto(input: HTMLInputElement, value: string): void {
-  input.value = value;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 const SCORES = `slot scores : List(Int) = [7, 3, 7]`;

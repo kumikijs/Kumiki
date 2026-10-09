@@ -1,23 +1,16 @@
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
+import { withApp } from "./helpers/source.ts";
 
-function freshRoot(): HTMLElement {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
-
-const app = (decl: string, write: string): string => `${decl}
+const app = (decl: string, write: string): string =>
+  withApp(`${decl}
 reducer bump on=ui.click(Go) do=
     v := ${write}
 tile Go = button(text="go")
-tile App = column(Go)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(Go)`);
 
 describe("o.get() / r.get() unwrap, the same member as the paren-free .get", () => {
   it.each([
@@ -28,7 +21,7 @@ describe("o.get() / r.get() unwrap, the same member as the paren-free .get", () 
     const report = await runScenario(shape, freshRoot(), {
       steps: [{ do: { dispatch: "bump" }, expect: { noErrors: true } }],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(shape.live?.v).toEqual(after);
   });
 
@@ -57,6 +50,6 @@ describe("o.get() / r.get() unwrap, the same member as the paren-free .get", () 
     const report = await runScenario(shape, freshRoot(), {
       steps: [{ do: { click: "#go" }, expect: { noErrors: true, state: { v: "picked" } } }],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
   });
 });

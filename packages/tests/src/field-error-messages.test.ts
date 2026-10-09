@@ -1,5 +1,5 @@
-import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
+import { mountApp } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
 
 const SOURCE = `
@@ -32,7 +32,7 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe("the error tile renders §5.7.2's message for the predicate a value fails", () => {
+describe("the error tile renders the message for the predicate a value fails", () => {
   const expected: [string, string][] = [
     ["mail", "Invalid email format"],
     ["site", "Invalid URL"],
@@ -49,10 +49,7 @@ describe("the error tile renders §5.7.2's message for the predicate a value fai
   ];
 
   it("covers every predicate the language registers", async () => {
-    const app = await loadSource(SOURCE);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    mount(app, root);
+    const { root } = mountApp(await loadSource(SOURCE));
 
     const rendered = Object.fromEntries(
       Array.from(root.querySelectorAll("[data-kumiki-tile='error']")).map((el) => [

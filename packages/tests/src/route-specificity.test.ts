@@ -1,5 +1,6 @@
-import { mount, renderToString, routing } from "@kumikijs/runtime";
+import { renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { textAt } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
 
 function appWith(entries: string): string {
@@ -22,22 +23,18 @@ app RouteOrder
 const PARAM_FIRST = appWith(`"/todos/:id" -> Detail, "/todos/new" -> NewTodo`);
 const STATIC_FIRST = appWith(`"/todos/new" -> NewTodo, "/todos/:id" -> Detail`);
 
-async function textAt(src: string, path: string): Promise<string> {
+/** The page text each path renders, one memory-router mount per path. */
+async function textsAt(src: string, ...paths: string[]): Promise<string[]> {
   const app = await loadSource(src, ["nav.push"]);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const handle = mount(app, root, { router: "memory", initialPath: path });
-  const text = root.textContent ?? "";
-  handle.dispose();
-  root.remove();
-  return text;
+  return paths.map((path) => textAt(app, path));
 }
 
 describe("route match order", () => {
   it("a static segment outranks a parameter, whichever is declared first", async () => {
     for (const src of [PARAM_FIRST, STATIC_FIRST]) {
-      expect(await textAt(src, "/todos/new")).toContain("New todo form");
-      expect(await textAt(src, "/todos/42")).toContain("Detail 42");
+      const [fresh, existing] = await textsAt(src, "/todos/new", "/todos/42");
+      expect(fresh).toContain("New todo form");
+      expect(existing).toContain("Detail 42");
     }
   });
 
@@ -62,9 +59,10 @@ app Ties
     init   = []
 `;
     // `/a/*` is declared first, but both parameter routes outrank it.
-    expect(await textAt(src, "/a/1")).toContain("A 1");
-    expect(await textAt(src, "/a/1/2")).toContain("Deeper 2");
-    expect(await textAt(src, "/a/1/2/3")).toContain("Deep");
+    const [one, two, three] = await textsAt(src, "/a/1", "/a/1/2", "/a/1/2/3");
+    expect(one).toContain("A 1");
+    expect(two).toContain("Deeper 2");
+    expect(three).toContain("Deep");
   });
 
   it("ranks the children of a sub-routes parent the same way", async () => {
@@ -86,7 +84,7 @@ app SubOrder
     routes = {"/" -> Home, "/s/*" -> Layout, "/404" -> NotFound}
     init   = []
 `;
-    const text = await textAt(src, "/s/new");
+    const [text] = await textsAt(src, "/s/new");
     expect(text).toContain("Settings");
     expect(text).toContain("New item form");
   });
@@ -112,13 +110,11 @@ app SiblingOwns
     init   = []
 `;
     // `/settings/:section` outranks `/settings/*`, so the parent's child map never sees this path: the sibling renders, without the layout.
-    const text = await textAt(src, "/settings/account");
+    const [text, deeper] = await textsAt(src, "/settings/account", "/settings/account/x");
     expect(text).toContain("Section account");
     expect(text).not.toContain("Settings layout");
     expect(text).not.toContain("Account child");
-    // A deeper path only the wildcard takes still goes through the parent,
-    // which falls back to its default child (§3.6.3).
-    const deeper = await textAt(src, "/settings/account/x");
+    // A deeper path only the wildcard takes still goes through the parent, which falls back to its default child.
     expect(deeper).toContain("Settings layout");
     expect(deeper).toContain("Settings home");
   });
@@ -134,8 +130,9 @@ app RootShell
     init   = []
 `;
     // `/*` matches `/` too; the pattern that ends where the path ends wins.
-    expect(await textAt(src, "/")).toContain("Home page");
-    expect(await textAt(src, "/anything")).toContain("Shell");
+    const [root, other] = await textsAt(src, "/", "/anything");
+    expect(root).toContain("Home page");
+    expect(other).toContain("Shell");
   });
 
   it("serves the same route from renderToString as the client renders", async () => {
@@ -165,11 +162,10 @@ app RedirectVsPage
     }
     init   = []
 `;
+    const [owned, moved] = await textsAt(src, "/todos/new", "/todos/42");
     // The static page outranks the wildcard redirect declared above it.
-    const owned = await textAt(src, "/todos/new");
     expect(owned).toContain("New todo form");
     // Anything else under `/todos` is still redirected home.
-    const moved = await textAt(src, "/todos/42");
     expect(moved).toContain("Home");
     expect(moved).not.toContain("New todo form");
   });
@@ -192,10 +188,11 @@ app RedirectOrder
     }
     init   = []
 `;
+    const [byParam, byStar] = await textsAt(src, "/old/7", "/old/7/8");
     // `/old/*` is declared first, but `/old/:id` is the more specific redirect.
-    expect(await textAt(src, "/old/7")).toContain("landed by param");
+    expect(byParam).toContain("landed by param");
     // The wildcard still owns what the parameter cannot take.
-    expect(await textAt(src, "/old/7/8")).toContain("landed by wildcard");
+    expect(byStar).toContain("landed by wildcard");
   });
 
   it("scans sub-route redirects only under the route that owns the path", async () => {
@@ -223,11 +220,10 @@ app RedirectNarrowing
     init   = []
 `;
     // `/x/:id` outranks `/x/*`, so the parent's `/x/legacy/*` redirect, which matches this path too, never applies to it.
-    const owned = await textAt(src, "/x/legacy");
+    const [owned, moved] = await textsAt(src, "/x/legacy", "/x/legacy/deep");
     expect(owned).toContain("Detail legacy");
     expect(owned).not.toContain("the redirect target");
     // The parent still owns — and still redirects — a path no other route takes.
-    const moved = await textAt(src, "/x/legacy/deep");
     expect(moved).toContain("the redirect target");
   });
 
@@ -250,9 +246,9 @@ app ChildRedirectVsPage
     routes = {"/" -> Home, "/s/*" -> Layout, "/moved" -> Moved, "/404" -> NotFound}
     init   = []
 `;
-    const owned = await textAt(src, "/s/old/keep");
+    const [owned, moved] = await textsAt(src, "/s/old/keep", "/s/old/other");
     expect(owned).toContain("Kept child");
     expect(owned).not.toContain("Moved page");
-    expect(await textAt(src, "/s/old/other")).toContain("Moved page");
+    expect(moved).toContain("Moved page");
   });
 });

@@ -1,12 +1,11 @@
 import { feature } from "@kumikijs/examples";
-import { mount } from "@kumikijs/runtime";
+import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { clickByText, type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import { clickContaining, mountApp, tick } from "./helpers/dom.ts";
+import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("116-emit-id-after-key-write");
-
-const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** A response that never arrives, and fails the way `fetch` does when its signal is aborted. */
 function pendingUntilAborted(signal: AbortSignal | null | undefined): Promise<Response> {
@@ -24,29 +23,35 @@ afterEach(() => {
   double = undefined;
 });
 
+/** Click `start`, see one pending request to `url`, click `cancel`, and see it aborted with `shown` on the page. */
+async function startThenCancel(
+  app: AppShape,
+  start: string,
+  cancel: string,
+  url: string,
+  shown: string,
+): Promise<void> {
+  double = stubFetch((call) => pendingUntilAborted(call.init.signal));
+  const { root, handle } = mountApp(app);
+  try {
+    clickContaining(root, start);
+    await tick(30);
+    expect(double.calls.map((c) => c.url)).toEqual([url]);
+    expect(double.calls[0]?.init.signal?.aborted).toBe(false);
+
+    clickContaining(root, cancel);
+    await tick(30);
+    expect(double.calls[0]?.init.signal?.aborted).toBe(true);
+    expect(root.textContent).toContain(shown);
+  } finally {
+    handle.dispose();
+    root.remove();
+  }
+}
+
 describe("the EffectId an emit yields after its reducer wrote the key slot", () => {
   it("cancels the request the dispatcher registered", async () => {
-    const app = await loadApp(EXAMPLE);
-    double = stubFetch((call) => pendingUntilAborted(call.init.signal));
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    try {
-      const { dispose } = mount(app, root);
-
-      clickByText(root, "Open b");
-      await tick();
-      expect(double.calls.map((c) => c.url)).toEqual(["/api/notes/b"]);
-      expect(double.calls[0]?.init.signal?.aborted).toBe(false);
-
-      clickByText(root, "Cancel");
-      await tick();
-      expect(double.calls[0]?.init.signal?.aborted).toBe(true);
-      expect(root.textContent).toContain("cancelled");
-
-      dispose();
-    } finally {
-      root.remove();
-    }
+    await startThenCancel(await loadApp(EXAMPLE), "Open b", "Cancel", "/api/notes/b", "cancelled");
   });
 });
 
@@ -103,26 +108,12 @@ describe("`emit cancel(id)` aborts the request `id := emit …` started", () => 
       [`noteKey := "b"`, `lastId := match ("x", 1) with | (s, _) -> emit load(s)`],
     ],
   ])("%s", { timeout: 30_000 }, async (_label, policy, body) => {
-    const app = await loadSource(cancelApp(policy, body));
-    double = stubFetch((call) => pendingUntilAborted(call.init.signal));
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    try {
-      const { dispose } = mount(app, root);
-
-      clickByText(root, "Go");
-      await tick();
-      expect(double.calls.map((c) => c.url)).toEqual(["/api/x"]);
-      expect(double.calls[0]?.init.signal?.aborted).toBe(false);
-
-      clickByText(root, "Stop");
-      await tick();
-      expect(double.calls[0]?.init.signal?.aborted).toBe(true);
-      expect(root.textContent).toContain("aborted");
-
-      dispose();
-    } finally {
-      root.remove();
-    }
+    await startThenCancel(
+      await loadSource(cancelApp(policy, body)),
+      "Go",
+      "Stop",
+      "/api/x",
+      "aborted",
+    );
   });
 });

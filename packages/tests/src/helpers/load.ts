@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadApp as cliLoadApp } from "@kumikijs/cli";
-import { resolveCapabilities } from "@kumikijs/compiler/node";
+import { compile } from "@kumikijs/compiler";
+import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
 import type { AppShape } from "@kumikijs/runtime";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -21,4 +22,32 @@ export async function loadApp(kumikiPath: string): Promise<AppShape> {
  */
 export async function loadSource(src: string, capabilities: string[] = []): Promise<AppShape> {
   return cliLoadApp(src, capabilities, { moduleDir: TMP_ROOT });
+}
+
+/**
+ * The compiled module's `createApp`, for tests that need two independent instances of one app — `loadApp` hands back only the default instance.
+ */
+export async function loadFactory(kumikiPath: string): Promise<() => AppShape> {
+  const result = compile(readFileSync(kumikiPath, "utf8"), {
+    runtimeSpecifier: "ignored",
+    bundle: true,
+    exportApp: true,
+    readRuntimeBundle: nodeRuntimeBundleReader,
+    capabilities: resolveCapabilities(kumikiPath),
+  });
+  if (result.kind !== "ok") {
+    throw new Error(result.errors.map((e) => `${e.code} ${e.message}`).join(", "));
+  }
+  const file = join(mkdtempSync(join(TMP_ROOT, "factory-")), "app.mjs");
+  writeFileSync(file, result.js);
+  const mod: { createApp: () => AppShape } = await import(pathToFileURL(file).href);
+  return mod.createApp;
+}
+
+/** Write `source` to `<name>.kumiki` under the scratch directory, for APIs that take a path. */
+export function writeSource(name: string, source: string): string {
+  const path = join(TMP_ROOT, `${name}.kumiki`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, source);
+  return path;
 }

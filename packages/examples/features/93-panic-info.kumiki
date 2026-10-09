@@ -1,5 +1,4 @@
-# Feature: every field of `PanicInfo` is a value a program can read
-# (spec/lifecycle.md §7.2.3).
+# Feature: every field of `PanicInfo` is a value a program can read.
 #
 # A panic reaches a program three ways: an `error-boundary` fallback takes it as
 # `$1`, an `app.error` reducer takes it as `$event`, and a `route.error`
@@ -15,7 +14,7 @@
 # it does for `None`, and `kumiki run` attaches no episode logger anyway, so
 # both report `(none)` whatever the runtime does. The case that can tell the
 # difference needs a logger attached and lives in
-# `packages/tests/panic-info-fields.test.ts`.
+# `packages/tests/src/panic-info-fields.test.ts`.
 #
 # `episode-id` is the join to the episode log: it names the episode the panic
 # happened in, which is what `kumiki replay` / `kumiki_episode_tail` read. It is
@@ -29,7 +28,7 @@
 # would name a real episode instead.
 #
 # The `app.error` half is driven by entering `/boom` rather than by a button.
-# A reducer panic is reported on the error channel by design (§7.3: the
+# A reducer panic is reported on the error channel by design (the
 # verification tiers watch it), and `smoke` drives every button and fails on
 # anything that reaches that channel. A scenario can claim the error with
 # `errorIncludes`; `smoke` never navigates, so the route is its own arming.
@@ -43,7 +42,7 @@ slot caughtCat   : Text         = "-"
 slot caughtEp    : Option(Text) = None
 slot caughtCause : Option(Text) = None
 
-# `secret` is None, so `.get` panics — the controlled signal §7.2.2 defines.
+# `secret` is None, so `.get` panics — the controlled signal.
 # Under `Guarded` that is a render panic the boundary catches; inside a reducer
 # body it rolls the dispatch back and fires `app.error`.
 tile Body = column(when(breakRender, text("secret: " + secret.get)))

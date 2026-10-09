@@ -1,7 +1,8 @@
 import { feature } from "@kumikijs/examples";
-import { mount } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { clickByText, type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import type { AppShape } from "@kumikijs/runtime";
+import { afterEach, describe, expect, it } from "vitest";
+import { clickContaining, mountApp, waitUntil } from "./helpers/dom.ts";
+import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("127-http-query-string");
@@ -36,24 +37,14 @@ describe("an HTTP effect's query reaches fetch", () => {
     double = undefined;
   });
 
-  async function requestedUrl(load: Promise<Parameters<typeof mount>[0]>, button: string) {
-    const app = await load;
+  async function requested(app: AppShape, button: string) {
     double = stubFetch(() => new Response(JSON.stringify([{ name: "x" }])));
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const calls = double.calls;
+    const { root, handle } = mountApp(app);
     try {
-      const { dispose } = mount(app, root);
-      clickByText(root, button);
-      const calls = double.calls;
-      // Wait for the request itself rather than a fixed delay, so machine
-      // load cannot make the test read an empty call list.
-      await vi.waitFor(
-        () => {
-          if (calls.length === 0) throw new Error("no request reached fetch yet");
-        },
-        { timeout: 2000, interval: 5 },
-      );
-      dispose();
+      clickContaining(root, button);
+      await waitUntil(() => calls.length > 0);
+      handle.dispose();
       return calls.map((c) => ({
         url: new URL(c.url, "http://localhost/"),
         method: c.init.method,
@@ -63,8 +54,8 @@ describe("an HTTP effect's query reaches fetch", () => {
     }
   }
 
-  it("encodes each entry and appends it to the url's own query string (example 127)", async () => {
-    const [first, ...rest] = await requestedUrl(loadApp(EXAMPLE), "Search");
+  it("encodes each entry and appends it to example 127's own query string", async () => {
+    const [first, ...rest] = await requested(await loadApp(EXAMPLE), "Search");
     expect(rest).toEqual([]);
     const url = first?.url;
     expect(url?.pathname).toBe("/search");
@@ -76,51 +67,39 @@ describe("an HTTP effect's query reaches fetch", () => {
     ]);
   });
 
-  it("starts the query string when the url has none", async () => {
-    const [{ url } = { url: undefined }] = await requestedUrl(
-      loadSource(program(`{url: "/search", query: {"q": $1, "page": "2"}, decode: Decoder.Text}`)),
+  it.each([
+    [
+      "starts the query string when the url has none",
+      `"/search", query: {"q": $1, "page": "2"}`,
+      "/search?q=a+b%26c&page=2",
+    ],
+    ["leaves the url unchanged for an empty query", `"/search?x=1", query: {}`, "/search?x=1"],
+    [
+      "puts the query before a fragment",
+      `"/search#top", query: {"q": $1}`,
+      "/search?q=a+b%26c#top",
+    ],
+    [
+      "finishes a url that already ends in `?`",
+      `"/search?", query: {"q": $1}`,
+      "/search?q=a+b%26c",
+    ],
+    [
+      "continues a url that already ends in `&`",
+      `"/search?x=1&", query: {"q": $1}`,
+      "/search?x=1&q=a+b%26c",
+    ],
+  ])("%s", async (_, request, sent) => {
+    const calls = await requested(
+      await loadSource(program(`{url: ${request}, decode: Decoder.Text}`)),
       "Go",
     );
-    expect(url?.search).toBe("?q=a+b%26c&page=2");
-  });
-
-  it("leaves the url unchanged for an empty query", async () => {
-    const [{ url } = { url: undefined }] = await requestedUrl(
-      loadSource(program(`{url: "/search?x=1", query: {}, decode: Decoder.Text}`)),
-      "Go",
-    );
-    expect(`${url?.pathname}${url?.search}`).toBe("/search?x=1");
-  });
-
-  it("puts the query before a fragment", async () => {
-    const [{ url } = { url: undefined }] = await requestedUrl(
-      loadSource(program(`{url: "/search#top", query: {"q": $1}, decode: Decoder.Text}`)),
-      "Go",
-    );
-    expect(url?.search).toBe("?q=a+b%26c");
-    expect(url?.hash).toBe("#top");
-  });
-
-  it("finishes a url that already ends in `?`", async () => {
-    const [{ url } = { url: undefined }] = await requestedUrl(
-      loadSource(program(`{url: "/search?", query: {"q": $1}, decode: Decoder.Text}`)),
-      "Go",
-    );
-    // No second `?` and no empty `&` in front of the first entry.
-    expect(url?.href).toBe("http://localhost/search?q=a+b%26c");
-  });
-
-  it("continues a url that already ends in `&`", async () => {
-    const [{ url } = { url: undefined }] = await requestedUrl(
-      loadSource(program(`{url: "/search?x=1&", query: {"q": $1}, decode: Decoder.Text}`)),
-      "Go",
-    );
-    expect(url?.href).toBe("http://localhost/search?x=1&q=a+b%26c");
+    expect(calls.map((c) => c.url.href)).toEqual([`http://localhost${sent}`]);
   });
 
   it("sends the query of an http.post effect too", async () => {
-    const [call, ...rest] = await requestedUrl(
-      loadSource(
+    const [call, ...rest] = await requested(
+      await loadSource(
         program(
           `{url: "/search", query: {"q": $1}, body: Empty, decode: Decoder.Text}`,
           "http.post",

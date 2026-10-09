@@ -1,23 +1,16 @@
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
+import { withApp } from "./helpers/source.ts";
 
-function freshRoot(): HTMLElement {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
-
-const app = (fn: string, type: string, call: string): string => `${fn}
+const app = (fn: string, type: string, call: string): string =>
+  withApp(`${fn}
 slot res : ${type} = ${type === "Int" ? "0" : "[]"}
 reducer go on=ui.click(Go) do= res := ${call}
 tile Go = button(text="go")
-tile App = column(Go)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(Go)`);
 
 describe("a fn body reads its arguments by position", () => {
   it.each([
@@ -52,7 +45,7 @@ describe("a fn body reads its arguments by position", () => {
     const report = await runScenario(shape, freshRoot(), {
       steps: [{ do: { dispatch: "go" }, expect: { noErrors: true } }],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(shape.live?.res).toEqual(want);
   });
 });

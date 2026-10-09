@@ -33,52 +33,26 @@ function generatedValuesPass(desc: GenDesc, accepts: (v: unknown) => boolean): s
 }
 
 describe("a generated value passes the check the runtime applies to a write", () => {
-  for (const pred of ["email", "url", "uuid"] as const) {
-    it(`generates a ${pred} its own predicate accepts`, () => {
-      const desc = descriptor({ t: "Text" }, pred);
-      expect(desc).toMatchObject({ t: "Text", form: pred });
-      expect(generatedValuesPass(desc, predicate(pred))).toBeUndefined();
-    });
-  }
-
-  it("draws a one-of value from the listed literals", () => {
-    const desc = descriptor({ t: "Text" }, "one-of", ["sm", "md", "lg"]);
-    expect(generatedValuesPass(desc, predicate("one-of", ["sm", "md", "lg"]))).toBeUndefined();
+  it.each(["email", "url", "uuid"])("generates a %s its own predicate accepts", (pred) => {
+    const desc = descriptor({ t: "Text" }, pred);
+    expect(desc).toMatchObject({ t: "Text", form: pred });
+    expect(generatedValuesPass(desc, predicate(pred))).toBeUndefined();
   });
 
-  it("draws a numeric one-of from its own literals", () => {
-    const desc = descriptor({ t: "Int" }, "one-of", [1, 2, 3]);
-    expect(generatedValuesPass(desc, predicate("one-of", [1, 2, 3]))).toBeUndefined();
-  });
-
-  // `positive` on a Float is the arm where a bound of 0 would hand the check
-  // the one value it refuses, and `negative` had no arm at all before #352.
-  const numeric: [string, GenDescData][] = [
-    ["positive", { t: "Int" }],
-    ["positive", { t: "Float" }],
-    ["negative", { t: "Int" }],
-    ["negative", { t: "Float" }],
-  ];
-  for (const [pred, base] of numeric) {
-    it(`generates a ${String(base.t)} the ${pred} check accepts`, () => {
-      expect(generatedValuesPass(descriptor(base, pred), predicate(pred))).toBeUndefined();
-    });
-  }
-
-  // The bounds that were already folded in, so the guard covers the whole set
-  // rather than only what this change added.
-  it("keeps the bounded and length-refined arms honest too", () => {
+  // `positive` on a Float is the arm where a bound of 0 would hand the check the one value it refuses.
+  it.each<[string, GenDescData, (number | string)[]]>([
+    ["one-of", { t: "Text" }, ["sm", "md", "lg"]],
+    ["one-of", { t: "Int" }, [1, 2, 3]],
+    ["positive", { t: "Int" }, []],
+    ["positive", { t: "Float" }, []],
+    ["negative", { t: "Int" }, []],
+    ["negative", { t: "Float" }, []],
+    ["between", { t: "Int" }, [0, 11]],
+    ["nonempty", { t: "Text" }, []],
+    ["len-gt", { t: "Text" }, [3]],
+  ])("generates a value the %s check over %o accepts", (pred, base, args) => {
     expect(
-      generatedValuesPass(
-        descriptor({ t: "Int" }, "between", [0, 11]),
-        predicate("between", [0, 11]),
-      ),
-    ).toBeUndefined();
-    expect(
-      generatedValuesPass(descriptor({ t: "Text" }, "nonempty"), predicate("nonempty")),
-    ).toBeUndefined();
-    expect(
-      generatedValuesPass(descriptor({ t: "Text" }, "len-gt", [3]), predicate("len-gt", [3])),
+      generatedValuesPass(descriptor(base, pred, args), predicate(pred, args)),
     ).toBeUndefined();
   });
 });

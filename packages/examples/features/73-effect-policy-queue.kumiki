@@ -2,7 +2,7 @@
 #
 # The dispatcher had no `queue` branch, so it fell through to the default and
 # ran every emit in parallel — the one policy whose whole purpose is that it
-# does not (runtime.md §10.4.3). Three emits from a single reducer overlapped.
+# does not. Three emits from a single reducer overlapped.
 #
 # `log` below is written by the `.ok` reducer, so the order it ends up in is
 # the order the invocations finished. The scenario shows the result — one
@@ -31,7 +31,7 @@ reducer done on=record.ok(_, $sent) do=
     pending := pending - 1
 
 # Without a host provider for `log.write` the effect errs — visible here rather
-# than dropped, and it keeps `pending` honest either way (#37).
+# than dropped, and it keeps `pending` honest either way.
 reducer failed on=record.err(_, $sent) do=
     log := log + "!"
     pending := pending - 1

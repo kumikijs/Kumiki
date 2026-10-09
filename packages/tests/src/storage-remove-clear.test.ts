@@ -1,12 +1,10 @@
 import { feature } from "@kumikijs/examples";
-import { type AppShape, mount } from "@kumikijs/runtime";
+import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clickByText } from "./helpers/http-double.ts";
+import { clickContaining, mountApp, waitUntil } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("130-storage-remove-clear");
-
-const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function snapshot(storage: Storage): Record<string, string> {
   const out: Record<string, string> = {};
@@ -25,25 +23,18 @@ async function run(
   storage: Storage,
   steps: [button: string, until: string][],
 ): Promise<Record<string, string>[]> {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  const { root, handle } = mountApp(app);
   const after: Record<string, string>[] = [];
-  let dispose: (() => void) | undefined;
   try {
-    ({ dispose } = mount(app, root));
     for (const [button, until] of steps) {
-      clickByText(root, button);
-      const deadline = Date.now() + 2000;
-      while (!(root.textContent ?? "").includes(until)) {
-        if (Date.now() > deadline) {
-          throw new Error(`after "${button}": wanted "${until}", page shows "${root.textContent}"`);
-        }
-        await tick();
-      }
+      clickContaining(root, button);
+      await waitUntil(() => (root.textContent ?? "").includes(until)).catch(() => {
+        throw new Error(`after "${button}": wanted "${until}", page shows "${root.textContent}"`);
+      });
       after.push(snapshot(storage));
     }
   } finally {
-    dispose?.();
+    handle.dispose();
     root.remove();
   }
   return after;

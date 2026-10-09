@@ -1,8 +1,8 @@
 import { app, feature } from "@kumikijs/examples";
-import { type AppShape, type CapabilityRegistry, mount } from "@kumikijs/runtime";
+import type { AppShape, CapabilityRegistry } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
+import { clickContaining, mountApp, tick } from "./helpers/dom.ts";
 import {
-  clickByText,
   type FetchCall,
   type FetchDouble,
   headerValues,
@@ -13,8 +13,6 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("128-http-body-variants");
 const BLOG = app("03-blog");
-
-const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
  * A one-button `http.post` program whose `map-request` is `request`. The effect takes `"x"` as a Text, or nothing when `input` is `Unit`.
@@ -51,13 +49,11 @@ describe("an HTTP request body is sent as its HttpBody variant names", () => {
   /** Mount `app`, click `button`, and return the one request it made. */
   async function sent(app: AppShape, button: string): Promise<FetchCall> {
     double = stubFetch(() => new Response("ok"));
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const { root, handle } = mountApp(app);
     try {
-      const { dispose } = mount(app, root);
-      clickByText(root, button);
-      await tick();
-      dispose();
+      clickContaining(root, button);
+      await tick(30);
+      handle.dispose();
     } finally {
       root.remove();
     }
@@ -67,34 +63,16 @@ describe("an HTTP request body is sent as its HttpBody variant names", () => {
 
   const contentType = (c: FetchCall): string | null => readHeader(c.init.headers, "Content-Type");
 
-  it("sends Form as a urlencoded body", async () => {
-    const call = await sent(await loadApp(EXAMPLE), "Form");
-    expect(call.init.body).toBe("user=ann&pass=pw");
-    expect(contentType(call)).toBe("application/x-www-form-urlencoded");
-  });
-
-  it("sends Json as its payload, not the variant", async () => {
-    const call = await sent(await loadApp(EXAMPLE), "Json");
-    expect(call.init.body).toBe('{"name":"x"}');
-    expect(contentType(call)).toBe("application/json");
-  });
-
-  it("sends Text as the raw text", async () => {
-    const call = await sent(await loadApp(EXAMPLE), "Text");
-    expect(call.init.body).toBe("raw");
-    expect(contentType(call)).toBeNull();
-  });
-
-  it("sends no body for Empty", async () => {
-    const call = await sent(await loadApp(EXAMPLE), "Empty");
-    expect(call.init.body).toBeUndefined();
-    expect(contentType(call)).toBeNull();
-  });
-
-  it("still sends a plain record as JSON", async () => {
-    const call = await sent(await loadApp(EXAMPLE), "Record");
-    expect(call.init.body).toBe('{"sku":"book"}');
-    expect(contentType(call)).toBe("application/json");
+  it.each([
+    ["Form", "user=ann&pass=pw", "application/x-www-form-urlencoded"],
+    ["Json", '{"name":"x"}', "application/json"],
+    ["Text", "raw", null],
+    ["Empty", undefined, null],
+    ["Record", '{"sku":"book"}', "application/json"],
+  ])("sends example 128's %s button's body as %j under Content-Type %s", async (button, body, type) => {
+    const call = await sent(await loadApp(EXAMPLE), button);
+    expect(call.init.body).toBe(body);
+    expect(contentType(call)).toBe(type);
   });
 
   it("sends Multipart as FormData, leaving the Content-Type to fetch", async () => {

@@ -3,7 +3,9 @@ import { feature } from "@kumikijs/examples";
 import type { AppShape, EpisodeLogEntry, EpisodeStep } from "@kumikijs/runtime";
 import { createEpisodeLogger, replayEpisodes, runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { withRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
 
 const EXAMPLE = feature("87-replayed-environment-read");
 const FIXTURE = EXAMPLE.replace(/\.kumiki$/, ".fixture.jsonl");
@@ -27,23 +29,14 @@ function afterValues(ep: EpisodeLogEntry): Record<string, unknown> {
 async function recordOneClick(): Promise<EpisodeLogEntry> {
   const app = await loadApp(EXAMPLE);
   const logger = createEpisodeLogger({ memoryMax: 10 });
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  try {
-    const report = await runScenario(
-      app,
-      root,
-      { steps: [{ do: { clickText: "stamp" } }] },
-      { episodeLogger: logger },
-    );
-    expect(report.ok).toBe(true);
-    const eps = logger.list();
-    expect(eps).toHaveLength(1);
-    // Through JSON, because that is how an episode reaches `kumiki replay`.
-    return JSON.parse(JSON.stringify(eps[0])) as EpisodeLogEntry;
-  } finally {
-    root.remove();
-  }
+  const report = await withRoot((root) =>
+    runScenario(app, root, { steps: [{ do: { clickText: "stamp" } }] }, { episodeLogger: logger }),
+  );
+  expect(report.ok, failureDetail(report)).toBe(true);
+  const eps = logger.list();
+  expect(eps).toHaveLength(1);
+  // Through JSON, because that is how an episode reaches `kumiki replay`.
+  return JSON.parse(JSON.stringify(eps[0])) as EpisodeLogEntry;
 }
 
 async function replayOnce(ep: EpisodeLogEntry): Promise<Record<string, unknown>> {
@@ -56,7 +49,7 @@ async function replayOnce(ep: EpisodeLogEntry): Promise<Record<string, unknown>>
   }).finalSlots;
 }
 
-describe("an episode that read the environment (#337)", () => {
+describe("an episode that read the environment", () => {
   it("records what `random()` and `now` answered", async () => {
     const ep = await recordOneClick();
     const reads = reducerStep(ep)["env-reads"] ?? [];

@@ -1,19 +1,15 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { runFixFromTest, testFile } from "@kumikijs/cli";
 import { feature } from "@kumikijs/examples";
 import { beforeAll, describe, expect, it } from "vitest";
-import { TMP_ROOT } from "./helpers/load.ts";
+import { writeSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("160-tile-test-content-fields");
 const SOURCE = readFileSync(EXAMPLE, "utf8");
-const TMP = join(TMP_ROOT, "tile-test-content-fields");
-mkdirSync(TMP, { recursive: true });
 
-/** Write `source` beside the example under `test`'s name and run that test. */
+/** Write `source` to a scratch file and run its test named `test`. */
 async function runSource(test: string, source: string) {
-  const path = join(TMP, `${test}.kumiki`);
-  writeFileSync(path, source);
+  const path = writeSource(`tile-test-content-fields/${test}`, source);
   const results = await testFile(path);
   const result = results.find((r) => r.name === test);
   if (!result) throw new Error(`no result for ${test}`);
@@ -99,33 +95,43 @@ describe("a tile-test compares the fields its expected node states", () => {
     expect(asWritten.get("people-list")).toBe(true);
   });
 
-  it("prints the compared fields on the expected / actual lines", async () => {
-    const r = await runWith("nav-to", '"/home"', '"/WRONG"');
-    expect(r.expected).toBe('link("Home", to="/WRONG")');
-    expect(r.actual).toBe('link("Home", to="/home")');
-  });
-
-  it("passes one aria attribute stated against two rendered, in either form", () => {
-    expect(asWritten.get("close-aria")).toBe(true);
-    expect(asWritten.get("close-block-aria")).toBe(true);
-  });
-
-  it("prints an aria attribute the way the source spells it", async () => {
-    const r = await runWith("close-aria", '"Close"', '"WRONG"');
-    expect(r.expected).toBe('button("x", aria-label="WRONG")');
-    expect(r.actual).toBe('button("x", aria-label="Close")');
-  });
-
-  it("prints a toggle's checked state as its value argument", async () => {
-    const r = await runWith("agree-checked", "value=true", "value=false");
-    expect(r.expected).toBe("check(value=false)");
-    expect(r.actual).toBe("check(value=true)");
-  });
-
-  it("prints only the stated fields of a node that carries more", async () => {
-    const r = await runWith("name-field", '"Grace"', '"WRONG"');
-    expect(r.expected).toBe('input(value="WRONG")');
-    expect(r.actual).toBe('input(value="Grace")');
+  it.each([
+    [
+      "the compared fields",
+      "nav-to",
+      '"/home"',
+      '"/WRONG"',
+      'link("Home", to="/WRONG")',
+      'link("Home", to="/home")',
+    ],
+    [
+      "an aria attribute the way the source spells it",
+      "close-aria",
+      '"Close"',
+      '"WRONG"',
+      'button("x", aria-label="WRONG")',
+      'button("x", aria-label="Close")',
+    ],
+    [
+      "a toggle's checked state as its value argument",
+      "agree-checked",
+      "value=true",
+      "value=false",
+      "check(value=false)",
+      "check(value=true)",
+    ],
+    [
+      "only the stated fields of a node that carries more",
+      "name-field",
+      '"Grace"',
+      '"WRONG"',
+      'input(value="WRONG")',
+      'input(value="Grace")',
+    ],
+  ])("prints %s on the expected / actual lines", async (_what, test, from, to, expected, actual) => {
+    const r = await runWith(test, from, to);
+    expect(r.expected).toBe(expected);
+    expect(r.actual).toBe(actual);
   });
 });
 

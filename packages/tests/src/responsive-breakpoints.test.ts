@@ -1,6 +1,7 @@
 import { feature } from "@kumikijs/examples";
 import { mount, renderToString } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("158-responsive-breakpoints");
@@ -53,8 +54,7 @@ async function styleAt(
 ): Promise<{ tracks: Shown; spaced: Shown }> {
   viewport(width);
   const app = typeof src === "string" ? await loadSource(src) : await loadApp(src.file);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  const root = freshRoot();
   const handle = mount(app, root);
   const pick = (id: string): Shown => {
     const style = (root.querySelector(`#${id}`) as HTMLElement).style;
@@ -109,7 +109,7 @@ describe("the active theme's breakpoints", () => {
 });
 
 describe("a theme that declares some breakpoints", () => {
-  it("keeps the §4.2 default for a key it leaves out", async () => {
+  it("keeps the default for a key it leaves out", async () => {
     // Only `md` moves; `lg` is still the 1024px default, so 1100px is `lg` and 900px is the theme's `md`.
     const src = themed('md: "500px"', "{base: 1, md: 2, lg: 4}");
     expect((await styleAt(src, 1100)).tracks.cols).toBe("repeat(4, 1fr)");

@@ -15,7 +15,9 @@ import {
   runScenario,
 } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { withRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
 
 const EXAMPLE = feature("159-replayed-event-payload");
 const SCENARIO = JSON.parse(
@@ -33,15 +35,11 @@ function serialized(eps: readonly EpisodeLogEntry[]): EpisodeLogEntry[] {
 async function recordScenario(): Promise<EpisodeLogEntry[]> {
   const app = await loadApp(EXAMPLE);
   const logger = createEpisodeLogger({ memoryMax: 10 });
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  try {
-    const report = await runScenario(app, root, SCENARIO, { episodeLogger: logger });
-    expect(report.ok).toBe(true);
-    return serialized(logger.list() as EpisodeLogEntry[]);
-  } finally {
-    root.remove();
-  }
+  const report = await withRoot((root) =>
+    runScenario(app, root, SCENARIO, { episodeLogger: logger }),
+  );
+  expect(report.ok, failureDetail(report)).toBe(true);
+  return serialized(logger.list() as EpisodeLogEntry[]);
 }
 
 async function replay(episodes: EpisodeLogEntry[]) {
@@ -74,7 +72,6 @@ async function episodeTest(episodes: EpisodeLogEntry[]) {
 describe("a replayed entry reducer gets the payload it ran with", () => {
   it("replays `$el`, `$event` and an effect result's `$1` to what the live run wrote", async () => {
     const eps = await recordScenario();
-    // What the live runtime recorded: the payload the reducer ran with.
     expect(eps.map((ep) => [ep.trigger.kind, ep.trigger.payload])).toEqual([
       ["effect.ok", { $1: { text: "hi", author: "me" } }],
       ["ui.click", { $el: { idx: 5 }, $event: { idx: 5 } }],

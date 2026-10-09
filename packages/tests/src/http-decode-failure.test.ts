@@ -1,24 +1,15 @@
 import { feature } from "@kumikijs/examples";
-import { mount } from "@kumikijs/runtime";
+import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { clickByText, type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import { clickContaining, mountApp, tick, waitUntil } from "./helpers/dom.ts";
+import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("129-http-decode-failure");
 
-const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-async function waitUntil(done: () => boolean, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
-    await tick(5);
-  }
-}
-
 /** Example 129 renders its failure; the whole-error program stores it in `err`. */
-function settled(app: Awaited<ReturnType<typeof loadApp>>, root: HTMLElement): boolean {
+function settled(app: AppShape, root: HTMLElement): boolean {
   if ((root.textContent ?? "").includes("failed")) return true;
   const err = (app.live as Record<string, { _tag?: string }> | undefined)?.err;
   return err?._tag === "Some";
@@ -46,6 +37,14 @@ app R
     init = []
 `;
 
+/** The `HttpError` the whole-error program stored. */
+function storedErr(app: AppShape): Record<string, unknown> {
+  const live = defined(app.live, "the app's live map") as Record<string, unknown>;
+  const err = defined(live.err, "the err slot") as { _tag: string; _0: Record<string, unknown> };
+  expect(err._tag).toBe("Some");
+  return err._0;
+}
+
 describe("a 2xx whose body does not decode", () => {
   let double: FetchDouble | undefined;
 
@@ -54,20 +53,15 @@ describe("a 2xx whose body does not decode", () => {
     double = undefined;
   });
 
-  async function clickBuy(
-    app: Awaited<ReturnType<typeof loadApp>>,
-    respond: () => Response | Promise<Response>,
-  ) {
+  async function clickBuy(app: AppShape, respond: () => Response | Promise<Response>) {
     double = stubFetch(respond);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const { root, handle } = mountApp(app);
     try {
-      const { dispose } = mount(app, root);
-      clickByText(root, "Buy");
-      await waitUntil(() => settled(app, root));
+      clickContaining(root, "Buy");
+      await waitUntil(() => settled(app, root), { timeoutMs: 3000 });
       await tick(200);
       const text = root.textContent ?? "";
-      dispose();
+      handle.dispose();
       return text;
     } finally {
       root.remove();
@@ -80,14 +74,11 @@ describe("a 2xx whose body does not decode", () => {
       headers: { "content-type": "text/html" },
     });
 
-  it("is sent once and reports the response's status (example 129)", async () => {
-    const text = await clickBuy(await loadApp(EXAMPLE), html);
-    expect(double?.calls).toHaveLength(1);
-    expect(text).toContain("failed with status 201");
-  });
-
-  it("is sent once for an empty body too", async () => {
-    const text = await clickBuy(await loadApp(EXAMPLE), () => new Response("", { status: 201 }));
+  it.each([
+    ["an HTML body", html],
+    ["an empty body", () => new Response("", { status: 201 })],
+  ])("is sent once and example 129 reports the status, for %s", async (_, respond) => {
+    const text = await clickBuy(await loadApp(EXAMPLE), respond);
     expect(double?.calls).toHaveLength(1);
     expect(text).toContain("failed with status 201");
   });
@@ -95,21 +86,17 @@ describe("a 2xx whose body does not decode", () => {
   it("keeps the response text in body and names the decode in message", async () => {
     const app = await loadSource(WHOLE_ERROR);
     await clickBuy(app, html);
-    const live = defined(app.live, "the app's live map") as Record<string, unknown>;
-    const err = defined(live.err, "the err slot") as { _tag: string; _0: Record<string, unknown> };
-    expect(err._tag).toBe("Some");
-    expect(err._0.status).toBe(201);
-    expect(err._0.body).toBe("<html>Created</html>");
-    expect(String(err._0.message)).toMatch(/^decode failed: /);
+    const err = storedErr(app);
+    expect(err.status).toBe(201);
+    expect(err.body).toBe("<html>Created</html>");
+    expect(String(err.message)).toMatch(/^decode failed: /);
   });
 
   it("still retries a connection failure, as status 0", async () => {
     const app = await loadSource(WHOLE_ERROR);
     await clickBuy(app, () => Promise.reject(new TypeError("Failed to fetch")));
     expect(double?.calls).toHaveLength(3);
-    const live = defined(app.live, "the app's live map") as Record<string, unknown>;
-    const err = defined(live.err, "the err slot") as { _0: Record<string, unknown> };
-    expect(err._0.status).toBe(0);
+    expect(storedErr(app).status).toBe(0);
   });
 
   it("still retries a 5xx", async () => {
@@ -133,19 +120,17 @@ describe("a 2xx whose body does not decode", () => {
         ),
     );
     expect(double?.calls).toHaveLength(3);
-    const live = defined(app.live, "the app's live map") as Record<string, unknown>;
-    const err = defined(live.err, "the err slot") as { _0: Record<string, unknown> };
-    expect(err._0.status).toBe(0);
-    expect(String(err._0.message)).toMatch(/stream reset/);
+    const err = storedErr(app);
+    expect(err.status).toBe(0);
+    expect(String(err.message)).toMatch(/stream reset/);
   });
 
   it("sends a body-less 204 once and reports status 204", async () => {
     const app = await loadSource(WHOLE_ERROR);
     await clickBuy(app, () => new Response(null, { status: 204 }));
     expect(double?.calls).toHaveLength(1);
-    const live = defined(app.live, "the app's live map") as Record<string, unknown>;
-    const err = defined(live.err, "the err slot") as { _0: Record<string, unknown> };
-    expect(err._0.status).toBe(204);
-    expect(String(err._0.message)).toMatch(/^decode failed/);
+    const err = storedErr(app);
+    expect(err.status).toBe(204);
+    expect(String(err.message)).toMatch(/^decode failed/);
   });
 });

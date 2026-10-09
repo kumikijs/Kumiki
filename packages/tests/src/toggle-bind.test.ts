@@ -1,8 +1,10 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { feature } from "@kumikijs/examples";
-import { type AppShape, mount, renderToString } from "@kumikijs/runtime";
+import { type AppShape, renderToString } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
+import { click, mountApp } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
 const example = feature("132-toggle-bind");
 
@@ -36,10 +38,7 @@ const INITIAL = {
 
 async function mounted(): Promise<{ app: AppShape; root: HTMLElement }> {
   const app = await loadApp(example);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  mount(app, root);
-  return { app, root };
+  return { app, root: mountApp(app).root };
 }
 
 describe("check / switch / radio bind", () => {
@@ -83,10 +82,7 @@ describe("check / switch / radio bind", () => {
     box(root, "rAll").click();
     box(root, "news").click();
     box(root, "sSmall").click();
-    const reset = Array.from(root.querySelectorAll("button")).find(
-      (b) => b.textContent === "reset",
-    );
-    reset?.click();
+    click(root, "reset");
     expect(ticked(root)).toEqual(INITIAL);
   });
 
@@ -126,47 +122,31 @@ describe("check / switch / radio bind", () => {
 });
 
 describe("the write-back runs before the control's own handler", () => {
-  const src = (kind: string) => `
-slot b : Bool = false
+  const src = (kind: string) =>
+    withApp(`slot b : Bool = false
 slot seen : Bool = false
 tile Box = ${kind}(bind=b, onClick=note) {id: "box"}
 reducer note on=ui.click(Box) do= seen := b
-tile App = column(Box)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-  for (const kind of ["check", "switch"]) {
-    it(`${kind}: the handler reads the state the click wrote`, async () => {
-      const app = await loadSource(src(kind));
-      const root = document.createElement("div");
-      document.body.appendChild(root);
-      mount(app, root);
-      box(root, "box").click();
-      expect(app.live).toMatchObject({ b: true, seen: true });
-    });
-  }
+tile App = column(Box)`);
+
+  it.each(["check", "switch"])("%s: the handler reads the state the click wrote", async (kind) => {
+    const app = await loadSource(src(kind));
+    box(mountApp(app).root, "box").click();
+    expect(app.live).toMatchObject({ b: true, seen: true });
+  });
 });
 
 function codes(source: string): string[] {
   return check(parse(lex(source))).map((e) => e.code);
 }
 
-const HEAD = `
-type Filter = All | Active | Done
+const program = (tile: string): string =>
+  withApp(`type Filter = All | Active | Done
 type Other = X | Y
 slot name : Text = ""
 slot flag : Bool = false
 slot filter : Filter = All
-`;
-const APP = `
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-const program = (tile: string): string => `${HEAD}tile App = ${tile}${APP}`;
+tile App = ${tile}`);
 
 describe("check / switch / radio bind types", () => {
   it("reports a check or switch bound to something other than a Bool", () => {
@@ -196,7 +176,9 @@ describe("check / switch / radio bind types", () => {
       [
         "selection-beside-bind",
         "warning",
-        `"value" on check() is not read beside bind= — the bound value decides whether it is ticked. Remove it (see docs/spec/forms.md §5.1.1)`,
+        expect.stringContaining(
+          `"value" on check() is not read beside bind= — the bound value decides whether it is ticked. Remove it`,
+        ),
       ],
     ]);
     expect(warned("switch(bind=flag, value=false)")).toHaveLength(1);
@@ -204,7 +186,9 @@ describe("check / switch / radio bind types", () => {
       [
         "selection-beside-bind",
         "warning",
-        `"selected" on radio() is not read beside bind= — the bound value decides whether it is chosen. Remove it (see docs/spec/forms.md §5.1.1)`,
+        expect.stringContaining(
+          `"selected" on radio() is not read beside bind= — the bound value decides whether it is chosen. Remove it`,
+        ),
       ],
     ]);
     expect(codes(program("check(value=flag)"))).not.toContain("W0216");

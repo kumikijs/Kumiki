@@ -1,6 +1,8 @@
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { withRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
 
 const SRC = `
 slot log : Text = ""
@@ -20,7 +22,7 @@ app LeaveOrder
     init   = []
 `;
 
-// The same app with a guard that holds every move off `/t/:id` behind confirm.
+/** The same app with a guard that holds every move off `/t/:id` behind confirm. */
 const GUARDED = SRC.replace(
   "caps   = [nav.push]",
   "caps   = [nav.push, notification.show]",
@@ -37,16 +39,10 @@ const YES = { click: "[data-kumiki-confirm] button[data-kumiki-confirm-action='y
 
 async function logAfter(steps: Step[], src = SRC): Promise<unknown> {
   const app = await loadSource(src, ["nav.push", "notification.show"]);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const report = await runScenario(
-    app,
-    root,
-    { steps: steps.map((s) => ({ do: s })) },
-    { router: "memory" },
+  const report = await withRoot((root) =>
+    runScenario(app, root, { steps: steps.map((s) => ({ do: s })) }, { router: "memory" }),
   );
-  root.remove();
-  expect(report.ok, JSON.stringify(report.steps.filter((s) => !s.ok))).toBe(true);
+  expect(report.ok, failureDetail(report)).toBe(true);
   return report.steps.at(-1)?.state?.log;
 }
 

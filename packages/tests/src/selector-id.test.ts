@@ -1,38 +1,25 @@
-import { join } from "node:path";
-import { examplesDir } from "@kumikijs/examples";
+import { feature } from "@kumikijs/examples";
 import { mount, runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
-const examples = examplesDir;
-const blockStyleApp = join(examples, "features", "51-selector-id.kumiki");
-const argStyleApp = join(examples, "features", "52-selector-id-arg.kumiki");
-
-function freshRoot(): HTMLElement {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
-}
+const blockStyleApp = feature("51-selector-id");
+const argStyleApp = feature("52-selector-id-arg");
 
 describe("static TileName#id selector matching", () => {
   it("fires id-scoped + unscoped reducers in source order, skips id-mismatched ones", async () => {
-    const app = await loadApp(blockStyleApp);
-    const report = await runScenario(app, freshRoot(), {
+    const report = await runScenario(await loadApp(blockStyleApp), freshRoot(), {
       steps: [
-        {
-          do: { clickText: "New" },
-          expect: { noErrors: true, state: { log: "hit;plain;" } },
-        },
+        { do: { clickText: "New" }, expect: { noErrors: true, state: { log: "hit;plain;" } } },
       ],
     });
     expect(report.ok).toBe(true);
-    expect(report.steps[0]?.state.log).toBe("hit;plain;");
   });
 
   it("renders the {id} prop as the element's native DOM id attribute", async () => {
-    const app = await loadApp(blockStyleApp);
     const root = freshRoot();
-    const handle = mount(app, root);
+    const handle = mount(await loadApp(blockStyleApp), root);
     try {
       expect(root.querySelector("#new")?.tagName.toLowerCase()).toBe("button");
       expect(root.querySelector("#edit")?.tagName.toLowerCase()).toBe("button");
@@ -42,16 +29,11 @@ describe("static TileName#id selector matching", () => {
   });
 
   it('matches arg-style id (input(id="…")) the same as block-style {id: "…"}', async () => {
-    const app = await loadApp(argStyleApp);
-    const report = await runScenario(app, freshRoot(), {
+    const report = await runScenario(await loadApp(argStyleApp), freshRoot(), {
       steps: [
-        {
-          do: { fill: "input", value: "hello" },
-          expect: { noErrors: true, state: { hits: 1 } },
-        },
+        { do: { fill: "input", value: "hello" }, expect: { noErrors: true, state: { hits: 1 } } },
       ],
     });
     expect(report.ok).toBe(true);
-    expect(report.steps[0]?.state.hits).toBe(1);
   });
 });

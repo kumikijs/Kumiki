@@ -1,8 +1,10 @@
-import { mount } from "@kumikijs/runtime";
+import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { click, mountApp } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
-const SOURCE = `
+const SOURCE = withApp(`
 # An alias to a stdlib nominal names the same type, so it carries the same
 # check — resolution has to follow the name, not stop at the first hop.
 type Handle = Email
@@ -37,13 +39,7 @@ tile BothBtn         = button(text="both", onClick=bothPosts)
 tile App = column(
              BreakContactBtn, FixContactBtn, BreakHandleBtn, BreakKeyBtn, BreakCodeBtn,
              AbortCodeBtn, AddPostBtn, AddBadPostBtn, BothBtn,
-             error(field=contact))
-
-app StdlibNominalRefinements
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+             error(field=contact))`);
 
 let errors: string[];
 
@@ -59,21 +55,9 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-async function mounted(): Promise<{
-  app: Awaited<ReturnType<typeof loadSource>>;
-  root: HTMLElement;
-}> {
+async function mounted(): Promise<{ app: AppShape; root: HTMLElement }> {
   const app = await loadSource(SOURCE);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  mount(app, root);
-  return { app, root };
-}
-
-function click(root: HTMLElement, text: string): void {
-  const btn = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === text);
-  if (!btn) throw new Error(`button "${text}" not found`);
-  btn.click();
+  return { app, root: mountApp(app).root };
 }
 
 describe("a slot typed with a stdlib nominal is checked by that nominal's predicate", () => {

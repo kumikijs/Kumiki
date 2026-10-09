@@ -1,8 +1,11 @@
-import { type AppShape, mount, runScenario, type ScenarioStep } from "@kumikijs/runtime";
+import { type AppShape, runScenario, type ScenarioStep } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
+import { click, fill, find, freshRoot, mountApp } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
+import { withApp } from "./helpers/source.ts";
 
-const SOURCE = `
+const SOURCE = withApp(`
 slot contact : Text where email = "ada@example.com"
 slot note    : Text = ""
 slot sent    : Text = ""
@@ -21,23 +24,9 @@ tile Signup = form(column(
     button(text="Send", type="submit")))
 
 tile App = column(Signup, text("sent=" + sent))
+`);
 
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-
-function fill(root: HTMLElement, id: string, value: string): void {
-  const inp = root.querySelector<HTMLInputElement>(`#${id}`);
-  if (!inp) throw new Error(`#${id} not found`);
-  inp.value = value;
-  inp.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
-function submit(root: HTMLElement): void {
-  const form = root.querySelector("form");
-  if (!form) throw new Error("no form");
+function submit(form: Element): void {
   form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
 
@@ -48,73 +37,70 @@ afterEach(() => {
 
 async function mounted(source = SOURCE): Promise<{ app: AppShape; root: HTMLElement }> {
   const app = await loadSource(source);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  const { root } = mountApp(app);
   roots.push(root);
-  mount(app, root);
   return { app, root };
 }
 
 function program(slots: string, tiles: string, route = "Signup"): string {
-  return `${slots}
-${tiles}
-app A
-    caps   = []
-    routes = {"/" -> ${route}, "/404" -> ${route}}
-    init   = []
-`;
+  return withApp(
+    `${slots}
+${tiles}`,
+    route,
+  );
 }
 
 describe("a form submits only while its bound fields are valid", () => {
   it("does not call the submit reducer while a field shows a refused value", async () => {
     const { app, root } = await mounted();
-    fill(root, "c", "ada@examplecom");
+    fill(root, "#c", "ada@examplecom");
     expect(root.textContent).toContain("Invalid email format");
-    submit(root);
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(0);
     expect(app.live?.sent).toBe("");
   });
 
   it("submits once the field is edited to a value the slot accepts", async () => {
     const { app, root } = await mounted();
-    fill(root, "c", "ada@examplecom");
-    fill(root, "c", "grace@example.com");
-    submit(root);
+    fill(root, "#c", "ada@examplecom");
+    fill(root, "#c", "grace@example.com");
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(1);
     expect(app.live?.sent).toBe("grace@example.com");
   });
 
   it("submits once a reducer rewrites the slot and the field follows", async () => {
     const { app, root } = await mounted();
-    fill(root, "c", "ada@examplecom");
-    Array.from(root.querySelectorAll("button"))
-      .find((b) => b.textContent === "fix")
-      ?.click();
-    submit(root);
+    fill(root, "#c", "ada@examplecom");
+    click(root, "fix");
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(1);
     expect(app.live?.sent).toBe("grace@example.com");
   });
 
   it("submits a form whose fields are valid, unrefined ones included", async () => {
     const { app, root } = await mounted();
-    fill(root, "n", "hello");
-    submit(root);
+    fill(root, "#n", "hello");
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(1);
   });
 
-  it("does not submit a pristine field whose default fails its refinement", async () => {
+  it.each([
+    ["beside an error tile", ", error(field=email)"],
+    ["with no error tile to say why", ""],
+  ])("does not submit a pristine field whose default fails its refinement, %s", async (_l, tile) => {
     const { app, root } = await mounted(
       program(
         `slot email : Text where email = ""
 slot sends : Int = 0
 reducer send on=ui.submit(Signup) do= sends := sends + 1`,
-        `tile Signup = form(column(input(bind=email, id="e"), error(field=email)))`,
+        `tile Signup = form(column(input(bind=email, id="e")${tile}))`,
       ),
     );
-    submit(root);
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(0);
-    fill(root, "e", "ada@example.com");
-    submit(root);
+    fill(root, "#e", "ada@example.com");
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(1);
   });
 
@@ -127,28 +113,12 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
         `tile Signup = form(column(input(bind=age, id="a", type="number"), error(field=age)))`,
       ),
     );
-    fill(root, "a", "1.5");
+    fill(root, "#a", "1.5");
     expect(root.textContent).toContain("Must be a whole number");
-    submit(root);
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(0);
-    fill(root, "a", "31");
-    submit(root);
-    expect(app.live?.sends).toBe(1);
-  });
-
-  it("does not submit a pristine failing default even with no error tile to say why", async () => {
-    const { app, root } = await mounted(
-      program(
-        `slot email : Text where email = ""
-slot sends : Int = 0
-reducer send on=ui.submit(Signup) do= sends := sends + 1`,
-        `tile Signup = form(column(input(bind=email, id="e")))`,
-      ),
-    );
-    submit(root);
-    expect(app.live?.sends).toBe(0);
-    fill(root, "e", "ada@example.com");
-    submit(root);
+    fill(root, "#a", "31");
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(1);
   });
 
@@ -164,19 +134,18 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
     select(bind=size, options=[{label: "S", value: "s"}], placeholder="Pick") {id: "s"}))`,
       ),
     );
-    submit(root);
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(0);
-    fill(root, "t", "hello");
-    submit(root);
+    fill(root, "#t", "hello");
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(0);
-    const select = root.querySelector<HTMLSelectElement>("#s");
-    if (!select) throw new Error("#s not found");
+    const select = find<HTMLSelectElement>(root, "#s");
     const option = Array.from(select.options).find((o) => o.textContent === "S");
     if (!option) throw new Error("no option S");
     select.value = option.value;
     select.dispatchEvent(new Event("change", { bubbles: true }));
     expect(app.live?.size).toBe("s");
-    submit(root);
+    submit(find(root, "form"));
     expect(app.live?.sends).toBe(1);
   });
 
@@ -190,12 +159,12 @@ reducer send on=ui.submit(Signup) do= sent := user.email`,
         `tile Signup = form(column(input(bind=user.email, id="e"), error(field=user)))`,
       ),
     );
-    fill(root, "e", "ada@examplecom");
+    fill(root, "#e", "ada@examplecom");
     expect(root.textContent).toContain("Invalid email format");
-    submit(root);
+    submit(find(root, "form"));
     expect(app.live?.sent).toBe("");
-    fill(root, "e", "grace@example.com");
-    submit(root);
+    fill(root, "#e", "grace@example.com");
+    submit(find(root, "form"));
     expect(app.live?.sent).toBe("grace@example.com");
   });
 });
@@ -212,9 +181,9 @@ tile App = column(input(bind=contact, id="out"), Signup)`,
         "App",
       ),
     );
-    fill(root, "out", "ada@examplecom");
+    fill(root, "#out", "ada@examplecom");
     expect(root.textContent).toContain("Invalid email format");
-    submit(root);
+    submit(find(root, "form"));
     expect(app.live?.sent).toBe("ada@example.com");
   });
 
@@ -232,11 +201,9 @@ tile App = column(FormA, FormB)`,
         "App",
       ),
     );
-    fill(root, "ca", "ada@examplecom");
+    fill(root, "#ca", "ada@examplecom");
     const [formA, formB] = Array.from(root.querySelectorAll("form"));
-    for (const form of [formA, formB]) {
-      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    }
+    for (const form of [formA, formB]) if (form) submit(form);
     expect(app.live?.a).toBe(0);
     expect(app.live?.b).toBe(1);
   });
@@ -245,8 +212,7 @@ tile App = column(FormA, FormB)`,
 describe("a {submit} step the form holds back is refused", () => {
   async function run(source: string, steps: ScenarioStep[]) {
     const app = await loadSource(source);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     roots.push(root);
     return runScenario(app, root, { steps });
   }
@@ -275,7 +241,7 @@ describe("a {submit} step the form holds back is refused", () => {
         },
       },
     ]);
-    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(report.steps[1]?.actionError).toBeUndefined();
     expect(report.steps[1]?.expectedActionError).toContain("held the submit back");
   });
@@ -300,7 +266,7 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
     const report = await run(SOURCE, [
       { do: { submit: "#c" }, expect: { noErrors: true, state: { sends: 1 } } },
     ]);
-    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(report.steps[0]?.actionError).toBeUndefined();
   });
 
@@ -312,7 +278,7 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
       ),
       [{ do: { submit: "#e" }, expect: { noErrors: true } }],
     );
-    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(report.steps[0]?.actionError).toBeUndefined();
   });
 
@@ -338,7 +304,7 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
         { do: { submit: "#nm" }, expect: { noErrors: true, state: { sends: 1 } } },
       ],
     );
-    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(report.steps[1]?.actionError).toBeUndefined();
   });
 
@@ -346,7 +312,7 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
     const report = await run(SOURCE, [
       { do: { key: "#c", value: "Enter" }, expect: { noErrors: true, state: { sends: 0 } } },
     ]);
-    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(report.steps[0]?.actionError).toBeUndefined();
   });
 
@@ -372,7 +338,7 @@ tile App = column(FormA, FormB)`,
         { do: { submit: "#cb" }, expect: { state: { b: 1 } } },
       ],
     );
-    expect(report.ok, JSON.stringify(report.steps)).toBe(true);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(report.steps[2]?.actionError).toBeUndefined();
   });
 });

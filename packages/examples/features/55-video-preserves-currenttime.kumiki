@@ -1,4 +1,4 @@
-# Feature (#190): a `<video>` whose Kumiki-level data props change is
+# Feature: a `<video>` whose Kumiki-level data props change is
 # patched in place — `.src`, `.controls`, `.autoplay` are set via the
 # runtime patcher only when they actually diverge, so browser-owned
 # playback state (`currentTime`, `paused`, buffered ranges) survives a
@@ -19,7 +19,7 @@ tile Clip      = video(src="/demo.mp4", controls=showControls) {id: "clip"}
 
 tile App
     = column(
-        heading("video preserves currentTime (#190)"),
+        heading("video preserves currentTime"),
         ToggleBtn,
         Clip,
         text("controls on: " + showControls.show))

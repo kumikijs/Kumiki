@@ -3,45 +3,69 @@ import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { hydrate, mount, renderToString } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { click, find, freshRoot, tick, typeInto } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
 
 const SRC = readFileSync(feature("157-theme-switch"), "utf8");
-const STARTS_DARK = SRC.replace(
-  'slot themeName : Text = "Light"',
-  'slot themeName : Text = "Dark"',
-);
 
-// The variants below add one thing each to the example, so a failure points at what that thing does across a switch.
-const WITH_INPUT = SRC.replace(
-  'slot themeName : Text = "Light"',
-  'slot themeName : Text = "Light"\nslot name : Text = "hello"',
-).replace(
-  'tile App    = page(text("theme: " + themeName), ToggleBtn, Swatch)',
-  'tile App    = page(text("theme: " + themeName), ToggleBtn, input(bind=name, id="name"), Swatch)',
+/** The example with each `[from, to]` applied; a `from` the example no longer has is an error, not a silent no-op. */
+function variant(...edits: [from: string, to: string][]): string {
+  return edits.reduce((src, [from, to]) => {
+    if (!src.includes(from)) throw new Error(`the example has no ${from}`);
+    return src.replace(from, to);
+  }, SRC);
+}
+
+const SLOT = 'slot themeName : Text = "Light"';
+const APP = 'tile App    = page(text("theme: " + themeName), ToggleBtn, Swatch)';
+const SWATCH =
+  'tile Swatch = box(text("swatch"), Inner) {bg: "surface", color: "fg", pad: "md", gap: "sm", id: "sw"}';
+
+const STARTS_DARK = variant([SLOT, 'slot themeName : Text = "Dark"']);
+
+// Each variant below adds one thing to the example, so a failure points at what that thing does across a switch.
+const WITH_INPUT = variant(
+  [
+    SLOT,
+    `${SLOT}
+slot name : Text = "hello"`,
+  ],
+  [
+    APP,
+    'tile App    = page(text("theme: " + themeName), ToggleBtn, input(bind=name, id="name"), Swatch)',
+  ],
 );
-const WITH_REFUSED = SRC.replace(
-  'slot themeName : Text = "Light"',
-  'slot themeName : Text = "Light"\nslot contact : Text where email = "ada@example.com"',
-).replace(
-  'tile App    = page(text("theme: " + themeName), ToggleBtn, Swatch)',
-  'tile App    = page(text("theme: " + themeName), ToggleBtn, input(bind=contact, id="contact"), error(field=contact) {id: "contact-err"}, Swatch)',
+const WITH_REFUSED = variant(
+  [
+    SLOT,
+    `${SLOT}
+slot contact : Text where email = "ada@example.com"`,
+  ],
+  [
+    APP,
+    'tile App    = page(text("theme: " + themeName), ToggleBtn, input(bind=contact, id="contact"), error(field=contact) {id: "contact-err"}, Swatch)',
+  ],
 );
-const WITH_MOTION = SRC.replace(
-  'slot themeName : Text = "Light"',
-  'slot themeName : Text = "Light"\nslot shown : Bool = false\nreducer reveal on=ui.click(RevealBtn) do= shown := true',
-)
-  .replace(
-    'tile Swatch = box(text("swatch"), Inner) {bg: "surface", color: "fg", pad: "md", gap: "sm", id: "sw"}',
-    'tile Swatch = box(text("swatch"), Inner) {bg: "surface", color: "fg", pad: "md", gap: "sm", id: "sw", transition: "fade"}\n' +
-      'motion Rise = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}, duration: "slow"}\n' +
-      'tile Risen = box(text("risen")) {motion: "Rise", id: "risen"}\n' +
-      'tile Late = box(text("late")) {transition: "fade", id: "late"}\n' +
-      'tile RevealBtn = button(text="Reveal", onClick=reveal)',
-  )
-  .replace(
-    'tile App    = page(text("theme: " + themeName), ToggleBtn, Swatch)',
+const WITH_MOTION = variant(
+  [
+    SLOT,
+    `${SLOT}
+slot shown : Bool = false
+reducer reveal on=ui.click(RevealBtn) do= shown := true`,
+  ],
+  [
+    SWATCH,
+    `${SWATCH.slice(0, -1)}, transition: "fade"}
+motion Rise = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}, duration: "slow"}
+tile Risen = box(text("risen")) {motion: "Rise", id: "risen"}
+tile Late = box(text("late")) {transition: "fade", id: "late"}
+tile RevealBtn = button(text="Reveal", onClick=reveal)`,
+  ],
+  [
+    APP,
     'tile App    = page(text("theme: " + themeName), ToggleBtn, RevealBtn, Swatch, Risen, when(shown, Late()))',
-  );
+  ],
+);
 
 const IDS = ["sw", "inner"] as const;
 
@@ -51,14 +75,8 @@ function styles(root: HTMLElement): Record<string, string | null> {
   );
 }
 
-function host(): HTMLElement {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
-}
-
 async function paintedAt(src: string): Promise<Record<string, string | null>> {
-  const root = host();
+  const root = freshRoot();
   const handle = mount(await loadSource(src), root);
   const out = styles(root);
   handle.dispose();
@@ -66,14 +84,10 @@ async function paintedAt(src: string): Promise<Record<string, string | null>> {
   return out;
 }
 
+/** `click()` dispatches without moving focus, so a control focused before the press stays focused while the reducer runs. */
 async function press(root: HTMLElement, label: string): Promise<void> {
-  const btn = Array.from(root.querySelectorAll("button")).find((b) =>
-    b.textContent?.includes(label),
-  );
-  if (!btn) throw new Error(`no "${label}" button`);
-  // `click()` dispatches the event without moving focus, so a control that was focused before the toggle is still the one focused when it runs.
-  btn.click();
-  await new Promise((r) => setTimeout(r, 0));
+  click(root, label);
+  await tick(0);
 }
 
 const toggle = (root: HTMLElement): Promise<void> => press(root, "Toggle theme");
@@ -82,13 +96,12 @@ describe("switching app.theme through its slot", () => {
   it("repaints unchanged tiles, nested ones included, with the new theme's values", async () => {
     const light = await paintedAt(SRC);
     const dark = await paintedAt(STARTS_DARK);
-    // The two themes really do paint these elements differently.
     expect(dark.sw).not.toBe(light.sw);
     expect(dark.inner).not.toBe(light.inner);
     expect(dark.sw).toContain("32px");
     expect(dark.sw).toContain("#1c1c1c");
 
-    const root = host();
+    const root = freshRoot();
     const handle = mount(await loadSource(SRC), root);
     expect(styles(root)).toEqual(light);
     await toggle(root);
@@ -104,7 +117,7 @@ describe("switching app.theme through its slot", () => {
     const app: AppShape = await loadSource(SRC);
     const rendered = await renderToString(app);
     delete app.live;
-    const root = host();
+    const root = freshRoot();
     root.innerHTML = rendered.html;
     const handle = hydrate(app, root, rendered);
     await toggle(root);
@@ -117,8 +130,8 @@ describe("switching app.theme through its slot", () => {
     const dark = await paintedAt(STARTS_DARK);
     const light = await paintedAt(SRC);
     const app = await loadSource(SRC);
-    const first = host();
-    const second = host();
+    const first = freshRoot();
+    const second = freshRoot();
     const one = mount(app, first);
     const two = mount(app, second);
     expect(styles(second)).toEqual(light);
@@ -132,10 +145,9 @@ describe("switching app.theme through its slot", () => {
   });
 
   it("gives a focused control its focus and selection back on the rebuilt element", async () => {
-    const root = host();
+    const root = freshRoot();
     const handle = mount(await loadSource(WITH_INPUT), root);
-    const before = root.querySelector<HTMLInputElement>("#name");
-    if (!before) throw new Error("#name not found");
+    const before = find<HTMLInputElement>(root, "#name");
     before.focus();
     before.setSelectionRange(1, 3);
     await toggle(root);
@@ -149,13 +161,10 @@ describe("switching app.theme through its slot", () => {
 
   it("drops a refused bind's text and its field error, like other DOM state no slot holds", async () => {
     // The refused text lives only in the control the switch replaces. The rebuilt control shows the value the slot kept.
-    const root = host();
+    const root = freshRoot();
     const handle = mount(await loadSource(WITH_REFUSED), root);
-    const before = root.querySelector<HTMLInputElement>("#contact");
-    if (!before) throw new Error("#contact not found");
-    before.value = "ada@examplecom";
-    before.dispatchEvent(new Event("input", { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 0));
+    typeInto(find<HTMLInputElement>(root, "#contact"), "ada@examplecom");
+    await tick(0);
     const shownError = root.querySelector("#contact-err")?.textContent ?? "";
     expect(shownError).toContain("Invalid email");
     await toggle(root);
@@ -168,11 +177,10 @@ describe("switching app.theme through its slot", () => {
   it("does not replay enter animations on the elements it rebuilds", async () => {
     // A CSS animation starts whenever its element is inserted, so the rebuilt tree would fade and rise in again.
     // The switch marks what it rebuilt as settled, and the injected motion stylesheet moves a settled element's animation straight to its end (the browser tier checks it plays that way).
-    const root = host();
+    const root = freshRoot();
     const handle = mount(await loadSource(WITH_MOTION), root);
     const settled = (id: string): boolean =>
       root.querySelector(`#${id}`)?.hasAttribute("data-kumiki-settled") ?? false;
-    // A first mount animates.
     expect(root.querySelector("#sw")?.classList.contains("kumiki-anim")).toBe(true);
     expect(root.querySelector("#risen")?.classList.contains("kumiki-motion")).toBe(true);
     expect([settled("sw"), settled("risen")]).toEqual([false, false]);

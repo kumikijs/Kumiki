@@ -1,23 +1,16 @@
 import { check, lex, parse } from "@kumikijs/compiler";
-import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mountApp } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
 /** A program whose one slot is typed `type`, starts at `init` and is set to `next`. */
-const program = (defs: string, type: string, init: string, next: string): string => `
-${defs}
+const program = (defs: string, type: string, init: string, next: string): string =>
+  withApp(`${defs}
 slot v : ${type} = ${init}
-
 reducer set on=ui.click(SetBtn) do= v := ${next}
-
 tile SetBtn = button(text="set", onClick=set)
-tile App = column(SetBtn)
-
-app RefinementBase
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(SetBtn)`);
 
 type Case = {
   label: string;
@@ -79,26 +72,20 @@ afterEach(() => {
 });
 
 describe("a refinement over a base it cannot test", () => {
-  for (const c of CASES) {
-    it(`is E0804 and nothing else: ${c.label}`, () => {
-      expect(check(parse(lex(c.broken))).map((e) => e.code)).toEqual(["E0804"]);
-    });
+  it.each(CASES)("is E0804 and nothing else, and does not build: $label", async ({ broken }) => {
+    expect(check(parse(lex(broken))).map((e) => e.code)).toEqual(["E0804"]);
+    await expect(loadSource(broken)).rejects.toThrow(/E0804/);
+  });
 
-    it(`does not build: ${c.label}`, async () => {
-      await expect(loadSource(c.broken)).rejects.toThrow(/E0804/);
-    });
-
-    it(`takes the write once written over the base it tests: ${c.label}`, async () => {
-      expect(check(parse(lex(c.fixed)))).toEqual([]);
-      const app = await loadSource(c.fixed);
-      const root = document.createElement("div");
-      document.body.appendChild(root);
-      mount(app, root);
-
-      root.querySelector("button")?.click();
-
-      expect(app.live?.v).toBe(c.written);
-      expect(errors).toEqual([]);
-    });
-  }
+  it.each(CASES)("takes the write once written over the base it tests: $label", async ({
+    fixed,
+    written,
+  }) => {
+    expect(check(parse(lex(fixed)))).toEqual([]);
+    const app = await loadSource(fixed);
+    const { root } = mountApp(app);
+    root.querySelector("button")?.click();
+    expect(app.live?.v).toBe(written);
+    expect(errors).toEqual([]);
+  });
 });

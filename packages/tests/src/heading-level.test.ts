@@ -1,23 +1,15 @@
 import { mount, renderToString } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { click, freshRoot, tick } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
 function appOf(body: string): string {
-  return `
-slot depth : Int = 2
+  return withApp(`slot depth : Int = 2
 reducer deeper on=ui.click(DeeperBtn) do= depth := depth + 1
 tile DeeperBtn = button(text="Deeper", onClick=deeper)
-tile App = column(${body}, DeeperBtn)
-app P
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(${body}, DeeperBtn)`);
 }
-
-const OUTLINE = appOf(
-  'heading("One"), heading(level=2, "Two"), heading("Three", level=3), heading("Six", level=6)',
-);
 
 function tags(root: ParentNode): string[] {
   return Array.from(root.querySelectorAll("[data-kumiki-tile='heading']")).map((h) =>
@@ -25,69 +17,56 @@ function tags(root: ParentNode): string[] {
   );
 }
 
-// Every mount is torn down here rather than at the end of its test, so a failing assertion cannot leave a live app in the document for the next test.
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const c of cleanups.splice(0)) c();
-});
-
 async function mountSource(src: string): Promise<HTMLElement> {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  cleanups.push(() => root.remove());
+  const root = freshRoot();
   const handle = mount(await loadSource(src), root);
-  cleanups.unshift(() => handle.dispose());
+  onTestFinished(() => {
+    handle.dispose();
+    root.remove();
+  });
   return root;
 }
 
-describe("heading level", () => {
-  it("renders h1 … h6 on mount", async () => {
-    const root = await mountSource(OUTLINE);
-    expect(tags(root)).toEqual(["h1", "h2", "h3", "h6"]);
-  });
+async function servedTags(src: string): Promise<string[]> {
+  const host = document.createElement("div");
+  host.innerHTML = (await renderToString(await loadSource(src))).html;
+  return tags(host);
+}
 
-  it("serves the same tags from renderToString", async () => {
-    const out = await renderToString(await loadSource(OUTLINE));
-    const host = document.createElement("div");
-    host.innerHTML = out.html;
-    expect(tags(host)).toEqual(["h1", "h2", "h3", "h6"]);
+describe("heading level", () => {
+  it.each([
+    [
+      "renders h1 … h6",
+      appOf(
+        'heading("One"), heading(level=2, "Two"), heading("Three", level=3), heading("Six", level=6)',
+      ),
+      ["h1", "h2", "h3", "h6"],
+    ],
+    [
+      "pulls a level outside 1-6 to the nearer end, and drops a fraction",
+      appOf(
+        'heading("a", level=0), heading("b", level=9), heading("c", level=2.7), heading("d", level=-3)',
+      ),
+      ["h1", "h6", "h2", "h1"],
+    ],
+    [
+      // `1.0 / z`, `-1.0 / z` and `z / z` with `z = 0.0` are Infinity, -Infinity and NaN.
+      "draws Infinity at the nearer end, and NaN as an h1",
+      withApp(`slot z : Float = 0.0
+tile App = column(heading("a", level=1.0 / z), heading("b", level=-1.0 / z), heading("c", level=z / z))`),
+      ["h6", "h1", "h1"],
+    ],
+  ])("%s, on mount and from renderToString alike", async (_what, src, expected) => {
+    expect(tags(await mountSource(src))).toEqual(expected);
+    expect(await servedTags(src)).toEqual(expected);
   });
 
   it("re-creates the element when a slot-driven level changes", async () => {
     const root = await mountSource(appOf('heading("Moving", level=depth)'));
     expect(tags(root)).toEqual(["h2"]);
-    root.querySelector("button")?.click();
-    await new Promise((r) => setTimeout(r, 0));
+    click(root, "Deeper");
+    await tick(0);
     expect(tags(root)).toEqual(["h3"]);
     expect(root.textContent).toContain("Moving");
-  });
-
-  it("pulls a level outside 1-6 to the nearer end, and drops a fraction", async () => {
-    const src = appOf(
-      'heading("a", level=0), heading("b", level=9), heading("c", level=2.7), heading("d", level=-3)',
-    );
-    const root = await mountSource(src);
-    expect(tags(root)).toEqual(["h1", "h6", "h2", "h1"]);
-    const host = document.createElement("div");
-    host.innerHTML = (await renderToString(await loadSource(src))).html;
-    expect(tags(host)).toEqual(["h1", "h6", "h2", "h1"]);
-  });
-
-  it("draws Infinity at the nearer end, and NaN as an h1", async () => {
-    // A Float slot can reach these: `1.0 / z`, `-1.0 / z` and `z / z` with
-    // `z = 0.0` are Infinity, -Infinity and NaN.
-    const src = `
-slot z : Float = 0.0
-tile App = column(heading("a", level=1.0 / z), heading("b", level=-1.0 / z), heading("c", level=z / z))
-app P
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    const root = await mountSource(src);
-    expect(tags(root)).toEqual(["h6", "h1", "h1"]);
-    const host = document.createElement("div");
-    host.innerHTML = (await renderToString(await loadSource(src))).html;
-    expect(tags(host)).toEqual(["h6", "h1", "h1"]);
   });
 });

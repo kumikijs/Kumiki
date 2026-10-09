@@ -45,12 +45,3 @@ export function readHeader(h: HeadersInit | undefined, name: string): string | n
   const values = headerValues(h, name);
   return values.length === 0 ? null : values.join(", ");
 }
-
-/** Click the first button whose text contains `text`; throw if there is none. */
-export function clickByText(root: HTMLElement, text: string): void {
-  const btn = Array.from(root.querySelectorAll("button")).find((b) =>
-    (b.textContent ?? "").includes(text),
-  );
-  if (!btn) throw new Error(`button "${text}" not found`);
-  btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-}

@@ -1,20 +1,12 @@
 import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
+import { mountApp, tick } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
 const LIFECYCLE_EXAMPLE = feature("37-lifecycle-events");
 
-const tick = (ms = 0): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-function freshRoot(): HTMLElement {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
-}
-
-describe("lifecycle events (#81) — runtime wiring", () => {
+describe("lifecycle events — runtime wiring", () => {
   let disposeFn: (() => void) | undefined;
   let mountedRoot: HTMLElement | undefined;
   afterEach(() => {
@@ -24,11 +16,23 @@ describe("lifecycle events (#81) — runtime wiring", () => {
     mountedRoot = undefined;
   });
 
-  it("fires tile.mount / tile.unmount as a user-defined tile enters / leaves the tree", async () => {
+  /** Mount the example; `afterEach` disposes it unless the test already did. */
+  async function mounted(): Promise<{ app: AppShape; dispose: () => void }> {
     const app = await loadApp(LIFECYCLE_EXAMPLE);
-    mountedRoot = freshRoot();
-    const { dispose } = mount(app, mountedRoot);
-    disposeFn = dispose;
+    const { root, handle } = mountApp(app);
+    mountedRoot = root;
+    disposeFn = () => handle.dispose();
+    return {
+      app,
+      dispose: () => {
+        handle.dispose();
+        disposeFn = undefined;
+      },
+    };
+  }
+
+  it("fires tile.mount / tile.unmount as a user-defined tile enters / leaves the tree", async () => {
+    const { app } = await mounted();
 
     // Initial render mounts Home + ToggleBtn but not Panel.
     const live = app.live as Record<string, unknown>;
@@ -39,22 +43,18 @@ describe("lifecycle events (#81) — runtime wiring", () => {
     const setSlot = (app as AppShape & { _setSlot?: (n: string, v: unknown) => void })._setSlot;
     if (!setSlot) throw new Error("runtime did not expose _setSlot");
     setSlot("panelOn", true);
-    await tick();
+    await tick(0);
     expect(live.mounts).toBe(1);
     expect(live.unmounts).toBe(0);
 
     setSlot("panelOn", false);
-    await tick();
+    await tick(0);
     expect(live.mounts).toBe(1);
     expect(live.unmounts).toBe(1);
   });
 
   it("fires app.online / app.offline on the corresponding window events", async () => {
-    const app = await loadApp(LIFECYCLE_EXAMPLE);
-    mountedRoot = freshRoot();
-    const { dispose } = mount(app, mountedRoot);
-    disposeFn = dispose;
-
+    const { app } = await mounted();
     const live = app.live as Record<string, unknown>;
     expect(live.online).toBe(true);
     window.dispatchEvent(new Event("offline"));
@@ -64,10 +64,7 @@ describe("lifecycle events (#81) — runtime wiring", () => {
   });
 
   it("fires app.visible / app.hidden on visibilitychange", async () => {
-    const app = await loadApp(LIFECYCLE_EXAMPLE);
-    mountedRoot = freshRoot();
-    const { dispose } = mount(app, mountedRoot);
-    disposeFn = dispose;
+    const { app } = await mounted();
     const live = app.live as Record<string, unknown>;
 
     // happy-dom does not flip visibilityState for us — override the getter (configurable in happy-dom) and fire the event the runtime listens for.
@@ -83,10 +80,7 @@ describe("lifecycle events (#81) — runtime wiring", () => {
   });
 
   it("fires app.stop on beforeunload", async () => {
-    const app = await loadApp(LIFECYCLE_EXAMPLE);
-    mountedRoot = freshRoot();
-    const { dispose } = mount(app, mountedRoot);
-    disposeFn = dispose;
+    const { app } = await mounted();
     const live = app.live as Record<string, unknown>;
     expect(live.stops).toBe(0);
     window.dispatchEvent(new Event("beforeunload"));
@@ -94,15 +88,11 @@ describe("lifecycle events (#81) — runtime wiring", () => {
   });
 
   it("removes window listeners on dispose", async () => {
-    const app = await loadApp(LIFECYCLE_EXAMPLE);
-    mountedRoot = freshRoot();
-    const { dispose } = mount(app, mountedRoot);
+    const { app, dispose } = await mounted();
     const live = app.live as Record<string, unknown>;
     dispose();
-    disposeFn = undefined;
     window.dispatchEvent(new Event("offline"));
     window.dispatchEvent(new Event("beforeunload"));
-    // listeners gone → the slots stay at their post-mount values
     expect(live.online).toBe(true);
     expect(live.stops).toBe(0);
   });

@@ -1,24 +1,16 @@
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-function freshRoot(): HTMLElement {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
+import { failureDetail } from "./helpers/scenario.ts";
+import { withApp } from "./helpers/source.ts";
 
 /** A one-slot app whose reducers are dispatched by name. */
 function app(decl: string, body: string, tiles = 'tile App = column(text("x"))'): string {
-  return `slot draft : ${decl}
+  return withApp(`slot draft : ${decl}
 slot log : Text = "start"
 ${body}
-${tiles}
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+${tiles}`);
 }
 
 describe("a write through .get on a Some", () => {
@@ -37,7 +29,7 @@ reducer edit on=ui.click(Btn) do= draft.get.title := "edited"`,
         { do: { dispatch: "edit" } },
       ],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(shape.live?.draft).toEqual({ _tag: "Some", _0: { title: "edited", body: "b" } });
   });
 });
@@ -56,7 +48,7 @@ describe("a write through .get on a None", () => {
     const report = await runScenario(shape, freshRoot(), {
       steps: [{ do: { dispatch: "edit" }, expect: { noErrors: true } }],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(shape.live?.draft).toEqual({ _tag: "None" });
     expect(shape.live?.log).toBe("ran");
   });
@@ -130,7 +122,7 @@ describe("a bind= path through .get", () => {
     const report = await runScenario(shape, root, {
       steps: [{ do: { fill: "#t", value: "edited" } }],
     });
-    expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+    expect(report.ok, failureDetail(report)).toBe(true);
     expect(shape.live?.draft).toEqual({ _tag: "Some", _0: { title: "edited" } });
   });
 });

@@ -1,6 +1,7 @@
 import { app, feature } from "@kumikijs/examples";
-import { type AppShape, mount, renderToString, routing } from "@kumikijs/runtime";
+import { renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { textAt } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("154-ssr-redirect");
@@ -9,17 +10,6 @@ function textOf(html: string): string {
   const el = document.createElement("div");
   el.innerHTML = html;
   return el.textContent ?? "";
-}
-
-async function clientText(path: string, app?: AppShape): Promise<string> {
-  app ??= await loadApp(EXAMPLE);
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  const handle = mount(app, root, { router: "memory", initialPath: path });
-  const text = root.textContent ?? "";
-  handle.dispose();
-  root.remove();
-  return text;
 }
 
 describe("renderToString resolves static redirects", () => {
@@ -43,7 +33,7 @@ describe("renderToString resolves static redirects", () => {
     const out = await renderToString(app, { route: from, routing });
     const served = textOf(out.html);
     expect(served).toContain(heading);
-    expect(served).toBe(await clientText(from));
+    expect(served).toBe(textAt(app, from));
     expect(out.snapshot.route).toBe(to);
     expect(out.bootstrapEpisode.trigger.target).toBe(to);
   });
@@ -68,16 +58,11 @@ app R
     expect(textOf(out.html)).toBe("at /");
   });
 
-  it("resolves a literal redirect when no routing module is passed", async () => {
-    const app = await loadApp(EXAMPLE);
-    const out = await renderToString(app, { route: "/old" });
-    expect(textOf(out.html)).toContain("Home");
-    expect(out.snapshot.route).toBe("/");
-  });
-
-  it("resolves a literal redirect asked with a query when no routing module is passed", async () => {
-    const app = await loadApp(EXAMPLE);
-    const out = await renderToString(app, { route: "/old?ref=x" });
+  it.each([
+    ["/old"],
+    ["/old?ref=x"],
+  ])("resolves a literal redirect asked as %s when no routing module is passed", async (route) => {
+    const out = await renderToString(await loadApp(EXAMPLE), { route });
     expect(textOf(out.html)).toContain("Home");
     expect(out.snapshot.route).toBe("/");
   });
@@ -96,7 +81,7 @@ app R
 `);
     const out = await renderToString(app, { route: path, routing });
     const served = textOf(out.html);
-    expect(served).toBe(await clientText(path, app));
+    expect(served).toBe(textAt(app, path));
     expect(served).toBe("404");
   });
 });

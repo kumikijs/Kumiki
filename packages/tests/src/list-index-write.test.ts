@@ -2,16 +2,10 @@ import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { createEpisodeLogger, runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
 const EXAMPLE = feature("101-list-index-write");
-
-function freshRoot(): HTMLElement {
-  window.history.replaceState(null, "", "/");
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  return root;
-}
 
 describe.each([
   ["a write past the end", "/outside", "write-outside", "Index 3 is out of range"],
@@ -21,6 +15,7 @@ describe.each([
   it("is recorded in the episode log as a panic, and its writes roll back", async () => {
     const logger = createEpisodeLogger({ memoryMax: 10 });
     const app: AppShape = await loadApp(EXAMPLE);
+    window.history.replaceState(null, "", "/");
     const report = await runScenario(
       app,
       freshRoot(),

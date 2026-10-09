@@ -4,6 +4,7 @@ import { runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { withRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
 
 const SCENARIO_ORIGIN_ROOT = "http://localhost/";
 
@@ -13,17 +14,7 @@ async function expectPassesScenario(s: ScenarioCase): Promise<void> {
   const app = await loadApp(s.kumiki);
   const scenario = JSON.parse(readFileSync(s.scenario, "utf8")) as Scenario;
   const report = await withRoot((root) => runScenario(app, root, scenario));
-  const detail = report.steps
-    .map((st, i) => ({ st, i }))
-    .filter(({ st }) => !st.ok)
-    .map(({ st, i }) => {
-      const fault = st.actionError ? ` action-failed=${st.actionError}` : "";
-      const errs = st.errors.length ? ` errors=${st.errors.join("|")}` : "";
-      const fails = st.failures.length ? ` failures=${st.failures.join("|")}` : "";
-      return `step ${i} (${st.label ?? st.action ?? "-"}):${fault}${errs}${fails}`;
-    })
-    .join("\n");
-  expect(report.ok, detail).toBe(true);
+  expect(report.ok, failureDetail(report)).toBe(true);
 }
 
 describe.each(
