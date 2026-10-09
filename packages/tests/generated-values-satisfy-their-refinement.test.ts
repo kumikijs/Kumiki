@@ -9,7 +9,7 @@
 // state testing.md §8.3.2 says cannot happen, stated here as an assertion.
 
 import { applyRefine, type GenDescData, refinementToJs } from "@kumikijs/compiler";
-import { _stdlibTest, type GenDesc } from "@kumikijs/runtime";
+import { _stdlibCore, _stdlibTest, type GenDesc } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const NO_POS = { line: 0, col: 0 };
@@ -91,5 +91,18 @@ describe("a generated value passes the check the runtime applies to a write", ()
     expect(
       generatedValuesPass(descriptor({ t: "Text" }, "len-gt", [3]), predicate("len-gt", [3])),
     ).toBeUndefined();
+  });
+});
+
+// A fresh id is the other value the runtime makes up for a `uuid` slot: the
+// runtime mints it (`<T>.fresh()`, stdlib.md §2.4.1) and the compiler's table
+// checks it, so the same two packages answer this question too.
+describe("a fresh id passes the check a uuid-refined slot applies", () => {
+  it("mints ids the uuid predicate accepts", () => {
+    const accepts = predicate("uuid");
+    for (let i = 0; i < 200; i++) {
+      const id = _stdlibCore.freshId();
+      expect(accepts(id), id).toBe(true);
+    }
   });
 });

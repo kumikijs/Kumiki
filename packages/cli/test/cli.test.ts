@@ -342,6 +342,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,660 measured, from 63,597 on dev at f72685e): `<T>.fresh()`
+    // mints a UUIDv7 (stdlib.md §2.4.1) itself instead of asking
+    // `crypto.randomUUID`, whose ids are v4 and sort in no particular order.
+    // The 63 bytes are the timestamp and the counter that keeps ids minted in
+    // one millisecond, or after the clock steps back, in the order they were
+    // minted. A counter mints no id and still ships them, because they sit in
+    // the stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

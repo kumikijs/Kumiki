@@ -1,0 +1,30 @@
+# Feature (stdlib.md §2.4.1): `TypeName.fresh()` mints a UUIDv7, so the ids one
+# app mints sort, as `Text`, in the order they were minted.
+#
+#   TypeName.fresh() : T   ; a new ID for a nominal type (UUIDv7)
+#
+# A v7 id starts with the millisecond it was minted in, and the runtime counts
+# up through the ids it mints within one millisecond, or after the clock steps
+# back, so each sorts after the one before it. `mint` writes twelve ids in one
+# run, most of them in the same millisecond, and `ids.sort == ids` says whether
+# sorting them as text gives back the order they were minted in. Each id is
+# written to a slot refined by `uuid`, which a v7 id passes like any uuid.
+
+type ItemId = nominal Text where uuid
+
+slot ids : List(ItemId) = []
+
+reducer mint on=ui.click(Mint)
+    do= for n in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] { ids := ids.push(ItemId.fresh()) }
+
+tile Mint = button(text="mint twelve") {id: "mint"}
+
+tile App = column(
+  Mint,
+  text("minted: " + ids.length.show),
+  text("in mint order: " + (ids.sort == ids).show))
+
+app FreshIdOrder
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

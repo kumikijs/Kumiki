@@ -478,6 +478,8 @@ TypeName.fresh()           : T            ; a new ID for a nominal type (UUIDv7)
 
 The id is a uuid `Text`, so `TypeName` is a type a `Text` goes into: `Text` itself, or a `nominal` / `where` over it — `PostId`, and the standard library's `Url` / `Email` / `Uuid`. Any other `TypeName` — `Int`, a `nominal Int`, a record, a union — is [E0802](./errors.md#e0802-unimplemented-function): there is no uuid that is a number, and a `nominal Int` id minted this way was a string wherever it went, which a `Set` of it read back as `NaN`.
 
+The uuid is a version 7 ([RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562#section-5.7)) in lowercase hex: its first 48 bits are a Unix time in milliseconds, its third group starts with the version `7` and its fourth with the variant (`8`, `9`, `a` or `b`), and the rest is a counter and random bits. It passes the `uuid` refinement ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)) like any uuid. The ids one running app mints sort, as `Text` ([§2.2.3](#_2-2-3-list-t)), in the order they were minted: several minted in one millisecond do, and so does one minted after the clock steps back. To keep that order an id carries the clock's millisecond only when the clock has moved past the previous id's; otherwise it carries the previous id's, or the one after once a few thousand ids have shared it. Ids from two runs or two apps — after a reload, in two tabs, on two devices — are ordered by nothing but the clocks they read. A replayed episode hands back the id it recorded ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)) rather than minting another.
+
 ### 2.4.2 Time
 
 ```

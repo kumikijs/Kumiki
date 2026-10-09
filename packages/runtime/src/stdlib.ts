@@ -158,29 +158,42 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
-type PlatformCrypto = {
-  randomUUID?: () => string;
-  getRandomValues?: (bytes: Uint8Array) => Uint8Array;
-};
+type PlatformCrypto = { getRandomValues?: (bytes: Uint8Array) => Uint8Array };
+
+/** The millisecond and counter of the last id `uuidV7` minted: the floor the next sorts above. */
+let lastMs = 0;
+let counter = 0;
 
 /**
- * A v4 uuid for when `crypto.randomUUID` is missing — it exists only in a
- * secure context, so a page on plain http falls back here. The result has to
- * pass the `uuid` refinement like any other id `fresh()` returns.
- * `getRandomValues` has no secure-context requirement; `Math.random` is the
- * last resort whenever that is missing too, `crypto` itself or not. That
- * branch is not cryptographically random, which is acceptable because a fresh
- * id only has to be distinct among the ids one app mints, never unguessable —
- * nothing may treat it as a secret.
+ * A UUIDv7 (RFC 9562 §5.7): the 48-bit Unix-millisecond time, the version, a
+ * 12-bit counter in `rand_a`, the variant, and 62 random bits.
+ *
+ * Each id sorts, as text, after the one before it (§6.2, method 1). A new
+ * millisecond seeds the counter with 11 random bits, its top bit clear so
+ * there is room to count up; an id in the same millisecond, or after the clock
+ * stepped back, keeps the last id's millisecond and takes the next count. A
+ * counter that runs out moves the millisecond on by one instead of wrapping.
+ *
+ * `crypto.randomUUID` is not asked: what it mints is a v4. `getRandomValues`
+ * has no secure-context requirement; `Math.random` is the last resort whenever
+ * that is missing too, `crypto` itself or not. That branch is not
+ * cryptographically random, which is acceptable because a fresh id only has to
+ * be distinct among the ids one app mints, never unguessable — nothing may
+ * treat it as a secret.
  */
-function uuidV4(c: PlatformCrypto | undefined): string {
-  const bytes = new Uint8Array(16);
-  if (c?.getRandomValues) c.getRandomValues(bytes);
-  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+function uuidV7(c: PlatformCrypto | undefined): string {
+  const b = new Uint8Array(10);
+  if (c?.getRandomValues) c.getRandomValues(b);
+  else for (let i = 0; i < 10; i++) b[i] = Math.floor(Math.random() * 256);
+  const now = Date.now();
+  if (now > lastMs || ++counter > 0xfff) {
+    lastMs = Math.max(now, lastMs + 1);
+    counter = (((b[8] as number) & 7) << 8) | (b[9] as number);
+  }
+  b[0] = ((b[0] as number) & 0x3f) | 0x80;
+  const ms = lastMs.toString(16).padStart(12, "0");
+  const rand = Array.from(b.subarray(0, 8), (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${ms.slice(0, 8)}-${ms.slice(8)}-${(0x7000 | counter).toString(16)}-${rand.slice(0, 4)}-${rand.slice(4)}`;
 }
 
 export const _stdlibCore = {
@@ -619,13 +632,12 @@ export const _stdlibCore = {
   eq(a: unknown, b: unknown): boolean {
     return valueEqual(a, b);
   },
-  /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
+  /**
+   * `<T>.fresh()` — a new UUIDv7 (stdlib.md §2.4.1). Journalled whole, so a
+   * replay hands back the recorded id rather than minting another.
+   */
   freshId(): string {
-    return readEnv("fresh-id", () => {
-      const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
-      if (c?.randomUUID) return c.randomUUID();
-      return uuidV4(c);
-    });
+    return readEnv("fresh-id", () => uuidV7((globalThis as { crypto?: PlatformCrypto }).crypto));
   },
   /** `now` — the current instant. Journalled (#337). */
   now(): number {
