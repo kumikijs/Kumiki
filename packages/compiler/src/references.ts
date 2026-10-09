@@ -10,9 +10,10 @@
 // asks "is this name legal in this position"; this asks "which definition does
 // this name denote, and at which source position". Sharing an implementation
 // would mean answering both at once, so the two walks stay separate — but the
-// resolution ORDER below (locals shadow definitions; a bare name in a handler
-// prop is a reducer) is the same order `typecheck` applies, and a divergence
-// would show up as `refs` disagreeing with a compile error.
+// resolution ORDER below (a bare name where a tile belongs is the tile; locals
+// shadow definitions; a bare name in a handler prop is a reducer) is the same
+// order `typecheck` applies, and a divergence would show up as `refs`
+// disagreeing with a compile error.
 
 import type {
   AppDef,
@@ -33,6 +34,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { tileNamedAt } from "./builtins.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -198,9 +200,11 @@ class Walker {
   }
 
   /**
-   * A bare identifier. Locals win over definitions — a `for x in …` binding
-   * that shares a slot's name is not a reference to that slot. Then slot, then
-   * fn: a name cannot occupy both without the typechecker rejecting it.
+   * A bare identifier in a value position — one where a tile belongs is
+   * answered before this, by `tileArg`. Locals win over definitions — a
+   * `for x in …` binding that shares a slot's name is not a reference to that
+   * slot. Then slot, then fn: a name cannot occupy both without the
+   * typechecker rejecting it.
    */
   private bareName(name: string, pos: Pos, locals: ReadonlySet<string>): void {
     if (locals.has(name)) return;
@@ -398,7 +402,7 @@ class Walker {
     switch (t.kind) {
       case "TileCall":
         this.add("tile", t.name, t.pos);
-        for (const a of t.args) this.tileArg(a, locals);
+        for (const a of t.args) this.tileArg(t.name, a, locals);
         for (const p of t.props) {
           // Three props hold a definition NAME rather than a value expression.
           // Each mirrors a `typecheck` site that resolves the same way — see
@@ -473,8 +477,12 @@ class Walker {
    * `rename` and `remove --cascade` validate before they write, so they never
    * act on the answer for a program that does not compile; `refs` has no such
    * gate, and a site it did not list would be a site a reader thinks is free.
+   *
+   * A bare name written where a tile belongs is asked about next, through
+   * `tileNamedAt`, which the checker asks too: there it is the tile of that
+   * name, ahead of a slot, `fn`, theme or local that shares it.
    */
-  private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
+  private tileArg(callee: string, a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
     if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
       const reducer = handlerReducerName(v);
@@ -485,6 +493,11 @@ class Walker {
     }
     if (isTileExpr(v)) {
       this.tileExpr(v, locals);
+      return;
+    }
+    const tile = tileNamedAt(callee, a, (name) => this.index.tile.has(name));
+    if (tile) {
+      this.add("tile", tile.name, tile.pos);
       return;
     }
     this.expr(v, locals);

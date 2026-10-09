@@ -1262,3 +1262,56 @@ describe("what an edit tool reports about the edit it made", () => {
     });
   });
 });
+
+// The tools read the compiler's references, so a slot and a tile that share a
+// name answer as they do on the CLI: `column(leaf)` names the tile, and
+// `text(leaf)` the slot.
+describe("a tile's name written as a child, beside a slot of the same name", () => {
+  let workdir: string;
+  let file: string;
+  const seed = (body: string): void => {
+    writeFileSync(
+      file,
+      `slot leaf : Text = "hello"
+tile leaf = column(text("tile"))
+tile App = ${body}
+app M
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+  };
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-shared-name-"));
+    file = join(workdir, "app.kumiki");
+  });
+  afterEach(() => rmSync(workdir, { recursive: true, force: true }));
+
+  it("is a reference to the tile for kumiki_refs and kumiki_remove", async () => {
+    seed("column(leaf)");
+    await withClient(async (client) => {
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "tile.leaf" })).toBe(
+        "tile.App @ line 3",
+      );
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "slot.leaf" })).toBe(
+        "(no references)",
+      );
+      const out = await callTool(client, "kumiki_remove", {
+        path: file,
+        name: "slot.leaf",
+        cascade: true,
+      });
+      expect(out).toContain("removed slot.leaf");
+      expect(out).not.toContain("cascaded");
+    });
+  });
+
+  it("is renamed with the tile by kumiki_rename, and the slot's read is not", async () => {
+    seed("column(leaf, text(leaf))");
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_rename", { path: file, name: "tile.leaf", newName: "twig" });
+      expect(readFileSync(file, "utf8")).toContain("tile App = column(twig, text(leaf))");
+    });
+  });
+});
