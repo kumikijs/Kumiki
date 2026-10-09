@@ -2,7 +2,7 @@
 // an HTTP-backed effect.
 
 import type { EffectResult } from "./core.ts";
-import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
+import { type Decode, decodeOf, decodeRead } from "./effects-decode.ts";
 
 export type HttpCfg = {
   baseUrl?: string;
@@ -32,12 +32,19 @@ export async function httpFetch(
     headers?: Record<string, string>;
     query?: Record<string, string>;
     body?: unknown;
-    decode?: Decode;
+    decode?: unknown;
     key?: string;
     value?: unknown;
   };
   const baseUrl = httpCfg?.baseUrl ?? "";
   const url = withQuery(baseUrl + (x.url ?? ""), x.query);
+  let decode: Decode;
+  try {
+    decode = decodeOf(x.decode);
+  } catch (e) {
+    // A `decode` that is no decoder fails the effect, before any request.
+    return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
+  }
   // Header precedence (spec http.md §6.1.5): auto < global < input, with
   // names compared case-insensitively so a global `Content-Type` and an input
   // `content-type` do not both reach fetch.
@@ -108,27 +115,19 @@ export async function httpFetch(
         },
       };
     }
-    const decode = x.decode ?? "json";
-    if (decode === "none") return { kind: "ok", value: null };
     // Reading the body can still fail like a connection (it stays in the outer
     // catch, status 0). Decoding it cannot: a response arrived, so a body that
     // does not parse, or parses to a value `Decoder.Json(T)`'s `T` refuses,
     // keeps its status and text (§6.1.4) and is not retried (§6.5).
-    const text = await res.text();
-    if (!decodesJson(decode)) return { kind: "ok", value: text };
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch (e) {
-      return {
-        kind: "err",
-        value: { status: res.status, message: `decode failed: ${String(e)}`, body: text },
-      };
-    }
-    const refused = decodeRefusal(decode, value);
-    if (refused)
-      return { kind: "err", value: { status: res.status, message: refused, body: text } };
-    return { kind: "ok", value };
+    const decoded = await decodeRead(decode, {
+      text: () => res.text(),
+      bytes: async () => new Uint8Array(await res.arrayBuffer()),
+    });
+    if (decoded.ok) return { kind: "ok", value: decoded.value };
+    return {
+      kind: "err",
+      value: { status: res.status, message: decoded.message, body: decoded.text },
+    };
   } catch (e) {
     // spec http.md §6.4.1: cancelled / aborted requests normalize to
     // `{status:0, message:"aborted"}` so reducers see the same HttpError

@@ -102,6 +102,15 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
     });
   });
 
+  it("a point read whose decode is no decoder is an err naming it", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-unknown-decoder" };
+    await indexedWrite({ store: "notes", key: "a", value: { body: "hello" } }, localCfg);
+    expect(await indexedRead({ store: "notes", key: "a", decode: "TEXT" }, localCfg)).toEqual({
+      kind: "err",
+      value: expect.stringContaining('"TEXT"'),
+    });
+  });
+
   it("delete removes a previously written value", async () => {
     const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-2" };
     await indexedWrite({ store: "notes", key: "a", value: { body: "x" } }, localCfg);

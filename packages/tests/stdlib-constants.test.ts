@@ -1,24 +1,24 @@
-// A decoder written without parentheses has to reach the runtime as a decoder.
+// A decoder written without parentheses reaches the runtime as a decoder, and
+// each decoder delivers what it names.
 //
 // `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` read as values in the spec
 // (http.md §6.1.4) and are written bare there — the compiler reads the bare
-// form as a call given no arguments, which for these members is that value.
-// Only the parenthesised form was ever lowered — the bare one became a field read on a variant named after
-// the qualifier and emitted `undefined`. Nothing objected: `check` had no
-// reason to, and the emitted module was valid JavaScript.
+// form as a call given no arguments, which for these members is that value. A
+// request with no decoder is decoded as JSON, and the example's responses are
+// ones JSON cannot decode, so a bare form lowered to nothing takes the `.err`
+// branch. `kumiki smoke` on the example reports that too, since no effect
+// declares an `.err` reducer; what this file adds is the slot values, which say
+// what each decoder delivered rather than only whether something failed.
 //
-// It was not harmless. The HTTP handler reads `decode ?? "json"`, so `undefined`
-// means **json** — a body meant to be discarded was parsed, and a 204 with no
-// body threw inside `res.json()` and took the `.err` branch. `kumiki smoke` on
-// the example reports that too, since neither effect declares an `.err`
-// reducer; what this file adds is the slot values, which say which branch ran
-// rather than only that something failed.
+// The responses are the example's own `.http.json`, the fixture smoke answers
+// it with.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readHttpFixture, useHttpFixture } from "@kumikijs/cli";
 import { mount } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { loadApp } from "./helpers/load.ts";
 
@@ -27,35 +27,21 @@ const EXAMPLE = join(here, "..", "examples", "features", "75-paren-less-stdlib-c
 
 const settle = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** The two responses the example's requests expect, by path. */
-function respond(url: string): Response {
-  if (url.includes("/api/note")) return new Response("kumiki", { status: 200 });
-  // No body at all, which is what `Decoder.None` exists for and what
-  // `res.json()` cannot survive.
-  return new Response(null, { status: 204 });
-}
-
 describe("a stdlib constant written without parentheses", () => {
-  let original: typeof fetch | undefined;
-
   afterEach(() => {
-    if (original) globalThis.fetch = original;
+    useHttpFixture(null);
     document.body.replaceChildren();
   });
 
   it("decodes each response the way the effect asked for", async () => {
+    useHttpFixture(readHttpFixture(EXAMPLE));
     const app = await loadApp(EXAMPLE);
-    original = globalThis.fetch;
-    globalThis.fetch = vi.fn(async (url: unknown) =>
-      respond(typeof url === "string" ? url : (url as Request).url),
-    ) as unknown as typeof fetch;
 
     const root = document.createElement("div");
     document.body.appendChild(root);
     const handle = mount(app, root);
     try {
-      // The empty-handle sentinel is a value, not a call, and is the one bare
-      // constant that always parsed — it is here as the regression pin.
+      // The empty-handle sentinel is a value, not a call.
       const live = defined(app.live, "the app's live map");
       expect(live.handle).toBe("");
 
@@ -64,12 +50,14 @@ describe("a stdlib constant written without parentheses", () => {
       load?.click();
       await settle();
 
-      // `Decoder.Text`: the body arrives as the text it is. Read as json it
-      // threw on `kumiki`, and the effect took its `.err` branch instead —
-      // which this app does not declare, so the value simply never arrived.
+      // `Decoder.Text`: the body arrives as the text it is.
       expect(live.note).toBe("kumiki");
-      // `Decoder.None`: nothing to decode. Read as json, a 204 threw.
+      // `Decoder.None`: the 204 has nothing to decode.
       expect(live.pinged).toBe(true);
+      // `Decoder.Bytes`: `日本語` arrives as its nine UTF-8 bytes, which `show`
+      // renders one number each. The text would show its three characters.
+      expect(live.raw).toBe("230,151,165,230,156,172,232,170,158");
+      expect(root.textContent).toContain("raw: 230,151,165,230,156,172,232,170,158");
     } finally {
       handle.dispose();
     }
@@ -77,7 +65,7 @@ describe("a stdlib constant written without parentheses", () => {
 
   // `kumiki smoke` only reports an effect error that no reducer consumes, so
   // the example's silence on `.err` is what makes the smoke tier answer for
-  // this at all — reverting the lowering there names both failing effects.
+  // this at all — reverting the lowering there names every failing effect.
   // Adding the `.err` reducers a reader might supply "for completeness" would
   // take that tier away with nothing turning red, so the absence is asserted
   // rather than left to a comment.

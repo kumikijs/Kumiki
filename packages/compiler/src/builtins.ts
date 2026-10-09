@@ -148,9 +148,10 @@ export const PER_TILE_FAMILY_SHARED: Partial<Record<TileFamily, string>> = {
 
 /**
  * The module the decoding effect handlers — `effects-storage`,
- * `effects-indexed`, `effects-http` — import in common: the `Decoder.Json(T)`
- * check (http.md §6.1.4). Like {@link PER_TILE_FAMILY_SHARED}, the handlers
- * reference it relatively, so it ships with them without a header import.
+ * `effects-indexed`, `effects-http` — import in common: what each `Decoder`
+ * makes of what a read holds, and the `Decoder.Json(T)` check (http.md
+ * §6.1.4). Like {@link PER_TILE_FAMILY_SHARED}, the handlers reference it
+ * relatively, so it ships with them without a header import.
  */
 export const EFFECT_HANDLERS_SHARED = "effects-decode";
 

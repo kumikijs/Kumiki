@@ -80,6 +80,8 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
+`Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たないリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` が組み立てるのは普通のレコードなので、その `decode` にはどんな値でも入りうる。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` はレスポンスのテキストである。
+
 レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
 decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
@@ -351,7 +353,9 @@ effect storage-clear  cap=storage.write
 
 このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、JSON で表せない `value` がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
 
-保存された値は常に JSON として parse される。read の `Decoder.Json(T)` が parse した値を拒否した場合（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）、read は `decode failed:` で始まる `Text` を値とする `.err` になる。parse できない値と同じ扱いである。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
+保存された値はテキストであり、read の decoder は [6.1.4](#_6-1-4-decoder-型) がレスポンス本文を読むのと同じように読む。`Decoder.Json(T)` と `decode` を持たない read は JSON として parse し、`Decoder.Text` は保存されたテキストをそのまま渡し、`Decoder.Bytes` はその UTF-8 のバイトを渡し、`Decoder.None` は `Unit` を渡す。つまり `Decoder.None` の read はキーがあるかどうかだけを答える。キーが無ければ decoder にかかわらず `Ok(None)` である。`storage-write` は値を JSON として保存するので、それが書いたものは `Decoder.Json` で読み戻す。それが書いた `Text` を `Decoder.Text` で読むと、引用符を含むその JSON（`"dark"`）になる。別の書き手がプレーンテキストで保存したもの（`dark`）は `Decoder.Text` で読む。どの decoder でもない `decode` は、それを示す `Text` を値とする `.err` になる。
+
+JSON として parse できない保存テキストと、read の `Decoder.Json(T)` が拒否した値（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）は、どちらも read を `decode failed:` で始まる `Text` を値とする `.err` にする。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
 
 **err 値は宣言どおりの `Text`。** storage / session / indexed の effect が失敗すると、失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら上記の呼び出しとキーを示すメッセージ、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、またはその capability に登録されたホストの provider が例外を投げた場合も同じ `Text` が渡る。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。
 
@@ -388,7 +392,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` も同じ形。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。
+`session-*` も同じ形。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。`session-read` は `storage-read` と同じように decode する。IndexedDB が保持するのはテキストではなく構造化された値なので、`indexed-read` ではどの decoder も何も読まない。レコードは、read がどの decoder を指定しても保存されたとおりに渡る。`Decoder.Json(T)` の検査は行うので、拒否された場合は `storage-read` と同じく `indexed-read` でも `.err` になり、どの decoder でもない `decode` も同様である。
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read

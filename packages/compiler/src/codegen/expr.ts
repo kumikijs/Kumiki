@@ -257,13 +257,12 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       // string doubles as a valid slot-initial value AND a guaranteed-no-op
       // cancel target.
       if (cn === "EffectId.none") return `""`;
-      // Decoder.* — codegen treats a decoder as a sentinel string, which the
-      // HTTP handler reads as `decode ?? "json"` and branches on: `json` /
-      // `text` / `none`, everything else falling through to text. Emitting no
-      // sentinel therefore means json, not "no decoding" — which is what made
-      // the paren-less form parse a body that was meant to be discarded.
-      // The storage handlers always `JSON.parse`, and read `decode` only for
-      // the check below.
+      // Decoder.* — codegen treats a decoder as a sentinel string: `json` /
+      // `text` / `bytes` / `none`. The read handlers take `decode` through
+      // `decodeOf` (runtime effects-decode.ts), where an absent one is json
+      // and any other value is an err naming it. Emitting no sentinel
+      // therefore means json, not "no decoding": a decoder that lowered to
+      // nothing would parse a body meant to be discarded.
       //
       // `Decoder.Json(T)` for a `T` that carries a predicate anywhere in it is
       // that check in place of the sentinel: the walk a slot of type `T` is
