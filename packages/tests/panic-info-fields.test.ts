@@ -85,6 +85,40 @@ describe("episode-id names the episode the panic happened in", () => {
     expect(report.steps[0]?.domText).toContain(`fallback episode: ${id}`);
   });
 
+  // An id is only a join if the episode it names answers for the panic. A
+  // boundary catches inside the tile expression, where neither the render
+  // catch nor `app.error` sees the throw, so the step has to be written from
+  // the boundary itself. The click is a dispatch, and the render the boundary
+  // catches in runs inside that dispatch's episode.
+  it("gives an error-boundary fallback an id whose episode recorded the panic", async () => {
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const app: AppShape = await loadApp(EXAMPLE);
+    // Clicked twice: `breakRender` stays true, so the boundary catches on every
+    // render after the first click, and each dispatch's own episode answers
+    // for the panic its own render raised — one step each, not a pile.
+    const report = await runScenario(
+      app,
+      freshRoot(),
+      { steps: [{ do: BREAK.render }, { do: BREAK.render }] },
+      { episodeLogger: logger },
+    );
+    const ids: string[] = [];
+    for (const step of report.steps) {
+      const text = step.domText;
+      const id = /fallback episode: (ep_[0-9A-Z]{26})/.exec(text)?.[1];
+      const ep = logger.list().find((e) => e.id === id);
+      expect(ep, `no episode ${id} in the log`).toBeDefined();
+      const panics = ep?.steps.filter((s) => s.kind === "panic") ?? [];
+      expect(panics).toHaveLength(1);
+      expect(panics[0]).toMatchObject({ category: "tile-render", location: "Guarded" });
+      // The step carries the message the fallback rendered, not merely a panic.
+      expect(text).toContain(`fallback message: ${panics[0]?.message}fallback location: Guarded`);
+      expect(ep?.status).toBe("panic");
+      ids.push(id ?? "");
+    }
+    expect(new Set(ids).size).toBe(2);
+  });
+
   // The documented value for a panic outside any episode. A host that attached
   // no logger has no episode to name, and `None` is what the language can say
   // about that — which is the whole reason the field is `Option(Text)` rather

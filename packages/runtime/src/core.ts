@@ -1548,12 +1548,6 @@ export type MountedApp = AppShape & {
   _submitHeldBy: (e: Event) => readonly string[] | undefined;
   /** Prefetch dedupe set (§3.8), lazily created on first link prefetch. */
   _prefetched?: Set<string>;
-  /**
-   * The open episode's id, for a caller that is inside this app's render pass
-   * and has no other way to reach its logger — `_s.boundaryPanic` is the one
-   * ({@link currentEpisodeId}). Absent when the host attached no logger.
-   */
-  _episodeId?: () => string | undefined;
   live: Record<string, unknown>;
 };
 
@@ -1926,46 +1920,78 @@ function withRenderingView<T>(view: Element, fn: () => T): T {
 }
 
 /**
- * Where {@link currentEpisodeId} reads its answer from.
+ * A panic caught while rendering, once it is on the record: what was caught,
+ * and the id of the episode its `panic` step landed on — `undefined` when no
+ * logger is attached or no episode is open, which `PanicInfo.episode-id`
+ * carries as `None`.
+ */
+export type RenderPanic = { rec: PanicRecord; episodeId: string | undefined };
+
+/**
+ * Where a render pass records a panic caught inside it. `site` is where it was
+ * caught, and becomes the step's `location`.
+ */
+export type RenderPanicSink = (e: unknown, site: string) => RenderPanic;
+
+/**
+ * The one place a panic caught while rendering becomes a `panic` step
+ * (runtime.md §10.5.1): built by {@link panicInfo} as `tile-render`, and
+ * written to the episode in focus under `site`. The live render catch, its
+ * reconcile safety net, an `error-boundary` (through the pass's
+ * {@link RenderPanicSink}) and the server render all record through it, so a
+ * render panic reads the same in the log whichever of them caught it.
+ *
+ * Recording is all it does. What else a site does with the panic — the
+ * console report and `route.error` for one nothing caught, the fallback for one
+ * a boundary caught — is that site's.
+ */
+export function recordRenderPanic(
+  logger: EpisodeLogger | null | undefined,
+  e: unknown,
+  site: string,
+): RenderPanic {
+  const rec = panicInfo(e, "tile-render");
+  return { rec, episodeId: logger?.recordPanic({ ...rec, location: site }) };
+}
+
+/**
+ * Where the render pass now executing takes a panic from inside it.
  *
  * Hung off `globalThis` for the same reason the environment journal above is,
  * and it is the same failure when it is not: an app compiled with
  * `bundle: true` carries its own inlined runtime, so the `_s.boundaryPanic`
- * that asks belongs to THAT copy while the `mount` that renders belongs to the
- * tool's. A module-local leaves the asking copy looking at a pass nothing ever
- * opened, and the answer is a silent `None` — which is exactly what the first
- * cut of this did. `kumiki run` / the test suites drive apps that way, so it
- * is the normal case, not the exotic one.
+ * that reports belongs to THAT copy while the `mount` that renders belongs to
+ * the tool's. A module-local leaves the reporting copy looking at a pass nothing
+ * ever opened, and the panic is recorded nowhere. `kumiki run` / the test suites
+ * drive apps that way, so it is the normal case, not the exotic one.
  *
  * `undefined` is in the type, not just implied by `?`: under
  * `exactOptionalPropertyTypes` the restore in {@link withRenderingApp}'s
  * `finally` writes back whatever it saved, and outside any render that is
  * `undefined`.
  */
-type RenderEpisodeHost = {
-  __kumikiRenderEpisode__?: (() => string | undefined) | null | undefined;
+type RenderPanicHost = {
+  __kumikiRenderPanic__?: RenderPanicSink | null | undefined;
 };
 
 /**
- * The episode open around the render pass now executing, for `PanicInfo`'s
- * `episode-id` on the boundary path.
+ * Record a panic caught inside the render pass now executing, on the episode
+ * open around it — the `error-boundary` path, which `_s.boundaryPanic` takes
+ * from generated code deep inside a tile expression with no mount in hand.
  *
- * `_s.boundaryPanic` is called from generated code deep inside a tile
- * expression and has no mount in hand, so it asks the render pass instead.
  * A render from `applyReducer`'s tail runs before that dispatch's
- * `endTrigger`, so there the answer is the episode the panic belongs to.
- * Other renders have no episode open around them — `updateRoute` renders after
- * each `route.enter` reducer has opened and closed its own, and the
- * leave-confirm paths and the `_setSlot` host seam render outside any dispatch
- * — and a boundary panic in one of those is `None` even with a logger
- * attached. So is the first paint, and so is a host that attached no logger.
- *
- * {@link withRenderingApp} is the only writer and restores the previous value
- * on both exits, so a nested mount inside a render (a custom element that
- * mounts its own app) leaves the outer pass's answer intact.
+ * `endTrigger`, so there the step lands on the episode the panic belongs to;
+ * the server render runs before the bootstrap episode's, so there it lands on
+ * that (runtime.md §10.5.1.1). Other renders have no episode open around them —
+ * `updateRoute` renders after each `route.enter` reducer has opened and closed
+ * its own, and the leave-confirm paths and the `_setSlot` host seam render
+ * outside any dispatch — and a boundary panic in one of those records nothing
+ * and is `None` even with a logger attached. So is the first paint, and so is a
+ * pass whose host attached no logger.
  */
-export function currentEpisodeId(): string | undefined {
-  return (globalThis as RenderEpisodeHost).__kumikiRenderEpisode__?.();
+export function recordInRenderPass(e: unknown, site: string): RenderPanic {
+  const sink = (globalThis as RenderPanicHost).__kumikiRenderPanic__;
+  return sink ? sink(e, site) : recordRenderPanic(undefined, e, site);
 }
 
 /**
@@ -1973,23 +1999,31 @@ export function currentEpisodeId(): string | undefined {
  * element inside the tree can synchronously mount a nested Kumiki app while
  * the outer render is still on the stack.
  *
+ * `panics` is where a panic the pass catches inside a tile expression is
+ * recorded ({@link recordInRenderPass}) — the mount's logger, or the server's.
+ * It is the caller's rather than the app's because one compiled app can be
+ * mounted more than once and rendered on the server besides, each with its own
+ * log. This is the only writer of the host slot, and it restores the previous
+ * value on both exits, so a nested mount inside a render (a custom element that
+ * mounts its own app) leaves the outer pass's intact.
+ *
  * Exported for the SSR pass, which is a render pass with no DOM: without the
  * bracket `currentTheme()` is null on the server and every token falls back to
  * its default, so a themed page was served with the *unthemed* spacing,
  * colours, radii and shadows and re-styled itself on hydration.
  */
-export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
+export function withRenderingApp<T>(app: AppShape, fn: () => T, panics?: RenderPanicSink): T {
   const prev = renderingApp;
-  const host = globalThis as RenderEpisodeHost;
-  const prevEpisode = host.__kumikiRenderEpisode__;
+  const host = globalThis as RenderPanicHost;
+  const prevPanics = host.__kumikiRenderPanic__;
   // Renders only run from mountCore, after the imperative seams are attached.
   renderingApp = app as MountedApp;
-  host.__kumikiRenderEpisode__ = (app as MountedApp)._episodeId;
+  host.__kumikiRenderPanic__ = panics;
   try {
     return fn();
   } finally {
     renderingApp = prev;
-    host.__kumikiRenderEpisode__ = prevEpisode;
+    host.__kumikiRenderPanic__ = prevPanics;
   }
 }
 
@@ -2173,6 +2207,11 @@ export function mountCore(
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
   /**
+   * This mount's render bracket: {@link withRenderingApp}, with this mount's
+   * logger as where a panic caught inside the pass is recorded.
+   */
+  const renderBracket = <T>(fn: () => T): T => withRenderingApp(app, fn, renderPanic);
+  /**
    * Add a view of this already-running app. It takes a host and nothing else:
    * everything else a mount can be given describes the app, which this one
    * already has — `rejectViewOptions` is what says so, before the call.
@@ -2181,7 +2220,7 @@ export function mountCore(
     const view = newView(into, false);
     views.push(view);
     registerAppRoot(into, app);
-    withRenderingApp(app, () => {
+    renderBracket(() => {
       withRenderingView(view.target, () => renderPass(view));
     });
     return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
@@ -2215,7 +2254,7 @@ export function mountCore(
     // was disposed) must not touch the DOM — each view's root has already been
     // detached by dispose()'s `replaceChildren()`, so replaceChild would throw.
     if (disposed || inRouteErrorHandlers) return;
-    withRenderingApp(app, () => {
+    renderBracket(() => {
       const touched: string[] = [];
       let tree: TileNode | null = null;
       for (let i = 0; i < views.length; i++) {
@@ -2348,10 +2387,7 @@ export function mountCore(
           // throw (`location: "render"`) so debugging points at the diff kernel
           // (or a detached-parent invariant) rather than a tile renderer.
           reportPanic("reconcile", reconcileErr);
-          episode?.recordPanic({
-            ...panicInfo(reconcileErr, "tile-render"),
-            location: "reconcile",
-          });
+          renderPanic(reconcileErr, "reconcile");
           dom = fullRender(renderedTree);
           target.replaceChild(dom, view.root);
         }
@@ -2381,10 +2417,8 @@ export function mountCore(
       // otherwise render a top-level panic fallback so the exception does not
       // escape and leave the DOM stale. Logged via console.error so the smoke /
       // scenario tiers still flag it (#24).
-      const renderRec = panicInfo(e, "tile-render");
       reportPanic("render", e);
-      episode?.recordPanic({ ...renderRec, location: "render" });
-      if (!fireRouteError(renderRec)) {
+      if (!fireRouteError(renderPanic(e, "render"))) {
         dom = renderPanicFallback(e);
         panicked = true;
       } else {
@@ -2399,7 +2433,7 @@ export function mountCore(
           reportPanic("render", e2);
           // The second render also panicked; keep the episode-log honest by
           // recording that too, so replays surface both failures.
-          episode?.recordPanic({ ...panicInfo(e2, "tile-render"), location: "render" });
+          renderPanic(e2, "render");
           renderedTree = null;
           dom = renderPanicFallback(e2);
           panicked = true;
@@ -2518,13 +2552,13 @@ export function mountCore(
   }
 
   /**
-   * Fire the `route.error(<pattern>)` reducer chain. Takes the already-derived
-   * PanicRecord from the caller so category / stack aren't recomputed and —
-   * more importantly — the $event category matches the recording site's
-   * category. The one caller today is the tile render catch, so a route.error
+   * Fire the `route.error(<pattern>)` reducer chain. Takes the panic as the
+   * caller recorded it so category / stack aren't recomputed and — more
+   * importantly — the $event category and `episode-id` match the recorded
+   * step's. The one caller today is the tile render catch, so a route.error
    * from a render panic reports `category: "tile-render"`, not `"reducer"`.
    */
-  function fireRouteError(rec: PanicRecord): boolean {
+  function fireRouteError({ rec, episodeId }: RenderPanic): boolean {
     if (!app.routes || app.routes.length === 0) return false;
     const cur = slotValues.route as ParsedRoute | undefined;
     const pattern = cur?.pattern;
@@ -2541,7 +2575,7 @@ export function mountCore(
     // not carry it. The caller records `"render"` against the episode for the
     // same panic, so that is what an unattributed one is called here too.
     const info = {
-      ...userPanicInfo(rec, rec.location ?? "render", safeEpisodeId()),
+      ...userPanicInfo(rec, rec.location ?? "render", episodeId),
       pattern,
     };
     inRouteErrorHandlers = true;
@@ -2589,6 +2623,18 @@ export function mountCore(
       }
       return undefined;
     }
+  }
+
+  /**
+   * {@link recordRenderPanic} against this mount's logger — the render pass's
+   * {@link RenderPanicSink}, and what its own catches record through. The id is
+   * the episode the step landed on, or failing that the one open now, as
+   * {@link fireAppError} answers it: a host logger written against an older
+   * `EpisodeLogger` can record a step and answer nothing.
+   */
+  function renderPanic(e: unknown, site: string): RenderPanic {
+    const { rec, episodeId } = recordRenderPanic(episode, e, site);
+    return { rec, episodeId: episodeId ?? safeEpisodeId() };
   }
 
   /**
@@ -3006,10 +3052,6 @@ export function mountCore(
   }
 
   app._rerender = render;
-  // Published on the shape so `currentEpisodeId()` can answer for whichever app
-  // is mid-render — `_s.boundaryPanic` runs inside a tile expression and has no
-  // other way to reach this mount's logger.
-  (app as AppShape & { _episodeId?: () => string | undefined })._episodeId = safeEpisodeId;
   (
     app as AppShape & { _dispatch?: (name: string, el: Record<string, unknown>) => void }
   )._dispatch = (reducerName: string, el: Record<string, unknown>) => {

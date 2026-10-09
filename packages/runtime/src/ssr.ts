@@ -36,6 +36,7 @@ import {
   type RedirectEntry,
   type RoutingImpl,
   readStatus,
+  recordRenderPanic,
   reportCapabilityRefusal,
   reportRejectedBatch,
   reportUnhandledEffectError,
@@ -100,7 +101,8 @@ export type RenderToStringResult = {
  * Render `app` to an HTML string and produce the SSR snapshot + bootstrap
  * episode that `mount`/`hydrate` will use on the client (§10.6.1, §10.6.2).
  * The pass runs `app.init` effects through host providers exactly once,
- * collapsing every reducer/effect step into a single `ssr.hydrate` episode
+ * collapsing every reducer/effect step — and a panic an `error-boundary`
+ * catches in the render that follows — into a single `ssr.hydrate` episode
  * — the client takes that as `app.episodes()[0]` and does NOT re-run init,
  * keeping HTTP / IndexedDB / storage effects from firing twice.
  *
@@ -165,6 +167,18 @@ export async function renderToString(
     // model — sequential await would let cache-first / network-first races land
     // a different "last write wins" than the client would observe.
     await Promise.all(app.init.map((emit) => dispatchEmit(app, live, emit, caps, logger)));
+
+    // Inside the render bracket, so `@token` references resolve against this
+    // app's theme rather than the built-in fallbacks. Before `endTrigger`: the
+    // render is the last step of the chain that produced the page (§10.5.1.1),
+    // so a panic an `error-boundary` catches in it lands on the bootstrap
+    // episode and its fallback is handed that episode's id. A render nothing
+    // panics in records nothing.
+    const html = withRenderingApp(
+      app,
+      () => renderTileToString(pickRootTile(app, live)),
+      (e, site) => recordRenderPanic(logger, e, site),
+    );
     logger.endTrigger();
 
     const list = logger.list();
@@ -172,10 +186,6 @@ export async function renderToString(
     if (!bootstrap) {
       throw new Error("renderToString: bootstrap episode was not committed (in-flight effects?)");
     }
-
-    // Inside the render bracket, so `@token` references resolve against this
-    // app's theme rather than the built-in fallbacks.
-    const html = withRenderingApp(app, () => renderTileToString(pickRootTile(app, live)));
 
     const slots: SsrSnapshot = {};
     for (const [k, meta] of Object.entries(app.slots)) {

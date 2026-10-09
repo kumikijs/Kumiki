@@ -10,7 +10,7 @@ import type {
   RenderedSnapshot,
   TileNode,
 } from "@kumikijs/runtime";
-import { renderToString, routing } from "@kumikijs/runtime";
+import { _stdlibCore, KumikiPanic, renderToString, routing } from "@kumikijs/runtime";
 import type { Mock } from "vitest";
 import { describe, expect, it, vi } from "vitest";
 
@@ -402,5 +402,66 @@ describe("renderToString §10.6.1", () => {
     const slowEnd = order.indexOf("slowOne:end");
     const fastStart = order.indexOf("fastTwo:start");
     expect(fastStart).toBeLessThan(slowEnd);
+  });
+});
+
+/**
+ * The server render is the last step of the `app.init` chain that produced the
+ * HTML (§10.5.1.1), so the bootstrap episode is still open while it runs. A
+ * panic an `error-boundary` catches there is recorded on it, and the fallback
+ * is handed its id — the same join a boundary on the client gets from the
+ * dispatch it renders inside (lifecycle.md §7.2.3).
+ */
+describe("a boundary fallback served by renderToString", () => {
+  /**
+   * `makeSsrApp` with a root that panics once `loadUser` has landed, caught
+   * the way codegen lowers `error-boundary` (`emit-tile.ts`'s `boundaryJs`).
+   */
+  function withBoundary(): AppShape {
+    const { app } = makeSsrApp();
+    app.root = (): TileNode => {
+      try {
+        const user = app.live?.user as User;
+        if (user.id !== "guest") throw new KumikiPanic(`no avatar for ${user.name}`);
+        return { kind: "text", text: "guest" };
+      } catch (e) {
+        const info = _stdlibCore.boundaryPanic(e, "Profile") as {
+          "episode-id": { _tag: string; _0?: string };
+        };
+        const ep = info["episode-id"];
+        return { kind: "text", text: `fallback episode: ${ep._tag === "Some" ? ep._0 : "(none)"}` };
+      }
+    };
+    return app;
+  }
+
+  /** Distinct ids: the logger draws effect tokens from the same generator. */
+  const ids = (): (() => string) => {
+    let n = 0;
+    return () => `ep_${++n}`;
+  };
+
+  it("names the bootstrap episode, which records the panic after the init chain", async () => {
+    const result = await renderToString(withBoundary(), {
+      providers: { "http.get": async () => ({ kind: "ok", value: { id: "u_1", name: "Yui" } }) },
+      idGen: ids(),
+    });
+    const boot = result.bootstrapEpisode;
+    expect(result.html).toContain(`fallback episode: ${boot.id}`);
+    expect(boot.steps.map((s) => s.kind)).toEqual([
+      "effect-start",
+      "effect-end",
+      "reducer",
+      "signal-update",
+      "panic",
+    ]);
+    expect(boot.steps.at(-1)).toMatchObject({
+      kind: "panic",
+      message: "no avatar for Yui",
+      location: "Profile",
+      category: "tile-render",
+    });
+    expect(boot.status).toBe("panic");
+    expect(result.snapshot.bootstrap).toBe(boot);
   });
 });

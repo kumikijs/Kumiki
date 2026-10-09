@@ -6,7 +6,6 @@
 
 import {
   _setPathHelper,
-  currentEpisodeId,
   entryKey,
   isEntryOf,
   isPanic,
@@ -14,10 +13,10 @@ import {
   KumikiPanic,
   listPosition,
   type PathSegment,
-  panicInfo,
   type RefinementNaming,
   type RefinementRejection,
   readEnv,
+  recordInRenderPass,
   refinementRejectionOf,
   type SlotGate,
   slotAccepts,
@@ -702,25 +701,25 @@ export const _stdlibCore = {
    * built by the same `userPanicInfo`, so the three ways a panic reaches a
    * program agree — and so an empty message stays empty instead of stringifying the
    * error object.
+   *
+   * A caught panic is still a panic the episode log answers for (runtime.md
+   * §10.5.1): it is recorded as a `tile-render` step, under the declaring tile,
+   * on the episode open around the render pass, and `episode-id` is that
+   * episode. What a boundary does not do is report it — no console line, no
+   * `app.error` — because it handled it.
    */
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
-    const rec = panicInfo(e, "tile-render");
+    // A render with no episode open around it, or no logger, records nothing
+    // (`recordInRenderPass` enumerates when that is), and the id is `None` — a
+    // value the fallback can match on.
+    const { rec, episodeId } = recordInRenderPass(e, location);
     // The panic names the tile it was attributed to when a frame nearer to it
     // knew which route target it was building (a `sub-routes` child in the
-    // declaring tile's outlet, #363); `location` — the tile that declares the
+    // declaring tile's outlet); `location` — the tile that declares the
     // boundary — is what it is attributed to otherwise. An empty attribution
     // is none: only a hand-built entry or a cross-realm panic can carry one.
-    //
-    // The episode comes from the render pass this is inside (§10.5). A render
-    // from a reducer dispatch runs before that dispatch's `endTrigger`, so
-    // there the id names the episode the panic belongs to. A render with no
-    // episode open around it — the first paint, a route change after its
-    // `route.enter` reducers have each closed their own, the `_setSlot` host
-    // seam — has none, and so does a host that attached no logger: `None`,
-    // which is a value the fallback can match on. `currentEpisodeId`'s own
-    // comment enumerates them.
-    return userPanicInfo(rec, rec.location || location, currentEpisodeId());
+    return userPanicInfo(rec, rec.location || location, episodeId);
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {
