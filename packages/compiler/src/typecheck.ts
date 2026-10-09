@@ -82,7 +82,13 @@ import {
   receiversOf,
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
-import { isPrimTypeName, isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import {
+  isPrimTypeName,
+  isReservedTypeName,
+  type ReservedTypeReason,
+  reservedTypeReason,
+  STDLIB_TYPES,
+} from "./stdlib-types.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -293,9 +299,11 @@ function checkAll(
   const errors: KumikiError[] = [];
   const sym: SymbolTable = {
     // Seeded before the program's own definitions. A program's `type Email = …`
-    // replaces the standard-library entry; a reserved name keeps it — the
-    // program's `type Route = …` is E0231 (`checkTypeDef`), and every use of
-    // `Route` means the route the runtime builds.
+    // replaces the standard-library entry. A declaration under a reserved name
+    // is never seeded: `type Route = …`, `type Option = …` and `type Int = …`
+    // are E0231 (`checkTypeDef`), and every use of the name keeps its built-in
+    // meaning — the route the runtime builds, the built-in `Option`, the
+    // primitive.
     types: new Map(STDLIB_TYPES.map((t) => [t.name, t])),
     slots: new Map(),
     reducers: new Map(),
@@ -466,9 +474,10 @@ function checkCycles(
     // loop through its own. A reserved one keeps the entry — the declaration is
     // E0231 — so `type Route = Route` names the stdlib record and closes none.
     // What is not in the table is a generic constructor (`List`, `Option`,
-    // `Map`), which has no body to come back along, and a name that denotes
-    // nothing at all, which is E0117's to report rather than a second name for
-    // one mistake.
+    // `Map`), which has no body to come back along — a program's own
+    // `type List(T) = List(T)` is E0231 and never seeded, so its body names
+    // the constructor — and a name that denotes nothing at all, which is
+    // E0117's to report rather than a second name for one mistake.
     return target && sym.types.has(target.to) ? [target] : [];
   };
   for (const cycle of findCycles(
@@ -7274,16 +7283,23 @@ function checkTypeArity(
 
 const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
+/** How E0231 names what a reserved type name already means. */
+const RESERVED_TYPE_MEANING: Readonly<Record<ReservedTypeReason, string>> = {
+  primitive: "the primitive type",
+  constructor: "the built-in type constructor",
+  "runtime-supplied": "the standard library's",
+};
+
 function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
-  // A reserved standard-library type name means the standard library's type in
-  // every program (`RESERVED_TYPE_NAMES`). The symbol table kept that entry, so
-  // this declaration is reported; its body is checked for what it says on its
-  // own.
-  if (isReservedTypeName(def.name)) {
+  // A reserved type name means the same type in every program
+  // (`reservedTypeReason`). The symbol table never took this declaration, so
+  // it is reported here; its body is checked for what it says on its own.
+  const reason = reservedTypeReason(def.name);
+  if (reason !== undefined) {
     errors.push({
       code: "E0231",
       kind: "reserved-type-name",
-      message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+      message: `Type "${def.name}" collides with ${RESERVED_TYPE_MEANING[reason]} ${def.name}; uses of it never see this type`,
       pos: def.pos,
     });
   }

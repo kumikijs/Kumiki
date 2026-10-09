@@ -299,5 +299,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `234-stdlib-type-names.kumiki` | type, slot, reducer, tile | stdlib | [§2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library) |
+| `247-builtin-type-names.kumiki` | type, slot, reducer, fn, tile | core | [§1.3.6](./language.md#_1-3-6-invariants) inv. 6 |
 <!-- examples:end -->
 :::

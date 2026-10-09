@@ -299,5 +299,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `234-stdlib-type-names.kumiki` | type, slot, reducer, tile | 標準ライブラリ | [§2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library) |
+| `247-builtin-type-names.kumiki` | type, slot, reducer, fn, tile | コア | [§1.3.6](./language.md#_1-3-6-不変条件) inv. 6 |
 <!-- examples:end -->
 :::

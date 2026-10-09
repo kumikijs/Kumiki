@@ -4,7 +4,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 
 ## 2.1 ビルトイン型
 
-### 2.1.1 プリミティブ
+### 2.1.1 プリミティブ {#_2-1-1-primitives}
 
 | 型 | 表現 | リテラル例 |
 |---|---|---|
@@ -40,6 +40,8 @@ let id = emit fetchQuote()
 | `Result(T, E)` | `Ok(T)` または `Err(E)` |
 | `Tuple(T1, ..., Tn)` | 固定長 |
 
+これらの名前と [§2.1.1](#_2-1-1-primitives) のプリミティブは、どのプログラムでも同じ型を意味する：これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前の使用はすべてここに書いた意味を保つ（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。
+
 ### 2.1.3 ドメイン型（標準提供） {#_2-1-3-domain-types-provided-by-the-standard-library}
 
 | 型 | 定義 |
@@ -56,7 +58,7 @@ let id = emit fetchQuote()
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error`、`route.error(<pattern>)`（`pattern` が加わる）、および `error-boundary` tile の `in=` に渡る値 |
 
-プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。
+プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。`File` はプリミティブの名前であり — 型の位置ではそれ自身として読まれる — プリミティブとともに予約されている。
 
 ---
 

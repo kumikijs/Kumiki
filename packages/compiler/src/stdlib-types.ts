@@ -57,8 +57,8 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
  * Domain types provided by the standard library (docs/spec/stdlib.md §2.1.3).
  *
  * `File` is absent on purpose: the grammar makes it a primitive type name, so a
- * program can never reach a definition under that name. Its fields live in the
- * checker's `PRIM_FIELDS` instead.
+ * use of it never reaches a definition, and a program's `type File = …` is
+ * E0231. Its fields live in the checker's `PRIM_FIELDS` instead.
  *
  * Seeded before the program's own definitions. A program may declare a type
  * under one of these names unless it is reserved ({@link isReservedTypeName});
@@ -136,7 +136,7 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
  * The other entries — `Url`, `Email`, `Uuid`, `FormData` — name types only a
  * program builds values of, and a program may declare its own.
  */
-export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+export const RUNTIME_SUPPLIED_TYPE_NAMES: ReadonlySet<string> = new Set([
   // The record an `error-boundary` fallback's `$1` and an `app.error`
   // reducer's `$event` are bound to.
   "PanicInfo",
@@ -152,14 +152,6 @@ export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
   // The union whose `FileV` a `Multipart` body sends as a file.
   "FormValue",
 ]);
-
-/**
- * Whether a program is refused a `type` declared under `name` (E0231): one of
- * {@link RESERVED_TYPE_NAMES}.
- */
-export function isReservedTypeName(name: string): boolean {
-  return RESERVED_TYPE_NAMES.has(name);
-}
 
 /**
  * Generic type constructors with no definition to look up (stdlib §2.1.2), and
@@ -181,7 +173,7 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
  * but a *misspelling* of one does, as an unresolvable `TypeRef`, which is
  * exactly when a repair needs them as candidates.
  */
-const PRIM_TYPE_NAMES: readonly PrimName[] = [
+export const PRIM_TYPE_NAMES: readonly PrimName[] = [
   "Text",
   "Int",
   "Float",
@@ -196,15 +188,48 @@ const PRIM_TYPE_NAMES: readonly PrimName[] = [
 const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
 
 /**
- * Whether `name` is a primitive type name. Separate from the symbol table
- * because the grammar resolves these itself: a primitive is a `TypePrim`, so
- * asking `sym.types` about `Int` answers no.
+ * Whether `name` is a primitive type name — what the parser asks of every name
+ * written in a type position. Separate from the symbol table because the
+ * grammar resolves these itself: a primitive is a `TypePrim`, so asking
+ * `sym.types` about `Int` answers no.
  *
  * Narrows, because a caller that resolves a name to a type has to build the
  * `TypePrim` afterwards and the `Set` is the only thing that knows the answer.
  */
 export function isPrimTypeName(name: string): name is PrimName {
   return PRIM_TYPE_NAME_SET.has(name);
+}
+
+/**
+ * What a reserved type name already means in every program, which is why a
+ * program may not declare it: a primitive ({@link PRIM_TYPE_NAMES}), a
+ * built-in constructor ({@link BUILTIN_TYPE_CONSTRUCTORS}), or a type whose
+ * values the runtime supplies ({@link RUNTIME_SUPPLIED_TYPE_NAMES}).
+ */
+export type ReservedTypeReason = "primitive" | "constructor" | "runtime-supplied";
+
+/**
+ * Why a program is refused a `type` declared under `name` (E0231), or
+ * `undefined` when it may declare one. The answer comes from the tables the
+ * parser and the checker resolve those names by, so a name added to one is
+ * reserved with no second list to update.
+ *
+ * A use of such a name has one meaning in every program: the parser reads a
+ * primitive as itself, the checker knows a constructor's values, members and
+ * arity without a definition, and the runtime supplies the third kind's
+ * values. A program's definition under one could only be half-applied, so the
+ * checker reports the declaration and never seeds it.
+ */
+export function reservedTypeReason(name: string): ReservedTypeReason | undefined {
+  if (isPrimTypeName(name)) return "primitive";
+  if (BUILTIN_TYPE_CONSTRUCTORS.has(name)) return "constructor";
+  if (RUNTIME_SUPPLIED_TYPE_NAMES.has(name)) return "runtime-supplied";
+  return undefined;
+}
+
+/** Whether a program is refused a `type` declared under `name` (E0231). */
+export function isReservedTypeName(name: string): boolean {
+  return reservedTypeReason(name) !== undefined;
 }
 
 /**

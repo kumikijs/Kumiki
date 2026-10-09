@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'File' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -285,7 +285,7 @@ type Shape = Leaf | Branch(Shape, Shape)
 Each reaches a structural type before it reaches itself, by invariant 3. Comparing two of them terminates because the relation is read **co-inductively** over the types *as written*: re-entering a pair already being compared answers yes, which is sound because the finite part of the comparison has been checked on the way down. Termination does not depend on the values being finite — `Node` above has none, its `next` being neither optional nor a container — and it is still a legal type.
 
 5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
-6. **A type name whose values the runtime or the standard library supplies is not the program's to declare.** `PanicInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) mean the standard library's definition in every program: `type PanicInfo = …` is [E0231](./errors.md#e0231-reserved-type-name), every use of the name keeps the standard library's type, and a program's own type takes a name of its own (`type AppPanic = …`). The other domain types — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of. A program may declare its own under one of those names, and its uses then mean the program's type.
+6. **A type name that already means a type in every program is not the program's to declare.** Three groups of names do: the primitives (the `primitive` names of [§1.3.1](#_1-3-1-syntax)), the built-in generic types ([stdlib §2.1.2](./stdlib.md#_2-1-2-generic-types)), and the six domain types whose values the runtime or the standard library supplies — `PanicInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). `type Int = …`, `type Option = …` and `type PanicInfo = …` are [E0231](./errors.md#e0231-reserved-type-name), every use of the name keeps its built-in meaning, and a program's own type takes a name of its own (`type AppPanic = …`, `type Box(T) = …`). The groups are the checker's own tables, so a primitive or a constructor added to the language is reserved with it. The other domain types — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of. A program may declare its own under one of those names, and its uses then mean the program's type.
 
 ---
 

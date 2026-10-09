@@ -40,6 +40,7 @@ import type {
 import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
 import { REFINEMENT_PREDS } from "./refinements.ts";
+import { isPrimTypeName } from "./stdlib-types.ts";
 
 export class ParseError extends Error {
   constructor(
@@ -72,18 +73,6 @@ type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
  */
 const MAX_NESTING_DEPTH = 256;
 
-/** The primitive type names, which a type position reads as `TypePrim`. */
-export const PRIM_TYPES: ReadonlySet<string> = new Set([
-  "Int",
-  "Text",
-  "Bool",
-  "Unit",
-  "Float",
-  "Time",
-  "Bytes",
-  "File",
-  "EffectId",
-]);
 // Closed set of `app.*` lifecycle events (docs/spec/language.md §1.6.1,
 // lifecycle.md §7.1). `app.http-*` keep their hyphenated form — the lexer
 // already treats `-` as ident-continuation, so they arrive as a single token.
@@ -456,9 +445,7 @@ class Parser {
       this.eat("op", ")");
       return { kind: "TypeApp", name, args, pos: t.pos };
     }
-    if (PRIM_TYPES.has(name)) {
-      return { kind: "TypePrim", name: name as "Int", pos: t.pos };
-    }
+    if (isPrimTypeName(name)) return { kind: "TypePrim", name, pos: t.pos };
     return { kind: "TypeRef", name, pos: t.pos };
   }
 
