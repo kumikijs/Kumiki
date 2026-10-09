@@ -8,6 +8,7 @@
 // (reducers), and effects are mocked at the capability boundary — so the oracle
 // is reliable app state, not scraped pixels, and runs are reproducible.
 
+import { chooseOption } from "./choose-check.ts";
 import {
   type ControlVerb,
   controlFault,
@@ -612,7 +613,8 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
    * has its element — one rule for all of them rather than a branch inside
    * `fill`, which is where the question was first noticed and would have been
    * the narrow answer. Each verb resolves its own element (`click` falls back
-   * to the document, `clickText` searches by text, `choose` wants a <select>),
+   * to the document, `clickText` searches by text, `choose` follows a <label>
+   * to its <select>),
    * so a single pre-pass would have to duplicate that resolution; this is the
    * same rule, asked where the element is known.
    *
@@ -788,15 +790,13 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("choose" in a) {
-    const sel = root.querySelector<HTMLSelectElement>(a.choose);
-    if (!sel) throw new Error(`no select matching selector ${a.choose}`);
-    refuse("choose", sel);
-    const opt = Array.from(sel.options).find(
-      (o) => o.value === a.value || (o.textContent ?? "").trim() === a.value,
-    );
-    if (!opt) throw new Error(`no option "${a.value}" in select ${a.choose}`);
-    sel.value = opt.value;
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const el = root.querySelector(a.choose);
+    if (!el) throw new Error(`no select matching selector ${a.choose}`);
+    refuse("choose", el);
+    // The rule the browser tier asks too, told here to take the option as
+    // well: that tier hands the index to Playwright instead.
+    const choice = chooseOption(el, { selector: a.choose, value: a.value, take: true });
+    if ("fault" in choice) throw new Error(choice.fault);
     return;
   }
   unhandledAction(a);

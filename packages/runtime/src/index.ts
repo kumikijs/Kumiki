@@ -39,12 +39,14 @@ import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
 // The rules a driver judges a step by, so §8.10's promise that the tiers agree
-// is structural rather than hand-maintained. Two are asked before the step
-// runs: this one — a verb that drives a control must not drive one the platform
-// refuses, asked by both scenario tiers and, as `refusesControl`, by `kumiki
-// smoke` — and `dispatchFault` below. The rest, from `submit-check.ts` below,
-// are asked after a `{submit}` has run, of what it did. They are kept apart
-// here only by the export order.
+// is structural rather than hand-maintained. Three are asked before the step
+// runs: the option a `{choose}` takes, just below; a verb that drives a control
+// must not drive one the platform refuses, after it, asked by both scenario
+// tiers and, as `refusesControl`, by `kumiki smoke`; and `dispatchFault`
+// further down. The rest, from `submit-check.ts` below, are asked after a
+// `{submit}` has run, of what it did. They are kept apart here only by the
+// export order.
+export { type Choice, chooseOption } from "./choose-check.ts";
 export {
   CONTROL_DEMANDS,
   type ControlDemand,
@@ -130,7 +132,7 @@ export {
   withEnvRecord,
   withEnvReplay,
 } from "./core.ts";
-// The second of them: a `{dispatch}` must name a reducer it can reach.
+// The third of them: a `{dispatch}` must name a reducer it can reach.
 export { type DispatchTarget, dispatchFault } from "./dispatch-check.ts";
 export { installConfirm } from "./effects-confirm.ts";
 export { httpFetch } from "./effects-http.ts";

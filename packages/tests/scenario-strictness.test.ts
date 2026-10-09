@@ -257,6 +257,68 @@ app Fillable
     expect(report.steps.flatMap((st) => st.failures)).toEqual([]);
     expect(report.ok).toBe(true);
   });
+
+  // `choose` asks `chooseOption`, the rule the browser tier asks too: the
+  // option with that label, else the one with that value. The `select` tile
+  // writes each value into its <option> as JSON, so `"b"` (quotes included) is
+  // the value of the option labelled Bee and the label of the third one. The
+  // same cases run at the browser tier in `packages/e2e/tests/action-faults.spec.ts`.
+  const CHOOSABLE = `slot pick : Text = "a"
+fn picks() -> List({label: Text, value: Text})
+   = [{label: "Ay", value: "a"}, {label: "Bee", value: "b"}, {label: "\\"b\\"", value: "c"}]
+tile Box  = box(text("not a select")) {id: "box"}
+tile Lbl  = label("pick one", for="pick") {id: "lbl"}
+tile Pick = select(bind=pick, options=picks()) {id: "pick"}
+tile App  = column(Box, Lbl, Pick, text("pick: " + pick))
+app Choosable
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("reports a choose whose selector matches no select, naming the element", async () => {
+    const app = await loadSource(CHOOSABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { choose: "#box", value: "Ay" } }],
+    });
+    expect(report.ok).toBe(false);
+    const fault = report.steps[0]?.actionError ?? "";
+    expect(fault).toContain("#box matched <div>");
+    expect(fault).toContain("holds no options to choose");
+    expect(report.steps[0]?.errors).toEqual([]);
+  });
+
+  it("takes the option a label names before one whose value matches", async () => {
+    const app = await loadSource(CHOOSABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [
+        { do: { choose: "#pick", value: '"b"' }, expect: { state: { pick: "c" } } },
+        { do: { choose: "#pick", value: '"a"' }, expect: { state: { pick: "a" } } },
+      ],
+    });
+    expect(report.steps.map((st) => st.actionError)).toEqual([undefined, undefined]);
+    expect(report.steps.flatMap((st) => st.failures)).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
+  it("follows a <label> to the select it labels", async () => {
+    const app = await loadSource(CHOOSABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { choose: "#lbl", value: "Bee" }, expect: { state: { pick: "b" } } }],
+    });
+    expect(report.steps[0]?.actionError).toBeUndefined();
+    expect(report.ok).toBe(true);
+  });
+
+  it("reports a choose on a select with no such option, naming the value", async () => {
+    const app = await loadSource(CHOOSABLE);
+    const report = await runScenario(app, freshRoot(), {
+      steps: [{ do: { choose: "#pick", value: "Zed" } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toBe('no option "Zed" in select #pick');
+    expect(report.steps[0]?.state.pick).toBe("a");
+  });
 });
 
 // `errorIncludes` asserts that the *runtime* surfaced something — a reducer

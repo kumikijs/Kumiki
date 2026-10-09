@@ -7,6 +7,7 @@ import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
   type ControlVerb,
+  chooseOption,
   constraintFault,
   controlFault,
   type DispatchTarget,
@@ -884,35 +885,18 @@ export async function performAction(page: Page, a: Action): Promise<void> {
   // choose
   const loc = page.locator(a.choose).first();
   await refuse(loc, "choose", describeAction(a));
-  // Which option the value names, decided once, in the page, through the
-  // locator `refuse` just resolved: the one with that label, else the one with
-  // that value. Playwright is handed the index, so nothing matches a second
-  // time, and a select with neither fails here in the scenario tier's words
-  // rather than in Playwright's timeout, which never names the value.
-  const picked = await loc.evaluate(
-    (el: Element, value: string) => {
-      // `selectOption` follows a <label> to its control, so this does too.
-      const select = el instanceof HTMLSelectElement ? el : el.closest("label")?.control;
-      if (!(select instanceof HTMLSelectElement)) return { tag: el.tagName.toLowerCase() };
-      // Whitespace collapsed on both sides, as Playwright's own label match
-      // does: `option.label` is the option's text with its runs of whitespace
-      // already collapsed, so a label copied from source still finds it.
-      const norm = (s: string): string => s.trim().replace(/\s+/g, " ");
-      const options = [...select.options];
-      const byLabel = options.findIndex((o) => norm(o.label) === norm(value));
-      return { index: byLabel !== -1 ? byLabel : options.findIndex((o) => o.value === value) };
-    },
-    a.value,
+  // Which option the value names, asked in the page through the locator
+  // `refuse` just resolved, by the rule the scenario tier asks. Playwright is
+  // handed the index, so nothing matches a second time, and a select with no
+  // such option fails here in the same words at both tiers rather than in
+  // Playwright's timeout, which never names the value.
+  const choice = await loc.evaluate(
+    chooseOption,
+    { selector: a.choose, value: a.value },
     { timeout: 3000 },
   );
-  if ("tag" in picked) {
-    throw new Error(
-      `${a.choose} matched <${picked.tag}>, which holds no options to choose — ` +
-        "choose targets a select",
-    );
-  }
-  if (picked.index === -1) throw new Error(`no option "${a.value}" in select ${a.choose}`);
-  await loc.selectOption({ index: picked.index }, { timeout: 3000 });
+  if ("fault" in choice) throw new Error(choice.fault);
+  await loc.selectOption({ index: choice.index }, { timeout: 3000 });
 }
 
 async function evaluateExpect(

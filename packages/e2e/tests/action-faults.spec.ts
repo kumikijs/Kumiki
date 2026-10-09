@@ -85,15 +85,18 @@ for (const action of UNMATCHED) {
 }
 
 // `choose` takes an option by its label, and by its value only when no option
-// carries that label. The `select` tile writes each value into its <option> as
-// JSON, so `"b"` (quotes included) is the value of the option labelled Bee and
-// the label of the third one: a rule that took either attribute in document
-// order, or the value first, would land on Bee.
+// carries that label — the rule the scenario tier asks, and the same cases
+// `scenario-strictness.test.ts` runs there. The `select` tile writes each value
+// into its <option> as JSON, so `"b"` (quotes included) is the value of the
+// option labelled Bee and the label of the third one: a rule that took either
+// attribute in document order, or the value first, would land on Bee.
 const CHOOSE_SOURCE = `slot pick : Text = "a"
 fn picks() -> List({label: Text, value: Text})
    = [{label: "Ay", value: "a"}, {label: "Bee", value: "b"}, {label: "\\"b\\"", value: "c"}]
+tile Box  = box(text("not a select")) {id: "box"}
+tile Lbl  = label("pick one", for="pick") {id: "lbl"}
 tile Pick = select(bind=pick, options=picks()) {id: "pick"}
-tile App  = column(Pick, text("pick: " + pick))
+tile App  = column(Box, Lbl, Pick, text("pick: " + pick))
 app Chooses
     caps   = []
     routes = {"/" -> App, "/404" -> App}
@@ -119,9 +122,26 @@ test("choose on a select with no such option fails the step, naming the value", 
     steps: [{ do: { choose: "#pick", value: "Zed" } }],
   });
   expect(report.ok).toBe(false);
-  expect(report.steps[0]?.actionError).toContain('no option "Zed" in select #pick');
+  expect(report.steps[0]?.actionError).toBe('no option "Zed" in select #pick');
   expect(report.steps[0]?.errors).toEqual([]);
   expect(report.steps[0]?.state.pick).toBe("a");
+});
+
+test("choose follows a <label> to its select, and names anything else it matched", async ({
+  page,
+}) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [
+      { do: { choose: "#lbl", value: "Bee" }, expect: { state: { pick: "b" } } },
+      { do: { choose: "#box", value: "Ay" } },
+    ],
+  });
+  expect(report.steps[0]?.actionError).toBeUndefined();
+  expect(report.steps[0]?.failures).toEqual([]);
+  expect(report.steps[1]?.actionError).toContain(
+    "#box matched <div>, which holds no options to choose",
+  );
+  expect(report.steps[1]?.errors).toEqual([]);
 });
 
 // `{dispatch}` is the verb where the two tiers could most easily drift: it names
