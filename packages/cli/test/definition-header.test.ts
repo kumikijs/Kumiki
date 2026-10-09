@@ -1,11 +1,3 @@
-// A body is a definition without its `<layer> <name>` opener. A tile's clauses
-// and a type's parameters sit between the name and the `=`, so a body can
-// state them, and a `replace` body that does not keeps the ones the
-// definition has. A tile or a type the op log records always states its
-// header, from its `=` when it has none, so a logged body means the same to
-// every reader; a `replace` or an `edit` also records the body it replaced,
-// which is what `patch revert` writes back.
-
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -295,12 +287,6 @@ describe("a comment after the name", () => {
   });
 });
 
-/**
- * Each form a right-hand side starts with. None of them is read as a header,
- * so a `replace` with any of them keeps the definition's clauses or parameters
- * and writes the body after its `=` as given. A right-hand side a future
- * grammar lets start with `(`, `=` or `<word> =` belongs here, and fails.
- */
 const TYPE_RIGHT_HAND_SIDES = ["T", "Option(T)", "{v: T}", "nominal Int", "Red | Green"];
 const TILE_RIGHT_HAND_SIDES = [
   "heading($1)",
@@ -355,8 +341,6 @@ describe("add writes the clauses and parameters a body states", () => {
   });
 
   it("refuses a name that is not one identifier, writing nothing", () => {
-    // Parameters written into the name would be written into the file, and
-    // the op logged as `type.Box(T)`: a name nothing can view, revert or remove.
     const file = seed("slot n : Int = 0\n");
 
     expect(() => addDef(file, "type", "Box(T)", "{v: T}")).toThrowError(/"Box\(T\)"/);
@@ -388,8 +372,6 @@ describe("patch revert of a replace or an edit", () => {
   });
 
   it("puts back a clause the op log never saw", () => {
-    // The clause is written by hand after the add, so no logged body has it:
-    // the revert has to write back the definition the replace replaced.
     const file = seed(BOUNDARY);
     addDef(file, "tile", "X", 'text("a")');
     handEdit(file, 'tile X = text("a")', 'tile X error-boundary=Oops = text("a")');
@@ -431,9 +413,6 @@ describe("patch revert of a replace or an edit", () => {
   });
 
   it("refuses a logged body that is a whole definition, writing nothing", () => {
-    // An op that records no replaced body falls back to the body the op before
-    // it logged — here a whole definition, which is how an earlier version
-    // logged the body of a tile with clauses.
     const file = seed(INPUT);
     const first = editDef(file, "tile.Greeting", { find: "Hi, ", replace: "Hello, " });
     const second = editDef(file, "tile.Greeting", { find: "Hello, ", replace: "Hey, " });
@@ -476,13 +455,6 @@ describe("a logged body means one thing", () => {
   });
 });
 
-/**
- * One definition of each kind, written through `add`. Every label the store
- * puts on a definition has a row, so a new kind of definition that `add` cannot
- * write, or `remove` cannot read back, fails here. `logged` is the body the op
- * log records when it is not the one given: a tile or a type without a header
- * is logged from its `=`.
- */
 const KINDS: { layer: string; name: string; body: string; logged?: string }[] = [
   { layer: "type", name: "Point", body: "{x: Int, y: Int}", logged: "= {x: Int, y: Int}" },
   { layer: "type", name: "Pair", body: "(A, B) = {first: A, second: B}" },
@@ -559,8 +531,6 @@ describe("every kind of definition", () => {
 });
 
 describe("kumiki add and replace, the commands", () => {
-  // Each case pays for a node + tsx start, so the limits allow for a loaded
-  // machine; the child's is the shorter one so it always fires first.
   const SPAWN = { timeout: 70_000 };
   const run = (args: string[]): { stdout: string; stderr: string; code: number } => {
     const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {

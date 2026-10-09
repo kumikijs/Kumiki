@@ -1,7 +1,3 @@
-// Runtime-side halves of the divergences between `docs/spec/` and what the
-// toolchain actually did. The compiler halves live in
-// `packages/compiler/test/spec-divergences.test.ts`.
-
 import type { AppShape, CapabilityRegistry, Episode, TileCtx, TileNode } from "@kumikijs/runtime";
 import {
   _stdlib,
@@ -33,9 +29,6 @@ function render(node: Extract<TileNode, { kind: "button" }>): HTMLButtonElement 
   return el;
 }
 
-// forms.md §5.2.2: `button(type="submit")` submits the form it is in. The
-// renderer never read the field, so the attribute was never written and the
-// browser's default decided for every button.
 describe("button(type=…) reaches the DOM", () => {
   it("writes the type the node carries", () => {
     expect(render(btn({ type: "button" })).type).toBe("button");
@@ -43,8 +36,6 @@ describe("button(type=…) reaches the DOM", () => {
   });
 
   it("leaves the HTML default alone when the node says nothing", () => {
-    // `submit` is what a `<button>` with no type does inside a form. The tile
-    // that did not ask for a type gets that, not a type this renderer chose.
     expect(render(btn()).hasAttribute("type")).toBe(false);
     expect(render(btn()).type).toBe("submit");
   });
@@ -53,10 +44,6 @@ describe("button(type=…) reaches the DOM", () => {
     const el = render(btn({ type: "button" }));
     inputPatchers.button?.(el, btn({ type: "button" }), btn({ type: "submit" }), ctx);
     expect(el.getAttribute("type")).toBe("submit");
-    // …and back: a node that stops saying loses the attribute, which is what
-    // `create` produces for the same node. Asserted on the attribute because
-    // `el.type` reads "submit" whether it is absent or explicit — the property
-    // cannot tell the two apart, and the two render differently on the server.
     inputPatchers.button?.(el, btn({ type: "submit" }), btn(), ctx);
     expect(el.hasAttribute("type")).toBe(false);
     inputPatchers.button?.(el, btn(), btn({ type: "reset" }), ctx);
@@ -67,9 +54,6 @@ describe("button(type=…) reaches the DOM", () => {
   });
 
   it("serves the same type it hydrates to", async () => {
-    // The SSR renderer wrote `type="button"` on every button, so the served
-    // HTML refused to submit and the hydrated page accepted — the one
-    // divergence a user sees as "it works on the second click".
     const app: AppShape = {
       slots: {},
       caps: [],
@@ -84,22 +68,13 @@ describe("button(type=…) reaches the DOM", () => {
     const { html } = await renderToString(app, {});
     expect(html).toContain('type="submit"');
     expect(html).not.toContain('type="button"');
-    // The typeless button carries no type AT ALL — `?? "submit"` here would
-    // keep the assertion above green while reintroducing the divergence in the
-    // other direction, since the client renderer leaves the attribute off.
     const tags = [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
     expect(tags).toHaveLength(2);
     expect(tags.filter((t) => t.includes("type="))).toHaveLength(1);
   });
 });
 
-// stdlib.md §2.2.8: `format(pattern) : Text`. The pattern was ignored — the
-// codegen produced the ISO date whatever was asked for, so an app that wrote
-// "yyyy-MM-dd HH:mm" rendered a date with no time, in UTC.
 describe("Time.format honours its pattern", () => {
-  // Expectations are derived from the same instant through `Date`'s own
-  // getters, never written out: this suite runs in JST locally and UTC in CI,
-  // and a hardcoded string would pin whichever one wrote it.
   const at = new Date(2026, 7, 14, 21, 5, 9).getTime();
   const two = (n: number) => String(n).padStart(2, "0");
   const d = new Date(at);
@@ -119,37 +94,23 @@ describe("Time.format honours its pattern", () => {
   });
 
   it("reads the instant in local time", () => {
-    // The rendered day is the reader's day. Formatting UTC fields would show
-    // yesterday to everyone whose evening is the previous UTC day.
     expect(_stdlib.formatTime(at, "dd")).toBe(two(d.getDate()));
     expect(_stdlib.formatTime(at, "HH")).toBe(two(d.getHours()));
   });
 
   it("reads an instant that arrived as text", () => {
-    // The compiler only ever produces a number here, but a `Time` field filled
-    // from a JSON payload — or from storage written by a build whose
-    // `Time.parse` kept the string — holds text. The old formatter handled
-    // those (it went through `new Date`), and dropping that would turn a date
-    // into `NaN-NaN-NaN` on exactly the paths no example covers.
     const iso = "2026-08-14T21:05:09";
     const asDate = new Date(iso);
     expect(_stdlib.formatTime(iso, "yyyy-MM-dd HH:mm")).toBe(
       `${asDate.getFullYear()}-${two(asDate.getMonth() + 1)}-${two(asDate.getDate())} ${two(asDate.getHours())}:${two(asDate.getMinutes())}`,
     );
-    // Padded text is still read: `Time.parse` refuses blanks, so the formatter
-    // trims before it asks, rather than rendering `NaN-NaN-NaN`.
     expect(_stdlib.formatTime(` ${iso}\n`, "yyyy-MM-dd HH:mm")).toBe(
       _stdlib.formatTime(iso, "yyyy-MM-dd HH:mm"),
     );
-    // A numeric string is the millisecond number it spells.
     expect(_stdlib.formatTime(String(at), "yyyy")).toBe(_stdlib.formatTime(at, "yyyy"));
   });
 
   it("reads a date-only string on the same clock it renders", () => {
-    // `Date.parse("2026-08-14")` is UTC midnight, and the fields come back
-    // local — so west of Greenwich the day a `type="date"` input produced came
-    // back as the day before. The two halves have to agree on which clock a
-    // zone-less string is on.
     const parsed = _stdlib.parseTime("2026-08-14");
     expect(parsed._tag).toBe("Some");
     expect((parsed as { _0: number })._0).toBe(new Date(2026, 7, 14).getTime());
@@ -249,8 +210,6 @@ describe("Time.format honours its pattern", () => {
   });
 
   it("is None for text that is not ISO 8601 YYYY-MM-DD with an optional time", () => {
-    // The platform's parser reads these too, each in its own way (and some as
-    // a different day); the reading is the one form `; ISO8601` names.
     for (const bad of [
       "Aug 14 2026",
       "14 August 2026 10:00",
@@ -277,37 +236,24 @@ describe("Time.format honours its pattern", () => {
   });
 
   it("is None for surrounding blanks, as the other readings are", () => {
-    // `Date.parse(" 2026-02-28")` is UTC midnight, not the local midnight the
-    // unpadded text reads as; the reading is exact instead.
     for (const bad of [" 2026-02-28", "2026-02-28 ", "\t2026-02-28", " 2026-02-28T10:00"]) {
       expect(_stdlib.parseTime(bad)._tag, JSON.stringify(bad)).toBe("None");
     }
   });
 
   it("does not render a blank as the epoch", () => {
-    // `Number(null)` and `Number("")` are both 0, so a numeric-first read shows
-    // 1970-01-01 for a field that is simply absent — a date that looks real.
     for (const blank of [null, undefined, "", "   "]) {
       expect(_stdlib.formatTime(blank, "yyyy-MM-dd"), String(blank)).toContain("NaN");
     }
-    // …and a real 0 is still the epoch, because that is what it means.
     expect(_stdlib.formatTime(0, "yyyy")).toBe(String(new Date(0).getFullYear()));
   });
 
   it("keeps MM and mm apart", () => {
-    // The pattern language is case-sensitive, and the two tokens differ only
-    // by case: a lookup that lowercased would render the month as the minute.
     const nov = new Date(2026, 10, 3, 0, 45, 0).getTime();
     expect(_stdlib.formatTime(nov, "MM mm")).toBe("11 45");
   });
 
-  // Whether the fields are local or UTC is only observable where the two
-  // differ, so this says nothing at offset 0. The suite pins `TZ` (see
-  // `vitest.config.ts`) precisely so it does not skip itself — the guard stays
-  // for anyone running this file in a different zone.
   it.skipIf(new Date().getTimezoneOffset() === 0)("renders the local day, not the UTC one", () => {
-    // An evening instant: west of Greenwich — where this suite is pinned — the
-    // same moment is already the next day in UTC.
     const evening = new Date(2026, 7, 14, 21, 0, 0);
     const local = evening.getTime();
     expect(_stdlib.formatTime(local, "dd HH")).toBe(
@@ -319,10 +265,6 @@ describe("Time.format honours its pattern", () => {
   });
 });
 
-// runtime.md §10.4.3: `policy=queue` executes sequentially, FIFO. The
-// dispatcher had no `queue` branch, so it fell through to the default and ran
-// every emit in parallel — the one policy whose whole purpose is that it does
-// not.
 describe("policy=queue runs one at a time", () => {
   function makeQueueApp(): { app: AppShape; log: string[]; peak: () => number } {
     const log: string[] = [];
@@ -332,8 +274,6 @@ describe("policy=queue runs one at a time", () => {
       slots: { n: { value: 0 } },
       caps: ["log.write", "http.cancel"],
       effects: {
-        // The dispatcher never invokes a `http.cancel` effect — it reads the
-        // id out of the emit and releases what is holding it.
         cancel: {
           name: "cancel",
           cap: "http.cancel",
@@ -401,10 +341,6 @@ describe("policy=queue runs one at a time", () => {
   });
 
   it("releases a queued launch that http.cancel cancelled", async () => {
-    // `dispose()` is not the only path that ends a pending launch. Cancelling
-    // by id aborts what is in flight and drops a pending debounce timer; a
-    // queued entry is the same debt — without this it runs after the user
-    // pressed Cancel, on an episode the log already recorded a cancel for.
     const { app, log } = makeQueueApp();
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -424,11 +360,6 @@ describe("policy=queue runs one at a time", () => {
   });
 
   it("releases a queued launch that unmount cancelled", async () => {
-    // Each queued entry claims its episode token when it is dispatched, so an
-    // entry that never runs has to give it back — otherwise the episode that
-    // emitted it waits for an effect-end that is never coming. The two entries
-    // still waiting at unmount become `effect-cancel` steps; without the drain
-    // they run after the mount is gone and land as two more `effect-end`s.
     const { app } = makeQueueApp();
     const logger = createEpisodeLogger();
     const host = document.createElement("div");
@@ -445,10 +376,6 @@ describe("policy=queue runs one at a time", () => {
   });
 });
 
-// stdlib.md §2.6.2 / lifecycle.md §7.7: `toast` takes a `kind` and an optional
-// `duration`. The runtime read neither — every toast looked the same and stayed
-// for a hardcoded three seconds, so `duration: Some(Duration.s(10))`, which the
-// example corpus writes, meant nothing.
 describe("toast honours the record the spec documents", () => {
   const fire = async (input: unknown): Promise<void> => {
     // `overridableInvoke` asks the registry for a provider first; a host that
@@ -471,14 +398,11 @@ describe("toast honours the record the spec documents", () => {
 
   it("marks the kind on the element rather than choosing an appearance", async () => {
     await fire({ kind: "success", text: "Saved" });
-    // `data-level` is the attribute the toast *tile* already writes; one
-    // author-facing concept, one attribute name.
     expect(banner()?.dataset.level).toBe("success");
     expect(banner()?.textContent).toBe("Saved");
   });
 
   it("uses the per-kind default when the emitter says nothing", async () => {
-    // lifecycle.md §7.7: info 3s, success 3s, warn 5s, error 0 = manual close.
     await fire({ kind: "warn", text: "Careful" });
     vi.advanceTimersByTime(3_001);
     expect(banner()).not.toBeNull();
@@ -521,19 +445,12 @@ describe("toast honours the record the spec documents", () => {
   });
 
   it("is announced: a toast is a live region", async () => {
-    // lifecycle.md §7.8 promises `aria-live` for toasts as a runtime guarantee.
     await fire({ kind: "error", text: "Failed" });
     expect(banner()?.getAttribute("role")).toBe("status");
     expect(banner()?.getAttribute("aria-live")).toBe("polite");
   });
 });
 
-// routing.md §3.2 types `Route.hash` as `Option(Text)`, and the compiler's
-// standard-library table now says so too — so `match route.hash with | Some(h)`
-// has to meet the tagged representation every other Option uses. The router
-// built a bare `string | null`, which matches neither arm: the subtree rendered
-// empty and `is-some` answered a confident `false`, with nothing thrown for a
-// smoke run to catch.
 describe("route.hash is the Option the type says it is", () => {
   const routeOf = (path: string): Record<string, unknown> => {
     const app: AppShape = {
@@ -560,10 +477,6 @@ describe("route.hash is the Option the type says it is", () => {
   });
 });
 
-// lifecycle.md §7.8 lists "aria-live regions: automatic for toast and error" as
-// a runtime guarantee. It held for none of the three paths that render one: the
-// toast tile and the error tile wrote no ARIA at all, on the client or the
-// server.
 describe("the announced regions §7.8 promises", () => {
   const toastNode = (): Extract<TileNode, { kind: "toast" }> => ({ kind: "toast", text: "hi" });
   const errorNode = (): Extract<TileNode, { kind: "error" }> => ({

@@ -1,19 +1,9 @@
-// Coverage for EffectSpec.retry (#83): the dispatcher retries 5xx / connection
-// errors with the configured backoff, leaves 4xx alone, and propagates the
-// final result to the .err / .ok reducer like a normal invoke.
-
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Wait for the ladder to finish climbing rather than for a duration. A fixed
- * window says "three attempts fit in 40ms", which is a claim about the machine:
- * under a loaded test run the timers land late and the count is short. The
- * assertions still fail loudly if the condition never holds.
- */
 async function until(done: () => boolean, limitMs = 2000): Promise<void> {
   const deadline = Date.now() + limitMs;
   while (!done() && Date.now() < deadline) await tick(5);

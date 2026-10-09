@@ -1,9 +1,3 @@
-// The standard library's type names had no single home: the checker knew none
-// of them (so `HttpError` was an unresolvable name that accepted every value)
-// and `dts.ts` carried five of the nine in a private list. `stdlib-types.ts` is
-// now the one table, and this drives every entry through both consumers so a
-// name added to one side cannot go missing from the other.
-
 import { check, generateDts, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { BUILTIN_TYPE_CONSTRUCTORS, STDLIB_TYPES } from "../src/stdlib-types.ts";
@@ -37,20 +31,13 @@ describe("every stdlib type generates a real TypeScript type", () => {
       const line = providerLine(`effect e cap=custom.thing in=${t.name} out=Result(Unit, Text)
 ${TAIL}`);
       expect(line, `no provider line for ${t.name}`).toBeDefined();
-      // Not a prefix check: an `unknown` nested inside a record field or a
-      // union member is the same hole, and that is where `File` inside
-      // `FormValue` sat while the primitive table was missing it.
       expect(line, `${t.name} generated an unknown`).not.toContain("unknown");
     });
   }
 
   it("quotes a field name TypeScript cannot take bare", () => {
-    // `PanicInfo.episode-id` is kebab-case; unquoted, the declaration does not
-    // parse at all — which is what routing PanicInfo through this table opened.
     const line = providerLine(`effect e cap=custom.thing in=PanicInfo out=Result(Unit, Text)
 ${TAIL}`);
-    // Its type is whatever the stdlib table says (an `Option(Text)` since
-    // #364); what this pins is the key, quoted rather than bare.
     expect(line).toContain('"episode-id": {');
     expect(line).not.toMatch(/[^"]episode-id:/);
   });
@@ -88,8 +75,6 @@ describe("the built-in type constructors", () => {
 
 describe("a program's own definition shadows the standard library's", () => {
   it("takes the program's Route over the built-in one", () => {
-    // The built-in `Route` is a record; a program that redefines it as Text
-    // must have its own definition checked against, not the built-in.
     expect(codes(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([]);
     expect(codes(`type Route = Text\nslot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
   });

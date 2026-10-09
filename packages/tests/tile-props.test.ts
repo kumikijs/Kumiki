@@ -1,18 +1,3 @@
-// Every documented tile prop, from `.kumiki` source to the DOM — on both
-// rendering paths (#251).
-//
-// The bug this exists to prevent is not "a prop is unimplemented". It is that
-// a prop's name has two spellings: the compiler lowers a Kumiki name to a
-// JS-safe key (`test-id` -> `test_id`), while `TileProps` is
-// `Record<string, unknown>`, so a runtime that reads `props["max-w"]` type-
-// checks, renders, and does nothing. Every app in the corpus wrote `max-w` and
-// none of them ever got a width.
-//
-// So every row here starts from SOURCE and ends at an ATTRIBUTE or a CSS
-// declaration. A hand-built `TileNode` would let the test agree with the
-// runtime about a spelling the compiler never emits — which is exactly how the
-// gap survived a parity suite that compared the two render paths to each other.
-
 import { mount, renderToString } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.js";
@@ -87,7 +72,7 @@ function check(el: HTMLElement, claim: Claim): void {
 
 /** Rows whose claim holds on the client and on the server alike. */
 const BOTH_PATHS: Row[] = [
-  // --- common props, spec/stdlib.md §2.3.10 ---
+  // --- common props ---
   {
     name: "class lands on the element",
     tile: 'column(text("x")) {class: "wide muted"}',
@@ -124,7 +109,7 @@ const BOTH_PATHS: Row[] = [
     claim: { attrs: { role: null } },
   },
 
-  // --- sizing, spec/style.md §4.3.1 + §4.4.7 ---
+  // --- sizing ---
   {
     name: "max-w reaches the DOM under the name the compiler emits",
     tile: 'column(text("x")) {max-w: 640}',
@@ -170,16 +155,11 @@ const BOTH_PATHS: Row[] = [
     claim: { style: { "box-shadow": "0 1px 2px rgba(0,0,0,0.1)" } },
   },
   {
-    // The theme has a `radius` scale and a separate `spacing` one; this read
-    // spacing, so `radius: "md"` was 16px where the theme says 8px.
     name: "radius reads the radius scale, not the spacing scale",
     tile: 'box(text("x")) {radius: "md"}',
     claim: { style: { "border-radius": "8px" } },
   },
   {
-    // The kinds whose renderers style nothing of their own: without the shared
-    // pass these reach neither path, and the `image` line is the only code
-    // example style.md §4.4.7 has.
     name: "an image is sized by the same props a container is",
     tile: 'image(src="/a.png", alt="c") {w: "full", max-w: 600, aspect: "16/9"}',
     claim: { style: { width: "100%", "max-width": "600px", "aspect-ratio": "16 / 9" } },
@@ -205,7 +185,6 @@ const BOTH_PATHS: Row[] = [
     claim: { at: "input", attrs: { disabled: "", type: "checkbox" } },
   },
   {
-    // The way to take input away from a contenteditable is to stop it being one.
     name: "a disabled editable is not editable",
     tile: "editable(bind=draft) {disabled: true}",
     claim: { attrs: { contenteditable: "false" } },
@@ -226,18 +205,11 @@ const BOTH_PATHS: Row[] = [
     claim: { style: { "border-radius": "999px" } },
   },
   {
-    // A kind that maps a prop itself keeps it: an icon's `size` sizes the SVG
-    // box, so the shared mapping must not also make it a font size.
     name: "a kind that owns a prop is not given the general answer for it",
     tile: 'icon(name="check") {size: "lg", color: "muted"}',
     claim: { style: { "font-size": "", color: "#888" } },
   },
   {
-    // The other branch of `{radius: if c then "pill" else ""}`. An empty token
-    // has to write nothing: on the mount path a declaration with an empty value
-    // REMOVES the property, taking the card's own corners with it, while the
-    // server serialises an invalid one and keeps them — the two paths
-    // disagreeing over a plain conditional.
     name: "an empty token leaves the kind's own base alone",
     tile: 'card(text("x")) {radius: "", bg: ""}',
     claim: { style: { "border-radius": "8px", background: "" } },
@@ -292,8 +264,6 @@ const BOTH_PATHS: Row[] = [
     claim: { attrs: { disabled: "", "aria-busy": "true" } },
   },
   {
-    // Hidden from assistive technology: a labelled spinner would join the
-    // button's accessible name and make it "Loading go".
     name: "a loading button carries a spinner, and it is not part of the name",
     tile: 'button(text="go") {loading: true}',
     claim: { at: '[data-kumiki-tile="spinner"]', attrs: { "aria-hidden": "true", role: null } },
@@ -345,13 +315,6 @@ const BOTH_PATHS: Row[] = [
   },
 ];
 
-/**
- * Rows the server has no answer for. The class-backed layers are injected CSS
- * (`transition`, the `hover:` / `focus:` / `active:` blocks, motion), which
- * §10.6.1 keeps off the served page — so the classes the runtime owns exist
- * only after hydration, and only the client can say the author's tokens joined
- * them rather than replaced them.
- */
 const CLIENT_ONLY: Row[] = [
   {
     name: "class does not displace a class the runtime owns",
@@ -365,14 +328,6 @@ const CLIENT_ONLY: Row[] = [
   },
 ];
 
-/**
- * Every prop that can go away, going away.
- *
- * The create path and the patch path are different code, and only the patch
- * path can be wrong about *removal* — a prop that stops being written has to
- * take its attribute or declaration with it. `BOUND_APP` above moves props from
- * one value to another; this moves them to absent.
- */
 const REMOVAL_APP = `
 slot set : Bool = true
 

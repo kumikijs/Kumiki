@@ -1,14 +1,6 @@
-// Shared compile→preview pipeline for the docs site. Both the playground
-// editor and the home-page live demo compile Kumiki in the browser and run
-// the result inside the same sandboxed srcdoc iframe.
-
 import { compile, parseCapabilityManifest } from "@kumikijs/compiler";
-// The prebuilt runtime bundle, inlined as a string so generated apps are
-// fully self-contained and runnable inside the preview iframe.
 import runtimeBundle from "@kumikijs/runtime/bundle?raw";
 
-// Load every feature example at build time so the playground ships with a
-// browsable catalog. Sources live in packages/examples (repo root is ../../..).
 const exampleModules = import.meta.glob("../../../packages/examples/features/*.kumiki", {
   query: "?raw",
   import: "default",
@@ -19,10 +11,6 @@ export const examples: { name: string; source: string }[] = Object.entries(examp
   .map(([path, source]) => ({ name: path.split("/").pop() ?? path, source }))
   .sort((a, b) => a.name.localeCompare(b.name));
 
-// The examples directory ships a `kumiki.caps.json` registering project-specific
-// capabilities (e.g. telemetry.track for 27-custom-capability). The CLI resolves
-// it from disk; here we load it at build time and pass the registered names to
-// check()/compile() so those examples typecheck instead of failing E0302.
 const capsModules = import.meta.glob("../../../packages/examples/features/kumiki.caps.json", {
   query: "?raw",
   import: "default",
@@ -42,21 +30,6 @@ export function compileToJs(source: string): ReturnType<typeof compile> {
   });
 }
 
-// The preview iframe is a sandboxed srcdoc (opaque origin, no real path, no
-// network). Configure the embedding seams before the auto-mounting module runs:
-//  - memory router (#36) so routing examples (18/23) initialise at "/" and
-//    navigate instead of falling to /404;
-//  - a deterministic http.get provider (#38) so the HTTP showcase (19) serves
-//    its /api/quote offline and demonstrates the SUCCESS path;
-//  - a telemetry.track provider so the custom-capability showcase (27) — which
-//    has no built-in and would otherwise always hit its `.err` branch ("no
-//    telemetry provider") — demonstrates the SUCCESS path;
-//  - an in-memory localStorage shim, installed only when the sandbox's opaque
-//    origin makes the real one throw, so the storage showcase (20) persists
-//    within the session and shows "saved" instead of always "storage
-//    unavailable". The runtime's own storage built-in (Option-wrapping, JSON)
-//    runs unchanged on top of it. All seams use the runtime's documented
-//    embedding points — no fetch patching, no sandbox weakening.
 const PREVIEW_PREAMBLE = `globalThis.__kumikiMount = { router: "memory" };
 try { void localStorage.length; } catch (_e) {
   const _store = Object.create(null);

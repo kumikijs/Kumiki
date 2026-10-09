@@ -1,13 +1,3 @@
-// A refinement written over a base it cannot test is a build error, not a slot
-// that refuses every write.
-//
-// Every predicate's check is guarded by the shape it tests, and `one-of`'s is
-// a strict `includes`, so each program below used to build and mount — and
-// then discard every reducer batch that wrote the slot, because no value of
-// its type passes. The generic ones did so only once a refinement on a generic
-// alias began gating the slot. Each now fails to build with E0804, and the
-// same program over the base the predicate tests mounts and takes the write.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

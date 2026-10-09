@@ -1,12 +1,3 @@
-// routing.md §3.1.2: routes are tried most specific first — segment by
-// segment, static > parameter > wildcard — and definition order only breaks a
-// tie. The corpus example (`153-route-specificity`) pins the top-level order
-// through its scenario; this suite adds what one example cannot: the same app
-// with its entries in the other order, the ranking inside a `sub-routes`
-// parent, redirects ranked together with the routes that render, and the SSR
-// pass, which resolves the route through the same helper when it is handed
-// `routing`.
-
 import { mount, renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -120,8 +111,7 @@ app SiblingOwns
     }
     init   = []
 `;
-    // `/settings/:section` outranks `/settings/*`, so the parent's child map
-    // never sees this path: the sibling renders, without the layout.
+    // `/settings/:section` outranks `/settings/*`, so the parent's child map never sees this path: the sibling renders, without the layout.
     const text = await textAt(src, "/settings/account");
     expect(text).toContain("Section account");
     expect(text).not.toContain("Settings layout");
@@ -232,8 +222,7 @@ app RedirectNarrowing
     }
     init   = []
 `;
-    // `/x/:id` outranks `/x/*`, so the parent's `/x/legacy/*` redirect, which
-    // matches this path too, never applies to it.
+    // `/x/:id` outranks `/x/*`, so the parent's `/x/legacy/*` redirect, which matches this path too, never applies to it.
     const owned = await textAt(src, "/x/legacy");
     expect(owned).toContain("Detail legacy");
     expect(owned).not.toContain("the redirect target");

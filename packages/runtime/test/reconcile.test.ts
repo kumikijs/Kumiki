@@ -1,11 +1,3 @@
-// Tile-level keyed diff (issue #187) — behavioural regression suite for the
-// renderer's reconcile path. These tests drive the runtime through `mount()`;
-// what they lock in is *DOM node identity across re-render*: sibling tiles that
-// did not change must keep the very same HTMLElement instance, so focus / caret
-// / <select> state / event listeners survive a slot update without going
-// through the snapshot-restore fallback (which only exists as a safety net for
-// tiles that DID change).
-
 import type {
   AppShape,
   Episode,
@@ -42,10 +34,6 @@ function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): ReducerSpe
   };
 }
 
-// Column with:
-//   [0] heading bound to `count`  (this one changes each render)
-//   [1..N] static text rows       (these never change → identity must be kept)
-// Optionally an input at the end for the focus test.
 function makeStripApp(opts: {
   rows: number;
   withInput?: boolean;
@@ -90,11 +78,6 @@ function makeStripApp(opts: {
   return Object.assign(app, { _live: live });
 }
 
-/**
- * The child a test says is at `i`. `children[i]` is optional to the
- * typechecker, and a missing one should fail the test that named it rather
- * than compare `undefined` against the element it was supposed to be.
- */
 const childAt = (parent: Element, i: number): Element =>
   defined(parent.children[i], `child ${i} of <${parent.tagName.toLowerCase()}>`);
 
@@ -125,10 +108,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     app._rerender?.();
 
     expect(root.firstElementChild).toBe(savedColumn); // root unchanged
-    // #190: identity-preserving reconciliation. The heading's text prop
-    // changed, but the per-kind patcher mutates .textContent in place and
-    // returns the same HTMLElement — no more subtree teardown for a leaf
-    // data-prop change. Pre-#190 this asserted `not.toBe` (rebuild path).
     expect(childAt(column, 0)).toBe(savedHeading);
     expect(childAt(column, 0).textContent).toBe("Count: 1");
     // Every sibling row survived — SAME element reference.
@@ -140,8 +119,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
   });
 
   it("preserves DOM identity for the containing column when only a child changes", () => {
-    // The parent column's own data props are unchanged across renders, so the
-    // reconcile must recurse into its children instead of rebuilding it.
     const app = makeStripApp({ rows: 3 });
     const { dispose } = mount(app, root);
     const savedColumn = root.firstElementChild;
@@ -165,9 +142,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     app._live.count = 1;
     app._rerender?.();
 
-    // Identity of the input element itself must survive — the snapshot layer
-    // could only reproduce focus, never element identity, so this asserts that
-    // reconcile (not snapshot/restore) is what preserved focus.
     expect(root.querySelector("input")).toBe(savedInput);
     expect(document.activeElement).toBe(savedInput);
     expect(savedInput.selectionStart).toBe(2);
@@ -176,9 +150,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
   });
 
   it("rebuilds the whole subtree when child list length changes", () => {
-    // Without keys (#188), a length change falls back to a subtree rebuild —
-    // the test just locks in that the app does not crash and the new content
-    // renders correctly.
     let rows = 2;
     const app: AppShape = {
       slots: {},
@@ -205,8 +176,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
   });
 
   it("still fires tile.mount / tile.unmount lifecycle across the reconcile path", () => {
-    // The mount/unmount diff walks the new tree, independent of the DOM diff.
-    // The reconcile changes must not disturb that.
     const events: string[] = [];
     let show = true;
     const named = (name: string, child: TileNode): TileNode => ({
@@ -246,12 +215,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
   });
 
   it("does not multiply-register event listeners on reused DOM nodes", () => {
-    // If reconcile re-attached handlers to a reused element, addEventListener-
-    // based handlers would accumulate and a single click would fire N reducers.
-    // Prove the count stays at one. The path here is the button's own
-    // `INPUT_STATE` slot (`tiles/input/_shared.ts`), not the universal four — those
-    // register through `installUiEventListeners`, which is idempotent per
-    // element, and `universal-handlers.test.ts` holds them to the same count.
     let clicks = 0;
     const app: AppShape & { _live: { n: number } } = Object.assign(
       {
@@ -291,13 +254,7 @@ describe("runtime: tile-level keyed diff (#187)", () => {
       { _live: { n: 0 } },
     );
     const { dispose } = mount(app, root);
-    // Capture the button element BEFORE any re-renders. If reuse breaks and
-    // reconcile silently rebuilds it, `savedBtn !== root.querySelector("button")`
-    // will catch the fresh-render case (which would install exactly one
-    // fresh listener and pass the click count check by coincidence).
     const savedBtn = root.querySelector("button") as HTMLButtonElement;
-    // Force several re-renders. If reconcile re-attached handlers, each click
-    // below would fire once per prior render.
     app._rerender?.();
     app._rerender?.();
     app._rerender?.();
@@ -308,8 +265,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
   });
 
   it("rebuilds the element in place when the tile kind at a position changes", () => {
-    // Covers the `oldNode.kind !== newNode.kind` branch — the walker must
-    // splice a fresh element at that position while preserving siblings.
     let showHeading = true;
     const app: AppShape = {
       slots: {},
@@ -336,8 +291,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     showHeading = false;
     app._rerender?.();
 
-    // Same column, same top / bottom, but middle became a fresh element of a
-    // different tag (`text` renders a <div>-family element, not <h1>).
     expect(root.firstElementChild).toBe(column);
     expect(childAt(column, 0)).toBe(savedTop);
     expect(childAt(column, 2)).toBe(savedBottom);
@@ -348,9 +301,6 @@ describe("runtime: tile-level keyed diff (#187)", () => {
   });
 
   it("preserves intermediate container identity on a deep-tree leaf change", () => {
-    // Every level between the root and the changing leaf must reuse its DOM
-    // node — this locks in that the walker recurses through unchanged parents
-    // instead of rebuilding the whole path.
     const live = { n: 0 };
     const app: AppShape = {
       slots: { n: { value: 0 } },
@@ -390,20 +340,13 @@ describe("runtime: tile-level keyed diff (#187)", () => {
     expect(childAt(column, 0)).toBe(savedSibling);
     expect(childAt(column, 1)).toBe(savedBox);
     expect(childAt(savedBox, 0)).toBe(savedCard);
-    // #190: leaf-tile data-prop change is patched in place, so element
-    // identity is preserved. Pre-#190 this asserted `not.toBe` (rebuild).
     expect(childAt(savedCard, 0)).toBe(savedHeading);
     expect(childAt(savedCard, 0).textContent).toBe("deep 7");
     dispose();
   });
 });
 
-// Keyed diff (issue #188) — once `TileNode.key` is present on every child at a
-// given level, reconcile matches children by key across renders. Reorder,
-// insert, and remove all preserve DOM identity of the surviving children. Old
-// bundles (children without `key`) still work via the structural path locked in
-// by the #187 suite above.
-describe("runtime: keyed reconcile (#188)", () => {
+describe("runtime: keyed reconcile", () => {
   let root: HTMLElement;
 
   beforeEach(() => {
@@ -488,12 +431,6 @@ describe("runtime: keyed reconcile (#188)", () => {
   });
 
   it("preserves DOM-only state (a manually-set input value) across a reorder of keyed items", () => {
-    // The key guarantee for reorder is DOM element identity: because the very
-    // same HTMLInputElement is reused, anything the browser tracked on it
-    // survives — `<select>` value, `<details>` open state, focus, caret, and
-    // in this test a manually-set input value that the reconciler is unaware
-    // of. Using an input keeps the test decoupled from the select tile's
-    // option-value serialization details.
     let order = ["a", "b", "c"];
     const app: AppShape = {
       slots: {},
@@ -549,8 +486,6 @@ describe("runtime: keyed reconcile (#188)", () => {
     order = ["c", "b", "a"];
     app._rerender?.();
 
-    // The DOM element identity for i-b is unchanged; browser focus and caret
-    // therefore survive naturally (no snapshot/restore path needed).
     expect(root.querySelector("#i-b")).toBe(inputB);
     expect(document.activeElement).toBe(inputB);
     expect(inputB.selectionStart).toBe(1);
@@ -559,10 +494,6 @@ describe("runtime: keyed reconcile (#188)", () => {
   });
 
   it("falls back to structural diff when only some children carry a key (mixed)", () => {
-    // Mixed-key children (some entries have `key`, some do not) should not
-    // enter the key-map path — reconcile keeps the current structural behavior
-    // (rebuild on length change). This locks in the design decision that key
-    // matching is all-or-nothing per parent.
     let mode: "same" | "grow" = "same";
     const app: AppShape = {
       slots: {},
@@ -586,8 +517,6 @@ describe("runtime: keyed reconcile (#188)", () => {
     mode = "grow";
     app._rerender?.();
 
-    // Structural path rebuilds the whole subtree on length change — the fresh
-    // column has 3 children, the old column reference is detached from DOM.
     const rebuiltColumn = root.firstElementChild as HTMLElement;
     expect(rebuiltColumn).not.toBe(initialColumn);
     expect(Array.from(rebuiltColumn.children).length).toBe(3);
@@ -595,10 +524,6 @@ describe("runtime: keyed reconcile (#188)", () => {
   });
 
   it("keyed removal of one instance does NOT fire tile.unmount when another same-named tile remains (mount/unmount is name-based, not per-instance)", () => {
-    // Lock in the current name-based lifecycle semantics: removing one keyed
-    // Row while another Row is still mounted keeps the name in the mounted
-    // set → unmount does NOT fire. If we ever move to per-instance lifecycle
-    // this assertion must change accordingly.
     const events: string[] = [];
     let showTwo = true;
     const app: AppShape = {
@@ -650,10 +575,6 @@ describe("runtime: keyed reconcile (#188)", () => {
   });
 
   it("fires tile.unmount when the last instance of a keyed user tile is removed", () => {
-    // Complement to the "one of many" test above: removing the LAST Row
-    // takes the name out of the mounted set, so tile.unmount(Row) must fire.
-    // Proves the keyed removal path is not silently dropping the lifecycle
-    // signal that the outer render-pass walk needs to observe.
     const events: string[] = [];
     let showRow = true;
     const app: AppShape = {
@@ -692,11 +613,6 @@ describe("runtime: keyed reconcile (#188)", () => {
   });
 
   it("panics on duplicate sibling keys (loud fallback, not silent DOM collapse)", () => {
-    // Two children with the same key would collapse into one DOM element
-    // silently — a bug class the outer bailout must at least surface. The
-    // reconciler throws, the outer render pass catches, records a
-    // 'reconcile' panic, and does a full rebuild. We only need to observe
-    // that the app does not crash and that DOM shape reflects the new tree.
     let dupe = false;
     const app: AppShape = {
       slots: {},
@@ -723,8 +639,6 @@ describe("runtime: keyed reconcile (#188)", () => {
       const { dispose } = mount(app, root);
       dupe = true;
       app._rerender?.();
-      // Both duplicated children must actually be present after the outer
-      // rebuild — full rebuild renders them positionally.
       const column = root.firstElementChild as HTMLElement;
       expect(column.children.length).toBe(2);
       expect(childAt(column, 0).textContent).toBe("a1");
@@ -738,12 +652,6 @@ describe("runtime: keyed reconcile (#188)", () => {
   });
 
   it("panics when a keyed tile's key is empty / null / undefined (compiler-side helper enforcement)", () => {
-    // Direct assertion of the invariant the compiler's `_wk` helper enforces.
-    // Runtime constructing a TileNode with an empty key manually is a bug —
-    // we prove the reconciler's own duplicate-detection path fires (empty
-    // strings collide when siblings coincide, but even a single "" is a
-    // programmer error). This test locks the runtime-side signal; the
-    // compiler side is covered by _wk itself which throws before emitting.
     let broken = false;
     const app: AppShape = {
       slots: {},
@@ -780,13 +688,6 @@ describe("runtime: keyed reconcile (#188)", () => {
     }
   });
 });
-
-// -----------------------------------------------------------------------------
-// #189: episode `signal-update` step's `binds-updated` is populated from the
-// tiles / binds the keyed diff (#187) actually patched. Same fixture pattern as
-// the reconcile tests above, but each case dispatches a reducer through the
-// `_dispatch` seam so the outer `applyReducer` fires a trailing `signal-update`
-// step that we can inspect on the logger.
 
 type DispatchApp = AppShape & {
   _dispatch: (name: string, el: Record<string, unknown>) => void;
@@ -827,9 +728,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("populates binds-updated with only the tiles the diff rebuilt", () => {
-    // The static rows are reused; only the heading is rebuilt. `binds-updated`
-    // must list "heading" alone — proving the log distinguishes "changed" from
-    // "unchanged" at the granularity of what the diff actually touched.
     const app = makeStripApp({ rows: 5 }) as unknown as DispatchApp;
     const { logger, committed } = makeLogger();
     const { dispose } = mount(app, root, { episodeLogger: logger });
@@ -841,8 +739,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("emits the bind expression (bind + bindPath joined) for a rebuilt form control", () => {
-    // Same shape as data-kumiki-bind, so an authored `bind=todo.title` shows up
-    // as the same "todo.title" identifier a reader would see in the DOM.
     let bindPath = ["title"];
     let value = "initial";
     const app: AppShape = {
@@ -911,15 +807,11 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
 
     (app as unknown as DispatchApp)._dispatch("append", {});
 
-    // Only the newly-mounted "c" child fires — "a" / "b" are keyed survivors
-    // and pass through reconcileNode without hitting a rebuild path.
     expect(lastBindsUpdated(committed)).toEqual(["c"]);
     dispose();
   });
 
   it("emits an empty binds-updated when the dirty slot did not change the tile tree", () => {
-    // The reducer writes a slot but the `root()` closure returns identical data
-    // — reconcile walks the tree, finds no differences, rebuilds nothing.
     const app: AppShape = {
       slots: { hidden: { value: 0 } },
       caps: [],
@@ -942,8 +834,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
 
     (app as unknown as DispatchApp)._dispatch("touchHidden", {});
 
-    // dirty-slots still records the write; binds-updated is empty because the
-    // diff found nothing visible to patch.
     const ep = committed[committed.length - 1]!;
     const step = ep.steps.find((s) => s.kind === "signal-update") as
       | { "dirty-slots": string[]; "binds-updated": string[] }
@@ -955,10 +845,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("emits the new tile's identifier when the kind at a position changes", () => {
-    // Directly exercises the `oldNode.kind !== newNode.kind` branch of
-    // reconcileNode. The rebuilt element carries the NEW kind, which is what
-    // shows up in binds-updated — the log describes what was mounted, not
-    // what was thrown away.
     let showHeading = true;
     const app: AppShape = {
       slots: { swap: { value: 0 } },
@@ -996,9 +882,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("emits just the bind name when bindPath is absent (not just empty array)", () => {
-    // `bindPath === undefined` is a distinct branch from `bindPath === []` —
-    // both must collapse to the bare bind name. Codegen omits the field
-    // entirely for a bare `bind=note` input, so this is the common shape.
     let value = "initial";
     const app: AppShape = {
       slots: { flip: { value: 0 } },
@@ -1029,13 +912,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("leaves binds-updated empty when reconcile throws and full-render bails out", () => {
-    // Regression guard: reconcile's local `touched` accumulator lives inside
-    // `reconcileTree` — a throw partway through (here: duplicate sibling keys
-    // in `reconcileKeyedChildren`) drops the array on the floor, so
-    // `lastRenderTouched` in `renderPass` is never assigned and stays at the
-    // `[]` reset. The episode step records `binds-updated: []` alongside the
-    // panic step. A future refactor that leaks partial touched IDs across the
-    // bailout would fail this test.
     let broken = false;
     const app: AppShape = {
       slots: { rev: { value: 0 } },
@@ -1083,9 +959,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("dedups identifiers when multiple rebuilt subtrees share an identifier", () => {
-    // Two <text> tiles at different positions both change → each is a separate
-    // rebuild, but the identifier ("text") collapses to a single entry in the
-    // log so the field stays a small, human-scannable set.
     let n = 0;
     const app: AppShape = {
       slots: { n: { value: 0 } },
@@ -1142,11 +1015,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   }
 
   it("names only the rebuilt parent when a hole abandons the positional walk", () => {
-    // #216. The walk reaches the hole at index 1 only after reconciling index
-    // 0 — which patched "a" in place and pushed its identifier — and then
-    // rebuilds the parent, throwing that patch away. The episode is the
-    // author-facing causal record, so it may only name what survived the
-    // render: the parent, and nothing else.
     let holed = false;
     const app = childListApp(() =>
       holed
@@ -1167,11 +1035,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("names only the rebuilt parent when an unmapped child abandons the walk", () => {
-    // Same shape, other bail. The host renderer maps its first child through
-    // `ctx.render` and hand-builds the rest, so index 0 reconciles and index 1
-    // has no element to reconcile against. Unkeyed on purpose: fully keyed
-    // children would take the keyed pass, which throws on a missing mapping
-    // instead of falling back.
     let label = "a";
     const app = childListApp(() => [
       { kind: "text", text: label },
@@ -1191,15 +1054,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("leaves the element map describing only what is mounted after a bail", () => {
-    // The walk used to write `newMap` entries for the children it applied
-    // before giving up, and relied on the parent's rebuild walking the same
-    // child nodes to overwrite them. True of every renderer that goes through
-    // `ctx.render`, but never a stated rule. Now nothing is written at all, so
-    // the map the NEXT render reads describes only mounted elements.
-    //
-    // A regression guard rather than a reproduction: a stale entry would hand
-    // the next walk a detached element, `replaceWithFreshTile` would throw on
-    // the missing parent, and the bailout would record a panic.
     let holed = false;
     const app = childListApp(() =>
       holed
@@ -1251,8 +1105,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   }
 
   it("emits each freshly mounted child when a list grows from empty", () => {
-    // Same granularity as a keyed insert: each new child is the root of a
-    // subtree that was just mounted, and the parent kept its element.
     const app = listSwapApp([], ["a", "b", "c"]);
     const { logger, committed } = makeLogger();
     const { dispose } = mount(app, root, { episodeLogger: logger });
@@ -1264,9 +1116,6 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 
   it("emits the parent when a list is cleared to empty", () => {
-    // Per-child would give `[]` here — indistinguishable from "the diff found
-    // nothing to do", for a render that visibly emptied the DOM. The parent is
-    // what changed, and it is what the rebuild path used to report.
     const app = listSwapApp(["a", "b"], []);
     const { logger, committed } = makeLogger();
     const { dispose } = mount(app, root, { episodeLogger: logger });
@@ -1280,13 +1129,7 @@ describe("runtime: episode binds-updated wiring (#189)", () => {
   });
 });
 
-// Per-kind identity-preserving patch (#190). These lock in the invariant
-// that a same-kind tile whose data props diverge is reconciled in place —
-// the mounted HTMLElement is reused across the render, so browser-owned
-// state (`<select>` open, `<video>` playback, `<details>` open,
-// contenteditable caret) survives what pre-#190 was a full teardown +
-// createElement + replaceChild cycle.
-describe("runtime: identity-preserving patch (#190)", () => {
+describe("runtime: identity-preserving patch", () => {
   let root: HTMLElement;
 
   beforeEach(() => {
@@ -1297,8 +1140,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
     document.body.removeChild(root);
   });
 
-  // A minimal single-slot app whose root() returns whatever `treeFn` produces —
-  // used across the suite so each per-kind test can focus on one tile.
   function drive(treeFn: (s: Record<string, unknown>) => TileNode): {
     app: AppShape;
     dispose: () => void;
@@ -1354,10 +1195,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
     }));
     const sel = root.querySelector("select") as HTMLSelectElement;
     expect(sel).toBeTruthy();
-    // Seed a dataset marker the runtime never writes — its survival across
-    // the rerender is direct evidence that the same HTMLSelectElement was
-    // reused (pre-#190 the select was destroyed and rebuilt on any
-    // `options` change, and this marker would vanish).
     sel.dataset.probe = "seeded";
     const optionsBefore = sel.options.length;
     expect(optionsBefore).toBe(3);
@@ -1374,10 +1211,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
   });
 
   it("select: carries its bind path as the marker focus restoration looks it up by", () => {
-    // §10.3.5 puts the full bind path on the element, and §10.3.9 re-identifies
-    // a focused `<select>` by that attribute after a wholesale swap. Only the
-    // SSR pass wrote it, so a picker fell back to positional restoration on the
-    // client — and the served page carried an attribute hydration removed.
     const { app, dispose } = drive((s) => ({
       kind: "column",
       children: [
@@ -1389,8 +1222,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
     const sel = defined(root.querySelector("select"), "the mounted select");
     expect(sel.dataset.kumikiBind).toBe("draft.title");
 
-    // A render that drops `bind` takes the marker with it: the element is
-    // reused, and a stale path would restore focus onto the wrong control.
     (app as unknown as { bump: () => void }).bump();
     expect(defined(root.querySelector("select"), "the reused select")).toBe(sel);
     expect(sel.dataset.kumikiBind).toBeUndefined();
@@ -1468,12 +1299,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
   });
 
   it("input: bind swap A→B routes new writes to the new slot (INPUT_STATE handler slot refresh)", () => {
-    // #190 handler-slot pattern: on the patch path, the input's native
-    // `input` listener stays the same but dispatches through the WeakMap
-    // slot, so `bind` swapping to a different slot after a data-prop patch
-    // must land the next keystroke in the NEW slot. Pre-#190 (full rebuild
-    // path) this always worked because the listener was re-created; the
-    // handler-slot pattern preserves that guarantee across in-place patch.
     let bind: "a" | "b" = "a";
     const live: Record<string, unknown> = { a: "", b: "" };
     const app: AppShape = {
@@ -1522,10 +1347,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
   });
 
   it("applyStateStyles: repeated patch does not grow data-kumiki-state or the shared stylesheet", () => {
-    // Pre-fix each patch appended a fresh token + a fresh rule; the element
-    // attribute and the `<style id=kumiki-state-styles>` node both grew
-    // unboundedly. Idempotency guard collapses identical re-applications to
-    // a no-op; a real state-prop change is still allowed.
     const app: AppShape = {
       slots: { n: { value: 0 } },
       caps: [],
@@ -1571,11 +1392,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
   });
 
   it("list: `ordered` flip declines the in-place patch WITHOUT recording a reconcile panic", () => {
-    // `PatchRequiresRebuild` is a controlled escape hatch — the outer
-    // reconcile catches it specifically and falls back to a subtree rebuild
-    // WITHOUT calling `episode.recordPanic`, so a legitimate `<ul>` ↔ `<ol>`
-    // flip does not pollute the episode log. Raw throws still panic (locked
-    // in by the "reconcile bailout records a panic" test elsewhere).
     let ordered = false;
     const app: AppShape = {
       slots: {},
@@ -1603,9 +1419,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
   });
 
   it("binds-updated records the patched tile's identifier", () => {
-    // A slot bump changes the input's `value` — reconcile takes the patch
-    // path, and `tileTouchedId` is still pushed so the causal chain
-    // `slot n → binds-updated ["field"]` lands in the episode log.
     const live: Record<string, unknown> = { n: 0 };
     const app: AppShape = {
       slots: { n: { value: 0 } },
@@ -1639,16 +1452,6 @@ describe("runtime: identity-preserving patch (#190)", () => {
 });
 
 describe("runtime: reconcile child-placement contract", () => {
-  // The keyed child pass takes ownership of its children's DOM slots: it moves
-  // survivors with `parentEl.appendChild` and drops unmatched ones with
-  // `parentEl.removeChild`. Both only address elements the parent element holds
-  // DIRECTLY. `overlay` breaks that: children 1..N are each wrapped in an
-  // absolutely-positioned `overlay-layer` div, so the element the reconciler
-  // has mapped for a child is a grandchild of the overlay. Taking the keyed
-  // path there tears children out of their layer (destroying the stacking) and
-  // strands the emptied layer divs in the DOM. The walker must recognise that
-  // it does not own those slots and fall back to the structural walk, whose
-  // rebuild path re-enters the renderer and re-wraps correctly.
   let root: HTMLElement;
 
   beforeEach(() => {
@@ -1666,9 +1469,6 @@ describe("runtime: reconcile child-placement contract", () => {
       effects: {},
       init: [],
       reducers: [],
-      // Every child keyed → the keyed gate would fire if placement were not
-      // checked. Mirrors `overlay(for l in layers Layer(l))`, where the
-      // compiler stamps an implicit key on each iteration's tile.
       root: (): TileNode => ({
         kind: "overlay",
         props: { align: "center" },
@@ -1739,10 +1539,6 @@ describe("runtime: reconcile child-placement contract", () => {
   });
 
   it("re-wraps correctly when a wrapped keyed list grows", () => {
-    // Growth lands on the structural walk's rebuild path (the length changed
-    // and the keyed matcher already stood down), so the overlay renderer runs
-    // again from scratch. What must come back is the same shape: one base
-    // child in normal flow plus one positioning layer per remaining tile.
     let order = ["a", "b", "c"];
     const app = overlayLayersApp(() => order);
     const { dispose } = mount(app, root);
@@ -1764,12 +1560,6 @@ describe("runtime: reconcile child-placement contract", () => {
   });
 
   it("splices a rebuilt wrapped child into its wrapper, not onto the parent", () => {
-    // The structural walk discards `reconcileNode`'s return value because
-    // `replaceWithFreshTile` has already spliced the new element in — anchored
-    // on the OLD element's parent, which under `overlay` is the layer div. An
-    // anchor taken from the parent tile's element instead would put the fresh
-    // element directly on the overlay and empty the layer, and every other
-    // assertion in this file would still pass.
     let secondKind: "text" | "heading" = "text";
     const app: AppShape = {
       slots: {},
@@ -1790,13 +1580,9 @@ describe("runtime: reconcile child-placement contract", () => {
     const layer = layerDivs(overlay)[0] as HTMLElement;
     expect(layer.children.length).toBe(1);
 
-    // A kind change is the one path that always rebuilds, so this exercises
-    // the splice without depending on which patcher is registered.
     secondKind = "heading";
     app._rerender?.();
 
-    // Same layer element, now holding the rebuilt tile — and the overlay still
-    // has exactly its base child plus that layer.
     expect(layerDivs(overlay)[0]).toBe(layer);
     expect(layer.children.length).toBe(1);
     expect((layer.children[0] as HTMLElement).tagName).toBe("H1");
@@ -1805,8 +1591,6 @@ describe("runtime: reconcile child-placement contract", () => {
   });
 
   it("still takes the keyed path when the parent places its children directly", () => {
-    // Guard against the placement check over-triggering: `column` appends
-    // children directly, so keyed reuse across a reorder must be unaffected.
     let order = ["a", "b", "c"];
     const app: AppShape = {
       slots: {},
@@ -1830,17 +1614,6 @@ describe("runtime: reconcile child-placement contract", () => {
     dispose();
   });
 });
-
-// -----------------------------------------------------------------------------
-// Empty-side child lists. A parent whose child list is empty on exactly one side
-// of a render has nothing to match — not by key, not by position. Every new
-// child is a fresh mount and every old child departs, so the only question left
-// is WHERE the new children go, and the answer belongs to the parent's renderer
-// (`overlay` wraps every child after the first in a positioning layer; the
-// surfaces wrap all of theirs in a content div). With no mounted child left, the
-// placement probe that normally answers that has nothing to testify with — which
-// is why the walker re-enters the renderer for a fresh interior and moves that
-// into the element it is keeping, instead of rebuilding the parent.
 
 function emptySideApp(root: () => TileNode): AppShape {
   return { slots: {}, caps: [], effects: {}, init: [], reducers: [], root };
@@ -1908,9 +1681,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("preserves the parent's browser-owned state across a clear and a refill", () => {
-    // happy-dom has no layout, so `scrollTop` cannot stand in for "the element
-    // survived". A seeded expando can: it lives on the instance and dies with
-    // it, which is exactly the thing the rebuild path used to take away.
     let order = ["a", "b"];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -1929,11 +1699,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("wraps the new children through the parent's renderer when the old list was empty", () => {
-    // The hazard the whole design turns on. `overlay` places child[0] in normal
-    // flow and wraps the rest in absolutely-positioned layers. Appending the new
-    // children straight onto the overlay — which is what the keyed pass does,
-    // and what an "empty lists are keyed" one-liner would have let it do here —
-    // produces three bare siblings and no stacking at all.
     let order: string[] = [];
     const app = rowsApp(() => order, "overlay");
     const { dispose } = mount(app, root);
@@ -1975,10 +1740,6 @@ describe("runtime: child lists that are empty on one side", () => {
     "drawer",
     "popover",
   ] as const)("fills a %s through its content wrapper, not onto the surface itself", (kind) => {
-    // The surfaces wrap ALL of their children, so unlike `overlay` they are
-    // caught by the placement measurement the moment one child is mounted —
-    // but at zero there is nothing to measure, and this is the path that
-    // decides where the first ones land.
     let order: string[] = [];
     const app = rowsApp(() => order, kind);
     const { dispose } = mount(app, root);
@@ -2009,10 +1770,6 @@ describe("runtime: child lists that are empty on one side", () => {
   }
 
   it("announces a modal as the dialog it is, under the name its title gives it", () => {
-    // The served page already said both; only the mount path did not, so the
-    // first hydration took the role off the dialog and left it unnamed. A
-    // title that changes renames it, and one that goes away leaves no stale
-    // name behind.
     let title: string | undefined = "Confirm";
     const app = surfaceApp(() => title);
     const { dispose } = mount(app, root);
@@ -2032,12 +1789,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("lets a modal's own role and aria win, and loses the renderer's with them", () => {
-    // The tradeoff `patchCommonProps` documents, now that a renderer writes
-    // under two of the names the common props also write. A tile that says
-    // `role` / `aria.label` wins on both paths — and a render that STOPS
-    // saying one removes the attribute by name, taking `role="dialog"` and the
-    // title's label with it. Pinned rather than fixed: removal-by-name is what
-    // stops a stale author value from outliving the render that set it.
     let props: TileProps | undefined = { role: "alertdialog", aria: { label: "Careful" } };
     const app = emptySideApp(
       () => ({ kind: "modal", open: true, title: "Confirm", children: [], props }) as TileNode,
@@ -2047,10 +1798,6 @@ describe("runtime: child lists that are empty on one side", () => {
     expect(surface.getAttribute("role")).toBe("alertdialog");
     expect(surface.getAttribute("aria-label")).toBe("Careful");
 
-    // Both go: `patchCommonProps` removes by NAME, and the renderer wrote
-    // under the same two names. The title's own label does not survive the
-    // author's `aria` map disappearing either — a fresh mount would restore
-    // both, a patch cannot.
     props = undefined;
     app._rerender?.();
     expect(root.firstElementChild).toBe(surface);
@@ -2060,9 +1807,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("rebuilds the renderer's own interior alongside the children", () => {
-    // `details` owns a `<summary>` that is not a tile child. Emptying `oldEl`
-    // and appending the new children would drop it; re-entering the renderer
-    // brings it back, and `open` rides on the retained element itself.
     let order = ["a", "b"];
     const app = rowsApp(() => order, "details");
     const { dispose } = mount(app, root);
@@ -2105,9 +1849,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("keeps the parent when an UNKEYED list grows from empty", () => {
-    // The empty boundary is key-agnostic: with nothing on the old side there is
-    // nothing keys could have matched against. `column(when(open, X))` is the
-    // commonest shape this reaches, and it carries no key at all.
     let open = false;
     const app = emptySideApp(() => ({
       kind: "column",
@@ -2127,9 +1868,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("does not re-enter the renderer when both sides are empty", () => {
-    // Ordering guard: the both-empty early return must stay ahead of the new
-    // branch, or every render of a childless container would rebuild its
-    // interior for nothing.
     let heading = "one";
     let renders = 0;
     const counting: TileRenderers = {
@@ -2159,9 +1897,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("hands the refilled list back to the ordinary keyed pass on the next render", () => {
-    // The new branch overwrites the node→element mapping the fresh render made.
-    // If it did not, the following render would look its children up in the map,
-    // miss, and throw the keyed pass's invariant error.
     let order: string[] = [];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -2180,9 +1915,6 @@ describe("runtime: child lists that are empty on one side", () => {
   });
 
   it("leaves the old element untouched when the renderer throws mid-transition", () => {
-    // `ctx.render` runs before `replaceChildren` on purpose: a renderer that
-    // throws must leave the mounted element exactly as it was, so the outer
-    // bailout's full rebuild is the only thing that changes the DOM.
     let armed = true;
     let order = ["a", "b", "c"];
     const oneShot: TileRenderers = {
@@ -2206,8 +1938,6 @@ describe("runtime: child lists that are empty on one side", () => {
       order = [];
       app._rerender?.();
 
-      // The throw landed in the reconcile bailout, and the element the walker
-      // was holding still carries the children it had before the attempt.
       expect(errors.flat().map(String).join(" ")).toContain("renderer refused an empty column");
       expect(column.children.length).toBe(3);
       expect(root.firstElementChild).not.toBe(column);
@@ -2230,11 +1960,6 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
   });
 
   it("re-wraps a newcomer that joins a one-child overlay", () => {
-    // `overlay` places its FIRST child directly, so with exactly one mounted
-    // child the placement probe truthfully reports "nothing is wrapped" — and
-    // the keyed pass then appends the newcomer bare, with no layer around it.
-    // The probe can only speak for slots that already exist; whether a NEW child
-    // can be placed is a property of the renderer, not of the current DOM.
     let order = ["solo"];
     const app = emptySideApp(() => ({
       kind: "overlay",
@@ -2257,9 +1982,6 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
   });
 
   it("still takes the keyed path for a one-child overlay with no newcomer", () => {
-    // The declaration must only bite when there is something to place. A
-    // same-membership render of a single-layer overlay has nothing to insert, so
-    // the keyed pass runs and the mounted element is reused.
     let text = "one";
     const app = emptySideApp(() => ({
       kind: "overlay",
@@ -2279,11 +2001,6 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
   });
 
   it("takes a host renderer at its word when it places children directly", () => {
-    // The declaration covers built-ins only. Declining for every unknown kind
-    // would be the safe-looking choice and would cost every well-behaved host
-    // integration its keyed inserts — so an unknown kind is trusted, and the
-    // measurement still catches one that wraps as soon as a child is mounted.
-    // Pinned because "unknown ⇒ unsafe" is a tempting future tightening.
     let order = ["a"];
     const hostTiles: TileRenderers = {
       ...layoutTiles,
@@ -2318,9 +2035,6 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
   });
 
   it("agrees with what the built-in renderers actually do with their children", () => {
-    // `WRAPPING_TILE_KINDS` is a declaration, and a declaration can drift from
-    // the renderers it describes. Mount every container kind with two children
-    // and compare the DOM the renderer produced against what the set claims.
     const containers: Array<TileNode["kind"]> = [
       "page",
       "column",
@@ -2380,10 +2094,6 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
       if (kids.length !== 2) {
         mismatches.push(`${kind}: rendered ${kids.length} of its 2 children — update the list`);
       } else {
-        // Membership, not `child.parentElement === parent`: happy-dom hands out
-        // `<form>` behind a Proxy (for named-item access), so the identity
-        // comparison reports a wrapper that is not there. The structural answer
-        // is what this test is about.
         const direct = new Set(Array.from(parent.children));
         const allDirect = kids.every((k) => direct.has(k));
         if (allDirect === WRAPPING_TILE_KINDS.includes(kind)) {
@@ -2405,30 +2115,8 @@ describe("runtime: keyed inserts under a renderer that wraps its children", () =
   });
 });
 
-// -----------------------------------------------------------------------------
-// The minimum move set. Matching children by key says WHICH old element belongs
-// to which new child; it does not say how many of them have to be touched to
-// get the new sequence. Re-attaching a node blurs it, so every survivor the
-// reorder moves for no reason costs exactly the state the keyed path exists to
-// keep: focus, the caret, an open `<select>`, an in-flight IME composition.
-//
-// These tests observe the DOM operations themselves rather than the resulting
-// order, because the order was already correct — what was wrong was the price
-// paid for it.
-
 type Placement = { node: Node; moved: boolean };
 
-/**
- * Record every child placement the reconciler performs on `parent`, saying for
- * each whether it MOVED a node already mounted there or inserted a fresh one.
- * The counter lives here rather than in the runtime because "how many moves"
- * is a property of what reaches the DOM, and the DOM node is where that can be
- * observed without the implementation reporting on itself.
- *
- * `appendChild` is wrapped alongside `insertBefore` so a test asserting "this
- * element was never placed" cannot be satisfied by the implementation simply
- * reaching for the other method.
- */
 function trackPlacements(parent: HTMLElement): Placement[] {
   const placements: Placement[] = [];
   const insertBefore = parent.insertBefore.bind(parent) as (node: Node, ref: Node | null) => Node;
@@ -2470,9 +2158,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   }
 
   it("touches nothing when the order is unchanged", () => {
-    // The common case, and the one the unconditional sweep was worst at: a
-    // list re-rendered because something else in the app changed. Every child
-    // is already where it belongs, so the reorder has nothing to do at all.
     let order = ["a", "b", "c", "d"];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -2489,8 +2174,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("moves one element when one element moved", () => {
-    // `d` to the front leaves `a b c` in their existing relative order, so they
-    // are the longest run that can stay put and `d` is the only thing to place.
     let order = ["a", "b", "c", "d"];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -2508,9 +2191,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("moves n-1 elements for a full reversal — one survivor always stays", () => {
-    // The worst case for a keyed list: no two children keep their relative
-    // order, so the longest run that can stay put has length one. Even here the
-    // sweep's Nth move is avoidable.
     let order = ["a", "b", "c"];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -2538,8 +2218,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
     order = ["x", "a", "b", "c"];
     app._rerender?.();
 
-    // One placement, and it is a mount rather than a move: nothing that was
-    // already on the page was touched to make room.
     expect(placements.length).toBe(1);
     expect(placements[0]?.moved).toBe(false);
     const after = Array.from(column.children) as HTMLElement[];
@@ -2549,8 +2227,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("moves nothing when a list shrinks in the middle", () => {
-    // Removal already addresses the departing element directly. What the sweep
-    // added on top was re-appending every survivor behind it.
     let order = ["a", "b", "c", "d"];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -2567,16 +2243,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("leaves a focused child that did not move alone — no blur, no placement", () => {
-    // The guarantee §10.3.11 makes is that the patch path does not need the
-    // focus-restore fallback, so the test has to hold with that layer out of
-    // the picture. It does: the placement record is taken before the restore
-    // runs and is not something a `.focus()` can put back.
-    //
-    // The `blur` listener states the consequence the user actually feels, but
-    // it does not enforce it here — happy-dom does not model a moved element
-    // losing focus, so it stays at zero even when the element is moved. A real
-    // browser is where that assertion has teeth; the placement record is what
-    // holds the line in this tier.
     let order = ["a", "b", "c", "d"];
     const app: AppShape = {
       slots: {},
@@ -2612,9 +2278,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("mounts, moves and drops in one render and still lands on the new order", () => {
-    // The three things the pass does, interleaved, so their orderings cannot be
-    // right only in isolation: `b` departs, `x` arrives, `d` moves to the front
-    // and `c` stays.
     let order = ["a", "b", "c", "d"];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -2636,10 +2299,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("mounts a wholly new list without moving the departing one out of the way", () => {
-    // No key matches, so every child is a mount and every old one a removal.
-    // The survivors' relative order — the thing that normally decides what to
-    // leave alone — has nothing to say here, and the placements have to produce
-    // the order on their own.
     let order = ["a", "b", "c"];
     const app = rowsApp(() => order);
     const { dispose } = mount(app, root);
@@ -2660,16 +2319,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("anchors the tail on where the child list ended, not on a rebuilt child", () => {
-    // The last new child has no successor to insert against, so it takes the
-    // anchor read from the end of the mounted child list. That read has to
-    // happen before any child is rebuilt: `replaceWithFreshTile` splices a new
-    // element into the old one's slot, and the old element — still what the map
-    // holds — is left detached. An anchor derived after that walks back to the
-    // previous child, whose next sibling is now the rebuilt element, and the
-    // tail lands in front of it instead of at the end.
-    //
-    // `c` changes kind, which is the rebuild reconcile performs silently, and
-    // `a` moves to the tail in the same render.
     let order = ["a", "b", "c"];
     let cKind: "text" | "heading" = "text";
     const app: AppShape = {
@@ -2701,16 +2350,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("keeps a reordered list ahead of content the parent's renderer put after it", () => {
-    // The keyed pass owns its children's slots, not the whole parent. A
-    // renderer is free to keep its own content on either side of them, and a
-    // reorder that appends survivors to the parent walks them past it. Every
-    // built-in that places its children directly happens to keep its own
-    // content in front of them, so this is written with a host renderer — the
-    // integration the placement contract explicitly admits.
-    //
-    // The order moves `a` to the TAIL on purpose: only the last new child
-    // reaches for the end-of-list anchor, so any other permutation would leave
-    // that branch — the one this test exists for — unexercised.
     const hostCard: TileRenderer<"card"> = (node, ctx) => {
       const el = document.createElement("div");
       el.appendChild(document.createElement("header"));
@@ -2744,8 +2383,6 @@ describe("runtime: keyed reorder moves the minimum", () => {
   });
 
   it("mounts a newcomer at the tail ahead of the renderer's own trailing content", () => {
-    // The same anchor, reached by a mount rather than a move: a list that grows
-    // at the end has nothing to insert its newcomer against either.
     const hostCard: TileRenderer<"card"> = (node, ctx) => {
       const el = document.createElement("div");
       for (const child of node.children) el.appendChild(ctx.render(child));

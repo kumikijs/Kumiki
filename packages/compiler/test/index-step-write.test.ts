@@ -5,13 +5,6 @@ import { check, compile, lex, parse } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
-// A reducer's `[…]` step reaches the runtime's setter as `{at: key}`, apart
-// from a field step (language.md §1.6.3): the two are both a string once
-// evaluated, and only the encoding tells the setter that a missing Map entry
-// is one `m[k].f := v` writes nothing through, where a missing record field is
-// a level to build. The runtime's half is pinned in `set-path.test.ts`; this is
-// the compiler's half — what `genSlotAssign` writes — and the two run together.
-
 const SRC = `type Todo = { title: Text, done: Bool }
 type Cell = { n: Int }
 
@@ -95,10 +88,6 @@ describe("the emitted write, run", () => {
     expect(run(app, "mark", { sel: "t9", todos: { t1: todo } }).todos).toEqual({ t1: todo });
   });
 
-  // An absent Map slot — `undefined` after a restore or a decode that found
-  // nothing — is read as the empty Map (`?? {}` around the slot read), so the
-  // two writes do what they do on `{}`: the field write finds no entry and
-  // leaves an empty Map, the entry write inserts.
   it("reads an absent Map slot as the empty Map", async () => {
     const app = await appP;
     expect(run(app, "mark", { sel: "t1", todos: undefined }).todos).toEqual({});

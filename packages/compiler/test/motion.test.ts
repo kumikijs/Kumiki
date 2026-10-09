@@ -51,10 +51,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
   });
 
   it("rejects a non-positive-integer duration / iteration (E0402)", () => {
-    // duration and iteration are spec'd as positive Ints. 0 and floats reach the
-    // validator and must be rejected (they would generate invalid/undefined CSS).
-    // Negatives are unrepresentable — a leading `-` is a separate operator token,
-    // so the theme-record parser rejects them before typechecking.
     const cases = ["duration: 0", "duration: 1.5", "iteration: 0", "iteration: 2.5"];
     for (const timing of cases) {
       const src = `motion Bad = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}, ${timing}}

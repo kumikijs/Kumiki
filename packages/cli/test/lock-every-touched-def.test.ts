@@ -1,8 +1,3 @@
-// An ownership lock covers every definition an op creates, removes or
-// rewrites — not only the name the verb was given. Otherwise an agent refused
-// a direct `replace` / `remove` can reach the same definition through a
-// cascade, a rename, or a body that carries a second definition with it.
-
 import {
   copyFileSync,
   existsSync,
@@ -103,9 +98,6 @@ describe("rename", () => {
   });
 });
 
-// A body is concatenated into the file as written, so one that carries a
-// second definition creates it. The check has to see what the write produced,
-// not what the verb was named with.
 describe("a body that carries another definition", () => {
   beforeEach(() => lockDef(file, "agent:a", "slot.todos*,reducer.*"));
 
@@ -165,10 +157,6 @@ describe("patch apply", () => {
   });
 });
 
-// Reverting a cascade restores every definition it took as one `add` (with a
-// `with` list), and reverting that restore removes the same recorded set. Only
-// the op's named definition is checked before the write; every other member is
-// caught by what the write shows it touched.
 describe("patch revert", () => {
   it("cannot restore a cascade member locked by another agent", () => {
     as("agent:b");

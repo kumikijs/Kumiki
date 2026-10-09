@@ -1,16 +1,3 @@
-// A bundler plugin exists so the bundler can do its job. Inlining the runtime
-// into every compiled module took that away: a project that imports one
-// `.kumiki` file and calls `mount` — the pattern this plugin's own
-// documentation recommends — shipped the runtime twice, and each further
-// `.kumiki` import added another copy. Two copies is not only size: the
-// runtime keeps module-level state (the injected state-style sheet is found by
-// DOM id while its sequence counter restarts per copy), so the copies disagree.
-//
-// The assertions run a real `vite build` and count copies against a baseline
-// measured from a project that imports the runtime and nothing else — a ratio,
-// not a byte count, so they stay true as the runtime grows. The sizes those
-// copies cost are recorded once, in runtime.md §10.8.1.
-
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -28,9 +15,7 @@ mkdirSync(TMP, { recursive: true });
 const RUNTIME_MARK = "kumiki-state-styles";
 
 /**
- * Build a one-entry project and return the concatenated output. `where` is the
- * directory the throwaway project is created under — inside the workspace by
- * default, where `@kumikijs/runtime` resolves from the project itself.
+ * Build a one-entry project and return the concatenated output. `where` is the directory the throwaway project is created, which defaults to a location within the workspace where `@kumikijs/runtime` is resolved from the project itself.
  */
 async function buildProject(
   main: string,
@@ -82,11 +67,6 @@ describe("the built app carries one runtime", () => {
   }, 60_000);
 
   it("builds where the project cannot resolve the runtime at all", async () => {
-    // The shape the default only works in because of the plugin's fallback: a
-    // project that installed @kumikijs/vite and nothing else. Outside the
-    // workspace there is no node_modules to walk up to, so if the fallback
-    // stopped answering, this build would fail to resolve the import rather
-    // than quietly ship two copies.
     const out = await buildProject(
       MOUNTS_THE_APP,
       undefined,
@@ -129,8 +109,6 @@ describe("resolving the runtime", () => {
   it("says nothing when the project resolves the runtime itself", async () => {
     const { run, calls } = resolverWith({ id: "/proj/node_modules/@kumikijs/runtime/index.js" });
     await expect(run("@kumikijs/runtime")).resolves.toBeNull();
-    // …and it asked, rather than assuming: without `skipSelf` the hook would
-    // re-enter itself.
     expect(calls[0]?.[2]).toMatchObject({ skipSelf: true });
   });
 
@@ -138,8 +116,6 @@ describe("resolving the runtime", () => {
     const { run } = resolverWith(null);
     const id = (await run("@kumikijs/runtime")) as string;
     expect(typeof id).toBe("string");
-    // A path Vite can load: posix-separated (Windows backslashes break the
-    // module graph's id comparisons) and actually on disk.
     expect(id).not.toContain("\\");
     expect(readFileSync(id, "utf8").length).toBeGreaterThan(0);
   });

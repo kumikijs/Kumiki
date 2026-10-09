@@ -1,10 +1,3 @@
-// What the headless scenario runner does with a scenario it cannot run.
-//
-// It used to ignore it. `evaluateExpect` handled five keys and silently skipped
-// the rest, so a `.browser.json` — whose assertions are all browser-tier —
-// passed `kumiki run` having checked nothing, and an unknown `do` kind fell
-// through to the last branch and reported a missing `select`.
-
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,8 +41,6 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toContain("domContains");
   });
 
-  // The whole reason this matters: a fixture written for the browser tier
-  // asserts things a headless DOM has no answer for, and passed anyway.
   it("names the tier that owns a browser-only expect key", async () => {
     const r = await run({ steps: [{ expect: { animating: [".spin"] } as never }] });
     expect(r.ok).toBe(false);
@@ -71,11 +62,6 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toMatch(/browser/i);
   });
 
-  // `key` carries the key to press in `value`, the way `fill` and `choose` carry
-  // theirs — and unlike those two it cannot be empty. `KeyboardEventInit.key`
-  // defaults to `""`, so a missing value and an empty one build the same event,
-  // and the listener never reads it: the reducer fires either way and the step
-  // reports success having pressed nothing anyone can name.
   it("refuses a key press that names no key", async () => {
     for (const action of [{ key: "input" }, { key: "input", value: "" }]) {
       const r = await run({ steps: [{ do: action as never }] });
@@ -90,8 +76,6 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toMatch(/two|more than one|exactly one/i);
   });
 
-  // `setTimeout(Infinity)` does not fit a 32-bit delay and runs at 1ms, so a
-  // step asking to wait forever ran as one asking not to wait — and passed.
   it("refuses a wait that is not a finite duration", async () => {
     const r = await run({ steps: [{ do: { wait: Number.POSITIVE_INFINITY } }] });
     expect(r.ok).toBe(false);
@@ -109,10 +93,6 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.ok).toBe(false);
   });
 
-  // A misspelled top-level key is the same failure one level up: `steps` reads
-  // as absent, so every assertion under it is skipped. It used to reach the
-  // runner's loop and throw `steps is not iterable` — after the mount, which is
-  // exactly what validating first is supposed to prevent.
   it("names a misspelled top-level key instead of crashing on it", async () => {
     const r = await run({ stpes: [{ expect: { state: { n: 999 } } }] } as unknown as Scenario);
     expect(r.ok).toBe(false);
@@ -125,15 +105,12 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
     expect(r.failures.join("\n")).toMatch(/"steps"/);
   });
 
-  // A scenario with nothing in it asserted nothing and said so with `ok: true`.
   it("refuses a document with no steps at all", async () => {
     const r = await run({ steps: [] });
     expect(r.ok).toBe(false);
     expect(r.failures.join("\n")).toMatch(/no steps|asserts nothing/i);
   });
 
-  // Reported together, and before the app is mounted: a document with three
-  // mistakes in it should not need three runs to find them.
   it("reports every problem in the document at once, without mounting", async () => {
     const app = await loadSource(COUNTER);
     const root = freshRoot();
@@ -174,11 +151,6 @@ describe("the browser-tier fixtures in the corpus are refused, not passed", () =
     return out;
   }
 
-  // Not every `.browser.json` is browser-*only*: 40-nested-routes asserts
-  // nothing a headless DOM cannot answer, and lives at that tier for the real
-  // history it exercises. So the fixtures are partitioned by what they actually
-  // name, and both halves are asserted — a refusal covering both would be a
-  // runner that refuses everything.
   const BROWSER_ONLY = /"(focused|visible|hidden|animating|elementState|setProperty)"\s*:/;
   const fixtures = browserFixtures().map((path) => ({
     path,
@@ -203,17 +175,11 @@ describe("the browser-tier fixtures in the corpus are refused, not passed", () =
         expect(failures).toMatch(/browser-tier/);
         return;
       }
-      // Run against a counter, so it fails on its own assertions — but never
-      // on a key this runner refuses to evaluate.
       expect(failures).not.toMatch(/browser-tier|unknown (expect key|action)/);
     });
   }
 });
 
-// A verb aimed at something it cannot drive fails the step. Every action but
-// `fill` already did: `fill` wrote a property the element does not have,
-// dispatched two events nothing listens for, and passed — a step asserting
-// nothing, reported as coverage.
 describe("an action fails on a target it cannot drive", () => {
   const FILLABLE = `slot note : Text = ""
 tile Box = box(text("not a field")) {id: "box"}
@@ -236,10 +202,6 @@ app Fillable
     expect(fault).toContain("holds no text to fill");
   });
 
-  // The fault is the scenario's, not the app's, and the two are reported on
-  // different channels: an action that could not run never reaches `errors`, so
-  // it can neither be claimed by `errorIncludes` nor be mistaken for something
-  // the app said.
   it("keeps the fault off the channel the app reports on", async () => {
     const app = await loadSource(FILLABLE);
     const report = await runScenario(app, freshRoot(), {
@@ -259,12 +221,6 @@ app Fillable
   });
 });
 
-// `errorIncludes` asserts that the *runtime* surfaced something — a reducer
-// batch a refinement rejected, an effect error no `.err` reducer consumes. A
-// step whose action could not run reported nothing about the app, so folding
-// the two together let a fixture assert that its own typo happened:
-// `{do: {key: "#typo", value: "Enter"}, expect: {errorIncludes: ["no element"]}}`
-// passed, having pressed nothing.
 describe("a broken selector cannot satisfy errorIncludes", () => {
   const APP = `slot n : Int = 0
 reducer bump on=ui.click(Btn) do= n := n + 1
@@ -300,8 +256,7 @@ app Selectors
       expect(report.ok, JSON.stringify(action)).toBe(false);
       // What went wrong, on its own channel...
       expect(step?.actionError, JSON.stringify(action)).toBeTruthy();
-      // ...and nowhere else: neither claimable by `errorIncludes` nor countable
-      // as something the app said.
+      // ...and nowhere else: neither claimable by `errorIncludes` nor countable as something the app said.
       expect(step?.errors, JSON.stringify(action)).toEqual([]);
       expect(step?.expectedErrors, JSON.stringify(action)).toEqual([]);
       expect(step?.failures.join(" "), JSON.stringify(action)).toContain(
@@ -310,9 +265,6 @@ app Selectors
     });
   }
 
-  // `noErrors` reads the same pool. A step whose action could not run fails on
-  // `actionError`, so `noErrors` must not be the thing that reports it — it
-  // would read as "the app raised an error", which is exactly backwards.
   it("keeps a broken selector out of noErrors", async () => {
     const app = await loadSource(APP);
     const report = await runScenario(app, freshRoot(), {
@@ -324,12 +276,6 @@ app Selectors
   });
 });
 
-// `{dispatch}` was the one action verb #334 did not reach: it drives a reducer
-// by name through the `_dispatch` seam rather than through a selector, and that
-// seam returns silently when the name matches nothing. So after a reducer was
-// renamed, a fixture still driving the old name kept passing — the reducer
-// never ran, the slot stayed at its initial value, and an assertion describing
-// that value was green. Nothing in the trace said the dispatch went nowhere.
 describe("a dispatch naming a reducer the app does not have cannot pass", () => {
   const RENAMED = `slot todos : Text = ""
 reducer addTodoItem on=ui.click(Btn) do= todos := todos + "x"
@@ -341,23 +287,15 @@ app Todos
     init   = []
 `;
 
-  // The exact fixture from the report: the assertion happens to describe the
-  // initial value, so the step is green precisely because nothing ran.
   it("fails the step its assertion would otherwise have passed", async () => {
     const app = await loadSource(RENAMED);
     const report = await runScenario(app, freshRoot(), {
       steps: [{ do: { dispatch: "addTodo" }, expect: { state: { todos: "" } } }],
     });
     expect(report.ok).toBe(false);
-    // Quoted, like every other `actionError` that carries text from the
-    // fixture: trailing whitespace or a stray character in the name is the typo
-    // a reader is here to find, and unquoted it is invisible.
     expect(report.steps[0]?.actionError).toContain('no reducer named "addTodo"');
   });
 
-  // Same channel discipline as the nine selector verbs: the fault is the
-  // scenario's, so it is neither claimable by `errorIncludes` nor countable as
-  // something the app reported.
   it("refuses to let errorIncludes claim it", async () => {
     const app = await loadSource(RENAMED);
     const report = await runScenario(app, freshRoot(), {
@@ -373,8 +311,6 @@ app Todos
     );
   });
 
-  // A rename usually leaves the new name one edit away, which is the whole
-  // repair: naming it turns a failed run into a one-word fix.
   it("names the reducer the rename left behind", async () => {
     const app = await loadSource(RENAMED);
     const report = await runScenario(app, freshRoot(), {
@@ -383,9 +319,6 @@ app Todos
     expect(report.steps[0]?.actionError).toContain('did you mean "addTodoItem"');
   });
 
-  // The other side of the threshold. A suggestion that names an unrelated
-  // reducer reads as authoritative, so over-suggesting is the direction that
-  // misleads — a name nothing is close to gets no clause at all.
   it("offers no suggestion when nothing is close", async () => {
     const app = await loadSource(RENAMED);
     const report = await runScenario(app, freshRoot(), {
@@ -405,12 +338,6 @@ app Todos
     expect(report.ok).toBe(true);
   });
 
-  // The seam's id-scoped `return` is deliberate on the CLICK path: a DOM event
-  // reaches the codegen'd handler, which calls `_dispatch` once per same-tile
-  // reducer name, and the id-mismatched ones drop out there — §1.6.2 working.
-  // `performAction`'s `{dispatch}` branch is never on that path. It sees one
-  // explicit step naming one reducer, so a step that cannot reach the reducer it
-  // named did nothing, and leaving it green pins the exact shape #410 reported.
   it("fails a dispatch that the id scope would drop", async () => {
     const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -436,8 +363,6 @@ app Todos
     expect(report.ok).toBe(true);
   });
 
-  // ...and the check does not over-report: an unscoped reducer needs no id, so
-  // the common case carries no payload and still fires.
   it("leaves an unscoped reducer alone", async () => {
     const app = await loadApp(join(featuresDir, "51-selector-id.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -448,14 +373,7 @@ app Todos
   });
 });
 
-// The second layer of the same silence: `app._dispatch?.()` and
-// `app._navigate?.()` do nothing and report nothing on a shape mounted without
-// the seam. `_navigate` is otherwise observable — an unrouted path renders
-// /404 — so this is the narrow half of it.
 describe("an action whose seam is missing fails rather than doing nothing", () => {
-  // Mount installs the seams by assignment, so the shape is given a property
-  // that swallows the write and reads back absent — which is what a shape
-  // mounted without that seam looks like at action time.
   function withoutSeam(app: AppShape, seam: "_dispatch" | "_navigate"): AppShape {
     Object.defineProperty(app, seam, {
       get: () => undefined,
@@ -480,11 +398,6 @@ describe("an action whose seam is missing fails rather than doing nothing", () =
   });
 });
 
-// Everything the runtime reported between `mount` and the first scripted action
-// used to be dropped: the step loop opened by clearing the buffer. An
-// `app.start` effect that failed with no `.err` reducer — the shape an
-// unfixtured HTTP request takes — was reported by the runtime and thrown away,
-// and the run said `ok: true`.
 describe("the first paint is a step like any other", () => {
   const BOOT = `slot n : Int = 0
 effect boot cap=storage.read
@@ -511,8 +424,6 @@ app Boot
     expect(report.steps[0]?.errors.join(" ")).toContain("storage unavailable");
   });
 
-  // …and stays out of the way otherwise: a clean first paint adds no step, so
-  // a caller reading `steps[0]` still gets the first scripted one.
   it("adds nothing when the mount window is clean", async () => {
     const app = await loadSource(BOOT, ["storage.read"]);
     const report = await runScenario(app, freshRoot(), {
@@ -525,14 +436,6 @@ app Boot
 });
 
 describe("waiting is one step, not dozens", () => {
-  // The countdown ticks every 100ms from 5 and clamps at 0. Without a wait
-  // primitive, a step with no `do` never settles at all, so watching it run
-  // down meant writing dozens of dummy steps — and the runner's own timing,
-  // not the app's, decided how many.
-  //
-  // Asserted at the clamp rather than mid-flight: how many ticks land inside a
-  // given window is the scheduler's business, and a test that counts them is
-  // measuring the machine.
   const timer = (): Promise<AppShape> => loadApp(join(featuresDir, "25-stop-timer.kumiki"));
 
   it("settles for the duration a step asks for", async () => {
@@ -546,8 +449,6 @@ describe("waiting is one step, not dozens", () => {
     expect(report.steps.flatMap((s) => [...s.errors, ...s.failures]).join("\n")).toBe("");
   });
 
-  // The other half: a wait that observes nothing happening is the only way to
-  // say `stop-timer` worked. The same 800ms leaves the countdown untouched.
   it("shows a stopped timer standing still for that long", async () => {
     const report = await runScenario(await timer(), freshRoot(), {
       steps: [

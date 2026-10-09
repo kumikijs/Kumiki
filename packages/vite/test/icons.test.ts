@@ -1,7 +1,3 @@
-// Vite plugin: when @kumikijs/icons is resolvable from the project, the plugin
-// runs a second codegen pass that bakes the referenced SVG paths into the
-// emitted module's App.icons (#101).
-
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,19 +39,14 @@ describe("vite-plugin-kumiki icon registry", () => {
     const file = join(dir, "app.kumiki");
     writeFileSync(file, FIXTURE);
     const out = (await transformFn().call(ctx as never, FIXTURE, file)) as { code: string };
-    // The plugin resolves @kumikijs/icons from the workspace, so the well-known
-    // Heroicons-solid paths for check + alert-triangle land in the output.
     expect(out.code).toContain("App.icons = {");
     expect(out.code).toMatch(/"check":\s*"[mM][^"]+"/);
     expect(out.code).toMatch(/"alert-triangle":\s*"[mM][^"]+"/);
-    // Unreferenced names are not baked.
     expect(out.code).not.toContain("x-circle");
     expect(out.code).not.toContain("paperclip");
   });
 });
 
-// `{ strictIcons: true }` opts the plugin into the E0704 diagnostic so
-// unknown literal icon names surface in Vite's error overlay at dev time.
 describe("vite-plugin-kumiki strict-icons", () => {
   const UNKNOWN = `
 slot _ : Text = ""
@@ -72,8 +63,6 @@ app StrictIcons
     const file = join(dir, "app.kumiki");
     writeFileSync(file, UNKNOWN);
     const out = (await transformFn().call(ctx as never, UNKNOWN, file)) as { code: string };
-    // The unknown literal makes it through codegen — the runtime renders the
-    // `[cheque]` placeholder rather than blocking compile.
     expect(out.code).toContain("cheque");
   });
 
@@ -99,7 +88,6 @@ app StrictOK caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
     const out = (await transformFn({ strictIcons: true }).call(ctx as never, src, file)) as {
       code: string;
     };
-    // First pass passed check + codegen, second pass baked the registry entry.
     expect(out.code).toMatch(/"check":\s*"[mM][^"]+"/);
   });
 
@@ -117,16 +105,10 @@ app StrictThemed caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
     const out = (await transformFn({ strictIcons: true }).call(ctx as never, src, file)) as {
       code: string;
     };
-    // `logo` isn't in @kumikijs/icons but is in theme.icons — accepted, and
-    // the runtime renders via the theme override.
     expect(out.code).toContain("logo");
   });
 });
 
-// #149 — `{ strictSelectorId: true }` opts the plugin into the E0212
-// diagnostic so a `Tile#id` selector whose id cannot match the tile's literal
-// `{id: "..."}` prop surfaces in Vite's error overlay at dev time. Parity
-// with strict-icons / strict-a11y (#127, §10.7).
 describe("vite-plugin-kumiki strict-selector-id", () => {
   const MISMATCH = `
 slot x : Int = 0
@@ -143,8 +125,6 @@ app StrictSelId
     const dir = mkdtempSync(join(TMP, "strict-selid-off-"));
     const file = join(dir, "app.kumiki");
     writeFileSync(file, MISMATCH);
-    // The runtime `_dispatch` filter is authoritative by default; codegen
-    // succeeds and ships the reducer even though `#nw` never matches.
     const out = (await transformFn().call(ctx as never, MISMATCH, file)) as { code: string };
     expect(out.code).toContain("NewForm");
   });

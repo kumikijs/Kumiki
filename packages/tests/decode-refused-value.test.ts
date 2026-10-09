@@ -1,11 +1,3 @@
-// A `Decoder.Json(T)` checks what it decoded against the predicates `T` carries
-// (http.md §6.1.4 / §6.7.2), and a value it refuses is the effect's `.err`.
-// Before, the decoder was a bare "json" sentinel: a restore of a value the type
-// refused answered `.ok`, the reducer's writes were refused as a batch
-// (runtime.md §10.3.3), and an app that set `ready` in the same reducer stayed
-// on its boot screen. These run the real storage and HTTP handlers — no
-// provider, no scripted effect results.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AppShape, mount } from "@kumikijs/runtime";

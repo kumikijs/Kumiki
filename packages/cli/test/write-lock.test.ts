@@ -1,6 +1,3 @@
-// The write lock's own protocol, one step at a time: what a claim may remove,
-// what a release may remove, and which filesystem failures it rides out.
-
 import * as fs from "node:fs";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -9,8 +6,6 @@ import { threadId } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { claimLock, type LockSighting, withWriteLock, writeLockPath } from "../src/write-lock.ts";
 
-// Spread `node:fs` into a plain object so `vi.spyOn(fs, …)` can replace its
-// functions; native module namespaces are frozen.
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual };
@@ -56,8 +51,6 @@ describe("claiming a lock", () => {
   });
 
   it("leaves in place a lock created after the one it saw was removed", () => {
-    // Two waiters saw the same dead holder. The first removed it and created
-    // its own lock; the second's claim, on what it saw, must not remove that.
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
     const seen = sight();
     rmSync(lock);
@@ -67,10 +60,6 @@ describe("claiming a lock", () => {
   });
 
   it("never removes a lock it did not see, whatever another writer creates meanwhile", () => {
-    // Waiters B and C both saw a dead holder; A has since taken its place and
-    // holds the lock. B's claim, on what it saw, runs while C keeps trying to
-    // create the lock before each of B's filesystem calls. As long as A's
-    // lock stands, no attempt of C's can succeed, and A's lock must stand.
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
     const seen = sight();
     rmSync(lock);
@@ -115,8 +104,6 @@ describe("claiming a lock", () => {
   it("takes over a lock whose claim was left by a waiter that stopped, and leaves no claim behind", () => {
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
     const seen = sight();
-    // A first claim stops before it can remove anything: its files stay, naming
-    // this process, which holds no claim once the call has returned.
     const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
       throw errno("EBUSY");
     });
@@ -153,10 +140,6 @@ describe("claiming a lock", () => {
   });
 });
 
-/**
- * Leave behind the claim a caller makes on `seen`, by failing every unlink
- * while it claims, and return its path.
- */
 function leaveClaim(seen: LockSighting): string {
   const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
     throw errno("EBUSY");
@@ -240,9 +223,6 @@ describe("a lock naming this process", () => {
     expect(fs.existsSync(lock)).toBe(false);
   });
 
-  // A lock with no thread names the main thread. Vitest's default `forks` pool
-  // runs this file on a main thread; under `pool: "threads"` it does not, and
-  // write-lock-threads.test.ts covers a worker meeting such a lock.
   it.runIf(threadId === 0)(
     "is taken over when it names no thread, as written before threads were recorded, on the main thread",
     () => {

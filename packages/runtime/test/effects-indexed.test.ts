@@ -1,8 +1,3 @@
-// indexed-* effect coverage for app.indexed-db (#79). The unavailable-config
-// branch matters most: parity with storage (#37) requires a clean error
-// result, not a throw. Happy-path coverage uses a small in-memory mock that
-// implements just enough of the IndexedDB request shape to drive the runtime.
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type IndexedDbCfg,
@@ -125,9 +120,6 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
   });
 });
 
-// A minimal mock that mirrors enough of IndexedDB's request/transaction shape
-// for our handlers — fully in-memory, one DB per name. Keeps the test free of
-// fake-indexeddb dependency drift.
 function makeMockIndexedDb(): IDBFactory {
   const dbs = new Map<string, Map<string, Map<string, unknown>>>();
   function makeRequest<T>(value: T): IDBRequest<T> {

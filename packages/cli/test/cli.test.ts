@@ -39,9 +39,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     expect(existsSync(join(outDir, "app.js"))).toBe(true);
     // The monolithic runtime.js is gone — replaced by the pruned module set.
     expect(existsSync(join(outDir, "runtime.js"))).toBe(false);
-    // `layout` ships whole (its kinds share renderers); `text` and `input` ship
-    // per tile, so the counter gets the heading and the button and nothing else
-    // from those two families.
     const expected = [
       "core.js",
       "stdlib.js",
@@ -61,9 +58,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
       "effects-http.js",
       "effects-toast.js",
       "effects-confirm.js",
-      // The siblings of the two tiles it does render (#71): the counter used
-      // to download the link tile's URL-disposition check and the select
-      // tile's option reconciler along with them.
       "tiles-text.js",
       "tiles-text-link.js",
       "tiles-text-icon.js",
@@ -87,261 +81,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     expect(app).toContain('tile: "IncBtn"');
     expect(app).toContain('_h("inc")');
 
-    // Size acceptance (#71): the counter runtime payload is well below the
-    // full minified bundle (~50KB raw / 15.2KB gzip shipped before this).
-    // Bumped to 36KB with the §10.5 episode logger seams in core.ts (#90),
-    // then to 36.5KB with the Bytes constructors + polymorphic listSort (#92),
-    // then to 37.5KB with the icon SVG resolver in tiles-text (#101 — the
-    // counter doesn't use icons, but the resolver code rides on tiles-text).
-    // Bumped to 38KB with the SSR/hydration seams in core.ts (#119 —
-    // `computeSlotDiffs` + `pickRootTile` exports + MountOptions overlay).
-    // Bumped to 39KB with the debounce-episode fidelity additions —
-    // `cancelPendingEffect`, `TimerEntry` token plumbing, dispose drain.
-    // Bumped to 39.5KB with the per-tile onChange wirings on check/radio/
-    // switch in tiles-input (#143 — needed so `ui.change(<Toggle>)` reducers
-    // fire; the counter rides on tiles-input via `button`).
-    // Bumped to 40.5KB with the multi-mount app registry in core.ts
-    // (WeakMap root registry + render-pass bracketing replacing the
-    // `__kumikiApp` global, so co-mounted apps never cross-wire).
-    // Bumped to 41.5KB when panicInfo grew to walk Error.cause into a
-    // JSON-safe chain, KumikiPanic gained a `cause` option, and reportPanic
-    // started emitting multi-line stack + cause output so devtools see the
-    // root cause instead of just the message.
-    // Bumped to 44KB with the tile-level keyed diff (#187) landed in core.ts:
-    // the reconcile walker + prop equality kernel + per-render mapping ctx
-    // replace the pre-existing full-teardown swap. Payoff is measurable in
-    // `packages/benchmarks/reactivity/reactivity-cost.mjs` (waste× drops from
-    // 503× to 1× on the 500-tile case).
-    // Bumped to 55KB with #190 identity-preserving reconciliation: every
-    // tile module exports a companion `patch(el, oldNode, newNode)` alongside
-    // its create renderer, plus per-element handler slots on tiles-input /
-    // tiles-text (link) / tiles-overlay so `bind` / `to` / `onClose` changes
-    // reroute the still-mounted element's listener without add/remove churn.
-    // Adds the `details` + `editable` tiles too. Payoff: `<select>` open
-    // dropdown, `<video>` currentTime, `<details>` open, `contenteditable`
-    // caret all survive a reducer-triggered re-render mid-interaction.
-    // Bumped to 56KB with the `never-equal-prop` reconcile diagnostic: the
-    // scan that names a host-tile prop the equality kernel can never call
-    // equal, so a tile patched on every render stops being invisible. Rides in
-    // core.ts because the diagnostics channel is opt-in at RUNTIME, not at
-    // build time — a production mount is silent because it passed no
-    // `onDiagnostic`, which is what keeps the sink a supported seam in a built
-    // artifact rather than a dev-only affordance a bundler strips.
-    // Bumped to 57KB with all-or-nothing reducer batches (spec/runtime.md
-    // §10.3.3): the per-write refinement check, the rejection merge, and the
-    // report that names the slot, value and predicate. Ships in production for
-    // the same reason the diagnostic above does — a reducer the runtime refuses
-    // to commit is invisible from the DOM, so a built artifact that stayed
-    // silent about it would be the defect this budget is meant to protect
-    // against, not the size.
-    // Bumped to 58KB with `policy=queue` (spec/runtime.md §10.4.3) and
-    // `Time.format`'s pattern substitution. Both ride in modules every app
-    // ships — the dispatcher in core.ts, the formatter in stdlib.js — because
-    // per-app pruning is by module, not by function. A counter pays for them;
-    // the alternative is a policy that silently runs in parallel and a
-    // formatter that silently ignores its pattern.
-    // Bumped to 60KB with per-view mounting (spec/runtime.md §10.9.1): the render
-    // pass takes a view record instead of closure locals, and a shape already
-    // mounted attaches another view rather than starting a second app. A
-    // counter mounted once pays for the indirection and the attach path it
-    // never calls — the alternative is what this replaced, where a second mount
-    // silently froze the first and the docs said the two would share a state.
-    // Bumped to 65KB when the documented tile props started reaching the DOM
-    // (spec/stdlib.md §2.3.10, style.md §4.3.1 + §4.4.7): the common-prop
-    // attributes and their reconcile diff in core.js, the sizing and theme-token
-    // mappings, and per-kind props on button / image / link / divider. A counter
-    // uses `gap` and nothing else, and still ships the table — the alternative
-    // is what this replaced, where an app wrote `max-w` or `class` and the
-    // build was the same size because the prop did nothing at all.
-    // Bumped to 65.2KB when the empty route became a shared function
-    // (spec/testing.md §8.2.5): the test harness seeds `route` from the same
-    // function `mount` does, and an exported symbol is one the bundler keeps
-    // whole instead of inlining it into its call site. A counter pays a few
-    // dozen bytes (65,009 measured) for a reducer-test tier that can drive a
-    // reducer reading the route at all.
-    // Bumped to 66KB when a link stopped throwing on an off-origin target
-    // (spec/routing.md §3.3.1, #298): the click handler asks whether the router
-    // can serve the target at all before it cancels the browser's navigation,
-    // and says so on the console when it cannot. That is a `new URL`, the set of
-    // schemes a click may be handed back to the browser for, and two messages in
-    // tiles-text.js, which every app with any text tile ships (65,748 measured).
-    // A counter has no link and still pays for it — the alternative is what this
-    // replaced, where forgetting `{external: true}` cancelled the navigation,
-    // threw `SecurityError` out of `pushState`, and left a dead link with
-    // nothing in the console naming it; and where the fix without the scheme
-    // set would have handed `javascript:` targets to the browser to execute.
-    // Bumped to 68KB when an episode started recording what the reducer read
-    // from the environment (spec/runtime.md §10.5.1, #337). The rationale for
-    // the feature lives at the top of runtime/src/core.ts ("the environment
-    // journal") and is not repeated here; what a counter pays for it is the
-    // journal and its scope helpers in core.js, the `_s.now` / `_s.random` /
-    // `_s.freshId` / `_s.prefersDark` wrappers in stdlib.js, and the per-kind
-    // shape check that keeps a corrupt `--from-log` entry out of a reducer
-    // body (67,352 measured, from 65,814 — the 65,748 on the line above was
-    // measured before the PRs between the two landed). A counter reads none of
-    // the four and still ships it: the alternative is that the episode a bug
-    // report is most worth attaching, the one whose reducer rolled a die or
-    // stamped a time or crashed, stays the one `kumiki replay` cannot answer
-    // for.
-    //
-    // Down to 55,002 when tiles started shipping one module per tile instead
-    // of one per family (#71): the counter renders a heading and a button, and
-    // was downloading the other fifteen text and input tiles — the link tile's
-    // URL-disposition check, the select tile's option reconciler, the
-    // contenteditable IME guard. The budget follows the measurement down, or
-    // it stops being one: at 68,000 it had 13KB of slack and could not have
-    // failed for anything short of a doubling.
-    //
-    // 57,000 from 56,000 (56,025 measured, from 55,577): supplying every field
-    // of `PanicInfo` (#364). 334 of it is the shared `userPanicInfo` builder
-    // and the episode seam the boundary path reads through — what a counter
-    // with no `error-boundary` and no `app.error` reducer pays so that an app
-    // with either gets a field it can read instead of `undefined`. The other
-    // 114 is the guard around the logger seam plus moving `endTrigger` into a
-    // `finally`, both of which buy a property the whole file already holds: a
-    // throw from inside a panic catch must not displace the panic, and an
-    // episode this dispatch opened must close however it exits.
-    //
-    // 58,000 from 57,000 (57,316 measured, from 56,872): a predicate written
-    // inside a slot's type reports *where* it failed (#444). The 444 bytes are
-    // `slotAccepts`, the one reading of a slot's gate that the write wrapper,
-    // the batch backstop, a `bind` write-back and the `error` tile share, and
-    // `showRefinementPath`, which writes the structured path a rejection
-    // carries the way the report always has. A counter has no such slot and
-    // pays for both because they sit on paths every app takes.
-    //
-    // 58,000 from 57,000 (57,490 measured, from 56,930): the memory of refused
-    // binds that `error(field=…)` speaks for (forms.md §5.1.2) got its edges.
-    // 402 of it is core — the lookup scoped to the view being rendered, so a
-    // shape mounted twice does not show one view's refusal in the other, and
-    // pruning of controls that left the page. The other 158 is the shared
-    // input helper holding a refusal back until an IME composition ends.
-    //
-    // 59,000 from 58,000 (58,350 measured): the two paragraphs above landed on
-    // parallel branches, each measured against its own base, and together
-    // they cost what each did — `slotAccepts` / `showRefinementPath` beside
-    // the refused-bind memory, which reads a slot's gate through the former.
-    // Still 59,000 (58,927 measured): an index into a List names an element
-    // or panics, on both sides of `:=` (language.md §1.6.3). On its own that
-    // was 416 (57,025 from 56,609); on top of the refused-bind work above it
-    // measured 581. It is the one range rule both sides ask (`listPosition`),
-    // the `_s.index` read every `xs[i]` now lowers to, and the setter's two
-    // panics for an index that meets no List. A counter indexes nothing and
-    // still ships them: the alternative is an out-of-range write that lands
-    // nowhere and a read that hands `undefined` to whatever comes next. It
-    // landed on a branch parallel to the paragraph above, which had already
-    // taken the budget to 59,000 for its own reason; together they fit under it.
-    //
-    // 60,000 from 59,000 (59,181 measured, from 58,927): a Set / Map key reads
-    // back as its declared type (stdlib.md §2.2.2). The checker names the key's
-    // representation and the key readers (`toList`, `mapKeys`, `mapEntries`,
-    // `Map.filter`) restore each key through `restoreKey`. A counter keys
-    // nothing and still ships them, because they sit in the stdlib module every
-    // app loads. It was measured on a base without the paragraph above.
-    //
-    // Still 60,000 (59,914 measured, from 59,789): `x.is-empty` and
-    // `x.is-empty()` are one member (stdlib.md §2.2.3) and lower to one
-    // `isEmpty`. A counter asks nothing of it and still ships it in stdlib.js.
-    //
-    // 61,000 from 60,000 (60,014 measured, from 59,889): the `isEmpty` above
-    // landed on a base that already carried the bound `check` / `switch` / `radio`
-    // write-back (forms.md §5.1.1), 59,889 from 59,789. Each fit under 60,000 on
-    // its own base; together they do not. A counter binds no box and asks nothing
-    // whether it is empty, and still ships both in the modules every app loads.
-    //
-    // Still 61,000 (60,153 measured, from 60,014): a bound `input` reads its text
-    // as the slot's `Int` / `Float` / `Time` (forms.md §5.1.1), and a refused
-    // write remembers which reading the text failed, so `error(field=…)` can
-    // name it before any refinement (§5.7.2). That memory is the refused-bind
-    // record in core, which every app loads; a counter binds no input and
-    // still ships it.
-    //
-    // Still 61,000 (60,650 measured, from 60,153): a Set element or Map key is one
-    // entry per value (stdlib.md §2.2.1) — `entryKey` and its sorted-JSON
-    // encoding in core.js, which every Set / Map member, a Map literal and the
-    // index read and write ask, and the panic that names a stored key no member
-    // wrote. A counter keys nothing and still ships them.
-    //
-    // Still 61,000 (60,924 measured, from 60,650): a `bind` into one field of a
-    // record is judged at that field (forms.md §5.6). `slotAccepts` and a slot's
-    // `refineFailure` take the path the write went through, and a refused bind
-    // keeps that path so what the field shows is laid over the record as it is
-    // now, shallower paths first. A counter binds nothing and still ships them,
-    // because they sit in the core module every app loads.
-    //
-    // Still 61,000 (60,983 measured, from 60,924): a Set literal is a Set
-    // (stdlib.md §2.2.2), built by `setOf`, which routes each member through
-    // `setAdd` so a literal and an `add` chain are one form. A counter writes
-    // no Set and still ships it in stdlib.js.
-    //
-    // Over 61,000 (61,184 measured, from 60,983; the budget stays at 61,000): a
-    // form submits only while every field bound inside it is valid as it shows
-    // (forms.md §5.2.2), judged by `judgeShownField` in core — the one judgement
-    // `error(field=…)` renders its message from, so the two cannot drift. It sits
-    // beside the refused-bind record in core, which every app loads; a counter has
-    // no form and still ships it.
-    //
-    // Raised once to 63,000 with the owner's approval (61,162 measured on this
-    // branch, from 61,184 on dev): dev had already gone over 61,000 with the
-    // form submit gate above, and the owner chose to raise the budget once
-    // rather than hold every open change at the old line.
-    //
-    // Still 63,000 (61,430 measured, from 61,164):
-    // `heading` renders the element its level names. The 266 bytes are
-    // `headingTag` and the patcher's rebuild on a level change; a counter
-    // renders a heading, so it ships them.
-    //
-    // Still 63,000 (61,620 measured, from 61,527): `Map.map` maps each entry.
-    // `mapOver` tells a Map apart from a tagged Option / Result and restores
-    // each key as `keys` does; it sits in stdlib, which every app loads.
-    //
-    // Still 63,000 (62,504 measured, from 61,933 on dev at 46d9dca):
-    // `Time.parse` reads ISO 8601 `YYYY-MM-DD` with an optional time and zone
-    // itself, and refuses a date that is not on the calendar (stdlib.md
-    // §2.2.8). The bytes are `ISO_TIME`, `isCalendarDate` and the
-    // field-by-field reading in `parseTime` that replaces the platform's
-    // parser, which rolls `2026-02-30` over into March. A counter parses no
-    // time and still ships it, because `parseTime` sits in the stdlib module
-    // every app loads.
-    //
-    // Still 63,000 (62,940 measured, from 62,504 on dev at f9a999c): the
-    // viewport pick reads the active theme's breakpoints over the style.md
-    // §4.2 defaults (`DEFAULT_BREAKPOINTS` in core.js) and orders them by their px size,
-    // counting rem and em at 16px (§4.5); a grid's track mapping moved from
-    // tiles-layout.js into core.js so SSR shares it without importing a
-    // renderer. A counter picks no viewport and lays out no grid and still
-    // ships them, because they sit in modules every app loads.
-    //
-    // Still 63,000 (62,985 measured, from 62,940 on dev at d8ff739): a decoded
-    // value its type refuses is the effect's err (http.md §6.1.4), named by the
-    // formatter a refused slot write uses. That formatter, `showRefinementFailure`,
-    // now sits in core as an export the decode handlers share instead of inline
-    // in the slot-write report; a counter decodes nothing and still ships it.
-    //
-    // 64,000 from 63,000 (63,331 measured, from 62,985 on dev at fbbec02): an index
-    // step reaches the setter apart from a field step (language.md §1.6.3), so
-    // a write through a Map key that is absent writes nothing, an index key is
-    // never taken for a `.get` unwrap, and a read there panics. The 346 bytes
-    // are `isIndexSegment` and the two branches in `_setPathHelper` that ask
-    // it, `isEntryOf` which both sides of `:=` ask, and the panic in
-    // `_stdlibCore.index`. A counter indexes nothing and still ships them,
-    // because the setter and the stdlib sit on paths every app loads.
-    // Dev was 15 bytes under the line at fbbec02, so this change crosses it;
-    // the budget moves up one step, as it did to 63,000, rather than holding
-    // the change at the old line.
-    //
-    // Still 64,000 (63,448 measured, from 63,331 on dev at 29aa08e): a `for`
-    // keys each tile it renders apart from its siblings, a repeated value
-    // included (runtime.md §10.3.10). The 117 bytes are `loopKeys`, which
-    // writes the loop and the occurrence before the value's `show`. A counter
-    // has no `for` and still ships it, because it sits in the stdlib module
-    // every app loads.
-    //
-    // Still 64,000 (63,457 measured, from 63,448 on dev at 2adec5b): an err a
-    // storage-family invoke caught from a throw is `final` (http.md §6.7), and
-    // `runWithRetry` returns it without another attempt. The 9 bytes are that
-    // check in the retry loop, which sits in core every app loads; a counter
-    // retries nothing and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
@@ -358,8 +97,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     root.id = "root";
     document.body.appendChild(root);
     try {
-      // app.js auto-mounts into #root and imports "./runtime/*.js" relatively,
-      // so this exercises the exact artifact set `kumiki build` ships.
       await import(pathToFileURL(join(outDir, "app.js")).href);
       expect(root.textContent).toContain("Count: 0");
     } finally {
@@ -370,11 +107,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
   it("the built counter patches in place — the heading element survives a bump", {
     timeout: 30000,
   }, async () => {
-    // Runtime truth for the identity-preserving reconcile in a REAL build
-    // artifact. Every test that mounts through the monolith `mount()` gets the
-    // full patcher registry merged in for free, so only an artifact produced by
-    // `kumiki build` can prove the granular mount options carry it. Without
-    // patchers the heading is torn down and replaced on every count change.
     build(COUNTER_PATH);
     const root = document.createElement("div");
     root.id = "root";
@@ -398,15 +130,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
   it("the built input keeps its element across a bound-value change", {
     timeout: 30000,
   }, async () => {
-    // The heading case above proves the patcher registry is wired at all; this
-    // one covers the tile kind where it actually matters, and where a rebuild
-    // is hardest to notice. Focus and caret are NOT asserted deliberately: the
-    // §10.3.9 snapshot layer restores both even when the element was destroyed
-    // and replaced (verified — a patcher-less rebuild still ends with the new
-    // input focused at the same offset), so they cannot distinguish a patch
-    // from a rebuild. Element identity is the only observable that can in a
-    // headless DOM; `<select>` open state and `<video>` playback are the
-    // browser-tier concerns identity protects.
     build(INPUT_BIND_PATH);
     const root = document.createElement("div");
     root.id = "root";
@@ -434,8 +157,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     const root = document.createElement("div");
     root.id = "root";
     document.body.appendChild(root);
-    // The history router reads the ambient location; force the memory router so
-    // the test is independent of the happy-dom URL.
     (globalThis as { __kumikiMount?: unknown }).__kumikiMount = { router: "memory" };
     try {
       await import(pathToFileURL(join(outDir, "app.js")).href);
@@ -457,9 +178,6 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
   });
 });
 
-// `kumiki check --strict-icons` opts into the strict-mode E0704 diagnostic:
-// literal `icon(name="<x>")` whose name is in neither @kumikijs/icons nor any
-// `theme.icons` block in the source.
 describe("kumiki check --strict-icons", () => {
   let dir: string;
   beforeEach(() => {
@@ -529,8 +247,6 @@ app StrictThemed
     expect(out).toContain("ok");
   });
 
-  // Critical fix: --strict-icons combined with a scope filter must NOT drop
-  // E0704 silently — the strict opt-in is an additive axis, not a sub-band.
   for (const scope of ["--types", "--refs", "--effects"]) {
     it(`--strict-icons + ${scope} still surfaces E0704`, { timeout: 30000 }, () => {
       const file = join(dir, "bad.kumiki");
@@ -560,11 +276,6 @@ app StrictA11y
   });
 });
 
-// #149 — `kumiki check --strict-selector-id` opts into the E0212 diagnostic:
-// a `ui.<ev>(Tile#id)` selector whose `#id` cannot match any literal `{id}`
-// the target tile declares. Default-off because the PR #148 runtime-filter
-// regression test intentionally uses a literal mismatch to prove the runtime
-// filter fires; a default-on E0212 would break that test at check time.
 describe("kumiki check --strict-selector-id", () => {
   let dir: string;
   beforeEach(() => {
@@ -587,8 +298,6 @@ describe("kumiki check --strict-selector-id", () => {
     }
   }
 
-  // `#nw` is a deliberate typo for `#new`. Runtime `_dispatch` drops the event
-  // (el.id === "new" !== "nw"), so without E0212 the `add` reducer never fires.
   const MISMATCH = `slot x : Int = 0
 reducer add on=ui.submit(NewForm#nw) do= x := x + 1
 tile NewForm = form(text="a") {id: "new"}
@@ -637,11 +346,6 @@ app OkApp
     expect(out).toContain("ok");
   });
 
-  // Critical: --strict-selector-id combined with a scope filter must NOT drop
-  // E0212 silently — the strict opt-in is an additive axis, not a sub-band.
-  // `--refs` and `--effects` are the cases that actually depend on the
-  // strict-code allowlist: E0212 lives in E02, which `--types` selects anyway,
-  // so a `--types` case alone passes even with the allowlist emptied.
   for (const scope of ["--types", "--refs", "--effects"]) {
     it(`--strict-selector-id + ${scope} still surfaces E0212`, { timeout: 30000 }, () => {
       const file = join(dir, "bad.kumiki");
@@ -653,9 +357,6 @@ app OkApp
   }
 });
 
-// #143 — `kumiki check` surfaces W0212 ui-event-tile-mismatch as a non-fatal
-// warning: the line appears in stderr, the `ok (N warning(s))` summary lands
-// on stdout, and the process exits 0 so build pipelines don't break.
 describe("kumiki check (W0212 ui-event-tile-mismatch)", () => {
   let dir: string;
   beforeEach(() => {
@@ -708,10 +409,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
-// Regression (PR #15 review): `smoke`/`run` go through their own loadApp in
-// src/smoke.ts, which must also thread the kumiki.caps.json capabilities.
-// Otherwise a file using a manifest capability passes `check`/`build` but fails
-// with E0302 before smoke/scenario can run.
 describe("kumiki smoke with a manifest-registered capability", () => {
   const CUSTOM_CAP = resolve(here, "../../examples/features/27-custom-capability.kumiki");
 
@@ -724,10 +421,6 @@ describe("kumiki smoke with a manifest-registered capability", () => {
   });
 });
 
-// The capability manifest registers names for a *project*, so it is looked for
-// from the source file up to the project root — and when a name is still not
-// accepted, the diagnostic says which manifest was read, or where one was
-// looked for. Before that, a manifest one directory up was ignored in silence.
 describe("kumiki check and the capability manifest", () => {
   let root: string;
   beforeEach(() => {
@@ -841,10 +534,6 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toContain("7/7 passed");
   });
 
-  // The reducer-test tier has to refuse exactly what the running app refuses.
-  // It used to merge a reducer's returned slots over the given ones with no
-  // refinement check at all, so a batch the app discards passed here — the tier
-  // meant to catch the bug would have certified it.
   it("refuses a batch the app's refinement rejects", { timeout: 30000 }, () => {
     const file = resolve(here, "../../examples/features/63-reducer-batch-atomicity.kumiki");
     const res = spawnSync(process.execPath, [...CLI_ARGV, "test", file], {
@@ -854,19 +543,11 @@ describe("kumiki test (in-language test runner)", () => {
     expect(res.stdout).toContain("PASS  bump-commits-whole");
     expect(res.stdout).toContain("PASS  bump-at-ceiling-changes-nothing");
     expect(res.stdout).toContain("2/2 passed");
-    // The `expect` block alone cannot tell "the batch was refused" from "the
-    // reducer degenerated into a no-op" — both leave the slots untouched — so
-    // pin the report too. The reducer-test tier has no `errorIncludes`
-    // equivalent to express this in-language.
     expect(res.stderr).toContain(
       '[kumiki] reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))',
     );
   });
 
-  // `route` is the runtime's slot: no program declares one, so the harness
-  // rebuilt its slot table without it and every reducer reading `route.path`
-  // panicked here — the tier that exists to test a reducer could not test that
-  // one at all.
   it("runs a reducer that reads the route slot", { timeout: 30000 }, () => {
     const file = resolve(here, "../../examples/features/80-route-in-tests.kumiki");
     const out = execFileSync(process.execPath, [...CLI_ARGV, "test", file], {
@@ -879,8 +560,6 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toContain("PASS  seeded-route-is-comparable");
     expect(out).toContain("PASS  wildcard-reads-the-route");
     expect(out).toContain("PASS  mocked-flow-sees-the-route");
-    // The tier that resets through its own path, and the one the checker's
-    // relaxation reaches: `slots-equal` may name `route` there too.
     expect(out).toContain("PASS  replay-reads-the-route");
     expect(out).toContain("PASS  tile-reads-the-route");
     expect(out).toMatch(/PASS {2}run-reducer-sees-route \(100 cases, \d+ms\)/);
@@ -917,9 +596,6 @@ describe("kumiki test (in-language test runner)", () => {
     expect(out).toContain("uncovered:");
   });
 
-  // A program that does not compile stops `test` before any test runs, so the
-  // diagnostic is all the reader gets. It has to say where, as `check` does —
-  // `test` used to print only the code and message.
   describe("a compile error", () => {
     let dir: string;
     beforeEach(() => {
@@ -1008,8 +684,6 @@ ${NOT_A_RECORD}`,
   });
 });
 
-// M4b: `kumiki fix --auto-patch <test-name>`. These exercise the real CLI wiring
-// (subprocess) so the in-process DOM of the test runner stays isolated.
 describe("kumiki fix --auto-patch (fix from a failing test)", () => {
   let dir: string;
 
@@ -1051,8 +725,6 @@ test title-text =
     const file = join(dir, "behavioral.kumiki");
     writeFileSync(file, BEHAVIORAL);
     const { out, code } = runCli(["fix", file, "--auto-patch", "title-text"]);
-    // Proposing is not repairing: the test still fails when the process ends,
-    // which is what the exit code reports.
     expect(code).toBe(1);
     expect(out).toContain('replace "Helo" with "Hello"');
     // File untouched (AC4).
@@ -1121,8 +793,6 @@ test dec-should-add =
         expect = {slots: {count: 1}, effects: []}
 `;
     writeFileSync(file, source);
-    // Pre-#156 this returned `no auto-patch available`; the expanded literal /
-    // arithmetic tier now rewrites the reducer body so the test passes.
     const { code } = runCli(["fix", file, "--auto-patch", "dec-should-add", "--apply"]);
     expect(code).toBe(0);
     const after = readFileSync(file, "utf8");
@@ -1130,10 +800,6 @@ test dec-should-add =
     expect(after).not.toContain("count := count - 1");
   });
 
-  // Regression (PR #18 review, Codex P2): when the failing text comes from the
-  // test's own `given` data, the literal lives only in the `test` body. Patching
-  // it would fake a PASS without fixing any production definition — so test
-  // bodies are excluded from the literal search and no patch is offered.
   it("does not patch a literal that lives only in a test fixture", { timeout: 30000 }, () => {
     const file = join(dir, "fixture-only.kumiki");
     const source = `slot msg : Text = "x"
@@ -1157,9 +823,6 @@ test msg-text =
   });
 });
 
-// Spec runtime.md §10.5.3 — `kumiki replay` replays a recorded episode log
-// against the compiled app: prints the per-step trace, applies effect mocks,
-// and (optionally) stops partway with `--until-step N`.
 describe("kumiki replay (episode log replay, §10.5.3)", () => {
   function runCli(args: string[]): { out: string; code: number } {
     try {
@@ -1225,8 +888,6 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
   it("--mock 'effect: err(<json>)' on a storage effect delivers the Text the handler would", {
     timeout: 30000,
   }, () => {
-    // `persist` is `storage.write`, whose `.err` is `Text`: the JSON is never
-    // typechecked, so a `{message}` record is read as a provider's err is.
     const { out, code } = runCli([
       "replay",
       REPLAY_PERSIST,
@@ -1377,10 +1038,6 @@ describe("kumiki replay (episode log replay, §10.5.3)", () => {
   });
 });
 
-// `check` is the gate: CI, the MCP server and every editing loop ask it whether
-// a file is sound. It used to answer `ok` for a file with no `app` definition —
-// including a completely empty one — while `build`, `smoke` and `test` all
-// failed on it. E0003 makes the gate agree with the stages behind it.
 describe("kumiki check (E0003 missing-app)", () => {
   let dir: string;
   beforeEach(() => {
@@ -1423,8 +1080,6 @@ describe("kumiki check (E0003 missing-app)", () => {
       const { stdout, stderr, code } = runCli(["check", file]);
       expect(code).toBe(1);
       expect(stderr).toContain("E0003 missing-app at 1:1");
-      // `check` prints its summary and nothing else on stdout, so an empty
-      // stdout is the precise statement that it did not call the file ok.
       expect(stdout.trim()).toBe("");
     });
   }
@@ -1445,9 +1100,6 @@ describe("kumiki check (E0003 missing-app)", () => {
     expect(stdout).toContain("ok");
   });
 
-  // `--types/--refs/--effects` narrow along one axis. Structural errors are not
-  // on that axis, so no scope selects them — and a filter that drops what no
-  // scope can ask for turns every narrowing flag back into the hole above.
   for (const scope of ["--types", "--refs", "--effects"]) {
     it(`survives ${scope}`, { timeout: 30000 }, () => {
       const file = write("noapp.kumiki", CASES[0]![1]);
@@ -1476,8 +1128,6 @@ describe("kumiki check (E0003 missing-app)", () => {
     const added = runCli(["add", file, "slot", "count", "Int", "=", "0"]);
     expect(added.code).toBe(0);
     expect(readFileSync(file, "utf8")).toContain("slot count");
-    // The edit lands; the gate is what reports that the program is not yet
-    // an application.
     expect(runCli(["check", file]).code).toBe(1);
   });
 
@@ -1493,8 +1143,6 @@ describe("kumiki check (E0003 missing-app)", () => {
     expect(stderr).toContain("E0003 missing-app");
   });
 
-  // The mirror image: too many entry points reads as `ok` and then builds into
-  // whichever one comes first, dropping the other's routes without a word.
   describe("E0004 duplicate-app", () => {
     const TWO_APPS = `slot n : Int = 0
 tile App   = column(text(n.show))
@@ -1524,15 +1172,11 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
     });
   });
 
-  // A repair loop reads the dry run to decide what is left to do. Listing only
-  // the repairable diagnostics tells it the file is one patch from clean.
   it("kumiki fix reports the diagnostics it cannot repair, not just the ones it can", {
     timeout: 30000,
   }, () => {
     const file = write("hide.kumiki", "slot count : Int = 0\ntile App = column(text(cout.show))\n");
     const { stdout, stderr, code } = runCli(["fix", file]);
-    // A dry run proposes; it does not repair. The file still has both errors
-    // when the process ends, so the exit code has to say so.
     expect(code).toBe(1);
     expect(stdout).toContain('fix: replace "cout" with "count"');
     expect(stdout).toContain("(no auto-patch for 1 of 2)");

@@ -1,16 +1,3 @@
-// A Set is `{ [key]: true }` and a Map a plain object, so each member turns a
-// key into an object key. They used to disagree about how: `add` / `has` /
-// `toggle` wrote `String(x)`, `get` / `insert` / `m[k]` / `m[k] := v` used the
-// raw value as a property name, and `remove` compared the stored string with
-// the raw key. So every union value and every record became the one key
-// `"[object Object]"` — `picked.add(Red).has(Blue)` was true and `votes[Red]`
-// and `votes[Green]` were one count — and `remove` on an `Int`, nominal-`Int`
-// or `Bool` key removed nothing (stdlib.md §2.2.1 / §2.2.2: one key per value).
-//
-// Each case builds a container through the members a program would use, then
-// reads it off the page after one click. Example 123 carries the same claims
-// as a scenario.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { testFile } from "@kumikijs/cli";

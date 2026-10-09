@@ -1,10 +1,3 @@
-// What a tile-test compares (testing.md §8.4), on hand-built nodes shaped the
-// way codegen lowers them: content fields at the top level, every named
-// argument folded into `props` beside the `{…}` block's styles and the
-// handlers, plus `el` (the element attribute bag) and `_tile` (the user-tile
-// marker). The compile-and-run cases are in
-// `packages/tests/tile-test-content-fields.test.ts`.
-
 import { _stdlib } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
@@ -108,10 +101,6 @@ describe("a tile-test compares the named arguments in props", () => {
   });
 
   it("compares a toggle's value argument once, as its checked state", () => {
-    // `check(value=true)` lowers to `checked: true` with `value: true` folded
-    // into props; a `check(bind=agreed)` carries the same state as `checked`
-    // alone. The argument is the checked state, not a second field, so the
-    // first difference is the one argument that does differ.
     const r = run(
       { kind: "check", checked: true, props: { value: true, disabled: true } },
       { kind: "check", checked: true, bind: "agreed", props: { disabled: false } },
@@ -194,8 +183,6 @@ describe("a builtin's default is compared", () => {
 
 describe("the expected / actual lines", () => {
   it("print only the fields the expected node states, on both sides", () => {
-    // A bound input carries placeholder, bind, bindPath, parse and (in a
-    // `for`) key; `input(value="Grace")` states none of them.
     const r = run(
       { kind: "input", value: "Grace", props: { value: "Grace" } },
       {

@@ -6,11 +6,6 @@
  * filled with `currentColor` by the runtime. Custom icons follow the same
  * convention and are registered via `theme.icons` to override any name here.
  *
- * The runtime itself does not import this package — `@kumikijs/vite` and the
- * `kumiki` CLI scan compiled tiles for `icon(name=<literal>)` and bake only the
- * referenced paths into the generated AppShape under `app.icons`. Apps that
- * don't use icons pay zero bundle cost.
- *
  * Visual style: Heroicons v2 Solid (MIT) — 24×24, single-path, fill-based.
  */
 

@@ -1,10 +1,3 @@
-// Coverage for issue #102 — `http.cancel` capability + `EffectId` returned at
-// `emit` time. Verifies the dispatcher's special-case `http.cancel` branch:
-// the in-flight controller is aborted (so `httpFetch`'s fetch sees the abort
-// and resolves to `{status:0, message:"aborted"}`), pending debounce timers
-// are cleared, unknown ids are silent no-ops, and the Episode logger records
-// the cancel intent.
-
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -37,10 +30,6 @@ function makeCancelApp(): {
           new Promise<EffectResult>((resolve) => {
             log.signal = signal;
             resolveFetch = resolve;
-            // §6.4.1: when the dispatcher aborts the signal we mirror what
-            // `httpFetch` would actually return — `{status:0, message:"aborted"}` —
-            // so the rest of the pipeline (.err reducer, no-silent-failure
-            // contract) sees the production shape.
             signal?.addEventListener("abort", () => {
               log.aborted = true;
               resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
@@ -95,7 +84,7 @@ function makeCancelApp(): {
   return { app, log, lastErr, lastOk, resolveNext };
 }
 
-describe("dispatcher http.cancel (#102)", () => {
+describe("dispatcher http.cancel", () => {
   it("aborts an in-flight effect and surfaces aborted to the .err reducer", async () => {
     const { app, log, lastErr } = makeCancelApp();
     const root = document.createElement("div");
@@ -142,8 +131,6 @@ describe("dispatcher http.cancel (#102)", () => {
   });
 
   it("does NOT clear a throttle window on cancel (review fix)", async () => {
-    // spec §6.4.1: a throttle window marker stays put on cancel so a next
-    // emit within the window does not slip past the rate limit.
     let calls = 0;
     const app: AppShape = {
       slots: { last: { value: "" } },
@@ -237,9 +224,6 @@ describe("dispatcher http.cancel (#102)", () => {
 });
 
 describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
-  // The reducer writes the slot the key reads *after* emitting, so the key the
-  // emit carries ("a") and the one `keyOf` would read from the committed slots
-  // ("b") differ. The request is registered under the carried key.
   function makeKeyedApp(emitted: { effect: string; args: unknown[]; key?: string }): {
     app: AppShape;
     log: AbortLog;

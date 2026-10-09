@@ -1,13 +1,3 @@
-// Invariant (spec §10.5.1): the causal chain from a single trigger lives on
-// one episode. A `policy=debounce(d)` effect emits inside the triggering
-// reducer but its `launch` is deferred via `setTimeout`, so the dispatcher
-// claims the episode token at *dispatch* time and threads it into `launch`
-// via a preset-token handle. The eventual `effect-start` / `effect-end` /
-// `.ok` reducer chain reattach to the originating episode. A debounce timer
-// dropped before it fires (replace, `http.cancel`, `dispose`) records an
-// `effect-cancel` step on its originating episode and settles it; the
-// launch never happened, so it cannot be `effect-end "err"`.
-
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -115,14 +105,6 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
   });
 
   it("debounce: a replaced timer records effect-cancel on its originating episode and the new episode owns the eventual effect-end", async () => {
-    // Timing budget: the invariant we care about is "the second dispatch
-    // reaches the reducer before the first debounce timer fires". A 20ms
-    // window with a 5ms inter-dispatch wait leaves ~15ms of slack, which
-    // shared CI runners can burn through when the event loop stalls
-    // (observed: first timer fires before the cancel, `searchCalls` hits 2).
-    // A 200ms window with a 20ms inter-dispatch wait keeps ~180ms of slack
-    // without materially slowing the test — the `tick(300)` afterwards
-    // remains dominated by the debounce.
     const DEBOUNCE_MS = 200;
     const ctx = makeDebounceApp(DEBOUNCE_MS);
     const logger = createEpisodeLogger({ memoryMax: 10 });
@@ -180,10 +162,6 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
   });
 
   it("latest: an aborted old launch commits its originating episode rather than hanging in closedAwaiting", async () => {
-    // Verify the existing closedAwaiting machinery does not strand an episode
-    // forever when `latest` aborts the prior launch. The AbortError travels
-    // through the catch → onResult → recordEffectEnd path and decrements the
-    // pending counter, settling the episode.
     let resolveOld: (r: EffectResult) => void = () => {};
     let resolveNew: (r: EffectResult) => void = () => {};
     let call = 0;
@@ -287,9 +265,6 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
   });
 
   it("debounce: http.cancel during the pending window clears the timer and commits the originating episode", async () => {
-    // User-initiated `http.cancel` of a pending debounce: the timer is cleared
-    // and the originating episode must release its claimed effect-start so it
-    // can commit instead of stranding in `closedAwaiting`.
     const app: AppShape = {
       slots: { q: { value: "" }, status: { value: "idle" } },
       caps: ["http.get", "http.cancel"],
@@ -366,15 +341,6 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
   });
 
   it("debounce: a missing capability at launch reports on the originating episode and releases its token", async () => {
-    // `caps.has(eff.cap)` is checked inside `launch`, so for a debounced
-    // effect the cap might already be missing by the time the timer fires.
-    // The early-return must release the dispatch-time token so the
-    // originating episode commits with an effect-cancel — and report the
-    // refusal onto that same episode (§10.4.2). By the time the timer fires
-    // `endTrigger` has balanced out and nothing is in focus, so the token is
-    // the only thing that can name the episode: a refusal that fell back to
-    // "no episode" would leave a start and a cancel and nothing else, which
-    // is exactly what a *replaced* debounce timer looks like.
     const app: AppShape = {
       slots: { q: { value: "" } },
       // Note: omit "http.get" so the dispatcher's launch path refuses + bails.
@@ -424,9 +390,6 @@ describe("policy-deferred effect episode fidelity (§10.5.1)", () => {
       // `panic`, not `completed`: the episode carries the refusal, which is
       // what tells a reader this is not a timer that was merely replaced.
       expect(eps[0]!.status).toBe("panic");
-      // The dispatch runs to completion first — the debounce timer is what
-      // fires later — so the refusal lands after the signal-update. Panic
-      // before cancel: the cancel settles (and commits) the episode.
       expect(eps[0]!.steps.map((s) => s.kind)).toEqual([
         "reducer",
         "effect-start",

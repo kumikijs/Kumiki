@@ -1,7 +1,3 @@
-// End-to-end coverage for retry=exponential(...) (#83): a compiled program
-// declaring a retry policy on an http effect actually retries on 5xx until it
-// either succeeds or exhausts the configured attempt count.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";

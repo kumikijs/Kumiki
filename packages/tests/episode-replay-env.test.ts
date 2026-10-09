@@ -1,10 +1,3 @@
-// Regression (#337): `kumiki run --episode-log` then `kumiki replay` has to be
-// the same run twice, including for a reducer that read the environment. The
-// two halves are driven here through the same seams the CLI verbs use — the
-// live runtime writes the episode, `replayEpisodes` consumes it — so a break
-// anywhere along record → serialize → replay fails this suite rather than
-// surfacing as "the dice came up different again".
-
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

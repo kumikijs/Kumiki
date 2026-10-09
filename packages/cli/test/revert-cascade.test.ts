@@ -1,7 +1,3 @@
-// `patch revert` of a `remove --cascade` undoes the whole op: every definition
-// the cascade took comes back, in one op, or nothing is written. Reverting that
-// restore removes exactly the set it added, or nothing is written.
-
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -129,10 +125,6 @@ describe("patch revert of a cascade", () => {
   });
 
   it("restores the body a dependent had when it was removed, even after a rename", () => {
-    // `Show` reads `x`, which is renamed to `y`: the rename rewrites `Show` in
-    // the file but logs no new body for it. A new, unrelated `slot.x` then
-    // takes the old name, so the last body the log holds for `Show` would now
-    // read the wrong slot.
     const file = seed("slot a : Int = 0\n");
     addDef(file, "slot", "b", "Int = 1");
     addDef(file, "slot", "x", "Int = 2");
@@ -178,8 +170,6 @@ describe("patch revert of a cascade", () => {
   });
 
   it("writes nothing when the restore fails validation", () => {
-    // A new `tile.Show` took the name after the cascade; restoring the old
-    // one beside it is a duplicate definition.
     const { file, removeId } = cascadeFixture();
     addDef(file, "tile", "Show", 'text("new")');
     const before = snapshot(file);
@@ -253,10 +243,6 @@ describe("patch revert of a cascade", () => {
   });
 
   it("reads a prior body from a restore's `with` list", () => {
-    // `tile.Show` predates the log, so the only op that ever recorded its body
-    // is the restore, in `with`. Reverting a later replace that records no
-    // replaced body of its own, as one logged before `prev` was, must find it
-    // there.
     const file = seed("slot a : Int = 0\nslot b : Int = 1\ntile Show = text(b.show)\n");
     const { opId } = removeDef(file, "slot.b", true);
     patchRevert(file, opId);
@@ -282,8 +268,6 @@ describe("patch revert of a cascade", () => {
 
 describe("patch revert of a cascade logged by an older CLI", () => {
   it("falls back to the log's bodies, and writes nothing when one is missing", () => {
-    // Logged before `remove` recorded bodies: `tile.Show` predates the op log,
-    // so no op holds its body.
     const file = seed("slot a : Int = 0\nslot b : Int = 1\ntile Show = text(b.show)\n");
     addDef(file, "tile", "Page", "column(Show)");
     const { opId } = removeDef(file, "slot.b", true);

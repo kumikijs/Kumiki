@@ -1,12 +1,3 @@
-// A `bind` into one field of a record slot is judged at that field
-// (forms.md §5.6): only a failure on the bound path, along it or below its
-// end, refuses the write. The slot's gate used to walk the whole record, so a
-// sibling that failed first — the pristine `email: ""` a declared default may
-// hold — refused every other field silently, and the form could only be filled
-// in one order. The scenario beside `134-record-field-bind` drives the
-// fields; what is here is the gate read directly, the fill order, and what
-// `error(field=…)` judges once a sibling write lands beside a refused field.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AppShape, mount } from "@kumikijs/runtime";
@@ -94,11 +85,6 @@ describe("binding into one field of a record slot", () => {
     expect(errorText(root)).toBe("");
   });
 
-  // Two fields each showing a refused value: both are laid over the record,
-  // and the message is its first failure in field order — `email` before
-  // `nick`. The two orders tell the whole overlay from one that keeps a single
-  // entry: laying only the first refused would speak for the nick in the
-  // first, laying only the last would in the second.
   it("lays every refused field over the record, the nick refused first", async () => {
     const app = await loadApp(example);
     const root = mountInto(app);
@@ -121,9 +107,6 @@ describe("binding into one field of a record slot", () => {
     expect(errorText(root)).toBe("Invalid email format");
   });
 
-  // A refusal during an IME composition is settled at compositionend, and what
-  // it settles is the field's own value at its path — not the record as it
-  // was when the composition refused it, which still held the pristine email.
   it("settles a field's refusal at compositionend, at the field", async () => {
     const app = await loadApp(example);
     const root = mountInto(app);

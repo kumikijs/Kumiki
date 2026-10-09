@@ -1,6 +1,3 @@
-// The `markdown` tile (#71): its own shipping unit, so an app that renders one
-// does not download the six other text tiles.
-
 import type { TilePatcher, TileRenderer } from "../../core.ts";
 
 export const markdownTile: TileRenderer<"markdown"> = (node) => {
@@ -20,9 +17,6 @@ export const markdownTile: TileRenderer<"markdown"> = (node) => {
 
 export const markdownPatcher: TilePatcher<"markdown"> = (el, _oldNode, newNode) => {
   const div = el as HTMLDivElement;
-  // Markdown renders paragraph-per-blank-line; on any text change reflow
-  // the paragraph list. This is a mount-only content tile so keeping the
-  // outer wrapper preserves any scroll position of an enclosing container.
   const text = newNode.text ?? "";
   const paragraphs = text.split(/\n\s*\n/);
   const existing = div.querySelectorAll("p");

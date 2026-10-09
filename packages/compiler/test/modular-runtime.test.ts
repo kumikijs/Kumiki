@@ -1,9 +1,3 @@
-// Issue #71: per-app DCE. With `runtimeModulesDir`, codegen must import only
-// the runtime feature modules the app actually uses (tile families, router,
-// effect handlers) and mount through `mountCore`; without it, the classic
-// single-import monolith shape must survive byte-for-byte semantics (the
-// inlining path strips exactly one import line).
-
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,14 +46,9 @@ describe("modular runtime emission (#71)", () => {
     const r = modular(COUNTER);
     expect(r.js).toContain('import { mountCore } from "./runtime/core.js"');
     expect(r.js).toContain('import { _stdlibCore } from "./runtime/stdlib.js"');
-    // `layout` ships whole — its thirteen kinds share five renderers, so there
-    // is nothing to split. `text` and `input` ship per tile.
     expect(r.js).toContain('from "./runtime/tiles-layout.js"');
     expect(r.js).toContain('from "./runtime/tiles-text-heading.js"');
     expect(r.js).toContain('from "./runtime/tiles-input-button.js"');
-    // The rest of those two families stays home: the counter renders neither a
-    // link (a URL-disposition check and an allowlist) nor a select (a 70-line
-    // option reconciler), and used to download both.
     for (const unused of ["tiles-text-link", "tiles-text-icon", "tiles-input-select"]) {
       expect(r.js, `${unused} should not ship`).not.toContain(unused);
     }
@@ -75,8 +64,6 @@ describe("modular runtime emission (#71)", () => {
       "tiles-layout",
       "tiles-input-button",
       "tiles-text-heading",
-      // The input tiles' shared module is copied, not imported by the header —
-      // `tiles-input-button.js` reaches it relatively.
       "tiles-input-shared",
     ]);
     // mounts through the granular core with the assembled registry
@@ -85,14 +72,6 @@ describe("modular runtime emission (#71)", () => {
   });
 
   it("assembles the patcher registry alongside the renderers", () => {
-    // Each tiles-* module exports a `create` renderer map AND a companion
-    // `patch` map; the reconcile mutates a mounted element in place only when
-    // it finds a patcher for the tile's kind. Dropping `tilePatchers` from the
-    // mount options makes `mountCore` default to `{}`, silently reverting the
-    // granular build to full subtree rebuilds — losing focus, caret, <select>
-    // open state and <video> playback on every data-prop change, while the
-    // monolith `mount()` path (which merges the patchers itself) stays correct
-    // and hides the regression from every test that goes through it.
     const r = modular(COUNTER);
     expect(r.js).toContain(
       'import { layoutTiles, layoutPatchers } from "./runtime/tiles-layout.js"',
@@ -133,9 +112,6 @@ describe("modular runtime emission (#71)", () => {
     expect(r.runtimeModules).toContain("effects-storage");
   });
 
-  // A clear is decided here, from the declaration, rather than from a request
-  // that turned out empty at runtime: an `undefined` request is what a failed
-  // Map index produces too, and it must not wipe the origin.
   const clearing = (cap: string, decl: string) => `
 type Nothing = Unit
 effect wipe cap=${cap} ${decl} out=Result(Unit, Text)

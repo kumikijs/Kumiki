@@ -1,11 +1,3 @@
-// A tile is a pure function of the slots and its `in` argument (language.md
-// §1.7.2 Invariant 1). None of its caller's `for` / `match` bindings are
-// visible in a user tile's body, so a name the body reads as a slot is the
-// slot wherever the tile is called from — even where the caller has bound the
-// same name.
-// The caller's bindings do reach the call's own argument: `FilterBtn(filter)`
-// passes the loop variable as `$1`.
-
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -38,8 +30,7 @@ tile Show = text("show: " + label + ";")`;
 
 describe("a user tile's body does not see its caller's bindings", () => {
   it("in a for loop, where the tile's argument is the loop variable", async () => {
-    // The loop variable reaches `$1` — every filter is rendered — and the
-    // body's `filter` is the slot, so only `All` is marked.
+    // The loop variable reaches `$1` — every filter is rendered — and the body's `filter` is the slot, so only `All` is marked.
     await renders(
       `type Filter = All | Active | Done
 slot filter  : Filter       = All

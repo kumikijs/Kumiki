@@ -1,12 +1,3 @@
-// stdlib.md §2.2.4 / §2.2.5 declare `get : T` on `Option` and `Result`, the
-// polymorphic unwrap, which the Panic-semantics note (§2.2.5) says is "also
-// written paren-free as `value.get`". So a zero-argument `.get()` the checker
-// accepts lowers to the unwrap: it answers what `.get` answers, panics where
-// `.get` panics, and on a receiver the checker cannot decide it is the unwrap
-// rather than the keyed lookup. Which counts compile is walked method by
-// method in `packages/compiler/test/method-check-build-agree.test.ts`; this
-// file pins what the built app does.
-
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -41,9 +32,6 @@ describe("o.get() / r.get() unwrap, the same member as the paren-free .get", () 
     expect(shape.live?.v).toEqual(after);
   });
 
-  // "Panics exactly like `.get`": the same reducer written in each spelling,
-  // run on the empty case, has to end the same way — an error reported and
-  // the write rolled back.
   it.each([
     ["None", "slot v : Option(Int) = None", "Some", { _tag: "None" }],
     ["Err", 'slot v : Result(Int, Text) = Err("e")', "Ok", { _tag: "Err", _0: "e" }],
@@ -60,9 +48,6 @@ describe("o.get() / r.get() unwrap, the same member as the paren-free .get", () 
     expect(outcomes[1]).toEqual(outcomes[0]);
   });
 
-  // The reading the checker accepts `.get()` for on a receiver it cannot
-  // decide is the unwrap: a call with no key has nothing to look up. `$el` is
-  // untyped, and the unwrap hands a plain value back unchanged.
   it("reads .get() on an undecided receiver as the unwrap, not the lookup", async () => {
     const src = app('slot v : Text = ""', "$el.x.get()").replace(
       'tile Go = button(text="go")',

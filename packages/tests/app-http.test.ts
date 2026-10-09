@@ -1,9 +1,3 @@
-// End-to-end coverage for app.http (#78): a compiled program that declares
-// `app.http = { base-url, headers, on-401, credentials }` should: (a) thread
-// the config into the HTTP effect path so `fetch` sees the merged URL +
-// headers, and (b) route a 401 response back into the `on-401` reducer
-// without the developer wiring a per-effect `.err` handler for it.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
@@ -22,14 +16,6 @@ const APP_HTTP_EXAMPLE = join(here, "..", "examples", "apps", "07-app-http", "ap
 
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Wait for `done()` rather than for a duration. A fixed sleep long enough for
- * the longest chain here — mount → `boot` → storage read → index fetch →
- * `indexIn` → detail fetch — is a number that holds on an idle machine and
- * stops holding on a loaded one; the condition is the thing actually being
- * waited for. Throws on the deadline so a chain that never completes fails
- * where it stalled instead of at whatever assertion came next.
- */
 async function waitUntil(done: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!done()) {
@@ -38,7 +24,7 @@ async function waitUntil(done: () => boolean, timeoutMs = 2000): Promise<void> {
   }
 }
 
-describe("app.http (#78) — end-to-end", () => {
+describe("app.http — end-to-end", () => {
   let double: FetchDouble | undefined;
 
   afterEach(() => {
@@ -53,12 +39,7 @@ describe("app.http (#78) — end-to-end", () => {
     document.body.appendChild(root);
     let dispose: (() => void) | undefined;
     try {
-      // `dispose` is bound before the assertions and released in `finally`: a
-      // failing expectation must not leak a mounted app — its router
-      // subscription and in-flight effects outlive the test and turn one
-      // failure into a run of them.
       ({ dispose } = mount(app, root));
-      // Trigger ui.click(LoadBtn) → emit fetchQuote()
       clickByText(root, "Load");
       await tick();
       expect(double.calls.length).toBe(1);
@@ -91,22 +72,13 @@ describe("app.http (#78) — end-to-end", () => {
   });
 });
 
-// #340: `app.http.headers` may hold a `fmt` call, and the blog app's does —
-// `fmt("Bearer {0}", session.map($1.token).get-or(""))`. `fmt` substituted
-// nothing, so every request that app made carried the literal
-// `Authorization: Bearer {0}` and the token never left the browser. Nothing in
-// `check`, `build` or `smoke` could see it: a header is a `Text` either way,
-// and no tier read what the header said. This one reads it.
 const BLOG_EXAMPLE = join(here, "..", "examples", "apps", "03-blog", "app.kumiki");
 
-describe("the blog app's Authorization header (#340)", () => {
+describe("the blog app's Authorization header", () => {
   let double: FetchDouble | undefined;
   let errors: unknown[][];
 
   beforeEach(() => {
-    // The channel the headless tiers decide failure from, captured rather than
-    // printed: a thrown header expression and a rejected decode both arrive
-    // here, and both would otherwise leave the request assertions intact.
     errors = [];
     vi.spyOn(console, "error").mockImplementation((...args) => {
       errors.push(args);
@@ -127,10 +99,6 @@ describe("the blog app's Authorization header (#340)", () => {
       title: "Seven layers, one file",
       body: "Every definition stands on its own.",
       authorId: "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
-      // Epoch milliseconds, the representation `Time` has (stdlib.md §2.2.9)
-      // and the one the blog's own scenario.json uses. `Decoder.Json(Post)`
-      // checks only the JSON syntax at runtime, not the shape, so an ISO string
-      // would still reach `.ok`; the test uses the real representation anyway.
       publishedAt: 1737018000000,
       tags: ["kumiki"],
     };
@@ -151,12 +119,6 @@ describe("the blog app's Authorization header (#340)", () => {
     let dispose: (() => void) | undefined;
     try {
       ({ dispose } = mount(app, root));
-      // Only the `/api/posts/{id}` calls are read, and every one of them must
-      // carry the token. The index request `/api/posts` is excluded by URL, not
-      // by position: `boot` emits `loadSession()` and `fetchIndex()` in one
-      // batch, so the index request may legitimately race the storage read and
-      // go out with an empty token. A detail request cannot — it is emitted by
-      // `indexIn` on `fetchIndex.ok`, by which time `sessIn` has run.
       const isDetail = (c: FetchCall): boolean => c.url.endsWith(`/api/posts/${postId}`);
       await waitUntil(() => double?.calls.some(isDetail) === true);
       for (const call of double.calls.filter(isDetail)) {
@@ -173,11 +135,6 @@ describe("the blog app's Authorization header (#340)", () => {
   });
 
   it("a login's stored session is read back after a reload", async () => {
-    // The round trip: `loginOk` writes the session with `saveSession`, and the
-    // next boot's `loadSession` decodes `Session` from the same key. The writer
-    // has to store the shape the reader decodes — a stored `Option` wrapper is
-    // refused by the reader's `uuid` check, and with no `loadSession.err`
-    // reducer that refusal lands on `console.error` and the user is logged out.
     const userId = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
     const app = await loadApp(BLOG_EXAMPLE);
     double = stubFetch((call) =>

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ALL_ICONS, check, ICON_NAMES, plus } from "../src/index.ts";
 
-// The spec/style.md §4.8.1 closed name set, sorted lexicographically. Any
-// addition / removal must land in spec, README, and this list in lockstep —
-// the test pins the surface so silent drift can't happen.
 const SPEC_NAMES: readonly string[] = [
   "alert-circle",
   "alert-triangle",

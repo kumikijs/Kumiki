@@ -1,7 +1,3 @@
-// Validates the scenario runner — the substrate for an agent's autonomous
-// generate → run → observe → fix loop. Drives real examples by reducer name and
-// by clicking text, and asserts on reliable slot state (not scraped pixels).
-
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,10 +47,6 @@ describe("scenario runner", () => {
     expect(report.steps[0]?.failures[0]).toContain("count");
   });
 
-  // Some contracts are "the runtime must say something" — a reducer batch a
-  // refinement rejected, an effect error no `.err` reducer consumes. The tier
-  // could only assert the absence of errors, so those were unassertable and an
-  // example demonstrating one had to settle for not failing.
   describe("errorIncludes", () => {
     const atomicity = join(examples, "features", "63-reducer-batch-atomicity.kumiki");
 
@@ -71,8 +63,7 @@ describe("scenario runner", () => {
           ...toCeiling,
           {
             do: { clickText: "bump" },
-            // `noErrors` still holds: it means "nothing this step did not ask
-            // for", so the two compose instead of contradicting.
+            // `noErrors` still holds: it means "nothing this step did not ask for", so the two compose instead of contradicting.
             expect: { noErrors: true, errorIncludes: ['reducer "bump" was rejected'] },
           },
         ],
@@ -105,12 +96,6 @@ describe("scenario runner", () => {
     });
   });
 
-  // #369: the runner wrote the value and dispatched the event itself, so a step
-  // that drove a control the platform refuses moved the slot, ran the reducer,
-  // and passed — asserting behaviour the product cannot produce. The corpus
-  // fixture beside this covers the whole table; these pin the two things that
-  // are about the runner rather than about the rule: a refusal lands on the
-  // fault channel and nowhere else, and `actionErrorIncludes` reads it.
   describe("a step cannot drive a control the platform refuses", () => {
     const disabled = join(examples, "features", "95-disabled-controls-refuse-a-step.kumiki");
 
@@ -125,9 +110,6 @@ describe("scenario runner", () => {
       expect(report.steps[0]?.state.typed).toBe(0);
     });
 
-    // The same split `errorIncludes` needed, for the same reason: a refusal is
-    // not something the app said, so a step must not be able to pass by
-    // claiming it through the error channel.
     it("keeps the refusal off the error channel, out of errorIncludes' reach", async () => {
       const app = await loadApp(disabled);
       const report = await runScenario(app, freshRoot(), {
@@ -171,9 +153,6 @@ describe("scenario runner", () => {
     });
   });
 
-  // A manifest-registered custom capability (telemetry.track) must compile and
-  // its effect must be emittable + dispatched — mocked deterministically here,
-  // exactly like a standard effect. loadApp resolves examples/features/kumiki.caps.json.
   it("dispatches a manifest-registered custom effect (mocked deterministically)", async () => {
     const app = await loadApp(join(examples, "features", "27-custom-capability.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -186,9 +165,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // M2 (#37): an unavailable storage backend (sandbox / private mode) returns
-  // `err`; the example's `.err` reducer turns that into a visible status instead
-  // of a silent no-op. Mock loadText → err and assert the status, not silence.
   it("surfaces an unavailable storage backend as a status (20-effect-storage)", async () => {
     const app = await loadApp(join(examples, "features", "20-effect-storage.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -205,12 +181,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // Regression (#20 example): typing must run the `edit` reducer
-  // (on=ui.input(NoteInput)) so it persists via `saveText`. The textarea
-  // renderer previously wired only `bind`, dropping the onInput/onChange props
-  // codegen emits — so a bound textarea updated its slot but never ran its
-  // reducer, and the auto-save never fired (status stuck, no `saveText` emit).
-  // settleMs covers the save effect's debounce(300ms).
   it("runs a textarea's ui.input reducer so the note auto-saves (20-effect-storage)", async () => {
     const app = await loadApp(join(examples, "features", "20-effect-storage.kumiki"));
     const report = await runScenario(
@@ -235,10 +205,6 @@ describe("scenario runner", () => {
     expect(report.steps[1]?.emits.some((e) => e.effect === "saveText")).toBe(true);
   });
 
-  // M1 (#24): a render panic under an `error-boundary` is caught and the
-  // fallback shown — cleanly, with no surfaced error (the boundary recovery is
-  // silent). Clicking "reveal" makes a child tile read `.get` on a None, which
-  // panics during render; the boundary turns it into "recovered: …".
   it("recovers from a render panic via an error-boundary (32-panic-boundary)", async () => {
     const app = await loadApp(join(examples, "features", "32-panic-boundary.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -250,9 +216,6 @@ describe("scenario runner", () => {
     expect(report.steps[0]?.domText).toContain("get called on None");
   });
 
-  // M2 (#23): a record field named like a method renders as the FIELD, not the
-  // shadowing method — proven end-to-end (the value "start" is the field, not a
-  // List.head result), while a real List receiver still uses the shortcut.
   it("reads record fields named like methods, not the shadowing method (33-field-vs-method)", async () => {
     const app = await loadApp(join(examples, "features", "33-field-vs-method.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -268,10 +231,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // M4 (#38): the HTTP showcase demonstrates the success path deterministically.
-  // The effect is mocked at the capability boundary (exactly what the playground
-  // does with a deterministic http.get provider), so the ok reducer populates
-  // the quote into Loaded(...).
   it("loads a quote on the success path (19-effect-http)", async () => {
     const app = await loadApp(join(examples, "features", "19-effect-http.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -293,10 +252,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // M3 (#36): path-based routing works in memory-router mode (the playground
-  // srcdoc sandbox / any embedded host that owns the URL), with no reliance on
-  // the ambient location/history: initial "/" resolves to Home (not /404), a
-  // link click navigates, and the path param survives into the routed tile.
   it("routes in memory mode: initial /, link nav, path params (18-routing)", async () => {
     const app = await loadApp(join(examples, "features", "18-routing.kumiki"));
     const report = await runScenario(
@@ -313,11 +268,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // Regression (#23 example): a `route.enter(pattern)` reducer must fire on
-  // entering that route. The parser previously discarded the pattern argument,
-  // so the reducer's event name was the bare "route.enter" and never matched the
-  // runtime's `route.enter("/page")` lookup — navigation worked but the counter
-  // stayed at 0. Each entry into "/page" bumps `visits`.
   it("fires a route.enter(pattern) reducer on navigation (23-lifecycle-route-enter)", async () => {
     const app = await loadApp(join(examples, "features", "23-lifecycle-route-enter.kumiki"));
     const report = await runScenario(
@@ -342,9 +292,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // Issue #82: route.leave guard + confirm effect. Drives the example end-to-end
-  // through the compiled .kumiki: dirty edit → navigation triggers the modal
-  // → click No reverts → click Yes commits and the user reducer cleans up dirty.
   it("gates a route.leave with confirm; No reverts, Yes commits (38-confirm-leave-guard)", async () => {
     const app = await loadApp(join(examples, "features", "38-confirm-leave-guard.kumiki"));
     const root = freshRoot();
@@ -382,10 +329,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // Issue #85: nested routes — a parent's `/settings/*` wildcard delegates to
-  // a `route-outlet`, and the runtime re-matches the path against the parent's
-  // sub-routes. Verifies the default child (§3.6.3), sibling switching,
-  // sub-route redirects (`->>`), and the global /404 fallthrough.
   it("nested routes select the right child via route-outlet (40-nested-routes)", async () => {
     const app = await loadApp(join(examples, "features", "40-nested-routes.kumiki"));
     const report = await runScenario(
@@ -464,10 +407,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // Spec §10.5.1: a debounce-deferred effect stays on the originating ui.input
-  // episode — the whole causal chain `edit → effect-start(saveText) →
-  // signal-update → effect-end → saved reducer → signal-update` lives on one
-  // episode rather than splitting onto a fresh `effect.ok`-triggered one.
   it("debounce-deferred effects ride the originating episode (20-effect-storage)", async () => {
     const app = await loadApp(join(examples, "features", "20-effect-storage.kumiki"));
     const logger = createEpisodeLogger({ memoryMax: 20 });
@@ -507,11 +446,9 @@ describe("scenario runner", () => {
     expect(reducers).toContain("edit");
     expect(reducers).toContain("saved");
     expect(editEp!.status).toBe("completed");
-    // Exactly one ui.input episode — no duplicate originating episode opened
-    // by a fallback path.
+    // Exactly one ui.input episode — no duplicate originating episode opened by a fallback path.
     expect(eps.filter((ep) => ep.trigger.kind === "ui.input")).toHaveLength(1);
-    // And the saveText effect-end is NOT split onto its own auto-opened
-    // `effect.ok`-triggered episode.
+    // And the saveText effect-end is NOT split onto its own auto-opened `effect.ok`-triggered episode.
     const saveOrphan = eps.find(
       (ep) =>
         ep.trigger.kind.startsWith("effect.") &&
@@ -520,9 +457,6 @@ describe("scenario runner", () => {
     expect(saveOrphan).toBeUndefined();
   });
 
-  // Regression: this app's scenario guards two framework fixes found via the
-  // iterate loop — List.fold codegen, and Int.parse numeric coercion (a total
-  // that was silently wrong via string concatenation).
   it("runs the expense-tracker acceptance scenario (fold + Int.parse)", async () => {
     const dir = join(examples, "apps", "06-expenses");
     const app = await loadApp(join(dir, "app.kumiki"));
@@ -537,12 +471,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // The blog's editor route reaches its slot through two reducers that are NOT
-  // route reducers — one on `fetchPost.ok`, one on the Save click. Both used to
-  // read `$route`, which the runtime only fills in for a route lifecycle
-  // reducer, so the comparison against the route was made against `undefined`
-  // and the editor never opened: the route rendered a spinner forever. The
-  // route slot is what those two read now, and this scenario is what says so.
   it("runs the blog editor route end to end (route slot outside a route reducer)", async () => {
     const dir = join(examples, "apps", "03-blog");
     const app = await loadApp(join(dir, "app.kumiki"));
@@ -557,11 +485,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // §1.6.4 Invariant 3: "Multiple reducers matching the same event run in
-  // definition order". The 11-multi-subscribe app puts two reducers on
-  // ui.click(SaveBtn) — clicking the button must advance BOTH slots, not just
-  // the first one defined. A regression to single-dispatch would leave `log`
-  // stuck at 0 and trip the assertion below.
   it("fires every ui.click reducer on the same tile (11-multi-subscribe)", async () => {
     const app = await loadApp(join(examples, "apps", "11-multi-subscribe", "app.kumiki"));
     const report = await runScenario(app, freshRoot(), {
@@ -573,11 +496,6 @@ describe("scenario runner", () => {
     expect(report.ok).toBe(true);
   });
 
-  // §1.6.4 Invariant 3 is enforced as independent dispatches, not a single
-  // composite apply: if reducer N panics, reducers N+1..M still run. The
-  // runtime catches panics in applyReducer and rolls back that one dispatch,
-  // so the chain doesn't blow up if any link throws. The panic itself is
-  // expected here, so report.ok will be false — assert on slot state directly.
   it("keeps running later reducers in the chain when an earlier one panics", async () => {
     const src = `
       slot first : Int = 0
@@ -607,16 +525,6 @@ describe("scenario runner", () => {
     expect(step0?.state.last).toBe(1);
   });
 
-  // A dispatch-only scenario for a ui.<event> reducer verifies the reducer body
-  // but not the DOM wiring — addEventListener(...) → `installUiEventListeners`
-  // → reducer. These four primitives let a scenario exercise that path in one
-  // step, so "compiles + DOM wired + reducer fires" can be observed in the
-  // scenario tier alone. Feature example 76 walks the other way in, where the
-  // listener is registered by the patch that first puts a handler in the slot.
-  //
-  // What each dispatch carries is part of the contract, not an implementation
-  // detail: `keydown` bubbles and the other three do not, and the payload a
-  // `ui.key` reducer reads is filled from the event.
   describe("focus / blur / key / hover DOM-event primitives", () => {
     async function compileInline(name: string, src: string): Promise<string> {
       const here = dirname(fileURLToPath(import.meta.url));
@@ -701,10 +609,6 @@ describe("scenario runner", () => {
     `;
 
     it("hands the pressed key to the reducer, and an empty code", async () => {
-      // The spec says both halves of this. `code` names a physical key on a
-      // layout, which a scenario asking for "Enter" has not chosen — so filling
-      // it here would be inventing one, and a reducer that reads it must see
-      // what it will see.
       const path = await compileInline("key-payload", keyApp);
       const app = await loadApp(path);
       const report = await runScenario(app, freshRoot(), {
@@ -730,10 +634,6 @@ describe("scenario runner", () => {
       expect(report.ok).toBe(true);
     });
 
-    // The two events differ here, and the difference is the DOM's, not a
-    // choice: `keydown` bubbles — which is what lets `ui.key(Container)` be
-    // driven from a focusable descendant — and `mouseenter` does not, since a
-    // browser fires a separate one on each ancestor rather than propagating.
     const nestedApp = `
       slot keyHits   : Int = 0
       slot hoverHits : Int = 0

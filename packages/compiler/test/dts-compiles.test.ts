@@ -1,10 +1,3 @@
-// `generateDts` writes a file into the user's project (the Vite plugin's
-// `types: true`), so its output is only useful if `tsc` accepts it. Asserting
-// on substrings cannot tell a declaration that parses from one that does not:
-// a hyphenated slot name and a user type named `Slots` both produced text that
-// looked right and failed the moment the project compiled. Every case here
-// ends at a real TypeScript program with zero diagnostics.
-
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { generateDts, lex, parse } from "@kumikijs/compiler";
@@ -14,9 +7,6 @@ import { describe, expect, it, vi } from "vitest";
 const TMP_ROOT = resolve(__dirname, "test-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
 
-// Every case here starts a TypeScript program, which is an order of magnitude
-// more work than the rest of this package's tests and past the 5 s default on a
-// loaded CI runner.
 vi.setConfig({ testTimeout: 30_000 });
 
 const dtsOf = (src: string): string => generateDts(parse(lex(src)));
@@ -48,8 +38,6 @@ const APP_TAIL = `
 describe("generateDts output compiles", () => {
   it("quotes a slot name TypeScript cannot take bare", () => {
     const gen = dtsOf(`slot my-slot : Text = ""${APP_TAIL}`);
-    // The runtime's own `slots` object keys it `"my-slot"` — the declaration
-    // has to describe the shape that exists, not a renamed one.
     expect(gen).toContain('"my-slot": string;');
     expect(tscDiagnostics(gen)).toEqual([]);
   });
@@ -93,8 +81,6 @@ describe("generateDts output compiles", () => {
       ${APP_TAIL}
     `);
     expect(tscDiagnostics(gen)).toEqual([]);
-    // Whichever spelling keeps the bare name, the two slots must not end up
-    // pointing at one declaration.
     const sType = /\bs: (\w+);/.exec(gen)?.[1];
     const tType = /\bt: (\w+);/.exec(gen)?.[1];
     expect(sType).toBeDefined();
@@ -126,10 +112,6 @@ describe("generateDts output compiles", () => {
   });
 
   it("does not let a type parameter capture a type declared beside it", () => {
-    // `f-oo` is the parameter and `f_oo` the record; lowering both to the same
-    // identifier makes the alias read as though the field referred to itself.
-    // TypeScript is silent about that — it is a valid declaration meaning the
-    // wrong thing — so the assertion is on the resolved reference.
     const gen = dtsOf(`
       type f_oo = { a: Int }
       type Box(f-oo) = { x: f-oo, y: f_oo }
@@ -156,17 +138,12 @@ describe("generateDts output compiles", () => {
     const box = /export type Box<(\w+)> = \{ x: (\w+) \};/.exec(gen);
     expect(box).not.toBeNull();
     const [, param, x] = box as RegExpExecArray;
-    // Kumiki shadows too, so `x` is the parameter — but it must not be spelled
-    // like the record, or the alias would read as the record for a reader.
     expect(x).toBe(param);
     expect(gen).toContain("export type T = { a: number };");
     expect(param).not.toBe("T");
   });
 
   it("does not declare a type under a name TypeScript reserves", () => {
-    // Every one of these is a legal Kumiki type name and an illegal TypeScript
-    // alias name (TS2457). One source declaring all of them is one program to
-    // check, and any name left unreserved shows up in the same diagnostics.
     const reserved = [
       "any",
       "unknown",
@@ -196,8 +173,6 @@ describe("generateDts output compiles", () => {
       ${APP_TAIL}
     `);
     expect(tscDiagnostics(gen)).toEqual([]);
-    // The helpers are the file's public surface — an importer names them — so
-    // the user type is the side that moves.
     expect(gen).toContain("export interface KumikiSlots {");
     expect(gen).not.toContain("export type KumikiSlots =");
   });
@@ -236,9 +211,6 @@ describe("generateDts output compiles", () => {
 
 describe("the standard library's Route", () => {
   it("carries every field the router produces", () => {
-    // routing.md §3.2 lists five and the runtime builds all five; stdlib.md's
-    // row (and this table) had three, so `route.pattern` typed as `unknown` in
-    // a generated provider signature.
     const gen = dtsOf(`slot r : Route = {path: "/", pattern: "/", params: {}, query: {}, hash: None}
       tile App = column(text(r.path))
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]

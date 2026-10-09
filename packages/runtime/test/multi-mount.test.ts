@@ -2,19 +2,10 @@ import type { AppShape } from "@kumikijs/runtime";
 import { defineKumikiElement, mount, resolveApp } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// Multi-mount isolation: several Kumiki apps on one page must not cross-wire.
-// App resolution is keyed off the mount root (`data-kumiki-root` + WeakMap),
-// so DOM-event-driven paths (bind write-back, link nav, icon lookup) land on
-// the app that owns the tree the event fired in — not on whichever app
-// happened to mount last.
-
 type AppLive = AppShape & {
   _setSlot?: (name: string, value: unknown) => void;
 };
 
-// An app whose UI is a bound input plus a mirror of the slot value. Typing
-// into the input exercises the tiles-input write-back path — the exact route
-// that used to resolve the app through the shared global.
 function makeBindApp(): AppShape {
   const app: AppShape = {
     slots: { text: { value: "" } },
@@ -33,9 +24,6 @@ function makeBindApp(): AppShape {
   return app;
 }
 
-// Both icon apps declare the SAME theme name: the theme-reapply cache then
-// skips rebinding on re-render, which is exactly the state where the old
-// global-based icon lookup read the wrong app.
 function makeIconApp(iconPath: string): AppShape {
   const app: AppShape = {
     slots: { n: { value: 0 } },
@@ -171,11 +159,6 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
   });
 
   it("restores the rendering context across a nested synchronous mount (T7)", () => {
-    // A custom element inside a Kumiki tree mounts its own app synchronously
-    // from connectedCallback while the outer render is still on the stack.
-    // Simulate that re-entrancy directly: the outer root() mounts the inner
-    // app mid-render. Outer render-time resolution (its icon) must still land
-    // on the outer app afterwards.
     const inner = makeIconApp("M9 9 L8 8");
     const innerHost = freshRoot();
     let innerMounted = false;
@@ -229,11 +212,6 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(d2).toBe("M9 9 L8 8");
   });
 
-  // T1-T5 are all about apps that must NOT share. The other half of the
-  // registry's job is the shape mounted twice on purpose, which resolves to one
-  // app from both roots and paints both — see `shared-mount.test.ts` for what
-  // that app then owns once. Here: the registry maps two roots to one app, and
-  // dropping one leaves the other resolvable.
   it("resolves both roots of one shape to that shape, and survives one being dropped (T8)", () => {
     const app = makeBindApp();
     const root1 = freshRoot();

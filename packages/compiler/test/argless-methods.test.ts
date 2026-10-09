@@ -1,10 +1,6 @@
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// Issue #7: docs/spec/stdlib.md §2.2 argument-less methods. Both call shapes must
-// work — `recv.m` (FieldAccess, the spec-recommended shortcut) and `recv.m()`
-// (MethodCall). Each is written on a receiver §2.2 lists it for: a member of
-// one receiver is E0108 on another.
 const ARGLESS: [method: string, receiver: string][] = [
   ["head", "xs"],
   ["tail", "xs"],
@@ -60,8 +56,6 @@ describe("argument-less stdlib methods (issue #7)", () => {
     expect(js).toContain("_s.parseFloatOpt(");
     expect(js).toContain("Math.abs(");
     expect(js).toContain("Math.trunc(");
-    // None of the 12 may fall through to the record-field accessor `(base)["m"]`
-    // (the old silent-`undefined` bug). Guards against a future forgotten case.
     for (const [m] of ARGLESS) expect(js, m).not.toContain(`["${m}"]`);
   });
 

@@ -1,13 +1,3 @@
-// The generator and the runtime gate answer the same question from opposite
-// ends, and nothing held them to the same answer.
-//
-// `email` / `url` / `uuid` fold into generation as a *shape* and into the
-// runtime as a regex (#352). The two live in different packages — the shape in
-// `@kumikijs/runtime`'s `genValue`, the pattern in the compiler's refinement
-// table — so either could change and stay green while a `for-all` over `Email`
-// generated values the slot it is generating for would refuse. That is the
-// state testing.md §8.3.2 says cannot happen, stated here as an assertion.
-
 import { applyRefine, type GenDescData, refinementToJs } from "@kumikijs/compiler";
 import { _stdlibTest, type GenDesc } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -28,9 +18,8 @@ const descriptor = (base: GenDescData, pred: string, args: (number | string)[] =
   applyRefine(base, refinement(pred, args)) as unknown as GenDesc;
 
 /**
- * 200 generated values, each asserted against the predicate. Run through the
- * runner the language's own `property-test` uses rather than a loop of our
- * own, so the seeding and the descriptor reading are the real ones.
+ * 200 generated values, each asserted against the predicate.
+ * Run through the runner the language's own `property-test` uses rather than a loop of our own, so the seeding and the descriptor reading are the real ones.
  */
 function generatedValuesPass(desc: GenDesc, accepts: (v: unknown) => boolean): string | undefined {
   const report = _stdlibTest.runPropertyTest({

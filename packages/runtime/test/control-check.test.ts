@@ -1,19 +1,3 @@
-// The rule every driver asks before driving a control (#369), the DOM reading
-// it is asked about, and the verdict a fixture's `actionErrorIncludes` gets.
-//
-// The lists below are written out by hand rather than derived from
-// `CONTROL_DEMANDS`, which is the only way they guard anything: a loop over
-// `Object.keys(CONTROL_DEMANDS)` asking `controlFault` reads the same table it
-// is checking, so an entry added there generates a case that is green by
-// construction and an entry *removed* takes its own case with it. Spelled out,
-// deleting `blur: "activation"` fails here, and `COVERED` fails if a new verb
-// is classified in neither list.
-//
-// What this file cannot guard is that `performAction` asks the rule at all —
-// it never touches either tier. `_ControlVerbsTotal` in `scenario.ts` and
-// `browser.ts` is what makes a new verb impossible to forget in the table, and
-// the corpus fixture is what shows the table is consulted.
-
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   CONTROL_DEMANDS,
@@ -74,9 +58,6 @@ describe("a disabled control refuses every verb that drives one", () => {
       expect(fault).toBeInstanceOf(ControlRefusal);
       expect(fault?.reason).toBe("disabled");
       expect(fault?.headline).toContain("<input> is disabled");
-      // The message must carry the substring it tells the reader to assert on,
-      // or the hint sends them to a step that cannot pass — and the substring
-      // must be one the headline holds, since that is what is matched.
       expect(fault?.message).toContain(
         `{"expect": {"actionErrorIncludes": ["${fault?.suggestion}"]}}`,
       );
@@ -93,8 +74,6 @@ describe("a disabled control refuses every verb that drives one", () => {
     );
   });
 
-  // The bare reason is the spelling most likely to also match "no element
-  // matching selector #save-disabled", so the hint must not teach it.
   it("the suggestion names the control, not the bare reason", () => {
     expect(
       controlFault("click", "click #off", { ...ACTIVE, tag: "button", disabled: true })?.suggestion,
@@ -102,9 +81,6 @@ describe("a disabled control refuses every verb that drives one", () => {
   });
 });
 
-// Spelled out whole, once per shape of message: `StepRefusal` builds `message`
-// from `headline`, and that construction must not change a word of what a
-// fixture already reads.
 describe("the message a refusal carries", () => {
   it("opens with the headline and ends with the assertion to write", () => {
     const fault = controlFault("click", "click #off", { ...ACTIVE, tag: "button", disabled: true });
@@ -151,9 +127,6 @@ describe("readonly and contenteditable=false refuse the typing alone", () => {
     );
   });
 
-  // The explanation names the other two reasons, so it must stay out of the
-  // surface a fixture matches — otherwise a fixture asserting the wrong reason
-  // on an `editable` passes.
   it("the explanation of not-editable is not matchable as disabled or readonly", () => {
     const fault = controlFault("fill", "fill #frozen", {
       ...ACTIVE,
@@ -165,9 +138,6 @@ describe("readonly and contenteditable=false refuse the typing alone", () => {
     expect(fault?.message).toContain("disabled");
   });
 
-  // Measured in Chromium: a readonly <input> is focusable and receives
-  // `keydown`; a `contenteditable="false"` <div> receives `click`. Refusing
-  // these would report a program broken that a browser runs.
   it.each(DRIVES.filter((v) => v !== "fill"))("%s is allowed on a readonly control", (verb) => {
     expect(controlFault(verb, `${verb} #note`, { ...ACTIVE, readonly: true })).toBeUndefined();
   });
@@ -200,9 +170,6 @@ describe("the rule says nothing where the platform says nothing", () => {
   });
 });
 
-// `kumiki smoke` skips rather than reports, so it asks the rule without its
-// prose. The two must agree, or one driver would fire at a control the other
-// turns away.
 describe("refusesControl answers the same question as controlFault", () => {
   const cases: ControlState[] = [
     ACTIVE,
@@ -242,9 +209,6 @@ describe("readControl finds the control a verb would drive", () => {
     });
   });
 
-  // `check` / `radio` / `switch` put the tile's id on a <label> and the state on
-  // the <input> under it, so a step aimed at the tile lands on the wrapper.
-  // Measured: Chromium refuses a click on the label of a disabled checkbox.
   it("looks through the <label> wrapper check / radio / switch render", () => {
     const state = readControl(el('<label id="a"><input type="checkbox" disabled></label>'));
     expect(state).toMatchObject({ tag: "input", via: "label", disabled: true });
@@ -253,16 +217,10 @@ describe("readControl finds the control a verb would drive", () => {
     );
   });
 
-  // The narrow reading is the point: widening it to any ancestor would refuse a
-  // click on a region because something disabled sits somewhere inside it.
   it("does not reach into a container that merely holds a control", () => {
     expect(readControl(el('<div id="a"><input disabled></div>'))).toBeNull();
   });
 
-  // The other direction, and the one that is not symmetric with it. Measured:
-  // a click dispatched at a <span> inside a disabled <button> reaches the
-  // <button>'s listener, so `ui.click` on that button runs — the bug, one
-  // element down from where the rule was looking.
   it("ascends to a disabled control the selector landed inside", () => {
     const state = readControl(
       el('<button id="b" disabled><span id="a">go</span></button>').querySelector("#a") as Element,
@@ -273,8 +231,6 @@ describe("readControl finds the control a verb would drive", () => {
     );
   });
 
-  // The ascent stops at `:disabled` rather than at any control, so a selector
-  // inside a live control is still nothing this rule speaks about.
   it("does not ascend to a control that is not disabled", () => {
     expect(
       readControl(
@@ -292,11 +248,6 @@ describe("readControl finds the control a verb would drive", () => {
   });
 });
 
-// The half that decides whether a fixture asserting a refusal is worth
-// anything. `actionError` is a shared channel — a selector matching nothing, an
-// unknown reducer, a `fill` on an element that holds no text, and now a
-// refusal — so a bare substring match over it would let a step claim a refusal
-// that never happened.
 describe("judgeRefusal", () => {
   const refusal = (): ControlRefusal => {
     const fault = controlFault("click", "click #off", {
@@ -327,9 +278,6 @@ describe("judgeRefusal", () => {
     expect(verdict.failures[0]).toContain("but it ran");
   });
 
-  // The blocking case: `no element matching selector #save-disabled` contains
-  // `disabled`, and used to be claimed as a refusal — a step reporting that the
-  // platform turned it away when nothing of the sort happened.
   it("refuses to let a non-refusal be claimed, and names what did happen", () => {
     const verdict = judgeRefusal(["disabled"], {
       message: "no element matching selector #save-disabled",

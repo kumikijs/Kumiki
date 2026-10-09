@@ -52,8 +52,6 @@ export function registerDev(program: Command): void {
         ...(options.episodeLog !== undefined ? { episodeLog: options.episodeLog } : {}),
         ...(options.strictA11y ? { strictA11y: true } : {}),
       };
-      // Loaded here, not at the top: `../dev.ts` pulls in vite, and every other
-      // verb would pay for that on each start.
       const { devCmd } = await import("../dev.ts");
       await devCmd(inputPath, devOpts);
     });

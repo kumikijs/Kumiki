@@ -1,6 +1,3 @@
-// Mutating commands for the kumiki CLI. Each mutation rewrites the .kumiki
-// file and appends an entry to `<file>.kumiki-ops.jsonl`.
-
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
 import { check, type Def, LexError, lex, type Pos, parse, type Token } from "@kumikijs/compiler";
@@ -16,10 +13,6 @@ import {
 } from "./store.ts";
 import { atomicWriteFileSync, withWriteLock } from "./write-lock.ts";
 
-// Crockford base32. The mutate-op id is a §9.3.3 ULID — 10-char ms timestamp
-// prefix followed by 16 random chars — so that lexicographic ordering matches
-// time order. §9.3.3 decides same-name add winners by op-id lexicographic
-// order; without the time prefix the tie-break would be random.
 const ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 function encodeTime(ms: number): string {
@@ -49,23 +42,8 @@ export type OpLogEntry = {
   cascade?: boolean;
   /** Every definition a cascade deleted, the requested one first (§9.4.1). */
   removed?: string[];
-  /**
-   * `remove` only: the source of every definition the op deleted, as it stood
-   * when it was deleted, the requested one first. It is what `patch revert`
-   * restores, so the restore never depends on reconstructing a body from
-   * earlier ops.
-   */
   bodies?: DefSpec[];
-  /**
-   * The definitions an `add` restores together with the named one — the
-   * inverse of a cascade, which is one op in both directions.
-   */
   with?: DefSpec[];
-  /**
-   * `replace` and `edit` only: the body the definition had before the op, as
-   * it stood in the file. It is what `patch revert` writes back, so the revert
-   * never depends on a body some earlier op happened to log.
-   */
   prev?: string;
   patch?: unknown;
   author: string;
@@ -127,12 +105,6 @@ export function readOpLog(path: string): OpLogEntry[] {
   return out;
 }
 
-/**
- * What is wrong with the definition lists an op carries, if anything. An op
- * read from a patch file or the op log is only JSON; without this a `with`
- * member missing its `name` was written to the file as `slot undefined`, and a
- * `with` that is not an array threw a TypeError from deep inside a revert.
- */
 function opShapeProblem(op: RawOp): string | undefined {
   const own = `${op.layer}.${op.name}`;
   if (op.with !== undefined) {
@@ -186,14 +158,6 @@ function lastOpId(path: string): string | undefined {
   return log.at(-1)?.["op-id"];
 }
 
-/**
- * Compute the `depends-on` list for an op. The body is scanned for identifiers
- * matching other definitions; each match contributes `<layer>:<name>@h:<hash>`
- * where the hash is the §9.5.1 transitive content hash (same algorithm as
- * `viewHash`), so `view --hash <q>` of any dependency is directly comparable
- * to the `@h:` digest recorded here. Falls back to the raw body identifiers
- * when the file has not yet parsed (e.g. mid-rollback).
- */
 function computeDependsOn(path: string, layer: string, name: string, body: string): string[] {
   try {
     const store = load(path);
@@ -253,10 +217,6 @@ function logOp(path: string, op: RawOp): string {
   return id;
 }
 
-/**
- * Append one line, or leave the file as it was: an append that fails partway
- * (ENOSPC) would otherwise leave a torn last line that no later read can parse.
- */
 function appendLine(file: string, line: string): void {
   const size = existsSync(file) ? statSync(file).size : null;
   try {
@@ -272,16 +232,6 @@ function appendLine(file: string, line: string): void {
   }
 }
 
-/**
- * Decide whether `next` may replace `before` on `path`. Returns the reason to
- * refuse, if there is one.
- *
- * The new source must parse and typecheck, and no definition the write
- * touches may be locked by another agent (§9.8.3). What is touched is read
- * off the two sources, not off the verb: a body is written as given, so a
- * `replace` / `add` / `edit` body can carry a second definition with it, a
- * cascade removes dependents and a rename rewrites referrers.
- */
 function validate(
   path: string,
   before: string,
@@ -289,14 +239,6 @@ function validate(
 ): { ok: true } | { ok: false; message: string } {
   try {
     const program = parse(lex(src));
-    // Only `severity: "error"` diagnostics roll back a mutate op. Non-fatal
-    // warnings (W02xx) describe pre-existing dead code patterns and would
-    // wedge legitimate edits to unrelated layers.
-    //
-    // `requireApp: false` because a program is built one definition at a time:
-    // the first `add` into a new file, and every edit until the `app` lands,
-    // would otherwise roll back with E0003. Whether the result is a complete
-    // application is what `kumiki check` answers afterwards.
     const errors = check(program, { requireApp: false }).filter((d) => d.severity !== "warning");
     if (errors.length > 0) {
       const summary = errors
@@ -315,11 +257,6 @@ function validate(
 /** The one order qualified names are listed in, in reports and in checks. */
 const compareQNames = (a: string, b: string): number => a.localeCompare(b);
 
-/**
- * Every definition that differs between two sources: added, removed, or with
- * different text. A source that does not parse contributes no definitions, so
- * everything in the other one counts as touched.
- */
 function touchedDefinitions(before: string, after: string): string[] {
   const a = definitionTexts(before);
   const b = definitionTexts(after);
@@ -347,22 +284,6 @@ function definitionTexts(source: string): Map<string, string> {
   return out;
 }
 
-/**
- * Validate `next`, put it on disk only if it passes, then log the op.
- *
- * The source is checked before it is written rather than written, re-read and
- * rolled back: a rollback restores a snapshot, and a snapshot restored over a
- * write the op never read is how one writer erased another's. The write goes
- * through a sibling file and a rename, so a reader that is not holding the
- * write lock — a `check`, a `list` — sees the old file or the new one and
- * never a half-written one.
- *
- * `log` runs after the write, because the op's `depends-on` is computed from
- * the file as the op left it. If it throws, the file is put back as it was, so
- * an op is never in the file without being in the log. That is safe only
- * because the caller holds the write lock: no other write can have landed in
- * between.
- */
 function commit(path: string, next: string, verb: string, log: () => string): string {
   const before = readFileSync(path, "utf8");
   const v = validate(path, before, next);
@@ -415,11 +336,6 @@ function patternToRegExp(pattern: string): RegExp {
   return new RegExp(`^(${reSrc})$`);
 }
 
-/**
- * The refusal for the first of `qnames` another agent holds a lock on, if any.
- * The one matcher both lock checks use: `enforceLock` on the named definition,
- * and `validate` on everything the write touches.
- */
 function lockViolation(path: string, qnames: readonly string[]): string | undefined {
   const locks = readLocks(path);
   if (locks.entries.length === 0) return undefined;
@@ -437,55 +353,19 @@ function lockViolation(path: string, qnames: readonly string[]): string | undefi
   return undefined;
 }
 
-/**
- * Refuse, before anything is written, an op whose named definition is locked.
- * Everything else the op turns out to touch is checked by `validate`, once the
- * composed source shows what that is.
- *
- * Each write verb runs this before it waits for the write lock, so an op that
- * may not touch its definition at all is told so at once rather than after
- * the wait, and again under the write lock, where an ownership lock taken
- * during the wait is seen.
- */
 function enforceLock(path: string, qname: string): void {
   const locked = lockViolation(path, [qname]);
   if (locked !== undefined) throw new Error(locked);
 }
 
-/**
- * What one mutation did, as the surfaces report it.
- *
- * Every op carries its op-id: it is the handle `kumiki patch revert` takes, so
- * an edit that does not hand it back cannot be undone by the caller that made
- * it. `remove` carries the definitions it deleted, because a cascade removes
- * the dependents of the name it was given — up to and including the `app` — and
- * a report naming only that one name is how a file loses its entry point
- * quietly. `replace` carries the clauses and parameters its body no longer
- * states (`headerItems`), for the same reason: the write is valid, so nothing
- * else would say they are gone.
- */
 export type EditReport =
   | { op: "add" | "edit"; qname: string; opId: string }
   | { op: "replace"; qname: string; opId: string; dropped?: readonly string[] }
   | { op: "rename"; qname: string; newName: string; opId: string }
   | { op: "remove"; qname: string; opId: string; removed: RemovedNames };
 
-/**
- * The definitions one `remove` deleted: the requested name, then the cascade.
- *
- * A remove always deletes at least the name it was given, and the report puts
- * that one on the headline line rather than among its own casualties — so the
- * split is the tuple, not a filter that has to recognise the name again.
- */
 export type RemovedNames = [requested: string, ...cascaded: string[]];
 
-/**
- * Render an `EditReport` for a human or an agent to read.
- *
- * The `kumiki` verbs print this and the MCP tools return it, so the two
- * surfaces cannot answer the same edit differently — they did, and the one
- * agents drive was the one saying less.
- */
 export function describeEdit(report: EditReport): string {
   const opIdSuffix = `  (${report.opId})`;
   switch (report.op) {
@@ -515,13 +395,6 @@ export function addDef(path: string, layer: string, name: string, body: string):
   return withWriteLock(path, () => addDefs(path, [{ layer, name, body }]));
 }
 
-/**
- * Add one or more definitions as a single op: one write, one validation, one
- * log entry. The first is the op's own `layer` / `name` / `body`; the rest are
- * its `with`. They are written in one batch and validated once, as a whole,
- * because they may reference each other: a cascade's dependents do not
- * typecheck on their own, without the definition they depend on.
- */
 function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
   for (const d of defs) {
     if (!isDefinitionName(d.name)) {
@@ -530,14 +403,8 @@ function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
       );
     }
   }
-  // The named definition up front; the rest of `with` is covered by the
-  // before/after diff in `validate`, like anything else the write adds.
   enforceLock(path, `${defs[0].layer}.${defs[0].name}`);
   const src = readFileSync(path, "utf8");
-  // The body argument is the definition after its name and the layer's
-  // separator (e.g. "Int = 0" for a slot, "Bool -> Bool = not $1" for a fn).
-  // A tile or a type states its header; one added without states that it has
-  // none, which is how it is written and logged.
   const stated = (d: DefSpec): DefSpec => ({ ...d, body: withHeader(d.layer, d.body, () => "= ") });
   const [first, ...others] = defs;
   const main = stated(first);
@@ -549,13 +416,6 @@ function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
   );
 }
 
-/**
- * Whether `name` lexes as one identifier, as every definition's name does. A
- * name is written into the file as given, so anything more becomes part of the
- * definition — `add type 'Box(T)' …` would write `type Box(T) = …` — while the
- * op is logged under a name no definition has, which nothing can view, revert
- * or remove.
- */
 function isDefinitionName(name: string): boolean {
   let tokens: Token[];
   try {
@@ -568,17 +428,6 @@ function isDefinitionName(name: string): boolean {
   return only?.kind === "ident" && only.value === name && end?.kind === "eof";
 }
 
-/**
- * Replace a definition with `body`. A body that does not state a tile's
- * clauses or a type's parameters (`statesHeader`) keeps the ones the
- * definition has: a body that rewrites only what follows the `=` must not
- * drop them unnoticed. One that states them may state fewer, and `dropped`
- * names each clause or parameter the definition no longer has.
- *
- * The op records the body the definition had (`prev`), which is what
- * `patch revert` writes back, and logs the body it wrote with its header
- * stated, so a logged body means the same to every reader.
- */
 export function replaceDef(
   path: string,
   qname: string,
@@ -610,16 +459,6 @@ function replaceDefLocked(
   return { opId, dropped: headerItems(entry.def).filter((item) => !now.includes(item)) };
 }
 
-/**
- * How a body states the header of a tile or a type — what the definition has
- * between its name and the `=` before its right-hand side — keyed by the
- * layers that have one: it starts with a clause (`<word> =`) or with the
- * parameters' `(`, or with that `=`, which states there is nothing there.
- * Neither right-hand side can start that way: a tile's opens with a tile name
- * or `for` / `when` / `if` / `match`, never `<word> =`, and a type's never
- * opens with `(` or `=`. So a body is read one way or the other by its first
- * characters alone.
- */
 const HEADER_START: ReadonlyMap<string, RegExp> = new Map([
   ["tile", /^\s*(?:=|[A-Za-z_][A-Za-z0-9_-]*\s*=)/],
   ["type", /^\s*[(=]/],
@@ -629,23 +468,10 @@ function statesHeader(layer: string, body: string): boolean {
   return HEADER_START.get(layer)?.test(body) ?? false;
 }
 
-/**
- * `body` with its header stated: as given when it states one, or when its
- * layer has none; otherwise after `header()` — the definition's own header
- * for a `replace`, `= ` (none) for an `add`.
- */
 function withHeader(layer: string, body: string, header: () => string): string {
   return !HEADER_START.has(layer) || statesHeader(layer, body) ? body : `${header()}${body}`;
 }
 
-/**
- * Where the header of a tile or a type sits in its definition's text: from
- * the first token after the name — a clause, the parameters' `(`, or the `=`
- * when there is no header — to the right-hand side, which starts where the
- * parser put the definition's body. Read off the tokens, so a comment after
- * the name is never taken for part of the header. Throws, naming the
- * definition, when the text is not laid out that way.
- */
 function headerSpan(
   store: Store,
   entry: DefEntry,
@@ -696,11 +522,6 @@ function headerOf(store: Store, entry: DefEntry, verb: string): string {
   return text.slice(from, to);
 }
 
-/**
- * The body of a definition in the file: the definition without `<layer>
- * <name>`, as the op log records it and `assemble` writes it back. A tile's
- * or a type's starts with its header, or with its `=` when it has none.
- */
 function bodyOf(store: Store, entry: DefEntry, verb: string): string {
   if (HEADER_START.has(entry.layer)) {
     const { text, from } = headerSpan(store, entry, verb);
@@ -709,11 +530,6 @@ function bodyOf(store: Store, entry: DefEntry, verb: string): string {
   return extractBody(entry.layer, entry.name, viewDef(store, `${entry.layer}.${entry.name}`) ?? "");
 }
 
-/**
- * What the header of a tile or a type says, item by item: the clauses that
- * change what the tile does, and the parameters. `scroll-restoration=true` is
- * the default, so the parser keeps nothing of it and it is not an item.
- */
 function headerItems(def: Def | undefined): string[] {
   switch (def?.kind) {
     case "TileDef":
@@ -730,12 +546,6 @@ function headerItems(def: Def | undefined): string[] {
   }
 }
 
-/**
- * What `cascade` adds to a remove (§9.4.1), in the words both surfaces use: the
- * `--cascade` help of `kumiki remove` and the `kumiki_remove` description. One
- * string, so the two state the relation `removeDef` walks, from the target out
- * to whatever references it, and cannot state different ones.
- */
 export const CASCADE_HELP =
   "also remove its dependents: every definition that references it, directly or transitively, which can include the app";
 
@@ -790,19 +600,6 @@ function removeDefLocked(
   return removeSet(path, store, set, cascade);
 }
 
-/**
- * Remove exactly `set` as one op, its first member being the op's own
- * definition. `removeDef` hands it the set a cascade derived; the inverse of a
- * restoring `add` and the replay of a logged cascade hand it the set the op
- * recorded, which is not re-derived: what references the first member now may
- * be more or less than what did when the op was made.
- *
- * Refused before anything is written when the first member is locked by
- * another agent, or a member is no longer in the file or is referenced by a
- * definition outside the set — removing it would leave that reference
- * dangling. Any other locked member is caught by `validate`'s before/after
- * diff, which rolls the write back.
- */
 function removeSet(
   path: string,
   store: Store,
@@ -829,9 +626,6 @@ function removeSet(
     );
   }
   const entries = set.map((q) => store.byQName.get(q)).filter((e) => e !== undefined);
-  // Each body as it stands now, so a revert restores this — not the last body
-  // some earlier op happened to log, which a rename of something it references
-  // leaves stale.
   const [main, ...rest] = entries.map((e) => ({
     layer: e.layer,
     name: e.name,
@@ -843,10 +637,6 @@ function removeSet(
   for (const e of [...entries].sort((a, b) => b.range.startLine - a.range.startLine)) {
     lines = [...lines.slice(0, e.range.startLine - 1), ...lines.slice(e.range.endLine)];
   }
-  // §9.4.1: a cascade is one op, and it says what it took. `removed` is written
-  // whenever `cascade` was requested, including when it took nothing, so its
-  // absence means "not a cascade" rather than "a cascade with no dependents".
-  // A replay removes that recorded set (`applyOne`).
   const opId = commit(path, lines.join("\n"), "remove", () =>
     logOp(path, {
       op: "remove",
@@ -877,9 +667,6 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
   }
 
   const { own, refs, unpositioned } = nameSites(store, entry);
-  // A reference with no identifier position of its own is an edge for `refs`
-  // and `remove --cascade` but nothing `rename` can rewrite, so refuse rather
-  // than half-rename the program.
   if (unpositioned.length > 0) {
     throw new Error(
       `Cannot rename ${qname}: it is named in a position with no rewritable identifier (${unpositioned.join(", ")}). Edit those definitions first.`,
@@ -895,17 +682,6 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
   );
 }
 
-/**
- * Where `entry`'s name is spelled as its name: on its own definition line
- * (`own`, undefined when it is not found there), and in each reference to it
- * from a definition in `store` (`refs`). These are the positions `rename`
- * rewrites, and nothing else, so a record field, a word in a comment, a string
- * literal and a loop variable that merely share the spelling are left alone by
- * construction rather than by a filter that has to anticipate them.
- * `unpositioned` names each definition that refers to `entry` with no
- * identifier of its own, which no rewrite can reach: a test's
- * `{slots: {count: 0}}` key is a record key, not a token the AST points at.
- */
 function nameSites(
   store: Store,
   entry: DefEntry,
@@ -925,12 +701,6 @@ function nameSites(
   return { own: defNamePos(store, entry, entry.name), refs, unpositioned };
 }
 
-/**
- * `lines` with the name `from` at each of `sites` spelled `to` instead, right
- * to left within a line so that earlier columns keep their positions. Throws,
- * naming `verb`, when a site is past the end of `lines` or does not spell
- * `from`.
- */
 function respell(
   lines: readonly string[],
   sites: readonly Pos[],
@@ -965,20 +735,6 @@ function respell(
   return out;
 }
 
-/**
- * Where a definition's own name sits. The AST records the definition's start,
- * which is the keyword; the name is the first identifier after it.
- *
- * The search must begin past the keyword, not at it: `pos.col` is 1-based and
- * `indexOf`'s offset is 0-based, so starting at `col` began one character into
- * the keyword — and a name that is a suffix of its own keyword (`slot lot`,
- * `fn n`, `type e`) matched inside the keyword instead. That produced
- * `stotal lot` from `rename slot.lot total`, written to disk before `validate`
- * caught it and rolled back.
- *
- * Undefined when the name is not found on the keyword's line. The content hash
- * leaves out the same position `rename` rewrites, so it reads it here too.
- */
 function defNamePos(store: Store, entry: DefEntry, name: string): Pos | undefined {
   const line = store.lines[entry.range.startLine - 1] ?? "";
   const keywordCol = (entry.def as { pos?: Pos }).pos?.col ?? 1;
@@ -987,18 +743,6 @@ function defNamePos(store: Store, entry: DefEntry, name: string): Pos | undefine
   return at < 0 ? undefined : { line: entry.range.startLine, col: at + 1 };
 }
 
-/**
- * Partial edit of a definition body. The patch is a JSON object in one of two
- * shapes (both from the spec §9.6.1 auto-patch precedent):
- *
- *   { "find": "...", "replace": "..." }            — replace one occurrence
- *   { "body:<line>": "replace 'a' -> 'b'" }       — per-line replacement
- *
- * The edit is confined to the target definition's source range; matches
- * outside the range are not touched. Either shape is rejected, with nothing
- * written, when the text it replaces is not where it says: in the definition
- * for `find`, on line `<line>` of it for a per-line patch.
- */
 export function editDef(path: string, qname: string, patch: unknown): string {
   enforceLock(path, qname);
   return withWriteLock(path, () => editDefLocked(path, qname, patch));
@@ -1040,10 +784,6 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   }
   const next = [...before, ...updated, ...after].join("\n");
   return commit(path, next, "edit", () => {
-    // Record the post-edit body, so `depends-on` is computable and a later op
-    // that records no body of its own can fall back to it, and the body the
-    // edit replaced, which `patch revert` writes back. Both are bodies as
-    // `assemble` takes them, so writing either back round-trips.
     const updatedStore = load(path);
     const updatedEntry = updatedStore.byQName.get(qname);
     const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
@@ -1058,27 +798,13 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   });
 }
 
-/**
- * `text` with its first `from` replaced by `to`, for both `edit` patch shapes.
- * Throws when `from` is not in `text`: there is nothing to replace, and an edit
- * that went ahead without it would be reported and logged as applied. `where`
- * names the text searched, for the message.
- */
 function replaceFirst(text: string, from: string, to: string, where: string): string {
   if (!text.includes(from)) {
     throw new Error(`edit rejected: ${JSON.stringify(from)} not present ${where}`);
   }
-  // Function replacer so that `$&` / `$$` / `` $` `` / `$'` in the replacement
-  // string aren't interpreted by String.prototype.replace.
   return text.replace(from, () => to);
 }
 
-/**
- * Inverse of `assemble` for a layer without a header: strip the layer-specific
- * opener (`slot <name> :`, `theme <name> =`, …) so we recover the "logical
- * body" written by the user and stored in op log entries. `bodyOf` reads a
- * tile's or a type's off its tokens instead.
- */
 function extractBody(layer: string, name: string, source: string): string {
   const n = escapeRegExp(name);
   const text = source;
@@ -1113,18 +839,11 @@ function isFindReplacePatch(p: unknown): p is { find: string; replace: string } 
 function isPerLinePatch(p: unknown): p is Record<string, string> {
   if (typeof p !== "object" || p === null) return false;
   const keys = Object.keys(p);
-  // An empty object would vacuously satisfy the per-line predicate; reject it
-  // so callers can't record a no-op edit.
   if (keys.length === 0) return false;
   for (const k of keys) if (!k.startsWith("body:")) return false;
   return true;
 }
 
-/**
- * Apply a CRDT op bundle (JSONL, one op per line). Each line is dispatched to
- * the matching mutation. On any failure the file is restored to its state
- * before the call.
- */
 export function patchApplyFile(path: string, opsFile: string): string[] {
   return withWriteLock(path, () => patchApplyFileLocked(path, opsFile));
 }
@@ -1147,8 +866,6 @@ function patchApplyFileLocked(path: string, opsFile: string): string[] {
     // Put back what was there before, unvalidated: it is the file as it was.
     try {
       atomicWriteFileSync(path, original);
-      // A bundle that started without an op log deletes the one the partial
-      // apply created instead of leaving an empty one behind.
       if (originalLog === null) rmSync(opLogPath(path), { force: true });
       else atomicWriteFileSync(opLogPath(path), originalLog);
     } catch (r) {
@@ -1189,11 +906,6 @@ function applyOne(path: string, op: RawOp): string {
   }
 }
 
-/**
- * Revert a single op. We compute the inverse by reading the op-log, locating
- * the target op, and replaying the original source up to just before it. This
- * is the simplest correct strategy for the PoC; op volume is small.
- */
 export function patchRevert(path: string, opId: string): string {
   return withWriteLock(path, () => patchRevertLocked(path, opId));
 }
@@ -1204,9 +916,6 @@ function patchRevertLocked(path: string, opId: string): string {
   if (idx === -1) throw new Error(`patch revert: op-id "${opId}" not found in log`);
   const target = log[idx]!;
   const own = `${target.layer}.${target.name}`;
-  // Each definition the op touched is acted on under the name it has now. One
-  // that a later op removed is gone, and whatever has its name now is another
-  // definition, which the revert must not touch.
   const namesNow = (did: string, qnames: readonly string[]): string[] => {
     const followed = qnames.map((q) => ({ q, ...nameNow(log, idx, q) }));
     const gone = followed.flatMap((f) => ("endedBy" in f ? [{ q: f.q, by: f.endedBy }] : []));
@@ -1225,22 +934,15 @@ function patchRevertLocked(path: string, opId: string): string {
   const nameOf = (did: string, qname: string): string => namesNow(did, [qname])[0]!;
   switch (target.op) {
     case "add": {
-      // Inverse of add = remove. An add that restored a cascade removes exactly
-      // the set it added — not what references the named definition now.
       const added = [own, ...(target.with ?? []).map((d) => `${d.layer}.${d.name}`)];
       const [main, ...rest] = namesNow("added", added);
       if (target.with === undefined) return removeDef(path, main!, false).opId;
       return removeSet(path, load(path), [main!, ...rest], true).opId;
     }
     case "remove": {
-      // Inverse of remove = add, of every definition the op removed — a
-      // cascade is one op (§9.4.1), so its inverse is one too.
       return addDefs(path, removedDefs(log, idx, opId));
     }
     case "replace": {
-      // The body the op replaced, as it recorded it. One logged before ops
-      // recorded it falls back to the last body the log has for the
-      // definition, under whichever name it had then.
       const prev = recordedPrev(target) ?? priorBody(log, idx, target.layer, target.name);
       if (prev === undefined) throw new Error(`patch revert: no prior body found for ${own}`);
       const now = nameOf("replaced", own);
@@ -1265,12 +967,6 @@ function patchRevertLocked(path: string, opId: string): string {
   }
 }
 
-/**
- * The definitions a `remove` op deleted, with their bodies. A remove records
- * them itself (`bodies`). One logged before it did falls back to the last body
- * the log recorded for each name before the remove; if any is missing, nothing
- * is restored rather than part of the op.
- */
 function removedDefs(
   log: OpLogEntry[],
   idx: number,
@@ -1303,13 +999,6 @@ function removedDefs(
   return [first, ...rest];
 }
 
-/**
- * `spec`, refused when its body is a whole definition: a body never starts
- * with its own `<layer> <name>`, since no right-hand side or header starts
- * with a definition keyword. Written back, it would read `tile X = tile X …`.
- * Earlier versions logged the body of a tile or a type with clauses or
- * parameters that way.
- */
 function writableBody(spec: DefSpec): DefSpec {
   const opener = new RegExp(`^\\s*${spec.layer}\\s+${escapeRegExp(spec.name)}(?![A-Za-z0-9_-])`);
   if (opener.test(spec.body)) {
@@ -1320,15 +1009,6 @@ function writableBody(spec: DefSpec): DefSpec {
   return spec;
 }
 
-/**
- * A body the log recorded for a definition under the name it had then
- * (`logged`), to write back to that definition, called `qname` now. Refused
- * when it is a whole definition (`writableBody`). A body logged under another
- * name spells that name wherever the definition names itself: on its own line
- * and in each reference to itself, as a recursive type or fn has. Those are
- * the positions `rename` rewrites, and they are rewritten the same way, so the
- * definition refers to itself, not to whatever has its old name now.
- */
 function bodyFor(logged: DefSpec, qname: string): string {
   const { layer, name: from, body } = writableBody(logged);
   const [, to] = splitQname(qname);
@@ -1351,10 +1031,6 @@ function recordedPrev(op: OpLogEntry): DefSpec | undefined {
   return op.prev === undefined ? undefined : { layer: op.layer, name: op.name, body: op.prev };
 }
 
-/**
- * The last body the log recorded for the definition before op `idx`, under
- * the name the definition had when it was recorded.
- */
 function priorBody(
   log: OpLogEntry[],
   idx: number,
@@ -1371,21 +1047,11 @@ function priorBody(
   return undefined;
 }
 
-/**
- * The qualified names a `rename` op moved a definition between; undefined for
- * any other op, and for a rename to the name the definition already had. A
- * name is a label (§9.5.3): history and revert follow a definition through a
- * rename by this one rule rather than by the name an op was logged under.
- */
 function renamedBy(op: OpLogEntry): { from: string; to: string } | undefined {
   if (op.op !== "rename" || op.newName === undefined || op.newName === op.name) return undefined;
   return { from: `${op.layer}.${op.name}`, to: `${op.layer}.${op.newName}` };
 }
 
-/**
- * Whether `op` takes `qname` from the definition that has it: removes that
- * definition, on its own or in a cascade, or renames it.
- */
 function vacates(op: OpLogEntry, qname: string): boolean {
   const removes =
     op.op === "remove" &&
@@ -1393,10 +1059,6 @@ function vacates(op: OpLogEntry, qname: string): boolean {
   return removes || renamedBy(op)?.from === qname;
 }
 
-/**
- * Whether `op` gives `qname` to a definition: adds it, on its own or in a
- * restore's `with`, or renames one to it.
- */
 function fills(op: OpLogEntry, qname: string): boolean {
   const adds =
     op.op === "add" &&
@@ -1405,16 +1067,6 @@ function fills(op: OpLogEntry, qname: string): boolean {
   return adds || renamedBy(op)?.to === qname;
 }
 
-/**
- * The ops before `end` made on one definition, latest first, each with the
- * name the definition had right after it: from `qname` back through each
- * rename that gave the definition its name, to the op that added it, where
- * the walk stops. It stops as well, before it, at an op that took the name
- * from an earlier definition (`vacates`), once this definition is known to
- * have had the name after that op — from the start when `held` says it has
- * `qname` at `end`. Without `held`, such an op met first is this definition's
- * own: the last one called `qname` was removed or renamed.
- */
 function* namesBack(
   log: readonly OpLogEntry[],
   end: number,
@@ -1439,13 +1091,6 @@ function* namesBack(
   }
 }
 
-/**
- * Where the definition called `qname` right after op `idx` is now: under the
- * name each later rename of it gave it (`now`), or gone, with the op that
- * ended it (`endedBy`) — one that removed it, or one that gave its name to
- * another definition, which can only have happened once this one had left the
- * file. Whatever has the name after that is another definition.
- */
 function nameNow(
   log: readonly OpLogEntry[],
   idx: number,
@@ -1469,16 +1114,6 @@ function namesDef(op: OpLogEntry, qname: string): boolean {
   );
 }
 
-/**
- * Return the op log entries that touched a qname, in chronological order: the
- * ops that name it (its own, a cascade's `removed`, a restore's `with`), and,
- * for the definition that has the name now (or last had it), the ops made on
- * it under earlier names, back to the op that added it, and each rename that
- * moved it. After `rename slot.count total`, the history of `slot.total`
- * therefore starts with the ops on `slot.count`, and `slot.count` keeps them
- * too, as that name's history. The ops on a definition removed from
- * `slot.count` before this one was added are that name's history only.
- */
 export function viewHistory(path: string, qname: string): OpLogEntry[] {
   const log = readOpLog(path);
   const followed = new Set<OpLogEntry>();
@@ -1488,24 +1123,6 @@ export function viewHistory(path: string, qname: string): OpLogEntry[] {
   return log.filter((e) => namesDef(e, qname) || followed.has(e));
 }
 
-/**
- * Content hash of a definition (§9.5.1): sha256 of its canonical form mixed
- * with the hashes of its direct deps, which carry their own deps' hashes. PoC
- * stand-in for the blake3-based hash the spec names. Shared with
- * `computeDependsOn` so `view --hash <q>` and the `@h:` digest in another op's
- * `depends-on` line up.
- *
- * No definition's name is part of it (§9.5.1): see `canonicalForm`. A rename
- * therefore leaves the hash of the renamed definition, and of every definition
- * that references it, as it was, and so does a change of whitespace or
- * comments. Definitions that refer to each other in a cycle are hashed as one
- * unit (`hashCycle`), so a member's hash does not depend on which member is
- * reached first.
- *
- * It does not follow §9.5.1's formula in one respect: the fields of a record
- * are hashed in the order they are written, not alphabetized (`canonicalForm`),
- * so reordering them changes the hash.
- */
 export function viewHash(store: Store, qname: string): string {
   return computeHash(store, qname, new Map());
 }
@@ -1524,8 +1141,6 @@ function computeHash(store: Store, qname: string, memo: Map<string, string>): st
     hashCycle(store, cycle, memo);
     return memo.get(qname)!;
   }
-  // Outside a cycle, nothing `qname` refers to refers back to it, so the
-  // recursion ends.
   const canonical = canonicalForm(store, entry, (target, layer) =>
     hashLabel(store, target, layer, memo),
   );
@@ -1544,17 +1159,6 @@ function hashLabel(store: Store, target: string, layer: string, memo: Map<string
   return `@${layer}:${computeHash(store, target, memo)}`;
 }
 
-/**
- * Hash the members of one cycle of references (two or more definitions) as
- * one unit, into `memo`. A reference from one member to another cannot count
- * as its target's hash, which is what is being computed. So each member is
- * read twice: first with every such reference as its target's layer alone,
- * then with it as the hash of the target's first reading too, so that which
- * member refers to which counts. A member's hash is its second reading, with
- * the hash of every member's second reading and the hashes of what it refers
- * to outside the cycle. Nothing in it depends on the order in which members
- * are reached, or on their names.
- */
 function hashCycle(store: Store, members: readonly string[], memo: Map<string, string>): void {
   const inCycle = new Set(members);
   const read = (within: (target: string, layer: string) => string): Map<string, string> =>
@@ -1584,13 +1188,6 @@ function hashCycle(store: Store, members: readonly string[], memo: Map<string, s
 
 const cyclesByStore = new WeakMap<Store, Map<string, readonly string[]>>();
 
-/**
- * The cycles of references among a store's definitions: each definition in
- * one, keyed to all the members of its cycle, itself included. They are the
- * strongly connected components of the reference graph (Tarjan's algorithm)
- * with two or more members; a definition that refers only to itself is in
- * none, as it reads its references to itself as `@self`.
- */
 function cycles(store: Store): Map<string, readonly string[]> {
   const known = cyclesByStore.get(store);
   if (known !== undefined) return known;
@@ -1631,15 +1228,6 @@ function cycles(store: Store): Map<string, readonly string[]> {
   return out;
 }
 
-/**
- * A definition's tokens, as its hash reads them. Whitespace and comments are
- * not tokens. The positions `rename` rewrites are not spelled by name: the
- * definition's own name and every reference to itself are `@self`, and every
- * other reference is what `label` reads for the definition it names, its
- * layer and hash. Everything else is kept as written, local names included,
- * and so is the order of a record's fields: §9.5.1's formula alphabetizes
- * them, and this does not, a known deviation.
- */
 function canonicalForm(
   store: Store,
   entry: DefEntry,
@@ -1714,8 +1302,6 @@ function escapeRegExp(s: string): string {
 const afterName = (rest: string): string => `${rest.startsWith("(") ? "" : " "}${rest}`;
 
 function assemble(layer: string, name: string, body: string): string {
-  // Each layer has its canonical opener. Keep this regenerable from the AST
-  // later; for the PoC we lean on tiny templates.
   if (statesHeader(layer, body)) return `${layer} ${name}${afterName(body)}`;
   switch (layer) {
     case "type":

@@ -1,9 +1,3 @@
-// The storage.* / session.* write handlers (http.md §6.7.2 / §6.7.4). Every
-// failure is an `err` result, never a throw and never a partial effect: a
-// request that is not one of the three shapes touches nothing, and a failing
-// Web Storage call names the operation and the key, so a quota error on one
-// key reads differently from a program that built the wrong request.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EffectResult } from "../src/core.ts";
 import {
@@ -31,12 +25,6 @@ function snapshot(storage: Storage): Record<string, string> {
   return out;
 }
 
-/**
- * Replace both storages with ones whose `method` throws. The handlers look the
- * storage up on each call, so a stubbed global is what they reach. (A spy on
- * `Storage.prototype` is not enough in happy-dom: a storage that has already
- * been used keeps calling the original method.)
- */
 function failing(method: "setItem" | "removeItem" | "clear", error: string): void {
   for (const name of ["localStorage", "sessionStorage"]) {
     const broken = {
@@ -142,8 +130,6 @@ describe("storageClear / sessionClear", () => {
 });
 
 describe("a handler resolves to its Text err; it never rejects", () => {
-  // A rejection skips the err contract: it reaches the dispatcher, which
-  // delivers a `{message}` record where `.err` expects the `Text`.
   it("when the storage getter itself throws, as in an opaque-origin sandbox", async () => {
     const names = ["localStorage", "sessionStorage"] as const;
     const saved = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));

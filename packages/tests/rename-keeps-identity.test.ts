@@ -1,13 +1,3 @@
-// A rename moves a definition's label, not the definition (ai-edit.md §9.5).
-// After `rename slot.count total`, `view --history slot.total` lists the ops
-// made under `count`, `patch revert` of an op made before the rename acts on
-// `slot.total`, and `view --hash` gives every definition the hash it had, so a
-// `depends-on` digest recorded before the rename still matches.
-//
-// A remove ends a definition. One added under its name afterwards is another
-// definition: its history starts at that add, and an op made on the removed
-// one is not reverted on it.
-
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,8 +51,7 @@ const renamedFixture = (): { file: string; add: string; replace: string; rename:
 };
 
 /**
- * `slot.count` added, replaced and removed; then a new `slot.count` added and
- * renamed to `foo`. The op ids in order.
+ * `slot.count` added, replaced and removed; then a new `slot.count` added and renamed to `foo`. The op ids in order.
  */
 const removedFixture = (): {
   file: string;
@@ -91,8 +80,7 @@ describe("history across a rename", () => {
   });
 
   it("keeps the ops of an earlier definition that was removed from the new name", () => {
-    // A removed definition is looked up by the name it had, so a later rename
-    // onto that name must not hide its ops.
+    // A removed definition is looked up by the name it had, so a later rename onto that name must not hide its ops.
     const file = seed("slot a : Int = 0\n");
     const first = addDef(file, "slot", "total", "Int = 5");
     const { opId: removed } = removeDef(file, "slot.total", false);
@@ -138,8 +126,7 @@ describe("history across a rename", () => {
   });
 
   it("follows a definition back to the restore that lists its old name in `with`, and no further", () => {
-    // The cascade lists `tile.Show` in `removed`: it ended the definition the
-    // restore's `with` then added under the same name.
+    // The cascade lists `tile.Show` in `removed`: it ended the definition the restore's `with` then added under the same name.
     const file = seed("slot a : Int = 0\nslot b : Int = 1\ntile Show = text(b.show)\n");
     const { opId: cascade, removed } = removeDef(file, "slot.b", true);
     expect(removed).toEqual(["slot.b", "tile.Show"]);
@@ -395,8 +382,7 @@ describe("content hash across a rename", () => {
   });
 
   it("is unchanged by a rename of a referenced tile that reorders the referrer's deps", () => {
-    // `tile.App` references `IncBtn` and `ResetBtn`; `UpBtn` sorts after
-    // `ResetBtn`, so ordering the deps by name would change App's hash.
+    // `tile.App` references `IncBtn` and `ResetBtn`; `UpBtn` sorts after `ResetBtn`, so ordering the deps by name would change App's hash.
     const file = seed(COUNTER);
     const before = ["tile.IncBtn", "reducer.inc", "tile.App", "app.Counter"].map((q) =>
       hashOf(file, q),
@@ -413,8 +399,7 @@ describe("content hash across a rename", () => {
 
   it("is unchanged by whitespace and comments, and changed by a change of meaning", () => {
     const file = seed(COUNTER);
-    // `tile.App` and `app.Counter` sit below the reformatted reducer, which
-    // gains a line: every one of their tokens moves down a line.
+    // `tile.App` and `app.Counter` sit below the reformatted reducer, which gains a line: every one of their tokens moves down a line.
     const qnames = ["slot.count", "reducer.inc", "tile.App", "app.Counter"];
     const hashes = (): string[] => qnames.map((q) => hashOf(file, q));
     const before = hashes();
@@ -525,10 +510,6 @@ describe("content hash of a reference cycle", () => {
   });
 });
 
-// A known limitation (ai-edit.md §9.5.1): a reference counts as the hash of
-// what it names, and two definitions that differ only in their names share a
-// hash. So a body that refers to one of them hashes like the same body
-// referring to the other, though `a` and `b` are two state cells.
 const SWAPPED = `slot a : Int = 0
 slot b : Int = 0
 slot c : Int = 1

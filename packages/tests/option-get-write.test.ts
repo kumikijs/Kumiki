@@ -1,22 +1,3 @@
-// `docs/spec/language.md` §1.6.3 documents assignment through `.get`:
-//
-//   Going via `.get` is safe: assigning when the Option is `None` is a no-op
-//   (does not panic).
-//
-// It was not a write at all when the Option was `Some` either. The lvalue was
-// flattened into a plain field path, so `draft.get.title := v` lowered to a
-// record set of `["get", "title"]` — a sibling field named `get` appeared
-// beside `_tag` / `_0`, and the payload the program then read was untouched.
-//
-// The read side has always lowered `.get` through the polymorphic unwrap,
-// which is why the same path reads correctly and wrote wrong. These tests hold
-// the two sides to the same decision — including the case that makes it a
-// decision rather than a keyword: a record whose field is literally `get`.
-//
-// This file is where the regression is pinned, not the example's scenario: a
-// scenario's `state` is a subset match, and the defect was an EXTRA key. The
-// scenario tier structurally cannot see one, whatever the app renders.
-
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -57,8 +38,6 @@ reducer edit on=ui.click(Btn) do= draft.get.title := "edited"`,
       ],
     });
     expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
-    // Asserted as the whole value rather than through a partial match: the
-    // defect was an EXTRA key, which a partial match cannot see.
     expect(shape.live?.draft).toEqual({ _tag: "Some", _0: { title: "edited", body: "b" } });
   });
 });
@@ -79,7 +58,6 @@ describe("a write through .get on a None", () => {
     });
     expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
     expect(shape.live?.draft).toEqual({ _tag: "None" });
-    // §10.3.3 makes a reducer one batch; a no-op write is not a rejected one.
     expect(shape.live?.log).toBe("ran");
   });
 });
@@ -92,9 +70,6 @@ describe("a record whose field is named get", () => {
   );
 
   it("is written as that field", async () => {
-    // The name is dispatched, not reserved (stdlib.md §2.2): the read side
-    // resolves it as a field when the receiver is a record that has it, and
-    // the write side has to make the same call.
     const shape = await loadSource(SOURCE);
     await runScenario(shape, freshRoot(), { steps: [{ do: { dispatch: "edit" } }] });
     expect(shape.live?.draft).toEqual({ get: { title: "edited" } });
@@ -139,11 +114,6 @@ describe("a bind= path through .get", () => {
   );
 
   it("panics while the Option is empty, the way every other .get read does", async () => {
-    // A decision this makes rather than inherits: the reader used to walk the
-    // path with `?? {}` and hand the control an empty string, so a `bind=`
-    // through `.get` was the one place `.get` did not mean `.get`. It panics
-    // now — during the first render, so the app does not mount at all — and
-    // an author reaches such a control through a `match` on the Option.
     const shape = await loadSource(
       app("Option({title: Text}) = None", "", "tile App = column(input(bind=draft.get.title))"),
     );
@@ -155,8 +125,6 @@ describe("a bind= path through .get", () => {
   });
 
   it("reads the payload and writes back into it", async () => {
-    // `bind=` goes through its own path builder and its own setter, so the two
-    // ways to write a slot can disagree — and did, in the same direction.
     const shape = await loadSource(SOURCE);
     const root = freshRoot();
     const report = await runScenario(shape, root, {

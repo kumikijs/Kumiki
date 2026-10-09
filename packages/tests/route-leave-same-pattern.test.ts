@@ -1,11 +1,3 @@
-// routing.md §3.4: a navigation to another path fires `route.leave` for the
-// route it leaves before `route.enter` for the one it lands on, even when both
-// are the same pattern (a params-only move, or a child switch under a `sub-routes`
-// parent). The corpus example (`155-leave-on-param-change`) pins the counts and
-// the confirm guard through its scenario; this suite pins the order the two
-// events run in and which route each one is handed, including when a guard
-// holds the move behind `confirm` and Yes commits it.
-
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";

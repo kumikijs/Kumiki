@@ -1,12 +1,3 @@
-// SSR hydration boundary (docs/spec/runtime.md §10.6.2) — exercises
-// `hydrate` end-to-end on a happy-dom DOM. Verifies that:
-//   - the bootstrap episode lands at `app.episodes()[0]` BEFORE app.start;
-//   - the snapshot.slots overlay reaches the live signal graph but volatile
-//     slots stay at their declared default;
-//   - the client never re-runs `app.init` (provider stays at 1 invocation);
-//   - localStorage mirror picks up the bootstrap on the same persist sweep;
-//   - a version-mismatched snapshot is dropped and a normal CSR boot runs.
-
 import type {
   AppShape,
   CapabilityProvider,
@@ -56,9 +47,6 @@ function makeApp(httpProvider: CapabilityProvider): AppShape {
         }),
       },
       {
-        // `app.start` lifecycle reducer — runs only on the client (the
-        // spec says SSR never fires it). We use it as a sentinel so tests
-        // can prove episode continuity (`ssr.hydrate` → `app.start` → …).
         name: "started",
         event: { kind: "lifecycle", name: "app.start" },
         apply: () => ({ slots: {}, emits: [] }),
@@ -100,12 +88,6 @@ function mountTarget(): HTMLDivElement {
   return el;
 }
 
-/**
- * Drops the map the SSR pass filled in, so the client starts from slot
- * defaults the way a fresh boot would. Behind a function because deleting the
- * property inline would narrow `app.live` to `undefined` for the rest of the
- * test, and every assertion after hydration is about what hydration put back.
- */
 function resetLive(app: AppShape): void {
   delete app.live;
 }
@@ -282,8 +264,6 @@ describe("hydrate §10.6.2", () => {
     const app = makeApp(provider);
     expect(() =>
       mount(app, target, {
-        // The shape that previously slipped through: hydrate flag on, but no
-        // bootstrap. Now a hard error so the silent state machine can't form.
         hydrate: true,
       }),
     ).toThrow(/bootstrapEpisode/);
@@ -297,9 +277,6 @@ describe("hydrate §10.6.2", () => {
     const app = makeApp(provider);
     const rendered = await renderToString(app, { providers: { "http.get": provider } });
 
-    // Inject SSR HTML the way a real host would (a `target.innerHTML = html`
-    // happens before hydrate). Without the §10.6.2 replaceChildren guard,
-    // the runtime appends a SECOND root — leaving two sibling trees.
     target.innerHTML = rendered.html;
     expect(target.children.length).toBeGreaterThanOrEqual(1);
 

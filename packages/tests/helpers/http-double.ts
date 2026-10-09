@@ -1,19 +1,5 @@
 import { vi } from "vitest";
 
-/**
- * The `fetch` double the end-to-end HTTP tests mount against, and the two
- * lookups that go with it.
- *
- * happy-dom hands a stub a `Request` where the runtime's own unit tests pass a
- * string, and a header may arrive as a `Headers`, an entry list or a plain
- * object. Each test used to normalise both itself, so a difference between two
- * of these files read as a difference between two behaviours.
- *
- * Only the tests that observe *what a request carried* share this. A stub that
- * counts attempts and answers by attempt number — the retry ladder — is a
- * different thing wearing a similar shape, and is left where it is.
- */
-
 export type FetchCall = { url: string; init: RequestInit };
 
 export type FetchDouble = {
@@ -44,9 +30,7 @@ export function stubFetch(
 }
 
 /**
- * Every value `fetch` was given for `name`, whatever the shape, matching the
- * name case-insensitively as HTTP does — so a stray `content-type` beside a
- * `Content-Type` shows up as two values instead of hiding.
+ * Every value `fetch` was given for `name`, whatever the shape, matching the name case-insensitively as HTTP does — so a stray `content-type` beside a `Content-Type` shows up as two values instead of hiding.
  */
 export function headerValues(h: HeadersInit | undefined, name: string): string[] {
   if (!h) return [];

@@ -1,15 +1,3 @@
-// A batch is a map, so it only remembers the last value written to each slot.
-// A `for` loop that walks a bounded slot out of range and back therefore ends
-// on a legal value, and the illegal one it passed through — readable by every
-// later statement in the body, which is exactly what makes successive writes in
-// a loop work — would be invisible to a check that only looked at the batch.
-//
-// This is the compiled path on purpose: the per-write check lives in codegen
-// (`_s.slotWrite` around every assignment to a refined slot), so a hand-written
-// AppShape cannot exercise it. It cannot live in the example corpus either —
-// `smoke` clicks every button once and treats any console.error as fatal, so an
-// example whose whole point is a rejection would fail that tier.
-
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -103,8 +91,7 @@ describe("every write in a reducer body is checked, not just the batch's last", 
     expect(app.live?.count).toBe(0);
     expect(app.live?.mirror).toBe(0);
     expect(errors).toHaveLength(1);
-    // Names the value the loop passed through, not the one it ended on — the
-    // latter is legal and would explain nothing.
+    // Names the value the loop passed through, not the one it ended on — the latter is legal and would explain nothing.
     expect(errors[0]).toContain('slot "count" cannot hold 4 (between(0, 3))');
   });
 
@@ -122,9 +109,6 @@ describe("every write in a reducer body is checked, not just the batch's last", 
   });
 });
 
-// The type is written as a generic applied inside itself. It used to normalise
-// to nothing, so no write into the slot was compared against anything: an
-// `Int` compiled and the running app held it in a `Text` slot.
 describe("a write into a generic applied inside itself", () => {
   const nested = (write: string) => `
 type NonEmpty(T) = T where nonempty

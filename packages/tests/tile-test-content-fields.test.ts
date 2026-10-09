@@ -1,11 +1,3 @@
-// Regression: a tile-test compares every field its expected node states
-// (testing.md §8.4). The snapshot compared only `kind`, `text` and `children`,
-// so an expectation with the wrong `src`, `to`, `value`, `checked`,
-// `options`, `alt` or `disabled` passed. The example's tests are run as
-// written, then with each stated field written wrong, through the same
-// compile-and-run path `kumiki test` uses. The boundary cases on hand-built
-// nodes are in `packages/runtime/test/tile-test-fields.test.ts`.
-
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,8 +36,7 @@ function edited(at: string, from: string, to: string): string {
 
 /** The example with one literal of one test's `expect` replaced. */
 async function runWith(test: string, from: string, to: string) {
-  // Anchored at the test's own `expect =` line, so neither another test's
-  // identical line nor this test's `given` is the one edited.
+  // Anchored at the test's own `expect =` line, so neither another test's identical line nor this test's `given` is the one edited.
   const expectAt = SOURCE.indexOf("expect =", SOURCE.indexOf(`test ${test} =`));
   const line = SOURCE.slice(expectAt, SOURCE.indexOf("\n", expectAt));
   if (!line.includes(from)) throw new Error(`${test}'s expect has no ${from}`);
@@ -53,10 +44,7 @@ async function runWith(test: string, from: string, to: string) {
 }
 
 describe("a tile-test compares the fields its expected node states", () => {
-  // Each case below starts from a test that passes as written: the example
-  // states only what its tiles render, and what it leaves out (the
-  // placeholder `Name` renders, `Go`'s `{variant: …}`, `People`'s keys) is
-  // not compared.
+  // Each case below starts from a test that passes as written: the example states only what its tiles render, and what it leaves out (the placeholder `Name` renders, `Go`'s `{variant: …}`, `People`'s keys) is not compared.
   let asWritten: Map<string, boolean>;
   beforeAll(async () => {
     asWritten = new Map((await testFile(EXAMPLE)).map((r) => [r.name, r.pass]));
@@ -93,8 +81,7 @@ describe("a tile-test compares the fields its expected node states", () => {
   });
 
   it("fails a disabled expectation against an enabled button, past the {…} block", async () => {
-    // `go-disabled` states `{variant: "primary"}` where `Go` renders "ghost";
-    // the block is styling, so the first difference is the argument.
+    // `go-disabled` states `{variant: "primary"}` where `Go` renders "ghost"; the block is styling, so the first difference is the argument.
     const source = edited("tile Go", "disabled=true", "disabled=false");
     const { result } = await runSource("go-disabled", source);
     expect(result.pass).toBe(false);
@@ -109,8 +96,6 @@ describe("a tile-test compares the fields its expected node states", () => {
   });
 
   it("passes a for with an implicit key against rows keyed by id", () => {
-    // `people-list`'s rows are keyed `_s.show(p)`; `People` keys them by
-    // `p.id`. A key is the reconciler's identity, not content.
     expect(asWritten.get("people-list")).toBe(true);
   });
 
@@ -121,8 +106,6 @@ describe("a tile-test compares the fields its expected node states", () => {
   });
 
   it("passes one aria attribute stated against two rendered, in either form", () => {
-    // `Close` writes both as named arguments, `CloseBlock` in its `{…}` block;
-    // each test states `aria-label` alone.
     expect(asWritten.get("close-aria")).toBe(true);
     expect(asWritten.get("close-block-aria")).toBe(true);
   });
@@ -140,7 +123,6 @@ describe("a tile-test compares the fields its expected node states", () => {
   });
 
   it("prints only the stated fields of a node that carries more", async () => {
-    // `Name` renders a placeholder that `name-field` does not state.
     const r = await runWith("name-field", '"Grace"', '"WRONG"');
     expect(r.expected).toBe('input(value="WRONG")');
     expect(r.actual).toBe('input(value="Grace")');
@@ -148,8 +130,6 @@ describe("a tile-test compares the fields its expected node states", () => {
 });
 
 describe("kumiki fix --auto-patch on a tile-test field", () => {
-  // `given.slots` decides `agreed`, so rewriting the slot's initial value
-  // cannot make `agree-checked` pass: a Bool leaf is not a literal to repair.
   it("proposes nothing for a non-text leaf", async () => {
     const { path } = await runSource(
       "agree-checked",

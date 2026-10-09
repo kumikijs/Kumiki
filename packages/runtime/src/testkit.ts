@@ -1,9 +1,3 @@
-// Test harness slice of the stdlib (#71): reducer-test / property-test /
-// tile-test runners and the §8.2.2 `expect` wildcards. Only `kumiki test` /
-// smoke-tier code paths reach these, so they live apart from `stdlib.ts` —
-// `kumiki build` output never ships them. `index.ts` merges this back into the
-// classic `_stdlib` export for the inlining (full-bundle) path.
-
 import {
   batchRejections,
   type EffectSpec,
@@ -21,12 +15,6 @@ import {
 } from "./core.ts";
 import { valueEqual } from "./stdlib.ts";
 
-/**
- * Loose shapes for an inlined episode-log entry (spec/runtime.md §10.5.1)
- * sufficient for replay. Inlined by codegen at compile time, so the runtime
- * deals only with already-parsed objects — anything not matched falls back to
- * an unrecognized step that replay just skips over.
- */
 type EpisodeReducerStep = {
   kind: "reducer";
   name: string;
@@ -70,11 +58,6 @@ export type EpisodeLogEntry = {
   status: "completed" | "panic" | "cancelled" | "ongoing";
 };
 
-/**
- * Mock resolution policy for an `episode-test` effect: replay the recorded
- * effect-end (`from-log`), drop the effect entirely (`ignore`), or inject a
- * fixed `{outcome, value}` deterministically.
- */
 export type EpisodeMockPolicy =
   | { policy: "from-log" }
   | { policy: "ignore" }
@@ -87,10 +70,7 @@ export type TestResult = {
   actual?: string;
   diffAt?: string;
   /**
-   * The values at the divergence point (`diffAt`), when the runner can
-   * isolate one — a scalar, or a list or record for a tile field such as
-   * `options`. Powers the §8.7.1 value arrow (`expected -> actual`) and lets
-   * `kumiki fix --auto-patch` find the responsible source literal.
+   * The values at the divergence point, when the runner can isolate one.
    */
   leaf?: { expected: unknown; actual: unknown };
   /** Number of generated cases run by a `property-test` (for the §8.7.1 `(N cases)` tag). */
@@ -107,17 +87,14 @@ function _jsonStr(v: unknown): string {
   }
 }
 
-// ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
-// `@@`-prefixed sentinels never collide with a Kumiki field name (identifiers
-// are alphanumeric + hyphen, so `@` can never appear in one).
+// `@@`-prefixed sentinels never collide with a Kumiki field name.
 const WILD = "@@kumiki:wild";
 /** A wildcard map key (`<any-id>` in key position): pairs with the one generated entry. */
 const WILD_KEY = "@@kumiki:wild-key";
 /** How many `<any-id>` members a Set literal has: each pairs with one generated member. */
 const WILD_MEMBERS = "@@kumiki:wild-members";
 /**
- * The `<slots.X>` keys of a Set or Map literal, as `[sentinel, value]` pairs
- * (a Set member's value is `true`): keyed only once the slots are known.
+ * The `<slots.X>` keys of a Set or Map literal, as `[sentinel, value]` pairs: keyed only once the slots are known.
  */
 const WILD_SLOT_KEYS = "@@kumiki:wild-slot-keys";
 
@@ -130,17 +107,6 @@ function slotWildValue(w: Record<string, unknown>, finalSlots: Record<string, un
   return finalSlots[w.slot as string];
 }
 
-/**
- * Key each `<slots.X>` entry of an expected Set or Map by its slot's value,
- * the way `add` / `insert` key that value (`entryKey`), so it then matches as
- * if the value had been written in its place. Every member or key the literal
- * writes asks for one of its own, so a slot whose key is already among the
- * others answers `undefined`: the literal names more members than any Set or
- * Map can hold under those keys, and the match fails.
- *
- * Keys are defined as own properties, never assigned: assigning `__proto__`
- * would set the prototype instead of adding the key.
- */
 function keySlotEntries(
   eo: Record<string, unknown>,
   finalSlots: Record<string, unknown>,
@@ -159,15 +125,6 @@ function keySlotEntries(
   return keyed;
 }
 
-/**
- * Wildcard-aware structural match for reducer-test `expect` (§8.2.2). Records are
- * matched by exact key set; `<any-id>` (value) matches any present value, a
- * `<any-id>` map key pairs with exactly one otherwise-unmatched entry (0 or >1 →
- * fail), each `<any-id>` member of a Set literal pairs with one otherwise-unmatched
- * member (the counts must agree), and `<slots.X>` stands for slot X's post-execution value — as a
- * value, a Set member or a map key alike (as a member or key, one distinct from every other the
- * literal writes; `<any-id>` pairs only with what they leave). Falls back to deep equality when no wildcard is involved.
- */
 function wildcardEqual(
   expected: unknown,
   actual: unknown,
@@ -221,13 +178,6 @@ function tileChildren(node: unknown): unknown[] {
   return Array.isArray(c) ? c.filter((x) => x != null) : [];
 }
 
-/**
- * Top-level fields of a tile node that are not content: `kind` (compared
- * first), `children` (recursed into), `props` (read below), and the identity
- * and wiring a node carries beside its content — `key` (the reconciler's
- * identity, stamped by `_wk`), `bind` / `bindPath` / `parse` (form
- * write-back) and `prefetch` / `prefetchArgs` (a link's §3.8 prefetch).
- */
 const TILE_NOT_CONTENT: ReadonlySet<string> = new Set([
   "kind",
   "children",
@@ -240,35 +190,8 @@ const TILE_NOT_CONTENT: ReadonlySet<string> = new Set([
   "prefetchArgs",
 ]);
 
-/**
- * Entries of a node's `props` that are not content: `el` (the same arguments
- * again, as the element's attribute bag), `_tile` (the user-tile marker
- * `_named` adds) and the classes and styles spec §8.4 leaves out.
- */
 const TILE_PROPS_NOT_CONTENT: ReadonlySet<string> = new Set(["el", "_tile", "class", "style"]);
 
-/**
- * The content of a tile node, by name, in comparison order (spec §8.4).
- *
- * First the fields its builtin lifts to the top level — `text`, `src`, `to`,
- * `value`, `options`, … — then the named arguments codegen folds into `props`
- * (`alt`, `disabled`, `id`, …). Codegen folds a lifted argument into `props`
- * as well, so a name the top level already has is read there, once — and so
- * is a props key whose kebab argument the builtin lifted under its camelCase
- * name (`auto-focus` is `autoFocus` above and `auto_focus` here).
- *
- * Two fields are named the way the source writes them rather than the way
- * the node stores them, so that a path and a report line read like the
- * test: a toggle's `checked` state is its `value` argument, and the `aria`
- * map codegen merges every `aria-*` argument into is one entry per
- * attribute, named the attribute `commonAttrDecls` (core.ts) renders — so
- * stating one attribute asserts that one alone.
- *
- * Handlers are functions and are left out with everything listed above. A
- * tile-test's expected node never carries its `{…}` block in `props` — the
- * compiler leaves it out of the lowering (`GenCtx.expectedTree`) — so what
- * is left there is what the expectation was written with.
- */
 function tileContent(node: unknown): Map<string, unknown> {
   const out = new Map<string, unknown>();
   if (node === null || typeof node !== "object") return out;
@@ -297,13 +220,6 @@ function contentValue(k: string, v: unknown): unknown {
   return k === "text" && v !== undefined ? String(v) : v;
 }
 
-/**
- * Structural tile comparison for tile-tests (spec §8.4): compares `kind`,
- * every content field the EXPECTED node carries ({@link tileContent}), and
- * `children` recursively. A field only the actual node carries was not
- * asserted, so it is not compared. Returns the first differing path on
- * mismatch, with the two values there.
- */
 function tileStructEqual(
   expected: unknown,
   actual: unknown,
@@ -335,14 +251,6 @@ function tileStructEqual(
   return { ok: true };
 }
 
-/**
- * One line per tile tree for the `expected:` / `actual:` report. `shape` is
- * the expected node at the same position, and only the fields
- * {@link tileStructEqual} compares there are printed — the text positionally,
- * the rest as `name=value`, a field `node` lacks left out — then the
- * children, each against the expected child beside it. A child with no
- * expected counterpart prints its kind and text.
- */
 function serializeTileNode(node: unknown, shape: unknown = node): string {
   if (node == null) return "null";
   const kind = String(tileField(node, "kind"));
@@ -369,11 +277,6 @@ type ReducerExpect =
       effects: { effect: string; args: unknown[]; argsSpecified?: boolean }[];
     };
 
-/**
- * Compare a reducer-test's final state (slots + emitted/residual effects, or a
- * panic) against `expect`. Shared by the single-apply `runReducerTest` and the
- * multi-step `runReducerTestFlow`. Honors §8.2.2 wildcards via `wildcardEqual`.
- */
 function compareReducerExpect(
   name: string,
   finalSlots: Record<string, unknown>,
@@ -401,8 +304,6 @@ function compareReducerExpect(
       diffAt: "(unexpected panic)",
     };
   }
-  // M2 (§8.5): a mocked `err` that no `.err` reducer consumes is a dropped error
-  // — a clear test failure rather than a silent pass.
   if (unhandledErr !== null) {
     return {
       name,
@@ -433,9 +334,6 @@ function compareReducerExpect(
           diffAt = `effects[${i}].effect`;
           break;
         }
-        // A bare effect name (`persist`) matches by name only; `persist(...)`
-        // (even `persist()`) pins the exact argument list. `<slots.X>` args
-        // (§8.2.2) match the post-execution slot value.
         if (ex.argsSpecified && !wildcardEqual(ex.args, ac.args, finalSlots)) {
           diffAt = `effects[${i}].args`;
           break;
@@ -457,8 +355,6 @@ function compareReducerExpect(
     ...(leaf ? { leaf } : {}),
   };
 }
-
-// ----- property-test generators / runner (spec/testing.md §8.3) -----
 
 /** A type's generation recipe, emitted by codegen from the `for-all` types. */
 export type GenDesc =
@@ -522,8 +418,7 @@ function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
 }
 
 function genValue(desc: GenDesc, rng: () => number): unknown {
-  // `one-of` names the whole domain, whatever the base type is, so it is
-  // answered ahead of the type it refines.
+  // `one-of` names the whole domain, whatever the base type is, so it is answered ahead of the type it refines.
   if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
     return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
   }
@@ -650,29 +545,8 @@ function shrinkCounterexample(
   return cur;
 }
 
-// ----- shared per-episode executor (spec/testing.md §8.6 + runtime.md §10.5.3) -----
-// Drives the reducer queue, applies effect mocks, and emits observer events.
-// Both `runEpisodeTest` (assert) and `replayEpisodes` (trace) call this — a
-// single implementation keeps `from-log` cursor / refine ward / unhandled-err
-// accounting from drifting between the test runner and the CLI replay verb.
-
-/**
- * The slot descriptor every harness in this file reads: the value, its
- * refinement, and the fields that say which predicate refused a write. The
- * naming fields are load-bearing rather than decorative — `batchRejections`
- * resolves the failed predicate from `refineAll` (core.ts), so a shape that
- * left them out would have this tier name a different predicate than the live
- * mount for the same rejected value — and `refineFailure` among them is, for
- * a type with a predicate written inside it, the gate itself (`slotAccepts`).
- */
 type SlotMetaLike = { value: unknown; refine?: (v: unknown) => boolean } & RefinementNaming;
 
-/**
- * The minimum app shape `executeEpisode` / `replayEpisodes` / `runEpisodeTest`
- * consume, and the reducer-test runner too. `effects` is required, not optional: it is where a
- * mocked or replayed err is read ({@link standInValue}), and a caller that
- * left it out would deliver every such err as written.
- */
 export type ReplayApp = {
   live: Record<string, unknown>;
   slots: Record<string, SlotMetaLike>;
@@ -680,18 +554,6 @@ export type ReplayApp = {
   effects: Record<string, Pick<EffectSpec, "errText">>;
 };
 
-/**
- * The value `.ok` / `.err` receives from a result that stands in for `eff`'s
- * invoke instead of running it — a scenario script, a `reducer-test` /
- * `episode-test` mock, a `kumiki replay --mock`, a replayed effect-end
- * (stdlib.md §2.5, testing.md §8.5). An err on an effect that fails with
- * `Text` is read through the spec's own `errText`, as the invoke reads a
- * provider's err. A missing err value there is a provider's err with no
- * `value`, not `null`: `errText(undefined)` is the `Text` `"undefined"`. Any
- * other value — an ok, an `HttpError`, a custom capability's `E` — is
- * delivered as written, with a missing one as `null`. `eff` is undefined for a
- * name the app declares no effect for.
- */
 export function standInValue(
   eff: Pick<EffectSpec, "errText"> | undefined,
   outcome: "ok" | "err",
@@ -700,21 +562,13 @@ export function standInValue(
   return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
-/**
- * Observer event for a single replay step (spec/runtime.md §10.5.1 step kinds,
- * plus the `episode-start` / `episode-end` brackets the executor adds so the
- * formatter can frame each episode). Step indices are 1-based and increment
- * across episodes — the `--until-step N` flag stops the executor after the Nth
- * such event fires.
- */
 export type ReplayEvent =
   | {
       kind: "episode-start";
       episodeId: string;
       trigger: { kind: string; target?: string; payload?: unknown };
       /**
-       * The entry reducer, when it is an `.ok` / `.err` reducer whose value
-       * the log does not carry (§10.5.3): it runs with no `$1`.
+       * The entry reducer, when it is an `.ok` / `.err` reducer whose value the log does not carry: it runs with no `$1`.
        */
       entryResultMissing?: string;
     }
@@ -725,9 +579,7 @@ export type ReplayEvent =
       name: string;
       slotDiffs: { name: string; before: unknown; after: unknown }[];
       /**
-       * Where this body's environment reads came from. Omitted when the log
-       * answered every one of them and the body asked for every one it
-       * carried — the case a reader does not need told about.
+       * Where this body's environment reads came from.
        */
       env?: EnvDrift;
     }
@@ -761,20 +613,8 @@ export type ReplayEvent =
     }
   | { kind: "episode-end"; episodeId: string };
 
-/**
- * Returns `"stop"` to halt the executor immediately after this event (the event
- * itself still landed — the caller has already seen the corresponding step run).
- * Used by `--until-step N` to short-circuit replay; the test runner passes a
- * `() => "continue"` no-op.
- */
 export type ReplayObserver = (event: ReplayEvent) => "continue" | "stop";
 
-/**
- * Environment-read provenance for a replay (§10.5.3). A read the log could not
- * answer was taken live, which is the one thing a replay cannot reproduce;
- * without a count there is no way, after the fact, to tell that apart from a
- * read that WAS answered from the log.
- */
 export type EnvDrift = {
   /** Reads with no recorded answer left; the live source was used instead. */
   live: number;
@@ -795,9 +635,7 @@ export type ReplayReport = {
     category?: PanicCategory;
   }[];
   /**
-   * Effect emits whose `.err` outcome had no `.err` reducer to catch. Carries
-   * the source `episodeId` so multi-episode replays can pinpoint which one
-   * leaked — the symmetric shape to `panics` keeps consumers uniform.
+   * Effect emits whose `.err` outcome had no `.err` reducer to catch.
    */
   unhandledErrors: { episodeId: string; effect: string }[];
   /** Step index at which `--until-step` interrupted the run, or `null` if all episodes finished. */
@@ -809,11 +647,6 @@ export type ReplayReport = {
   entryResultsMissing: { episodeId: string; reducer: string }[];
 };
 
-/**
- * Seed the router-maintained `route` slot (testing.md §8.2.5). Seeded only
- * when absent: no `.kumiki` can declare `route`, but a host-built slot table
- * can carry one, and that one wins.
- */
 function seedRoute(live: Record<string, unknown>): void {
   if (!("route" in live)) live.route = emptyRoute();
 }
@@ -825,21 +658,6 @@ function resetLiveFromSlots(app: ReplayApp): void {
   seedRoute(app.live);
 }
 
-/**
- * The payload the episode's entry reducer ran with (§10.5.3).
- *
- * The live runtime records `trigger.payload` as the payload it handed the
- * reducer — `{$el, $event}` for a UI event, `{$1, $2}` for an effect result —
- * so it is passed on as it is. A trigger with no payload whose entry reducer
- * is an `.ok` / `.err` reducer (an `ssr.hydrate` bootstrap, which is opened
- * by the SSR pass rather than by a reducer) ran on the last `effect-end` of
- * that effect and outcome recorded before it, and that step's value, read
- * as any replayed result is ({@link standInValue}), is its `$1`. There is
- * deliberately no `$2`: the SSR pass itself passes
- * `$2: undefined`. Handing the value over consumes it, so the `from-log`
- * cursor of that effect starts past it. With no such step the log cannot
- * answer, and `undefined` says so for the caller to report.
- */
 function entryPayload(
   effects: ReplayApp["effects"],
   ep: EpisodeLogEntry,
@@ -876,8 +694,7 @@ function executeEpisode(
   observer: ReplayObserver,
   stepCounter: { n: number },
   untilStep: number | undefined,
-  // Accumulated across episodes by the caller, for the same reason
-  // `stepCounter` is: every `return` below would otherwise have to carry it.
+  // Accumulated across episodes by the caller, for the same reason `stepCounter` is: every `return` below would otherwise have to carry it.
   envDrift: EnvDrift,
 ): {
   panics: {
@@ -899,12 +716,6 @@ function executeEpisode(
   }[] = [];
   const unhandledErrors: { effect: string }[] = [];
 
-  // Apply a reducer's slot writes under the runtime.md §10.3.3 all-or-nothing
-  // rule: if any slot's new value fails its refinement, nothing is written and
-  // the caller drops that reducer's emits too. Returns null in that case, so a
-  // rejected batch is distinguishable from one that legitimately changed
-  // nothing. Replay must match the live runtime here — the whole point of the
-  // tier is to reproduce what the app actually did.
   const writeSlots = (
     reducerName: string,
     res: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | undefined,
@@ -925,8 +736,6 @@ function executeEpisode(
 
   // Stop signal is shared with the caller (untilStep) AND the observer return.
   const emit = (ev: ReplayEvent): boolean => {
-    // `episode-start` / `episode-end` are bracket markers — not counted as
-    // steps so `--until-step N` lines up with the printable trace lines.
     if (ev.kind !== "episode-start" && ev.kind !== "episode-end") {
       stepCounter.n += 1;
       (ev as { stepIndex: number }).stepIndex = stepCounter.n;
@@ -944,11 +753,6 @@ function executeEpisode(
     return false;
   };
 
-  // The episode's entry reducer. A reducer whose body threw wrote NO `reducer`
-  // step — only a `panic` one — so an episode that crashed on its first
-  // reducer would otherwise replay as an episode with nothing in it, and
-  // `kumiki replay` would exit 0 on a recorded crash. The panic step carries
-  // the reducer's name for exactly this.
   const firstRed = ep.steps.find(
     (s): s is EpisodeReducerStep | (EpisodeStepLite & { kind: "panic"; name: string }) =>
       s.kind === "reducer" || (s.kind === "panic" && typeof s.name === "string"),
@@ -973,22 +777,6 @@ function executeEpisode(
 
   // Per-effect FIFO of recorded effect-end values for `from-log` mocks.
   const recordedResults: Record<string, { result: "ok" | "err"; value: unknown }[]> = {};
-  // Per-reducer FIFO of recorded environment reads (§10.5.1). Replay derives
-  // the chain by re-executing reducers rather than walking the log's steps, so
-  // there is no step to read the reads off — they are keyed by reducer NAME,
-  // and the nth run of reducer `foo` takes the nth recorded `foo`.
-  //
-  // That is an ordering assumption, not an alignment guarantee. Replay walks
-  // `res.emits` in declaration order while the recording appended `.ok` / `.err`
-  // steps in effect-COMPLETION order, so a reducer reached twice by two
-  // effects that completed out of declaration order gets the two recorded read
-  // sets swapped. The failure is silent — crossed-over values, not a fallback
-  // — which is why the `live` count below cannot detect it and §10.5.3 names
-  // the case.
-  //
-  // A `panic` step is harvested on the same key: it carries the reducer's name
-  // for exactly this, so the episode that crashed replays the reads that
-  // crashed it.
   const recordedEnvReads: Record<string, EnvRead[][]> = {};
   const harvestEnvReads = (name: string | undefined, reads: EnvRead[] | undefined): void => {
     if (name === undefined) return;
@@ -1006,12 +794,6 @@ function executeEpisode(
   }
   const envCursors: Record<string, number> = {};
 
-  /**
-   * Hand the reducer the environment it read when the episode was recorded.
-   * With nothing recorded for it — an older log, or a reducer the chain
-   * reached that the recording never logged — the scope is empty and every
-   * read falls through to the live source, which is the pre-#337 behaviour.
-   */
   const takeEnvReads = (reducerName: string): EnvRead[] => {
     const list = recordedEnvReads[reducerName] ?? [];
     const idx = envCursors[reducerName] ?? 0;
@@ -1043,12 +825,6 @@ function executeEpisode(
     const envClean = stepEnv.live === 0 && stepEnv.unused === 0 && stepEnv.malformed === 0;
     if (!outcome.ok) {
       const e = outcome.error;
-      // Derive the record via panicInfo so stack + Error.cause reach the
-      // replay CLI unchanged. The runner treats this catch site as `reducer`
-      // — it's replaying the initial reducer of a recorded episode. If the
-      // thrown KumikiPanic didn't stamp its own location, fall back to the
-      // reducer name we're replaying so the CLI can render "reducer "foo""
-      // instead of leaving the location blank.
       const rec = panicInfo(e, "reducer");
       const location = rec.location ?? `reducer "${job.reducer.name}"`;
       const panicEntry: {
@@ -1093,8 +869,6 @@ function executeEpisode(
     ) {
       return { panics, unhandledErrors, stopped: true };
     }
-    // A rejected batch produced its emits from state that never became real,
-    // so the effect chain below must not run (§10.3.3).
     if (written === null) continue;
     for (const eEmit of res.emits ?? []) {
       const mock = mocks[eEmit.effect];
@@ -1133,8 +907,6 @@ function executeEpisode(
         const idx = cursors[eEmit.effect] ?? 0;
         const recorded = list[idx];
         if (!recorded) {
-          // Recorded log doesn't have an effect-end for this slot — drop the
-          // emit (testkit behaviour) but still surface a trace marker.
           if (
             emit({
               kind: "effect-end",
@@ -1206,15 +978,6 @@ function executeEpisode(
   return { panics, unhandledErrors, stopped: false };
 }
 
-/**
- * Replay an episode log against a compiled app, streaming each observed step
- * through `observer`. Powers `kumiki replay` (§10.5.3): mocks resolve effect
- * outcomes the same way `episode-test` does, `--until-step N` short-circuits
- * the run when the observer (or the executor's own counter) reports `"stop"`.
- *
- * The app's `live` state is reset to slot defaults at the start of replay; the
- * caller can read `finalSlots` afterwards (also written into `app.live`).
- */
 export function replayEpisodes(input: {
   app: ReplayApp;
   episodes: EpisodeLogEntry[];
@@ -1258,14 +1021,12 @@ export function replayEpisodes(input: {
 }
 
 export const _stdlibTest = {
-  // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
   WILD_MEMBERS,
   /**
-   * The `<slots.X>` members of a Set literal and keys of a Map literal; codegen collects
-   * them under this key as `[sentinel, value]` pairs.
+   * The `<slots.X>` members of a Set literal and keys of a Map literal.
    */
   WILD_SLOT_KEYS,
   /** Build a value-position wildcard sentinel: `wild("any-id")` / `wild("slot", name)`. */
@@ -1276,17 +1037,6 @@ export const _stdlibTest = {
   genValue(desc: GenDesc, rng: () => number): unknown {
     return genValue(desc, rng);
   },
-  /**
-   * Apply one reducer to a `{slots}` state and return the next `{slots}` — the
-   * `run-reducer(name)` step used inside a `property-test` invariant (§8.3).
-   * Pure w.r.t. the test: it seeds `app.live` from `state.slots`, applies, and
-   * returns a fresh merged slots snapshot (emitted effects are ignored).
-   *
-   * Chained steps make this the one apply path where a rejection is easiest to
-   * hide: `run-reducer(inc).run-reducer(dec)` reads its predecessor's output, so
-   * a batch the app would refuse becomes the next step's starting state and the
-   * invariant is checked against a world that cannot happen.
-   */
   runReducerStep(
     app: {
       live: Record<string, unknown>;
@@ -1311,12 +1061,6 @@ export const _stdlibTest = {
     for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
     return { slots: next };
   },
-  /**
-   * Run a `property-test` (spec/testing.md §8.3): generate `count` (default 100)
-   * cases for the `vars` descriptors with a seeded PRNG (reproducible), check
-   * `trial(binds) === true` each time, and on failure shrink to a minimal
-   * counterexample (unless `shrink === false`).
-   */
   runPropertyTest(input: {
     name: string;
     vars: Record<string, GenDesc>;
@@ -1354,19 +1098,6 @@ export const _stdlibTest = {
     }
     return { name, pass: true, cases: count };
   },
-  // ----- in-language test runner (`kumiki test`) -----
-  /**
-   * Reset live slot state to slot defaults, seed `route`, then apply the
-   * test's `given` slots — with one further pass over `route`, because a
-   * `given` one names only the fields the test cares about and takes the empty
-   * route's values for the rest. `route.params` reading `undefined` is the
-   * panic this seam exists to prevent, and an abbreviation must not
-   * reintroduce it. The field names are checked when the program is checked.
-   *
-   * Shared by `reducer-test`, its multi-step form and `tile-test`, and by
-   * `run-reducer` inside a `property-test`; `episode-test` and `kumiki replay`
-   * reach the same seed through `resetLiveFromSlots`.
-   */
   resetLive(
     live: Record<string, unknown>,
     slots: Record<string, { value: unknown }>,
@@ -1382,12 +1113,6 @@ export const _stdlibTest = {
       live.route = { ...(base as Record<string, unknown>), ...(seeded as Record<string, unknown>) };
     }
   },
-  /**
-   * Compare a reducer's resulting slots + emitted effects (or a panic) to
-   * `expect`. `slotMetas` carries the refinements: without them this tier would
-   * accept a batch the running app refuses (runtime.md §10.3.3), which is the
-   * one thing a reducer-test must never do.
-   */
   runReducerTest(input: {
     name: string;
     target: string;
@@ -1408,8 +1133,7 @@ export const _stdlibTest = {
         };
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
-    // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here,
-    // not silently lose every refinement check and pass a batch the app refuses.
+    // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
     const rejected = batchRejections(result, slotMetas);
     if (rejected.length > 0) {
       reportRejectedBatch(target, rejected);
@@ -1418,15 +1142,6 @@ export const _stdlibTest = {
     const finalSlots = { ...givenSlots, ...(result?.slots ?? {}) };
     return compareReducerExpect(name, finalSlots, result?.emits ?? [], panic, expect);
   },
-  /**
-   * Multi-step reducer-test with effect mocks (spec/testing.md §8.5). Dispatches
-   * `target` headlessly, then drives the emit→result→reducer loop: an emitted
-   * effect with a `mocks` entry is delivered to its `.ok`/`.err` reducer (its
-   * result `value` as `$1`); one with no mock is *residual* and asserted via
-   * `expect.effects`. `delay(ms, …)` is resolved immediately (virtualized time —
-   * no real wait, FIFO order). A mocked `err` with no `.err` reducer fails the
-   * test.
-   */
   runReducerTestFlow(input: {
     name: string;
     app: ReplayApp;
@@ -1442,9 +1157,6 @@ export const _stdlibTest = {
     let panic: string | null = null;
     let unhandledErr: string | null = null;
 
-    // §10.3.3 all-or-nothing, as on the live path. Returns false when the batch
-    // was rejected so the caller skips its emits — otherwise a reducer test
-    // would see effects the running app would never have dispatched.
     const writeSlots = (
       reducerName: string,
       res: { slots?: Record<string, unknown>; rejected?: RefinementRejection[] } | undefined,
@@ -1497,22 +1209,6 @@ export const _stdlibTest = {
     }
     return compareReducerExpect(name, { ...live }, residual, panic, expect, unhandledErr);
   },
-  /**
-   * Replay a recorded episode log against the current app (spec/testing.md §8.6).
-   * For each Episode, dispatch the first `reducer` step's reducer with the
-   * trigger payload and let the recorded emit → effect-end → .ok/.err chain
-   * play out. Effect outcomes come from the caller's `mocks` map: `from-log`
-   * consumes the next recorded effect-end value in order; `ignore` skips
-   * delivery; `fixed` injects an explicit `{outcome, value}`. After every
-   * episode replays, compare the live slots against `expect.slotsEqual` —
-   * either a record literal or `"from-log"` (accumulated from each reducer
-   * step's `slot-diffs`).
-   *
-   * Reuses {@link executeEpisode} (and `replayEpisodes`) — the same per-episode
-   * executor drives both the assert-based `kumiki test` runner and the trace
-   * formatter behind `kumiki replay` (spec/runtime.md §10.5.3), so a divergence
-   * between the two is impossible.
-   */
   runEpisodeTest(input: {
     name: string;
     app: ReplayApp;
@@ -1525,16 +1221,12 @@ export const _stdlibTest = {
     };
   }): TestResult {
     const { name, app, episodes, mocks, expect } = input;
-    // Start from slot defaults so each test is hermetic (spec §8.6 expects the
-    // log to be the sole driver of state).
     resetLiveFromSlots(app);
 
     const panics: { episodeId: string; message: string }[] = [];
     const unhandledErrors: string[] = [];
     const stepCounter = { n: 0 };
     const observer: ReplayObserver = () => "continue";
-    // `episode-test` asserts against slots, not provenance; the drift is still
-    // accumulated so the executor has one shape to write into.
     const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
 
     for (const ep of episodes) {

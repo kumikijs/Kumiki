@@ -1,18 +1,3 @@
-// A builtin's content is its first POSITIONAL argument.
-//
-// `heading(level=2, title)` is an ordinary program: the level is a prop, the
-// title is what the heading says. Lowering read `t.args[0]` whatever its name,
-// so the level was rendered as the text and the title was dropped, with
-// `check` saying nothing. A user-tile call already took its input from the
-// first positional argument; this holds the builtins to the same rule.
-//
-// Each row writes a named argument FIRST and the content after it (one row
-// also writes it after, to show the order does not matter), then
-// mounts and reads the DOM: the content must be the positional value, and the
-// named argument must still have reached the element as a prop. `code` and
-// `editable` already read the positional argument; their rows hold all five
-// kinds to the one rule the lowering now shares.
-
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.js";
@@ -109,10 +94,6 @@ const rows: Row[] = [
     notSays: "probe",
     prop: (el) => expect(el.getAttribute("data-kumiki-test")).toBe("probe"),
   },
-  // `label` and `link` take their label the same way as `editable`: the first
-  // positional argument, or `text=` when none is written (both together is
-  // E0129, see `packages/compiler/test/builtin-content-args.test.ts`). The
-  // positional one used to be parsed and then dropped, so both rendered empty.
   {
     kind: "label",
     tile: 'label(test-id="probe", title)',
@@ -149,10 +130,6 @@ describe("a builtin's content is its first positional argument", () => {
     });
   }
 
-  // Only the prop half here is a rule: a `test-id` never becomes content. The
-  // empty text is today's behaviour for a call that gives no content, and says
-  // nothing about `text(text="…")`, which is E0129 (see
-  // `packages/compiler/test/builtin-content-args.test.ts`).
   it("text with only a test-id: the test-id is a prop, not the content", async () => {
     const el = await render('text(test-id="probe")');
     expect(el.textContent).toBe("");

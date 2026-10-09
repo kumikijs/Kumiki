@@ -1,6 +1,3 @@
-// The `switch` tile (#71): its own shipping unit, so an app that renders one
-// does not download the nine other input controls.
-
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
 import {
   applyControlState,
@@ -43,11 +40,6 @@ export const switchTile: TileRenderer<"switch"> = (node) => {
 export const switchPatcher: TilePatcher<"switch"> = (el, _oldNode, newNode) => {
   const wrap = el as HTMLLabelElement;
   reconcileId(wrap, newNode);
-  // check / radio / switch: create wraps a single `<input>` as the first
-  // child (radio also appends a trailing `<span>` label; check / switch do
-  // not). Use the direct child instead of `querySelector("input")` to avoid
-  // matching a nested input if a future container tile ever wraps another
-  // input beneath the same label.
   const inp = wrap.firstElementChild as HTMLInputElement | null;
   if (inp) {
     if (inp.checked !== newNode.checked) inp.checked = newNode.checked;

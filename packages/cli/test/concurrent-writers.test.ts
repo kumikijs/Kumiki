@@ -1,7 +1,3 @@
-// Write verbs on one file from several processes at once: every op either
-// lands and is logged, or is rejected and is not — the file and the op log
-// never disagree, and no writer's edit is erased by another's.
-
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
   copyFileSync,
@@ -61,11 +57,6 @@ const runChild = (script: string, args: string[]): Promise<string> =>
     child.on("exit", (code) => (code === 0 ? done(out.trim()) : fail(new Error(err))));
   });
 
-/**
- * A live process that takes the write lock itself — the way another `kumiki`
- * would — and signals once it holds it. After `holdMs` it copies the `.kumiki`
- * file to `seen` (what the file was while it still held the lock) and releases.
- */
 const holdLock = (holdMs: number, seen: string): Promise<number> =>
   new Promise((ready, fail) => {
     const script = [
@@ -104,15 +95,6 @@ const slotsInFile = (): string[] =>
 
 type Racer = { name: string; pid: number; saw: number[]; opId?: string; error?: string };
 
-/**
- * A writer for `race`: waits for the start instant, then adds one slot. It
- * also reports the pid named by every lock it found in its way — each open of
- * the lock path that failed with EEXIST, which only an exclusive create can —
- * by wrapping `fs.openSync`, which the write lock calls through the `node:fs`
- * namespace (`syncBuiltinESMExports` carries the wrapper into that namespace).
- * The path is compared resolved and the flags not at all, so the check does
- * not depend on how the lock spells either.
- */
 const RACER = [
   'import fs from "node:fs";',
   'import { syncBuiltinESMExports } from "node:module";',
@@ -154,20 +136,6 @@ const RACER = [
 /** How many times `race` starts the writers before it gives up on their meeting. */
 const RACE_ATTEMPTS = 3;
 
-/**
- * Four writers released at one instant on a fresh copy of the counter (after
- * `setup`); resolves with what each reported once they have contended, that
- * is, once one of them found the write lock held by another.
- *
- * Writers that never meet prove nothing about the lock: they ran one after
- * another. A writer's one `addDef` — the first in its process — takes about
- * 15-20 ms on an idle machine (2-5 ms for later calls), so a writer the
- * scheduler wakes that much late can miss the others entirely. That is a
- * missed start, not a lost add, so the writers are started again, up to
- * `RACE_ATTEMPTS` times. Writers that never meet in any attempt are reported
- * as such, and that has a second cause the test cannot tell apart: a lock
- * that is no longer created exclusively, so no writer ever finds one.
- */
 async function race(setup: () => void = () => {}): Promise<Racer[]> {
   const racer = join(dir, "racer.mts");
   writeFileSync(racer, RACER);
@@ -177,16 +145,11 @@ async function race(setup: () => void = () => {}): Promise<Racer[]> {
     rmSync(`${file}.kumiki-ops.jsonl`, { force: true });
     rmSync(lock, { force: true });
     setup();
-    // Far enough ahead that every child has started, so their read-modify-writes
-    // overlap rather than queue behind process start-up.
     const at = String(Date.now() + 8_000);
     const results = (await Promise.all(names.map((n) => runChild(racer, [file, lock, n, at])))).map(
       (line) => JSON.parse(line) as Racer,
     );
     expect(results.filter((r) => r.error !== undefined)).toEqual([]);
-    // Contended: a writer found a lock naming another racer. The exited
-    // writer's lock that the takeover race starts from does not count: the
-    // first writer finds it even when the writers run one after another.
     const pids = new Set(results.map((r) => r.pid));
     const contended = results.some((r) => r.saw.some((p) => pids.has(p)));
     if (contended) return results;
@@ -219,8 +182,6 @@ describe("concurrent write verbs", () => {
   it("land every add when all the writers find a lock left by a writer that exited", {
     timeout: 120_000,
   }, async () => {
-    // Every waiter decides at once that the holder is gone; only one of them
-    // may take its place.
     const gone = exitedPid();
     const results = await race(() =>
       writeFileSync(lock, JSON.stringify({ pid: gone, host: hostname() })),
@@ -279,8 +240,6 @@ describe("concurrent write verbs", () => {
   });
 
   it("take over a lock this process left behind", { timeout: 60_000 }, () => {
-    // A release that failed leaves this process's own pid in the lock. Nothing
-    // in this process holds it, so it must not be waited on as a live writer.
     process.env[WAIT_ENV] = "20000";
     writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname() }));
     addDef(file, "slot", "extra1", "Int = 0");
@@ -332,8 +291,6 @@ describe("concurrent write verbs", () => {
   });
 
   it("restore the file when the op cannot be logged", () => {
-    // A directory where the op log goes: the append fails after the file has
-    // been written.
     mkdirSync(`${file}.kumiki-ops.jsonl`);
     const before = readFileSync(file, "utf8");
     expect(() => addDef(file, "slot", "extra1", "Int = 0")).toThrow(

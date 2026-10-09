@@ -1,10 +1,3 @@
-// style.md §4.5: a `{base, …}` map picks the largest breakpoint the viewport
-// reaches, the breakpoints are the active theme's (over §4.2's defaults), and
-// `cols` / `rows` take a map like any other responsive prop. happy-dom has no
-// layout viewport, so `window.matchMedia` is answered here for a chosen width;
-// the e2e tier (`responsive-breakpoints.spec.ts`) repeats the grid claim in
-// Chromium at real viewport sizes.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount, renderToString } from "@kumikijs/runtime";
@@ -24,11 +17,6 @@ app Resp
     init   = []
 `;
 
-/**
- * Answer `(min-width: …)` queries as a viewport `width` px wide would: px as
- * is, rem / em against the initial 16px font size, as a browser resolves them
- * in a media query.
- */
 function viewport(width: number): void {
   vi.spyOn(window, "matchMedia").mockImplementation((q: string) => {
     const m = /min-width:\s*([\d.]+)(px|rem|em)\)/.exec(q);
@@ -59,8 +47,7 @@ afterEach(() => {
 type Shown = { cols: string; rows: string; gap: string };
 
 /**
- * The inline styles the two probed elements carry at `width`, read as strings
- * while the app is still mounted.
+ * The inline styles the two probed elements carry at `width`, read as strings while the app is still mounted.
  */
 async function styleAt(
   src: string | { file: string },
@@ -110,8 +97,7 @@ describe("responsive grid tracks", () => {
 
 describe("the active theme's breakpoints", () => {
   it("move where a key starts", async () => {
-    // Narrow puts `md` at 500px: 600px is `md` there, and only `base` under the
-    // 768px default.
+    // Narrow puts `md` at 500px: 600px is `md` there, and only `base` under the 768px default.
     const narrow = await styleAt({ file: EXAMPLE }, 600);
     expect(narrow.spaced.gap).toBe("24px");
     expect(narrow.tracks.cols).toBe("repeat(2, 1fr)");
@@ -126,8 +112,7 @@ describe("the active theme's breakpoints", () => {
 
 describe("a theme that declares some breakpoints", () => {
   it("keeps the §4.2 default for a key it leaves out", async () => {
-    // Only `md` moves; `lg` is still the 1024px default, so 1100px is `lg` and
-    // 900px is the theme's `md`.
+    // Only `md` moves; `lg` is still the 1024px default, so 1100px is `lg` and 900px is the theme's `md`.
     const src = themed('md: "500px"', "{base: 1, md: 2, lg: 4}");
     expect((await styleAt(src, 1100)).tracks.cols).toBe("repeat(4, 1fr)");
     expect((await styleAt(src, 900)).tracks.cols).toBe("repeat(2, 1fr)");
@@ -156,8 +141,7 @@ describe("breakpoints are ordered by width across units", () => {
   });
 
   it("a width that is not one is dropped and leaves the others in order", async () => {
-    // A nested theme value has no width. Left in, it compared as NaN and put
-    // `sm` ahead of `lg`, so 1100px resolved to `sm`.
+    // A nested theme value has no width. Left in, it compared as NaN and put `sm` ahead of `lg`, so 1100px resolved to `sm`.
     const src = themed('md: { x: "1px" }', "{base: 1, sm: 2, md: 3, lg: 4}");
     expect((await styleAt(src, 1100)).tracks.cols).toBe("repeat(4, 1fr)");
     const asked = vi.mocked(window.matchMedia).mock.calls.map(([q]) => q);

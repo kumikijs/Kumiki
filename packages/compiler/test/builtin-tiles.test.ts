@@ -1,12 +1,3 @@
-// Regression for issue #61: every tile in the single-source registry
-// (`BUILTIN_TILES`) must be handled by codegen. The parser, typechecker, and
-// codegen all derive their built-in set from `builtins.ts`, so the only way the
-// three can still disagree is a registry entry that codegen's switch doesn't
-// implement — which used to surface as `Tile "<name>" not found` (or
-// `Unsupported builtin tile`) at build time. This test calls every registered
-// tile through codegen and asserts it emits a render expression without
-// throwing, locking the layers in agreement.
-
 import { BUILTIN_TILES, codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -51,9 +42,6 @@ describe("builtin tile registry (issue #61)", () => {
   for (const name of BUILTIN_TILES) {
     it(`codegen handles "${name}"`, () => {
       const src = program(callFor(name));
-      // Bypass typecheck (a11y / required-arg diagnostics are not what we test
-      // here) and drive codegen directly — it must not throw for any registered
-      // built-in tile.
       const prog = parse(lex(src));
       const { js } = codegen(prog, { runtimeSpecifier: "./runtime.js" });
       expect(js.length).toBeGreaterThan(0);

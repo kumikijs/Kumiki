@@ -1,11 +1,3 @@
-// A `filter` / `map` / `find` / `sort-by` fragment binds `$1` / `$2` from the
-// receiver's type (stdlib.md §2.2.3). The lowering used to decide at run time,
-// taking apart any value that was an array of exactly two items — so a
-// two-item `List` element or `Option(List)` value bound `$1` to its first item,
-// and the answer depended on the list's length. Each row goes through check,
-// codegen and the runtime, which is where the binding is made: a unit test on
-// the stdlib helpers never reaches it.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -66,8 +58,6 @@ describe("a two-item list is one value to the fragment", () => {
 });
 
 describe("the type, not the length, decides", () => {
-  // The same two-item shape in one program: an `.entries` pair and a Map's
-  // filter are taken apart, a `List(Int)` element is not.
   it("takes a pair apart and hands a two-item list over whole", async () => {
     const defs = `slot scores : Map(Text, Int) = {"ann": 2, "bob": 1}
 ${NESTED}`;
@@ -95,8 +85,6 @@ describe("a fragment handed one value binds no second positional", () => {
 });
 
 describe("an element that is itself a Set is typed", () => {
-  // With `$1` bound to the element whole, the checker types it, so a key
-  // reader on it restores the keys (stdlib.md §2.2.2).
   it("reads a Set element's keys back as Int", async () => {
     const source = program(
       "slot tags : Set(Int) = {}",
@@ -108,8 +96,6 @@ describe("an element that is itself a Set is typed", () => {
 });
 
 describe("a bare fn fragment binds like the call it stands for", () => {
-  // `xs.map(len)` is `xs.map(len($1))` (language.md §1.8.6), so the two
-  // spellings bind the same `$1`: the two-item element is one value to both.
   it("hands a two-item list element whole to a named fn", async () => {
     const defs = `fn len(xs: List(Int)) -> Int = xs.length
 ${NESTED}`;
@@ -118,8 +104,6 @@ ${NESTED}`;
 });
 
 describe("a Set's filter is handed its elements", () => {
-  // `_s.filter` hands a Set's predicate each `[element, true]` entry, so a
-  // Set is not a receiver whose element §2.2.3 binds whole.
   it("keeps the Text elements the predicate keeps", async () => {
     const defs = 'slot words : Set(Text) = ["ann", "bob"]';
     expect(await run(program(defs, "List(Text)", 'words.filter($1 != "bob").to-list'))).toEqual([
@@ -133,9 +117,6 @@ describe("a Set's filter is handed its elements", () => {
 });
 
 describe("a $2 inside another method's argument is the enclosing fragment's", () => {
-  // Only a fragment position binds positionals; any other argument is
-  // evaluated where the call is, so its `$2` is whatever the enclosing scope
-  // binds — and a fragment handed one value binds none.
   const NUMS =
     'slot nums : List(Int) = [1, 2]\nslot words : List(Text) = ["a", "b"]\nslot m : Map(Text, Int) = {"a": 9}';
   it.each([
@@ -150,8 +131,6 @@ describe("a $2 inside another method's argument is the enclosing fragment's", ()
     ]);
   });
   it("reads an enclosing pair's value from inside a one-positional fragment", async () => {
-    // `update`'s fragment binds `$1` (the current value) and nothing else, so
-    // its `$2` is the `.entries` pair's value.
     const defs = 'slot scores : Map(Text, Int) = {"ann": 2, "bob": 1}';
     const rhs = "scores.entries.map(scores.update($1, $1 + $2).get-or($1, 0))";
     expect(await run(program(defs, "List(Int)", rhs))).toEqual([4, 2]);
@@ -159,8 +138,6 @@ describe("a $2 inside another method's argument is the enclosing fragment's", ()
 });
 
 describe("a fn named as a two-positional fragment where only one is bound", () => {
-  // Over a receiver the checker knows, a fragment that binds no `$2` cannot
-  // take a two-parameter `fn`; only an undecidable receiver is let through.
   const ADD2 = "fn add2(a: Int, b: Int) -> Int = a + b";
   it.each([
     ["an Option", "slot picked : Option(Int) = Some(1)", "picked.map(add2)"],
@@ -171,8 +148,6 @@ describe("a fn named as a two-positional fragment where only one is bound", () =
     expect(found).toContain("E0213");
   });
 
-  // A receiver without the member at all has no count to get wrong: the
-  // member it lacks is the one mistake (errors.md E0108).
   it.each([
     ["a record", "type P = { x: Int }\nslot p : P = { x: 1 }", "p.map(add2)"],
     ["Text", 'slot t : Text = "x"', "t.map(add2)"],
@@ -227,8 +202,6 @@ describe("the shapes §2.2.3 binds", () => {
 });
 
 describe("a Map's map is handed each entry, the key and the value", () => {
-  // Like a Map's filter, `Map.map`'s fragment takes the `[key, value]` pair it
-  // is handed apart: `$1` is the key, restored to its type, `$2` the value.
   const M = "slot m : Map(Int, Int) = {1: 10, 2: 20}";
   const shown = (mapped: string) => `${mapped}.entries.map($1.show + "=" + $2.show).join(",")`;
   it.each([

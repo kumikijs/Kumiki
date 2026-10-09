@@ -6,16 +6,6 @@ import {
   type WebMcpTool,
 } from "./webmcp";
 
-// AC — playground WebMCP registration must survive SPA remounts:
-//  1. no modelContext (no agent attached) → bind is a silent no-op
-//  2. first bind registers exactly the four kumiki_* tools
-//  3. remount (bind → release → bind) never re-registers on a context without
-//     unregisterTool — the "Duplicate tool name" InvalidStateError repro
-//  4. after a remount, execute delegates to the NEW instance
-//  5. execute while no instance is mounted returns an error result, never throws
-//  6. release of a stale instance must not detach the currently active one
-//  7. on a context WITH unregisterTool, release unregisters and rebind re-registers
-
 const TOOL_NAMES = [
   "kumiki_compile",
   "kumiki_list_examples",

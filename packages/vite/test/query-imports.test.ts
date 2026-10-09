@@ -1,15 +1,3 @@
-// Vite gives the same file different meanings through a query: `?raw` is its
-// text, `?url` its URL (`&inline` / `&no-inline` choosing the form), `?worker`
-// a wrapper that starts it as a worker. Those imports belong to Vite. The
-// plugin compiles the module a `.kumiki` file *is* — the plain import, and
-// the `?import` marker Vite's dev server adds to it — so a project can show an
-// app's source next to the app.
-//
-// Each of Vite's query forms is checked against a project with no plugin at
-// all: Vite alone must succeed, and with the plugin enabled it must produce
-// the same thing. A query Vite does not act on (a bare `?inline`, `?raw=1`)
-// fails without the plugin, so it is the plugin's, and it still compiles.
-
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,18 +60,12 @@ async function outcome(run: () => Promise<string | undefined>): Promise<string> 
 }
 
 const ASSET_QUERIES = ["raw", "url", "url&inline", "url&no-inline"] as const;
-/** Queries Vite gives no meaning to on a `.kumiki` file: the module itself. */
 const NOT_VITES = ["inline", "no-inline", "raw=1", "url=x"] as const;
-// A worker's own entry is bundled by a separate build that runs only
-// `worker.plugins`, so a `vite build` of `?worker` fails in that build the same
-// way with or without this plugin and cannot tell the two apart. The wrapper
-// the importer gets is checked through the dev server instead.
 const DEV_QUERIES = [...ASSET_QUERIES, "worker", "sharedworker"] as const;
 
 describe("vite build of each import form", () => {
   it("compiles the plain import", async () => {
     const out = await buildMain(`import App from "./app.kumiki";\nconsole.log(App);\n`, [kumiki()]);
-    // The runtime was pulled in by the compiled module; the source text was not.
     expect(out).toContain("kumiki-state-styles");
     expect(out).not.toContain(JSON.stringify(SOURCE));
   }, 60_000);

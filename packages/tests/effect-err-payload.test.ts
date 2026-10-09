@@ -1,12 +1,3 @@
-// What a `.err` reducer on a built-in storage-family effect actually receives.
-// These run programs against the real `storage.*` / `session.*` / `indexed.*`
-// handlers, failing, and check that the reducer's `problem := $e` gets the
-// `Text` the effect's `out=Result(_, Text)` declares (http.md §6.7) — not a
-// record, which renders as "[object Object]". A scripted or mocked result
-// stands in for the provider's, so the later blocks hold each of those to
-// what the real run delivers: a scenario script, a `reducer-test` /
-// `episode-test` mock, a `kumiki replay` mock, and a replayed effect-end.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile } from "@kumikijs/compiler";
@@ -121,8 +112,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 
   it("a host provider for storage.write that throws is delivered as the same Text", async () => {
-    // Not the handler's own catch: the throw escapes the provider, which the
-    // dispatcher would otherwise wrap as `{message: …}` without knowing `E`.
     const app = await loadSource(failingAtBoot("storage.write", `{key: "k", value: "v"}`));
     const text = await problemShown(app, {
       "storage.write": () => {
@@ -134,9 +123,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 
   it("a host provider for storage.read that returns a {message} err is delivered as that message", async () => {
-    // A provider written against the old record contract returns `{message}`
-    // as its err value; `$e : Text` must still get the message, not the record
-    // (which `String(…)` would render as "[object Object]").
     const app = await loadSource(failingAtBoot("storage.read", `{key: "k"}`));
     const text = await problemShown(app, {
       "storage.read": async () => ({ kind: "err", value: { message: "vault sealed" } }),
@@ -146,8 +132,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 
   it("a host provider for indexed.write that returns a Text err passes it through unchanged", async () => {
-    // Guard, passes before and after the coercion above: a provider already on
-    // the `Text` contract must not have its value touched.
     const app = await loadSource(
       failingAtBoot("indexed.write", `{store: "notes", key: "k", value: "v"}`),
     );
@@ -158,9 +142,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 
   it("storage.read when the localStorage getter itself throws, as in an opaque-origin sandbox", async () => {
-    // The handler used to read the global before its own `try`, and codegen
-    // returned the built-in's promise without awaiting it, so the rejection
-    // skipped the invoke's `try` and reached the dispatcher as `{message}`.
     const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
@@ -181,8 +162,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
     "session.read",
     "indexed.write",
   ])("%s with in=Unit and no map-request delivers the Text of the missing request", async (cap) => {
-    // `check` accepts the declaration; the handler then receives `undefined`
-    // as its request.
     const app = await loadSource(failingAtBoot(cap, null), []);
     const text = await problemShown(app);
     expect(text).toMatch(/problem: (TypeError: |app\.indexed-db is not declared)/);
@@ -190,8 +169,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 
   it("a map-request that panics is delivered as its Text, once: retry= does not retry it", async () => {
-    // The retry delay is far longer than the wait: a retried panic would not
-    // reach `.err` in time.
     const app = await loadSource(
       failingAtBoot("storage.read", `panic("no key")`, "retry=linear(3, 5000ms)"),
     );
@@ -200,7 +177,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 
   it("a provider that throws is called once under retry=; one that returns err is retried", async () => {
-    // Only a throw is final. A returned err is what `retry=` exists for.
     let thrown = 0;
     const throwing = await problemShown(
       await loadSource(
@@ -233,8 +209,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
   });
 
   it("a provider that rejects asynchronously is delivered as the same Text", async () => {
-    // Only the `await` on the provider's promise keeps this inside the invoke's
-    // `try`; the synchronous throw above does not need it.
     const app = await loadSource(failingAtBoot("storage.write", `{key: "k", value: "v"}`));
     const text = await problemShown(app, {
       "storage.write": async () => {
@@ -289,13 +263,6 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
     );
   });
 });
-
-// Every result that stands in for a provider's — a scenario script, a
-// `reducer-test` / `episode-test` mock, a `kumiki replay --mock`, a recorded
-// effect-end replayed by `from-log` (including the one an `ssr.hydrate`
-// bootstrap's entry reducer takes as `$1`) — is read as the provider's result
-// would be (stdlib.md §2.5, testing.md §8.5). The helpers below run one value
-// through each of them and return what the effect's `.err` stored.
 
 type LiveApp = AppShape & { live: Record<string, unknown> };
 
@@ -353,8 +320,7 @@ async function reducerTestSlots(
 }
 
 /**
- * A recorded `effect-end` of `run`. A result with no `value` gives a step whose
- * `value` is `undefined`, which the JSON a log reaches replay as drops
+ * A recorded `effect-end` of `run`. A result with no `value` gives a step whose `value` is `undefined`, which the JSON a log reaches replay as drops
  * ({@link replaySlots}): a log line with no `value` at all.
  */
 const effectEnd = (result: {
@@ -375,11 +341,6 @@ const bootEpisode = (recorded: { outcome: "ok" | "err"; value?: unknown }): Epis
   status: "completed",
 });
 
-/**
- * One `ssr.hydrate` bootstrap whose recorded `run` ended with `recorded`
- * before `entry` ran on it: the entry reducer's `$1` comes from the log, not
- * from a mock (runtime.md §10.5.3).
- */
 const hydrateEpisode = (
   recorded: { outcome: "ok" | "err"; value?: unknown },
   entry: string,
@@ -478,11 +439,6 @@ const ROWS: [string, string, string, Script, string][] = [
   ],
 ];
 
-// One table: each row's value goes through a real mount, as a host provider's
-// err, and through every stand-in, and `.err` must store the same `Text` each
-// way. The runners used to hand a stand-in's value to `.err` as written, so a
-// record or a number reached the `Text` slot and the page showed
-// "[object Object]".
 describe("a stand-in's err on a storage-family effect is the Text the real app delivers", () => {
   it.each(ROWS)("a provider's err: %s on %s", async (_, cap, mapRequest, script, shown) => {
     expect(await realDelivers(cap, failingAtBoot(cap, mapRequest), script)).toBe(shown);
@@ -504,8 +460,7 @@ describe("a stand-in's err on a storage-family effect is the Text the real app d
     expect(await deliver(src, script, [])).toBe(shown);
   });
 
-  // The other capabilities define their own `E`, and a stand-in writes it as
-  // the provider would return it: it reaches `.err` as written.
+  // The other capabilities define their own `E`, and a stand-in writes it as the provider would return it: it reaches `.err` as written.
   const asWritten: [string, string, unknown, string[]][] = [
     [
       "an http.* err is the HttpError record it writes",
@@ -543,10 +498,6 @@ describe("a stand-in's err on a storage-family effect is the Text the real app d
   });
 });
 
-// An ok carries no reading of its own, but a missing ok value is `null`, as a
-// reducer-test mock's and a scenario script's already were — not `undefined`,
-// which no Kumiki value is. Replay used to pass a `fixed` / `from-log` ok's
-// missing value on as `undefined`.
 describe("a stand-in's ok with no value is null", () => {
   const src = `
 slot got : Option(Text) = Some("unset")
@@ -588,11 +539,6 @@ app OkPayload
   });
 });
 
-// The checker's half. In a `.kumiki` test the checker sees a mock's value
-// first: it must be the effect's `E`, so a record on a `Text`-failing effect
-// is E0201 there. The runtime reading above is what a value the checker never
-// saw gets — `--mock` JSON, a recorded effect-end, a host calling the runner
-// directly.
 describe("a .kumiki test mock's err on a storage-family effect must be its Text", () => {
   /** `src` with one `test` definition appended, checked; the codes it reports. */
   const testCodes = (src: string, test: string): string[] => {

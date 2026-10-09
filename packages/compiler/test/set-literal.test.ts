@@ -1,9 +1,3 @@
-// A list literal where a `Set` is declared is built as a Set (stdlib.md
-// §2.2.2): the checker marks it (`asSet`) wherever it checks a value against a
-// Set type, and codegen lowers a marked literal to `_s.setOf`. The runtime
-// half, and every member reading the result, is pinned in
-// `packages/tests/set-literal.test.ts`; this pins the decision.
-
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -42,9 +36,6 @@ reducer go on=ui.click(Btn) do= w := w.union(["a"])`);
     expect(js("slot w : Set(Text) = []")).toContain('"w": { value: _s.setOf([]) }');
   });
 
-  // Each row writes the literal in one position whose declared type is a Set
-  // only through the position's own type — an element, a value, a payload, an
-  // alias, a return type, a member's argument, a `let … in` body.
   it.each([
     ["a List element", "slot v : List(Set(Int)) = [[1]]", "[_s.setOf([1])]"],
     [
@@ -151,8 +142,6 @@ test t = reducer-test go
 
   it("is built as a Set in an expected effect's argument and in a mocked result", () => {
     const out = js(
-      // An HTTP effect: a storage-family one must declare its error as Text
-      // (E0306), and this case needs a Set on both sides of the Result.
       `effect save cap=http.post in=Set(Text) out=Result(Set(Text), Set(Int))
 slot w : Set(Text) = []
 reducer go on=ui.click(Btn) do= emit save(w)

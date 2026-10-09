@@ -1,12 +1,3 @@
-// A standard effect's argument is held to the `in=` stdlib.md §2.6 gives it.
-//
-// `emit navigate("/about")` used to check ok and build, and the app then stayed
-// on "/" with no error: the router read `.path` off a string. Now `compile()`
-// refuses it, and the record forms the corpus writes — with `params` / `query`
-// / an `Option` field left out — still build and run (`features/144`).
-// The checker's cases, one per shape, are in
-// `packages/compiler/test/builtin-effect-input.test.ts`.
-
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 

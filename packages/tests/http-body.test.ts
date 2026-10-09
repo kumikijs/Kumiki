@@ -1,9 +1,3 @@
-// What the built-in HTTP handler sends for a request body (http.md §6.1.3 /
-// §6.1.5). Each `HttpBody` variant is sent as what it names; before, the
-// handler JSON-encoded the variant value itself, so `Form(m)` went out as
-// `{"_tag":"Form","_0":{…}}` under `application/json`. These run the real
-// handler — no provider, no scenario mock — and read what reached `fetch`.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AppShape, type CapabilityRegistry, mount } from "@kumikijs/runtime";
@@ -25,8 +19,7 @@ const BLOG = join(here, "..", "examples", "apps", "03-blog", "app.kumiki");
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
- * A one-button `http.post` program whose `map-request` is `request`. The
- * effect takes `"x"` as a Text, or nothing when `input` is `Unit`.
+ * A one-button `http.post` program whose `map-request` is `request`. The effect takes `"x"` as a Text, or nothing when `input` is `Unit`.
  */
 function program(request: string, input: "Text" | "Unit" = "Text", http = ""): string {
   return `slot res : Text = "idle"

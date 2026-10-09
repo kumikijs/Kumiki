@@ -2,12 +2,6 @@ import type { ReplayEvent } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { formatEvent } from "../src/replay.ts";
 
-/**
- * `kumiki replay` panic display. The formatter is exercised via `formatEvent`
- * directly — driving a full CLI panic fixture would test the runtime's
- * replay-executor pipeline, not the CLI's stack / cause rendering, which is
- * what changed here.
- */
 describe("formatEvent panic", () => {
   it("prints category, message, location, indented stack, and cause chain", () => {
     const ev: ReplayEvent = {
@@ -64,8 +58,6 @@ describe("formatEvent panic", () => {
 });
 
 describe("formatEvent episode-start", () => {
-  // runtime.md §10.5.3: an entry reducer whose recorded result the log does not
-  // carry is reported rather than inferred, on the episode's own line.
   it("names the entry reducer whose recorded result is missing", () => {
     const ev: ReplayEvent = {
       kind: "episode-start",

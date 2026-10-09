@@ -1,17 +1,3 @@
-// An argument a value builtin never renders is E0129.
-//
-// A value builtin reads its content from one place: its first positional
-// argument, or — for `label`, `link` and `editable` — `text=` when no
-// positional one is written (so `text=` beside one is never read); `image` and `icon` read `src=` / `name=`
-// (language.md §1.7.1, stdlib.md §2.3). Anything else written as content is
-// dropped by the lowering, and `check`, `build` and `smoke` were all green:
-//
-// - `heading(text="Title")` renders "" — `text=` is a prop there, the label
-//   argument of `button` / `link` / `label` / `editable`;
-// - `text("A", "B")` renders "A", and "B" goes nowhere;
-// - `label(text="A", "B")` renders "B", and "A" goes nowhere;
-// - `image("a.png", alt="a")` renders no source.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -25,15 +11,11 @@ const diagnostics = (tile: string) =>
 
 const codes = (tile: string) => check(parse(lex(program(tile)))).map((e) => e.code);
 
-// Which argument each E0129 says is dropped — the structured field a repair
-// keys off, so rewording the message cannot change what gets repaired.
 const shapes = (tile: string) =>
   check(parse(lex(program(tile))))
     .filter((e) => e.code === "E0129")
     .map((e) => e.unrendered);
 
-// `column(` is 18 columns wide on line 2, so an argument's column is 19 plus
-// its offset in the call.
 const at = (tile: string, arg: string) => 19 + tile.indexOf(arg);
 
 describe("content written as text= on a text builtin", () => {
@@ -67,8 +49,6 @@ describe("content written as text= on a text builtin", () => {
 });
 
 describe("text= beside a positional argument on label / link / editable", () => {
-  // These read `text=` only when no positional argument is written, so with
-  // one written the `text=` value is content that never renders.
   it.each([
     ['label(text="A", "B")', "label"],
     ['link(to="/x", text="A", "B")', "link"],

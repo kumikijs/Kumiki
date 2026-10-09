@@ -1,13 +1,3 @@
-// One `AppShape` mounted into more than one host. `docs/spec/runtime.md` §10.9.1
-// says passing the default export rather than the `createApp` factory "shares
-// one instance across all elements of that tag" — which is only a sentence
-// worth writing if every element stays live.
-//
-// It did not. Each mount overwrote the shape's imperative seams, so the second
-// mount captured every event that resolved through the shape and the first
-// froze: its buttons re-rendered the other host, and `el.setSlot` on the first
-// element landed on the second.
-
 import type { AppShape, CapabilityProvider, EffectSpec } from "@kumikijs/runtime";
 import { defineKumikiElement, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,9 +26,6 @@ function makeCounter(): Counter {
       kind: "column",
       children: [
         { kind: "text", text: `${app.live?.label ?? "-"}:${app.live?.count ?? 0}` },
-        // How a compiled app wires a click: the handler calls the shape's
-        // dispatch seam by name, which is exactly the seam a second mount used
-        // to overwrite.
         { kind: "button", text: "+", props: { onClick: () => app._dispatch?.("inc", {}) } },
       ],
     }),
@@ -83,8 +70,6 @@ describe("one AppShape mounted into two hosts", () => {
 
     expect(readAll([a, b])).toEqual(["-:0", "-:0"]);
 
-    // The first mount is the one that used to freeze: its click re-rendered
-    // the *other* host, so `a` stayed at 0 while `b` counted.
     clickIn(a);
     expect(app.live?.count).toBe(1);
     expect(readAll([a, b])).toEqual(["-:1", "-:1"]);
@@ -124,8 +109,6 @@ describe("one AppShape mounted into two hosts", () => {
     mount(app, freshRoot(), { providers: { "log.write": provider } });
     mount(app, freshRoot(), { providers: { "log.write": provider } });
 
-    // Shared state means shared initialization: running `app.init` twice would
-    // double every request the app makes on load.
     expect(provider).toHaveBeenCalledTimes(1);
     expect(started).toHaveBeenCalledTimes(1);
   });
@@ -222,8 +205,6 @@ describe("one AppShape mounted into two hosts", () => {
   });
 
   it("refuses to add a view that wants to hydrate", () => {
-    // A snapshot overlays a *fresh* state. This app's is already live, and the
-    // views painting it would silently jump to whatever the server had.
     const app = makeCounter();
     mount(app, freshRoot());
     expect(() =>
@@ -235,9 +216,6 @@ describe("one AppShape mounted into two hosts", () => {
   });
 
   it("refuses a view that wants its own style root", () => {
-    // A view in its own shadow root would paint there while every injected
-    // <style> stayed in the first view's root, and the shadow boundary would
-    // leave it completely unstyled. Loud beats invisible.
     const app = makeCounter();
     mount(app, freshRoot());
     const shadowHost = freshRoot();
@@ -261,10 +239,6 @@ describe("one AppShape mounted into two hosts", () => {
   });
 
   it("does not register a shape whose mount threw", () => {
-    // `mount(app, el, { hydrate: true })` without a bootstrap episode is a
-    // public call that throws by contract. If the shape were registered before
-    // that point, every later mount would attach into an app with no `init`, no
-    // timers and no handle to dispose it with.
     const app = makeCounter();
     const failed = freshRoot();
     expect(() => mount(app, failed, { hydrate: true })).toThrow(/bootstrapEpisode/);
@@ -302,8 +276,6 @@ describe("one AppShape mounted into two hosts", () => {
     };
     mount(app, freshRoot());
     mount(app, freshRoot());
-    // One mount of one tile, not one per host: these reducers carry
-    // subscriptions and fetches, and a second host is not a second mount.
     expect(mounted).toHaveBeenCalledTimes(1);
   });
 
@@ -329,9 +301,6 @@ describe("one AppShape mounted into two hosts", () => {
         kind: "column",
         children: [
           { kind: "text", text: "row", props: { _tile: "Row" } },
-          // A tile kind with no renderer registered would only warn, so throw
-          // from the tree itself: `text` reads `.text`, and a getter that
-          // throws is a render panic with the tree already picked.
           {
             kind: "text",
             get text(): string {
@@ -353,15 +322,10 @@ describe("one AppShape mounted into two hosts", () => {
     } finally {
       err.mockRestore();
     }
-    // The tree still says Row is mounted; only the painting failed. Firing
-    // `tile.unmount` here would run its unsubscribes and leave notifications
-    // for a tile that never left.
     expect(unmounted).not.toHaveBeenCalled();
   });
 
   it("delivers an imperative slot write to the element it was called on", () => {
-    // The custom-element form of the same defect: `el.setSlot` goes through the
-    // shape's `_setSlot`, which the second mount had overwritten.
     const tag = freshTag();
     const app = makeCounter();
     defineKumikiElement(tag, app, { attributeSlots: { label: { slot: "label" } } });
@@ -370,8 +334,6 @@ describe("one AppShape mounted into two hosts", () => {
     const [el1, el2] = Array.from(host.querySelectorAll(tag)) as SlotEl[];
     if (!el1 || !el2) throw new Error("elements did not upgrade");
 
-    // Both elements show the shared state; the attribute applied last wins the
-    // slot, which is what "shares one instance" means.
     expect(app.live?.label).toBe("B");
     expect(readAll([el1, el2])).toEqual(["B:0", "B:0"]);
 

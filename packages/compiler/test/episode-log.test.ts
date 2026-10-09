@@ -37,9 +37,6 @@ describe("parseEpisodeLogText", () => {
   });
 
   it("still parses minimal panic steps (no stack / cause / category)", () => {
-    // A log written by an older runtime uses the minimal panic shape
-    // {kind, message, location?, ts}. New readers MUST accept it as-is —
-    // that's the forward-compat guarantee spec §10.5 promises.
     const raw =
       '{"id":"ep_old","trigger":{"kind":"ui.click","ts":1},"steps":[{"kind":"panic","message":"boom","location":"reducer \\"x\\"","ts":2}],"status":"panic"}';
     const parsed = parseEpisodeLogText(raw);

@@ -1,11 +1,3 @@
-// A built-in effect's argument is checked like a declared effect's: E0213 for
-// the count, E0202 against its `in=` (stdlib.md §2.6).
-//
-// `checkEmitTarget` stopped after the capability check for every built-in,
-// because a built-in has no `effect` declaration to read an `in=` off. So
-// `emit navigate("/about")` checked ok, and at run time the router read `.path`
-// off a string and never moved.
-
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,8 +67,6 @@ describe("a built-in effect's argument type", () => {
   });
 
   it("names the whole in= when a value of another record type is passed", () => {
-    // Leaving `params` / `query` out is allowed, and the message still names
-    // the record `navigate` takes, not the part this call happened to write.
     expect(diagnostics(`emit navigate(wide)`)).toEqual([
       "E0202 Expected {path: Text, params: Map(Text, Text), query: Map(Text, Text)} but got {path: Text, hash: Text}",
     ]);
@@ -103,8 +93,6 @@ describe("a built-in effect's argument type", () => {
 });
 
 describe("a field a built-in does not default is required", () => {
-  // stdlib.md §2.6: only an `Option(T)` field and the ones the entry defaults
-  // (`navigate`'s `params` / `query`, `confirm`'s `message`) may be left out.
   it.each([
     [`navigate({params: {}, query: {}})`, `"path" of type Text`],
     [`navigate-replace({query: {}})`, `"path" of type Text`],
@@ -132,8 +120,6 @@ describe("the shapes the built-ins take are still accepted", () => {
     `navigate({path: "/x"})`,
     `navigate-replace({path: "/x", query: {"q": "1"}})`,
     `navigate-replace({path: "/x"})`,
-    // A value whose type leaves the defaulted fields out, and a branch or a
-    // `let` body that does: each leaf is held to the fields it writes itself.
     `navigate(cfg)`,
     `navigate(if n > 0 then {path: "/a"} else {path: "/b", query: {}})`,
     `navigate(let p = {path: "/a"} in p)`,
@@ -151,8 +137,6 @@ describe("the shapes the built-ins take are still accepted", () => {
 });
 
 describe("a declared effect of the same name is the one checked", () => {
-  // The declaration is what the program dispatches, so its `in=` is the one an
-  // argument is held to, not the standard effect's.
   const shadowed = `effect navigate cap=nav.push in=Text out=Unit\n`;
   it("takes the declaration's in=", () => {
     expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([]);
@@ -165,10 +149,6 @@ describe("a declared effect of the same name is the one checked", () => {
 });
 
 describe("the table the checker reads is the one the spec writes", () => {
-  // stdlib.md §2.6 says it "is the list the compiler holds": each `effect` line
-  // there names the capability and the `in=` of one entry of `BUILTIN_EFFECTS`.
-  // Both tracks carry the same fenced blocks, so the slice is anchored on the
-  // section numbers alone.
   const here = path.dirname(fileURLToPath(import.meta.url));
   const spec = (track: string, file: string) =>
     readFileSync(path.resolve(here, `../../../docs/${track}spec/${file}`), "utf8");
@@ -206,10 +186,6 @@ describe("the table the checker reads is the one the spec writes", () => {
   });
 
   it("names no type the checker cannot resolve", () => {
-    // `checkAgainst` passes anything held to a name that resolves to nothing,
-    // so a misspelt or invented name here would check no argument at all.
-    // `ReducerRef` is the one name with no definition: the checker matches the
-    // table's own node, not the name.
     const known = new Set(STDLIB_TYPES.map((t) => t.name));
     const refs = (t: TypeExpr): TypeExpr[] =>
       t.kind === "TypeRef"

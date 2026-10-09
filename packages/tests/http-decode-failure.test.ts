@@ -1,10 +1,3 @@
-// A response that arrived but does not decode (http.md §6.1.4) is an
-// `HttpError` carrying the response's status and text, and — being neither a
-// 5xx nor a connection error — it is not retried (§6.5). The decode used to run
-// inside the same `try` as `fetch`, so a parse error came back as `status: 0`,
-// the connection-error value, and a `retry=` POST the server had accepted was
-// sent again on every attempt. These run the real handler and retry loop.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
@@ -73,9 +66,6 @@ describe("a 2xx whose body does not decode", () => {
     try {
       const { dispose } = mount(app, root);
       clickByText(root, "Buy");
-      // `.err` fires only after the retry loop has returned, so `calls` is
-      // already final here. The extra wait is a margin, longer than any
-      // backoff, in case an attempt is ever issued outside the loop.
       await waitUntil(() => settled(app, root));
       await tick(200);
       const text = root.textContent ?? "";

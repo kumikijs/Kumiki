@@ -1,14 +1,3 @@
-// A per-line `edit` patch, `{"body:N": "replace 'a' -> 'b'"}`, is the shape of
-// the auto-patch in ai-edit §9.6: it names the line its text is on. When that
-// text is not on that line, because the line has changed since the patch was
-// made, there is nothing to replace. `edit` and `patch apply` used to write the
-// file back unchanged, log the op and exit 0, so an agent applying a stale
-// auto-patch was told it had applied. They now reject it, as the
-// `{find, replace}` shape is rejected when `find` is not in the definition.
-//
-// Asserted through a real process: exit `1` is the contract (§9.2.5), and only
-// a shell can read it.
-
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -21,8 +10,7 @@ const cliDir = join(dirname(fileURLToPath(import.meta.url)), "..", "cli");
 const CLI = join(cliDir, "src", "kumiki.ts");
 const TSX = pathToFileURL(createRequire(join(cliDir, "package.json")).resolve("tsx")).href;
 
-// `spawnSync` blocks the worker, so vitest's timeout cannot interrupt a hung
-// child: the child's own limit is the shorter one, so it always fires first.
+// `spawnSync` blocks the worker, so vitest's timeout cannot interrupt a hung child: the child's own limit is the shorter one, so it always fires first.
 const CHILD_TIMEOUT_MS = 60_000;
 const SPAWN = { timeout: 70_000 };
 
@@ -32,8 +20,7 @@ function runCli(args: string[]): { stdout: string; stderr: string; code: number 
     encoding: "utf8",
     timeout: CHILD_TIMEOUT_MS,
   });
-  // A child that never started or was killed has `status: null`; folding that
-  // into 1 would pass every `toBe(1)` below without the CLI having run.
+  // A child that never started or was killed has `status: null`; folding that into 1 would pass every `toBe(1)` below without the CLI having run.
   if (res.error) throw res.error;
   return { stdout: res.stdout, stderr: res.stderr, code: res.status ?? Number.NaN };
 }
@@ -76,8 +63,7 @@ describe("a per-line edit patch whose text is not on its line", () => {
   });
 
   it("is rejected when the text is elsewhere in the definition", SPAWN, () => {
-    // `count` is on body line 2 of the reducer, not line 1. A check against
-    // the whole definition, which is what `{find, replace}` makes, passes here.
+    // `count` is on body line 2 of the reducer, not line 1. A check against the whole definition, which is what `{find, replace}` makes, passes here.
     const patch = { "body:1": "replace 'count' -> 'total'" };
     const { stderr, code } = runCli(["edit", file, "reducer.reset", JSON.stringify(patch)]);
     expect(code).toBe(1);

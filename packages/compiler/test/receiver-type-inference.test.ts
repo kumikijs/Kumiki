@@ -8,12 +8,6 @@ import {
 } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// ADR-002 / issue #23: `recv.m` (the parenthesis-free shortcut) must dispatch
-// field-vs-method by the receiver's INFERRED type, not by name alone — so a
-// record field named like a method is read as a field (no shadow), a genuine
-// stdlib receiver still gets the shortcut, and an unknown member on a known type
-// is a diagnostic (E0108) instead of a silent `undefined`.
-
 const compileOk = (src: string): string => {
   const r = compile(src, { runtimeSpecifier: "./runtime.js" });
   if (r.kind !== "ok") throw new Error(`compile failed: ${JSON.stringify(r.errors ?? r)}`);
@@ -98,8 +92,6 @@ tile App = column(Row({head: "h", size: 1}))`),
     expect(js).toContain('["head"]');
   });
 
-  // ADR-002 symmetry: every no-paren FieldAccess shortcut must also be a known
-  // method (so `recv.m` and `recv.m()` agree, and the diagnostic set is correct).
   it("every FieldAccess shortcut is also in KNOWN_METHODS (symmetric dispatch)", () => {
     for (const m of FIELD_ACCESS_SHORTCUTS) expect(KNOWN_METHODS.has(m), m).toBe(true);
   });

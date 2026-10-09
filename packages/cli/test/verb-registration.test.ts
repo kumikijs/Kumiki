@@ -1,22 +1,8 @@
-// Regression test locking that every verb is wired into the commander program.
-// Without this, dropping a `registerX(program)` line in kumiki.ts silently
-// removes a verb from the CLI — every ai-edit.test.ts case still passes
-// because it targets the library API directly (`addDef` etc.), so the CLI
-// dispatch layer would never be exercised.
-//
-// For each verb we assert:
-//   1. `kumiki <verb> --help` exits 0 and mentions the verb name (proves the
-//      subcommand is registered).
-//   2. Missing required args produce a Usage line and exit 2 (proves the
-//      per-verb USAGE constant survived the refactor).
-
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { CASCADE_HELP } from "../src/mutate.ts";
 import { CLI_ARGV } from "./helpers/cli.ts";
 
-// 60s per case, not 30: every one of these is a process start, and this file
-// runs beside the rest of a suite that is mostly process starts too.
 function runCli(args: string[]): { out: string; code: number } {
   try {
     const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
@@ -30,9 +16,6 @@ function runCli(args: string[]): { out: string; code: number } {
   }
 }
 
-// Verbs whose CLI wiring has no dedicated regression elsewhere.
-// build / check / smoke / dev / test / run / replay / add / replace / edit / fix
-// are already covered by cli.test.ts, dev.test.ts, body-file.test.ts, etc.
 const VERBS = ["list", "view", "refs", "remove", "rename", "lock", "unlock", "patch"];
 
 describe("verb registration smoke", () => {
@@ -54,8 +37,6 @@ describe("verb registration smoke", () => {
   }
 });
 
-// `kumiki_remove` describes `cascade` with the same string, so an agent on
-// either surface reads the relation `removeDef` walks.
 describe("remove --help", () => {
   it("describes --cascade as taking the target's dependents", { timeout: 60000 }, () => {
     const { out, code } = runCli(["remove", "--help"]);

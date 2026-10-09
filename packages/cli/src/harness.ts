@@ -1,20 +1,3 @@
-// Test doubles for the two headless verification tiers.
-//
-// `kumiki smoke` / `kumiki run` and the `@kumikijs/tests` suite drive the same
-// runtime through the same examples, so they must see the same environment.
-// Two pieces of that environment are not the DOM's to provide:
-//
-//   * `fetch` — an example that emits an http effect would otherwise reach the
-//     real network. That makes a run depend on DNS, and `httpFetch` normalizes
-//     every failure into an `HttpError`, so an app with an `.err` reducer
-//     reports the outcome it was written to report and the tier stays green.
-//   * `IntersectionObserver` — happy-dom ships one whose `observe()` never
-//     notifies, so the runtime takes its IO branch and nothing ever fires.
-//
-// Both doubles are installed onto the current realm's globals, which is why
-// this lives beside the CLI's happy-dom registration rather than in the
-// runtime: the runtime must stay the thing under test.
-
 import { readFileSync } from "node:fs";
 
 /** One scripted response. `json` and `text` are alternatives; `json` wins. */
@@ -28,51 +11,22 @@ export type HttpResponseFixture = {
   headers?: Record<string, string>;
 };
 
-/**
- * Scripted responses for one example, keyed `"<METHOD> <path>"` — `path` as the
- * effect's `map-request` writes it, after the app's `base-url` is applied
- * (`https://api.example.com` + `/quote` is keyed `"GET /quote"`).
- *
- * A key may carry a queue instead of a single response, and the last entry
- * repeats: `[500, 500, 200]` is how a `retry=exponential` ladder becomes
- * observable. A key with a query string matches that exact query; a key
- * without one matches any.
- */
 export type HttpFixture = Record<string, HttpResponseFixture | HttpResponseFixture[]>;
 
 let currentFixture: HttpFixture | null = null;
 let cursors: Record<string, number> = {};
 let requestLog: string[] = [];
 
-/**
- * Point the `fetch` double at one example's scripted responses. Passing `null`
- * leaves every request unfixtured, which is a reported failure rather than a
- * live request.
- */
 export function useHttpFixture(fixture: HttpFixture | null): void {
   currentFixture = fixture;
   cursors = {};
   requestLog = [];
 }
 
-/**
- * Every request the double has *seen* since the fixture was set, answered or
- * not, as `"<METHOD> <path>"`. What a retry ladder or a `policy=latest`
- * cancellation actually did is otherwise invisible: the app reports the same
- * final state whether it took one attempt or three.
- */
 export function httpRequests(): string[] {
   return [...requestLog];
 }
 
-/**
- * Read `<source>.http.json` beside a `.kumiki` file; `null` when there is none.
- *
- * Only a missing file means "no fixture". A permission error, or a directory in
- * its place, is a different problem, and swallowing it would send the author
- * looking for a file that is sitting right there — the miss message they would
- * eventually see says "add it to the example's .http.json".
- */
 export function readHttpFixture(kumikiPath: string): HttpFixture | null {
   if (!kumikiPath.endsWith(".kumiki")) {
     throw new Error(`not a Kumiki source, so nothing sits beside it: ${kumikiPath}`);
@@ -92,13 +46,6 @@ export function readHttpFixture(kumikiPath: string): HttpFixture | null {
   }
 }
 
-/**
- * Install the doubles onto `globalThis`, replacing whatever is there. Call it
- * from a vitest setup file, and again after anything that rebuilds the realm —
- * `GlobalRegistrator.register` overwrites both globals, so a version that
- * installed only once would leave the second realm undoubled and the tier back
- * on the network. The fixture table is swapped per example by `useHttpFixture`.
- */
 export function installTestDoubles(): void {
   installFetchDouble();
   installIntersectionObserverDouble();
@@ -113,11 +60,6 @@ function installFetchDouble(): void {
     requestLog.push(`${method} ${target.pathname}${target.search}`);
     const found = lookup(method, target);
     if (!found.found) {
-      // Reported, not merely thrown: `httpFetch` turns every rejection into an
-      // `HttpError`, so an app with an `.err` reducer would absorb this and the
-      // run would pass having tested nothing. `smoke` fails on a captured
-      // `console.error`, and so does `runScenario` — including during the mount
-      // window, where an `app.init` effect fires.
       const key = `${method} ${target.pathname}${target.search}`;
       console.error(
         `no HTTP fixture for ${key} — ${found.why} (the headless tiers never reach the network)`,
@@ -144,9 +86,6 @@ function lookup(method: string, target: URL): Lookup {
   const entry = currentFixture[key];
   if (entry === undefined) return miss;
   if (!Array.isArray(entry)) return { found: true, response: entry };
-  // The documented rule is that the last entry repeats, so an empty array is
-  // the one way a queue can run out — named separately, because telling an
-  // author to add a fixture they already wrote helps nobody.
   const first = entry[0];
   if (first === undefined) {
     return { found: false, why: `its queue in the .http.json is empty` };
@@ -156,12 +95,6 @@ function lookup(method: string, target: URL): Lookup {
   return { found: true, response: entry[Math.min(idx, entry.length - 1)] ?? first };
 }
 
-/**
- * One macrotask of latency, abortable. Without it a scripted response resolves
- * synchronously enough that `policy=latest`, `http.cancel` and the timeout path
- * never get to abort anything, and the tier would certify cancellation it never
- * exercised.
- */
 function waitATick(signal: AbortSignal | null): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -200,13 +133,6 @@ function toResponse(fixture: HttpResponseFixture): Response {
   return new Response(status === 204 || status === 205 ? null : body, { status, headers });
 }
 
-/**
- * happy-dom's `IntersectionObserver.observe()` is a no-op, so the runtime's
- * primary prefetch path (§3.8) never fires under it and the microtask fallback
- * never runs either — the feature is unreachable from both headless tiers.
- * This double reports every observed target as intersecting, on a microtask so
- * the caller returns before the callback re-enters render.
- */
 function installIntersectionObserverDouble(): void {
   class IntersectingObserver {
     private readonly cb: IntersectionObserverCallback;
@@ -232,13 +158,6 @@ function installIntersectionObserverDouble(): void {
     IntersectingObserver as unknown as typeof IntersectionObserver;
 }
 
-/**
- * Start a run from an empty browser. Every smoke or scenario run is one app's
- * first visit, but a process registers its DOM once, so `localStorage` and
- * `sessionStorage` would otherwise carry whatever the previous app wrote — and
- * an app restoring a key another app used (`session`, say) boots on that app's
- * value, which its own type may refuse, discarding the whole restore.
- */
 export function clearStorage(): void {
   const page = globalThis as { localStorage?: Storage; sessionStorage?: Storage };
   page.localStorage?.clear();

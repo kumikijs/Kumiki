@@ -1,8 +1,3 @@
-// style.md §4.5 in a real viewport: a responsive `cols` map lays the grid out
-// in the track count its breakpoint names, and the breakpoints are the active
-// theme's. happy-dom has no viewport, so `packages/tests` answers `matchMedia`
-// itself; here Chromium does, and the computed track list is what a user sees.
-
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,8 +75,6 @@ test("600px is md under a theme that puts md at 500px", async ({ page }) => {
 
 test("a rows map gives an 80px row from lg (900px under Narrow)", async ({ page }) => {
   await mountAt(page, 1000);
-  // Six cells in four columns: the first row is the declared 80px track, the
-  // second an implicit one sized to its content.
   const rows = await page.evaluate(
     () => getComputedStyle(document.querySelector("#tracks") as HTMLElement).gridTemplateRows,
   );

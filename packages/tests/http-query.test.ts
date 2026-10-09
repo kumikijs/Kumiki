@@ -1,9 +1,3 @@
-// An HTTP effect's `query` (http.md §6.1.2) is part of the request the
-// built-in handler sends. The handler fetched `base-url + url` and read nothing
-// else, so every entry was dropped while `check`, `build` and the headers from
-// the same record all went through. These run the real `http.get` handler — no
-// provider, no scenario mock — and read the URL that reached `fetch`.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";

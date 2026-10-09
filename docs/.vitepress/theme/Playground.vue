@@ -15,9 +15,6 @@ const DEFAULT_SOURCE =
 const source = ref(DEFAULT_SOURCE);
 const diagnostics = shallowRef<Diag[]>([]);
 const srcdoc = ref("");
-// The select mirrors what the editor holds: it starts on the example the
-// editor is seeded with, and falls back to the placeholder as soon as the
-// source is edited away from the selected example.
 const selected = ref(defaultExample?.name ?? "");
 
 function diagnose(src: string): Diag[] {
@@ -93,9 +90,6 @@ watch(selected, (name) => {
 
 const ok = computed(() => diagnostics.value.length === 0 && srcdoc.value.length > 0);
 
-// --- Syntax highlight: a Shiki-rendered backdrop sits behind a transparent
-// textarea (same font metrics, scroll-synced). Until the highlighter loads —
-// or if it fails — the textarea keeps its normal text color.
 const highlight = shallowRef<Highlight | null>(null);
 const backdropEl = ref<HTMLElement | null>(null);
 const highlighted = computed(() =>
@@ -110,11 +104,6 @@ function syncScroll(event: Event): void {
   backdrop.scrollLeft = ta.scrollLeft;
 }
 
-// --- WebMCP: expose the playground as tools for in-browser AI agents ---
-// Registration goes through the page-global host (see webmcp.ts): tools are
-// registered at most once per page load and delegated to the currently
-// mounted instance, so SPA revisits of this page can't hit the
-// "Duplicate tool name" InvalidStateError.
 const webMcpApi: PlaygroundApi = {
   compileSource(src) {
     const diags = diagnose(src);
@@ -197,8 +186,6 @@ onBeforeUnmount(() => playgroundToolHost.release(webMcpApi));
   position: relative; display: grid;
   background: var(--vp-c-bg); border-right: 1px solid var(--vp-c-divider);
 }
-/* Backdrop and textarea must share identical text metrics so the highlighted
-   text sits exactly under the (transparent) editor text. */
 .sp-input, .sp-backdrop {
   margin: 0; padding: 12px; box-sizing: border-box;
   font-family: var(--vp-font-family-mono); font-size: 13px; line-height: 1.5;

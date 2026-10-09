@@ -1,8 +1,3 @@
-// Issue #71: per-app DCE — the runtime is split into feature modules so
-// `kumiki build` can ship only what an app uses. These tests pin the granular
-// module API (mountCore + explicit registries) and the back-compat contract of
-// the assembled `index.ts` entry (full mount / merged _stdlib / builtinEffects).
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppShape, mountCore } from "../src/core.ts";
 import { httpFetch } from "../src/effects-http.ts";

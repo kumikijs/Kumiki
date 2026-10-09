@@ -1,9 +1,3 @@
-// End-to-end coverage of the inbound ecosystem seam: a custom capability
-// (registered via kumiki.caps.json) is implemented by a host-supplied provider
-// passed to `mount(..., { providers })`. This exercises the whole path —
-// compile → custom-cap effect codegen → capability boundary → provider — that
-// the codegen/runtime unit tests check in isolation.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CapabilityProvider } from "@kumikijs/runtime";

@@ -20,11 +20,9 @@ app Counter
 
 Kumiki は JSX・Hooks・依存配列・Provider といった「人間の認知に最適化された」装置を持たない。代わりに **7 レイヤ**（type / slot / effect / reducer / tile / fn / app）の独立した定義の集合としてアプリを表す。構文オーバーヘッドが小さく、定義同士の依存が明示的で、AI が安全に部分編集できる。
 
-> 言語・ランタイム・ツールは 1.0 未満で、マイナーバージョン間で破壊的変更が入りうる。依存させる場合はバージョンを固定すること。
-
 ## なぜ Kumiki か
 
-クロスベンダー実測（Claude / Codex / Gemini）では、仕様書だけ・単一パスで、LLM は中規模の Kumiki アプリ（最大 〜600 行のマルチルートなイシュートラッカー）を typecheck・build が通る形で書ける。〜1000 行規模になると編集ループが必要になる。React 比のトークン効率も高く、同等アプリはトークン・行数とも概ね 1.4〜2.0 倍コンパクト。詳細は [packages/benchmarks](./packages/benchmarks/)。
+クロスベンダー実測（Claude / Codex / Gemini）では、仕様書だけ・単一パスで、LLM は中規模の Kumiki アプリ（最大 〜600 行のマルチルートなイシュートラッカー）を build が通る形で書ける。〜1000 行規模になると編集ループが必要になる。React 比のトークン効率も高く、同等アプリはトークン・行数とも概ね 1.4〜2.0 倍コンパクト。詳細は [packages/benchmarks](./packages/benchmarks/)。
 
 ## リポジトリ構成
 
@@ -44,23 +42,14 @@ kumiki check app.kumiki      # 型検査して診断を出す
 kumiki build app.kumiki ./out
 ```
 
-その最初の 1 ファイルを書くところは [はじめに](./docs/guide/getting-started.md)、1 レイヤずつ組み立てるのは [最初のアプリ](./docs/guide/your-first-app.md) にある。
-
-Kumiki 自体を開発する場合は clone して:
-
-```sh
-pnpm install
-pnpm build          # 全パッケージをビルド
-pnpm test           # 全テスト
-pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
-```
+最初の 1 ファイルを書くところは [はじめに](./docs/guide/getting-started.md)、1 レイヤずつ組み立てるのは [最初のアプリ](./docs/guide/your-first-app.md) にある。
 
 ## パッケージ
 
 | パッケージ | 内容 |
 |---|---|
-| [`@kumikijs/compiler`](./packages/compiler/) | lexer・parser・typechecker・codegen |
-| [`@kumikijs/runtime`](./packages/runtime/) | DOM ランタイム（signal graph・mount・dispatch） |
+| [`@kumikijs/compiler`](./packages/compiler/) | lexer, parser, typechecker, codegen |
+| [`@kumikijs/runtime`](./packages/runtime/) | DOM ランタイム（signal graph, mount, dispatch） |
 | [`@kumikijs/cli`](./packages/cli/) | `kumiki` コマンド（build / check / list / view / add / replace / remove / rename / fix） |
 | [`@kumikijs/mcp`](./packages/mcp/) | MCP サーバー。コンパイラと AI 編集・仕様検索を MCP ツールとして公開 |
 

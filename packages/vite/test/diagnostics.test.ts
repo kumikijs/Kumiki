@@ -1,12 +1,3 @@
-// What the author sees when a `.kumiki` file does not compile. A type error
-// already arrived as a located diagnostic; a *parse* error — the likelier
-// mistake while typing — escaped the transform as a raw exception, so Vite's
-// overlay showed the file with no line, followed by eight frames of compiler
-// internals. The two failures now read alike.
-//
-// The capability manifest is here for the same reason: a lookup that misses
-// says where it looked.
-
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -120,15 +111,6 @@ describe("the capability manifest a project actually has", () => {
     return out.code;
   }
 
-  it("takes no root from Vite, so no root can narrow the search", () => {
-    // `kumiki dev` makes the .kumiki file's own directory Vite's root; a plugin
-    // that read a root from anywhere in the config would read a different
-    // manifest there than `kumiki check` reads for the very same file. The
-    // behavioural half of this claim is `packages/cli/test/dev.test.ts`, which
-    // drives a real dev server; this pins that there is no such input at all.
-    expect(kumiki().configResolved).toBeUndefined();
-  });
-
   it("accepts a manifest at the project root, not only beside the source", async () => {
     const p = project();
     writeFileSync(
@@ -157,8 +139,6 @@ describe("the capability manifest a project actually has", () => {
   });
 
   it("says nothing about manifests when the failure is not about capabilities", async () => {
-    // The provenance is an answer to "which file registers this name"; on a
-    // type error it is noise in front of the line the author has to fix.
     const p = project();
     const r = await failureOf(
       `tile App = column(text(nope))

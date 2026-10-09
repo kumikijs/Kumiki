@@ -1,15 +1,3 @@
-// `check` and the mounted app agree on a value written where a tile belongs.
-//
-// A value as a positional argument of a builtin that is not a value builtin
-// used to pass `check` and then render nothing: codegen dropped it, so
-// `column(let x = 42 in Card(x))` mounted an empty root,
-// `column(heading("h"), let x = () in Card(x))` showed only the heading, and
-// `column(text("a"), 42)` showed only the `text`. Each of those programs is
-// now refused before anything is built (E0128). A value where a value belongs
-// — a text builtin's content, a user tile's input, a named argument — still
-// mounts and shows its value. The checker's cases are in
-// `packages/compiler/test/value-as-child.test.ts`.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";

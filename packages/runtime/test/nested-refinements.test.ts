@@ -1,12 +1,3 @@
-// A predicate written inside a slot's type — a record field, a union payload,
-// a container element — refuses a value as one on the type itself does
-// (spec/language.md §1.3.3), and the report has to say where inside
-// the value it failed: a record is not "an invalid email", its `email` field
-// is. Codegen emits `refineFailure` for such a slot, and nothing else to gate
-// it: every check reads it through `slotAccepts`, so these build the slot with
-// `refineFailure` alone — a host that assembles a `SlotMeta` the same way gets
-// the same gate.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppShape, MountedApp, RefinementFailure } from "../src/core.ts";
 import { mount, showRefinementPath, slotAccepts } from "../src/index.ts";

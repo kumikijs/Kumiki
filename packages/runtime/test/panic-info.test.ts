@@ -35,10 +35,6 @@ describe("panicInfo", () => {
     const a = new Error("a") as Error & { cause?: unknown };
     a.cause = a;
     const rec = panicInfo(a, "reducer");
-    // The root is already surfaced via `rec.message` / `rec.stack`; walking a
-    // pointer that leads straight back to the root and repeating it as a
-    // "cause" would confuse a reader into thinking the error was caused by
-    // itself. `cause` stays undefined (nothing new to report).
     expect(rec.message).toBe("a");
     expect(rec.cause).toBeUndefined();
   });
@@ -51,8 +47,6 @@ describe("panicInfo", () => {
     const top = new Error("top", { cause: mid });
     const rec = panicInfo(top, "reducer");
     expect(rec.cause).toBeDefined();
-    // Only unique visitors are added: mid, root — then the pointer loops
-    // back to mid (already `seen`) and the walk stops. No hang, no repeats.
     expect(rec.cause!.map((c) => c.message)).toEqual(["mid", "root"]);
   });
 
@@ -90,8 +84,6 @@ describe("panicInfo", () => {
   });
 
   it("stringifies a non-Error link inside the cause chain", () => {
-    // `Error(msg, {cause})` accepts any value for `cause` — even a plain
-    // string / number / object. The cause walker must survive them.
     const top = new Error("top", { cause: "disk full" });
     const rec = panicInfo(top, "reducer");
     expect(rec.cause).toBeDefined();
@@ -102,11 +94,6 @@ describe("panicInfo", () => {
   });
 
   it("never re-throws when the throw's fields have hostile getters", () => {
-    // A caught throw could be an adversarial object (a proxy, a getter that
-    // itself throws, ...). `panicInfo` runs INSIDE every panic catch site —
-    // a secondary throw here would escape the dispatch handler entirely.
-    // Verify by handing it an Error subclass whose `.message` / `.stack` /
-    // `.cause` all detonate.
     class Hostile extends Error {
       override get message(): string {
         throw new Error("hostile message getter");
@@ -121,8 +108,6 @@ describe("panicInfo", () => {
     const rec = panicInfo(new Hostile(), "reducer");
     // Must not throw; must degrade gracefully.
     expect(rec.category).toBe("reducer");
-    // With every getter hostile we can't recover the real message, but the
-    // record must still be well-formed (message is a string, no crash).
     expect(typeof rec.message).toBe("string");
     expect(rec.stack).toBeUndefined();
     expect(rec.cause).toBeUndefined();

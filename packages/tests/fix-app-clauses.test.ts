@@ -1,26 +1,3 @@
-// `kumiki fix --apply` repairs E0001 and E0301 in the app's own clauses, and
-// leaves the rest of the file as it was.
-//
-// errors.md (Auto-patch Coverage) lists both as repaired, and both were text
-// patterns that failed on ordinary layouts. E0001's `routes = {` pattern also
-// matched a tile's `sub-routes = {`, so a layout tile written above the app got
-// the `/404` route and the app kept its E0001. E0001 also defined
-// `tile NotFound` when the program already had one, which is E0007. E0301 split
-// `caps` on commas and joined it onto one line, so a `# comment` after the last
-// cap swallowed the new cap and the closing `]`, and the file stopped parsing.
-// The gate refused each write, so `fix --apply` could never repair these files.
-//
-// Both repairs now find the clause from the tokens of the app the parser found,
-// and add the new entry right after the last token of the last entry. The
-// other cases pin that rule where it is easiest to get wrong: a redirect's
-// last token is a string, an empty map has no last entry, of two `caps`
-// clauses the parser keeps the second, the app's clauses end at the next
-// definition, and in a CRLF file the entry goes in without touching a line
-// break.
-//
-// Where there is nothing the repair can add, `fix` offers no patch and says
-// why, so a dry run never proposes a patch that `--apply` then finds empty.
-
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,11 +29,6 @@ function fixApply(source: string): { code: number; after: string; program: Progr
   return { code, after, program: parse(lex(after)) };
 }
 
-/**
- * What `fix` plans for `code` on `source`: whether it offers a patch, and the
- * reasons it gives for not offering one. The dry run prints this plan and
- * `--apply` composes it, so the two cannot disagree about it.
- */
 function planFor(source: string, code: string): { patched: boolean; reasons: string[] } {
   const plan = planFix(writeSource(source), undefined);
   return {
@@ -197,11 +169,6 @@ test routes =
   });
 
   it("in a CRLF file, whose own lines keep CRLF while the added NotFound tile has LF", () => {
-    // This pins today's output, not the intended one. The route goes in
-    // without touching a line break, but the prepended tile is written with
-    // LF, so the file ends up with mixed line breaks. It should get the file's
-    // own line break once fix.ts writes lines through the shared line-break
-    // helper; flip the expectation then.
     const lines = [
       'tile Landing = page(heading("Landing"))',
       "",
@@ -267,8 +234,6 @@ app A
   });
 
   it("in the caps clause the parser keeps, when the clause is written twice", () => {
-    // The duplicate is E0008, which no patch repairs, so the file still has an
-    // error. What the repair can do is clear the E0301.
     const { code, after, program } = fixApply(`${SAVES}
 app A
     caps   = [nav.push]

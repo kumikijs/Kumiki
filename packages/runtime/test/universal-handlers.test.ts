@@ -1,19 +1,3 @@
-// The four handlers the runtime lifts onto every tile kind — `onKeyDown`,
-// `onMouseEnter`, `onFocus`, `onBlur` — rather than any per-kind renderer.
-//
-// They dispatch through one shared per-element slot, and the native listeners
-// that read that slot used to be registered only when the tile carried a
-// handler at create time. A conditional whose later branch introduces one
-// therefore had nowhere to land: the element is reused, the slot is refreshed
-// with the new handler, and no listener was ever registered to read it. The
-// neighbouring case — a conditional that swaps one handler for another — was
-// fixed earlier and works, which is what made this one hard to see.
-//
-// The counterpart matters as much: a tile that never carries one of the four
-// must still register nothing, so the lazy registration is asserted against
-// `addEventListener` itself rather than against behaviour, which cannot tell a
-// missing listener from an empty slot.
-
 import type { AppShape, TileNode, TileProps } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,12 +23,9 @@ const NAMES = Object.keys(UNIVERSAL) as Universal[];
 const UNIVERSAL_EVENTS: ReadonlySet<string> = new Set(NAMES.map((name) => UNIVERSAL[name].event));
 
 /**
- * An app whose single `input` carries whichever of the four the test last asked
- * for, and re-renders on demand.
+ * An app whose single `input` carries whichever of the four the test last asked for, and re-renders on demand.
  *
- * `input` on purpose: it has a patcher registered, so the two renders reuse one
- * element. A kind with no patcher rebuilds the subtree, which re-runs the
- * create path and would register the listener for the wrong reason.
+ * `input` on purpose: it has a patcher registered, so the two renders reuse one element. A kind with no patcher rebuilds the subtree, which re-runs the create path and would register the listener for the wrong reason.
  */
 function handlerApp(calls: Record<string, unknown>[]) {
   let live: readonly Universal[] = [];
@@ -60,9 +41,6 @@ function handlerApp(calls: Record<string, unknown>[]) {
       renders += 1;
       const props: TileProps = { el: payload };
       for (const name of live) props[name] = (el: Record<string, unknown>) => calls.push(el);
-      // A fresh closure per render already makes the two nodes unequal —
-      // functions compare by identity. `value` changes as well so the patch
-      // path stays certain if that ever stops being true.
       return { kind: "input", value: `v${renders}`, props };
     },
   };
@@ -73,8 +51,6 @@ function handlerApp(calls: Record<string, unknown>[]) {
       live = next;
       if (nextPayload) payload = nextPayload;
     },
-    // `_rerender` is optional on `AppShape`, so a typo here would be no type
-    // error and every assertion after it would pass having rendered once.
     rerender: () => defined(app._rerender, "the rerender seam a mount installs")(),
   };
 }
@@ -132,11 +108,6 @@ describe("a universally-lifted handler across renders", () => {
   });
 
   it.each(NAMES)("%s comes back after a render that dropped it", (handler) => {
-    // Holds today only because the element is never taken off the
-    // already-registered list. The comment on that list invites the obvious
-    // follow-up — hold listener refs and `removeEventListener` on disarm — and
-    // a missing counterpart delete would bring the original bug back with
-    // every other case here still green.
     const calls: Record<string, unknown>[] = [];
     const { app, set, rerender } = handlerApp(calls);
     set([handler]);
@@ -157,11 +128,6 @@ describe("a universally-lifted handler across renders", () => {
   });
 
   it("registers the second of the four to arrive, not only the first", () => {
-    // One bit per element says whether the listeners are on, and all four go on
-    // together. Splitting that per event — "do not register keydown when only
-    // onFocus is set" — is the obvious optimisation, and it would break exactly
-    // this: a handler arriving on a render after the element was already
-    // listening for a different one.
     const calls: Record<string, unknown>[] = [];
     const { app, set, rerender } = handlerApp(calls);
     const { dispose } = mount(app, root);
@@ -180,10 +146,6 @@ describe("a universally-lifted handler across renders", () => {
   });
 
   it.each(NAMES)("%s fires once on an element the reconcile has patched", (handler) => {
-    // The runtime holds no listener refs, so registering on the render that
-    // fills the slot has to be idempotent by bookkeeping. A tile that carries
-    // the handler from the start and is then patched would otherwise gain a
-    // second set of listeners and run the reducer twice per event.
     const calls: Record<string, unknown>[] = [];
     const { app, set, rerender } = handlerApp(calls);
     set([handler]);
@@ -197,10 +159,6 @@ describe("a universally-lifted handler across renders", () => {
   });
 
   it.each(NAMES)("%s is handed the payload of the render that is live", (handler) => {
-    // The slot carries `props.el` beside the handlers, and the refresh replaces
-    // both. A regression that keeps the handler and drops the payload copy
-    // delivers the create-time `el` — or `{}` — to the reducer, with every
-    // count above unchanged.
     const calls: Record<string, unknown>[] = [];
     const { app, set, rerender } = handlerApp(calls);
     set([handler], { seq: 1 });
@@ -218,8 +176,6 @@ describe("a universally-lifted handler across renders", () => {
   });
 
   it("registers no listener at all for a tile that never carries one", () => {
-    // Behaviour cannot answer this: a registered listener over an empty slot is
-    // a no-op and looks exactly like no listener. Ask `addEventListener`.
     const spy = vi.spyOn(HTMLElement.prototype, "addEventListener");
     try {
       const app: AppShape = {

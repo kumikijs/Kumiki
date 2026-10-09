@@ -8,8 +8,6 @@ import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.kumiki");
-// A feature whose capability lives in a sibling kumiki.caps.json (exercises
-// resolveCapabilities wiring through the plugin).
 const CUSTOM_CAP = join(here, "..", "..", "examples", "features", "27-custom-capability.kumiki");
 
 const TMP = join(here, "test-tmp");
@@ -24,7 +22,6 @@ function transformOf(opts?: KumikiPluginOptions) {
   return fn;
 }
 
-// Minimal Rollup-ish context: `error` throws (mirroring its `never` contract).
 const ctx = {
   error(e: unknown): never {
     throw new Error(typeof e === "string" ? e : (e as Error).message);
@@ -52,7 +49,6 @@ describe("vite-plugin-kumiki", () => {
   it("compiles a .kumiki file to a default-exported, self-contained module (bundle)", async () => {
     const code = await runTransform(COUNTER, { bundle: true });
     expect(code).toContain("export default App;");
-    // bundled: runtime inlined, no bare external import left behind
     expect(code).not.toMatch(/^import \{[^}]*\} from "@kumikijs\/runtime"/m);
     const app = await importModule(code);
     expect(app.slots).toHaveProperty("count");
@@ -99,7 +95,6 @@ describe("vite-plugin-kumiki", () => {
       "t=1700000000000",
       "worker_file&type=module",
       "import&v=abc123",
-      // Vite acts on a valueless flag only, and on `inline` only for CSS.
       "inline",
       "no-inline",
       "raw=1",
@@ -129,7 +124,6 @@ describe("vite-plugin-kumiki", () => {
   });
 
   it("resolves project capabilities from a sibling kumiki.caps.json", async () => {
-    // Without manifest resolution this would fail typecheck (E0302 unknown cap).
     const code = await runTransform(CUSTOM_CAP);
     expect(code).toContain("export default App;");
     const app = await importModule(code);
@@ -149,10 +143,8 @@ describe("vite-plugin-kumiki", () => {
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     `;
     const file = "/abs/a11y.kumiki";
-    // Lax: a11y warning is filtered, transform succeeds.
     const lax = (await transformOf().call(ctx as never, bad, file)) as { code: string };
     expect(lax.code).toContain("export default App;");
-    // Strict: same source is rejected with the E0701 message.
     await expect(transformOf({ strictA11y: true }).call(ctx as never, bad, file)).rejects.toThrow(
       /E0701/,
     );
@@ -181,9 +173,6 @@ describe("vite-plugin-kumiki", () => {
     };
     expect(out.code).toContain("export default App;");
     expect(warnings).toHaveLength(1);
-    // The selector `ui.focus(Card)` is on the 3rd source line (the template
-    // literal opens with a newline), 29 characters in; Rollup counts the
-    // column from 0. Pinned so a regression in `pos` threading is caught.
     expect(warnings[0]).toMatchObject({
       message: expect.stringContaining("W0212") as string,
       loc: { file, line: 3, column: 29 },
@@ -191,11 +180,6 @@ describe("vite-plugin-kumiki", () => {
   });
 
   it("emits W0212 via this.warn BEFORE this.error when a compile fail co-occurs (#143)", async () => {
-    // The same source carries a W0212 (ui.focus on box) AND a fatal error
-    // (undefined effect in `emit`). The warning must reach `this.warn`
-    // even though `this.error` then throws — otherwise diagnostics
-    // detected in the same check pass would be silently dropped on the
-    // error path.
     const src = `
       slot f : Text = ""
       reducer recordFocus on=ui.focus(Card) do= emit nope({})
@@ -220,17 +204,11 @@ describe("vite-plugin-kumiki", () => {
     expect(w.message).toContain("W0212");
   });
 
-  // Runs a whole TypeScript program over the generated file, which is far
-  // heavier than the rest of this suite and past Vitest's 5 s default when the
-  // machine is loaded.
   it("emits a sibling <name>.kumiki.gen.ts of typed helpers when types is enabled", {
     timeout: 30_000,
   }, async () => {
     const dir = mkdtempSync(join(TMP, "types-"));
     const file = join(dir, "app.kumiki");
-    // A slot named the way Kumiki allows and TypeScript does not, next to a
-    // user type named after one of the generated helpers: this file is written
-    // into the user's project, so it has to survive their `tsc`.
     const src = `
       slot count : Int = 0
       slot last-error : Text = ""
@@ -254,8 +232,6 @@ describe("vite-plugin-kumiki", () => {
     expect(gen).toContain("count: number;");
     expect(gen).toContain('"last-error": string;');
     expect(gen).toMatch(/"telemetry\.track"\??: KumikiProvider<\{ name: string \}, null>/);
-    // The generated declaration is only useful if the project it lands in
-    // still compiles.
     const program = ts.createProgram([genPath], {
       noEmit: true,
       strict: true,

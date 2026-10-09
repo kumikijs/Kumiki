@@ -1,7 +1,3 @@
-// Regression for issue #62: three constructs that look legal from the spec but
-// are not. The spec now states the rules (language.md §1.6.5 / §1.7.1 / §1.9.1);
-// these tests lock the *diagnostics* so the rules are enforced, not just prose.
-
 import { compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -9,7 +5,7 @@ function check(src: string): ReturnType<typeof compile> {
   return compile(src, { runtimeSpecifier: "./runtime.js" });
 }
 
-describe("spec gaps (issue #62)", () => {
+describe("spec gaps", () => {
   it("Gap 1 — literal match patterns are a parse error", () => {
     const src = [
       'slot status : Text = "open"',

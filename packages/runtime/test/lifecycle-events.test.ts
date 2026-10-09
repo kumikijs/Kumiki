@@ -1,8 +1,3 @@
-// Runtime-unit coverage for the lifecycle events introduced in #81. These tests
-// construct an AppShape directly to drive the runtime in isolation — the
-// cross-cutting end-to-end coverage (parser → codegen → runtime) lives in
-// packages/tests/lifecycle-events.test.ts.
-
 import type { AppShape, ReducerSpec, TileNode } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -135,17 +130,11 @@ describe("runtime: route.error fallback (#81)", () => {
     const { dispose } = mount(app, root);
     expect(captured.event?.message).toBe("kaboom");
     expect(captured.event?.pattern).toBe("/");
-    // The re-render after the handler ran the second branch — the DOM shows
-    // the recovery text, not the top-level panic fallback.
     expect(root.textContent).toContain("recovered");
     dispose();
   });
 
   it("fires route.error once for a render that stays broken, and shows the panic display", () => {
-    // A handler that changes nothing leaves the page as broken as it was. Its
-    // write used to start a render of its own, which panicked and fired the
-    // handler again one level deeper, until the stack overflowed — and the
-    // payload the last surviving handler saw depended on where it overflowed.
     let fired = 0;
     const app: AppShape = baseApp({
       reducers: [
@@ -170,10 +159,6 @@ describe("runtime: route.error fallback (#81)", () => {
   });
 
   it("route.error $event carries the tile-render category, not reducer", () => {
-    // Regression cover: earlier the fireRouteError helper hard-coded
-    // `category: \"reducer\"`, so a render panic would show up in the reducer
-    // handler with a wrong category tag while the same episode-log step was
-    // tagged tile-render. Both sides must agree.
     const captured: { event?: Record<string, unknown> } = {};
     let mode: "boom" | "ok" = "boom";
     const app: AppShape = baseApp({
@@ -196,21 +181,11 @@ describe("runtime: route.error fallback (#81)", () => {
     });
     const { dispose } = mount(app, root);
     expect(captured.event?.category).toBe("tile-render");
-    // Dev-only fields must never bleed into a user reducer payload —
-    // spreading the raw PanicRecord would leak stack to production UI.
     expect(captured.event).not.toHaveProperty("stack");
-    // `cause` is a declared field of `PanicInfo` and supplied since #364, so it
-    // is present; what stays out is the `PanicRecord` shape behind it — the
-    // chain of links, each carrying its own stack. This throw had no cause.
     expect(captured.event?.cause).toEqual({ _tag: "None" });
     dispose();
   });
 
-  // #364: `route.error` is the third path a `PanicInfo` reaches a program, and
-  // the one with no corpus example driving it. Every declared field is read
-  // here for the same reason the other two are read in
-  // `packages/tests/panic-info-fields.test.ts`: a field that stops being
-  // supplied reads as `undefined`, which nothing else in this file would catch.
   it("route.error $event carries every declared PanicInfo field", () => {
     const captured: { event?: Record<string, unknown> } = {};
     let mode: "boom" | "ok" = "boom";
@@ -234,16 +209,11 @@ describe("runtime: route.error fallback (#81)", () => {
       ],
     });
     const { dispose } = mount(app, root, { episodeLogger: logger });
-    // `location` is the field the shared builder fixed on this path: it used to
-    // be absent here rather than `undefined`, because the literal built by hand
-    // never carried it. A render the runtime could not attribute is `"render"`.
     expect(captured.event?.location).toBe("render");
     expect(captured.event?.message).toBe("kaboom");
     expect(captured.event?.category).toBe("tile-render");
     expect(captured.event?.pattern).toBe("/");
     expect(captured.event?.cause).toEqual({ _tag: "Some", _0: "the socket" });
-    // The first paint has no episode open around it, so this one is `None` —
-    // what matters is that the field is a value rather than `undefined`.
     expect(captured.event?.["episode-id"]).toEqual({ _tag: "None" });
     dispose();
   });

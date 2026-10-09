@@ -40,9 +40,6 @@ describe("counter e2e (built from .kumiki)", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 3");
   });
 
-  // The floor is guarded in the source, so the refinement never fires here —
-  // this pins that the guard is what stops the decrement, from the built
-  // artifact rather than the AST.
   it("does not decrement below the guarded floor", async () => {
     const app = await buildAndLoad(COUNTER, rootId);
     mount(app, root);

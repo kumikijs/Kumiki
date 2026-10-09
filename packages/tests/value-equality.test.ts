@@ -1,18 +1,3 @@
-// Equality is by value (language.md §1.9.4): Kumiki values are immutable, so
-// there is no reference identity a program could mean to compare. `==` used
-// to compare anything but a primitive or a flat variant by JS reference, and
-// `List.contains` / `unique` by SameValueZero, so `xs == []` was false on an
-// empty list, `[Admin, Editor].contains(Admin)` was false, and `unique` kept
-// every duplicate record — all with `check` saying `ok`.
-//
-// Each row renders one comparison through the real build + mount and reads it
-// off the page. The rows that expect `false` ride along with a `true` of the
-// same shape, so a row pins both halves: equal values compare equal and
-// different ones do not; `!=` is asked of both an unequal and an equal pair.
-// No label is a substring of another, since the rows are read off one run of
-// page text. Example 122 carries the same claims as a scenario;
-// the property test at its bottom is run here through `kumiki test`'s path.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { testFile } from "@kumikijs/cli";

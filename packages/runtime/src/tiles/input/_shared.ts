@@ -1,12 +1,3 @@
-// Helpers every input control shares (#71).
-//
-// Each `input` tile ships as its own module, so what several of them need has
-// to live somewhere both can import: the per-element handler slot the native
-// listeners dispatch through (`INPUT_STATE`, registered once at create so a
-// patch can swap handlers without listener churn), the `bind=` write-back
-// path, and the small attribute reconcilers. A single-use helper stays with
-// its tile instead — `reconcileSelectOptions` is 70 lines only `select` runs.
-
 import type { BindReader, BindSegment, EventHandler, MountedApp, TileProps } from "../../core.ts";
 import {
   _setPathHelper,
@@ -24,19 +15,6 @@ export function liveApp(el: Element): MountedApp | undefined {
   return app;
 }
 
-/**
- * Write what control `el` now holds back to its slot (forms.md §5.1). A value
- * the slot's refinement refuses is refused for this field alone and reported
- * nowhere — a half-typed value is expected — but it is not forgotten: the
- * control keeps showing it, so `error(field=…)` has to speak for it, and the
- * pass that re-renders is what lets it.
- *
- * Except mid-composition: every intermediate value of an IME composition
- * comes through here, and a strict refinement refuses most of them, so
- * settling each one would flash the message while the user is still
- * composing. The refusal is held until `compositionend` settles it (see
- * {@link installCompositionGuard}); an accepted write in between drops it.
- */
 export function writeBind(
   app: MountedApp,
   el: HTMLElement,
@@ -45,11 +23,6 @@ export function writeBind(
   value: unknown,
   parse?: BindReader,
 ): void {
-  // Text that spells no value of the bound position's base (`Int`, `Float`,
-  // `Time`) is refused the way a value its refinement refuses is: the slot
-  // keeps what it had, the field what was typed. The refusal remembers which
-  // base the text failed to read as, and `error(field=…)` names that reading
-  // before any refinement (forms.md §5.7.2).
   const read = parse?.read(String(value));
   const unread = read !== undefined && read._tag !== "Some" ? parse?.as : undefined;
   const written = read?._tag === "Some" ? read._0 : value;
@@ -57,8 +30,6 @@ export function writeBind(
     bindPath && bindPath.length > 0
       ? _setPathHelper(app.live[slotName] ?? {}, bindPath, written)
       : written;
-  // Judged at the bound field: a sibling that fails its own refinement is not
-  // this field's to refuse (forms.md §5.6).
   const accepted = unread === undefined && app._setSlot(slotName, next, bindPath);
   if (!accepted && IME_COMPOSING.has(el)) {
     PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, written, bindPath, unread));
@@ -98,22 +69,12 @@ export function clearBindDataset(el: HTMLElement): void {
   if (el.dataset.kumikiBind !== undefined) delete el.dataset.kumikiBind;
 }
 
-// §1.6.2 — `{id: "..."}` on any tile maps to the element's native HTML `id`.
-// Read from both `node.id` (top-level field; populated for tiles that lift
-// `id` from positional args, e.g. `input(id="..")`) and `node.props.id`
-// (block-style `{id: "..."}` for any tile kind). Used only by tile rendering;
-// the `el.id` payload that feeds selector matching is built separately in
-// codegen's `propsFor` so the two paths stay decoupled.
 export function tileId(node: { id?: unknown; props?: unknown }): string | undefined {
   const fromProps = (node.props as { id?: unknown } | undefined)?.id;
   const raw = node.id ?? fromProps;
   return raw == null ? undefined : String(raw);
 }
 
-// Serialize a value to a stable option key for `<select>`. Recurses into
-// variant `_tag` payloads so `Some(A)` vs. `Some(B)` don't collapse to the
-// same key. Shared by both `create` and `patch` so option-slot lookups stay
-// consistent across renders.
 export function valueKey(v: unknown): string {
   if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
     const t = v as Record<string, unknown>;
@@ -124,11 +85,6 @@ export function valueKey(v: unknown): string {
   return JSON.stringify(v);
 }
 
-// Per-element handler slot (#190). `create` registers native listeners ONCE;
-// they dispatch through the current slot value. `patch` overwrites the slot
-// so the new node's `bind` / `onChange` / `el` reach subsequent events
-// without add/remove-listener churn (which would either multiply-register or
-// require holding a listener reference on the element).
 export type InputHandlers = {
   bind?: string;
   bindPath?: BindSegment[];
@@ -140,29 +96,13 @@ export type InputHandlers = {
   el?: Record<string, unknown>;
   // Select-specific — decoded via valueKey lookup on `change`.
   selectOptions?: Array<{ label: unknown; value: unknown }>;
-  // Input-specific — how the text reads as the bound position's base, when that
-  // is an `Int`, a `Float` or a `Time`.
   parse?: BindReader;
 };
 
 export const INPUT_STATE = new WeakMap<HTMLElement, InputHandlers>();
 
-/**
- * Per-element IME composition flag (#190). Set between `compositionstart` and
- * `compositionend` so patchers on `input` / `textarea` / `editable` can skip
- * `.value` / `.textContent` overwrites that would otherwise destroy an in-
- * flight IME candidate window (JP/CN/KR users typing kana → kanji, pinyin →
- * hanzi, jamo → hangul). Divergence is REMEMBERED via a pending flag on the
- * slot: the next `compositionend` triggers a bind writeback so state stays in
- * sync with what the user actually committed.
- */
 export const IME_COMPOSING = new WeakSet<HTMLElement>();
 
-/**
- * Attach `compositionstart` / `compositionend` listeners once at create time.
- * `compositionend` also settles a refused bind {@link writeBind} held back
- * while the composition was in progress.
- */
 export function installCompositionGuard(el: HTMLElement): void {
   el.addEventListener("compositionstart", () => {
     IME_COMPOSING.add(el);
@@ -184,9 +124,6 @@ export function inputHandlers(node: {
   bindPath?: BindSegment[];
   props?: TileProps;
 }): InputHandlers {
-  // Build only with defined fields — `exactOptionalPropertyTypes: true` in
-  // the repo tsconfig would otherwise widen every optional to `T | undefined`
-  // at the assignment site.
   const h: InputHandlers = {};
   if (node.bind !== undefined) h.bind = node.bind;
   if (node.bindPath !== undefined) h.bindPath = node.bindPath;
@@ -197,12 +134,6 @@ export function inputHandlers(node: {
   return h;
 }
 
-/**
- * Update an element's `id` attribute to match `node`'s current id (or clear
- * it if the id was removed). Kept as a helper so every patcher handles the
- * `id` field consistently — otherwise a tile that dropped its `id` would
- * still carry the previous render's DOM `id`, breaking `#foo` selectors.
- */
 export function reconcileId(el: HTMLElement, node: { id?: unknown; props?: unknown }): void {
   const id = tileId(node);
   if (id) {
@@ -221,20 +152,7 @@ export function setStringAttr(inp: HTMLElement, name: string, value: string | un
   else inp.setAttribute(name, next);
 }
 
-/**
- * `disabled`, `readonly` and `auto-complete` on a control (forms.md §5.3, the
- * common props for input elements). All three were documented and read by
- * nothing.
- *
- * Which of them an element takes is decided by the element: a `<select>` has no
- * `readOnly`, a `<div contenteditable>` has no `disabled`. Asking it is what
- * keeps this one function instead of a per-kind list that would fall behind the
- * next kind. Shared by create and patch, so a `disabled` bound to a slot
- * follows it.
- */
 export function applyControlState(el: HTMLElement, props?: TileProps): void {
-  // A contenteditable div has neither property, and the way to take input away
-  // from one is to stop it being editable.
   if (el.isContentEditable || el.getAttribute("contenteditable") !== null) {
     el.setAttribute(
       "contenteditable",

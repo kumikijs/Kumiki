@@ -1,9 +1,3 @@
-// routing.md §3.10 / runtime.md §10.6.1: a `->>` redirect is resolved before the
-// route is rendered, on the server as on the client. The corpus example
-// (`154-ssr-redirect`) pins the client through its scenario; a scenario never
-// runs `renderToString`, so this suite renders each redirected URL on both paths
-// and compares what they drew.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AppShape, mount, renderToString, routing } from "@kumikijs/runtime";
@@ -52,11 +46,7 @@ describe("renderToString resolves static redirects", () => {
     const served = textOf(out.html);
     expect(served).toContain(heading);
     expect(served).toBe(await clientText(from));
-    // The snapshot names the route the server drew, so hydration does not
-    // start from one it did not.
     expect(out.snapshot.route).toBe(to);
-    // runtime.md §10.5: the bootstrap episode's trigger names the initial
-    // route, which §10.6.1 defines as where the path lands.
     expect(out.bootstrapEpisode.trigger.target).toBe(to);
   });
 
@@ -96,9 +86,6 @@ app R
 });
 
 describe("renderToString reads the requested path as the client does", () => {
-  // A browser's `location.pathname` keeps `//foo` and `/a/../b` as written, and
-  // so does the memory router `mount` reads `initialPath` through. A server that
-  // resolved them as URLs would draw `/` and `/b` where the client draws `/404`.
   it.each([["//foo"], ["/a/../b"]])("%s is matched as written", async (path) => {
     const app = await loadSource(`
 tile Home     = page(heading("home"))

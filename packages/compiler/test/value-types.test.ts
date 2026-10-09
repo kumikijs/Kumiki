@@ -1,8 +1,3 @@
-// `inferType` existed but nothing ever compared an inferred type against a
-// declared one, so `slot n : Int = "hello"` was `ok` and every promise in
-// forms.md §5.6 ("You cannot put a string into `slot age : Int`") was empty.
-// These drive the assignability relation and every site that now applies it.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -18,13 +13,6 @@ const prog = (defs: string) => codes(`${defs}\n${TAIL}`);
 const inReducer = (defs: string, body: string) =>
   prog(`${defs}\nreducer r on=ui.click(B) do= ${body}`);
 
-/**
- * `kind` is the machine-readable half of a diagnostic and the half nothing else
- * guards: `spec-drift` compares codes only, and `spec-index` compares the two
- * documents against each other rather than against the implementation. So a
- * rename here would ship silently and break every consumer switching on it —
- * `kumiki fix`'s skip reasons, the MCP surface, the debug skill's table.
- */
 describe("the code ⇆ kind pairing of every diagnostic this adds", () => {
   const PAIRS: [string, string, string][] = [
     ["E0117", "undef-type", `slot v : Nope = 1`],
@@ -113,17 +101,6 @@ describe("assignability — nominal, refinement and aliases", () => {
   });
 });
 
-/**
- * Two `nominal` definitions over one base used to accept each other, so
- * `PostId := UserId` compiled — which is the one mistake `nominal` exists to
- * catch, and the opposite of what language.md §1.3.5 tells a reader.
- *
- * The rule is stated in one line and the cases below are it: a value is refused
- * only when it carries a nominal declaration of its own and the required name
- * is nowhere in that declaration's chain. So two nominals over one base reject
- * each other, a type with no nominal name of its own meets any nominal over it
- * in both directions, and only a named `type` definition confers the identity.
- */
 describe("assignability — a nominal type is distinct from every other one", () => {
   const MONEY = `type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
@@ -134,8 +111,6 @@ slot n : Int   = 3`;
   it("reports one nominal assigned to another over the same base", () => {
     const errs = check(parse(lex(`${MONEY}\nreducer r on=ui.click(B) do= c := y\n${TAIL}`)));
     expect(errs.map((e) => e.code)).toEqual(["E0201"]);
-    // The names as written, not the base they share — an "Expected Int but got
-    // Int" here would read as a compiler bug rather than as the mistake it is.
     expect(errs[0]?.message).toBe("Expected Cents but got Yen");
   });
 
@@ -153,9 +128,6 @@ slot n : Int   = 3`;
   });
 
   it("still accepts a value outside the refinement", () => {
-    // The refinement is validation's question (forms.md §5.6) and this check
-    // never evaluates one. The rule is about which type a value has, not about
-    // whether the value is in range.
     expect(
       inReducer(`type Volume = nominal Int where between(0, 11)\nslot v : Volume = 5`, `v := 50`),
     ).toEqual([]);
@@ -180,31 +152,11 @@ slot k : Kept  = 3`;
   });
 
   it("terminates on an alias cycle", () => {
-    // The identity walk runs before `unaliasType` and follows the same `TypeRef`
-    // chain, so it needs its own guard: it is direct recursion with no
-    // accumulator, so without one it recurses until the stack gives out —
-    // a `RangeError`, not a hang.
-    //
-    // Reaching it takes a comparison `checkAgainst` does not filter out first:
-    // it drops an expression whose type is unresolvable before calling the
-    // relation, so `n := x` alone would leave the walk unvisited and this test
-    // green for the wrong reason. Two routes, so that a change to either one
-    // cannot quietly stop exercising the guard: `commonType` over a list
-    // literal's items, and a record field compared against its declared type.
-    //
-    // The cycle itself is `E0009`, and that is the whole report: the guards are
-    // what let the walks answer "undecidable" and carry on, so nothing below
-    // the cycle turns into a second, value-level finding. The guards stay
-    // whether or not the diagnostic does — normalisation has to terminate on a
-    // program the checker is still in the middle of reporting.
     const src = `type A = B\ntype B = A\nslot x : A = 1\nslot n : Int = 0`;
     expect(inReducer(src, `n := [x, x].length`)).toEqual(["E0009"]);
     const rec = `${src}\ntype R = {v: Int}\nslot r : R = {v: 0}`;
     expect(inReducer(rec, `r := {v: x}`)).toEqual(["E0009"]);
 
-    // The chain walk needs a guard of its own for the same reason, and its
-    // failure is a hang rather than a `RangeError`: it is a loop, so each turn
-    // pushes a name instead of a frame.
     const nominalCycle = `type A2 = nominal B2
 type B2 = nominal A2
 slot p : A2 = 1
@@ -214,9 +166,6 @@ slot n : Int = 0`;
   });
 
   it("resolves a generic alias with its argument, not with a name that shadows it", () => {
-    // `nominalDecl` substitutes for the same reason `unaliasType` does. Without
-    // it the unsubstituted `TypeRef` resolves against the global definition, so
-    // the parameter's spelling decides the answer.
     const shadow = `type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 type Alias(Cents) = Cents
@@ -224,8 +173,6 @@ slot y : Yen = 1
 slot a : Alias(Yen) = 2`;
     expect(inReducer(shadow, `y := a`)).toEqual([]);
 
-    // And the identity has to survive the substitution rather than be lost by
-    // it: a generic alias to a nominal names the same type its argument does.
     const wrapped = `type Cents = nominal Int where positive
 type Yen   = nominal Int where positive
 type Validated(T) = T where positive
@@ -236,10 +183,6 @@ slot y : Yen = 2`;
   });
 
   it("keeps the identity when a second refinement wraps the nominal", () => {
-    // The first `where` is folded into the `TypeNominal` node as a property; a
-    // second one wraps it, so a body test that looks exactly one layer down
-    // sees a `TypeRefinement` and answers "not nominal" — one extra predicate
-    // would have turned every nominal diagnostic for that type off.
     const src = `type Cents = nominal Int where between(0, 100) where positive
 type Yen   = nominal Int where positive
 slot c : Cents = 1
@@ -249,10 +192,6 @@ slot y : Yen   = 2`;
   });
 
   it("accepts a nominal where one it is declared over is required, but not the reverse", () => {
-    // `nominal` over a nominal is a narrowing, and the stdlib types make it a
-    // shape someone writes (`type WorkEmail = nominal Email`). Every `Deep` was
-    // declared a `Cents`, so it goes where a `Cents` is wanted; the reverse is
-    // the mistake the declaration was written to catch.
     const src = `type Cents = nominal Int where positive
 type Deep  = nominal Cents
 slot c : Cents = 1
@@ -267,8 +206,6 @@ slot n : Int   = 3`;
   });
 
   it("takes no identity from a nominal written inline at a use site", () => {
-    // There is no definition to name, so there is nothing to tell it apart
-    // from any other nominal over Int.
     const src = `type Yen = nominal Int where positive
 slot y : Yen = 1
 slot x : nominal Int = 2`;
@@ -296,9 +233,6 @@ slot bt : Box(Text) = ["a"]`;
     const src = `${MONEY}\nslot l : List(Cents) = []`;
     expect(inReducer(src, `l := [y]`)).toEqual(["E0201"]);
     expect(inReducer(src, `l := [c]`)).toEqual([]);
-    // Every constructor that carries an element type, not only the one a list
-    // literal reaches — and the generic nominal, which is the only shape whose
-    // message shows both names inside a constructor.
     expect(inReducer(`${MONEY}\nslot o : Option(Cents) = None`, `o := Some(y)`)).toEqual(["E0201"]);
     expect(inReducer(`${MONEY}\nslot m : Map(Text, Cents) = {}`, `m := {"a": y}`)).toEqual([
       "E0201",
@@ -310,11 +244,6 @@ slot bt : Box(Text) = ["a"]`;
   });
 
   it("answers the shared base when two nominals meet in one expression", () => {
-    // The relation is not transitive across `nominal` — `Cents` and `Yen` both
-    // meet `Int` and refuse each other — so a common type taken as "the first
-    // one, if the rest agree" would be `null` here. That silences every check
-    // that needs the expression to have a type at all, and makes a list
-    // literal's answer depend on which item happens to come first.
     expect(
       inReducer(`${MONEY}\nslot flag : Bool = true`, `n := (if flag then c else y).abs`),
     ).toEqual([]);
@@ -327,8 +256,6 @@ slot bt : Box(Text) = ["a"]`;
     // Order-independent, which is the same property said the other way.
     expect(inReducer(`${MONEY}\nslot t : Text = ""`, `t := [n, c, y].length.show`)).toEqual([]);
     expect(inReducer(`${MONEY}\nslot t : Text = ""`, `t := [c, y, n].length.show`)).toEqual([]);
-    // A disagreement with no shared base stays undecidable rather than being
-    // forced onto one side: the member goes unchecked, as it did before.
     expect(
       inReducer(
         `${MONEY}\nslot t : Text = ""\nslot s : Text = ""\nslot flag : Bool = true`,
@@ -358,17 +285,9 @@ app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
     expect(withBody(`emit save(y)`)).toEqual(["E0202"]);
     expect(codes(`${POSITIONS}\ntile Home = Amount(y)\n${app}`)).toEqual(["E0201"]);
     expect(codes(`${POSITIONS}\nfn wrong(a: Yen) -> Cents = a\n${app}`)).toEqual(["E0201"]);
-    // An effect's `out=` is a declared type too, but the binding an ok-handler
-    // makes from it carries no type — for any type, not only a nominal one —
-    // so it is not among the positions this covers.
   });
 
   it("stays silent when either side is undecidable", () => {
-    // `Q` is not a type, so `q` has none, and a nominal identity nothing can
-    // resolve must not become a mismatch on top of the undefined-name report.
-    // An undefined name is the right vehicle in both directions: anything the
-    // language might later give a type to would change what this asserts
-    // without changing the assertion.
     expect(prog(`type Cents = nominal Int where positive\nslot q : Q = 1`)).toEqual(["E0117"]);
     expect(
       inReducer(
@@ -381,10 +300,6 @@ slot q : Q = "b"`,
   });
 
   it("reports a comparison across two nominals over one base", () => {
-    // The same mistake as `c := y`, in the spelling authors actually reach for:
-    // `t.id == selectedProjectId` is how a router and a lookup are written, so
-    // leaving `==` outside the rule left the check catching only the rarer
-    // half. Both operators report it (language.md §1.9.4).
     for (const op of ["==", "!=", "<", "<=", ">", ">="]) {
       const errs = check(
         parse(
@@ -395,8 +310,6 @@ slot q : Q = "b"`,
         errs.map((e) => e.code),
         op,
       ).toEqual(["E0201"]);
-      // The names as written, for the reason the assignment form names them:
-      // "cannot compare Int with Int" would read as a compiler bug.
       expect(errs[0]?.message, op).toBe(`Operator "${op}" cannot compare Cents with Yen`);
     }
     const IDS = `type PostId = nominal Text where uuid
@@ -409,21 +322,12 @@ slot n : Int = 0`;
   });
 
   it("reports an equality once, where ordering already reported", () => {
-    // A comparison has no destination, so neither side alone is the wrong one
-    // — the pair is. So one diagnostic naming both types, where `requireNumeric`
-    // would give one per offending side. The position is the `BinOp`'s, which
-    // the parser builds as its *left operand's* — column 38 is `c`, not the
-    // operator at 40 — so what `==` gains is the report, at the place `<` was
-    // already reporting.
     const at = (op: string) =>
       check(
         parse(
           lex(`${MONEY}\nreducer r on=ui.click(B) do= n := if c ${op} y then 1 else 2\n${TAIL}`),
         ),
       )[0]?.pos;
-    // Derived, not written: the reducer is the line after MONEY, and hardcoding
-    // that turns "MONEY grew a line" into a position mismatch rather than the
-    // real failure.
     const reducerLine = MONEY.split("\n").length + 1;
     expect(at("==")).toEqual({ line: reducerLine, col: 38 });
     expect(at("<")).toEqual(at("=="));
@@ -436,21 +340,12 @@ slot n : Int = 0`;
   });
 
   it("does not read the identity below the top level, as an assignment does", () => {
-    // `nominalChain` answers about the type as a whole, so a nominal buried in
-    // a type argument is invisible to it — while `relate` descends into the
-    // argument and reports the assignment. The asymmetry is a missing
-    // diagnostic rather than a wrong one, which is the reading the whole
-    // relation keeps, and language.md §1.9.4 states it rather than leaving it
-    // to be found.
     const LISTS = `${MONEY}\nslot lc : List(Cents) = []\nslot ly : List(Yen) = []`;
     expect(inReducer(LISTS, `n := if lc == ly then 1 else 2`)).toEqual([]);
     expect(inReducer(LISTS, `lc := ly`)).toEqual(["E0201"]);
   });
 
   it("compares a nominal with its base, as it assigns", () => {
-    // The rule is the assignment rule read symmetrically: a type carrying no
-    // nominal name of its own meets any nominal over it, so the bare literal
-    // and the base slot both compare.
     expect(inReducer(MONEY, `n := if c == 0 then 1 else 2`)).toEqual([]);
     expect(inReducer(MONEY, `n := if 0 == c then 1 else 2`)).toEqual([]);
     expect(inReducer(MONEY, `n := if c < n then 1 else 2`)).toEqual([]);
@@ -464,9 +359,6 @@ slot n : Int = 0`;
   });
 
   it("compares a nominal declared over another with the one it was declared as", () => {
-    // `nominalChain` is what assignment asks, and a comparison asks it from
-    // both sides: a `Deep` is a `Cents`, so either order compares — while a
-    // `Deep` and a `Yen` still do not.
     const DEEP = `${MONEY}\ntype Deep = nominal Cents\nslot d : Deep = 4`;
     expect(inReducer(DEEP, `n := if d == c then 1 else 2`)).toEqual([]);
     expect(inReducer(DEEP, `n := if c == d then 1 else 2`)).toEqual([]);
@@ -474,18 +366,12 @@ slot n : Int = 0`;
   });
 
   it("stays silent when either side of a comparison is undecidable", () => {
-    // An unresolved name has no nominal chain, and a silence here is the
-    // one-sided reading the whole relation keeps: the undefined name is the
-    // only thing wrong.
     expect(inReducer(`${MONEY}\nslot q : Q = 1`, `n := if c == q then 1 else 2`)).toEqual([
       "E0117",
     ]);
   });
 
   it("leaves an unrelated pair of shapes to the operator that already judges it", () => {
-    // Nominal identity is the only thing this rule adds to the operators.
-    // `==` stays total across every shape that carries no nominal name —
-    // including an Option and its None — and ordering still answers by family.
     expect(
       inReducer(`slot o : Option(Int) = None\nslot n : Int = 0`, `n := if o == None then 1 else 2`),
     ).toEqual([]);
@@ -504,8 +390,6 @@ slot n : Int = 0`;
   });
 
   it("reports a nominal over a base no ordering is defined on once", () => {
-    // Two reasons to refuse `<` — no shared family, and two identities — and
-    // one diagnostic, because the operator cannot be repaired twice.
     const FLAGS = `type Flag = nominal Bool
 type Mark = nominal Bool
 slot f : Flag = true
@@ -866,17 +750,10 @@ describe("division yields Float (language.md §1.9.4)", () => {
 });
 
 describe("undecidable types stay silent", () => {
-  // A member on a *typed* receiver is not an example of this: `l.head` on a
-  // `List(Int)` is an `Option(Int)`, and writing it into an `Int` is a wrong
-  // program rather than an undecidable one. `receiver-member-result.test.ts`
-  // owns those. What belongs here is a receiver that decides nothing at all.
   it("says nothing about a value whose type cannot be inferred", () => {
     expect(inReducer(`slot n : Int = 0`, `n := $event.head`)).toEqual([]);
   });
 
-  // A member whose result a lambda decides, rather than the receiver. `map` on
-  // a `List(Int)` is a `List(T')` and `T'` is whatever the body says, so it is
-  // left alone instead of guessed at.
   it("says nothing about a member whose result a lambda body decides", () => {
     expect(inReducer(`slot n : Int = 0\nslot l : List(Int) = []`, `n := l.map($1 + 1)`)).toEqual(
       [],
@@ -888,9 +765,6 @@ describe("undecidable types stay silent", () => {
   });
 
   it("does not carry an outer $1 into a method-call argument", () => {
-    // `$1` inside `.map(...)` is the element, not the tile's `in=`. Carrying
-    // the tile's type in reported `formatDate($1)` — which is correct code —
-    // as a mismatch, on a recorded benchmark program that compiles and runs.
     expect(
       prog(
         `type Id = nominal Text where uuid
@@ -911,12 +785,6 @@ tile Due in=Id = text(due[$1].map(formatDate($1)).get-or(""))`,
   });
 });
 
-/**
- * `relate` is only reached when neither side is a literal, which in practice
- * means slot-to-slot assignment. Every record and union case above goes down
- * the literal path instead, so without these the whole relation could be
- * replaced by `() => true` and stay green.
- */
 describe("the assignability relation itself", () => {
   const assign = (defs: string, lhs: string, rhs: string) => inReducer(defs, `${lhs} := ${rhs}`);
 
@@ -931,9 +799,6 @@ describe("the assignability relation itself", () => {
   });
 
   it("refuses a record carrying a field the target does not declare", () => {
-    // Records get no width subtyping: the extra field would ride into a value
-    // whose type says it is not there, and every later read of that value is
-    // checked against a shape it does not have.
     expect(
       assign(
         `type P = {a: Int}\ntype Q = {a: Int, b: Int}\nslot p : P = {a: 1}\nslot q : Q = {a: 1, b: 2}`,
@@ -966,8 +831,6 @@ describe("the assignability relation itself", () => {
   });
 
   it("refuses a scalar where a tuple is declared", () => {
-    // The tuple slot is initialised from `.zip`, whose result type is
-    // undecidable, so the only diagnostic left is the assignment itself.
     expect(
       assign(`slot t : Tuple(Int, Text) = [1].zip(["a"])\nslot n : Int = 0`, "t", "n"),
     ).toEqual(["E0201"]);
@@ -978,12 +841,6 @@ describe("the assignability relation itself", () => {
   });
 });
 
-/**
- * A recursive type is what an LLM reaches for first — a comment tree, a file
- * tree, a nested todo. `unaliasType`'s cycle guard covers one normalisation,
- * so the relation needs its own or it recurses until the stack gives out: a
- * `RangeError` thrown out of `check`, not a diagnostic.
- */
 describe("recursive types terminate", () => {
   const RECURSIVE: [string, string][] = [
     ["a record naming itself", `type Node = {value: Int, next: Node}\nfn f(n: Node) -> Node = n`],
@@ -1011,11 +868,6 @@ describe("recursive types terminate", () => {
   });
 });
 
-/**
- * `substituteType` is what instantiates a generic. Replaced with the identity,
- * every argument degrades to an opaque type parameter — which the relation
- * accepts — so a test that only asserts `[]` cannot tell the two apart.
- */
 describe("generic instantiation", () => {
   it("checks a field against the instantiated parameter", () => {
     expect(prog(`type Box(T) = {v: T}\nslot b : Box(Int) = {v: "x"}`)).toEqual(["E0201"]);
@@ -1038,17 +890,10 @@ describe("generic instantiation", () => {
   });
 
   it("reports a generic named without its arguments", () => {
-    // `Box` alone expands with `T` unsubstituted, and an unsubstituted
-    // parameter is opaque — so everything typed by it would stop being checked.
     expect(prog(`type Box(T) = {v: T}\nslot b : Box = {v: 1}`)).toEqual(["E0210"]);
   });
 });
 
-/**
- * `fix.ts` parses these with regexes and the debug skill quotes them, so the
- * wording is an interface. `spec-drift` compares codes and `spec-index`
- * compares the two documents to each other; neither reads a message.
- */
 describe("diagnostic messages", () => {
   const firstMessage = (src: string) => check(parse(lex(`${src}\n${TAIL}`)))[0]?.message;
 
@@ -1070,17 +915,10 @@ describe("diagnostic messages", () => {
   });
 
   it("prints an undecidable type argument rather than dropping it", () => {
-    // `?` is `unknownType` reaching the reader: `List(?)` says the value is a
-    // list and its element type could not be worked out.
     expect(firstMessage(`slot n : Int = []`)).toBe("Expected Int but got List(?)");
   });
 });
 
-/**
- * The one-sided design is the load-bearing claim, so the silences need pinning
- * as much as the reports do — each of these would be a false positive on a
- * program that runs.
- */
 describe("more that stays silent", () => {
   it("says nothing about a refinement, which the runtime evaluates instead", () => {
     expect(
@@ -1102,10 +940,6 @@ tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
     expect(inReducer(`slot t : Text = ""`, `t := $event.head + "x"`)).toEqual([]);
   });
 
-  // The operand *is* resolved here — `l.head` on a `List(Text)` is an
-  // `Option(Text)` — and `+` does not check it. That is the operator check's
-  // own gap rather than a missing result type, so this asserts only that no
-  // type mismatch is claimed, rather than writing the silence into the spec.
   it("does not yet report an Option operand of +", () => {
     expect(
       inReducer(`slot t : Text = ""\nslot l : List(Text) = []`, `t := l.head + "x"`),
@@ -1113,11 +947,6 @@ tile Sum in=Text = text(rows.fold(0, pick($1, $2)).show)`,
   });
 });
 
-/**
- * A binding shadows whatever the name meant outside it. Before `bindLocal`,
- * only the name was rebound and the outer type stayed behind, so an inner loop
- * variable was reported as the type of an outer `let`.
- */
 describe("a re-binding does not inherit the outer type", () => {
   it("for-bind over a let of a different type", () => {
     expect(

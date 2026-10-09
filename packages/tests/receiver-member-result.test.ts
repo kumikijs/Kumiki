@@ -1,14 +1,3 @@
-// A member whose result the receiver decides used to resolve to nothing, so
-// an `Option(Int)` landed in an `Int` slot and a `Bool` in a `Text` slot with
-// `check` saying `ok`. The value is then of a shape its readers do not expect:
-// `is-some` is false on a value that is present, and a `match` finds no arm.
-//
-// The checker's own cases, family by family, are in
-// `packages/compiler/test/receiver-member-result.test.ts`. What this file pins
-// is that the two verbs agree — a program `check` rejects is one `build`
-// refuses to emit — and that the idioms the corpus is built out of still
-// compile, which is the half a rejection cannot show.
-
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -37,8 +26,6 @@ describe("a receiver-decided result lands in a slot of its own type", () => {
     expect(r.errors.map((e) => e.code)).toContain("E0201");
   });
 
-  // `.get` resolved for `Map` / `Option` / `Result` and not for `List`, though
-  // §2.2 gives all four.
   it("reports .get on a List", () => {
     const src = app(`slot xs : List(Int) = []\nslot n : Int = 0
 reducer a on=ui.click(B) do= n := xs.get(0)`);
@@ -47,9 +34,6 @@ reducer a on=ui.click(B) do= n := xs.get(0)`);
 });
 
 describe("what must keep compiling", () => {
-  // Written the way the spec's own examples are, each result goes into a slot
-  // of the type §2.2 gives it. Reporting any of these would be the expensive
-  // direction — the corpus is built out of exactly these shapes.
   it.each([
     [
       "head into an Option",

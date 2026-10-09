@@ -56,8 +56,6 @@ describe("parser: app.http (#78)", () => {
     if (app?.kind !== "AppDef") throw new Error("no app");
     expect(app.http?.on403?.name).toBe("handleForbidden");
     expect(app.http?.on5xx?.name).toBe("handleServerErr");
-    // The name carries where it was written, so a diagnostic and a rename
-    // both land on the handler rather than on the `app`.
     expect(app.http?.on5xx?.pos.line).toBeGreaterThan(app.http?.on403?.pos.line ?? 0);
   });
 
@@ -110,10 +108,6 @@ describe("codegen: app.http (#78)", () => {
     const result = compile(src, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
-    // Every field the author writes an expression for is deferred — the three
-    // scalars as getters, `headers` as the thunk the runtime calls — so each is
-    // read when a request is made. A literal is emitted the same way, so the
-    // shape never depends on what was written.
     expect(result.js).toContain('get baseUrl() { return "https://api.example.com"; }');
     expect(result.js).toContain('on401: "handleUnauthorized"');
     expect(result.js).toContain("headers: () =>");
@@ -124,11 +118,6 @@ describe("codegen: app.http (#78)", () => {
   });
 
   it("lowers a slot reference inside the getter body, in the non-reducer scope", () => {
-    // The literal cases above pin the shape and say nothing about what goes
-    // inside it. `_next` is local to a reducer's generated body, so a scope
-    // flipped to the reducer one would put an unreachable name in every getter
-    // — a ReferenceError on the first request, from a change that looks like a
-    // one-word cleanup here.
     const src = `
       slot endpoint    : Text = "https://api.example.com"
       slot timeoutMs   : Int  = 5000
@@ -156,9 +145,6 @@ describe("codegen: app.http (#78)", () => {
   });
 
   it("reports a name in an http field that resolves to nothing", () => {
-    // Nothing else looks at these expressions, and each is read inside a
-    // request — so an unresolved name reaches the runtime as a throw the
-    // dispatcher turns into an `err` result, which an `.err` reducer absorbs.
     const src = `
       slot endpoint : Text = "https://api.example.com"
       tile B = button(text="b")

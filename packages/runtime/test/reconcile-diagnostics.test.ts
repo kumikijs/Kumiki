@@ -1,19 +1,3 @@
-// Dev-mode observability for the reconcile walker.
-//
-// The diff has several full-rebuild escape hatches that are correctness-
-// preserving but hide behind an ordinary `return`: an app can be re-mounting
-// every subtree on every render while the benchmark still reports a waste
-// ratio of 1×. The prop-equality kernel adds one more on the unequal side of
-// its own verdict: it can never call a per-render closure, a `Date` or a `NaN`
-// equal to its counterpart, so a host tile carrying one is patched every render
-// with nothing reported at all.
-//
-// These tests lock in that each of those paths reports through the opt-in
-// `onDiagnostic` sink, and — just as importantly — that a mount without a
-// sink behaves exactly as before and that built-in tiles produce neither kind
-// of host-tile noise (they route handlers through per-element slots and carry
-// only the plain data codegen emits).
-
 import type {
   AppShape,
   MountedApp,
@@ -61,9 +45,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports an unkeyed sibling-list length change", () => {
-    // The everyday shape: a `when`-gated child inside a column. Because the
-    // siblings carry no `key`, dropping one changes `children.length` and the
-    // whole column is rebuilt — the authoring cost the diagnostic makes visible.
     let extra = true;
     const app = appOf(() => ({
       kind: "column",
@@ -78,8 +59,6 @@ describe("runtime: reconcile diagnostics", () => {
     extra = false;
     app._rerender?.();
 
-    // The counts are the actionable part: "2 unkeyed children became 1" points
-    // straight at the `when` that has to become keyed.
     expect(seen).toContainEqual(
       expect.objectContaining({ reason: "child-count-change", oldCount: 2, newCount: 1 }),
     );
@@ -87,12 +66,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("survives a sink that throws without disturbing the render", () => {
-    // The walker runs inside the reconcile bailout's try/catch, so an unguarded
-    // throw from the host's sink would be recorded as a reconcile panic and
-    // force a full-tree rebuild — the diagnostic channel inflicting the exact
-    // identity loss it exists to report.
-    // The churn is nested one level down, so only the inner column should be
-    // rebuilt. A panic-driven `fullRender` would take the outer heading with it.
     let extra = true;
     const app = appOf(() => ({
       kind: "column",
@@ -130,10 +103,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports a same-kind prop change with no patcher registered for the kind", () => {
-    // `mountCore` renders with exactly the registries it is handed. A renderer
-    // registered without its companion patcher rebuilds the tile on every data
-    // change instead of mutating it — this is what a granular mount looked like
-    // before the patcher registry was wired through.
     let title = "one";
     const app = appOf(() => ({ kind: "heading", text: title }));
     const { sink, seen } = collector();
@@ -151,9 +120,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports a hole in a children list", () => {
-    // Defensive path: Kumiki codegen flattens nils out of `_children`, so only
-    // a host-built tree can hand the walker a sparse slot. Rebuilding the
-    // parent keeps it correct; the diagnostic says why the parent churned.
     let holed = false;
     const app = appOf(() => ({
       kind: "column",
@@ -175,10 +141,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports a child that never passed through the mapping render ctx", () => {
-    // A host renderer that builds its children with `document.createElement`
-    // instead of `ctx.render` leaves them out of the node→element map, so the
-    // walker cannot reuse them and rebuilds the parent on every single render.
-    // Silently, today — which is exactly the compat pattern this surfaces.
     const detachedColumn = (node: TileNode, _ctx: TileCtx): HTMLElement => {
       const el = document.createElement("div");
       for (const child of (node as { children?: TileNode[] }).children ?? []) {
@@ -213,20 +175,11 @@ describe("runtime: reconcile diagnostics", () => {
     dispose();
   });
 
-  /**
-   * A column whose child at index 0 changes on every render and whose child at
-   * index 1 is the one a bail trips over. The shape every case below shares:
-   * the bail sits behind a sibling that would otherwise have reconciled.
-   */
   function bailBehindSiblingApp(children: () => TileNode[]): AppShape {
     return appOf(() => ({ kind: "column", children: children() }));
   }
 
   it("reports the same evidence when the bail follows a sibling that would have reconciled", () => {
-    // The parent's fate is settled for the whole child list before any of it
-    // is applied. That decision asks the same two questions at every index, in
-    // index order, so a bail at index 1 still names index 1 — and, for
-    // `child-unmapped`, the kind of the child whose element went missing.
     let label = "a";
     let holed = false;
     const holeApp = bailBehindSiblingApp(() =>
@@ -270,12 +223,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("calls an index that is both a hole and unmapped a hole", () => {
-    // Both questions are asked at the same index and the hole is asked first,
-    // which is the order the walk used before the decision was lifted out of
-    // it. Pinned because the two are not interchangeable to a reader: a hole
-    // says the tree handed the walker an empty slot, `child-unmapped` says a
-    // renderer skipped `ctx.render`. The nil child cannot be looked up at all,
-    // so only one of them can be the truth here.
     let holed = false;
     const app = bailBehindSiblingApp(() =>
       holed
@@ -301,12 +248,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("says nothing about the siblings a bail no longer applies", () => {
-    // With no patcher registered, reconciling the child at index 0 reports
-    // `no-patcher` and rebuilds its subtree — and then the hole at index 1
-    // rebuilds the parent, discarding that subtree. Reporting a fallback for a
-    // subtree that was thrown away is the same falsehood as listing it in
-    // `binds-updated`: the parent's fate is settled first, so the only thing
-    // named is the rebuild that actually happened.
     let label = "a";
     let holed = false;
     const app = bailBehindSiblingApp(() =>
@@ -333,10 +274,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("says nothing about the siblings an unmapped-child bail no longer applies", () => {
-    // The `child-unmapped` half of the case above, so neither bail is pinned
-    // by the other's test. The renderer maps index 0 and hand-builds index 1;
-    // with no patcher registered, index 0 would report `no-patcher` and be
-    // rebuilt before index 1 stopped the pass.
     let label = "a";
     const app = bailBehindSiblingApp(() => [
       { kind: "text", text: label },
@@ -358,12 +295,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("says nothing about a churning handler on a sibling a bail no longer applies", () => {
-    // The other diagnostic a child can raise. The host tile at index 0 keeps
-    // identical data props and swaps only its handler, so the walk would patch
-    // its element and report `function-identity` — a cost about to be paid. It
-    // is not paid: the hole at index 1 rebuilds the parent, and the element
-    // that would have churned goes with it. Reporting it would send a reader
-    // after churn this render never incurred.
     const hostCard = (node: TileNode, _ctx: TileCtx): HTMLElement => {
       const el = document.createElement("div");
       el.textContent = (node as { text?: string }).text ?? "";
@@ -394,10 +325,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports a handler the host rebuilds on every render", () => {
-    // The kernel compares handlers by identity, so a host that mints one inline
-    // per render never compares equal to itself and pays a patch — or, with no
-    // patcher, a rebuild — forever. It used to be reused instead, silently
-    // firing the first render's closure.
     let generation = 0;
     const hostCard = (node: TileNode, _ctx: TileCtx): HTMLElement => {
       const el = document.createElement("div");
@@ -432,8 +359,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("catches a handler on the node itself, not only under props", () => {
-    // Some hosts hang the handler off the node rather than `props`. The scan
-    // covers the node's own data fields too, so both conventions are seen.
     const hostCard = (): HTMLElement => document.createElement("div");
     const app = appOf(() => ({ kind: "card", onSelect: () => undefined }) as unknown as TileNode);
     const { sink, seen } = collector();
@@ -455,10 +380,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("does not chase handlers nested deeper than props", () => {
-    // The scan stops at `props.x` on purpose. Anything deeper is past the point
-    // where a generic warning helps, and an unbounded walk would run on every
-    // reuse decision of every host tile. Locked in so the shallow contract in
-    // `ownFieldPairs` cannot silently widen.
     const hostCard = (): HTMLElement => document.createElement("div");
     const app = appOf(
       () =>
@@ -480,11 +401,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays silent about function identity on built-in tiles", () => {
-    // Codegen memoises one closure per reducer list, so a built-in's handler is
-    // the same reference every render and never reaches the unequal fork. The
-    // per-kind gate keeps it that way even for a hand-built tree like this one,
-    // which does mint a fresh closure — reporting it would bury the host-tile
-    // signal under one entry per tile per render.
     const app = appOf(() => ({
       kind: "column",
       children: [{ kind: "button", text: "go", props: { onClick: () => undefined } }],
@@ -499,9 +415,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("scopes the scan to the kinds the host actually registered", () => {
-    // Registering `card` must not put every other tile under suspicion. Without
-    // the per-kind gate this passes trivially only while `hostTileKinds` is
-    // empty; here it is non-empty and still must not fire for `button`.
     const hostCard = (): HTMLElement => document.createElement("div");
     const app = appOf(() => ({
       kind: "column",
@@ -523,13 +436,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("survives a host value that throws while the diagnostic scan reads it", () => {
-    // Reading a host node's fields is not inert. `props` is the same object on
-    // both sides, so the equality kernel short-circuits on `===` and never
-    // enumerates it; a sibling field that does differ sends the pair down the
-    // unequal fork, and the scan there enumerates what the kernel proved
-    // nothing about — hitting the trap. Unguarded that throw lands in the
-    // reconcile bailout as a panic and rebuilds the whole tree: the observation
-    // inflicting the identity loss it exists to report.
     const hostCard = (): HTMLElement => document.createElement("div");
     let enumerated = 0;
     const props = new Proxy(
@@ -570,27 +476,12 @@ describe("runtime: reconcile diagnostics", () => {
     }
   });
 
-  // ---- props that can never compare equal ----
-  //
-  // A tile whose props compare unequal on EVERY render while a patcher is
-  // registered is the identity-preserving happy path as far as the walker is
-  // concerned — the element survives, nothing fell back, nothing is reported —
-  // and it re-applies the same attributes forever. Both causes are unreachable
-  // from a `.kumiki` source, so a host tree is the only way in and the only
-  // audience.
-
   /** Ignores its node: these cases are about the kernel's verdict, not paint. */
   const hostCard = (): HTMLElement => document.createElement("div");
 
   /** Registered so the unequal decision is PATCHED rather than rebuilt. */
   const inPlaceCardPatch = { card: () => undefined } as TilePatchers;
 
-  /**
-   * Mounts a host-registered `card` and re-renders it once. `patchers` picks
-   * which of the two shapes is under test: with a patcher the walker preserves
-   * the element and reports no fallback at all, without one it rebuilds and
-   * reports `no-patcher` on top.
-   */
   function hostCardRun(tree: () => TileNode, patchers: TilePatchers): RuntimeDiagnostic[] {
     const app = appOf(tree);
     const { sink, seen } = collector();
@@ -615,9 +506,6 @@ describe("runtime: reconcile diagnostics", () => {
   }
 
   it("names the field holding a fresh Date, and the rebuild it caused", () => {
-    // Without a patcher the churn is already audible as `no-patcher` — but that
-    // reason names the kind, not the field, so it cannot say WHICH prop made
-    // two structurally identical renders compare unequal. This does.
     const seen = hostCardRun(
       () => ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode,
       {},
@@ -636,9 +524,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("names it when a patcher makes the churn invisible", () => {
-    // The case this whole scan exists for. A patcher runs, the element keeps its
-    // identity, nothing degraded — so the fallback channel is silent and the app
-    // looks perfectly healthy while patching the same attributes forever.
     const seen = hostCardRun(
       () => ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode,
       inPlaceCardPatch,
@@ -649,9 +534,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("names a NaN prop, which is unequal to itself by design", () => {
-    // §10.3.13 makes `NaN` unequal to `NaN` on purpose — a failed computation
-    // should churn visibly rather than freeze a tile. The churn was the visible
-    // part; this makes the reason for it visible too.
     const seen = hostCardRun(
       () => ({ kind: "card", props: { total: Number.NaN } }) as unknown as TileNode,
       inPlaceCardPatch,
@@ -663,9 +545,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("names a class instance, not only the built-in exotics", () => {
-    // "Plain" is decided by prototype identity, so anything whose state lives
-    // outside its own enumerable keys lands here — a domain class as much as a
-    // `Date`, and a cross-realm object through the very same check.
     class Span {
       constructor(
         readonly from: number,
@@ -683,8 +562,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("catches an exotic on the node itself, not only under props", () => {
-    // Both conventions the scan covers: a host may hang data off the node
-    // rather than `props`.
     const seen = hostCardRun(() => ({ kind: "card", at: new Date(0) }) as unknown as TileNode, {});
 
     expect(neverEqual(seen)).toEqual([
@@ -693,10 +570,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet while only one side is exotic", () => {
-    // A plain bag becoming a `Date` is an ordinary type change: this render's
-    // inequality is real, and nothing yet says the next one will repeat it. The
-    // report arrives on the following render, when two exotics that describe the
-    // same value still compare unequal — one render late, never wrong.
     let exotic = false;
     const app = appOf(
       () =>
@@ -729,9 +602,6 @@ describe("runtime: reconcile diagnostics", () => {
     ["a RegExp", () => /x/g],
     ["a DOM node", () => document.createElement("span")],
   ])("names %s, since the rule is about the prototype and not the type", (_label, make) => {
-    // Every exotic the spec and `describeDiagnostic` list runs through the one
-    // `isPlainDataBag` check. Spot-checked here so narrowing that check to
-    // object literals would fail loudly instead of silently exempting the rest.
     const seen = hostCardRun(
       () => ({ kind: "card", props: { value: make() } }) as unknown as TileNode,
       inPlaceCardPatch,
@@ -743,11 +613,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("says nothing about a tile the parent's bail is about to discard", () => {
-    // Same rule the sibling case above follows, and the same reason: the hole
-    // at index 1 settles the parent's fate before any child is applied, so the
-    // host card at index 0 is never reconciled and the props that would have
-    // churned are about to be thrown away with it. Reporting them would point
-    // a reader at churn this render did not pay for.
     let holed = false;
     const card = (): TileNode =>
       ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode;
@@ -771,11 +636,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("survives a host value that throws while the unequal scan reads it", () => {
-    // The kernel short-circuits at the FIRST unequal field, so a later prop can
-    // hold something it never touched — here a proxy whose prototype is
-    // unreadable, exactly what `neverEqualCause` asks for. The scan abandons
-    // the tile and the render carries on: `no-patcher` still reports, the
-    // rebuild still happens, and no reconcile panic is recorded.
     const hostile = () =>
       new Proxy(
         {},
@@ -814,11 +674,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet for an exotic buried in an array", () => {
-    // The kernel takes arrays element-wise, so an array is never itself the
-    // never-equal value — and descending into one to find the `Date` inside is
-    // the deep walk this scan refuses on the same grounds as `props.meta.at`.
-    // The tile still churns; what is missing is a name for why, which is the
-    // documented cost of keeping the scan bounded.
     const seen = hostCardRun(
       () => ({ kind: "card", props: { tags: [new Date(0)] } }) as unknown as TileNode,
       {},
@@ -829,9 +684,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet for the same instance handed over twice", () => {
-    // `===` rescues a stable instance, so an exotic value is only a hazard when
-    // a fresh one is minted per render. Reporting the stable case would fire on
-    // every unequal decision of every tile that happens to carry one.
     const at = new Date(0);
     let renders = 0;
     const seen = hostCardRun(() => {
@@ -845,10 +697,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("does not chase exotics nested deeper than props", () => {
-    // The scan stops at `props.x`: it runs on every unequal decision of every
-    // host tile, and an unbounded walk to
-    // find an exotic three levels down would be a per-render cost on the hot
-    // path. Locked in so the shallow contract cannot silently widen.
     const seen = hostCardRun(
       () => ({ kind: "card", props: { meta: { at: new Date(0) } } }) as unknown as TileNode,
       {},
@@ -859,9 +707,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays silent about an exotic prop on a built-in tile", () => {
-    // Same per-kind gate. `card` is registered by the host
-    // here, so `hostTileKinds` is non-empty and the check is live — the `heading`
-    // beside it must still produce nothing.
     let at = new Date(0);
     const app = appOf(
       () =>
@@ -887,8 +732,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("changes nothing about the render when no sink is registered", () => {
-    // The scan is opt-in like the rest of the channel: without `onDiagnostic`
-    // the walker takes the pre-existing path, patcher and all.
     let patched = 0;
     const app = appOf(() => ({ kind: "card", props: { at: new Date(0) } }) as unknown as TileNode);
     const { dispose } = mountCore(app, root, {
@@ -950,12 +793,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports keyed children the parent renderer wrapped out of reach", () => {
-    // `overlay` puts children 1..N inside a positioning layer, so the elements
-    // the walker has mapped are grandchildren of the overlay. The keyed pass
-    // moves and removes children by addressing the parent element, which would
-    // tear them out of those layers — it stands down and the positional walk
-    // runs instead. The diagnostic is how an author learns the list stopped
-    // being reorder-stable despite every child carrying a key.
     let order = ["a", "b", "c"];
     const app = appOf(() => ({
       kind: "overlay",
@@ -976,9 +813,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("says the keyed match was declined, not that anything was rebuilt", () => {
-    // Every other fallback rebuilt a subtree; this one did not touch the DOM at
-    // all. Wording that claimed a rebuild would send the reader hunting churn
-    // that is not there.
     let order = ["a", "b"];
     const app = appOf(() => ({
       kind: "overlay",
@@ -1001,11 +835,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports a wrapped list that also changed length twice, naming both facts", () => {
-    // The keyed matcher declines because of the wrapper; the structural walk it
-    // falls into then rebuilds because the length changed. Both are true and
-    // both are worth saying — the first is the cause the author can fix, the
-    // second is what it cost this render. Pinned so a future de-duplication
-    // does not quietly drop one.
     let order = ["a", "b", "c"];
     const app = appOf(() => ({
       kind: "overlay",
@@ -1022,11 +851,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("leaves a keyed child missing from the element map on the panic path", () => {
-    // An unmapped child is a broken invariant, not a placement style: the keyed
-    // pass throws, the reconcile bailout records a panic, and that is audible
-    // without a diagnostic sink. Diverting it into the placement gate would
-    // trade a panic every host sees for a `child-unmapped` only an opted-in one
-    // does — so the gate deliberately steps over it.
     const detachedColumn = (node: TileNode): HTMLElement => {
       const el = document.createElement("div");
       for (const child of (node as { children?: TileNode[] }).children ?? []) {
@@ -1068,14 +892,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("puts a DEPARTING keyed child with no element mapping on that same path", () => {
-    // The half the gate's reasoning has to cover too. A child on its way out is
-    // looked up for removal rather than for reuse, and the invariant it breaks
-    // is the same one — so it answers to the same channel, and the pass settles
-    // that for the whole old list before it applies anything.
-    //
-    // The renderer maps index 0 through `ctx.render` and hand-builds index 1,
-    // so the survivor is mapped and only the departure is not: the gate is
-    // reached and steps over it exactly as it says it does.
     let members = ["a", "b"];
     const app = appOf(() => ({
       kind: "column",
@@ -1114,14 +930,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("answers the missing mapping before it mounts a newcomer", () => {
-    // The panic is not a late discovery dressed up as an early one. A departure
-    // is looked at last — after every survivor is reconciled and every newcomer
-    // built — so resolving the old list up front is what makes the pass leave
-    // nothing behind when it throws.
-    //
-    // The newcomer's renderer counts its own calls, and the keyed pass is the
-    // only thing that would ever call it: the parent hand-builds every child
-    // after the first, so the full rebuild the panic falls back to does not.
     let mounted = 0;
     const badge = (): HTMLElement => {
       mounted++;
@@ -1162,17 +970,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("does not let a later reason to decline swallow the missing mapping", () => {
-    // The placement gate asks two questions, and only the first one steps over
-    // an unmapped child. If the second — "this renderer has nowhere to put a
-    // newcomer" — could still decline afterwards, the invariant would ride the
-    // decline down into the structural walk and come out as an opt-in
-    // `child-unmapped`, or as nothing at all once the length change rebuilt the
-    // parent. So the mapping is answered in between.
-    //
-    // `overlay` is in the declared set, and the renderer here places its first
-    // child directly and hand-builds the rest — so the measurement comes back
-    // clean, the second question has a newcomer to object to, and the unmapped
-    // child sits between them.
     let members = ["a", "hand-built"];
     const app = appOf(() => ({
       kind: "overlay",
@@ -1200,10 +997,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet for a one-child overlay, which wraps nothing", () => {
-    // `overlay` places its FIRST child directly and only wraps the rest, so a
-    // single-layer overlay has nothing out of reach and the keyed path must
-    // still run. Locks in that the gate reads actual placement rather than
-    // assuming a kind is disqualified wholesale.
     let text = "one";
     const app = appOf(() => ({
       kind: "overlay",
@@ -1220,10 +1013,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet when a list grows from empty", () => {
-    // Nothing was lost: the parent kept its element and every child is new, so
-    // there was no identity to preserve in the first place. Reporting
-    // `child-count-change` here used to send authors looking for keys they had
-    // already added.
     let order: string[] = [];
     const app = appOf(() => ({
       kind: "column",
@@ -1256,9 +1045,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet for a wrapping parent whose list grows from empty", () => {
-    // `overlay` cannot key-match, but the empty boundary never asks it to: the
-    // renderer is re-entered for the interior, so neither the placement decline
-    // nor the length rebuild happened.
     let order: string[] = [];
     const app = appOf(() => ({
       kind: "overlay",
@@ -1275,10 +1061,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("reports a newcomer the parent renderer has nowhere to put", () => {
-    // With one mounted child the placement probe truthfully reports "nothing is
-    // wrapped" — `overlay` places its first child directly. It cannot speak for
-    // the slot the SECOND child would get, so the walker reads the renderer's
-    // declared placement instead, declines, and the structural walk rebuilds.
     let order = ["solo"];
     const app = appOf(() => ({
       kind: "overlay",
@@ -1302,11 +1084,6 @@ describe("runtime: reconcile diagnostics", () => {
     "drawer",
     "popover",
   ] as const)("reports a %s's growth from the measurement, not from the declaration", (kind) => {
-    // The surfaces wrap every child, so one mounted child is already enough
-    // for the placement measurement to answer — and a measurement that can
-    // answer always wins. Their entry in the declared set is redundant for
-    // these renders, and this pins that it stays redundant rather than
-    // producing a second, competing diagnostic.
     let order = ["a"];
     const app = appOf(() => ({
       kind,
@@ -1323,11 +1100,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet for an empty slot in a list that grows from empty", () => {
-    // `child-hole` exists because a hole desynchronises the positional walk
-    // from the old list and costs a rebuild. Growing from empty has no old list
-    // to desynchronise from, and the renderer drops nils itself — so the DOM is
-    // right and there is no fallback to report. Deliberate, not an oversight:
-    // the same tree on a same-length render still reports.
     let filled = false;
     const app = appOf(() => ({
       kind: "column",
@@ -1353,9 +1125,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("says the newcomer could not be placed, not that the child was wrapped", () => {
-    // `wrapped-children` names a child that IS wrapped right now;
-    // `unplaceable-insert` names one that cannot be mounted at all. Conflating
-    // them would point the author at the wrong element.
     let order = ["solo"];
     const app = appOf(() => ({
       kind: "overlay",
@@ -1378,8 +1147,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("stays quiet when the parent places its keyed children directly", () => {
-    // The placement check must not fire for the ordinary containers, or every
-    // keyed list in the app would report a fallback it did not take.
     let order = ["a", "b", "c"];
     const app = appOf(() => ({
       kind: "column",
@@ -1396,9 +1163,6 @@ describe("runtime: reconcile diagnostics", () => {
   });
 
   it("leaves the by-design paths alone", () => {
-    // A kind change means "a different thing is here now", and a patcher that
-    // declines (a `list` flipping <ul>↔<ol>) is a documented, expected outcome
-    // kept out of the log on purpose. Neither is a lost identity guarantee.
     let ordered = false;
     let swapped = false;
     const app = appOf(() => ({
@@ -1449,10 +1213,6 @@ describe("smoke: reconcile diagnostics", () => {
     document.body.removeChild(root);
   });
 
-  // A button that toggles an unkeyed sibling in and out — the shape `smoke`
-  // will trip the moment it clicks anything.
-  // `_dispatch` is attached by the mount, so the shape the test builds is an
-  // app that does not have it yet and a handler that runs only once it does.
   function togglingApp(): AppShape & { _dispatch?: MountedApp["_dispatch"] } {
     let open = false;
     const app: AppShape & { _dispatch?: MountedApp["_dispatch"] } = {
@@ -1487,11 +1247,6 @@ describe("smoke: reconcile diagnostics", () => {
   }
 
   it("collects diagnostics without failing the run, with the context of an issue", async () => {
-    // The whole point of keeping these out of `issues`: an unkeyed sibling
-    // list is ordinary, correct Kumiki. The corpus must stay green. But a
-    // report that says "a subtree was rebuilt" without saying which
-    // interaction provoked it answers half the question, so each one carries
-    // the same phase / trigger a `SmokeIssue` would.
     const report = await smoke(togglingApp(), root, { settleMs: 0 });
 
     expect(report.ok).toBe(true);
@@ -1517,8 +1272,6 @@ describe("smoke: reconcile diagnostics", () => {
   });
 
   it("spells out a per-render handler as the churn it causes", async () => {
-    // The wording has to name the cost and the fix. A host reading "never-equal
-    // prop" alone would not know that memoising the handler is what stops it.
     const hostCard = (): HTMLElement => document.createElement("div");
     const app = appOf(
       () =>

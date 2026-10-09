@@ -20,11 +20,9 @@ app Counter
 
 Kumiki has none of the "optimized for human cognition" machinery like JSX, Hooks, dependency arrays, or Providers. Instead, it represents an app as a set of independent definitions across **7 layers** (type / slot / effect / reducer / tile / fn / app). Syntax overhead is small, dependencies between definitions are explicit, and AI can safely edit parts of it.
 
-> The language, runtime, and tools are still pre-1.0 and may change between minor versions. Pin exact versions when you depend on it.
-
 ## Why Kumiki
 
-Cross-vendor measurements (Claude / Codex / Gemini) show that, from the specification alone and in a single pass, LLMs can write mid-size Kumiki apps — up to a ~600-line multi-route issue tracker — that typecheck and build; larger apps (~1000+ lines) still need an edit loop. Token efficiency is also high: an equivalent app is roughly 1.4–2.0× smaller than React (tokens / lines). See [packages/benchmarks](./packages/benchmarks/).
+Cross-vendor measurements (Claude / Codex / Gemini) show that, from the specification alone and in a single pass, LLMs can write mid-size Kumiki apps — up to a ~600-line multi-route issue tracker — that build; larger apps (~1000+ lines) still need an edit loop. Token efficiency is also high: an equivalent app is roughly 1.4–2.0× smaller than React (tokens / lines). See [packages/benchmarks](./packages/benchmarks/).
 
 ## Repository layout
 

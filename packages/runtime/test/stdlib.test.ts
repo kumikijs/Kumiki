@@ -1,13 +1,8 @@
-// Issue #92: Bytes constructors live in `_stdlibCore` and are reached via
-// codegen-emitted `_s.bytesFrom*` calls. The unit test pins the byte-level
-// behavior of each constructor so a regression in the runtime helper surfaces
-// here even if the compiler's smoke / examples test happens to skip the path.
-
 import { describe, expect, it } from "vitest";
 import { KumikiPanic } from "../src/core.ts";
 import { _stdlibCore } from "../src/stdlib.ts";
 
-describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
+describe("Bytes constructors", () => {
   it("bytesFromText UTF-8 encodes the string", () => {
     expect(_stdlibCore.bytesFromText("hi")).toEqual(new Uint8Array([0x68, 0x69]));
     expect(_stdlibCore.bytesFromText("")).toEqual(new Uint8Array([]));
@@ -46,13 +41,6 @@ describe("Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10)", () => {
   });
 });
 
-// Issue #92 review: previously `.sort()` lowered inline to JS's default
-// (string-comparator) sort, so `[3,1,2,10].sort` → `[1,10,2,3]` for a
-// `List(Int)`. The fix routes both forms through `_stdlibCore.listSort`
-// which sorts numerically when every element is a finite number.
-// `sort-by` subtracted its keys, and two Text keys subtract to `NaN`, which
-// `Array.prototype.sort` reads as "equal": a list sorted by a name came back
-// in the order it went in.
 describe("listSortBy (docs/spec/stdlib.md §2.2.3 List.sort-by)", () => {
   const users = [
     { name: "carol", age: 30 },
@@ -86,8 +74,6 @@ describe("listSortBy (docs/spec/stdlib.md §2.2.3 List.sort-by)", () => {
   const ids = (xs: { id: number }[]) => xs.map((x) => x.id);
 
   it("sorts an absent (undefined) key after every other, keeping its order", () => {
-    // Compared as "equal" to everything, one missing key used to leave the
-    // whole list as it found it.
     expect(ids(_stdlibCore.listSortBy(keyed([3, undefined, 1, null, 2]), (x) => x.k))).toEqual([
       2, 4, 0, 1, 3,
     ]);
@@ -103,16 +89,11 @@ describe("listSortBy (docs/spec/stdlib.md §2.2.3 List.sort-by)", () => {
   });
 
   it("orders a numeric key that arrives as Text the way `<` does", () => {
-    // Text against Text compares as text ("10" < "9"); Text against a number
-    // is coerced to a number. Not converted to the declared type
-    // (stdlib.md §2.2.3).
     expect(_stdlibCore.listSortBy(["9", "10"], (x) => x)).toEqual(["10", "9"]);
     expect(_stdlibCore.listSortBy([10, "9", 2], (x) => x)).toEqual([2, "9", 10]);
   });
 
   it("keeps every element of a key list `<` cannot order, and leaves the input alone", () => {
-    // A number against a non-numeric Text answers false both ways, so there
-    // is no single order to assert — only that nothing is lost or mutated.
     const xs = keyed([3, "b", 1, { r: 1 }, "a"]);
     const out = _stdlibCore.listSortBy(xs, (x) => x.k);
     expect(ids(out).sort()).toEqual([0, 1, 2, 3, 4]);
@@ -120,9 +101,6 @@ describe("listSortBy (docs/spec/stdlib.md §2.2.3 List.sort-by)", () => {
   });
 });
 
-// The implicit key of each tile a `for` renders (runtime.md §10.3.10). It was
-// `show(x)` alone, so equal values keyed two siblings alike and the keyed
-// reconciler refused the render.
 describe("loopKeys (docs/spec/runtime.md §10.3.10)", () => {
   it("keys equal values apart by their occurrence", () => {
     const keys = _stdlibCore.loopKeys([7, 3, 7], "App_0");
@@ -141,8 +119,6 @@ describe("loopKeys (docs/spec/runtime.md §10.3.10)", () => {
   });
 
   it("cannot be spelled by another element's value", () => {
-    // A Text value may contain the separator; the count comes first, so the
-    // second "x" and a value spelling "2|x" still differ.
     expect(new Set(_stdlibCore.loopKeys(["x", "x", "2|x", "1|2|x"], "App_0")).size).toBe(4);
   });
 
@@ -176,11 +152,6 @@ describe("listSort (docs/spec/stdlib.md §2.2.3 List.sort)", () => {
   });
 });
 
-// `find` is typed `Option(T)` by the spec and by the checker, and lowered to
-// this helper. The raw `Array.prototype.find` it used to lower to answers
-// `undefined` on no match, which is neither a `Some` nor a `None`: `.is-some`
-// on it is false whether or not an element was found, and a `match` finds no
-// arm. The two cases below are the ones that tell those apart.
 describe("listFind (docs/spec/stdlib.md §2.2.3 List.find)", () => {
   it("wraps a hit in Some, so is-some reads true", () => {
     const hit = _stdlibCore.listFind([3, 1, 2], (x) => x > 2);
@@ -202,10 +173,6 @@ describe("listFind (docs/spec/stdlib.md §2.2.3 List.find)", () => {
   });
 });
 
-// Issue #340: `fmt` had no helper at all, so codegen's `_s.fmt ? … : template`
-// guard always took the else branch and every call returned its template with
-// the placeholders intact. The rules pinned here are the ones docs/spec/stdlib.md
-// §2.4.5 now states — including the two it used to leave open.
 describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   it("replaces each {n} with the argument at that index", () => {
     expect(_stdlibCore.fmt("{0}-{1}", "a", "b")).toBe("a-b");
@@ -217,8 +184,6 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   });
 
   it("renders an argument through `show`", () => {
-    // `show`: a variant is its tag, a nullish is the empty string, everything
-    // else is `String(v)`.
     expect(_stdlibCore.fmt("{0}", { _tag: "None" })).toBe("None");
     expect(_stdlibCore.fmt("[{0}]", null)).toBe("[]");
     expect(_stdlibCore.fmt("{0}", true)).toBe("true");
@@ -226,12 +191,6 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   });
 
   it("agrees with `+` on every value, which is what §2.4.5 promises", () => {
-    // Asserted against `add` rather than restated: `"x=" + v` and
-    // `fmt("x={0}", v)` are two ways to put one value in one sentence, and
-    // §2.4.5 says both render it through `show`. `add` used to be
-    // `String(a) + String(b)`, which disagreed exactly here — `[object Object]`
-    // for an absent Option, `"null"` for a nullish — so this is the assertion
-    // that keeps the two halves of the promise from drifting apart again.
     for (const v of [{ _tag: "None" }, { _tag: "Some", _0: 1 }, null, undefined, true, 1.5, "s"]) {
       expect(_stdlibCore.fmt("{0}", v)).toBe(_stdlibCore.add("", v));
     }
@@ -244,10 +203,6 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   });
 
   it("drops an argument no placeholder names", () => {
-    // The direction with no trace in the output: the result is what a correct
-    // call would render, so nothing downstream can tell the value was passed.
-    // W0214 is what makes it visible, and only for a literal template — this
-    // is what the runtime does when the template is an expression.
     expect(_stdlibCore.fmt("{0}", "a", "b")).toBe("a");
     expect(_stdlibCore.fmt("none here", "a")).toBe("none here");
   });
@@ -258,17 +213,11 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
     expect(_stdlibCore.fmt("{ 0 }", "a")).toBe("{ 0 }");
     expect(_stdlibCore.fmt("{01", "a")).toBe("{01");
     expect(_stdlibCore.fmt("0}", "a")).toBe("0}");
-    // …but `{01}` IS one: the digits are read as a decimal index, so a leading
-    // zero is a digit and nothing more. Pinned beside the unclosed `{01` it
-    // sits next to in the spec, where the two are easy to conflate.
     expect(_stdlibCore.fmt("{01}", "a", "b")).toBe("b");
-    // No escape: the inner `{0}` is the placeholder and the outer braces are text.
     expect(_stdlibCore.fmt("{{0}}", "a")).toBe("{a}");
   });
 
   it("does not re-scan what it substituted", () => {
-    // One left-to-right pass. Otherwise a formatted user string could reach
-    // back into the argument list and print an argument it was never given.
     expect(_stdlibCore.fmt("{0}", "{1}", "secret")).toBe("{1}");
   });
 
@@ -278,12 +227,6 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   });
 });
 
-// A Set is stored as `{ [key]: true }` and a Map as a plain object, so their
-// keys are JavaScript object keys — strings, whatever the declared type. The
-// readers that hand keys back restore them to the kind the checker recorded
-// (stdlib.md §2.2.1 / §2.2.2): without that, a `Set(Int)` read back `["7", "8"]`
-// under a `List(Int)` type, and `contains(7)`, `sort` and `+` all disagreed
-// with it.
 describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 / §2.2.2)", () => {
   const set = _stdlibCore.setAdd(_stdlibCore.setAdd({}, 7), 8);
 
@@ -310,9 +253,6 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
     expect(_stdlibCore.toList(_stdlibCore.setAdd({}, "7"))).toEqual(["7"]);
   });
 
-  // `Map.filter` hands each key to its predicate as `$1`, so it reads keys
-  // too: `m.filter($1 == 3)` on a `Map(Int, _)` compared `"3"` with `3` under a
-  // strict `eq` and kept nothing.
   it("Map.filter hands its predicate the restored key and keeps the entry under its stored key", () => {
     const seen: unknown[] = [];
     const pred = (pair: unknown) => {
@@ -325,13 +265,7 @@ describe("keys read back as the declared key type (docs/spec/stdlib.md §2.2.1 /
   });
 });
 
-// `Map(K, V).map` lowers to the polymorphic `_s.mapOver`, which used to call
-// the fragment once with the whole Map, so a `Map(Int, Text)` slot ended up
-// holding the string `"[object Object]!"`.
 describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
-  // The fragment is called the way `filter` calls its predicate: with one
-  // argument, the `[key, value]` pair, which the generated lambda takes apart
-  // into `$1` / `$2`.
   it("hands the fragment one [key, value] argument, the key restored to its kind", () => {
     const calls: unknown[][] = [];
     const out = _stdlibCore.mapOver(
@@ -361,8 +295,6 @@ describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
     expect(out).toEqual({ "[1,2]": "a!" });
   });
 
-  // A `Map(Text, _)` may have a `"_tag"` key; only a real variant tag makes it
-  // an Option / Result, as `filter` decides with `variantIs`.
   it('maps a Map that has a "_tag" key instead of returning it unchanged', () => {
     const out = _stdlibCore.mapOver(
       { _tag: "label", a: "x" },
@@ -372,9 +304,6 @@ describe("mapOver on a Map (docs/spec/stdlib.md §2.2.1 Map.map)", () => {
   });
 });
 
-// `Option(T).filter` lowers to the polymorphic `_s.filter`, which used to read
-// an Option's own representation (`{_tag, _0}`) as a Map and filter its fields.
-// The result was neither a `Some` nor a `None`.
 describe("filter on an Option (docs/spec/stdlib.md §2.2.4 Option.filter)", () => {
   it("keeps a Some whose value passes the predicate", () => {
     const kept = _stdlibCore.filter(_stdlibCore.Some(3), (x) => (x as number) > 2);
@@ -412,9 +341,6 @@ describe("filter on an Option (docs/spec/stdlib.md §2.2.4 Option.filter)", () =
   });
 });
 
-// `xs[i]` reads the element the same write names (language.md §1.6.3), so an
-// index that names no element panics on both sides of `:=`. A Map is a plain
-// object and is read by key.
 describe("an index read (docs/spec/language.md §1.6.3)", () => {
   it("reads the element of a List at the index", () => {
     expect(_stdlibCore.index([10, 20, 30], 1)).toBe(20);
@@ -433,18 +359,12 @@ describe("an index read (docs/spec/language.md §1.6.3)", () => {
     expect(_stdlibCore.index({ 5: "x" }, 5)).toBe("x");
   });
 
-  // An absent key answered `undefined`, which no `V` is, and the next read
-  // through it (`todos["zz"].title`) was a raw TypeError outside the panic
-  // model. It is a panic, as an index past the end of a List is.
   it("panics for a key the Map does not hold", () => {
     expect(() => _stdlibCore.index({ a: 1 }, "zz")).toThrow(KumikiPanic);
     expect(() => _stdlibCore.index({ a: 1 }, "zz")).toThrow('Key "zz" is not in the Map');
     expect(() => _stdlibCore.index({ 5: "x" }, 6)).toThrow("Key 6 is not in the Map");
   });
 
-  // A structured key is shown in its `entryKey` encoding (fields sorted, a
-  // variant as its `_tag` object): the one spelling the Map stores it under,
-  // pinned here so the `app.error` message does not drift on its own.
   it("shows a record key and a union key in their entry encoding", () => {
     expect(() => _stdlibCore.index({}, { y: 2, x: 1 })).toThrow(
       'Key {"x":1,"y":2} is not in the Map',
@@ -490,9 +410,6 @@ describe("one key per value (docs/spec/stdlib.md §2.2.1 / §2.2.2)", () => {
   });
 
   it("panics, naming the key, on a structured key no member stored", () => {
-    // A record key stored before keys were encoded, or a decoded Map whose
-    // keys are bare variant names: neither is the JSON a structured key reads
-    // back from, so the reader says so instead of throwing a bare SyntaxError.
     expect(() => s.mapKeys({ "[object Object]": 1 }, "value")).toThrow(KumikiPanic);
     expect(() => s.mapEntries({ Red: 1 }, "value")).toThrow(/"Red"/);
     expect(() => s.toList({ "[object Object]": true }, "value")).toThrow(
@@ -551,8 +468,6 @@ describe("value equality (docs/spec/language.md §1.9.4)", () => {
     expect(eq(bytesFromText("ab"), { 0: 97, 1: 98 })).toBe(false);
   });
 
-  // A Blob, File or Date keeps its state outside its own enumerable keys, so
-  // key-wise it is an empty bag and any two would compare equal.
   it.each([
     ["a Blob", () => new Blob(["aaa"]), () => new Blob(["bbb"])],
     ["a File", () => new File(["aaa"], "a.txt"), () => new File(["bbb"], "a.txt")],
@@ -592,8 +507,6 @@ describe("value equality (docs/spec/language.md §1.9.4)", () => {
 });
 
 describe("isEmpty's scalar tail (docs/spec/stdlib.md §2.2.1 / §2.2.3 / §2.2.6 is-empty)", () => {
-  // A missing value cannot be written as a slot's initial value, so the
-  // receiver rows in `packages/tests` never reach this half of the last line.
   it("a missing value is empty", () => {
     expect(_stdlibCore.isEmpty(undefined)).toBe(true);
     expect(_stdlibCore.isEmpty(null)).toBe(true);

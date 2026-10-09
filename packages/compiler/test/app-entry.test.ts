@@ -1,11 +1,3 @@
-// `codegen` reads the entry point out of the one `app` definition: with none
-// it throws, and with several it silently takes the first. Neither was a
-// diagnostic, so `check()` — the gate every tool and CI job points at —
-// reported `ok` for a file nothing could build, and for a file that builds
-// into a different program than it describes. E0003 and E0004 close both;
-// these tests pin them along with the incremental-editing escape hatch that
-// keeps `kumiki add` usable on a half-written program.
-
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -18,8 +10,6 @@ const NO_APP = `slot n : Int = 0
 tile App = column(text(n.show))
 `;
 
-// `codegen` takes `apps[0]`, so without E0004 this builds as `First` alone and
-// the "/x" route simply is not in the artifact.
 const TWO_APPS = `slot n : Int = 0
 tile App   = column(text(n.show))
 tile Other = column(text("x"))
@@ -104,9 +94,6 @@ describe("check and build agree on what is buildable", () => {
     expect(result.errors.map((e) => e.code)).toEqual(["E0003"]);
   });
 
-  // The throw stays as a contract violation for callers that reach codegen
-  // without going through check() at all — it is no longer how the CLI or the
-  // Vite plugin learn that an app is missing.
   it("codegen still refuses an app-less program when called directly", () => {
     expect(() => codegen(parse(lex(NO_APP)), { runtimeSpecifier: "./runtime.js" })).toThrow(
       "No app definition found",

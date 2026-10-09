@@ -1,11 +1,3 @@
-// Regression (#337): an episode is the record of one run, and a replay of it
-// has to be that run again. A reducer that reads the environment — `random()`,
-// `now`, `<T>.fresh()`, `prefers-dark()` — draws a value no slot can derive, so
-// re-executing the body draws a NEW one and the replayed `slot-diffs` disagree
-// with the recorded ones. The episode therefore carries `env-reads`: what each
-// read answered, in the order the body asked, and the replay hands those back
-// instead of re-reading (spec/runtime.md §10.5.1 + §10.5.3).
-
 import type {
   AppShape,
   EnvScopeOutcome,
@@ -27,11 +19,6 @@ import { describe, expect, it } from "vitest";
 
 type ReplayableApp = AppShape & { live: Record<string, unknown> };
 
-/**
- * The shape codegen emits for `roll := (random() * 6.0).floor + 1` and
- * `stamped := now.show` — the stdlib call is inside `apply`, which is exactly
- * where the recorder has to reach.
- */
 function makeDiceApp(): ReplayableApp {
   const slots = {
     roll: { value: 0 },
@@ -221,9 +208,6 @@ describe("the environment journal", () => {
   });
 
   it("leaves the environment live again once the scope closes", () => {
-    // Two identical entries, so the assertion after the scope fails if
-    // `endEnvScope` were a no-op — one entry would already be spent by the
-    // read inside, and the check outside would pass either way.
     const out = ok(
       withEnvReplay(
         [
@@ -373,10 +357,6 @@ describe("a reducer that panicked (#337)", () => {
 
 describe("the other two recording paths (#337)", () => {
   it("the SSR bootstrap episode journals its reducers' reads", async () => {
-    // §10.5.1.1: the bootstrap episode is an episode, so a replay of the SSR
-    // chain has to reproduce the instants the server stamped. Dropping the
-    // 4th argument at `ssr.ts`'s two `recordReducer` calls is invisible to a
-    // suite that only asserts step kinds.
     const app: AppShape = {
       slots: { seededAt: { value: "" }, token: { value: "" } },
       caps: ["http.get"],
@@ -420,9 +400,6 @@ describe("the other two recording paths (#337)", () => {
   });
 
   it("a reducer whose batch a refinement rejected still records what it read", () => {
-    // Its `slot-diffs` is `[]`, so the "replays to the recorded slot-diffs"
-    // assertions elsewhere are vacuously true here. The reads matter anyway:
-    // a replay that re-runs the body has to see them or it may not reject.
     const app: AppShape = {
       slots: { roll: { value: 1, refine: (v) => (v as number) > 0.5 } },
       caps: [],

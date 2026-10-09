@@ -4,17 +4,6 @@ import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// A `fn` is not a value in Kumiki — there are no lambdas (language.md §1.9.1)
-// — but a `fn` name written without its parentheses was accepted wherever a
-// value goes. It lowered to the generated function itself, so
-// `emit load(label)` dispatched a *function* where the effect declares
-// `in=Text`: a storage key stringified to the function's source, an HTTP body
-// serialised to `undefined`, and every tier stayed silent.
-//
-// The one position that takes a fn name is the fragment argument of a
-// higher-order method — `items.map(double)`, §1.8.6 — which is a call the
-// method makes, not a value.
-
 type Diagnostic = { code: string; message: string; text: string };
 
 const diagnose = (src: string): Diagnostic[] =>
@@ -214,8 +203,6 @@ slot t : Text              = ""`;
   });
 
   it("binds a second positional only over a key/value pair", () => {
-    // A plain list's element and an Option's value are handed over as one
-    // value, so a second parameter would be handed nothing (stdlib.md §2.2.3).
     const only =
       "supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)";
     expect(arity("xs := xs.map(add)")).toEqual([
@@ -290,9 +277,6 @@ reducer subject on=ui.click(B) do= result := scale(5)`);
 });
 
 describe("a fn named in a fragment runs where the method does", () => {
-  // The method applies it, so a slot initializer or an `app.init` argument
-  // that names it runs its body before the mount installs the route — the
-  // same as writing the call `here($1)`.
   const HERE = "fn here(n: Int) -> Text = route.path";
   const codesOf = (src: string) => check(parse(lex(src))).map((e) => e.code);
   const program = (defs: string, init = "", caps = "") => `${HERE}
@@ -327,8 +311,6 @@ slot names : List(Text) = all()`),
   });
 
   it("is not the fn when a parameter of the same name shadows it", () => {
-    // Regression guard: `here` inside `pick` is the Int parameter, so the
-    // route-reading fn is never reached.
     expect(
       codesOf(
         program(`fn pick(here: Int) -> List(Int) = [1, 2].map(here)

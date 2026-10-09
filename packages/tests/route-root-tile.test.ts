@@ -1,22 +1,3 @@
-// A tile named as a route is still that tile.
-//
-// The chrome a user tile gets — the `_named(…)` marker the runtime diffs
-// `tile.mount` / `tile.unmount` against (lifecycle.md §7.1.6), and the
-// `try` / `catch` its `error-boundary` lowers to (§7.3) — is applied by
-// `tileCallJs`, the lowering for a *call site*. A route target used to be
-// lowered straight from the route table by `genTile`, which is the body and
-// nothing else, so a tile had both guarantees everywhere except at a route
-// root; it goes through `genRouteTile` now. That inverted the boundary in
-// particular: the tile was protected as a child and unprotected in the one
-// position lifecycle.md §7.3 names.
-//
-// The last describe is the other half of the same subject: what a boundary
-// takes. Giving a route root one closes the tier-2 detection path for anything
-// it swallows, so what it refuses to swallow has to be pinned beside it.
-//
-// These run the real pipeline and the real runtime, because every guarantee
-// here is runtime-truth: `check` and `build` were green throughout.
-
 import { mount, renderToString, routing } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -95,8 +76,7 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
   });
 
   it("protects a sub-route parent", async () => {
-    // The parent's own body panics, so the boundary it declares is the one that
-    // has to run — the child never gets to render.
+    // The parent's own body panics, so the boundary it declares is the one that has to run — the child never gets to render.
     const { root } = await run(
       `${BOOM}
 tile NotFound = column(text("nf"))
@@ -121,11 +101,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("leaves a route root with no boundary to the built-in panic display", async () => {
-    // The declared-boundary case must not be confused with the un-declared one:
-    // lifecycle.md §7.3 keeps a top-level display for a root that names none,
-    // and this rule does not take it away. Asserted against the markup that
-    // display actually emits — "something non-empty rendered" would also pass
-    // on the 404 tile, or on a stale tree.
     const { root } = await run(`slot xs : List(Int) = []
 tile Bare = column(text(xs.head.get.show))
 app M caps=[] routes={"/" -> Bare, "/404" -> Bare} init=[]
@@ -135,8 +110,6 @@ app M caps=[] routes={"/" -> Bare, "/404" -> Bare} init=[]
   });
 
   it("protects the tile a landing on /404 renders", async () => {
-    // `/404` is not matched like the others (`pickRootTile` reaches it by its
-    // own branch), and it is the one route every program has.
     const { root } = await run(
       `${BOOM}
 tile Home = column(text("home"))
@@ -148,9 +121,6 @@ app M caps=[] routes={"/" -> Home, "/404" -> Boom} init=[]
   });
 
   it("protects a parent whose whole body is the outlet", async () => {
-    // The marker has to survive here: `injectRouteOutlet` replaces the parent's
-    // tree when the body *is* the outlet, which works only because `_named`
-    // shallow-copies and keeps `kind`. A wrapper node would break it silently.
     const { root } = await run(
       `${BOOM}
 tile NotFound = column(text("nf"))
@@ -163,26 +133,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 });
 
-/**
- * A boundary on a `sub-routes` parent covers the child in its `route-outlet`.
- *
- * §7.3 scopes a boundary to what renders *under* the tile, and a child the
- * runtime injects into the parent's outlet is under it in the rendered tree.
- * It used to be constructed outside the parent's `try` / `catch` — `pickRootTile`
- * returned from the parent's factory before it called the child's — so a
- * boundary declared only on the shell covered the frame and nothing else, and
- * the one obvious way to write "one fallback for this whole section" silently
- * did not (#363). The parent's factory now takes the outlet's contents as a
- * callback, so the child is built inside the parent's guard.
- *
- * Two things follow and are pinned beside it: the nearest boundary wins (a
- * child's own comes first, being inner), and `PanicInfo.location` names the
- * route target whose build raised the panic rather than the tile that declared
- * the boundary — the outlet child is the one position where they differ *and*
- * the runtime has a name for the inner one. A tile the target renders inside
- * its own body is not distinguished from the target: the runtime has no name
- * for it.
- */
 describe("a boundary on a sub-routes parent covers the child in its outlet", () => {
   let disposeFn: (() => void) | undefined;
   let mountedRoot: HTMLElement | undefined;
@@ -220,9 +170,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
     const { root } = await at(SHELL, "/shell/a");
     expect(root.querySelector('[data-kumiki-test="fallback"]')).not.toBeNull();
     expect(root.textContent).toContain("caught: get called on None");
-    // The whole section is replaced, frame included: the fallback stands where
-    // the shell's tree would have been, exactly as for a panic in the shell's
-    // own body.
     expect(root.textContent).not.toContain("frame");
     expect(root.querySelector("[data-kumiki-panic]")).toBeNull();
   });
@@ -266,8 +213,7 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("keeps a healthy child in the outlet under a parent that declares a boundary", async () => {
-    // The parent's factory changed shape to make room for the child; the
-    // ordinary case has to come out the same as before.
+    // The parent's factory changed shape to make room for the child; the ordinary case has to come out the same as before.
     const { root } = await at(
       `tile Fallback in=PanicInfo = column(text("caught"))
 tile NotFound = column(text("nf"))
@@ -297,9 +243,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("fires tile.unmount for the child when the outlet child starts panicking", async () => {
-    // The child rendered once (mount fired), then a click makes it panic and
-    // the parent's fallback replaces the whole section: the child is gone from
-    // the rendered tree, so its unmount fires, and nothing re-mounts it.
     const { app, root } = await at(
       `slot go : Bool = false
 slot mounts : Int = 0
@@ -326,9 +269,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("names the route target, not a tile it renders inside its own body", async () => {
-    // The runtime has a name for a route target and for nothing under it, so
-    // the attribution stops at the target. Pinned so §7.3's "not distinguished
-    // from the target" is a measured limit rather than a caveat.
     const { root } = await at(
       `slot xs : List(Int) = []
 tile Fallback in=PanicInfo = column(text("caught at " + $1.location))
@@ -345,12 +285,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("fires route.error once when the page it leaves in place stays broken", async () => {
-    // The handler's write does not re-render the page on its own: that page is
-    // the one that just panicked. When it did, each render fired the handler
-    // again one level deeper until the stack overflowed, and whichever frame
-    // the overflow landed in decided `$event.location` — the route target
-    // or, for the overflow itself, "render". That is what made the attribution
-    // test next to this one fail only sometimes.
     const { app, root } = await at(
       `slot xs : List(Int) = []
 slot fired : Int = 0
@@ -367,8 +301,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("hands route.error the same attribution when no boundary catches it", async () => {
-    // `route.error`'s `$event.location` used to be absent for a render panic;
-    // it is the route target now, the same name the built-in display carries.
     const { app } = await at(
       `slot xs : List(Int) = []
 slot site : Text = "unset"
@@ -384,10 +316,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("serves the parent's fallback from renderToString too", async () => {
-    // `renderToString` picks the tree through the same `pickRootTile`, with no
-    // try / catch of its own: the child's panic used to escape it as a throw,
-    // and now comes back as the fallback the client would show — SSR produces
-    // the tree CSR would.
     const app = await loadSource(SHELL);
     const rendered = await renderToString(app, { route: "/shell/a", routing });
     expect(rendered.html).toContain("caught: get called on None at Boom");
@@ -395,11 +323,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 });
 
-/**
- * Where a panic is attributed once the route target is what the runtime
- * names. `data-kumiki-panic` on the built-in display carries the attribution,
- * so it is the probe for every path that has no boundary to show it in.
- */
 describe("a panic is attributed to the route target being built", () => {
   let disposeFn: (() => void) | undefined;
   let mountedRoot: HTMLElement | undefined;
@@ -440,9 +363,6 @@ app M caps=[] routes={"/" -> Home, "/404" -> Missing} init=[]
   });
 
   it("names the declaring tile when its own fallback panics", async () => {
-    // The fallback is lowered inside the boundary's catch, so a panic in it
-    // leaves the factory the way an unguarded one would, and takes the same
-    // attribution path: the route target is `Boom`, the fallback has no name.
     const root = await at(`slot xs : List(Int) = []
 tile Fallback in=PanicInfo = column(text(xs.head.get.show))
 tile Boom error-boundary=Fallback = column(text(panic("first")))
@@ -454,16 +374,6 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
   });
 });
 
-/**
- * What a boundary takes, and what it refuses.
- *
- * §7.2.2 defines a panic as a controlled signal — `panic(message)`, the
- * polymorphic `.get`. Anything else that reaches the `catch` is a defect in the
- * generated code or in the runtime, and a boundary that swallowed one would
- * turn a failure into a rendered page: `smoke` and `scenario` both verify
- * through the error channel, so nothing would be left to see. Before this,
- * declaring a boundary was enough to hide `_d_1 is not defined` from tier 2.
- */
 describe("an error boundary catches a panic and re-throws a defect", () => {
   let disposeFn: (() => void) | undefined;
   let mountedRoot: HTMLElement | undefined;
@@ -484,9 +394,6 @@ describe("an error boundary catches a panic and re-throws a defect", () => {
   };
 
   it("re-throws a key-invariant violation rather than showing the fallback", async () => {
-    // `_wk` throws a plain Error deliberately, and its own comment says it does
-    // so "the outer render bailout catches the panic and falls back to a full
-    // rebuild" — which a boundary that caught it would prevent.
     const root = await mountIt(`slot items : List(Text) = ["a", "", "c"]
 tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
 tile Rows error-boundary=Fallback = column(for n in items text(n) {key: n})
@@ -497,9 +404,6 @@ app M caps=[] routes={"/" -> Rows, "/404" -> Host} init=[]
   });
 
   it("hands the fallback the same payload app.error gets", async () => {
-    // `{message, location, category}` — the shape `handleLivePanic` builds, so
-    // the two ways a panic reaches a program agree. `category` used to be
-    // absent, and a fallback reading it rendered the string "undefined".
     const root = await mountIt(`slot xs : List(Int) = []
 tile Fallback in=PanicInfo = column(text("m=" + $1.message + " at=" + $1.location + " cat=" + $1.category))
 tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
@@ -510,8 +414,6 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
   });
 
   it("keeps an empty panic message empty", async () => {
-    // `String(err && err.message || err)` fell through to the error object,
-    // so `panic("")` reached the fallback as the class name.
     const root = await mountIt(`slot go : Bool = true
 tile Fallback in=PanicInfo = column(text("len=" + $1.message.length.show))
 tile Boom error-boundary=Fallback = column(when(go, text(panic(""))))
@@ -522,9 +424,6 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
   });
 
   it("gives the fallback tile no mount marker of its own", async () => {
-    // The fallback is lowered by the boundary rather than through a call site,
-    // so `tile.mount(<the fallback>)` never fires. Pinned because it is a
-    // consequence of where the lowering happens, not a decision.
     const app = await loadSource(`slot xs : List(Int) = []
 slot fbMounts : Int = 0
 reducer sawFb on=tile.mount(Fallback) do= fbMounts := fbMounts + 1
@@ -592,10 +491,6 @@ app M caps=[] routes={"/" -> Panel, "/other" -> Other, "/404" -> Other} init=[]
   });
 
   it("fires no mount for a tile that is showing its fallback, in either position", async () => {
-    // The boundary wraps the marker from the outside, so a tile that panicked
-    // did not render and has nothing to diff against. That is a consequence of
-    // the wrap order rather than a decision, which is why it is pinned in both
-    // positions: whatever it is, a route root and a call site agree.
     const src = `slot xs : List(Int) = []
 slot mounts : Int = 0
 reducer sawMount on=tile.mount(Boom) do= mounts := mounts + 1
@@ -620,11 +515,6 @@ tile Host = column(Boom())
   });
 
   it("fires unmount when a mounted route root starts panicking", async () => {
-    // The other end of the fallback case above, and behaviour this fix creates:
-    // before it a route root fired neither event, so nothing pinned the
-    // transition. It goes through `syncMountedTiles`' set difference, and a
-    // regression there leaves the runtime believing the tile is still mounted,
-    // so a user's teardown never runs.
     const app = await start(`slot go : Bool = false
 slot mounts : Int = 0
 slot unmounts : Int = 0
@@ -661,8 +551,6 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> Other} init=[]
       false,
     );
     await tick();
-    // 10 for the parent, 1 for the child: both are route targets, and the
-    // count tells them apart without a second slot.
     expect(live.mounts).toBe(11);
   });
 });

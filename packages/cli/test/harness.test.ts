@@ -1,7 +1,3 @@
-// The doubles the headless tiers run against. What they answer decides what a
-// green `kumiki smoke` means, so each of their promises is asserted here rather
-// than assumed by the corpus that depends on them.
-
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -66,9 +62,6 @@ describe("the fetch double answers from the fixture, never from a host", () => {
     );
   });
 
-  // The app above turns every failure into `Failed(...)` — which is what an app
-  // is supposed to do, and what made a network outage look like a passing run.
-  // The report has to fail even though the app handled it.
   it("fails the run even when the app has an .err reducer for it", async () => {
     const report = await drive(QUOTE, {});
     expect(report.mounted).toBe(true);
@@ -80,9 +73,6 @@ describe("the fetch double answers from the fixture, never from a host", () => {
     expect(report.issues.map((i) => i.message)).toEqual([]);
   });
 
-  // A queue is what makes a retry ladder observable: the same URL has to answer
-  // differently on the second and third attempt, or `retry=exponential` is
-  // exercised only in the shape of its declaration.
   it("walks a queue and repeats its last entry", async () => {
     useHttpFixture({ "GET /quote": [{ status: 500 }, { status: 503 }, OK] });
     const statuses: number[] = [];
@@ -90,12 +80,7 @@ describe("the fetch double answers from the fixture, never from a host", () => {
     expect(statuses).toEqual([500, 503, 200, 200]);
   });
 
-  // …and the ladder run through the runtime, not through the double: three
-  // attempts against one click is the retry policy actually firing.
   it("is what a retry policy climbs", async () => {
-    // A settle long enough for the ladder: 10ms then 20ms of backoff, which the
-    // CLI's 20ms window cuts off — the run ends and disposal aborts what is
-    // still in flight.
     const report = await drive(
       QUOTE,
       { "GET /quote": [{ status: 500 }, { status: 500 }, OK] },
@@ -125,9 +110,6 @@ describe("a fixture that is there, and one that is not", () => {
     expect(readHttpFixture(counter)).toBeNull();
   });
 
-  // A bare catch would call every read failure "no fixture", and the author
-  // would be told to add a file that is sitting right there — or, in an example
-  // that issues no request, told nothing at all.
   it("does not call a directory in the fixture's place 'no fixture'", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fixture-"));
     const source = join(dir, "app.kumiki");
@@ -140,16 +122,10 @@ describe("a fixture that is there, and one that is not", () => {
     }
   });
 
-  // `replace(/\.kumiki$/, …)` is a no-op for a path that does not end in
-  // `.kumiki`, so the source itself was parsed as JSON and the author was told
-  // their `.kumiki` file was not valid JSON.
   it("refuses a path that is not a Kumiki source", () => {
     expect(() => readHttpFixture("somewhere/app.txt")).toThrow(/not a Kumiki source/);
   });
 
-  // "add it to the .http.json" is unhelpful advice for an author who wrote the
-  // key and left its queue empty — the one way a queue can run out, since the
-  // documented rule is that the last entry repeats.
   it("says an empty queue is empty rather than missing", async () => {
     const report = await drive(QUOTE, { "GET /quote": [] });
     const said = report.issues.map((i) => i.message).join("\n");
@@ -159,9 +135,6 @@ describe("a fixture that is there, and one that is not", () => {
 });
 
 describe("the fetch double can be cancelled", () => {
-  // Without a tick of latency nothing is ever in flight, so `policy=latest`,
-  // `http.cancel` and the timeout would all be certified by a stub that had
-  // already answered.
   it("rejects an in-flight request when its signal aborts", async () => {
     useHttpFixture({ "GET /quote": OK });
     const controller = new AbortController();
@@ -179,9 +152,6 @@ describe("the fetch double can be cancelled", () => {
 });
 
 describe("the IntersectionObserver double actually notifies", () => {
-  // happy-dom ships one whose `observe()` does nothing, so the runtime's §3.8
-  // prefetch path was unreachable from either headless tier — and so was its
-  // own fallback, because the branch is chosen by `typeof IO === "function"`.
   it("reports an observed target as intersecting", async () => {
     const seen: Element[] = [];
     const io = new IntersectionObserver((entries) => {

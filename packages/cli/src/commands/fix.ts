@@ -34,11 +34,6 @@ export function registerFix(program: Command): void {
             apply,
             capsFor(fixPath).capabilities,
           );
-          // `ok` counts "a fix is available in dry-run" as success, which is a
-          // proposal rather than a repair: the test still fails and the file
-          // is untouched. The exit code answers the same question here as it
-          // does for the diagnostic path — is the file in the state that was
-          // asked for now that the process is ending?
           const repaired = outcome.status === "already-pass" || (apply && outcome.ok);
           if (!repaired) process.exitCode = 1;
           return;

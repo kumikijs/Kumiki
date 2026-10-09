@@ -138,22 +138,15 @@ describe("typecheck", () => {
   });
 
   it("reports an error-boundary that names no tile (E0105)", () => {
-    // The only tile-name position nothing used to resolve. The lowering
-    // skipped a name it could not find, so a misspelling produced a tile with
-    // no boundary, no diagnostic, and no sign until something panicked.
     const src = `
       tile Fallback in=PanicInfo = column(text($1.message))
       tile A error-boundary=Nope = column()
       app App caps=[] routes={"/" -> A, "/404" -> A} init=[]
     `;
     const errors = checkSrc(src);
-    // The whole set: an unresolved boundary is E0105 alone, and nothing else
-    // about the clause — E0220 has no fallback to judge — piles on.
     expect(errors.map((e) => e.code)).toEqual(["E0105"]);
     const found = errors.filter((e) => e.code === "E0105");
     expect(found[0]?.message).toBe('Tile "A" declares error-boundary "Nope", which is not a tile');
-    // Reported at the clause rather than at the definition, so a tile with
-    // several of them is not ambiguous.
     expect(found[0]?.pos.line).toBe(3);
     expect(checkSrc(src.replace("Nope", "Fallback"))).toEqual([]);
   });
@@ -266,8 +259,6 @@ describe("typecheck", () => {
     );
   });
 
-  // Issue #85: nested routes — the spec/§3.6 contract is enforced at the type
-  // check layer so a misuse fails before it reaches the runtime.
   describe("sub-routes (issue #85)", () => {
     const nested = (parentPath: string, extra = "") => `
       tile NotFound = page(heading("404"))
@@ -335,8 +326,6 @@ describe("typecheck", () => {
     });
 
     it("reports a parent without route-outlet in its body as E0113", () => {
-      // sub-routes declared but the body just has a heading — the matched
-      // child would have nowhere to render.
       const src = `
         tile NotFound = page(heading("404"))
         tile Account = page(heading("a"))
@@ -389,9 +378,6 @@ describe("typecheck", () => {
     });
 
     it("rejects an unknown mock policy value (E0712)", () => {
-      // `from_log` (underscore) is the classic typo of `from-log`. Before
-      // typecheck caught it, codegen silently lowered to `{policy: "ignore"}`
-      // and the test would pass while skipping the very effect being replayed.
       const src = `
         ${PREAMBLE}
         test t = episode-test
@@ -669,15 +655,7 @@ describe("typecheck", () => {
     });
   });
 
-  // issue #123 — match arm patterns must agree with the scrutinee's static
-  // type. Until now `addPatternBinds` only collected bind names; tuple arity,
-  // variant arity, and unknown tags all slipped through and turned into
-  // silent "arm is always false" runtime mis-behaviour (the codegen falls
-  // through to the next arm). The three new codes:
-  //   E0207 pat-arity-mismatch   — tuple/variant arity differs from the type
-  //   E0208 pat-type-mismatch    — pattern shape vs scrutinee type mismatch
-  //   E0209 pat-unknown-variant  — variant tag not in the scrutinee union
-  describe("issue #123 — match-pattern type integrity", () => {
+  describe("match-pattern type integrity", () => {
     it("reports tuple-arity mismatch in fn MatchExpr (E0207)", () => {
       const src = `
         fn f(p: Tuple(Int, Int)) -> Int = match p with | (a, b, c) -> a + b + c
@@ -789,10 +767,6 @@ describe("typecheck", () => {
     });
 
     it("registers PVariant binds into localTypes so arm body sees the inner type", () => {
-      // Regression: `Some(x)` against Option(Int) must bind `x` as Int, so a
-      // call like `Int.show(x)` (or the `.show` shortcut) typechecks. Before
-      // this issue, `x` was added to localBinds with no type — `.show` would
-      // happen to lower correctly but `inferType` returned null for the ref.
       const src = `
         fn label(sel: Option(Int)) -> Text = match sel with
           | None -> "none"
@@ -856,10 +830,6 @@ describe("typecheck", () => {
     });
 
     it("accepts a user generic union instantiation (LoadResult(Post)) — regression", () => {
-      // The first cut of this PR rejected user generic union instantiations
-      // (`type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(Text)` used
-      // as `LoadResult(Post)`) with E0208 because the TypeApp path didn't
-      // substitute type params. Pin the fix.
       const src = `
         type Post = {id: Text, body: Text}
         type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(Text)
@@ -878,10 +848,6 @@ describe("typecheck", () => {
     });
 
     it("reports nested PTuple element mismatch (PTuple inside PTuple)", () => {
-      // Variant-payload binds are bare identifiers in this grammar
-      // (`Ok(n)`, never `Ok((a, b))`), so nested-pattern coverage is
-      // exercised via tuple-of-tuple — the recursive call into the inner
-      // PTuple element must propagate E0207 on its own arity.
       const src = `
         fn label(p: Tuple(Tuple(Int, Int), Int)) -> Int = match p with
           | ((a, b, c), n) -> a + b + c + n
@@ -894,8 +860,6 @@ describe("typecheck", () => {
     });
 
     it("preserves the user alias name in diagnostic messages", () => {
-      // `type Light = Red | Green` should surface as "Light" in the
-      // diagnostic, not the expanded body "Red | Green".
       const src = `
         type Light = Red | Green
         fn label(l: Light) -> Text = match l with
@@ -914,9 +878,6 @@ describe("typecheck", () => {
     });
 
     it("reports E0210 type-arity mismatch for user generic types", () => {
-      // A misuse of a user generic — passing the wrong number of type args —
-      // would otherwise silently turn pattern checks into a no-op via
-      // `paramSubstitution` producing a short map. Caught at resolveType.
       const src = `
         type Box(A, B) = {a: A, b: B}
         slot s : Box(Int) = {a: 0, b: ""}
@@ -932,10 +893,6 @@ describe("typecheck", () => {
     });
 
     it("does not infinite-recurse on a self-cycling user type", () => {
-      // `type Cycle(T) = Cycle(T)` self-refers through the same name. The
-      // cycle-detection set in lookupVariantPayloads must short-circuit;
-      // otherwise resolveToTuple / lookupVariantPayloads would recurse
-      // forever. We assert that check() returns within the suite's timeout.
       const src = `
         type Cycle(T) = X(T)
         slot s : Cycle(Int) = X(0)
@@ -944,16 +901,10 @@ describe("typecheck", () => {
         app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       `;
       const errors = checkSrc(src);
-      // Just confirm there's no internal stack overflow; specific error
-      // content isn't required here.
       expect(Array.isArray(errors)).toBe(true);
     });
   });
 
-  // Issue #131: previously `on=ui.click(NonExistent)` passed silently and
-  // bound to nothing — a typo in a selector was indistinguishable from a
-  // genuinely-unused reducer. The checker now requires the selector's tile
-  // name to refer to a declared tile.
   describe("undefined tile in ui.* selector (E0211)", () => {
     it("reports a reducer that targets an undeclared tile", () => {
       const src = `
@@ -983,10 +934,6 @@ describe("typecheck", () => {
     });
 
     it("accepts the _ wildcard selector for indirectly-dispatched reducers", () => {
-      // The `_` sentinel marks a reducer that has no UI subscription of its
-      // own — it is invoked through an effect callback such as
-      // `emit confirm({onYes: r, onNo: r})`. Treating it as an undeclared
-      // tile would falsely diagnose every confirm/leave-guard pattern.
       const src = `
         slot x : Int = 0
         reducer cb on=ui.click(_) do= x := x + 1
@@ -998,10 +945,6 @@ describe("typecheck", () => {
     });
   });
 
-  // #143 — typecheck-time guard that a `ui.<ev>(Tile)` reducer subscription
-  // can actually fire on the target tile. Codegen drops the handler silently
-  // for mismatches (e.g. `ui.focus(box)`), so without this warning the
-  // reducer is dead code that compiles cleanly.
   describe("W0212 ui-event-tile-mismatch", () => {
     it("flags a direct builtin mismatch (ui.focus on a box)", () => {
       const src = `
@@ -1020,9 +963,6 @@ describe("typecheck", () => {
     });
 
     it("suppresses the warning when a focusable descendant is in the cascade body", () => {
-      // `ui.click(Outer)` cascades down to `check` which IS in click's
-      // allowed set — codegen wires the handler on the descendant, so the
-      // subscription is live and W0212 should not fire.
       const src = `
         slot x : Int = 0
         reducer rc on=ui.click(Outer) do= x := x + 1
@@ -1110,11 +1050,6 @@ describe("typecheck", () => {
     });
 
     it("descends into a TileFor body — `for ... box(...)` warns because box never fires click", () => {
-      // Pins the actual descend behavior, not just "is the root statically
-      // resolvable". A previous version of this test used `button` inside
-      // the `for` body and the warning was suppressed by the accidental
-      // overlap with click's allowed set — which would pass even if the
-      // descent into TileFor never happened.
       const src = `
         slot xs : List(Int) = [1, 2]
         slot s : Text = ""
@@ -1156,9 +1091,6 @@ describe("typecheck", () => {
     });
 
     it("descends into BOTH branches of a TileIf — accepts when either branch is allowed", () => {
-      // `if then input(...) else button(...)` — both branches contribute an
-      // allowed root, so W0212 must NOT fire. Catches a regression where the
-      // walker only descended into `consequent`.
       const src = `
         slot c : Bool = true
         slot v : Text = ""
@@ -1188,8 +1120,6 @@ describe("typecheck", () => {
     });
 
     it("descends into all arms of a TileMatch — accepts when any arm is allowed", () => {
-      // Arm 1: button (allowed for click). Arm 2: box (disallowed). Mixed.
-      // The aggregate observed set includes button, so warn must be silent.
       const src = `
         type Mode = A | B
         slot m : Mode = A
@@ -1223,12 +1153,6 @@ describe("typecheck", () => {
     });
 
     it("warns on ui.click(<link tile>) — runtime reserves link click for nav", () => {
-      // Pins the design choice in `UI_EVENT_TILE_KINDS`: `link` is intentionally
-      // NOT in click's allowed set even though `<a>` fires click natively,
-      // because the runtime intercepts click on links for navigation and does
-      // not invoke user `onClick` reducers. Any future change that adds `link`
-      // to the click allowed set without a matching runtime change must trip
-      // this test.
       const src = `
         slot s : Text = ""
         reducer rc on=ui.click(L) do= s := "x"
@@ -1243,11 +1167,6 @@ describe("typecheck", () => {
     });
   });
 
-  // #149 — a typo in the `#id` portion of a `ui.<ev>(Tile#id)` selector was
-  // silent: parser/checker/codegen accept it and runtime `_dispatch` drops the
-  // event because `el.id !== selector.id`. E0212 is opt-in via
-  // `strictSelectorId` so the PR #148 runtime-filter regression (which uses a
-  // deliberate literal mismatch) still compiles by default.
   describe("selector id mismatch (E0212, strictSelectorId)", () => {
     const checkStrict = (src: string) => check(parse(lex(src)), { strictSelectorId: true });
 
@@ -1303,8 +1222,6 @@ describe("typecheck", () => {
     });
 
     it("silently passes when the tile's {id} value is a non-Str expression", () => {
-      // A `Ref` id could resolve to anything at runtime — the runtime filter
-      // is authoritative, so we do not flag it at compile time.
       const src = `
         slot x : Int = 0
         slot dynId : Text = "new"
@@ -1390,10 +1307,6 @@ describe("typecheck", () => {
       expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
     });
 
-    // TileMatch differs from TileIf: it folds N arms (potentially 1..N),
-    // seeded with UNKNOWN so a hypothetical 0-arm match cannot emit an
-    // empty-`actual` message. Every arm must contribute a literal id for the
-    // fold to stay `known: true`.
     it("flags a TileMatch where every arm's literal id mismatches", () => {
       const src = `
         type Mode = A | B
@@ -1429,8 +1342,6 @@ describe("typecheck", () => {
     });
 
     it("stays silent when any TileMatch arm has no {id} prop", () => {
-      // Pin the fold semantics: one arm without {id} makes the whole tile's
-      // id set unknown, matching the TileIf partial-dynamic case.
       const src = `
         type Mode = A | B
         slot m : Mode = A
@@ -1445,9 +1356,6 @@ describe("typecheck", () => {
       expect(checkStrict(src).some((d) => d.code === "E0212")).toBe(false);
     });
 
-    // TileFor / TileWhen are pass-through wrappers around a single body. Pin
-    // that a mismatched literal id inside the body still surfaces E0212, so
-    // a future refactor that accidentally drops the descent regresses loudly.
     it("descends into TileFor body — a literal id mismatch under `for` still fires E0212", () => {
       const src = `
         slot xs : List(Int) = [1, 2]

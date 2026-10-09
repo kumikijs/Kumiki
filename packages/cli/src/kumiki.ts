@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-// Thin entry: wire every verb into a commander program and hand off argv.
-// Per-verb handlers live in ./commands/<verb>.ts; library-shape functions
-// (addDef, smokeFile, ...) still live in the thematic modules re-exported by
-// ./index.ts so programmatic consumers (MCP, examples) are unaffected.
 
 import { Command, CommanderError } from "commander";
 import { registerAdd } from "./commands/add.ts";
@@ -25,13 +21,6 @@ import { registerTest } from "./commands/test.ts";
 import { registerUnlock } from "./commands/unlock.ts";
 import { registerView } from "./commands/view.ts";
 
-/**
- * Verb → the usage string surfaced when commander itself trips on parsing
- * (missing required option value, excess positionals). Each per-verb command
- * already exits 2 with the same string when its action detects the problem;
- * this map is the fallback for the paths that parsing bails out of before the
- * action ever runs.
- */
 const USAGES: Record<string, string> = {
   build: "Usage: kumiki build <input.kumiki> <outdir> [--minify] [--bundle]",
   list: "Usage: kumiki list <input.kumiki> [layer]",
@@ -107,11 +96,6 @@ async function main(argv: string[]): Promise<void> {
       ) {
         process.exit(e.exitCode ?? 0);
       }
-      // Parse failures (unknown option, missing option arg, excess positional,
-      // a positional outside its `choices`): commander has already written its
-      // own diagnostic to stderr — under `exitOverride` it prints first and
-      // throws second — so all that is left here is the per-verb usage line.
-      // Re-printing `e.message` said the same sentence twice.
       if (e.code === "commander.excessArguments" && argv[2] === "replay") {
         // Preserve the pre-refactor wording so `unexpected positional` regex hits.
         console.error("kumiki replay: unexpected positional arguments after <episode-id>");
@@ -119,10 +103,6 @@ async function main(argv: string[]): Promise<void> {
         const usage = usageFor(argv);
         if (usage) console.error(usage);
       }
-      // Commander sends parse failures through exitCode=1 by default
-      // (`commander.optionMissingArgument`, `commander.excessArguments`).
-      // Tests treat those as "argument shape" errors that deserve exit 2,
-      // matching the pre-refactor hand-rolled parser.
       process.exit(2);
     }
     console.error(String(e));

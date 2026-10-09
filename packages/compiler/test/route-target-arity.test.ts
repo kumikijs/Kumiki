@@ -1,10 +1,3 @@
-// A route entry applies the tile it names, and is the only application that
-// cannot pass anything: the route table lowers to `tile: () => …` (a
-// `sub-routes` parent to `tile: (_fill) => …`, whose parameter is the runtime's
-// outlet fill, not an argument the target can read). A target
-// that declared `in=` left `$1` unbound, so `check` and `build` both said ok
-// and the mount died with `_d_1 is not defined` — nothing rendered at all.
-
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -92,9 +85,6 @@ describe("a route target is rendered with no argument", () => {
   });
 });
 
-// The refusal a caller reaching codegen without `check()` gets. Unreachable
-// through `compile`, which is what the case above pins — so it is asserted
-// where it does fire, or it would be asserted nowhere.
 describe("codegen refuses the entry it cannot lower", () => {
   const lower = (src: string) => () =>
     codegen(parse(lex(src)), { runtimeSpecifier: "./runtime.js" });
@@ -169,8 +159,6 @@ tile Home = column(text("h"))`;
   });
 
   it("reports a parent that declares in= once, at its route entry", () => {
-    // The third `genRouteTile` site: a route target that carries sub-routes of
-    // its own. The parent is refused; its children are read as usual.
     const src = app(
       '{"/" -> Home, "/s/*" -> Parent, "/404" -> Home}',
       `tile Child = column(text("c"))
@@ -184,9 +172,6 @@ tile Home = column(text("h"))`,
   });
 
   it("reports an orphaned parent for both mistakes at once", () => {
-    // `checkSubRoutes` runs for every tile, not only for reachable ones, so a
-    // sub-route entry is answered for before anything routes to its parent.
-    // Narrowing that later would take this report with it.
     const src = app(
       '{"/" -> Home, "/404" -> Home}',
       `tile Panel in=Text = column(text($1))

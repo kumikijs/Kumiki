@@ -2,21 +2,12 @@ import type { AppShape, CapabilityProvider } from "@kumikijs/runtime";
 import { defineKumikiElement } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Outbound ecosystem seam: a compiled Kumiki app embedded into any host page as
-// a custom element. These tests use hand-crafted AppShapes (the runtime contract
-// codegen targets) so the element wiring is verified independently of the
-// compiler. A compiled app is single-instance (render closures bind to the
-// module's live state), so each test defines a fresh tag bound to a fresh app.
-
 const CAP = "telemetry.track";
 
 type AppLive = AppShape & {
   _dispatch?: (name: string, el: Record<string, unknown>) => void;
 };
 
-// Counter app + a custom-cap effect (`track`) whose invoke mirrors exactly what
-// codegen emits for a custom capability (resolve the host provider at the
-// boundary). `fire` emits it; `inc` bumps a refined counter (0..999).
 function makeApp(): AppShape {
   const app: AppShape = {
     slots: {

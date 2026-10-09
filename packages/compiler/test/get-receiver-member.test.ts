@@ -1,15 +1,3 @@
-// `.get` is a member of `Option` / `Result` / `Map` / `List` only (stdlib.md
-// §2.2.1 / §2.2.3 / §2.2.4 / §2.2.5). On any other receiver the checker knows,
-// every spelling of it — `.get`, `.get()`, `.get(k)`, and a count no reading
-// takes — is one mistake: the receiver has no such member, E0108 and nothing
-// else. An argument count is a question about a member the receiver has; asked
-// of one it lacks, it has no answer to give, and saying E0213 besides would
-// report the one mistake twice.
-//
-// A receiver whose type cannot be decided keeps the name-based dispatch
-// §2.2.3 leaves it, so it stays unreported — apart from a count past both
-// readings, which no receiver takes.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -18,8 +6,6 @@ tile App = column(Run)
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-// Fns a fragment argument can name: one takes more arguments than any member
-// hands it, one takes none.
 const FNS = `fn three(a: Int, b: Int, c: Int) -> Bool = a + b + c > 0
 fn zero() -> Bool = true
 `;
@@ -39,8 +25,6 @@ ${APP}`;
   return check(parse(lex(src))).map((e) => e.code);
 }
 
-// Every receiver with a row in the member table that has no `.get`, and a
-// record — `R` has no field of that name.
 const KNOWN = [
   "Text",
   "Int",
@@ -67,9 +51,6 @@ describe(".get on a known receiver that has none is E0108, and only that", () =>
 });
 
 describe("one diagnostic for a member the receiver lacks, whatever the member", () => {
-  // The rule is not `.get`'s alone: an arity check on a member the receiver
-  // does not have is the same second report for any name — the call's own
-  // count, or the count the member would hand a fn named as its fragment.
   it.each([
     ["Text", "v.filter()"],
     ["Text", "v.filter(three)"],

@@ -12,43 +12,12 @@ export type GenCtx = {
   types: Map<string, TypeDef>;
   /** Built-in tile kinds the generated code emits (filled during generation, #71). */
   usedTiles: Set<string>;
-  /**
-   * Icon names referenced by `icon(name="<literal>")` (#101). Collected during
-   * tile-body generation and used to bake only the referenced entries from
-   * `opts.icons` into the emitted `App.icons` map. Dynamic `name=<expr>` calls
-   * are not captured — they resolve via `theme.icons` at runtime.
-   */
   usedIcons: Set<string>;
-  /**
-   * The walks that answer where a value fails a predicate written anywhere in
-   * its type (language.md §1.3.3). One per program, shared by every reader —
-   * a slot's gate and a `Decoder.Json(T)`'s check — so a type is lowered to one
-   * helper however many places ask about it.
-   */
   refinements: NestedRefinements;
-  /**
-   * The readings an `input` parses its text by when the bound position's base
-   * is an `Int`, a `Float` or a `Time` (forms.md §5.1.1). Each is declared
-   * once per app instance, so the reader a node carries is the same object on
-   * every render and the node still compares equal to the last one.
-   */
   usedReaders: Set<ParseReading>;
-  /**
-   * Set while lowering a tile-test's `expect` tree. The `{…}` block of each
-   * node there is styling, which a snapshot does not compare (testing.md
-   * §8.4), so its data stays out of the node's `props`: what is left there is
-   * what the expectation states with named arguments, and the runtime
-   * compares all of it.
-   */
   expectedTree?: boolean;
 };
 
-/**
- * The names in scope at one point in the emitted code, each mapped to the JS
- * identifier a read of it resolves to. A `Set` was enough while one Kumiki name
- * meant one JS name; it stopped being enough once a name could be declared
- * twice — see {@link declareBind}.
- */
 export type BindScope = Map<string, string>;
 
 export type EvalCtx = {
@@ -58,13 +27,6 @@ export type EvalCtx = {
   reducerScope?: boolean;
 };
 
-/**
- * A scope holding `locals`. Pass a {@link BindScope} to continue an enclosing
- * scope — the identifiers its shadowed names resolve to come along, which is
- * what keeps a read inside a nested form pointing at the binding that is
- * actually in scope there. Pass names to open a fresh one, where each is its
- * own `jsBinding`.
- */
 export function makeEvalCtx(
   gen: GenCtx,
   locals: Iterable<string> | BindScope,
@@ -75,14 +37,6 @@ export function makeEvalCtx(
   return { gen, localBinds, reducerScope };
 }
 
-/**
- * A nested scope inside `ctx`: its bindings, and its view of the slots. Every
- * lowering that opens one — a `match` arm, a `let … in` body, a method's
- * predicate, a `for` / `if` block — goes through here, so a slot read inside
- * a reducer body keeps reading `_next` first and sees what the body has
- * already written. A tile or other render-time context has no `reducerScope`
- * to hand down, so its nested scopes read `_live`.
- */
 export function childCtx(ctx: EvalCtx): EvalCtx {
   return makeEvalCtx(ctx.gen, ctx.localBinds, ctx.reducerScope);
 }
@@ -94,20 +48,6 @@ export function addBind(ctx: EvalCtx, name: string): EvalCtx {
   return out;
 }
 
-/**
- * Bring `name` into `ctx` and return the identifier to declare it under.
- *
- * A name declared over one already in scope shadows it (language.md §1.6.7),
- * and a Kumiki scope is not always a JS one: a reducer's top-level `let` lands
- * in the same JS block as the trigger's binds and the positional-binding
- * declarations, so `let $route = …` there used to emit a second `const
- * _d_route` and the module threw `SyntaxError` at load. The shadow takes an
- * identifier of its own instead, which is what makes the rule hold in the one
- * place the language's nesting does not reach.
- *
- * The declaration is what changes name; every read goes through
- * {@link bindRef}, so the two sides cannot drift apart.
- */
 export function declareBind(ctx: EvalCtx, name: string): string {
   const js = freshBinding(ctx.localBinds, name);
   ctx.localBinds.set(name, js);
@@ -119,23 +59,6 @@ export function bindRef(ctx: EvalCtx, name: string): string {
   return ctx.localBinds.get(name) ?? jsBinding(name);
 }
 
-/**
- * An identifier for a declaration of `name` in `scope` that no live binding is
- * already using.
- *
- * The `$<n>` suffix cannot be produced by {@link jsBinding} from any other
- * Kumiki name, which is what keeps two distinct names from converging on one
- * identifier. A `$` that `jsBinding` emits is either the second character of
- * the `_$` escape for a user `_` or the marker on an unsafe name; the one here
- * is followed by a digit, so it is not the marker, so it would have to be the
- * escape — which needs a `_` before it, i.e. a `jsBinding` output ending in
- * one. No output ends in `_`: a user `_` becomes `_$`, and the only other
- * source of one is `-` / `.`, neither of which can end an identifier the lexer
- * produces (`readIdentBody` continues a `-` only when an identifier character
- * follows it). `packages/compiler/test/js-identifier-safety.test.ts` brute-forces
- * the property over the identifiers the lexer accepts, because the argument
- * rests on that rule and on `jsBinding`'s mapping rather than on anything local.
- */
 function freshBinding(scope: BindScope, name: string): string {
   const base = jsBinding(name);
   if (!scope.has(name)) return base;
@@ -146,66 +69,26 @@ function freshBinding(scope: BindScope, name: string): string {
   }
 }
 
-/**
- * The raw character mapping. `$…` is the compiler's own bind namespace ($1,
- * $event, effect binds) and lands in `_d_…`; `-` and `.` are legal in Kumiki
- * names but not in JS ones.
- */
 function mapSpecialChars(name: string): string {
   return name.replace(/^\$/, "_d_").replace(/-/g, "_").replace(/\./g, "_");
 }
 
-/**
- * Map a Kumiki name for a *property* position — `recv.method()`, an object
- * literal key. Reserved words are legal there, and the emitted name has to be
- * exactly what the runtime defines, so nothing is escaped.
- *
- * For anything that becomes a JS binding, use {@link jsBinding} instead. The
- * two are deliberately named so the wrong one reads as wrong at the call site.
- */
 export function jsProperty(name: string): string {
   return mapSpecialChars(name);
 }
 
-/**
- * The key a Kumiki field name has on a JS object that the program itself reads
- * by field: a record, and the `$el` payload a tile hands its handlers. The
- * source spelling, quoted — `item-name` stays `"item-name"` — because a field
- * read (`r.item-name`, `$el.item-name`) is lowered with this same key. The
- * writer and the reader take it from here so they cannot disagree.
- *
- * Not {@link jsProperty}: that one rewrites `-` to `_` for names the runtime
- * defines, which a program's own field is not.
- */
 export function fieldKey(name: string): string {
   return JSON.stringify(name);
 }
 
-/**
- * The generated identifier holding one tile family's renderer map. It lives
- * here rather than next to the import header because the reserved-name list
- * below has to enumerate it, and `imports.ts` is downstream of this module.
- */
 export function tileFamilyVar(f: TileFamily): string {
   return `${f}Tiles`;
 }
 
-/**
- * The generated identifier holding one tile family's patcher map — the
- * companion to `tileFamilyVar`. The reconcile mutates a mounted element in
- * place only when it finds a patcher for the tile's kind; a mount without them
- * falls back to rebuilding every changed subtree, discarding focus, caret,
- * `<select>` open state and `<video>` playback on every data-prop change.
- */
 export function tilePatcherFamilyVar(f: TileFamily): string {
   return `${f}Patchers`;
 }
 
-/**
- * The generated identifier holding one tile's renderer, for a tile that ships
- * as its own runtime module (#71). Mirrors the runtime's export name, so the
- * import needs no alias.
- */
 export function tileVar(kind: string): string {
   return `${camelKind(kind)}Tile`;
 }
@@ -215,23 +98,10 @@ export function tilePatcherVar(kind: string): string {
   return `${camelKind(kind)}Patcher`;
 }
 
-/**
- * A tile kind as a JS identifier stem — `route-outlet` would be `routeOutlet`.
- * No kind of a per-tile family is hyphenated today, so the conversion never
- * fires; it is here so that adding one is a table edit rather than a silent
- * syntax error in generated code.
- */
 function camelKind(kind: string): string {
   return kind.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
 }
 
-/**
- * Identifiers the emitted module binds at its own top level: the two it
- * declares, plus every name `emitImportHeader` can import. Names starting with
- * `_` are omitted — {@link jsBinding} already keeps user names out of that
- * namespace. `packages/compiler/test/js-identifier-safety.test.ts` asserts this
- * list still covers what codegen actually emits.
- */
 export const EMITTED_MODULE_BINDINGS: readonly string[] = [
   "App",
   "createApp",
@@ -252,18 +122,11 @@ export const EMITTED_MODULE_BINDINGS: readonly string[] = [
   ...new Set(
     Object.values(TILE_FAMILY).flatMap((f) => [tileFamilyVar(f), tilePatcherFamilyVar(f)]),
   ),
-  // The per-tile modules' exports (#71) — one pair per kind of a family on
-  // `PER_TILE_FAMILIES`, which the granular header imports by these names.
   ...Object.keys(TILE_FAMILY)
     .filter((k) => isPerTileFamily(TILE_FAMILY[k]))
     .flatMap((k) => [tileVar(k), tilePatcherVar(k)]),
 ];
 
-/**
- * Reserved words proper, plus the strict-mode reserved set and
- * `arguments` / `eval`, which are illegal as binding names under the
- * `"use strict"` semantics of an ES module.
- */
 const JS_RESERVED_WORDS: readonly string[] = [
   "arguments",
   "await",
@@ -315,14 +178,6 @@ const JS_RESERVED_WORDS: readonly string[] = [
   "yield",
 ];
 
-/**
- * Globals the emitted code and the runtime it calls into rely on. Binding one
- * of these does not throw at load time — it shadows the global, so the failure
- * surfaces later as `String is not a function` inside an unrelated stdlib call.
- * The list is deliberately wider than what codegen emits today: the cost of an
- * extra entry is one `$` in a name nobody writes, and the cost of a missing one
- * is a silent miscompile.
- */
 const JS_GLOBALS: readonly string[] = [
   "AbortController",
   "Array",
@@ -373,27 +228,6 @@ const JS_UNSAFE_BINDINGS: ReadonlySet<string> = new Set([
   ...EMITTED_MODULE_BINDINGS,
 ]);
 
-/**
- * The emitted preamble backing {@link handlerRef}: one memoised closure per
- * reducer list, per app instance.
- *
- * Handlers used to be minted fresh on every render, which made them impossible
- * to compare — the reconciler's field comparison had to treat any two
- * functions as equal, so a conditional swapping two inline tiles that differ
- * only in their handler reused the element untouched and kept dispatching to
- * the reducer it was created with. Memoising by reducer list restores the
- * property the comparison needs: same handler ⇒ same reference.
- *
- * `App` is the enclosing `createApp()` scope's own instance, resolved at click
- * time, so several compiled apps on one page never cross-wire. Emitting this at
- * module scope instead would bind every instance's handlers to the first one.
- *
- * The cache key is the reducer list joined on `|`. That is injective because
- * the lexer restricts identifiers to `[A-Za-z_][A-Za-z0-9_-]*`, so no reducer
- * name can contain the separator — load-bearing, since two distinct handler
- * chains collapsing onto one entry is the same class of bug the memo exists to
- * fix.
- */
 export const HANDLER_MEMO_PREAMBLE = [
   "const _handlerCache = new Map();",
   "function _h(...names) {",
@@ -412,49 +246,11 @@ export function handlerRef(names: readonly string[]): string {
   return `_h(${names.map((n) => JSON.stringify(n)).join(", ")})`;
 }
 
-/**
- * Map a Kumiki identifier to a JS identifier for a *binding* position — a
- * declaration (`const x`, a parameter, a `for … of` head) or a reference to
- * one. The result is guaranteed to be
- *
- *  - a legal binding name that shadows nothing the emitted module depends on,
- *    so a slot or `let` called `new`, `String` or `httpFetch` still works;
- *  - outside the `_`-prefixed namespace that codegen and the runtime use for
- *    their own symbols (`_live`, `_s`, `_next`, …), so an author-chosen name
- *    can never shadow one and silently compute against the wrong value;
- *  - injective over the identifiers the lexer can produce
- *    (`[A-Za-z_][A-Za-z0-9_-]*`), so two distinct Kumiki names never converge
- *    on one JS name — `a-b` and `a_b` used to. Qualified builtin references
- *    such as `Decoder.Json` also reach this function as a callee; `.` and `-`
- *    share a mapping, which is unambiguous only because the lexer cannot put a
- *    `.` inside an identifier.
- */
 export function jsBinding(name: string): string {
   // The `$…` namespace is the compiler's own and already lands in `_d_…`.
   if (name.startsWith("$")) return mapSpecialChars(name);
-  // Escape `_` first so the following `-` → `_` cannot collide with it. Every
-  // user `_` therefore becomes `_$`, which is also what keeps names that start
-  // with `_` clear of the runtime's symbols.
   const mapped = name.replace(/_/g, "_$").replace(/[-.]/g, "_");
-  // No unsafe name contains `_`, so `mapped === name` here and the `$` suffix
-  // cannot be produced by any other input.
   return JS_UNSAFE_BINDINGS.has(mapped) ? `${mapped}$` : mapped;
 }
 
-/**
- * The user tiles a node is being rendered *under*, outermost first — every
- * name a `ui.<ev>(<Tile>)` selector can use to reach it.
- *
- * A chain rather than the innermost name alone (#333): the enclosing tile used
- * to be replaced at each user-tile boundary, so `box(Inner)` lifted nothing a
- * selector on the container asked for while the inline `box(input(...))`
- * lifted it — the same program written two ways, wired one way. `W0212`
- * resolves the reference when it looks for a descendant that fires the event
- * (`collectTileBuiltinKinds` walks through it) and reported nothing, so both
- * halves were silent about the same dropped handler.
- *
- * It is a property of the PATH a tile was reached by, not of the tile: a
- * `Leaf` written beside its container is not inside it and collects no
- * listener from it.
- */
 export type EnclosingTiles = readonly string[];

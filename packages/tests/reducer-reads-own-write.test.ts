@@ -1,12 +1,3 @@
-// Language.md §1.6.4 invariant 7: a slot read inside a reducer body sees what
-// the body has already written, in every nested form. Each nested form (a
-// `match` arm, a `let … in` body, a method's predicate or element lambda, a
-// statement-level `if` / `match`) opens a scope of its own, and a read in any
-// of them must still lower `_next`-first; a read that runs before the write
-// still sees the value the slot held when the reducer started. A tile renders
-// outside every reducer body, so a tile's nested forms are the control: there
-// the read has to stay on `_live`.
-
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -98,10 +89,6 @@ describe("a statement-level if / match after the write", () => {
 });
 
 describe("a read after a write whose value is undefined in JS", () => {
-  // A `match` with no arm for the scrutinee answers JS `undefined` (the
-  // checker does not require exhaustiveness today), and the batch commits that
-  // value. A later read in the same body has to see the same write rather than
-  // fall back to the value from before the reducer ran.
   it.each([
     ["directly in the body", "got"],
     ["in a match arm", "match 1 with | n -> got"],
@@ -140,9 +127,6 @@ describe("a nested read that runs before the write", () => {
 });
 
 describe("a tile's nested forms still read the live slots", () => {
-  // A tile renders outside every reducer body, where `_next` is not declared,
-  // so a nested scope there must keep reading `_live`: a `_next` read would be
-  // a ReferenceError at render.
   it("renders a tile match arm and let body that read a slot", async () => {
     const source = `type Shape = Circle(Int) | Square(Int)
 slot noteKey : Text  = "a"

@@ -1,8 +1,3 @@
-// SSR snapshot construction (docs/spec/runtime.md §10.6.1) — unit tests over
-// `renderToString`. Builds an AppShape by hand so the test isn't entangled
-// with the compiler, then asserts the snapshot envelope shape, the volatile
-// filter, and the bootstrap episode causal chain.
-
 import type {
   AppShape,
   CapabilityProvider,
@@ -36,8 +31,6 @@ function makeSsrApp(): { app: AppShape; httpProvider: Mock<CapabilityProvider> }
     slots: {
       user: { value: { id: "guest", name: "guest" } satisfies User },
       count: { value: 0 },
-      // language.md §175: `draft` is volatile — neither the snapshot.slots
-      // map nor the bootstrap episode's slot-diffs may carry it.
       draft: { value: "", volatile: true },
     },
     caps: ["http.get"],
@@ -184,9 +177,6 @@ describe("renderToString §10.6.1", () => {
   });
 
   it("resets app.live to slot defaults after each request so the next request can't see leftovers", async () => {
-    // Edge / Node SSR runs the same module-singleton `App` across many
-    // requests. A leaked `app.live` would mean user A's `user` slot lands
-    // in user B's HTML and snapshot.
     const { app } = makeSsrApp();
 
     const providerA = vi.fn<CapabilityProvider>(async () => ({
@@ -196,14 +186,9 @@ describe("renderToString §10.6.1", () => {
     const resultA = await renderToString(app, { providers: { "http.get": providerA } });
     expect(resultA.snapshot.slots.user).toEqual({ id: "u_A", name: "Alice" });
 
-    // The shared singleton was wiped back to slot defaults on the way out
-    // of `renderToString`, so anyone reading `app.live` between requests
-    // sees `guest`, never Alice.
     expect(app.live?.user).toEqual({ id: "guest", name: "guest" });
     expect(app.live?.count).toBe(0);
 
-    // Request B with a different provider — must see DEFAULTS in dispatchEmit,
-    // never carry-over from request A.
     const providerB = vi.fn<CapabilityProvider>(async () => ({
       kind: "ok",
       value: { id: "u_B", name: "Bob" },
@@ -216,8 +201,6 @@ describe("renderToString §10.6.1", () => {
   it("records a panic step when an SSR reducer throws — never silent", async () => {
     const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
     const { app } = makeSsrApp();
-    // Replace the userLoaded reducer with one that throws so SSR observes
-    // a reducer panic on a happy-path effect outcome.
     app.reducers = app.reducers.map((r) =>
       r.name === "userLoaded"
         ? {

@@ -1,10 +1,3 @@
-// A `label {for: …}` that names no id (E0705).
-//
-// `for` is the whole of what makes a label a label: it is what focuses the
-// control when the label is clicked and what gives the field its accessible
-// name. A `for` pointing at nothing reads, in source, exactly like one that
-// works — and two of the corpus apps had five such labels between them.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -24,7 +17,7 @@ app P
 `;
 }
 
-describe("E0705 label-for (#251)", () => {
+describe("E0705 label-for", () => {
   it("reports a for that names no id in the program", () => {
     expect(codes(program('column(label(text="Name") {for: "name"})'))).toContain("E0705");
   });
@@ -75,8 +68,6 @@ app P
   });
 
   it("reports a literal for against a computed id, and says so on purpose", () => {
-    // One literal name cannot address a control per row. The fix is to build
-    // the `for` the same way the id is built, which the check then skips.
     const computed = program(
       'column(label(text="Name") {for: "row-1"}, input(bind=draft) {id: "row-" + draft})',
     );

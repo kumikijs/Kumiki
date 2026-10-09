@@ -1,15 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSrcdoc, capabilities, compileExample, examples } from "./preview";
 
-// AC — shared compile→preview pipeline (playground editor + home-page demo):
-//  1. the example catalog loads from packages/examples and is name-sorted;
-//     the capability manifest (kumiki.caps.json) is honored
-//  2. buildSrcdoc embeds the compiled JS as a module script plus the sandbox
-//     seams: memory router, demo http.get/telemetry.track providers, and the
-//     localStorage shim for the opaque origin
-//  3. compileExample compiles a real committed example into a srcdoc
-//  4. compileExample reports unknown names as an error result, not a throw
-
 describe("preview pipeline", () => {
   it("AC1: loads the sorted example catalog and the capability manifest", () => {
     expect(examples.length).toBeGreaterThan(20);

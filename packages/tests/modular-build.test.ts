@@ -1,15 +1,3 @@
-// Issue #71: per-app DCE. Two cross-package guards:
-//
-// 1. The compiler's TILE_FAMILY table and the runtime's tiles-* modules must
-//    agree — a tile assigned to family X that the runtime renders in family Y
-//    would make `kumiki build` ship an app whose tile has no renderer. The
-//    runtime's graceful missing-tile fallback would hide that as a console
-//    error, so we pin the mapping structurally here.
-//
-// 2. Every example must compile in modular mode and reference only runtime
-//    modules that actually exist as build artifacts (the same set tsdown emits
-//    to dist/modules — no anonymous chunks, no dangling imports).
-
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,7 +6,6 @@ import {
   compile,
   EFFECT_HANDLERS_SHARED,
   isPerTileFamily,
-  PER_TILE_FAMILIES,
   PER_TILE_FAMILY_SHARED,
   TILE_FAMILY,
   type TileFamily,
@@ -50,13 +37,6 @@ const RUNTIME_FAMILIES = {
   status: statusTiles,
 } as const;
 
-/**
- * Every module file the runtime build emits to dist/modules (sans extension),
- * read from the build rather than listed here: the set changed once already
- * (families to per-tile modules, #71) and a hand-kept copy would have said the
- * new names were unknown while the build was emitting them. `test` depends on
- * `^build`, so this directory is the runtime's current output.
- */
 const AVAILABLE_MODULES = new Set(
   readdirSync(join(packagesDir, "runtime", "dist", "modules"))
     .filter((f) => f.endsWith(".js"))
@@ -93,10 +73,6 @@ describe("compiler TILE_FAMILY ⇆ runtime tiles-* modules (#71)", () => {
   });
 
   it("gives every tile of a per-tile family its own built module", () => {
-    // The module name is derived from the kind (`tiles-text-link`), so a kind
-    // added to one of these families without a matching runtime entry compiles
-    // to an import of a file that was never built — a blank page, and `check`
-    // and `build` both pass.
     for (const tile of BUILTIN_TILES) {
       if (!isPerTileFamily(TILE_FAMILY[tile])) continue;
       const mod = tileModule(tile);
@@ -112,13 +88,6 @@ describe("compiler TILE_FAMILY ⇆ runtime tiles-* modules (#71)", () => {
   });
 
   it("emits exactly the module set the compiler can ask for, and nothing else", async () => {
-    // The anonymous-chunk guard. `dist/modules` is built from 19 tile entries
-    // sharing `tiles/input/_shared.ts`; if that stopped resolving to its own
-    // entry chunk, rolldown would emit a shared chunk under a generated name,
-    // every tile module would import it, and `kumiki build` — which copies by
-    // NAME, from the compiler's list — would ship a dangling import. Presence
-    // checks cannot see that, because the named files it looks for are all
-    // still there. Only an exact comparison can.
     const expected = new Set<string>([
       "core",
       "stdlib",
@@ -142,13 +111,6 @@ describe("compiler TILE_FAMILY ⇆ runtime tiles-* modules (#71)", () => {
   });
 
   it("exports each per-tile module under the names codegen imports", async () => {
-    // Codegen writes `import { selectTile, selectPatcher } from
-    // "./runtime/tiles-input-select.js"` from `tileVar` / `tilePatcherVar`,
-    // which derive the names from the kind. Rename `selectTile` in the runtime
-    // and every tier stays green — typecheck never sees the generated import,
-    // and the family aggregate still re-exports under its own name — while a
-    // built app gets `undefined` in `_tiles` and renders a blank tile. That is
-    // the failure mode #71's own notes warn about; this is the guard.
     const modulesDir = join(packagesDir, "runtime", "dist", "modules");
     for (const tile of BUILTIN_TILES) {
       if (!isPerTileFamily(TILE_FAMILY[tile])) continue;
@@ -189,12 +151,6 @@ describe("every example compiles in modular mode with resolvable imports (#71)",
       for (const mod of result.runtimeModules) {
         expect(AVAILABLE_MODULES.has(mod), `unknown runtime module "${mod}"`).toBe(true);
       }
-      // …and matches the imports the generated code actually contains, except
-      // for a module other modules share — a per-tile family's, or the effect
-      // handlers' — which they reach relatively, so it is copied without
-      // appearing in the header. Anything
-      // else declared-but-unimported is a module shipped for no reason, and
-      // anything imported-but-undeclared is a dangling import at runtime.
       const imported = new Set(
         [...result.js.matchAll(/from "\.\/runtime\/([\w-]+)\.js"/g)].map((m) => m[1] as string),
       );

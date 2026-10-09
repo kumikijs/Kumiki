@@ -1,18 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createKumikiHighlighter, overlayPad } from "./highlight";
 
-// AC — playground editor syntax highlighting:
-//  1. createKumikiHighlighter returns a function rendering kumiki source as
-//     Shiki HTML (pre.shiki > code > span.line per line)
-//  2. tokens carry BOTH theme colors as CSS variables (--shiki-light /
-//     --shiki-dark) so VitePress's .dark class toggle can switch them
-//  3. HTML-special characters in the source are escaped
-//  4. every feature example in the repo highlights without throwing on the
-//     JavaScript regex engine (grammar ⇆ engine compatibility)
-//  5. overlayPad keeps the highlight backdrop the same height as the
-//     textarea: a trailing newline gets a trailing space (an empty final
-//     line would otherwise collapse); anything else is unchanged
-
 const exampleModules = import.meta.glob("../../../packages/examples/features/*.kumiki", {
   query: "?raw",
   import: "default",
@@ -48,9 +36,6 @@ describe("kumiki playground highlighter", () => {
     expect(html).toMatch(/&(#x26|amp);/);
   });
 
-  // The cost is one highlighter build plus one pass per example, so it grows
-  // with the corpus and sits near the default 5s ceiling. A timeout here has
-  // never meant a broken grammar, only a cold start.
   it("AC4: highlights every feature example without throwing (JS regex engine)", {
     timeout: 30_000,
   }, async () => {

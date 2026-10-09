@@ -1,17 +1,3 @@
-// A route entry's factory takes the runtime's outlet fill, so a parent that
-// declares `sub-routes` can build its child inside its own `error-boundary`
-// (lifecycle.md §7.3, #363). Every test in packages/tests compiles a `.kumiki`,
-// so only the codegen-shaped factory is ever exercised there. This file hands
-// `mount` route entries built by hand — the shape a host, or a runtime bundle
-// from before the fill existed, would produce — and pins what the contract
-// promises them: a factory that calls the fill gets its child inside; one that
-// ignores it still gets its child, filled after the fact; a panic raised while
-// building a named entry is attributed to that name; and a panic the runtime
-// did not build cannot turn the attribution into a second throw.
-//
-// The fill is never invoked by hand: `mount` picks the tree through
-// `pickRootTile`, which is the one caller, so this drives the real path.
-
 import type { AppShape, OutletFill, RouteEntry, TileNode } from "@kumikijs/runtime";
 import { KumikiPanic, mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -54,8 +40,6 @@ describe("a hand-built route entry and the outlet fill", () => {
   };
 
   it("builds the child inside a parent that calls the fill around its tree", () => {
-    // The parent's own try / catch is what makes the fill worth calling: a
-    // child that panics is caught there and the parent decides what shows.
     const parent = (fill?: OutletFill): TileNode => {
       try {
         return (fill as OutletFill)({
@@ -79,9 +63,6 @@ describe("a hand-built route entry and the outlet fill", () => {
   });
 
   it("fills the outlet of a parent that declares no parameter, after it returns", () => {
-    // The pre-fill factory shape. Its child is built outside whatever the
-    // parent does around its own tree — exactly the behaviour it was written
-    // for — and the outlet is not left empty.
     const parent = (): TileNode => ({
       kind: "column",
       children: [text("frame "), outlet()],
@@ -94,10 +75,6 @@ describe("a hand-built route entry and the outlet fill", () => {
   });
 
   it("builds no child for a parent that takes the fill but never reached it", () => {
-    // The parent's own body panicked and its boundary answered with a fallback
-    // that stands in for the whole section, child included. Reaching for the
-    // child after the fact would build it outside that boundary — and here
-    // the child is a defect, so building it at all would be visible.
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const parent = (fill?: OutletFill): TileNode => {
       try {
@@ -151,8 +128,6 @@ describe("a hand-built route entry and the outlet fill", () => {
   });
 
   it("keeps a panic it cannot write to as the panic, not a TypeError", () => {
-    // `isPanic` duck-types so a panic from another realm is recognised; that
-    // object may be frozen. The attribution is dropped, the panic is not.
     const frozen = Object.freeze({ isKumikiPanic: true, message: "boom", location: undefined });
     let caught: unknown;
     const parent = (fill?: OutletFill): TileNode => {
@@ -176,8 +151,6 @@ describe("a hand-built route entry and the outlet fill", () => {
   });
 
   it("reports a parent whose tree has no outlet for the matched child", () => {
-    // `when(cond, route-outlet())` passes E0113 and can be absent at runtime.
-    // The child was built for nothing; say so where smoke and scenario listen.
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const parent = (fill?: OutletFill): TileNode => (fill as OutletFill)(text("frame"));
     const child: RouteEntry = { pattern: "/shell/a", name: "Child", tile: () => text("child") };

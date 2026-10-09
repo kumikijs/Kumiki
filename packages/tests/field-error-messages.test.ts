@@ -1,16 +1,3 @@
-// §5.7.2's table of default validation messages, driven end to end.
-//
-// `resolveFieldError` reads the failed predicate off the slot and renders its
-// message, and six of its twelve arms — `url`, `uuid`, `positive`, `negative`,
-// `regex`, `one-of` — were unreachable while those predicates lowered to a
-// check that cannot fail (#352): a slot whose value never fails its refinement
-// never renders a message. They are reachable now, so the table and the
-// implementation are held to each other here, `one-of` included — the one arm
-// that interpolates the predicate's arguments.
-//
-// Every slot below starts on a value its own refinement rejects, which is
-// legal and is what puts a message on a pristine form (runtime.md §10.3.3).
-
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";

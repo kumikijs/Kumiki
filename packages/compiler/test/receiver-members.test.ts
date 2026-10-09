@@ -1,12 +1,3 @@
-// Which members a receiver has (docs/spec/stdlib.md §2.2), decided per receiver.
-//
-// The checker used to ask one flat question — "does the runtime know this name
-// on some receiver?" — so a member of one container was a member of all of
-// them. `res.filter(…)` on a `Result` passed `check` and the runtime read the
-// `Result` as a `Map`, answering `{}`; `opt.keys` handed back the object's own
-// `_tag` / `_0` as data. §2.2.3's dispatch rule makes a name that is neither a
-// field nor a member of a *known* receiver E0108, and these pin that rule.
-
 import { readFileSync } from "node:fs";
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -34,11 +25,6 @@ const PARAMS: Record<Receiver, string> = {
   File: "fl: File",
 };
 
-/**
- * Receivers wrapped in something that keeps them what they are (§2.2.2) — an
- * alias, a `where`, a `nominal` — each reading the row of the receiver it
- * wraps. The types they need are declared in `WRAPPED_DECLS`.
- */
 const WRAPPED: [param: string, reads: Receiver][] = [
   ["rd: RefinedDuration", "Duration"],
   ["nd: NominalDuration", "Duration"],
@@ -87,8 +73,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 }
 
 describe("a member of one container on another", () => {
-  // Each row is its own program declaring only what it reads, so an E0108
-  // cannot come from a neighbour.
   const rows: [string, string, string][] = [
     [
       'slot res : Result(Int, Text) = Ok(3)\nslot sink : Result(Int, Text) = Err("x")',
@@ -125,8 +109,6 @@ describe("a member of one container on another", () => {
   });
 
   it("reports .copy on a receiver that is not a record, and not on one that is", () => {
-    // `n.copy(z=1)` lowered to a record spread over a number and put `{z: 1}`
-    // in an `Int` slot. On a record it is the update form (language.md §1.6.3).
     const n = reducerErrors("slot n : Int = 0", "n := n.copy(z=1)");
     expect(n.map((e) => e.code)).toEqual(["E0108"]);
     const rec = reducerErrors("slot rec : {z: Int} = {z: 0}", "rec := rec.copy(z=1)");
@@ -139,9 +121,6 @@ describe("a member of one container on another", () => {
   });
 
   it("stays silent on a receiver whose type it cannot decide", () => {
-    // A `fold`'s result has no type (§2.2.2), so the `$1` a `map` over it
-    // binds is not resolved and the name-based dispatch §2.2.3 keeps for it
-    // still applies.
     const errs = reducerErrors(
       "slot xs : List(Int) = []\nslot n : Int = 0",
       "n := xs.fold([], $1.push($2)).map($1.size).length",
@@ -150,9 +129,6 @@ describe("a member of one container on another", () => {
   });
 });
 
-// Every receiver against every name any receiver has, every name codegen
-// lowers, and `show`: the member is accepted exactly where its own row lists
-// it, in both spellings.
 describe("the per-receiver table, enumerated", () => {
   const every = new Set<string>([
     ...(Object.values(RECEIVER_MEMBERS).flat() as string[]),
@@ -188,8 +164,6 @@ describe("the per-receiver table, enumerated", () => {
   }
 });
 
-// `Duration` is the one receiver that is a `nominal` over another, so it is
-// the one whose row has to be found under whatever wraps it (§2.2.2).
 describe("a Duration under an alias, a refinement or a nominal", () => {
   const rows: [string, string, string][] = [
     [
@@ -267,9 +241,6 @@ describe("the receiver an E0108 names", () => {
   });
 });
 
-// A `$1` / `$2` the checker binds to the wrong type becomes a false E0108 — or
-// a missed one — so each binding is pinned both ways: a member of the bound
-// type is accepted, and a member of another receiver is not.
 describe("members on a fragment's $1 / $2", () => {
   const pairs: [ok: string, bad: string][] = [
     ["xs.filter($1.abs > 0)", "xs.filter($1.size > 0)"],
@@ -297,8 +268,6 @@ describe("members on a fragment's $1 / $2", () => {
   }
 });
 
-// A receiver that is itself a member's result: `receiverMemberResult` has to
-// answer its type, or the next member goes through unchecked.
 describe("a member of another receiver on a member's result", () => {
   const rows: [string, string][] = [
     ["xs.head.size", 'Type "Option" has no member ".size"'],
@@ -330,12 +299,6 @@ function topLevelPieces(line: string): string[] {
   return pieces;
 }
 
-/**
- * The members §2.2.N lists for each receiver, read out of the section's
- * signature block. A qualified name (`Time.now`, `Duration.ms(n)`) is a
- * constructor, not a member; `show` is the member every value has and is read
- * from the Int / Float block like the rest, then set aside.
- */
 function specMembers(path: string): Map<Receiver, Set<string>> {
   const md = readFileSync(new URL(path, import.meta.url), "utf8");
   const out = new Map<Receiver, Set<string>>();

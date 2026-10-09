@@ -2,7 +2,7 @@
   "name": "@kumikijs/runtime",
   "version": "0.13.0",
   "type": "module",
-  "description": "Kumiki DOM runtime \u2014 mounts compiled Kumiki apps, dispatches effects, manages the signal graph.",
+  "description": "Kumiki DOM runtime — mounts compiled Kumiki apps, dispatches effects, manages the signal graph.",
   "license": "Apache-2.0",
   "author": "kage1020",
   "homepage": "https://github.com/kumikijs/Kumiki/tree/main/packages/runtime#readme",

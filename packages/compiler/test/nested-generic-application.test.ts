@@ -1,12 +1,3 @@
-// A generic applied inside itself — `NonEmpty(NonEmpty(Short))`, or reached
-// again through another generic's argument — is a type like any other, and a
-// write of the wrong type into it is E0201.
-//
-// Normalisation used to read the substituted argument under the guard of the
-// body it was substituted into, so the inner application met its own name as a
-// re-entry and the type normalised to nothing. With no type to compare
-// against, every write was accepted: `a := 5` checked `ok` on a `Text` slot.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -43,8 +34,6 @@ describe("a generic applied inside itself", () => {
     expect(diags(`slot a : NonEmpty(NonEmpty(Short)) = "ku"`, `a := "ok"`)).toEqual([]);
   });
 
-  // `Named`'s body applies `NonEmpty` again, so reaching it through the outer
-  // `NonEmpty`'s argument re-entered the name the same way.
   it("keeps the nominal of a generic reached through the argument", () => {
     expect(diags(`slot n : NonEmpty(Named(Short)) = "ku"`, "n := o")).toEqual([
       "E0201 Expected NonEmpty(Named(Short)) but got Other",
@@ -54,9 +43,6 @@ describe("a generic applied inside itself", () => {
     ]);
   });
 
-  // A generic that forwards its parameter into another application hands the
-  // argument on again, and it is read where it was first written — not under
-  // the guard of the body that forwarded it.
   it("refuses a different nominal through a generic applied inside itself", () => {
     expect(diags(`slot n : Named(Named(Short)) = "ku"`, "n := o")).toEqual([
       "E0201 Expected Named(Named(Short)) but got Other",
@@ -131,10 +117,6 @@ slot t : Text = ""`;
   });
 });
 
-// Each level applies the one below more than once. Normalising by expanding
-// every body walks the bottom definition 2^k (or 3^k) times, which exhausted
-// the stack at a dozen definitions; a generic that hands its parameter back is
-// now taken in one step.
 describe("a chain of definitions that each apply the one below repeatedly", () => {
   const chain = (levels: number, times: number, bottom: string) => {
     const lines = [`type D0(T) = ${bottom}`];
@@ -166,18 +148,12 @@ describe("a chain of definitions that each apply the one below repeatedly", () =
     ).toEqual(["E0803"]);
   });
 
-  // The application is checked for refinements its arguments put over a base
-  // they cannot test, and that walk entered each application in a body with
-  // its arguments substituted: `D40`'s body holds three `D39`s, so it walked
-  // `D0` 3^40 times. Fourteen levels took seconds; forty would never finish.
   it("checks an application at forty levels that each apply the one below three times", () => {
     expect(diags(`${chain(40, 3, "T")}\nslot a : D40(Text) = "ku"`, "a := 5")).toEqual([
       "E0201 Expected D40(Text) but got Int",
     ]);
   });
 
-  // The walk reported the refinement once per path to it, so the count of
-  // copies was the count of walks: 3^12 here, which overflowed the stack.
   it("reports a refinement over the wrong base once, however many paths reach it", () => {
     expect(
       diags(`${chain(12, 3, "T where nonempty")}\nslot a : D12(Int) = 1`, "a := 2").filter((d) =>
@@ -188,9 +164,6 @@ describe("a chain of definitions that each apply the one below repeatedly", () =
     ]);
   });
 
-  // Each application's argument is taken through the generics that hand it
-  // straight back before the walk goes on, and the message still names the
-  // base as the application gives it: a container keeps the argument as written.
   it("names the base a deep chain applies a refinement over, as before", () => {
     const LIST = `type L(T) = List(T)\ntype Q(T) = T where nonempty\n${chain(3, 3, "Q(T)")}`;
     expect(
@@ -209,9 +182,6 @@ describe("a chain of definitions that each apply the one below repeatedly", () =
     ]);
   });
 
-  // `nominal` is looked through on the way to a base, so a generic nominal
-  // hands its parameter back as an alias does, and a chain of them meets the
-  // same way.
   it("reports a refinement once through a chain of generic nominals", () => {
     const NOMINAL = `type N(T) = nominal T where nonempty\n${chain(12, 3, "N(T)")}`;
     expect(
@@ -221,9 +191,6 @@ describe("a chain of definitions that each apply the one below repeatedly", () =
     ]);
   });
 
-  // A bottom that is a type of its own hands nothing back, so every argument
-  // reaches `D0` distinct and the walk is still 3^k: kept shallow so it stays
-  // fast. It pins the messages that walk gives, which sharing must not change.
   it("still checks a chain whose generics hand nothing back", () => {
     const RECORD = chain(5, 3, "{v: T where nonempty}");
     expect(
@@ -244,9 +211,6 @@ describe("a chain of definitions that each apply the one below repeatedly", () =
   });
 });
 
-// An application reports each refinement its arguments put over the wrong
-// base once: paths that reach the same refinement say nothing new, and two
-// refinements that read alike are still two.
 describe("how many E0804s an application gets", () => {
   const e0804 = (decl: string) => diags(decl, `o := o`).filter((d) => d.startsWith("E0804"));
 
@@ -272,8 +236,6 @@ slot s : Both(Int, Text) = {x: 1, y: "a", z: 1}`;
     ]);
   });
 
-  // `Int()` is an application of a name nothing declares (E0117), which has no
-  // base to judge; `Int` has one. Both orders report the `Int` field.
   it("tells an application with no arguments from the name it applies", () => {
     const O = `type P(T) = T where nonempty\ntype O(A, B) = {x: P(A), y: P(B)}`;
     const message =
@@ -282,8 +244,6 @@ slot s : Both(Int, Text) = {x: 1, y: "a", z: 1}`;
     expect(e0804(`${O}\nslot s : O(Int, Int()) = {x: 1, y: 1}`)).toEqual([message]);
   });
 
-  // Two arguments written apart reach the one refinement over the same base,
-  // and that is one problem.
   it("reports one refinement reached through two parameters over one base once", () => {
     const O = `type P(T) = T where nonempty\ntype O(A, B) = {x: P(A), y: P(B)}`;
     expect(e0804(`${O}\nslot s : O(Int, Int) = {x: 1, y: 1}`)).toEqual([
@@ -301,8 +261,6 @@ slot y : Yen = 1
 slot b : Bool = false
 slot n : Tag(Tag(Cents)) = 1`;
 
-  // `Tag(Tag(Cents))` is declared as a `Tag` of a `Tag` of a `Cents`, so it
-  // is a `Cents` — the same way `Tag(Cents)` is.
   it("is accepted where the nominal at the bottom is required", () => {
     expect(diags(NOMINAL, "c := n")).toEqual([]);
   });
@@ -315,9 +273,6 @@ slot n : Tag(Tag(Cents)) = 1`;
     expect(diags(NOMINAL, "y := n")).toEqual(["E0201 Expected Yen but got Tag(Tag(Cents))"]);
   });
 
-  // `Wrap` forwards its parameter into `Tag`, so the inner `Wrap` is
-  // substituted twice before the chain reads it — and is read where it was
-  // written, not under the guard of the `Wrap` that forwarded it.
   it("keeps the whole chain through a generic that forwards into it", () => {
     const WRAP = `${NOMINAL}\ntype Wrap(T) = Tag(T)\nslot w : Wrap(Wrap(Cents)) = 1`;
     expect(diags(WRAP, "c := w")).toEqual([]);
@@ -331,16 +286,12 @@ app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
   const codes = (src: string) => check(parse(lex(`${src}\n${APP}`))).map((e) => e.code);
 
-  // The re-entry here is through the body, not an argument, so the guard
-  // still stops it — and E0009 is still what reports it.
   it("terminates on a generic that forwards to itself", () => {
     expect(codes(`type Loop(T) = Loop(T) where nonempty\nslot l : Loop(Text) = "a"`)).toContain(
       "E0009",
     );
   });
 
-  // `D1` hands its parameter back through `D0` twice, so `A` is its own
-  // argument here too.
   it("reports an alias that is its own argument through a doubled generic", () => {
     expect(
       codes(`type D0(T) = T\ntype D1(T) = D0(D0(T))\ntype A = D1(A)\nslot a : A = "a"`),

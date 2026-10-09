@@ -1,11 +1,3 @@
-// An `input` reads its text as the bound position's type and shows that type's
-// value back (forms.md §5.1.1), so an `Int` / `Float` / `Time` goes only with
-// the field kinds its text round-trips through. A `Time` bound to a
-// `type="time"` field was shown its millisecond count, which `Time.parse`
-// refused on every edit: the field could never write and never said why. A
-// type with no row in the table at all (a `Bool`, an `Option` bound without
-// `.get`) was written the field's string.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -89,8 +81,6 @@ describe("an input's field kind has to go with the bound type (E0226)", () => {
     ["a Time in a datetime-local field", `input(bind=t, type="datetime-local")`],
     ["a Text with no type", `input(bind=s)`],
     ["a Text in an email field", `input(bind=s, type="email")`],
-    // A Text is written as typed, so every field whose value is the edited
-    // text round-trips it: a date field's Text holds "2026-03-04".
     ["a Text in a date field", `input(bind=s, type="date")`],
     ["a Text in a number field", `input(bind=s, type="number")`],
     ["an aliased Int in a number field", `input(bind=q, type="number")`],

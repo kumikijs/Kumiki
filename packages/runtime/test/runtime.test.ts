@@ -92,12 +92,7 @@ function makeCounterApp(): AppShape {
     }),
   };
 
-  // Provide `_live` so the root() closure can read count after mounts.
   (app as unknown as { _live: Record<string, unknown> })._live = { count: 0 };
-  // Intercept the runtime's slot writes by patching apply functions to also
-  // write into our shadow `_live` mirror, under the same all-or-nothing rule
-  // the runtime applies (spec/runtime.md §10.3.3) — a mirror that diverged
-  // would make the DOM assertions below lie about what the app rendered.
   const originalReducers = app.reducers;
   app.reducers = originalReducers.map((r) => ({
     ...r,
@@ -153,10 +148,6 @@ describe("runtime", () => {
     mount(app, root);
     const minus = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "-");
     minus?.click();
-    // Assert the runtime's own state, not just the DOM: the fixture keeps a
-    // shadow mirror so `root()` can read the count, and that mirror applies the
-    // same rule — checking it alone would pass even against a runtime that
-    // wrote -1.
     expect((app as MountedApp).live.count).toBe(0);
     expect(root.querySelector("h1")?.textContent).toBe("Count: 0");
   });
@@ -173,9 +164,6 @@ describe("runtime", () => {
     expect(root.querySelector("h1")?.textContent).toBe("Count: 0");
   });
 
-  // Not a clamp — a refinement is a type constraint, so the write past 999 is
-  // refused (and reported) rather than saturating. The observable count is the
-  // same; a real app guards the edge instead of relying on this.
   it("refuses a write past the refinement ceiling of 999", () => {
     const app = makeCounterApp();
     mount(app, root);
@@ -186,9 +174,6 @@ describe("runtime", () => {
   });
 });
 
-// `style: {...}` (spec/style.md §4.3) — the runtime must walk the record and
-// apply each key as a CSS property. With a theme present, `@token` references
-// (lowered to `_s.token(...)` by codegen) resolve through `currentTheme()`.
 describe("style block application", () => {
   let root: HTMLElement;
 
@@ -239,9 +224,6 @@ describe("style block application", () => {
   });
 
   it("says so when the selected theme name matches no declared theme", () => {
-    // The compiler resolves the name in `app.theme = X` but not the value a
-    // slot behind it holds, so this is where a misspelled theme name surfaces.
-    // Rendering with the built-in defaults otherwise looks merely unstyled.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const app = makeStyledApp();
     app.themeName = "Ligth";
@@ -251,9 +233,6 @@ describe("style block application", () => {
   });
 });
 
-// A named timer (`timer(100ms, name=countdown)`) incrementing `count`, plus a
-// `stop` reducer that returns stopTimers: ["countdown"] (what codegen lowers
-// `stop-timer(countdown)` to).
 function makeTimerApp(): AppShape {
   const app: AppShape = {
     slots: { count: { value: 0 } },
@@ -319,8 +298,6 @@ describe("named timers + stop-timer", () => {
   });
 });
 
-// An overlay whose second child (the modal) is gated by the `open` slot —
-// mirrors what codegen emits for `overlay(Content, when(open, Modal()))`.
 function makeOverlayApp(): AppShape {
   const app: AppShape = {
     slots: { open: { value: false } },
@@ -376,8 +353,6 @@ function makeOverlayApp(): AppShape {
   return app;
 }
 
-// A root that renders one spinner tile — the status-tile contract (spec
-// stdlib §2.3.8: an animated loading indicator, props: size).
 function makeSpinnerApp(props: Record<string, unknown> = {}): AppShape {
   const app: AppShape = {
     slots: {},
@@ -401,7 +376,6 @@ describe("spinner builtin", () => {
     root.remove();
   });
 
-  // AC1: an accessible animated indicator, not the "…" text placeholder
   it("renders an accessible ring element, not placeholder text", () => {
     mount(makeSpinnerApp(), root);
     const el = root.querySelector('[data-kumiki-tile="spinner"]') as HTMLElement;
@@ -411,8 +385,6 @@ describe("spinner builtin", () => {
     expect(el.getAttribute("aria-label")).toBe("Loading");
   });
 
-  // AC2: the spin keyframes + spinner rule are injected into the style root,
-  // with a reduced-motion opt-out
   it("injects kumiki-spin keyframes, the spinner rule, and reduced-motion handling", () => {
     mount(makeSpinnerApp(), root);
     const css = document.getElementById("kumiki-animations")?.textContent ?? "";
@@ -421,7 +393,6 @@ describe("spinner builtin", () => {
     expect(css).toMatch(/prefers-reduced-motion[^}]*\{[^}]*spinner/s);
   });
 
-  // AC3: the size prop scales the ring — sm/md/lg/xl tokens; unknown ignored
   it("maps the size prop tokens", () => {
     mount(makeSpinnerApp({ size: "lg" }), root);
     const lg = root.querySelector('[data-kumiki-tile="spinner"]') as HTMLElement;
@@ -691,17 +662,10 @@ describe("in-language test runner helpers", () => {
   it("resetLive clears, seeds defaults, then applies given", () => {
     const live: Record<string, unknown> = { stale: 1 };
     _stdlib.resetLive(live, { count: { value: 0 }, name: { value: "x" } }, { count: 5 });
-    // `route` is there whether or not the program declares one — the harness
-    // seeds it the way `mount` does, so a reducer reading it is testable. This
-    // is the key set; what the seed holds is pinned in the route suite beside
-    // this one.
     expect(live).toEqual({ count: 5, name: "x", route: expect.anything() });
     expect(live.route).toMatchObject({ path: "/", pattern: "/" });
   });
 
-  // M4b: the runner carries the scalar leaf values at the divergence point, so
-  // `kumiki test` can print the §8.7.1 value arrow and `fix --auto-patch` can
-  // locate the responsible source literal.
   it("runTileTest exposes the leaf text values on a `.text` mismatch", () => {
     const r = _stdlib.runTileTest({
       name: "t",
@@ -738,7 +702,7 @@ describe("in-language test runner helpers", () => {
     expect(r.leaf).toBeUndefined();
   });
 
-  // ----- `expect` wildcards (spec/testing.md §8.2.2) -----
+  // ----- `expect` wildcards -----
 
   it("wildcard <any-id> matches any value at a slot position", () => {
     const r = _stdlib.runReducerTest({
@@ -868,7 +832,7 @@ describe("in-language test runner helpers", () => {
   });
 });
 
-// -----effect-result mocks inside reducer-test (spec/testing.md §8.5) -----
+// -----effect-result mocks inside reducer-test -----
 
 describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   // A two-step flow: `fetchUser` emits `loadUser`; its result drives `userLoaded`
@@ -999,7 +963,7 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
   });
 });
 
-// ----- property-test generators + runner (spec/testing.md §8.3) -----
+// ----- property-test generators + runner -----
 
 describe("runPropertyTest", () => {
   it("genValue keeps an Int within its [min, max] bounds", () => {
@@ -1165,10 +1129,6 @@ describe("stdlib argument-less methods (issue #7)", () => {
     expect(() => _stdlib.getErr(_stdlib.Ok(1))).toThrow(KumikiPanic);
   });
 
-  // M1 (#24): `.get` is the polymorphic unwrap for Option AND Result; spec
-  // stdlib.md §2.2 says it panics on the empty case (None / Err). Before M1 it
-  // returned the value unchanged (silent), so `.get` and `.get-err` behaved
-  // oppositely. Now both panic via KumikiPanic.
   it("unwrap (.get) unwraps Some/Ok and panics on None/Err", () => {
     expect(_stdlib.unwrap(_stdlib.Some(5))).toBe(5);
     expect(_stdlib.unwrap(_stdlib.Ok(7))).toBe(7);
@@ -1193,15 +1153,6 @@ describe("stdlib argument-less methods (issue #7)", () => {
   });
 });
 
-// M1 (#24): a panic on the LIVE path must be handled cleanly — caught, the
-// dispatch episode rolled back (no partial writes), surfaced via console.error
-// (so smoke/scenario flag it), and the app left interactive (a later dispatch
-// still works). Before M1 the panic escaped the DOM event handler uncaught.
-//
-//  - `boom`     panics inside its reducer body (via _stdlib.panic).
-//  - `ok`       is a normal reducer that still works after a panic.
-//  - `onError`  is the spec §7.2.3 `app.error` reducer; it records the message
-//               of the PanicInfo delivered as `$event`.
 function makePanicApp(): AppShape {
   const app: AppShape = {
     slots: { n: { value: 0 }, lastError: { value: "" } },
@@ -1238,8 +1189,6 @@ function makePanicApp(): AppShape {
   return app;
 }
 
-// A root tile that panics during render with NO enclosing error-boundary — the
-// top-level render boundary must catch it (render a panic node, not throw).
 function makeRenderPanicApp(): AppShape {
   const app: AppShape = {
     slots: {},
@@ -1323,10 +1272,6 @@ describe("live panic handling (#24)", () => {
   });
 
   it("reportPanic emits stack lines and Caused-by continuation to console.error", () => {
-    // Verify the exact console.error shape reportPanic produces — the smoke /
-    // scenario tiers rely on the "[kumiki] panic in ..." header staying the
-    // first line, and devtools users rely on stack + Caused-by continuation
-    // lines showing up right after it.
     const app = makePanicApp();
     // Rewire boom to throw a cause-chain error so we exercise the Caused-by
     // path too.
@@ -1398,19 +1343,10 @@ describe("live panic handling (#24)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Capability providers (inbound ecosystem seam): a custom capability has no
-// built-in implementation, so the host supplies one via mount(..., {providers}).
-// The generated effect invoke resolves it at the capability boundary
-// (caps.provider(cap)) and errors clearly when none is registered.
-// ---------------------------------------------------------------------------
-
 import type { CapabilityProvider, EffectResult } from "@kumikijs/runtime";
 
 const CAP = "telemetry.track";
 
-// Mirrors exactly what codegen emits for a custom-capability effect, so this
-// test pins the runtime contract the generated code relies on.
 function makeTrackApp(): AppShape {
   const app: AppShape = {
     slots: { sent: { value: 0 }, failed: { value: false } },
@@ -1531,16 +1467,6 @@ describe("capability providers", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// No-silent-failure contract: an effect `err` result that no
-// `.err` reducer consumes must be surfaced (console.error → smoke/runScenario
-// flag it), never swallowed. The storage-unavailable case (sandbox / private
-// mode) otherwise looks like the app does nothing. An app opts into ignoring an
-// error by wiring an `.err` reducer.
-// ---------------------------------------------------------------------------
-
-// A custom-cap effect with no provider always returns `err` (mirrors
-// makeTrackApp). `withErrReducer` toggles whether the program handles it.
 function makeErringApp(withErrReducer: boolean): AppShape {
   const cap = "telemetry.track";
   const reducers: AppShape["reducers"] = [
@@ -1670,13 +1596,6 @@ describe("unhandled effect-error contract (#37)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Memory router mode: routing must work without the
-// ambient location/history — for the playground srcdoc sandbox and any embedded
-// host that owns the URL. mount(..., { router: "memory" }) holds the path in
-// memory and never calls history.*.
-// ---------------------------------------------------------------------------
-
 function makeRoutedApp(): AppShape {
   const app: AppShape = {
     slots: {},
@@ -1754,13 +1673,6 @@ describe("memory router mode (#36)", () => {
     history.replaceState(null, "", "/");
   });
 });
-
-// ---------------------------------------------------------------------------
-// Standard capabilities (toast/nav/log + http/storage) are also provider-
-// overridable: a host can swap the implementation (custom toast UI, router,
-// HTTP transport, auth injection) by registering a provider for the cap. Absent
-// one, the built-in behavior runs.
-// ---------------------------------------------------------------------------
 
 function makeBuiltinApp(): AppShape {
   return {
@@ -1853,9 +1765,6 @@ describe("standard capability override", () => {
   });
 });
 
-// issue #91 — ui.key / ui.hover are wired through the universal render hook on
-// every tile (not per-renderer), so the DOM-level dispatch must fire for an
-// input (keydown) and a generic box (mouseenter).
 describe("ui.key / ui.hover handlers (issue #91)", () => {
   let root: HTMLElement;
 
@@ -1925,9 +1834,6 @@ describe("ui.key / ui.hover handlers (issue #91)", () => {
   });
 });
 
-// issue #122 — ui.focus / ui.blur ride the same universal render hook as
-// ui.key / ui.hover. The DOM-level focus / blur events must reach the
-// codegen-installed onFocus / onBlur props with the tile's `el` payload.
 describe("ui.focus / ui.blur handlers (issue #122)", () => {
   let root: HTMLElement;
 

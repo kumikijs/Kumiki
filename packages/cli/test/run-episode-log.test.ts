@@ -26,9 +26,6 @@ describe("kumiki run --episode-log", () => {
     );
 
     const eps = logger.list();
-    // The counter has no async effects, so each dispatch yields one episode
-    // (the scenario opens 3 — plus an implicit app.start lifecycle if present,
-    // counter has init=[] so none here).
     expect(eps.length).toBeGreaterThanOrEqual(3);
 
     for (const ep of eps) {

@@ -1,6 +1,3 @@
-// Icon renderer (#101) — built-in path lookup, theme.icons override, props,
-// and graceful placeholder fallback when neither registry knows a name.
-
 import type { AppShape } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

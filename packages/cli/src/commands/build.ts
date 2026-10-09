@@ -12,11 +12,6 @@ const require = createRequire(import.meta.url);
 
 const USAGE = "Usage: kumiki build <input.kumiki> <outdir> [--minify] [--bundle]";
 
-/**
- * Read one prebuilt (minified) runtime feature module. The modules are plain
- * browser ESM whose cross-imports are relative (`./core.js`, `./stdlib.js`),
- * so copying them side by side under `<outdir>/runtime/` keeps them resolvable.
- */
 function readRuntimeModule(name: string): string {
   const modulePath = require.resolve(`@kumikijs/runtime/modules/${name}.js`);
   return readFileSync(modulePath, "utf8");
@@ -45,58 +40,13 @@ function buildHtml(): string {
 }
 
 export type BuildOptions = {
-  /**
-   * Minify the generated `app.js`, keeping `runtime/` as separate modules.
-   *
-   * Off by default, and that default is the load-bearing one: the AI debug
-   * loop reads `app.js` stack traces, and the harnesses patch two of its
-   * emitted lines by verbatim string replace (see codegen's note on
-   * `const App = createApp();`). Minifying renames every top-level binding, so
-   * a build that did it unasked would take both away. `runtime/` is untouched
-   * either way — those modules ship minified already.
-   */
   minify?: boolean;
-  /**
-   * Link `app.js` and the runtime modules it imports into one minified file,
-   * and drop `runtime/`. Implies `minify`.
-   *
-   * Worth its own flag rather than being implied by `--minify` because the two
-   * optimise opposite things. The modular layout gives `runtime/core.js` a URL
-   * that does not change when the app does, so a returning visitor re-downloads
-   * only `app.js`. Bundling gives a first visitor one request and one
-   * compression stream over the whole payload, which is worth 20–30% on the
-   * examples — gzip and brotli build their dictionary per response, so twenty
-   * small modules compress markedly worse than the same bytes linked together.
-   *
-   * It also tree-shakes across the seam the module boundary hides: a tile
-   * module's renderer that the app's `_tiles` never names, a stdlib helper it
-   * never calls.
-   */
   bundle?: boolean;
 };
 
 /** The files a build writes, as content — assembled before anything lands on disk. */
 type Artifacts = { appJs: string; modules: Map<string, string>; html: string };
 
-/**
- * Minify `app.js`, and with `bundle` also link the runtime modules into it.
- *
- * Both flags go through rolldown — the same linker `@kumikijs/vite` already
- * depends on, pinned to the same version so one native toolchain ships rather
- * than two. `external` is what separates them: keeping `./runtime/*` external
- * minifies the app module alone and leaves the imports (and therefore the
- * modular layout) intact; dropping it pulls them in.
- *
- * It runs over a staging copy on disk rather than in memory, so what is linked
- * is exactly what the modular build produces — one code path, and the
- * optimised output cannot drift from the layout the other tiers test. Nothing
- * reaches `outdir` until this returns, so a linker error leaves no partial
- * build behind for a deploy step to ship by mistake.
- *
- * rolldown is imported here rather than at module scope because it is a native
- * addon and both flags are opt-in: `kumiki check` / `list` / `view` / `fix`,
- * and `@kumikijs/mcp` at startup, would otherwise pay to load it.
- */
 async function link(artifacts: Artifacts, bundle: boolean): Promise<Artifacts> {
   const { rolldown } = await import("rolldown");
   const stage = mkdtempSync(join(tmpdir(), "kumiki-link-"));
@@ -115,10 +65,6 @@ async function link(artifacts: Artifacts, bundle: boolean): Promise<Artifacts> {
       const { output } = await build.generate({ format: "esm", minify: true });
       const chunks = output.filter((o) => o.type === "chunk");
       if (chunks.length !== 1) {
-        // Every import the generated header emits is static and relative, so
-        // the graph has no split point. More than one chunk means something
-        // changed upstream, and silently writing the first would ship a
-        // broken app.
         const names = chunks.map((c) => c.fileName).join(", ");
         throw new Error(`kumiki build: expected one chunk, got ${chunks.length} (${names})`);
       }

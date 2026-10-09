@@ -1,8 +1,6 @@
 import { LexError, lex } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// Every token but `eof` carries a value, and `eof` is filtered out — so one
-// shape covers them all.
 const tokenSummary = (s: string) =>
   lex(s)
     .filter((t) => t.kind !== "eof")

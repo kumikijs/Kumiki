@@ -1,6 +1,3 @@
-// Spec access for the MCP server: locate the docs/spec directory, list
-// documents, fetch one, and run a simple keyword search across them.
-
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

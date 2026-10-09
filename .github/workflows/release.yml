@@ -4,13 +4,12 @@ on:
   push:
     branches: [main]
 
-# Avoid overlapping release runs racing on the same branch.
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write # create the Release PR / tags
-  pull-requests: write # open/update the Release PR
-  id-token: write # OIDC trusted publishing + provenance signing
+  contents: write
+  pull-requests: write
+  id-token: write
 
 jobs:
   release:
@@ -27,43 +26,22 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Cache Turborepo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
+          node-version: 24
           path: .turbo
           key: ${{ runner.os }}-turbo-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-turbo-
 
-      # Trusted publishing (OIDC) needs npm CLI >= 11.5.1 and Node 24 ships an
-      # older 11.x, so npm is upgraded here — but held on the 11 line, not
-      # `@latest`. `changeset publish` detects the pnpm workspace and runs
-      # `pnpm publish --no-git-checks`, and pnpm 10 shells out to npm, passing
-      # `--git-checks` down with it. npm 11 answers that with a warning ("this
-      # will stop working in the next major version of npm"); npm 12 made good
-      # on it, and `EUNKNOWNCONFIG Unknown cli flag: --git-checks` failed every
-      # package in the v0.12 publish. pnpm 11 publishes natively without
-      # shelling out to npm at all, which retires this pin — but only once its
-      # native path is confirmed to do OIDC trusted publishing.
-      #
-      # No NPM_TOKEN — the id-token permission above authenticates the publish
-      # and signs provenance automatically.
-      - run: npm install -g npm@11
-
       - run: pnpm install --frozen-lockfile
 
-      # When changesets exist on main, opens/updates a "Version Packages" PR.
-      # When that PR is merged (versions bumped, changesets consumed), publishes
-      # via OIDC trusted publishing (changeset publish shells out to npm publish).
       - name: Create Release PR or Publish
         id: changesets
         uses: changesets/action@v1
         with:
           version: pnpm run version
           publish: pnpm release
-          # The step below makes the GitHub Releases. changesets/action would
-          # send each CHANGELOG section whole, and GitHub refuses a body over
-          # 125,000 characters: v0.14's compiler section was 167,000, so that
-          # release failed and turned the run red after npm had published.
           createGithubReleases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

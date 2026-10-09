@@ -1,10 +1,3 @@
-// style.md §4.6: with `app.theme = <slot>`, changing the slot re-themes every
-// tile, including those whose own props did not change. Token props resolve to
-// literal values when a tile renders, so the check here is the one a reader
-// can make: after a switch each styled element carries what a fresh mount
-// under the new theme gives it. The corpus example (`157-theme-switch`) shows
-// the switch surviving interaction; a scenario cannot read an inline style.
-
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,8 +16,7 @@ const STARTS_DARK = SRC.replace(
   'slot themeName : Text = "Dark"',
 );
 
-// The variants below add one thing each to the example, so a failure points at
-// what that thing does across a switch.
+// The variants below add one thing each to the example, so a failure points at what that thing does across a switch.
 const WITH_INPUT = SRC.replace(
   'slot themeName : Text = "Light"',
   'slot themeName : Text = "Light"\nslot name : Text = "hello"',
@@ -84,8 +76,7 @@ async function press(root: HTMLElement, label: string): Promise<void> {
     b.textContent?.includes(label),
   );
   if (!btn) throw new Error(`no "${label}" button`);
-  // \`click()\` dispatches the event without moving focus, so a control that
-  // was focused before the toggle is still the one focused when it runs.
+  // `click()` dispatches the event without moving focus, so a control that was focused before the toggle is still the one focused when it runs.
   btn.click();
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -154,8 +145,6 @@ describe("switching app.theme through its slot", () => {
     before.setSelectionRange(1, 3);
     await toggle(root);
     const after = root.querySelector<HTMLInputElement>("#name");
-    // The switch rebuilt the control, so what follows is the restore, not a
-    // control that never lost focus.
     expect(after).not.toBe(before);
     expect(document.activeElement).toBe(after);
     expect([after?.selectionStart, after?.selectionEnd]).toEqual([1, 3]);
@@ -164,8 +153,7 @@ describe("switching app.theme through its slot", () => {
   });
 
   it("drops a refused bind's text and its field error, like other DOM state no slot holds", async () => {
-    // runtime.md §10.3.6: the refused text lives only in the control the
-    // switch replaces. The rebuilt control shows the value the slot kept.
+    // The refused text lives only in the control the switch replaces. The rebuilt control shows the value the slot kept.
     const root = host();
     const handle = mount(await loadSource(WITH_REFUSED), root);
     const before = root.querySelector<HTMLInputElement>("#contact");
@@ -183,10 +171,8 @@ describe("switching app.theme through its slot", () => {
   });
 
   it("does not replay enter animations on the elements it rebuilds", async () => {
-    // A CSS animation starts whenever its element is inserted, so the rebuilt
-    // tree would fade and rise in again. The switch marks what it rebuilt as
-    // settled, and the injected motion stylesheet moves a settled element's
-    // animation straight to its end (the browser tier checks it plays that way).
+    // A CSS animation starts whenever its element is inserted, so the rebuilt tree would fade and rise in again.
+    // The switch marks what it rebuilt as settled, and the injected motion stylesheet moves a settled element's animation straight to its end (the browser tier checks it plays that way).
     const root = host();
     const handle = mount(await loadSource(WITH_MOTION), root);
     const settled = (id: string): boolean =>

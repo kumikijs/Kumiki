@@ -1,14 +1,3 @@
-// A `for` keys each tile it renders (runtime.md §10.3.10), and the keyed
-// reconciler refuses two siblings with one key. The implicit key used to be
-// `show(x)` alone, so a list holding one value twice — `[7, 3, 7]` — or two
-// loops under one parent sharing a value keyed two siblings alike. The first
-// paint worked; every later render, whatever caused it, panicked in reconcile
-// and rebuilt the whole tree, replacing every element on the page, the
-// `<input>` beside the list included.
-//
-// Each case mounts the real compiled program and re-renders it through the
-// same DOM events a user causes.
-
 import type { AppShape } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -113,10 +102,6 @@ describe("two for loops under one parent that share a value", () => {
   });
 });
 
-// What the keys are for (§10.3.10): a reorder moves the elements it already
-// has. Pinned by identity, as the old index of each element in its new place,
-// for distinct values, which the old key served, and for a repeated one, where
-// the first occurrence of a value keeps its key wherever it moves.
 describe("a keyed reorder", () => {
   it.each([
     // keys |1|1, |1|2, |1|3 -> |1|3, |1|2, |1|1
@@ -141,9 +126,6 @@ describe("a keyed reorder", () => {
   });
 });
 
-// An insert or remove in the middle renumbers the occurrences after it. Equal
-// values are interchangeable, so the element a later equal value had may move
-// to an earlier one; each distinct value keeps its own.
 describe("an insert or remove in the middle of a list that repeats a value", () => {
   const lists = (init: string, next: string) =>
     `slot xs : List(Int) = ${init}\nreducer edit on=ui.click(Edit) do= xs := ${next}\ntile Edit = button(text="edit")`;
@@ -172,10 +154,6 @@ describe("an insert or remove in the middle of a list that repeats a value", () 
   });
 });
 
-// The state keyed matching exists to keep (§10.3.10) lives on elements inside
-// the loop body as much as beside it. The remove is of the last `7`, which
-// renumbers nothing; one before a repeated value renumbers its later
-// occurrences, and the elements of equal values may then trade places.
 describe("an input inside a loop that repeats a value", () => {
   it("keeps its focus and caret across a re-render and a remove", async () => {
     const lists = `slot xs : List(Int) = [7, 3, 7]\nreducer drop on=ui.click(Drop) do= xs := [7, 3]\ntile Drop = button(text="drop")`;
@@ -198,8 +176,6 @@ describe("an input inside a loop that repeats a value", () => {
   });
 });
 
-// A nested `for` keys each inner list by the inner loop; the outer rows hold
-// one each, and a value repeats in both.
 describe("a nested for over lists that repeat a value", () => {
   it("re-renders in place", async () => {
     const lists = `slot outer : List(Int) = [1, 1]\nslot inner : List(Int) = [5, 5]`;
@@ -226,9 +202,6 @@ describe("a nested for over lists that repeat a value", () => {
   });
 });
 
-// A record shows as one text for every record (`show` is not injective for it),
-// so the old key gave every row of a record list the same key and the first
-// re-render panicked. The occurrence now tells the rows apart, by position.
 describe("a for over a list of records", () => {
   it("re-renders without a reconcile panic", async () => {
     const lists = `slot todos : List({id: Int, title: Text}) = [{id: 1, title: "a"}, {id: 2, title: "b"}]`;
@@ -243,11 +216,6 @@ describe("a for over a list of records", () => {
   });
 });
 
-// An explicit `{key: …}` is the author's promise that the key is unique among
-// its siblings (§10.3.10). Where every child at that level is keyed, as the
-// loop's are here, a loop that breaks it is a program error: the reconciler
-// does not fall back to position, it panics on the next render and rebuilds
-// the tree.
 describe("a for whose explicit keys collide", () => {
   it("panics in reconcile on the next render, naming the key", async () => {
     const loop = `column(for s in scores text("score " + s.show) {key: s.show})`;

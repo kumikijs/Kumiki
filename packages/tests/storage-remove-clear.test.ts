@@ -1,10 +1,3 @@
-// `storage.write` / `session.write` carry three declarations (http.md §6.7.2 /
-// §6.7.4), told apart by the request: a write (`{key, value}`), a remove
-// (`{key}`) and a clear (an effect declared `in=Unit` with no `map-request`).
-// These run the real handlers against the real Web Storage — no provider, no
-// mock — and read what the storage holds after each step, so a remove that
-// cleared everything, or a bad request that cleared anything, shows up.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AppShape, mount } from "@kumikijs/runtime";
@@ -27,8 +20,7 @@ function snapshot(storage: Storage): Record<string, string> {
 }
 
 /**
- * Mount `app` and, for each step, click the button and wait until the page
- * shows `until`. Returns what `storage` holds after each step.
+ * Mount `app` and, for each step, click the button and wait until the page shows `until`. Returns what `storage` holds after each step.
  */
 async function run(
   app: AppShape,

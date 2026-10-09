@@ -1,13 +1,3 @@
-// An effect's own expressions — its `latest-per-key` key and its `map-request`.
-//
-// The checker tests come first: the key runs away from where it is written, so
-// a name nothing checked there was a `ReferenceError` on the first dispatch
-// rather than a diagnostic — the app imported, mounted and rendered first.
-//
-// The last block compiles a program, imports the generated module and runs one
-// reducer, to pin *when* the key is evaluated: at the emit, against the slot
-// values the reducer body has written so far.
-
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -81,17 +71,11 @@ describe("an effect's latest-per-key key is checked", () => {
     expect(textAt(source, at)).toMatch(/^Bytes\.from-text\(\)/);
   });
 
-  // The measurement that motivated the fix: before the key was walked, a
-  // misspelled name built cleanly and lowered to a bare global, so the app
-  // imported, mounted and rendered before dying on the first dispatch.
   it("no longer lowers an undefined name into the generated dispatch", () => {
     const result = compile(app("quary"), { runtimeSpecifier: "./runtime.js" });
     expect(result.kind).toBe("fail");
   });
 
-  // The key's own binds, unchanged: `$1` is the effect's input, a slot is
-  // readable (codegen lowers one through the live slot map), and a `fn` is
-  // callable. None of these may become E0103 on the way to the two above.
   it.each([
     ["the effect input", "$1"],
     ["a slot", "query"],
@@ -111,9 +95,6 @@ app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
     expect(codes(source)).toEqual([]);
   });
 
-  // `$route` is a payload field, and the key is applied to the effect's input
-  // and nothing else — the same `no-payload` answer `map-request` gives, so
-  // the name means nothing here rather than being a bind out of its scope.
   it("reports $route in the key as an undefined name", () => {
     expect(codes(app("$route.path"))).toEqual(["E0103"]);
   });
@@ -128,8 +109,6 @@ app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
   });
 });
 
-// `map-request` shares `pureScope` with the key, so a change made for the key's
-// sake changes `map-request` too. These pin its half of that scope.
 describe("an effect's map-request is checked in the same scope", () => {
   it("reports a misspelled name as E0103", () => {
     const at = only(mapRequestApp("quary"));
@@ -199,12 +178,6 @@ async function runGo(body: string[]): Promise<{ id: unknown; key: unknown }> {
 }
 
 describe("a `latest-per-key` key is evaluated at the emit (http.md §6.4)", () => {
-  // The key is computed once, where the emit runs in the reducer body: a slot
-  // it reads has the value the body has written so far, and a write after the
-  // emit is not seen. That one value is both the key the `emit` expression's id
-  // is built from and the key the emit record carries to the dispatcher. That
-  // the dispatcher runs the request under the carried key is pinned through the
-  // real dispatcher in `packages/tests/emit-id-after-key-write.test.ts`.
   const EMIT = `lastId := emit load("x")`;
 
   it.each([

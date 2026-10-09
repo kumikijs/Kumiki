@@ -1,9 +1,3 @@
-// A form's `ui.submit` reducer runs only when every slot a control inside it
-// binds passes its validation, judged on what the controls show (forms.md
-// §5.2.2) — the judgement `error(field=…)` makes. A field showing a refused
-// value has left its slot on the last value it accepted; were the form to
-// submit, the reducer would read that value, not what the field shows.
-
 import { type AppShape, mount, runScenario, type ScenarioStep } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -125,8 +119,6 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
   });
 
   it("does not submit while an Int field shows text that is no Int", async () => {
-    // The field says "Must be a whole number" (forms.md §5.1.2) while the slot
-    // keeps its last number, which passes; the form judges what is shown.
     const { app, root } = await mounted(
       program(
         `slot age   : Int = 30
@@ -145,8 +137,6 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
   });
 
   it("does not submit a pristine failing default even with no error tile to say why", async () => {
-    // Every bound slot counts, shown message or not: the reducer would
-    // otherwise run on a value its own type refuses.
     const { app, root } = await mounted(
       program(
         `slot email : Text where email = ""
@@ -191,8 +181,6 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
   });
 
   it("does not submit while a path-bound field shows a refused value", async () => {
-    // `bind=user.email` writes the whole record back to `user`; the record the
-    // write would have produced is what is refused, and what is judged.
     const { app, root } = await mounted(
       program(
         `type Email = Text where email
@@ -214,9 +202,6 @@ reducer send on=ui.submit(Signup) do= sent := user.email`,
 
 describe("only the controls inside a form hold it back", () => {
   it("submits while a control outside the form shows a refused value for the same slot", async () => {
-    // The form submits what its own control shows, which is the slot's value.
-    // `error(field=…)` speaks for the whole view, so it still names the edit
-    // outside the form (forms.md §5.2.2).
     const { app, root } = await mounted(
       program(
         `slot contact : Text where email = "ada@example.com"
@@ -257,10 +242,6 @@ tile App = column(FormA, FormB)`,
   });
 });
 
-// A `{submit}` step dispatches the event and the form decides; the step used to
-// pass either way, so a fixture expecting a submit read green while the gate
-// held it back. The scenario tier reports a held-back submit as a refusal, from
-// the rule the browser tier asks too (`submitFault`).
 describe("a {submit} step the form holds back is refused", () => {
   async function run(source: string, steps: ScenarioStep[]) {
     const app = await loadSource(source);
@@ -343,11 +324,6 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
     expect(report.steps[0]?.failures[0]).toContain("but it ran");
   });
 
-  // The browser tier runs `requestSubmit()`, whose constraint validation can
-  // stop a submit before any event fires; this tier dispatches the event, which
-  // skips it. testing.md §8.10 says so, and this is what it says: an empty
-  // `required` field and a malformed `type="email"` one do not stop the submit
-  // here, and with no refinement on either slot the gate lets it through.
   it("dispatches past the browser's constraint validation, which only the browser tier runs", async () => {
     const report = await run(
       program(
@@ -366,10 +342,6 @@ reducer send on=ui.submit(Signup) do= sends := sends + 1`,
     expect(report.steps[1]?.actionError).toBeUndefined();
   });
 
-  // Enter in a field is how a browser submits implicitly; this tier's `{key}`
-  // dispatches a `keydown`, which the DOM here does not turn into a submit at
-  // all — even one the gate would let through. A step that means to submit
-  // says `{submit}`.
   it("{key: Enter} in a field submits nothing at this tier", async () => {
     const report = await run(SOURCE, [
       { do: { key: "#c", value: "Enter" }, expect: { noErrors: true, state: { sends: 0 } } },

@@ -8,21 +8,6 @@ type ResolveBodyArgs = {
   flag?: string;
 };
 
-/**
- * Resolve the body of an `add` / `replace` (or JSON of `edit`) invocation.
- *
- * Precedence: `--body-file <path>` wins over positional. A value of `-`
- * reads stdin. Passing both is an error — mixing them would silently drop
- * whichever the CLI decides against.
- *
- * Positional tokens are joined with a single space, matching legacy shell
- * behavior. The join is lossy for multi-space runs; that's exactly why
- * `--body-file` exists.
- *
- * ENOENT / stdin-on-TTY are surfaced as flag-shape errors (exit 2) so they
- * are consistent with commander's own parse-error class rather than falling
- * through to the caller's generic exit 1 catch.
- */
 export function resolveBody({
   positional,
   bodyFile,
@@ -47,9 +32,6 @@ export function resolveBody({
 }
 
 function readStdin(flag: string): string {
-  // Reading fd 0 on a TTY blocks forever with no signal to the user. Bail out
-  // with an actionable message so `kumiki add ... --body-file -` at a bare
-  // prompt fails fast instead of appearing to hang.
   if (process.stdin.isTTY) {
     console.error(`${flag} '-' expects piped stdin (pipe data in, or use ${flag} <path>)`);
     process.exit(2);

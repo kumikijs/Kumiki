@@ -11,10 +11,6 @@ type ViewMode = "text" | "with-deps" | "hash" | "history";
 export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
   const path = resolve(process.cwd(), inputArg);
   if (mode === "history") {
-    // History lives in a sidecar op-log, so this is the one mode that never
-    // opens the .kumiki file — and it reported "(no history)" for a path that
-    // was never there. Existence is checked rather than parsed on purpose: the
-    // history of a file that no longer parses is exactly when it is wanted.
     if (!existsSync(path)) {
       console.error(`File "${path}" not found`);
       process.exit(1);

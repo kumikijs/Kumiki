@@ -53,23 +53,6 @@ export class ParseError extends Error {
 /** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
 
-/**
- * How deep a tree a program may build (language.md §1.2.3).
- *
- * The bound is on the *result*, not on how the parser reached it. Everything
- * downstream of the parse — the typechecker, the reference walk, code
- * generation — descends the tree by recursion, so a tree past what the call
- * stack holds surfaces as a bare `RangeError` with no position wherever it is
- * first walked. Bounding the parse alone would only move that crash: a
- * left-associative chain (`1 + 1 + 1 + …`, `x.trim().trim()…`) is parsed by a
- * loop but still builds one node per operator, and at 3,000 operators it
- * parsed clean and then took down `compile`.
- *
- * So a chain counts against the same budget nesting does, and one budget
- * covers both. The limit is far above anything written in practice — no
- * program in this repository's examples or benchmarks comes close, and the
- * corpus gates would fail if one ever did.
- */
 const MAX_NESTING_DEPTH = 256;
 
 /** The primitive type names, which a type position reads as `TypePrim`. */
@@ -84,9 +67,6 @@ export const PRIM_TYPES: ReadonlySet<string> = new Set([
   "File",
   "EffectId",
 ]);
-// Closed set of `app.*` lifecycle events (docs/spec/language.md §1.6.1,
-// lifecycle.md §7.1). `app.http-*` keep their hyphenated form — the lexer
-// already treats `-` as ident-continuation, so they arrive as a single token.
 const APP_LIFECYCLE_EVENTS = new Set([
   "start",
   "stop",
@@ -99,11 +79,6 @@ const APP_LIFECYCLE_EVENTS = new Set([
   "http-403",
   "http-5xx",
 ]);
-const _GENERIC_TYPES = new Set(["Map", "Set", "List", "Option", "Result", "Tuple"]);
-// Builtins whose positional argument is a value expression (Text/Number), not a tile.
-// Named args whose value is always a value expression (Text / Number / etc.),
-// independent of the enclosing builtin. This lets `button(text=if c then "A" else "B")`
-// parse the `if` as a value-level `IfExpr` instead of a `TileIf`.
 const VALUE_NAMED_ARGS = new Set([
   "text",
   "value",
@@ -152,15 +127,6 @@ class Parser {
     );
   }
 
-  /**
-   * Parse one level deeper, refusing to go past `MAX_NESTING_DEPTH`.
-   *
-   * Every construct that can contain itself goes through this, so a program
-   * that nests too far is reported at the token where the parser stopped
-   * rather than crashing the process. The budget is over the whole enclosing
-   * tree, not per construct: a pattern inside a slot's initializer starts one
-   * level down because that is where its node will sit.
-   */
   private descend<T>(parseNested: () => T): T {
     if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth();
     this.depth += 1;
@@ -171,15 +137,6 @@ class Parser {
     }
   }
 
-  /**
-   * Charge `built` levels against the same budget without recursing.
-   *
-   * A left-associative chain — `1 + 1 + 1 + …`, `x.trim().trim()…`, a run of
-   * prefix operators — is parsed by a loop, so it costs the parser no stack.
-   * It still builds one node per operator, each nested inside the last, and
-   * everything downstream walks that by recursion. Left unbounded it parsed
-   * clean and crashed `compile` instead.
-   */
   private widen(built: number): void {
     if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
   }
@@ -247,9 +204,6 @@ class Parser {
     return def;
   }
 
-  // `motion N = { keyframes: {...}, duration: ..., ... }`. The body reuses the
-  // theme-record grammar (literals + nested records only), which is exactly why
-  // a motion can't reference slots/effects — purity is structural (M5 AC4).
   private parseMotionDef(): Def {
     const start = this.eat("ident", "motion");
     const name = this.eat("ident").value;
@@ -271,9 +225,6 @@ class Parser {
     [k: string]: import("./ast.ts").ThemeValue;
   } {
     this.eat("op", "{");
-    // Prototype-less: `out["__proto__"] = v` on an object literal replaces the
-    // prototype instead of adding a property, so the key vanished from the
-    // body and `Object.hasOwn` could never see it written twice.
     const out: { [k: string]: import("./ast.ts").ThemeValue } = Object.create(null);
     if (!this.matchOp("}")) {
       this.parseThemeEntry(out, duplicates);
@@ -297,8 +248,6 @@ class Parser {
     }
     this.next();
     const key = keyTok.value as string;
-    // `out` is this record's own keys, so sibling records with a key in common
-    // are not a duplicate — only a key written twice in the same braces is.
     if (Object.hasOwn(out, key)) duplicates.push({ name: key, pos: keyTok.pos });
     this.eat("op", ":");
     const v = this.peek();
@@ -379,13 +328,6 @@ class Parser {
       }
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
-    // Refinement. `refinement-type ::= type-expr 'where' pred-expr` is recursive
-    // (§1.3.1), so the `where`s chain without a bound and every predicate the
-    // type collects has to hold. Read as a loop rather than by recursing:
-    // `parseTypeUnionAtom` above has already taken the first one — folded onto
-    // the `nominal` node as a property, or wrapping a bare atom — and a second
-    // `if` here is what used to cap the form at two, with a third reported as a
-    // parse error while the grammar said otherwise.
     let refined = first;
     while (this.matchKw("where")) {
       this.next();
@@ -492,9 +434,6 @@ class Parser {
 
   private parseRefinementArg(): number | string {
     const t = this.peek();
-    // A refinement's arguments are literals, and `-40.0` is one. The lexer
-    // emits the sign as its own operator (it has no way to know whether a `-`
-    // is unary), so a literal-only position has to put it back.
     if (t.kind === "op" && t.value === "-" && this.matchTAt(1, "num")) {
       this.next();
       const n = this.next() as { value: number };
@@ -551,8 +490,6 @@ class Parser {
     return { kind: "ReducerDef", name, on, do: stmts, pos: start.pos };
   }
 
-  // Detect when a new statement starts even without an explicit `;` (newline-friendly):
-  // identifier followed by `:=`, `[`, `.`, or keyword `let`/`emit`.
   private statementLookahead(): boolean {
     if (
       this.matchKw("let") ||
@@ -640,10 +577,6 @@ class Parser {
         return { kind: "LifecycleEvent", name: `app.${sub}`, pos: t.pos };
       }
       if (name === "tile") {
-        // `tile.mount(TileName)` / `tile.unmount(TileName)` carry the tile name.
-        // The name is part of the event identity: the runtime fires the reducer
-        // when *that* user-defined tile enters/leaves the rendered tree, so the
-        // ident must be preserved here. Encode the same way the runtime sees it.
         if (sub !== "mount" && sub !== "unmount") {
           throw new ParseError(`Unknown tile lifecycle event "tile.${sub}"`, t.pos);
         }
@@ -658,12 +591,6 @@ class Parser {
         };
       }
       if (name === "route") {
-        // `route.enter("/p")` / `route.leave("/p")` / `route.error("/p")` carry
-        // the route pattern. The pattern is part of the event identity: the
-        // runtime dispatches by matching the reducer's name against
-        // `route.enter(${JSON.stringify(matchedPattern)})`, so the literal must
-        // be preserved here (dropping it would leave every route reducer dead).
-        // Encode it the same way the runtime does so the names match verbatim.
         if (sub !== "enter" && sub !== "leave" && sub !== "error") {
           throw new ParseError(`Unknown route lifecycle event "route.${sub}"`, t.pos);
         }
@@ -712,8 +639,6 @@ class Parser {
       const tok = this.next();
       return { name: "_", pos: tok.pos };
     }
-    // `$el` and friends lex as one ident, so a positional name arrives here
-    // whole — the checker decides which of them a bind may take.
     const tok = this.eat("ident");
     return { name: tok.value, pos: tok.pos };
   }
@@ -797,9 +722,6 @@ class Parser {
       this.eat("op", ")");
       return { kind: "StopTimer", name, pos: cur.pos };
     }
-    // `panic("...")` (stdlib §2.4) is documented as usable inside a reducer,
-    // and a reducer body is statements. As an expression it was writable only
-    // by assigning it to something, which is the opposite of what it does.
     if (cur.kind === "ident" && cur.value === "panic" && this.matchTAt(1, "op", "(")) {
       this.next();
       this.eat("op", "(");
@@ -814,14 +736,6 @@ class Parser {
     return { kind: "SlotAssign", lvalue, rhs, pos: lvalue.pos };
   }
 
-  /**
-   * Body of a control-flow statement (for / if-stmt / match-stmt arm).
-   * Three accepted forms:
-   *   - `{ stmt (; stmt)* }` explicit brace block
-   *   - `stmt; stmt; ...` semicolon-separated (until next branch keyword)
-   *   - `stmt\n stmt\n ...` newline-separated (until next branch keyword)
-   * Stops at `else`, `}`, `|` (match arm), or EOF — those belong to the enclosing form.
-   */
   private parseStatementBody(): Statement[] {
     if (this.matchOp("{")) {
       this.next();
@@ -874,11 +788,6 @@ class Parser {
   }
 
   private parseExprNested(): Expr {
-    // `emit X(args)` as an expression (spec http.md §6.4, stdlib §2.1.1.1) —
-    // yields the dispatched effect's `EffectId`. Statement-form `emit` is
-    // parsed earlier in `parseStatement` (with no capture), so we only reach
-    // this branch when `emit` appears in an expression position such as
-    // `let id = emit X(...)`.
     if (this.matchKw("emit")) {
       const start = this.next();
       const effectTok = this.eat("ident");
@@ -900,11 +809,6 @@ class Parser {
 
   private parseLogicOr(): Expr {
     let lhs = this.parseLogicAnd();
-    // `||` always works as bool OR. `|` also works as bool OR EXCEPT when it
-    // clearly starts a match arm — i.e. it's immediately followed by a pattern
-    // (capital-letter variant or `_`) and a `->`. This lets `a | b` mean bool
-    // OR in expression context while still letting `not x | Done -> ...` be
-    // parsed as a match arm separator.
     let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
       built += 1;
@@ -922,10 +826,6 @@ class Parser {
     const next = this.peek(1);
     // `| _ ->` is a wildcard match arm
     if (next.kind === "ident" && next.value === "_") return true;
-    // `| Variant ->` / `| Variant(args) ->`, and `| (p, q) ->` — a tuple
-    // pattern arm (§1.9). A payload or a tuple proves nothing on its own:
-    // `a | Some(1).is-some` and `a | (b)` are ors written with the same tokens,
-    // so what decides is whether a `->` closes the parens.
     if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
       const after = this.peek(2);
       if (after.kind === "op" && after.value === "->") return true;
@@ -935,10 +835,6 @@ class Parser {
     return false;
   }
 
-  /**
-   * From `peek(from)`, one paren already open: skip to its match and answer
-   * whether a `->` follows it.
-   */
   private arrowClosesParens(from: number): boolean {
     let depth = 1;
     let i = from;
@@ -954,9 +850,6 @@ class Parser {
   }
   private parseLogicAnd(): Expr {
     let lhs = this.parseCmp();
-    // `&&` and `&` are both accepted as boolean AND — `&` is a tolerance alias
-    // for LLMs that bring C-style habits. (`|` would conflict with type union
-    // and match arm separator; only `&` can be safely aliased.)
     let built = 0;
     while (this.matchOp("&&") || this.matchOp("&")) {
       built += 1;
@@ -1004,10 +897,6 @@ class Parser {
     return lhs;
   }
   private parseUnary(): Expr {
-    // A run of prefix operators (`- - x`, `not not b`) is collected in a loop
-    // rather than by recursing per operator: a chain is not nesting, and one
-    // long enough used to exhaust the stack. `not` is the keyword spelling
-    // of `!`.
     const prefixes: { op: UnaryOp; pos: Pos }[] = [];
     while (true) {
       if (this.matchOp("-")) prefixes.push({ op: "-", pos: this.next().pos });
@@ -1032,10 +921,6 @@ class Parser {
         this.widen(built);
         const dotTok = this.next();
         const fldTok = this.peek();
-        // `slot s : Float = 1.` at the end of a line: the member name is
-        // whatever the next line starts with, so this reads as a chained
-        // access and the error surfaces there instead. A chain written across
-        // lines puts the `.` on the member's line, never on the receiver's.
         if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
           throw new ParseError(
             `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
@@ -1043,9 +928,6 @@ class Parser {
           );
         }
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
-          // `1.` lexes as the number then the access operator, so what arrives
-          // here is a member access with no member — and `Expected field or
-          // method name` describes the tokens rather than the mistake.
           if (e.kind === "Num") {
             throw new ParseError(
               `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
@@ -1057,12 +939,8 @@ class Parser {
         this.next();
         const fld = fldTok.value;
         if (this.matchOp("(")) {
-          // method call
           this.next();
           const args: Expr[] = [];
-          // `.copy(field=value, ...)` is a record-update syntax: the named
-          // args are collected into a single RecordLit and the method call
-          // proceeds with one arg. (See docs/spec/language.md §1.6 lvalue path.)
           const isCopyKwargs =
             fld === "copy" &&
             this.matchT("ident") &&
@@ -1139,16 +1017,11 @@ class Parser {
     }
     if (t.kind === "op" && t.value === "(") {
       this.next();
-      // `()` is the unit literal (spec §1.2). It was writable only as a bare
-      // statement, so §7's `do= ()` read and §8's `-> ()` did not.
       if (this.matchOp(")")) {
         this.next();
         return { kind: "Unit", pos: t.pos };
       }
       const inner = this.parseExpr();
-      // `(a, b)` is a tuple. `Tuple` is a type and tuple PATTERNS destructure
-      // one, so §1.8.4's `match (lr, tag) with` was a documented example with
-      // no way to write its scrutinee.
       if (this.matchOp(",")) {
         this.next();
         const items: [Expr, Expr, ...Expr[]] = [inner, this.parseExpr()];
@@ -1168,8 +1041,6 @@ class Parser {
     if (t.kind === "op" && t.value === "[") {
       return this.parseListLit();
     }
-    // Theme-token reference (spec/style.md §4.3): `@<group>.<name>(.<sub>)*`.
-    // Requires at least one segment under the group (`@colors` alone is rejected).
     if (t.kind === "op" && t.value === "@") {
       this.next();
       const head = this.peek();
@@ -1199,9 +1070,6 @@ class Parser {
       }
       return { kind: "TokenRef", group, path, pos: t.pos };
     }
-    // Test `expect` wildcards (spec/testing.md §8.2.2): `<any-id>` / `<slots.X>`.
-    // A leading `<` can only begin a wildcard — a real expression never starts
-    // with the comparison operator — so this stays unambiguous.
     if (t.kind === "op" && t.value === "<") {
       this.next();
       const head = this.eat("ident");
@@ -1223,32 +1091,7 @@ class Parser {
     if (t.kind === "ident") {
       this.next();
       const name = t.value;
-      // qualified call (Module.fn / TypeName.method) — only when the receiver is a
-      // capital-cased identifier; otherwise this is a method call on a value and
-      // should be parsed by parsePostfix.
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
-      // A member of a `QUALIFIED_CALL_NAMESPACES` qualifier, written without
-      // parentheses:
-      // `EffectId.none` (stdlib §2.1.1.1), `Decoder.Text` / `Decoder.Bytes` /
-      // `Decoder.None` (http §6.1.4). Read as a 0-arg Call so typecheck and
-      // codegen handle it through the same builtin-call channel as
-      // `Decoder.Json(User)` / `TodoId.fresh()` — one decision site rather than
-      // three. Left to postfix parsing it becomes a field read on a variant of
-      // the qualifier's name, which emits `undefined` and which nothing objects
-      // to; the member being wrong is then an E0116 rather than silence.
-      //
-      // `Duration` and `Bytes` are in that set too, though neither has a
-      // constant member. Reading `Duration.s` as a call is how the missing
-      // argument gets reported at all: as a field read it was `undefined`, and
-      // a `setTimeout(undefined)` is a `setTimeout(0)` — so the spelling
-      // without parentheses reached the failure the arity check exists for,
-      // past the arity check. It is now the same E0213 as `Duration.s()`.
-      //
-      // `kw` is accepted alongside `ident` to mirror the parenthesised branch
-      // below, which needs it — none of the constants named above lex as a
-      // keyword. Matching the two shapes keeps `Decoder.if` a resolvable callee
-      // that `checkCallee` names, rather than a parse error in one form and a
-      // diagnostic in the other.
       if (
         QUALIFIED_CALL_NAMESPACES.has(name) &&
         this.matchOp(".") &&
@@ -1256,8 +1099,6 @@ class Parser {
         !this.matchTAt(2, "op", "(")
       ) {
         this.next(); // .
-        // The guard restricts this token to `ident` / `kw`, both of which carry
-        // a string `value`, so there is no other shape to fall back to.
         const member = (this.next() as { value: string }).value;
         return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
       }
@@ -1381,8 +1222,6 @@ class Parser {
       return { kind: "PBind", name, pos: t.pos };
     }
     if (this.matchOp("(")) {
-      // Tuple pattern: `(p1, p2, ...)` requires ≥ 2 items; a single parenthesized
-      // pattern would be plain grouping with no semantics, so reject it.
       this.next();
       const items: Pattern[] = [this.parsePattern()];
       while (this.matchOp(",")) {
@@ -1414,10 +1253,6 @@ class Parser {
       this.next();
       return { kind: "MapLit", entries: [], pos: start.pos };
     }
-    // Heuristic: if the first key is a field name (identifier or keyword, e.g.
-    // `type` / `in`) followed by `=`, `:`, `,`, or `}`, treat the whole literal
-    // as a record. Otherwise it's a map. A bare keyword key is never a valid map
-    // key, so this stays unambiguous.
     let isRecord = false;
     const k0 = this.peek();
     if (k0.kind === "ident" || k0.kind === "kw") {
@@ -1502,9 +1337,6 @@ class Parser {
     let scrollRestoration: boolean | undefined;
     const duplicateClauses: DuplicateName[] = [];
     const seenClauses = new Set<string>();
-    // Same assembly as `app` and `effect`: one variable per clause, so a
-    // second `in=` silently retypes `$1` and a second `error-boundary=`
-    // decides by line order which tile a failed render falls back to.
     const noteClause = (tok: Token): void => {
       // Only the clause keywords matter; the loop rejects anything else.
       if (tok.kind !== "kw" && tok.kind !== "ident") return;
@@ -1620,9 +1452,6 @@ class Parser {
     const nameTok = this.eat("ident");
     const name = nameTok.value;
     const isBuiltin = BUILTIN_TILES.has(name);
-    // value-arg builtins take a text/number expression as their positional arg,
-    // not a tile. `match` inside them is a value match (`MatchExpr`), not a
-    // tile match (`TileMatch`).
     const takesValueArg = VALUE_ARG_BUILTINS.has(name);
     const args: TileArg[] = [];
     if (this.matchOp("(")) {
@@ -1658,9 +1487,6 @@ class Parser {
       const name = first.value;
       this.next();
       this.eat("op", "=");
-      // Named args with a well-known value-typed name (text/value/placeholder
-      // /to/src/id/key/...) are always parsed in value context, regardless of
-      // whether the parent tile is itself a value-arg builtin.
       const argTakesValue = parentTakesValueArg || VALUE_NAMED_ARGS.has(name);
       const value = this.parseArgValue(parentIsBuiltin, argTakesValue);
       return { kind: "TileArg", name, namePos: first.pos, value };
@@ -1673,26 +1499,15 @@ class Parser {
       return this.parseTileExpr();
     }
     if (this.matchKw("match")) {
-      // value-arg builtins (text / heading / markdown / label / link) take an
-      // expression positional arg, so a `match` inside them is a value match.
-      // Other tile-arg builtins (column / row / card / page / ...) take tiles,
-      // so `match` produces a `TileMatch`.
       if (parentTakesValueArg) return this.parseExpr();
       return this.parseTileExpr();
     }
     if (this.matchKw("if")) {
-      // Same dispatch as `match`: value-arg builtins take an expression-level if,
-      // tile-arg builtins take a tile-level if.
       if (parentTakesValueArg) return this.parseExpr();
       return this.parseTileExpr();
     }
     const tok0 = this.peek();
     if (tok0.kind === "ident") {
-      // Value-arg builtins (heading/text/markdown/label/link/image/icon) take a
-      // value expression, never a nested tile. An identifier here is always a
-      // value — even one that shadows a builtin tile name (e.g. a user
-      // `fn label`) or is capital-cased — so parse it as an expression. Without
-      // this guard `heading(label(x))` mis-parses `label(x)` as a builtin tile.
       if (parentTakesValueArg) return this.parseExpr();
       const name = tok0.value;
       const p1 = this.peek(1);
@@ -1701,8 +1516,6 @@ class Parser {
       const isCapital = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
       // builtins are always treated as tile calls.
       if (isBuiltin && looksLikeTileCall) return this.parseTileCall();
-      // Inside a user tile call, positional args lean towards expressions
-      // (so `FilterTab(All)` reads `All` as a variant payload, not a tile reference).
       if (!parentIsBuiltin) return this.parseExpr();
       // Inside a builtin tile, capital-cased identifiers refer to user tiles.
       if (isCapital && looksLikeTileCall) return this.parseTileCall();
@@ -1773,8 +1586,6 @@ class Parser {
 
     while (this.isEffectField()) {
       const key = this.peek();
-      // Same assembly as `app`: one variable per clause, so a second one wins
-      // and the first is gone by the time the tree exists.
       if (key.kind === "kw" || key.kind === "ident") {
         if (seenClauses.has(key.value)) duplicateClauses.push({ name: key.value, pos: key.pos });
         seenClauses.add(key.value);
@@ -1885,13 +1696,6 @@ class Parser {
     throw new ParseError(`Unknown retry "${t.value}"`, t.pos);
   }
 
-  /**
-   * A retry count. Signed, because `§1.2` makes a sign part of a number
-   * literal and `Expected num, got op(-)` said nothing about what is wrong with
-   * one — and then rejected, because a negative count is not a shorter retry
-   * policy, it is a policy that cannot run. Whole, for the same reason: 2.5
-   * attempts is not a number of attempts.
-   */
   private eatRetryCount(): number {
     const t = this.peek();
     const n = this.eatSignedNumber();
@@ -1901,10 +1705,6 @@ class Parser {
     return n;
   }
 
-  /**
-   * A retry backoff factor — a multiplier, so signed like every other literal
-   * and then held to being one.
-   */
   private eatRetryFactor(): number {
     const t = this.peek();
     const n = this.eatSignedNumber();
@@ -1928,11 +1728,6 @@ class Parser {
     const n = this.eatSignedNumber();
     const unitTok = this.eat("ident");
     const unit = unitTok.value;
-    // A duration is a length of time, and the runtime reads every one of them
-    // as a delay: `setInterval(f, -1000)` is clamped to the minimum, so
-    // `on=timer(-1s)` would fire a "once a second" reducer hundreds of times a
-    // second. `§1.2` makes the sign part of the literal, so the grammar admits
-    // it and the meaning is what rejects it.
     if (n < 0) {
       throw new ParseError(`Duration must be 0 or more (got ${n})`, numTok.pos);
     }
@@ -1964,9 +1759,6 @@ class Parser {
     while (!this.isAppEnd()) {
       const ident = this.eat("ident");
       const k = ident.value;
-      // Each clause is assigned into a single variable, so a second one
-      // overwrites the first and leaves nothing behind — for `caps` that means
-      // the declared capability set depends silently on clause order.
       if (seenClauses.has(k)) duplicateClauses.push({ name: k, pos: ident.pos });
       seenClauses.add(k);
       this.eat("op", "=");
@@ -2149,9 +1941,6 @@ class Parser {
     return store;
   }
 
-  // app.http = { base-url, headers, on-401, on-403, on-5xx, timeout, credentials } — spec http.md §6.3.
-  // headers is kept as Expr so the codegen can wrap it in a closure (slot
-  // references must re-evaluate on every request, not freeze at mount).
   private parseAppHttp(pos: Pos, sources: Expr[]): AppHttpConfig {
     const rec = this.parseExpr();
     sources.push(rec);
@@ -2200,12 +1989,6 @@ class Parser {
     const t = this.peek();
     if (t.kind === "eof") return true;
     if (t.kind === "kw") return true;
-    // `theme` and `motion` are the two definition heads that are not reserved
-    // words, because `theme = T` is also an `app` clause. The shape tells them
-    // apart: a definition names itself first (`theme T = …`), a clause assigns
-    // straight away (`theme = T`). Without this an `app` written before either
-    // one ate it as a clause of its own, though §1.1 says definitions are
-    // unordered.
     if (t.kind === "ident" && (t.value === "theme" || t.value === "motion")) {
       return this.matchTAt(1, "ident") && this.matchTAt(2, "op", "=");
     }
@@ -2326,9 +2109,6 @@ class Parser {
       kind: "TestDef",
       name,
       testKind: "episode-test",
-      // `given` is unused for episode-test (the log IS the given) but the AST
-      // requires it; supply a synthetic empty record so downstream visitors
-      // that walk every TestDef.given do not have to special-case undefined.
       given: { kind: "RecordLit", fields: [], pos },
       load,
       mocks,
@@ -2380,9 +2160,6 @@ class Parser {
     let name = this.eat("ident").value;
     while (this.matchOp(".")) {
       this.next();
-      // A segment after `.` is a name in the capability's own namespace, not in
-      // the language's, so a keyword there is unambiguous — and
-      // `caps=[telemetry.out]` was otherwise unwritable.
       name += `.${this.eatName().value}`;
     }
     return name;

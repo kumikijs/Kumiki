@@ -1,18 +1,9 @@
 import { createRequire } from "node:module";
 import { defineConfig } from "vitepress";
 
-// Load the Kumiki TextMate grammar as raw JSON rather than via the package's
-// TypeScript entry (`@kumikijs/syntax`). VitePress evaluates this config with
-// Node's ESM loader, which externalizes the workspace package and would try to
-// load its `.ts` source directly — failing on CI Node with
-// ERR_UNKNOWN_FILE_EXTENSION. The published `grammar.json` sidesteps that.
 const nodeRequire = createRequire(import.meta.url);
 const kumikiGrammar = nodeRequire("@kumikijs/syntax/grammar.json");
 
-// Docs live directly under this VitePress root and are served as-is (no sync
-// step). English pages are `spec/`, `guide/`; their Japanese counterparts sit
-// under `ja/` and are served as the `ja` locale. Example sources live in
-// `packages/examples` and are loaded by the Playground.
 export default defineConfig({
   title: "Kumiki",
   head: [["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }]],

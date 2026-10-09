@@ -1,17 +1,3 @@
-// A Set literal is a Set (stdlib.md §2.2.2). A list literal written where a
-// `Set` is declared used to lower to a JavaScript array, while every Set
-// member reads a Set as `{ [key]: true }` — so `slot s : Set(Int) = [5]`
-// answered `has(5)` false, counted `[5, 5]` as two, and `add(5)` produced the
-// mix `{"0": 5, "5": true}`. `check` said `ok`.
-//
-// The first block renders a literal-initialised Set through each member of
-// §2.2.2 and reads it off the page; every row fails on an array. (`diff`'s
-// `size` half reads 1 on either form — its `has` half is the one that tells
-// them apart.) The second pins that the form does not depend on where the
-// literal is written: a record field, a reducer write, a `fn` argument, a
-// member's argument, a `let … in` body, a test's slots. The literal as a Set
-// operand is the argument of the `union` / `intersect` / `diff` rows above.
-
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -122,8 +108,7 @@ app A
     expect(shape.live?.bag).toEqual({ tags: { x: true } });
   });
 
-  // A record or variant member is keyed the way `add` keys it — whatever that
-  // is — so the literal and the `add` chain agree on the members they hold.
+  // A record or variant member is keyed the way `add` keys it — whatever that is — so the literal and the `add` chain agree on the members they hold.
   it("of records or variants, holds what the add chain of the same members holds", async () => {
     const text = await render(
       '"r=" + (recs.size == recs2.add({x: 1}).add({x: 2}).size).show' +
@@ -303,9 +288,7 @@ test wrong-value = reducer-test bump
   it("fails a <slots.X> member that is already one of the others, in either order", {
     timeout: 30_000,
   }, async () => {
-    // Each member the literal writes asks for one member of its own: a slot
-    // whose value is already written beside it must not merge with it and
-    // pass on a Set that holds one member fewer than the literal names.
+    // Each member the literal writes asks for one member of its own: a slot whose value is already written beside it must not merge with it and pass on a Set that holds one member fewer than the literal names.
     expect(
       await runTests(`slot tags  : Set(Text) = []
 slot pick  : Text      = ""

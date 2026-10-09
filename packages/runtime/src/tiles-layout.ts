@@ -1,7 +1,3 @@
-// Layout tile renderers (#71): flow containers, grid, divider, and the
-// route-outlet placeholder. Children recurse through `ctx.render`, so this
-// module never needs to know which other tile families are loaded.
-
 import {
   applyContainerProps,
   gridTracks,
@@ -28,11 +24,6 @@ function applyGridTracks(div: HTMLElement, props?: TileProps): void {
   else div.style.removeProperty("grid-template-rows");
 }
 
-/**
- * `orientation` on a divider (style.md §4.4.5). A vertical rule separates
- * columns rather than rows: it takes its height from the row it sits in and
- * draws on its left edge, since an `<hr>`'s own border is the horizontal one.
- */
 function applyDividerOrientation(hr: HTMLElement, props?: TileProps): void {
   if (props?.orientation !== "vertical") {
     hr.removeAttribute("aria-orientation");
@@ -118,9 +109,6 @@ export const layoutTiles: TileRenderers = {
     return hr;
   },
   "route-outlet"(node, ctx) {
-    // §3.6: `pickRootTile` injects the matched child tile into `node.children`
-    // before render. Without a sub-route match, children stay empty and the
-    // outlet renders as an empty placeholder.
     const div = document.createElement("div");
     div.dataset.kumikiTile = "route-outlet";
     appendChildren(div, node.children, ctx);
@@ -128,14 +116,6 @@ export const layoutTiles: TileRenderers = {
   },
 };
 
-/**
- * Re-apply container-shaped props to an already-mounted element. `apply-
- * ContainerProps` is idempotent for the properties it sets (each is a plain
- * `el.style.X = value` or `setAttribute`), so calling it again on the same
- * element with new props overwrites the previously-set values and returns
- * the element to a coherent state. Children are walked by the outer
- * reconcile.
- */
 function patchContainer(el: HTMLElement, _oldNode: TileNode, newNode: TileNode): void {
   applyContainerProps(el, (newNode as { props?: import("./core.ts").TileProps }).props);
 }

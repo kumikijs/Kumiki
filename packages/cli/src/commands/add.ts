@@ -12,9 +12,6 @@ export function registerAdd(program: Command): void {
     .command("add")
     .description("Add a new definition to a .kumiki file")
     .argument("[file]", "target .kumiki file")
-    // The labels the store puts on definitions, as `list` takes: a kind of
-    // definition `list` shows is one `add` writes, and any other word is
-    // refused before the file is read.
     .addArgument(new Argument("[layer]", "kind of definition to add").choices([...LAYERS]))
     .argument("[name]", "definition name")
     .argument(

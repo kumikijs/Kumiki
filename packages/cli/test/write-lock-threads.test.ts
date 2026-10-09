@@ -1,8 +1,3 @@
-// The write lock between worker threads of one process. They share a pid, so a
-// lock naming this pid is not necessarily this thread's: another thread of the
-// same process may be inside its own write, and it is waited on like any other
-// live writer.
-
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { hostname, tmpdir } from "node:os";
@@ -113,8 +108,6 @@ it("lets a writer on one thread in once the writer on another thread releases", 
 }, async () => {
   const a = await holdingWriter("A");
   const b = startWriter("B", 20_000);
-  // A is released only once B has found its lock, so B had the chance to take
-  // it over and must have waited instead.
   await until(event("B met the lock"), '"B met the lock"');
   await a.release();
   await b;
@@ -131,9 +124,6 @@ it("lets a writer on one thread in once the writer on another thread releases", 
 it("waits on a lock that records no thread, which names the main thread, from a worker thread", {
   timeout: 60_000,
 }, async () => {
-  // An earlier kumiki wrote no `threadId`, so the lock names this process's
-  // main thread. A worker thread cannot tell whether that thread is writing,
-  // so it waits.
   const old = JSON.stringify({ pid: process.pid, host: hostname() });
   writeFileSync(writeLockPath(file), old);
   await startWriter("B", 300);

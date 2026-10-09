@@ -1,15 +1,3 @@
-// A key on a call to a user tile whose body is a `for` — written at the call
-// site, or stamped by a surrounding `for` — keys each node the list renders.
-// The key used to be spread into the list itself, an object of its indices
-// with no `kind`, which no renderer draws; and a `for` whose iterations each
-// render such a list left a list inside the child list, which drew the same
-// nothing. The example is mounted, and a reorder is driven on both forms: the
-// keyed reconciler has to move each node's element, not rebuild it. The same
-// is driven where the `for`s nest — through a for-bodied tile that calls
-// another, one `for` directly in another, and one reached through a `when` —
-// where a node keyed by its
-// position, or by its inner loop variable alone, is rebuilt or collides.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";

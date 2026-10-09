@@ -1,8 +1,3 @@
-// Two compiled Kumiki apps mounted on ONE page must not cross-wire: clicks
-// dispatch to the app owning the clicked tree (generated handlers reference
-// their own instance) and bind write-back resolves the owning mount through
-// the runtime's root registry — no shared-global last-mount-wins.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount, runScenario } from "@kumikijs/runtime";

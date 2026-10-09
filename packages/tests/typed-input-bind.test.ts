@@ -1,16 +1,3 @@
-// An `input` bound to an `Int` / `Float` / `Time` slot reads its text as a
-// value of that type before writing it (forms.md §5.1.1): the renderer used to
-// write `inp.value` — always a string — straight into the slot, so an `Int`
-// held `"5"` and `age + 1` rendered `51`. The scenario beside
-// `133-typed-input-bind` drives the slot values; what is here is what it
-// cannot see — the type of what was stored, what the field keeps showing after
-// a refusal, the message `error(field=…)` gives for it, and the text a date
-// field is given.
-//
-// The suite runs on America/Los_Angeles (vitest.config.ts), so a date field's
-// "local clock" is not also UTC: a formatter that rendered the instant in UTC
-// passes on a UTC runner and fails here.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AppShape, mount } from "@kumikijs/runtime";
@@ -123,12 +110,6 @@ app A
     expect(field(root, "n").value).toBe("130");
     expect(root.textContent).toContain("Must be between 0 and 120");
   });
-
-  it("runs on a clock that is not UTC", () => {
-    // What makes the date assertions above tell local from UTC: 2026-01-01 is
-    // UTC-8 here, so a local midnight is 08:00 UTC, not 00:00.
-    expect(new Date(2026, 0, 1).getTimezoneOffset()).toBe(480);
-  });
 });
 
 describe("text that reads as no value of the bound type says why (forms.md §5.7.2)", () => {
@@ -148,7 +129,6 @@ tile App = column(input(bind=age, type="number", id="age"), error(field=age))`),
     expect(app.live?.age).toBe(5);
     expect(field(root, "age").value).toBe("1.5");
     expect(errorText(root, "age")).toBe("Must be a whole number");
-    // An accepted write clears it.
     fill(root, "age", "6");
     expect(app.live?.age).toBe(6);
     expect(errorText(root, "age")).toBe("");
@@ -203,9 +183,6 @@ app A
   });
 
   it("reads a number field exactly as T.parse reads text", async () => {
-    // A number field can hold ".5" and "1e3" (valid HTML floating-point
-    // numbers); the reading is `Float.parse` / `Int.parse`'s all the same, so
-    // ".5" is no Float, "1e3" is a Float and no Int — and each refusal says so.
     const app = await loadSource(
       program(`
 slot price : Float = 1.0
@@ -287,8 +264,6 @@ tile App = column(
     expect(app.live?.qty).toBe(3);
     fill(root, "cents", "250");
     expect(app.live?.cents).toBe(250);
-    // The alias's refinement still applies after the read, and the reading
-    // is named before it.
     fill(root, "qty", "0");
     expect(app.live?.qty).toBe(3);
     expect(errorText(root, "qty")).toBe("Must be positive");

@@ -1,13 +1,3 @@
-// What the rejected forms did before they were rejected — through `compile`,
-// which is the seam the CLI's `build` and the Vite plugin both go through.
-//
-// A unit test over `check` proves a diagnostic is produced. It does not prove
-// the pipeline stops there, and for three of these four that is the whole
-// point: a tile cycle crashed code generation with a `RangeError`, a derived
-// slot produced an artifact that threw on mount, and a type that resolved to
-// itself produced one that built and ran with nothing checked against it. Each
-// case below asserts both — the diagnostic, and that nothing is emitted to run.
-
 import { type CompileResult, compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -51,8 +41,6 @@ ${TAIL}`,
   {
     what: "a type that resolves to itself",
     code: "E0009",
-    // This one built an artifact and ran: the type denotes nothing, so the
-    // slot declared with it was never checked against anything at all.
     source: `type A = A
 slot x : A = 1
 tile App = column(text("a"))
@@ -76,8 +64,6 @@ describe("a definition written in terms of itself never reaches code generation"
       expect(result.kind, `${what} produced an artifact`).toBe("fail");
       if (result.kind !== "fail") return;
       expect(result.errors.map((e) => e.code)).toContain(code);
-      // A diagnostic with no position is one a caller cannot act on, and
-      // "somewhere in this program" is what the crash already said.
       for (const e of result.errors) {
         expect(e.pos.line).toBeGreaterThanOrEqual(1);
         expect(e.pos.col).toBeGreaterThanOrEqual(1);
@@ -86,10 +72,6 @@ describe("a definition written in terms of itself never reaches code generation"
   }
 
   it("builds the accepted forms of all four", () => {
-    // The same four shapes written the way the language provides for:
-    // repetition through `for`, derivation through `fn`, a slot that stands on
-    // its own, and a type that reaches a record before it reaches itself —
-    // the one of the four where the self-reference is kept, not replaced.
     const source = `type Thread = {label: Text, replies: List(Thread)}
 slot xs : List(Int) = [1, 2, 3]
 slot t : Thread = {label: "root", replies: [{label: "reply", replies: []}]}

@@ -1,10 +1,3 @@
-// SSR hydration integration test (docs/spec/runtime.md §10.6.2 + AC6 of
-// issue#119). Drives the full pipeline: real .kumiki source → compile →
-// `renderToString` → DOM injection → `hydrate` → user interaction → episode
-// continuity. Anything that breaks the SSR → CSR seam (volatile leak, init
-// re-execution, bootstrap dropped from the ring) shows up here as a failed
-// expectation, not as a downstream UI bug.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
@@ -12,12 +5,6 @@ import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime"
 import { describe, expect, it, vi } from "vitest";
 import { loadApp, loadSource } from "./helpers/load.js";
 
-/**
- * Drops the map the SSR pass filled in, so the client starts from slot
- * defaults the way a fresh boot would. Behind a function because deleting the
- * property inline would narrow `app.live` to `undefined` for the rest of the
- * test, and every assertion after hydration is about what hydration put back.
- */
 function resetLive(app: AppShape): void {
   delete app.live;
 }
@@ -45,11 +32,6 @@ describe("SSR hydration integration (issue#119)", () => {
 
     expect(rendered.html).toContain("Hi Yui");
 
-    // Real host pattern: inject the SSR HTML into the mount root, then call
-    // `hydrate`. The runtime's §10.6.2 step 2 guard replaces the SSR tree
-    // wholesale on the first CSR render so we don't end up with sibling
-    // SSR + CSR trees. Without that fix, `target.children.length` would be
-    // 2 after hydration.
     resetLive(app);
     const target = document.createElement("div");
     target.innerHTML = rendered.html;
@@ -72,8 +54,7 @@ describe("SSR hydration integration (issue#119)", () => {
     const eps = handle.episodes();
     expect(eps[0]?.trigger.kind).toBe("ssr.hydrate");
     expect(eps[0]?.id).toBe(rendered.bootstrapEpisode.id);
-    // app.start has no user-declared lifecycle reducer in this fixture, so the
-    // next observable episode comes from user input (or stays absent).
+    // app.start has no user-declared lifecycle reducer in this fixture, so the next observable episode comes from user input (or stays absent).
     expect(eps[0]?.steps.map((s) => s.kind)).toEqual([
       "effect-start",
       "effect-end",
@@ -81,12 +62,6 @@ describe("SSR hydration integration (issue#119)", () => {
       "signal-update",
     ]);
 
-    // Click the IncBtn — the runtime renders a real <button> after hydration,
-    // so a synthetic click goes through the compiled handler. We invoke the
-    // native `.click()` method so happy-dom routes the event through the
-    // standard listener path instead of a manual bubbling dispatch.
-    // After hydration there's exactly one root in `target` — the SSR
-    // tree was replaced by the CSR render.
     expect(target.children.length).toBe(1);
     const button = target.querySelector("button");
     expect(button).not.toBeNull();
@@ -105,14 +80,8 @@ describe("SSR hydration integration (issue#119)", () => {
   });
 });
 
-describe("the served page carries what the client paints (#296)", () => {
+describe("the served page carries what the client paints", () => {
   it("serves a markdown body as paragraphs and a closed surface as a hidden host", async () => {
-    // Both were the SSR pass answering a compiled app differently from the
-    // renderer that hydrates over it: `markdown` was served as one text node
-    // holding the whole source, and a closed `modal` as nothing at all. The
-    // node-level table in `packages/runtime/test/ssr-parity.test.ts` is where
-    // every kind is compared; this is the same claim made of markup that came
-    // out of the compiler.
     const app = await loadSource(`
 slot shown : Bool = false
 
@@ -135,9 +104,6 @@ app SsrParity
       "new paragraph",
     ]);
 
-    // A crawler and the first paint both see the dialog: present, hidden, and
-    // holding its content — not an empty string that hydration has to build a
-    // subtree from.
     const dialog = host.querySelector('[data-kumiki-tile="modal"]');
     expect(dialog?.getAttribute("style")).toContain("display: none");
     expect(dialog?.getAttribute("role")).toBe("dialog");

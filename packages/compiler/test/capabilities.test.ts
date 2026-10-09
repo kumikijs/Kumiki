@@ -49,9 +49,6 @@ describe("capability manifest parsing", () => {
   });
 });
 
-// The effects the runtime registers itself, with the argument shape
-// `docs/spec/stdlib.md §2.6` gives each and the capability it is gated on.
-// `scroll-to` is the one that needs none.
 const BUILTIN: [effect: string, cap: string | null, emit: string][] = [
   ["navigate", "nav.push", `emit navigate({path: "/x", params: {}})`],
   ["navigate-replace", "nav.replace", `emit navigate-replace({path: "/x", params: {}})`],
@@ -74,8 +71,6 @@ describe("built-in effect capabilities (E0301)", () => {
   for (const [effect, cap, emit] of BUILTIN) {
     if (cap === null) {
       it(`asks for no capability for ${effect}`, () => {
-        // Nothing at all, not merely no E0301: dropping the table entry makes
-        // this an undefined effect, which `not.toContain("E0301")` accepts.
         expect(checkSrc(emitting("[]", emit))).toEqual([]);
       });
       continue;
@@ -92,8 +87,6 @@ describe("built-in effect capabilities (E0301)", () => {
     });
   }
 
-  // All three ways to reach an effect share one validation path; a check
-  // wired into only the statement form would leave the other two open.
   it("checks an effect emitted for its handle", () => {
     const src = emitting("[]", `let h = emit navigate({path: "/x", params: {}})\n x := 1`);
     expect(checkSrc(src).map((e) => e.code)).toContain("E0301");
@@ -108,11 +101,6 @@ describe("built-in effect capabilities (E0301)", () => {
   });
 
   it("holds a declared effect with an empty cap to that empty capability", () => {
-    // The parser rejects `cap=` with nothing after it, so this shape reaches
-    // `check` only from a `Program` built programmatically — which `check`
-    // accepts, being exported over the AST rather than over source. Empty is
-    // not the same as "asks for nothing": only the built-in table says that,
-    // and only for `scroll-to`.
     const program = parse(
       lex(`
         slot x : Int = 0

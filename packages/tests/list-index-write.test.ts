@@ -1,10 +1,3 @@
-// An index that names no element of a List is a panic (lifecycle.md §7.2.2,
-// language.md §1.6.3), on both sides of `:=`. The corpus example
-// (`101-list-index-write`) pins the rollback and `app.error` through its
-// scenario; what a scenario run cannot show is the episode log, because
-// `kumiki run` attaches no logger. This suite attaches one and drives the
-// example through the same routes its scenario does.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
@@ -16,8 +9,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const EXAMPLE = join(here, "..", "examples", "features", "101-list-index-write.kumiki");
 
 function freshRoot(): HTMLElement {
-  // The cases navigate, and the next mount would otherwise start on the route
-  // the last one left — firing that route's panic on the way in.
   window.history.replaceState(null, "", "/");
   const root = document.createElement("div");
   document.body.appendChild(root);

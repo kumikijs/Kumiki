@@ -1,10 +1,3 @@
-// A click reducer on a submit button and the form's `ui.submit` are
-// independent (forms.md §5.2.2): a click reducer must not cancel the click,
-// because cancelling a submit button's click cancels its activation and the
-// form never submits. These use `HTMLElement.click()`, which is cancelable as
-// a user's click is, and pin the scenario and smoke tiers' clicks to the same,
-// so a cancelled activation shows up in those tiers too.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AppShape, mount, runScenario, smoke } from "@kumikijs/runtime";

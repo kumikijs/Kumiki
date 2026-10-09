@@ -1,15 +1,3 @@
-// language.md §1.6.5 defines `$el` as the `{...}` props of the tile that fired
-// the event, and §1.7.3 delivers `{todoId: $1}` as `$el.todoId`. Nothing keeps
-// a prop name from being kebab-case, which is the house style for Kumiki names.
-//
-// The payload keyed each prop the way names the runtime defines are keyed,
-// with `-` rewritten to `_`, while the reducer's `$el.item-name` read the
-// source spelling. The two never met: the reducer read `undefined`, and the
-// slot it wrote dropped out of the state. A prop reaches the payload both from
-// the props block and as a named argument, so both are asserted. `ui.input` and
-// `ui.change` hand their reducers the same payload as `ui.click`; they are
-// asserted too, so the payload cannot come to be built differently per event.
-
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";

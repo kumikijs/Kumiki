@@ -1,17 +1,3 @@
-// `T.parse(text)` is an `Option(T)` (stdlib §2.4.3), and what it converts the
-// text into is decided by the base `T` unaliases to, not by the name it is
-// written with. The lowering used to branch on the name — `Int`, `Float` and
-// `Time` converted, and every other qualifier wrapped the raw string — so a
-// nominal over `Int` parsed to a `Text`, and the arithmetic after it
-// concatenated:
-//
-//   type Cents = nominal Int where positive
-//   total := total + Cents.parse("12").get-or(0)      # 12 + "12" = "1212"
-//
-// `check` said `ok` and nothing threw: the defect is a value of the wrong kind,
-// and only the state shows it. So every assertion here reads `shape.live`,
-// never the DOM.
-
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";
@@ -92,8 +78,6 @@ describe("a nominal parses by the base it is declared over", () => {
 });
 
 describe("Bool.parse converts rather than answering the text", () => {
-  // `Some("false")` was the answer, and a non-empty string is truthy, so every
-  // `if` over the unwrapped value took the `true` branch.
   it("reads false as false and true as true", async () => {
     const live = await stateAfterGo(
       app(
@@ -115,8 +99,6 @@ describe("Bool.parse converts rather than answering the text", () => {
 
 describe("the standard library's Duration and Bytes parse to their own representation", () => {
   it("reads a Duration as the millisecond number it is", async () => {
-    // `.get-or(0).to-ms` style arithmetic is what the number is for; adding it
-    // to a Duration is the same concatenation `Cents` suffered.
     const live = await stateAfterGo(
       app(
         `slot d : Duration = Duration.ms(100)`,
@@ -156,9 +138,6 @@ slot f : Option(Flag) = None`,
 });
 
 describe("a parse never produces a value its type refuses", () => {
-  // The refinement is part of the type: a `Cents` held in an `Option(Cents)`
-  // never meets a slot-write guard, so a parse that let `-5` through handed
-  // the program a `Cents` that is not one.
   it("answers None when the reading fails the nominal's refinement", async () => {
     const live = await stateAfterGo(
       app(
@@ -233,8 +212,6 @@ describe("Int and Float read decimal text only", () => {
     expect(await readAll("Float", FLOATS)).toEqual(FLOATS);
   });
 
-  // A `Duration` is an `Int` of milliseconds, so it reads as one: a fraction
-  // is not a whole number of milliseconds.
   it("reads a Duration as an Int", async () => {
     const live = await stateAfterGo(
       app(

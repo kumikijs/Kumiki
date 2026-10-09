@@ -1,9 +1,3 @@
-// `Decoder.Json(T)` lowers to the check a slot of type `T` is gated by, when
-// `T` carries a predicate anywhere in it (http.md §6.1.4). The decoder used to
-// lower to a bare "json" sentinel whatever `T` was, so a handler had nothing to
-// check a decoded value against. What the handlers do with the check is
-// `packages/tests/decode-refused-value.test.ts`; this pins what reaches them.
-
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";

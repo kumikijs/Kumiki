@@ -1,8 +1,3 @@
-// Issue #82: `confirm` built-in effect (lifecycle §7.6) + route.leave guard
-// callbacks (routing §3.5.2). Asserts the modal renders on top of the OLD
-// route's tile, that Yes commits the held transition (and runs the user's
-// onYes reducer), and that No reverts the router back to the old path.
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppShape, ParsedRoute } from "../src/core.ts";
 import { installConfirm } from "../src/effects-confirm.ts";
@@ -25,8 +20,6 @@ afterEach(() => {
 });
 
 function leaveGuardApp(editPattern = "/edit"): AppShape {
-  // A two-route app whose `route.leave(editPattern)` guard emits `confirm` when
-  // `dirty` is true. `continueLeave` clears `dirty`; `stayHere` is a noop.
   const app: AppShape = {
     slots: {
       dirty: { value: false },

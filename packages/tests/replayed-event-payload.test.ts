@@ -1,10 +1,3 @@
-// Regression: replaying an episode hands its entry reducer the payload the
-// live run handed it (runtime.md §10.5.3). The live runtime records
-// `trigger.payload` as the reducer payload itself, and an `ssr.hydrate`
-// bootstrap carries its first reducer's value only on the `effect-end` step
-// before it. Record → serialize → replay is driven through the same seams the
-// CLI verbs use (`kumiki run --episode-log`, `kumiki replay`, `episode-test`).
-
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,14 +131,7 @@ describe("an ssr.hydrate bootstrap episode replays", () => {
   });
 });
 
-// The consumption half of the rule (§10.5.3): the bootstrap's entry value is
-// taken from the log, so a `from-log` mock of the same effect continues after
-// it. The example records one `effect-end`, which cannot tell "continues after"
-// from "starts over", so these logs are built by hand.
 describe("the entry reducer's recorded result is consumed", () => {
-  // `load.ok` / `load.err` append what they got to `got`; the first of them to
-  // run emits `load` once more, so the re-emit shows which recorded result the
-  // `from-log` cursor hands out next.
   function chainApp(): ReplayApp {
     const step = (tag: string) => (live: Record<string, unknown>, p: Record<string, unknown>) => {
       const got = live.got as unknown[];
@@ -209,8 +195,6 @@ describe("the entry reducer's recorded result is consumed", () => {
     return { report, events, ends, got: report.finalSlots.got };
   }
 
-  // Fails if `cursors[effect] = nth + 1` is dropped: the re-emit is then handed
-  // "first" a second time, one step stale, and nothing panics to say so.
   it("hands a re-emit of the same effect the result after the consumed one", () => {
     const { ends, got, report } = run(
       hydrate([end("ok", "first"), red("load.ok"), end("ok", "second"), red("load.ok")]),
@@ -223,9 +207,6 @@ describe("the entry reducer's recorded result is consumed", () => {
     ]);
   });
 
-  // Fails if the `s.result === outcome` filter is dropped: the `.err` entry
-  // reducer is then handed the later `ok` value, and the cursor moves past
-  // both results, so the re-emit finds nothing left to replay.
   it("hands an `.err` entry reducer the recorded `err` result, not a later `ok` one", () => {
     const { ends, got } = run(hydrate([end("err", "boom"), end("ok", "v"), red("load.err")]));
     expect(got).toEqual([
@@ -235,9 +216,6 @@ describe("the entry reducer's recorded result is consumed", () => {
     expect(ends).toEqual([["ok", "v", "from-log"]]);
   });
 
-  // Fails if the `found === false` path hands over `{ $1: undefined }` as if
-  // the log had answered: the reducer then gets a `$1` key, and neither the
-  // episode line nor the report says the log never carried the value.
   it("reports an entry result the log does not carry instead of inventing one", () => {
     const { events, got, report } = run(hydrate([red("load.ok")]));
     expect(got).toStrictEqual([["ok", {}]]);

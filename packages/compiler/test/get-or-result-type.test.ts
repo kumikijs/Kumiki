@@ -1,24 +1,6 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// `.get-or(fallback)` answers from its receiver's type argument: `Option(T)`
-// and `Result(T, E)` answer `T`, and `Map(K, V).get-or(k, fallback)` answers
-// `V` (stdlib.md §2.2.4 / §2.2.5 / §2.2.1). Nothing said so, so
-// `opt := opt.get-or(x)` on an `Option(T)` slot passed `check` and left the
-// slot holding a bare `T` — `is-some` and `is-none` both false on a value that
-// was there, so a `when(is-some, …)` / `when(is-none, …)` pair rendered
-// neither arm.
-//
-// The fallback is checked against the same type, which is the report that
-// names the mistake rather than its consequence.
-//
-// Every expectation here is the whole diagnostic list rather than a filtered
-// one: a stray extra report on a program this file calls clean is the thing
-// worth catching. The argument-count cases have since gained the diagnostic
-// this file anticipated — as an E0213, since the receiver deciding the count
-// is what an arity mismatch is; `get-or-receiver-arity.test.ts` owns it, and
-// what is pinned here is that it did not also make the result type decidable.
-
 const errsOf = (src: string) => check(parse(lex(src)));
 const app = (defs: string): string =>
   `${defs}
@@ -74,8 +56,6 @@ reducer keep on=ui.click(B) do= n := res.get-or(0)`),
   });
 
   it("a Map answers its value type, not an Option of it", () => {
-    // `.get` on the same receiver answers `Option(Int)` — the fallback is what
-    // makes this one answer the value itself.
     expect(
       diagnostics(
         app(`slot m : Map(Text, Int) = {}
@@ -113,22 +93,16 @@ describe("the fallback carries the same type", () => {
 slot opt : Option(S) = None
 reducer keep on=ui.click(B) do= opt := opt.get-or(None)`),
     );
-    // Two mistakes, not one report of two shapes: the fallback is not an `S`,
-    // and what the call answers is not an `Option(S)`.
     expect(errs.map((e) => `${e.code} ${e.message}`)).toEqual([
       'E0201 Expected S but got variant "None"',
       "E0201 Expected Option(S) but got S",
     ]);
-    // The argument sits inside the assignment it is reported alongside: one
-    // line, and further along it.
     const [atArg, atAssign] = errs;
     expect(atArg?.pos.line).toBe(atAssign?.pos.line);
     expect(atArg?.pos.col).toBeGreaterThan(atAssign?.pos.col ?? 0);
   });
 
   it("inside an emit argument it is still E0201, not the effect's own code", () => {
-    // The fallback is wrong against the method's signature, which is a
-    // different statement from "this is not what the effect declared in=".
     expect(
       diagnostics(
         `slot m : Map(Text, Int) = {}
@@ -160,13 +134,6 @@ reducer keep on=ui.click(B) do= n := m.get-or("k", "none")`),
 
 describe("what stays undecidable", () => {
   it("an argument count that does not fit the receiver decides no result type", () => {
-    // The lowering picks the Map reading or the unwrapping one by counting
-    // arguments, so neither call has a result type to check against here —
-    // which is still true, and is what keeps a *wrong* result type from being
-    // guessed. What has changed is that the mismatch no longer goes unsaid:
-    // the count is reported as the arity error it is, so the call cannot
-    // silently lower to the other reading. That report is the whole list —
-    // no E0201 rides along on a result type nothing decided.
     expect(
       diagnostics(
         app(`slot opt : Option(Int) = None
@@ -206,11 +173,6 @@ reducer keep on=ui.click(B) do= n := $event.get-or("not an Int")`),
   });
 
   it("an effect payload bind is a receiver like a slot: unwrapping one is the same pair", () => {
-    // The shape this defect was found in: an `Option` restored from storage,
-    // unwrapped into the slot that declares it. `$s` has the Ok type of the
-    // effect's `out=`, so the receiver decides the result exactly as an
-    // `Option(Session)` slot would. `effect-payload-bind-type.test.ts` owns
-    // the bind's type; this pins that `.get-or` reaches it.
     expect(
       diagnostics(
         `type Session = {email: Text}

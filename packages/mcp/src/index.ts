@@ -1,10 +1,3 @@
-// Kumiki MCP server — exposes the compiler and AI-edit toolchain as MCP tools.
-//
-// Tools fall into three groups:
-//   * source / file validation  (check, build)
-//   * project navigation + edits (list, view, refs, add, replace, remove, rename, fix)
-//   * spec access                (spec_search, spec_list, spec_get)
-
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -52,13 +45,6 @@ import { getSpecDoc, listSpecDocs, searchSpec } from "./spec.ts";
 
 type Diagnostic = { code: string; kind: string; message: string; line: number; col: number };
 
-/**
- * The shape of each scenario action, for the one surface an agent reads before
- * writing a scenario. Keyed by the runner's own action set, so an action added
- * there and forgotten here is a compile error rather than an action no caller
- * of this tool knows exists — this description had drifted by six of them, and
- * the set is closed, so an action missing from it is unreachable in practice.
- */
 const ACTION_SHAPES: Record<(typeof HEADLESS_ACTION_KEYS)[number], string> = {
   dispatch: "{dispatch, payload?}",
   clickText: "{clickText}",
@@ -79,30 +65,10 @@ function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
 }
 
-/**
- * A tool answer that reports failure.
- *
- * The content is whatever the caller asked for — the diagnostics, the smoke
- * report, the scenario trace — and `isError` is the one field a client can
- * branch on without reading prose. The rule, so that no tool needs its own:
- * **`isError` is set exactly when the matching CLI verb would exit non-zero**
- * (docs/spec/ai-edit.md §9.2.5). `build failed:` and `scenario FAILED` exist
- * only as sentences, so without this an agent driving generate → check → fix
- * over MCP reads a failed build as a finished one.
- */
 function failed(s: string) {
   return { ...text(s), isError: true };
 }
 
-/**
- * Resolve `path` for a tool that reads a sidecar rather than the file itself.
- *
- * The op-log and the episode log are separate files, so those tools never open
- * the `.kumiki` — and answered "(no history)" / "(no episode log)" for a path
- * that was never there, which is exactly what an app nobody has edited or run
- * yet looks like. The source file is required to exist; the sidecar's absence
- * stays an ordinary answer.
- */
 function requireSourceFile(path: string): string {
   const abs = resolve(process.cwd(), path);
   if (!existsSync(abs)) throw new Error(`File "${abs}" not found`);
@@ -115,11 +81,6 @@ function readSource(input: { source?: string | undefined; path?: string | undefi
   throw new Error("provide either `source` or `path`");
 }
 
-/**
- * Registered capabilities for an input: from the nearest `kumiki.caps.json` at
- * or above a `path` (searched up to the project root), or an explicit
- * `capabilities` list when only `source` is given.
- */
 function capsForInput(input: {
   path?: string | undefined;
   capabilities?: string[] | undefined;
@@ -128,34 +89,12 @@ function capsForInput(input: {
   return input.capabilities ?? [];
 }
 
-/**
- * Uniform JSON error envelope for tool responses. Success responses use their
- * own JSON shape (e.g. `{ total, passed, ... }`); a client that always
- * `JSON.parse`s the tool output would otherwise hit an exception on the
- * failure path with the older `"error: <msg>"` plain-text form.
- *
- * `isError` is the field the protocol gives clients to branch on, and it has to
- * agree with the envelope: a caught failure returned without it reported
- * success for a file that does not exist, while the same failure in a tool with
- * no catch reached the SDK and came back flagged. A client branching on
- * `isError` saw half its failures as results.
- */
 function errText(e: unknown) {
   const kind = e instanceof CapabilityManifestError ? "capability-manifest" : "error";
   const message = e instanceof Error ? e.message : String(e);
   return { ...text(JSON.stringify({ error: { kind, message } }, null, 2)), isError: true };
 }
 
-/**
- * Serialise a `FixFromTestOutcome` for the MCP wire: drop the un-serialisable
- * `apply` closure from every `AutoPatch`, convert `KumikiError[]` →
- * `Diagnostic[]`, and preserve the discriminated union so the client can
- * `switch (r.status)` on the response. The `applied` variant always carries
- * `regressed: []`: a patch that would regress a test is `test-blocked`.
- *
- * Exported so a test can serialise an outcome no file reaches today, such as a
- * refusal over composed source that does not parse.
- */
 export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
   const base = { ok: o.ok, status: o.status };
@@ -176,10 +115,6 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
         compilePatches: o.compilePatches.map(patchWire),
       };
     case "compile-blocked":
-      // `compileErrors` is the author's own set; `blocked` is what the refused
-      // patch would have done. A client that merged the two would report a
-      // diagnostic that is not in the file. Each `reason` keeps its own
-      // payload, so reading `reason` alone is never misleading.
       return {
         ...base,
         compileErrors: toDiagnostics(o.compileErrors),
@@ -235,10 +170,6 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
       };
     }
     case "write-failed":
-      // I/O failure surfaces on the wire so MCP callers see it as a
-      // structured outcome rather than a transport-level error. `phase`
-      // distinguishes the two write sites; `patch` only appears on
-      // phase="test" (the tier-2 proposal that never landed).
       return {
         ...base,
         phase: o.phase,
@@ -247,8 +178,6 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
         ...(o.patch ? { patch: patchWire(o.patch) } : {}),
       };
     default: {
-      // Exhaustiveness guard: a new variant on `FixFromTestOutcome` without a
-      // matching case here becomes a TS compile error.
       const _exhaustive: never = o;
       throw new Error(`unhandled FixFromTestOutcome status: ${JSON.stringify(_exhaustive)}`);
     }
@@ -270,13 +199,6 @@ type EpisodeLogRead = {
   firstMalformedLine?: number;
 };
 
-/**
- * Read a `<file>.kumiki-episodes.jsonl` log into a chronological (append-order)
- * array. Malformed JSONL lines are counted (not silently dropped) so callers
- * can surface a warning — a log written by a long-running process may end
- * mid-write, which is expected; arbitrary bad lines usually mean the runtime
- * logger produced garbage, and hiding that would mask the real bug.
- */
 function readEpisodeLog(logPath: string): EpisodeLogRead {
   const lines = readFileSync(logPath, "utf8").split(/\r?\n/);
   const entries: Episode[] = [];
@@ -368,21 +290,6 @@ function validate(
 export function createServer(): McpServer {
   const server = new McpServer({ name: "kumiki", version: "0.1.0" });
 
-  /**
-   * Register a tool whose failures always leave through `errText`.
-   *
-   * Wrapping at registration rather than inside each handler is the point: a
-   * per-handler `try` is something a new tool can be written without, and
-   * that is exactly how half of these ended up reporting a missing file as a
-   * successful result while the other half reported it as an error.
-   *
-   * The assertion is the price of implementing a callback type whose
-   * parameters depend on a type variable: `ToolCallback<InputArgs>` resolves
-   * to concrete parameters only once `InputArgs` is, and every call site below
-   * supplies one. The explicit return type keeps the assertion from covering
-   * what this function returns as well — without it the `catch` arm is checked
-   * against an unresolved conditional type, which accepts anything.
-   */
   const tool = <InputArgs extends ZodRawShapeCompat>(
     name: string,
     config: { title: string; description: string; inputSchema: InputArgs },
@@ -545,19 +452,9 @@ export function createServer(): McpServer {
         const status = s.ok ? "ok" : "FAIL";
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const sub = [
-          // The action never ran: an agent reading this must not diagnose the
-          // app from a state it never reached — including the `final state:`
-          // line below, when this is the last step.
           ...(s.actionError !== undefined ? [`    action failed: ${s.actionError}`] : []),
           ...s.errors.map((e) => `    error: ${e}`),
-          // An error the step's `errorIncludes` asked for is out of `errors`,
-          // so without this line the agent driving the fix loop reads a step
-          // that reported something as one that reported nothing.
           ...s.expectedErrors.map((e) => `    expected error: ${e}`),
-          // The same, for the other channel: a refusal the step's
-          // `actionErrorIncludes` claimed is out of `actionError`, and without
-          // this line a step whose whole point is that the platform turned it
-          // away reads as a step where nothing happened.
           ...(s.expectedActionError !== undefined
             ? [`    expected refusal: ${s.expectedActionError}`]
             : []),
@@ -581,10 +478,6 @@ export function createServer(): McpServer {
       description: "List the definitions in a .kumiki file, optionally filtered by layer.",
       inputSchema: {
         path: z.string().describe("Path to a .kumiki file"),
-        // Derived from the labels the store puts on definitions, so this
-        // filter and `kumiki list <layer>` accept the same set. Written out
-        // here, it omitted `test` and `motion` — definitions the tool listed
-        // but could not filter to.
         layer: z.enum(LAYERS).optional(),
       },
     },
@@ -626,9 +519,6 @@ export function createServer(): McpServer {
     },
     async ({ path, name }) => {
       const store = load(resolve(process.cwd(), path));
-      // "(no references)" for a name that is not defined reads as "safe to
-      // delete", which is the opposite of what a typo'd name means. Same
-      // answer as `kumiki_view` gives to the same question.
       if (!store.byQName.has(name)) throw new Error(`Definition "${name}" not found`);
       const refs = findReferences(store, name).map((r) => `${r.qname} @ line ${r.line}`);
       return text(refs.join("\n") || "(no references)");
@@ -642,8 +532,6 @@ export function createServer(): McpServer {
       description: "Append a new definition to a .kumiki file. Returns the new op-id.",
       inputSchema: {
         path: z.string(),
-        // The labels `kumiki_list` filters by, so a kind of definition it
-        // lists is one this tool writes.
         layer: z.enum(LAYERS),
         name: z.string(),
         body: z
@@ -874,16 +762,7 @@ export function createServer(): McpServer {
             before: r.before,
             after: r.after,
             remaining: toDiagnostics(r.remaining),
-            // The advisory half, always — an empty `remaining` means the file
-            // is clean of errors, not that it is clean, and an agent deciding
-            // whether it is done reads this envelope rather than the CLI's
-            // stdout.
             warnings: toDiagnostics(r.warnings),
-            // Surface every non-success modifier on the wire so callers
-            // can distinguish "no patch was needed" (`applied === 0`,
-            // no modifier) from a rollback / parser-break / I/O failure.
-            // Without these fields the three failure shapes collapse into
-            // one indistinguishable `applied: 0`.
             ...(r.parseError ? { parseError: r.parseError } : {}),
             ...(r.regressionBlocked ? { regressionBlocked: r.regressionBlocked } : {}),
             ...(r.writeError ? { writeError: r.writeError } : {}),
@@ -896,16 +775,9 @@ export function createServer(): McpServer {
       const plan = planFix(abs, input.only, caps);
       const advisory = plan.warnings.map((w) => `${w.code} ${w.message}`);
       if (plan.errors.length === 0) {
-        // The warnings come out with the verdict. `kumiki_check` on the same
-        // file returns a JSON diagnostics array — non-`isError`, since nothing
-        // in it is fatal — so an agent told a bare "no errors" here has two
-        // answers about one file and nothing that reconciles them. The
-        // clean-file verdict is still `text`, not `failed`.
         if (plan.warnings.length === 0) return text("no errors");
         return text([`no errors (${plural(plan.warnings.length)})`, ...advisory].join("\n"));
       }
-      // A dry run proposes and repairs nothing, so the file still has every
-      // error it started with — which is what `isError` reports here.
       if (plan.patches.length === 0) {
         return failed(
           [
@@ -915,9 +787,6 @@ export function createServer(): McpServer {
           ].join("\n"),
         );
       }
-      // The unrepairable half goes out with the repairable half. An agent
-      // that reads only the proposals treats the file as one patch away from
-      // clean when it is not.
       const proposals = plan.patches.map((p) => `${p.code}: ${p.description}`);
       const unrepaired = plan.skipped.map((s) => `${s.code}: ${s.message} (no auto-patch)`);
       return failed([...proposals, ...unrepaired, ...advisory].join("\n"));
@@ -951,8 +820,6 @@ export function createServer(): McpServer {
       const apply = input.apply === true;
       const outcome = await runFixFromTest(abs, input.testName, apply, caps);
       const body = JSON.stringify(serialiseFixFromTest(outcome), null, 2);
-      // `ok` counts a dry-run proposal as success; the named test passing is
-      // what was asked for. Same rule as `kumiki fix --auto-patch`.
       const repaired = outcome.status === "already-pass" || (apply && outcome.ok);
       return repaired ? text(body) : failed(body);
     },
@@ -993,8 +860,6 @@ export function createServer(): McpServer {
         null,
         2,
       );
-      // A filter that matches nothing is a failure for the same reason it is
-      // one in `kumiki test`: the caller named tests that are not there.
       const matchedNothing = report.filter !== undefined && report.total === 0;
       return report.failed > 0 || matchedNothing ? failed(body) : text(body);
     },
@@ -1033,9 +898,6 @@ export function createServer(): McpServer {
     },
     async ({ doc }) => {
       const body = getSpecDoc(doc);
-      // A name that resolves to no document is a caller mistake, not an empty
-      // document: returning the sentence as the answer means a client reads
-      // "not found: langauge" as the spec text it asked for.
       if (body === null) throw new Error(`no spec document named "${doc}"`);
       return text(body);
     },

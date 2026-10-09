@@ -1,7 +1,3 @@
-// httpFetch unit coverage for app.http (#78): base-url prepend, header
-// precedence (auto < global < input), credentials, and timeout via
-// AbortController. Each test stubs `globalThis.fetch` so no network is touched.
-
 import { httpFetch } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -116,8 +112,6 @@ describe("httpFetch (#78)", () => {
   });
 
   it("returns immediately with aborted when external signal is already aborted (#102)", async () => {
-    // fetch is never called for an already-aborted signal — but if it is, it
-    // must still resolve to the aborted shape.
     globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       return new Promise<Response>((_, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
@@ -133,8 +127,6 @@ describe("httpFetch (#78)", () => {
     expect(v.message).toBe("aborted");
   });
 
-  // A failed body read stays a connection-shaped error (status 0, retried),
-  // unlike a body that arrived and does not parse (§6.1.4).
   it("reports a body stream that errors mid-read as status 0", async () => {
     stubFetch(
       () =>
@@ -155,8 +147,6 @@ describe("httpFetch (#78)", () => {
     expect(v.message).toMatch(/stream reset/);
   });
 
-  // §6.4.1: an abort while the body is being read is still `aborted`, never a
-  // decode failure carrying the response's status.
   it("reports an abort during the body read as aborted, not a decode failure", async () => {
     let body: ReadableStreamDefaultController<Uint8Array> | undefined;
     stubFetch(

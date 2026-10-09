@@ -3,13 +3,6 @@ import { replayEpisodes } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 
-/**
- * Cover the seam that carries panic root-cause info from the replay executor
- * (`executeEpisode` / `replayEpisodes`) out to CLI consumers as
- * {@link ReplayEvent}. The formatter itself has its own unit test; here we
- * verify the *event shape* an observer receives — the pipeline that ties
- * runtime → CLI together and was previously untested end-to-end.
- */
 describe("replayEpisodes panic emit", () => {
   function makePanicApp(): AppShape {
     const app: AppShape = {
@@ -37,8 +30,6 @@ describe("replayEpisodes panic emit", () => {
     id: "ep_panic",
     trigger: { kind: "ui.click", target: "BoomBtn", ts: 1 },
     steps: [
-      // The executor dispatches the first reducer step — that's the throw
-      // point. Payload / slot-diffs are not needed for the executor to run.
       { kind: "reducer", name: "boom", "slot-diffs": [], emits: [], ts: 2 },
     ],
     status: "panic",

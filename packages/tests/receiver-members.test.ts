@@ -1,13 +1,3 @@
-// A member of one container written on another used to pass `check` and
-// `build`, and the runtime answered with whichever container's reading the
-// name reached: `res.filter(…)` on a `Result` read it as a `Map` and gave `{}`,
-// `opt.keys` gave the Option's own `_tag` / `_0` as data. It is E0108 now, on
-// both verbs.
-//
-// The checker's table, receiver by receiver and against the spec, is pinned in
-// `packages/compiler/test/receiver-members.test.ts`; the spelling §2.2 gives
-// each of these runs in `features/145-receiver-members` and its scenario.
-
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 

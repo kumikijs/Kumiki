@@ -1,15 +1,3 @@
-// Integration tests for `kumiki dev` (issue #118, spec §10.7).
-//
-// Starts the dev server on an ephemeral port via the programmatic
-// `startDevServer` API, then probes:
-//   - GET / returns the synthesized HTML with the dev panel container and
-//     the injected dev client script tag.
-//   - GET /@kumiki-dev/client.ts returns the substituted client source so
-//     the static `__KUMIKI_TARGET__` placeholder has been replaced with the
-//     absolute target path BEFORE serving (required for Vite's HMR matcher).
-//   - POST /__kumiki/episode with --episode-log appends one JSONL line per
-//     posted body, matching the `kumiki run --episode-log` format.
-
 import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
@@ -79,22 +67,12 @@ describe("kumiki dev", () => {
     expect(res.status).toBe(200);
     const code = await res.text();
     expect(code).not.toContain("__KUMIKI_TARGET__");
-    // After Vite's transform the static specifier becomes a /@fs/... or
-    // relative URL — the path's tail still matches the .kumiki basename.
     expect(code).toMatch(/app\.kumiki/);
-    // Substitution happens BEFORE Vite transforms — both the import and the
-    // hot.accept boundary share the same specifier shape; rely on the basename
-    // to confirm without coupling to Vite's URL-rewriting choices.
   });
 
-  // Spawns `kumiki check` through tsx *and* starts a dev server — well past
-  // Vitest's 5 s default whenever the machine is busy.
   it("reads a capability manifest at the project root, as check does", {
     timeout: 60_000,
   }, async () => {
-    // The dev server makes the .kumiki file's own directory Vite's root so the
-    // static `import App` resolves. The manifest search must not inherit that
-    // root: a file that `kumiki check` accepts has to compile here too.
     const projectRoot = mkdtempSync(join(tmpdir(), "kumiki-dev-caps-"));
     mkdirSync(join(projectRoot, "src"), { recursive: true });
     writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ name: "p" }));
@@ -183,16 +161,12 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     expect(res.status).toBe(400);
     const payload = (await res.json()) as { error: string };
     expect(payload.error).toMatch(/invalid episode JSON/);
-    // The corrupted body must NOT have polluted the JSONL — `kumiki replay`
-    // would choke on it. Either no file, or an empty one is acceptable.
     if (existsSync(logFile)) {
       expect(readFileSync(logFile, "utf8")).toBe("");
     }
   });
 
   it("returns 500 when --episode-log points at a path that cannot be written", async () => {
-    // Point at the tmp directory itself — appendFileSync to a directory
-    // errors with EISDIR on every platform we ship for.
     await start({ episodeLog: tmpRoot });
     const res = await fetch(new URL("/__kumiki/episode", baseUrl), {
       method: "POST",
@@ -205,9 +179,6 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("propagates --strict-a11y to the kumiki vite plugin so a11y violations fail compile", async () => {
-    // Write a throwaway .kumiki with an unlabeled button, point the dev server
-    // at it with --strict-a11y, request the file's URL, and expect a 500 with
-    // the E0701 code in the body.
     const dir = mkdtempSync(join(tmpRoot, "a11y-"));
     const file = join(dir, "bad.kumiki");
     writeFileSync(
@@ -223,9 +194,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       });
       baseUrl = url;
       close = () => server.close();
-      // Use Vite's `transformRequest` directly — fetching the file URL is
-      // brittle across Vite versions, but transformRequest deterministically
-      // exercises the plugin chain.
       await expect(server.transformRequest(file)).rejects.toThrow(/E0701/);
     } finally {
       try {
@@ -237,10 +205,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
-// CLI dispatch tests spawn `node --import tsx kumiki.ts ...` so the first run
-// pays the tsx cold-start cost. CI cold start once pushed the first
-// invocation past vitest's 5s default. Give the whole suite a 30s per-test
-// budget so cold-start drift doesn't flake builds.
 const DISPATCH_TIMEOUT_MS = 30_000;
 
 describe("kumiki dev — CLI dispatch argument parsing", () => {
@@ -294,10 +258,6 @@ describe("kumiki dev — CLI dispatch argument parsing", () => {
     DISPATCH_TIMEOUT_MS,
   );
 
-  // Every case above exits 2 in argument validation, before the action runs.
-  // This one reaches it: the action loads the server module with a dynamic
-  // `import()`, which in the published build resolves to a separate chunk, so
-  // only a start that gets as far as listening shows the specifier resolves.
   it(
     "starts the server when the arguments are valid",
     async () => {

@@ -1,14 +1,3 @@
-// `check` / `switch` bind a `Bool`, and `radio(group=…, bind=b, value=V)` binds
-// one variant of a union (forms.md §5.1.1, §5.5.2). The checker accepted
-// `bind=` on all three and codegen dropped it: every box rendered unticked
-// whatever the slot held, and ticking one wrote nothing. The scenario beside
-// `132-toggle-bind` drives the write-back through its steps; what is here
-// drives it from the DOM itself, and asserts what a scenario cannot — which
-// boxes are ticked on mount and after a reducer, the bind marker, the served
-// HTML, where focus lands after a radio is chosen, and the order of the
-// write-back against the control's own handler — and the checker's half of the
-// table.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, lex, parse } from "@kumikijs/compiler";
@@ -19,8 +8,6 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const example = join(here, "..", "examples", "features", "132-toggle-bind.kumiki");
 
-// Every radio of a group shares a `name` on the real document, so the radios
-// of an abandoned root would form one group with the next test's.
 afterEach(() => {
   document.body.replaceChildren();
 });
@@ -115,9 +102,7 @@ describe("check / switch / radio bind", () => {
   });
 
   it("keeps focus on the radio chosen, not the first radio sharing its marker", async () => {
-    // happy-dom's `.click()` does not move focus, so focus it first, as a
-    // browser does on a click; the Chromium tier pins the same thing with a
-    // real click (132-toggle-bind.browser.json).
+    // happy-dom's `.click()` does not move focus, so focus it first, as a browser does on a click; the Chromium tier pins the same thing with a real click.
     const { root } = await mounted();
     const chosen = box(root, "rActive");
     chosen.focus();
@@ -143,9 +128,6 @@ describe("check / switch / radio bind", () => {
 });
 
 describe("the write-back runs before the control's own handler", () => {
-  // A `check(value=b, onClick=toggle)` moved to `check(bind=b, onClick=toggle)`
-  // inverts `b` twice: the bind writes the new state, then `toggle` reads it
-  // and inverts it back. forms.md §5.1.1 states the order; this pins it.
   const src = (kind: string) => `
 slot b : Bool = false
 slot seen : Bool = false
@@ -199,9 +181,6 @@ describe("check / switch / radio bind types", () => {
   });
 
   it("reports a bound radio with no value to write", () => {
-    // Without one the radio would write `undefined` into the union slot, then
-    // show itself chosen (`undefined == undefined`) while every `match` on the
-    // slot fell through.
     const diags = check(parse(lex(program(`radio(group="f", bind=filter) {label: "all"}`))));
     expect(diags.map((d) => [d.code, d.kind, d.severity ?? "error"])).toEqual([
       ["E0225", "radio-bind-without-value", "error"],
@@ -230,7 +209,6 @@ describe("check / switch / radio bind types", () => {
         `"selected" on radio() is not read beside bind= — the bound value decides whether it is chosen. Remove it (see docs/spec/forms.md §5.1.1)`,
       ],
     ]);
-    // Without a bind the same arguments are what the control reads.
     expect(codes(program("check(value=flag)"))).not.toContain("W0216");
     expect(codes(program(`radio(group="f", value=All, selected=true)`))).not.toContain("W0216");
   });

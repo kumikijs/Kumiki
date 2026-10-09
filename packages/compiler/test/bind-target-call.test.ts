@@ -1,9 +1,3 @@
-// A `bind=` target is the place a control writes to (forms.md §5.1): a path,
-// whose steps are a field, an index, or the unwrap `.get` (language.md §1.6.1 /
-// §1.6.3), written without parentheses. A step written as a call names the
-// value the call answers, not a place, so it is E0602 at the call. On the left
-// of `:=` the same path does not parse, because a path step is an identifier.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 

@@ -1,9 +1,3 @@
-// AC for #163: kumiki add/replace grow --body-file <path>, and edit grows
-// --patch-file <path>. Positional body is joined with a single space, so a
-// multi-line definition round-tripped through the shell collapses. --body-file
-// reads the file (or stdin, when path is "-") verbatim so tabs / newlines /
-// multi-space runs survive.
-
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,18 +98,12 @@ describe("kumiki add --body-file", () => {
     expect(out).toMatch(/Usage: kumiki add/);
   });
 
-  // Regression for CRIT-2 (PR #195 review): without an argParser rejecting
-  // `--`-prefixed values, commander happily consumes the next flag token as
-  // the body path, then --body-file surfaces as ENOENT for a nonsense name.
   it("exits 2 when --body-file's next token is another flag", { timeout: 30000 }, () => {
     const { out, code } = runCli(["add", target, "slot", "count", "--body-file", "--strict-a11y"]);
     expect(code).toBe(2);
     expect(out).toMatch(/Usage: kumiki add/);
   });
 
-  // Regression for IMP-1 (PR #195 review): ENOENT used to bubble up as a raw
-  // Error string + exit 1, which is inconsistent with the flag-shape errors
-  // in the rest of the CLI. Should land as exit 2 with the flag + path named.
   it("exits 2 with a named error when --body-file points at a missing path", {
     timeout: 30000,
   }, () => {
@@ -241,9 +229,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(out).toMatch(/Usage: kumiki edit/);
   });
 
-  // Regression: broken JSON in a patch file used to bubble a raw SyntaxError
-  // that didn't name the file, so users couldn't tell which of many patches
-  // was malformed.
   it("names --patch-file in the error when the file's JSON is invalid", { timeout: 30000 }, () => {
     const patchFile = join(dir, "broken.json");
     writeFileSync(patchFile, "{ not valid json");

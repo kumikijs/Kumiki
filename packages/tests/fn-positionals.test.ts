@@ -1,10 +1,3 @@
-// language.md §1.6.5: within a `fn`, `$1`, `$2`, ... are the arguments in
-// order. A positional reads the argument at its position, and a fragment
-// inside the body — `xs.map($1 * 2)`, `xs.fold(s, $1 + $2)` — keeps its own
-// `$1` / `$2`, the element (and accumulator) the method binds, not the fn's.
-// The checker's verdicts are in `packages/compiler/test/fn-positionals.test.ts`;
-// this file pins what the built fn returns.
-
 import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { loadSource } from "./helpers/load.ts";

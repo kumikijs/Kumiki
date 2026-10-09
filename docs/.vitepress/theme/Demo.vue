@@ -1,8 +1,4 @@
 <script setup lang="ts">
-// A read-only live demo of one feature example, for embedding in prose pages
-// (e.g. the home page below the code comparison). The compiler + runtime
-// bundle load lazily on mount via the dynamic import, so pages embedding a
-// demo don't pay for them in their initial chunk.
 import { onMounted, ref } from "vue";
 
 const props = withDefaults(defineProps<{ example: string; height?: string }>(), {

@@ -1,9 +1,6 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// `()` is a literal, so its type is known: `Unit`, refused where anything else
-// is declared and accepted where `Unit` is.
-
 type Diagnostic = { code: string; message: string; text: string };
 
 const diagnose = (src: string): Diagnostic[] =>
@@ -12,8 +9,6 @@ const diagnose = (src: string): Diagnostic[] =>
     .map((e) => ({
       code: e.code,
       message: e.message,
-      // The text at the diagnostic's own position, so the position is read
-      // rather than counted.
       text: (src.split("\n")[e.pos.line - 1] ?? "").slice(e.pos.col - 1),
     }));
 

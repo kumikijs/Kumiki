@@ -1,11 +1,3 @@
-// `lastId := emit load(x)` yields the id `emit cancel(id)` is later given, and
-// the dispatcher registers the in-flight request under an id of its own. When
-// the two differ, the cancel names nothing in flight and aborts nothing,
-// silently. What is pinned here is the whole round trip through the real
-// dispatcher and a `fetch` double: the request is left pending, the id the
-// reducer kept is handed back, and the request that id names is the one that is
-// aborted. Nothing in this file restates how either side builds its id.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
@@ -83,10 +75,6 @@ app M caps=[http.get, http.cancel] routes={"/" -> App, "/404" -> App} init=[]`;
 const EMIT = `lastId := emit load("x")`;
 
 describe("`emit cancel(id)` aborts the request `id := emit …` started", () => {
-  // Every policy builds an id, and every way of reaching an emit expression
-  // from a reducer body must build the one the dispatcher runs the request
-  // under. A debounce is short enough that the request is in flight by the
-  // time `Stop` is pressed.
   it.each([
     ["no policy", "", [EMIT]],
     ["latest", "policy=latest", [EMIT]],

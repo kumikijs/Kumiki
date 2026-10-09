@@ -1,11 +1,3 @@
-// End-to-end coverage for the lifecycle events introduced in #81. The runtime
-// must:
-//   - wire window beforeunload / visibilitychange / online / offline to the
-//     matching `app.*` reducers,
-//   - diff the rendered tile tree each render and fire
-//     `tile.mount(X)` / `tile.unmount(X)` for user-defined tiles, and
-//   - dispatch `route.error("/p")` when rendering throws under route `/p`.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppShape } from "@kumikijs/runtime";
@@ -45,8 +37,7 @@ describe("lifecycle events (#81) — runtime wiring", () => {
     expect(live.mounts).toBe(0);
     expect(live.unmounts).toBe(0);
 
-    // Flip the slot through the host-exposed setter so the assertion does not
-    // depend on which specific DOM button receives the click.
+    // Flip the slot through the host-exposed setter so the assertion does not depend on which specific DOM button receives the click.
     const setSlot = (app as AppShape & { _setSlot?: (n: string, v: unknown) => void })._setSlot;
     if (!setSlot) throw new Error("runtime did not expose _setSlot");
     setSlot("panelOn", true);
@@ -81,8 +72,7 @@ describe("lifecycle events (#81) — runtime wiring", () => {
     disposeFn = dispose;
     const live = app.live as Record<string, unknown>;
 
-    // happy-dom does not flip visibilityState for us — override the getter
-    // (configurable in happy-dom) and fire the event the runtime listens for.
+    // happy-dom does not flip visibilityState for us — override the getter (configurable in happy-dom) and fire the event the runtime listens for.
     const restoreHidden = stubVisibility("hidden");
     document.dispatchEvent(new Event("visibilitychange"));
     expect(live.visible).toBe(false);

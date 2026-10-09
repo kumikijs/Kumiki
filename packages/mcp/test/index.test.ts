@@ -68,11 +68,6 @@ describe("kumiki_check strict options", () => {
 
   it("strictIcons / strictSelectorId are wired through and default-off", async () => {
     await withClient(async (client) => {
-      // Counter-tests fixture is clean under default settings AND under either
-      // strict-icons or strict-selector-id — the toggles never surface false
-      // positives on well-formed input, so both invocations should be `ok`.
-      // The point of this test is to prove the options are wired to the
-      // typechecker at all (the previous test only exercised strictA11y).
       const off = await callTool(client, "kumiki_check", { path: FIX_COUNTER_TESTS });
       expect(off).toBe("ok — no diagnostics");
       const iconsOn = await callTool(client, "kumiki_check", {
@@ -133,9 +128,6 @@ describe("kumiki_fix", () => {
     const file = join(workdir, "typo.kumiki");
     copyFileSync(FIX_COUNTER_TYPO, file);
     await withClient(async (client) => {
-      // The typo emits E0103 (undefined-reference). Passing `only: "E9999"`
-      // should filter it out; no patches are planned so the tool reports
-      // "(no auto-patches available)" with the underlying error listed.
       const filtered = await callTool(client, "kumiki_fix", { path: file, only: "E9999" });
       expect(filtered).toContain("(no auto-patches available)");
       expect(filtered).toContain("E0103");
@@ -147,8 +139,6 @@ describe("kumiki_fix", () => {
   });
 
   it("puts the warnings on the wire when applying, where `remaining` is empty", async () => {
-    // `remaining: []` means clean of errors, not clean. An agent deciding
-    // whether it is done reads this envelope and nothing else.
     const file = join(workdir, "reveals-warning.kumiki");
     writeFileSync(
       file,
@@ -178,8 +168,6 @@ describe("kumiki_fix", () => {
   });
 
   it("reports a warning-only file as clean and still names the warning", async () => {
-    // `kumiki_check` calls this file "ok (1 warning)". A bare "no errors" here
-    // gives an agent two answers about one file with nothing to reconcile them.
     const file = join(workdir, "warning-only.kumiki");
     writeFileSync(
       file,
@@ -214,12 +202,6 @@ describe("kumiki_fix", () => {
   });
 
   it("apply-mode surfaces writeError on the wire when the on-disk write throws", async () => {
-    // Symmetric with the `kumiki_auto_patch` writeError test: the top-level
-    // apply wire must expose `writeError` (and by extension the two other
-    // non-success modifiers `regressionBlocked` / `parseError`) so MCP callers
-    // can distinguish "no patch needed" from a filesystem error the caller can
-    // act on. Without this surface the three failure shapes collapse into an
-    // indistinguishable `applied: 0`.
     const file = join(workdir, "typo.kumiki");
     copyFileSync(FIX_COUNTER_TYPO, file);
     const before = readFileSync(file, "utf8");
@@ -271,8 +253,6 @@ describe("kumiki_auto_patch", () => {
         status: string;
         compileFixes?: number;
       };
-      // Tier-1 clears the E0103 typo; the (now-compiling) test passes.
-      // The variant here is `already-pass`, not `applied`.
       expect(parsed.status).toBe("already-pass");
       expect(parsed.compileFixes).toBeGreaterThan(0);
     });
@@ -284,10 +264,6 @@ describe("kumiki_auto_patch", () => {
   it("serialises a gate refusal as compile-blocked, naming what the patch would have added", {
     timeout: 30000,
   }, async () => {
-    // `cnt` has one close name, `cn`, and `cn` is a `Text` in an `Int` sum —
-    // so the repair resolves the E0103 it was offered for and introduces an
-    // E0201. The gate refuses it; the wire has to say which of its conditions
-    // that was, because a client reading `reason` alone decides from it.
     const file = join(workdir, "repair-introduces.kumiki");
     writeFileSync(
       file,
@@ -324,9 +300,6 @@ describe("kumiki_auto_patch", () => {
       expect(parsed.status).toBe("compile-blocked");
       expect(parsed.blocked?.reason).toBe("introduced");
       expect(parsed.blocked?.introduced?.map((d) => d.code)).toEqual(["E0201"]);
-      // The file's own diagnostics, kept apart from what the refused patch
-      // would have added — a client that merged them would report a
-      // diagnostic that is not in the file.
       expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
       expect(parsed.compileFixes).toBeUndefined();
     });
@@ -334,9 +307,6 @@ describe("kumiki_auto_patch", () => {
   });
 
   it("serialises a refusal over unparseable source as compile-blocked, with the parser's message", () => {
-    // No repair rule writes unparseable source, so no file reaches this
-    // refusal. The outcome is built from the gate's verdict on hand-written
-    // broken text instead: a composed routes map that lost its closing brace.
     const source = [
       'tile App = column(heading("hi"))',
       "app A",
@@ -433,9 +403,6 @@ describe("kumiki_auto_patch", () => {
     copyFileSync(FIX_REGRESSION, file);
     const original = readFileSync(file, "utf8");
     await withClient(async (client) => {
-      // Test A wants message="planet", impl says "world" — Tier-2 would
-      // replace "world" with "planet". Test B asserts on "world", so the
-      // patch would make it fail: the gate refuses it and names "B".
       const out = await callTool(client, "kumiki_auto_patch", {
         path: file,
         testName: "A",
@@ -467,8 +434,6 @@ describe("kumiki_auto_patch", () => {
   it("serialises an `introduced` refusal's errors as diagnostics", {
     timeout: 30000,
   }, async () => {
-    // The unique `5` is a refinement bound; replacing it with `1` puts the
-    // lower bound above the upper one (E0804).
     const file = join(workdir, "introduced.kumiki");
     writeFileSync(
       file,
@@ -570,11 +535,6 @@ describe("kumiki_auto_patch", () => {
   it("serialises the write-failed variant on the wire: status, phase, writeError, patch metadata", {
     timeout: 30000,
   }, async () => {
-    // The single-fixture failing test would normally reach Tier-2 and land
-    // an `applied` outcome. Blocking `writeFileSync` reroutes it through the
-    // new `write-failed` branch. The wire must expose status/phase/writeError
-    // plus the proposed `patch` metadata (code + description, no `apply`
-    // closure).
     const file = join(workdir, "failing-single.kumiki");
     copyFileSync(FIX_FAILING_SINGLE, file);
     const before = readFileSync(file, "utf8");
@@ -608,8 +568,6 @@ describe("kumiki_auto_patch", () => {
     } finally {
       writeSpy.mockRestore();
     }
-    // `atomicWriteFileSync` in fix.ts stages into a sibling tmp file and
-    // renames; a throw on the staging write leaves the target byte-identical.
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 });
@@ -717,8 +675,6 @@ describe("kumiki_episode_list / kumiki_episode_tail", () => {
     const source = join(workdir, "app.kumiki");
     writeFileSync(source, "");
     const logPath = `${source}.kumiki-episodes.jsonl`;
-    // Mix of good and bad lines. The bad line ("{ not json") is neither
-    // parseable nor blank — it must not be silently dropped.
     writeFileSync(
       logPath,
       [
@@ -792,10 +748,6 @@ describe("kumiki_episode_list / kumiki_episode_tail", () => {
   });
 });
 
-// A client that branches on `isError` has to be able to trust it. Half these
-// tools caught their own failures and returned a JSON envelope as a *success*
-// response; the other half let the throw reach the SDK, which flagged it. The
-// same missing file was a result in one tool and an error in the next.
 describe("failure reporting", () => {
   let workdir: string;
   beforeEach(() => {
@@ -819,14 +771,6 @@ describe("failure reporting", () => {
   };
 
   it("every tool that opens a file reports a missing one as an error", async () => {
-    // Enumerated from the live server rather than listed here: a tool added
-    // without the guard is the failure this is for, and a hand-written list
-    // would not contain it.
-    //
-    // Selected on `properties` rather than `required`, because the four tools
-    // that accept `source` OR `path` have neither as required — and those four
-    // are exactly the ones that answer with a sentence when they fail, so a
-    // list that skips them tests the guard where it was never in doubt.
     await withClient(async (client) => {
       const { tools } = await client.listTools();
       const withPath = tools.filter(
@@ -895,9 +839,6 @@ describe("failure reporting", () => {
   });
 });
 
-// The editing tools call the CLI's mutators, so an op another agent's lock
-// covers is refused here exactly as at the CLI — including a definition the
-// body creates rather than the one the tool was named with.
 describe("ownership locks", () => {
   let workdir: string;
   let prevAuthor: string | undefined;
@@ -931,10 +872,6 @@ describe("ownership locks", () => {
   });
 });
 
-// `isError` follows one rule so no tool needs its own: it is set exactly when
-// the matching CLI verb would exit non-zero. These tools report a failed build
-// / smoke / scenario as a sentence with no machine-readable field beside it,
-// so this flag is the only thing a client can branch on.
 describe("isError mirrors the CLI's exit code", () => {
   let workdir: string;
   beforeEach(() => {
@@ -952,17 +889,11 @@ describe("isError mirrors the CLI's exit code", () => {
   }
 
   it("flags a check / build that failed on well-formed input", async () => {
-    // The file exists and parses, and neither tool throws — `validate` catches
-    // and `compile` returns `{kind: "fail"}`. So this is the tool running,
-    // producing its answer, and the answer being "this failed".
     expect(await flag("kumiki_check", { path: FIX_COUNTER_TYPO })).toBe(true);
     expect(await flag("kumiki_build", { path: FIX_COUNTER_TYPO })).toBe(true);
   });
 
   it("flags a smoke run on a file that compiles", async () => {
-    // Deliberately not the typo fixture: that one fails to compile, so the
-    // throw would reach the guard and this would pass without the smoke
-    // branch existing. This one is `ok` to `check` and panics when clicked.
     expect(await flag("kumiki_smoke", { path: FIX_SMOKE_PANICS })).toBe(true);
     expect(await flag("kumiki_smoke", { path: FIX_COUNTER_TESTS })).toBe(false);
   });
@@ -995,9 +926,6 @@ describe("isError mirrors the CLI's exit code", () => {
     );
   });
 
-  // As at the CLI (`exit-codes.test.ts`): the marker and the reason line are
-  // what an agent reads, and `isError` alone would stay green if a reporter
-  // forgot the fault channel while the body still said `[ok]`.
   it("marks a step whose action could not run as FAIL, and says why", async () => {
     // No `expect`: the failed action is the only thing that can fail this step.
     const scenario = { steps: [{ do: { click: "#typo" } }] };
@@ -1021,8 +949,6 @@ describe("isError mirrors the CLI's exit code", () => {
     // Now clean.
     expect(await flag("kumiki_fix", { path: file })).toBe(false);
 
-    // Apply is not success by itself: this file has a second error no patch
-    // covers, so the write lands and the file is still broken.
     const partial = join(workdir, "partial.kumiki");
     writeFileSync(
       partial,
@@ -1088,9 +1014,6 @@ tile Orphan = column(zzz.show)
   });
 
   it("offers `test` and `motion` as layer filters, which the store labels", async () => {
-    // The enum used to be written out by hand and had drifted from the labels
-    // `listDefs` puts on definitions, so these two were listed but could not
-    // be filtered to.
     await withClient(async (client) => {
       const { tools } = await client.listTools();
       const list = tools.find((t) => t.name === "kumiki_list");
@@ -1117,11 +1040,6 @@ tile Orphan = column(zzz.show)
   });
 });
 
-// What these pin is that the tools go through the shared formatter at all: the
-// wording itself is pinned once, in the CLI suite. A handler that answers with
-// a sentence of its own instead is the regression — that is how `kumiki_remove`
-// came to say "removed slot.count" for an edit that had also taken the three
-// reducers, the tile and the `app`, over the protocol path an agent drives.
 describe("what an edit tool reports about the edit it made", () => {
   let workdir: string;
   let file: string;
@@ -1163,8 +1081,6 @@ describe("what an edit tool reports about the edit it made", () => {
     });
   });
 
-  // The cascade above takes what references `slot.count`, out to the `app`,
-  // and the description an agent reads before calling the tool says so.
   it("describes the cascade as taking the target's dependents", async () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
@@ -1176,9 +1092,6 @@ describe("what an edit tool reports about the edit it made", () => {
   });
 
   it("says nothing about a cascade when there was none", async () => {
-    // `app.Counter` is the one definition in this file nothing references, so
-    // it removes without `cascade` — and a report that listed the requested
-    // name as its own casualty would show up here.
     await withClient(async (client) => {
       const out = await callTool(client, "kumiki_remove", { path: file, name: "app.Counter" });
       expect(out).toContain("removed app.Counter");
@@ -1214,8 +1127,6 @@ describe("what an edit tool reports about the edit it made", () => {
       expect(renamed).toContain("renamed slot.step -> stride");
       expect(renamed).toMatch(OP_ID);
 
-      // `kumiki_edit` is the one tool that already reported its op-id, which
-      // makes it the one where dropping it again would go unnoticed.
       const edited = await callTool(client, "kumiki_edit", {
         path: file,
         name: "slot.stride",
@@ -1244,10 +1155,6 @@ describe("what an edit tool reports about the edit it made", () => {
   });
 
   it("returns an id that identifies the edit in the file's history", async () => {
-    // The point of returning the id: it is the handle `kumiki patch revert`
-    // takes, and what tells this edit apart from every other edit to the same
-    // definition. `kumiki_history` is asked by name and answers with the
-    // entries; the id is what picks one of them out.
     await withClient(async (client) => {
       const added = await callTool(client, "kumiki_add", {
         path: file,

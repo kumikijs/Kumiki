@@ -1,18 +1,3 @@
-// Create the GitHub Release for each published package tag, with its CHANGELOG
-// section as the body.
-//
-//   node .github/scripts/github-release.mjs [<tag> ...]
-//
-// Without tags, reads changesets/action's `publishedPackages` output from
-// PUBLISHED_PACKAGES. Needs GITHUB_TOKEN (contents: write) and GITHUB_REPOSITORY.
-//
-// changesets/action creates these releases itself, but sends the whole section,
-// and GitHub refuses a body over 125,000 characters: the v0.14 batch of 119
-// changesets gave @kumikijs/compiler a 167,000-character section, so its release
-// was never made. Here a section over the limit is cut at an entry boundary and
-// links the full changelog. A tag that already has a release is left as it is,
-// so a re-run only fills in what is missing.
-
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -40,8 +25,7 @@ export function changelogSection(changelog, version) {
 
 /**
  * The release body for `section`: the section itself when it fits `limit`,
- * otherwise the entries that fit, whole, followed by a link to the full
- * changelog at `changelogUrl`.
+ * otherwise the entries that fit, whole, followed by a link to the full changelog at `changelogUrl`.
  */
 export function releaseBody(section, changelogUrl, limit = GITHUB_BODY_LIMIT) {
   if (section.length <= limit) return section;

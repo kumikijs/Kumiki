@@ -1,10 +1,3 @@
-// The two rules a `{submit}` step is judged by once it has run, and the DOM
-// reading the second is asked about. Each tier wires them in on its own —
-// `packages/tests/form-submit-gate.test.ts` drives the scenario tier, and the
-// e2e suite the browser tier — so what is pinned here is the wording a fixture
-// matches and the shape of the refusal, at the granularity of
-// `control-check.test.ts`.
-
 import { beforeEach, describe, expect, it } from "vitest";
 import { StepRefusal } from "../src/control-check.ts";
 import {

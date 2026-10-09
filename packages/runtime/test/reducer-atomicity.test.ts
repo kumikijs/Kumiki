@@ -1,15 +1,3 @@
-// A reducer is one batch (spec/runtime.md §10.3.3). A refinement that rejects
-// one slot in that batch must therefore reject the batch, not just the slot.
-//
-// The runtime used to skip only the offending key, which broke the batch in two
-// ways: the remaining writes landed (half a reducer applied), and — because the
-// reducer body reads the batch under construction — a value the slot never took
-// stayed readable by later statements and could be copied somewhere permanent.
-//
-// Both are asserted below, together with the parts of the batch that are not
-// slot writes (emits, stop-timer) and the one path that deliberately keeps the
-// per-field behaviour: two-way `bind`.
-
 import type { AppShape, MountedApp, ReducerSpec } from "@kumikijs/runtime";
 import { _stdlib, mount, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -282,9 +270,6 @@ describe("a rejected batch is reported, never silent", () => {
   });
 });
 
-// The live mount is only one of the five places a reducer batch gets applied.
-// The other four are verification tiers, and a tier that accepts what the app
-// refuses certifies the bug it exists to catch — so each is pinned here.
 describe("every tier applies the same rule", () => {
   const overflow = (name: string): ReducerSpec => ({
     name,
@@ -336,9 +321,6 @@ describe("every tier applies the same rule", () => {
     expect(followUps).toEqual([]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('reducer "booted" was rejected');
-    // A rejected batch is not an *unhandled* error: the `.ok` reducer matched,
-    // it just refused to commit. Reporting both would name a defect that is not
-    // there.
     expect(errors[0]).not.toContain("no .err reducer");
   });
 
@@ -405,9 +387,6 @@ describe("every tier applies the same rule", () => {
       reducers: [overflow("bump")],
       effects: {},
     };
-    // Chained steps are why this one matters: without the check the refused
-    // state becomes the next step's input and the invariant is proved about a
-    // world the app cannot reach.
     const after = _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {});
 
     expect(after.slots).toEqual({ count: 0, log: "" });
@@ -422,8 +401,6 @@ describe("the paths a batch rejection must not change", () => {
     app._setSlot("count", 2);
     expect(app.live.count).toBe(2);
 
-    // §5.1.2: an out-of-range keystroke leaves the slot alone and says nothing
-    // — a half-typed value is expected, not a defect.
     app._setSlot("count", 9);
     expect(app.live.count).toBe(2);
     expect(errors).toEqual([]);

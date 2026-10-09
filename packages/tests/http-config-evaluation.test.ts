@@ -1,24 +1,3 @@
-// `app.http`'s value fields are expressions, and an expression may read a
-// slot. `headers` was lowered into a thunk and worked; `base-url`, `timeout`
-// and `credentials` were lowered as values into `const _http = {…}`, which the
-// module emits before `_live` exists — so a slot reference there was a
-// `ReferenceError` at import and nothing mounted at all.
-//
-// What is pinned here is not that the module loads. It is *when* each field is
-// read: the value that reaches `fetch` is the slot's value at the moment of
-// the request, not at construction. A fix that only reordered the emission
-// would load, mount, and freeze every field at its declared default — which
-// looks identical until the slot changes. So every field is moved by a reducer
-// between two requests, through the language's own write path.
-//
-// Coverage of the literal case lives elsewhere, and is a different guarantee
-// in each place: `packages/compiler/test/app-http.test.ts` asserts the emitted
-// shape of all four fields on inline source, and the sibling
-// `packages/tests/app-http.test.ts` mounts `07-app-http` and asserts the URL,
-// one header and `credentials` reach `fetch` — not `timeout`, which is pinned
-// end-to-end only here: as an `Int` slot through example 81, and as a
-// `Duration` literal through example 120.
-
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mount } from "@kumikijs/runtime";
@@ -86,15 +65,7 @@ describe("app.http fields that read a slot", () => {
   });
 
   it("arms the abort with the timeout slot's current value", async () => {
-    // The fourth field, through the same write path. `httpFetch` arms
-    // `setTimeout(abort, timeout)` per request, so a request that is never
-    // answered ends as an `err` — and reaches the `failed` reducer — only if
-    // the abort was armed with the 20ms the reducer wrote rather than with the
-    // 5s the slot was declared with.
     const app = await loadApp(EXAMPLE);
-    // A request that only ends when the abort arrives. A stub that ignored
-    // `init.signal` would hang instead, and the assertion below would fail for
-    // a reason that has nothing to do with the timeout.
     double = stubFetch(
       (call) =>
         new Promise<Response>((_resolve, reject) => {
@@ -120,11 +91,6 @@ describe("app.http fields that read a slot", () => {
   });
 
   it("reads a Duration timeout as milliseconds, so a slow answer still arrives", async () => {
-    // Example 120 writes `timeout: Duration.s(5)`, which is 5000 ms at run time.
-    // The answer below takes 100 ms: it arrives only if the abort was armed
-    // with more than that. Were `Duration.s(5)` ever read as 5 ms, the abort
-    // would win and the quote would never render — while check, build and the
-    // typecheck of the field all stayed green.
     const app = await loadApp(DURATION_EXAMPLE);
     double = stubFetch(
       (call) =>
