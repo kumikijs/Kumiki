@@ -5,14 +5,11 @@
 // exposes a /__kumiki/episode middleware for `--episode-log` JSONL append.
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { kumiki as kumikiVitePlugin } from "@kumikijs/vite";
 import type { Plugin, ViteDevServer } from "vite";
 import { createServer } from "vite";
-
-const require = createRequire(import.meta.url);
 
 export type DevCmdOptions = {
   /** TCP port to bind. Defaults to 5173 to match the spec example. `0` picks an ephemeral port. */
@@ -36,6 +33,15 @@ const EPISODE_ENDPOINT = "/__kumiki/episode";
  * as `kumiki check` does — deliberately not bounded by the root below), so the
  * dev server doesn't take a capabilities parameter: passing one would
  * duplicate the work the plugin already does.
+ *
+ * Runtime resolution lives there too: the plugin alone resolves
+ * `@kumikijs/runtime`, for the dev client as for the compiled app, so the page
+ * runs one copy — the project's own when the root resolves one, the plugin's
+ * dependency otherwise. Vite serves that copy as it would in any project using
+ * the plugin: the project's own is pre-bundled when installed and served from
+ * source when linked, and the plugin's own is served as it is. Naming the
+ * runtime to the dependency optimizer here would be a second answer to the
+ * same question.
  */
 export async function startDevServer(
   kumikiPath: string,
@@ -73,7 +79,6 @@ export async function startDevServer(
     ],
     // Suppress Vite's own banner — devCmd prints its own.
     logLevel: "warn",
-    optimizeDeps: { include: ["@kumikijs/runtime"] },
   });
 
   await server.listen();
@@ -121,11 +126,6 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
   // the client and panel in both (see tsdown.config.ts).
   const clientTemplate = readFileSync(join(devSrcDir, "dev", "client.ts"), "utf8");
   const panelSource = readFileSync(join(devSrcDir, "dev", "panel.ts"), "utf8");
-
-  // Pre-resolve @kumikijs/runtime from the CLI's perspective. Virtual modules
-  // (the dev client/panel) have no real filesystem location, so Vite can't
-  // walk node_modules upward from them; we hand it the absolute path instead.
-  const runtimeAbs = require.resolve("@kumikijs/runtime");
 
   // The client.ts source has a `__KUMIKI_TARGET__` placeholder for the static
   // `import App from ...` line. Substitute the absolute target path up front;
@@ -208,17 +208,11 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
       };
     },
 
-    resolveId(id, importer) {
+    // The client's bare `@kumikijs/runtime` import is not answered here: a
+    // virtual importer has no directory, so Vite resolves it from the root,
+    // and @kumikijs/vite answers it exactly as it answers the compiled app's.
+    resolveId(id) {
       if (id === VIRTUAL_CLIENT_ID || id === VIRTUAL_PANEL_ID) return id;
-      // The virtual client/panel import @kumikijs/runtime as a bare specifier.
-      // Vite resolves bare imports relative to the importer's directory, and
-      // virtuals have none — so hand it the pre-resolved absolute path.
-      if (
-        id === "@kumikijs/runtime" &&
-        (importer === VIRTUAL_CLIENT_ID || importer === VIRTUAL_PANEL_ID)
-      ) {
-        return runtimeAbs;
-      }
       return null;
     },
 
