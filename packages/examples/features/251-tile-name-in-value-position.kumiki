@@ -1,0 +1,25 @@
+# Feature (language.md §1.7.1, errors.md E0005): a slot and a tile may share a
+# name, and where the name is written decides which of the two it means.
+#
+#   tile leaf = column(text(leaf), Card(leaf))
+#   tile App  = column(leaf)
+#
+# As a positional argument of a builtin that renders tiles there —
+# `column(leaf)` in `App` — the name is the tile, and its body is inlined. As a
+# value builtin's content — `text(leaf)` — or a user tile's input —
+# `Card(leaf)` — it is a value: the slot. Nothing is inlined there, so the tile
+# `leaf` reading the slot `leaf` does not expand into itself, and the page
+# shows the slot's value twice.
+
+slot leaf : Text = "hello"
+
+tile Card in=Text = text("card: " + $1)
+
+tile leaf = column(text(leaf), Card(leaf))
+
+tile App = column(leaf)
+
+app TileNameInValuePosition
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

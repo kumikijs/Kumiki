@@ -15,6 +15,7 @@
 
 import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { positionalIsTile } from "./builtins.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };
@@ -36,11 +37,13 @@ export type Cycle = {
  * The tile names a tile body statically expands into.
  *
  * These are exactly the edges code generation follows when it inlines: nested
- * tile calls, an identifier argument standing in for a tile, and the branches
- * of `for` / `when` / `if` / `match`. Names that turn out to denote a builtin,
- * or nothing at all, are included — the caller knows which table to resolve
- * them against, and code generation resolves a bare identifier to a tile
- * before anything else, so a slot of the same name is not the target.
+ * tile calls, an identifier written as a positional argument where a tile
+ * belongs (`positionalIsTile` — `column(leaf)`, never `text(leaf)` or
+ * `Card(leaf)`), and the branches of `for` / `when` / `if` / `match`. Names
+ * that turn out to denote a builtin, or nothing at all, are included — the
+ * caller knows which table to resolve them against, and code generation
+ * resolves an identifier in a tile position to a tile before anything else,
+ * so a slot of the same name is not the target there.
  *
  * A tile's own `error-boundary` is an edge too, but it belongs to the
  * definition rather than to its body — `boundaryTarget` is where it is taken
@@ -311,7 +314,12 @@ function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
         // is why this `continue` needs no case of its own.
         if (a.name !== undefined) continue;
         if (isTileExpr(v)) walkTileBody(v, out);
-        else if ((v as Expr).kind === "Ref") {
+        else if ((v as Expr).kind === "Ref" && positionalIsTile(t.name)) {
+          // An identifier stands in for a tile only where the callee takes a
+          // positional argument as one — the rule E0128 reads. A value
+          // builtin's content (`text(leaf)`) and a user tile's input
+          // (`Card(leaf)`) are values: the name there is read as a value and
+          // never inlined, so a tile sharing it is no edge.
           const ref = v as Expr & { kind: "Ref" };
           out.push({ to: ref.name, pos: ref.pos });
         }
