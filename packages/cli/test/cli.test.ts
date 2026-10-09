@@ -342,6 +342,14 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,644 measured, from 63,597 on dev at f72685e): `Int.parse`
+    // and `.parse-int` read a text one way, as `Float.parse` and `.parse-float`
+    // do (stdlib.md §2.2.6, §2.4.3). The 47 bytes are `INT_TEXT`, `FLOAT_TEXT`
+    // and `readNumber`, the one definition of each reading, which every
+    // spelling calls rather than carrying a copy inlined into the app. A
+    // counter parses nothing and still ships them, because they sit in the
+    // stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

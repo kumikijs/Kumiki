@@ -35,9 +35,11 @@ export function qualifierType(name: string, pos: Pos, env: TypeEnv): TypeExpr | 
 
 /**
  * The bases a text has a reading as. Each is how `T.parse` lowers for a
- * qualifier that unaliases to it (stdlib §2.4.3 is the table):
+ * qualifier that unaliases to it, and the `Int` / `Float` ones are what
+ * `.parse-int` / `.parse-float` read too (stdlib §2.4.3 is the table):
  *
- * - `Int` — an optional sign and decimal digits, nothing else.
+ * - `Int` — an optional sign and decimal digits, nothing else, spelling a
+ *   finite number.
  * - `Float` — an optional sign, decimal digits, an optional fraction and an
  *   optional exponent, spelling a finite number.
  * - `Time` — the instant as a millisecond number (stdlib §2.2.9).

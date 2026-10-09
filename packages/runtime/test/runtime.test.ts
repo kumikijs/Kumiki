@@ -1183,13 +1183,35 @@ describe("stdlib argument-less methods (issue #7)", () => {
     expect(() => _stdlib.panic("boom")).toThrow("boom");
   });
 
-  it("parseIntOpt / parseFloatOpt return Option, None on non-numeric", () => {
+  it("parseIntOpt reads an optional sign and decimal digits, and nothing else", () => {
     expect(_stdlib.parseIntOpt("42")).toEqual(_stdlib.Some(42));
-    expect(_stdlib.parseIntOpt("3.7")).toEqual(_stdlib.Some(3)); // truncated
+    expect(_stdlib.parseIntOpt("+5")).toEqual(_stdlib.Some(5));
+    expect(_stdlib.parseIntOpt("007")).toEqual(_stdlib.Some(7));
+    expect(_stdlib.parseIntOpt("-0")).toEqual(_stdlib.Some(-0));
+    // A fraction is no whole number, so it is not truncated into one.
+    expect(_stdlib.parseIntOpt("3.7")).toEqual(_stdlib.None);
+    expect(_stdlib.parseIntOpt("0x10")).toEqual(_stdlib.None);
+    expect(_stdlib.parseIntOpt("1e3")).toEqual(_stdlib.None);
+    expect(_stdlib.parseIntOpt(" 12 ")).toEqual(_stdlib.None);
+    expect(_stdlib.parseIntOpt(`1${"0".repeat(400)}`)).toEqual(_stdlib.None);
     expect(_stdlib.parseIntOpt("x")).toEqual(_stdlib.None);
     expect(_stdlib.parseIntOpt("")).toEqual(_stdlib.None);
+    // Only a text has a reading: a number handed in is not one.
+    expect(_stdlib.parseIntOpt(12)).toEqual(_stdlib.None);
+  });
+
+  it("parseFloatOpt reads decimal text with a fraction and an exponent, and nothing else", () => {
     expect(_stdlib.parseFloatOpt("3.5")).toEqual(_stdlib.Some(3.5));
+    expect(_stdlib.parseFloatOpt("1e3")).toEqual(_stdlib.Some(1000));
+    expect(_stdlib.parseFloatOpt("-1.5e-3")).toEqual(_stdlib.Some(-0.0015));
+    expect(_stdlib.parseFloatOpt("0x10")).toEqual(_stdlib.None);
+    expect(_stdlib.parseFloatOpt(" 1.5 ")).toEqual(_stdlib.None);
+    expect(_stdlib.parseFloatOpt(".5")).toEqual(_stdlib.None);
+    expect(_stdlib.parseFloatOpt("1.")).toEqual(_stdlib.None);
+    expect(_stdlib.parseFloatOpt("Infinity")).toEqual(_stdlib.None);
+    expect(_stdlib.parseFloatOpt("1e400")).toEqual(_stdlib.None);
     expect(_stdlib.parseFloatOpt("nope")).toEqual(_stdlib.None);
+    expect(_stdlib.parseFloatOpt(1.5)).toEqual(_stdlib.None);
   });
 });
 

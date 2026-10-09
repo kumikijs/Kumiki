@@ -73,15 +73,20 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
   return jsOfExpr(arg, ctx);
 }
 
-/** The lowering of one reading: text in, `Some(value)` or `None` out. */
+/**
+ * The lowering of one reading: text in, `Some(value)` or `None` out. Every
+ * spelling of a reading comes here — `T.parse`, a bound input's reader, and
+ * `.parse-int` / `.parse-float` (stdlib.md §2.2.6) for `Int` / `Float` — so
+ * none of them can read a text differently from the others.
+ */
 export function readingJs(reading: ParseReading, a: string): string {
   switch (reading) {
-    // Decimal only, and exact like `Bool`: `Number()` on its own also reads
-    // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.
+    // The rule for these two lives in the runtime, one helper per base; a
+    // copy inlined here would be a second definition of it.
     case "Int":
-      return `((_v) => (typeof _v === "string" && /^[+-]?[0-9]+$/.test(_v)) ? _s.Some(Number(_v)) : _s.None)(${a})`;
+      return `_s.parseIntOpt(${a})`;
     case "Float":
-      return `((_v) => { if (typeof _v !== "string" || !/^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/.test(_v)) return _s.None; const _n = Number(_v); return Number.isFinite(_n) ? _s.Some(_n) : _s.None; })(${a})`;
+      return `_s.parseFloatOpt(${a})`;
     case "Time":
       // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one has
       // to produce that number, or every later `diff` / `plus` / `format` reads
@@ -202,8 +207,8 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "to-list") return `_s.toList(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "get-err") return `_s.getErr(${baseJs})`;
       if (e.field === "to-option") return `_s.toOption(${baseJs})`;
-      if (e.field === "parse-int") return `_s.parseIntOpt(${baseJs})`;
-      if (e.field === "parse-float") return `_s.parseFloatOpt(${baseJs})`;
+      if (e.field === "parse-int") return readingJs("Int", baseJs);
+      if (e.field === "parse-float") return readingJs("Float", baseJs);
       if (e.field === "abs") return `Math.abs(${baseJs})`;
       if (e.field === "neg") return `(-(${baseJs}))`;
       if (e.field === "floor") return `Math.floor(${baseJs})`;
@@ -916,9 +921,9 @@ export function methodCallJs(
     case "to-option":
       return `_s.toOption(${recvJs})`;
     case "parse-int":
-      return `_s.parseIntOpt(${recvJs})`;
+      return readingJs("Int", recvJs);
     case "parse-float":
-      return `_s.parseFloatOpt(${recvJs})`;
+      return readingJs("Float", recvJs);
     case "abs":
       return `Math.abs(${recvJs})`;
     case "floor":

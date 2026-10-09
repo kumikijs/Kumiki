@@ -73,3 +73,48 @@ describe("argument-less stdlib methods (issue #7)", () => {
     expect(js).toContain("Math.trunc(");
   });
 });
+
+// `t.parse-int` is `Int.parse(t)` and `t.parse-float` is `Float.parse(t)`
+// (stdlib §2.2.6): every spelling of a reading — the method, `T.parse` on the
+// base or on a type declared over it, and the reader of an `input` bound to
+// one — lowers to the one runtime helper for its base, so no spelling carries
+// a copy of the rule of its own.
+describe("every spelling of an Int or Float reading lowers to the one helper", () => {
+  const src = `type Cents = nominal Int where positive
+type Ratio = nominal Float
+slot t : Text = ""
+slot n : Int = 0
+slot x : Float = 0.0
+slot a : Option(Int) = None
+slot b : Option(Cents) = None
+slot c : Option(Float) = None
+slot d : Option(Ratio) = None
+reducer go on=ui.click(Go)
+    do= a := Int.parse(t)
+        b := Cents.parse(t)
+        c := Float.parse(t)
+        d := Ratio.parse(t)
+tile Go = button(text="go")
+tile App = column(Go,
+    input(bind=n, type="number"),
+    input(bind=x, type="number"),
+    heading(t.parse-int.get-or(0).show),
+    heading(t.parse-float().get-or(0.0).show))
+tile Missing = text("missing")
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> Missing}
+    init   = []`;
+
+  const calls = (js: string, helper: string): number => js.split(`_s.${helper}(`).length - 1;
+
+  it("reads every Int and every Float through its base's helper", () => {
+    const js = compileOk(src);
+    // Int.parse, Cents.parse, the bound `n`'s reader, and .parse-int.
+    expect(calls(js, "parseIntOpt")).toBe(4);
+    // Float.parse, Ratio.parse, the bound `x`'s reader, and .parse-float().
+    expect(calls(js, "parseFloatOpt")).toBe(4);
+    // The decimal-digit pattern is the helper's, and appears nowhere else.
+    expect(js).not.toContain("[0-9]");
+  });
+});

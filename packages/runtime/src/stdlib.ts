@@ -158,6 +158,27 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
+/** The text an `Int` reading takes (stdlib.md §2.4.3): an optional sign and decimal digits. */
+const INT_TEXT = /^[+-]?[0-9]+$/;
+
+/**
+ * The text a `Float` reading takes (stdlib.md §2.4.3): an optional sign,
+ * decimal digits, an optional `.` and digits, and an optional `e` / `E`
+ * exponent.
+ */
+const FLOAT_TEXT = /^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/;
+
+/**
+ * The number a text of `form` spells. The whole text has to be of the form,
+ * so what `Number` reads beyond it — surrounding blanks, a `0x` / `0b` prefix,
+ * `Infinity` — is `None`, and so is a spelling too large to be finite.
+ */
+function readNumber(text: unknown, form: RegExp): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+  if (typeof text !== "string" || !form.test(text)) return _stdlibCore.None;
+  const n = Number(text);
+  return Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+}
+
 type PlatformCrypto = {
   randomUUID?: () => string;
   getRandomValues?: (bytes: Uint8Array) => Uint8Array;
@@ -902,22 +923,21 @@ export const _stdlibCore = {
     return _stdlibCore.None;
   },
   /**
-   * Text.parse-int → Option(Int): any text `Number` reads as finite, truncated.
-   * Looser than `Int.parse`, which reads decimal digits only (stdlib §2.4.3).
+   * The `Int` reading of a text → `Option(Int)` (stdlib.md §2.4.3). The one
+   * definition of it: `Int.parse(t)` and `T.parse(t)` for a `T` over `Int`,
+   * `t.parse-int` (§2.2.6), and an `input` bound to an `Int` (forms.md §5.1.1)
+   * all lower to this call.
    */
-  parseIntOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n)
-      ? _stdlibCore.Some(Math.trunc(n))
-      : _stdlibCore.None;
+  parseIntOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, INT_TEXT);
   },
   /**
-   * Text.parse-float → Option(Float): any text `Number` reads as finite.
-   * Looser than `Float.parse`, which reads decimal text only (stdlib §2.4.3).
+   * The `Float` reading of a text → `Option(Float)` (stdlib.md §2.4.3), behind
+   * `Float.parse(t)`, `T.parse(t)` for a `T` over `Float`, `t.parse-float` and
+   * an `input` bound to a `Float`, as `parseIntOpt` is for `Int`.
    */
-  parseFloatOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+  parseFloatOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, FLOAT_TEXT);
   },
   /**
    * `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10). The
