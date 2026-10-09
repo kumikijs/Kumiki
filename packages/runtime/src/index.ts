@@ -166,6 +166,8 @@ export {
   type EpisodeStatus,
   type EpisodeStep,
   type EpisodeTrigger,
+  isUnhandledPanic,
+  type PanicStep,
   type SlotDiff,
 } from "./episode.ts";
 export { routing } from "./router.ts";

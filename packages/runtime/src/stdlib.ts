@@ -706,7 +706,7 @@ export const _stdlibCore = {
    * §10.5.1): it is recorded as a `tile-render` step, under the declaring tile,
    * on the episode open around the render pass, and `episode-id` is that
    * episode. What a boundary does not do is report it — no console line, no
-   * `app.error` — because it handled it.
+   * `app.error` — because it handled it, which the step says as `handled: true`.
    */
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;

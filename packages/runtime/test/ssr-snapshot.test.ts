@@ -408,8 +408,8 @@ describe("renderToString §10.6.1", () => {
 /**
  * The server render is the last step of the `app.init` chain that produced the
  * HTML (§10.5.1.1), so the bootstrap episode is still open while it runs. A
- * panic an `error-boundary` catches there is recorded on it, and the fallback
- * is handed its id — the same join a boundary on the client gets from the
+ * panic an `error-boundary` catches there is recorded on it as handled, and
+ * the fallback is handed its id — the same join a boundary on the client gets from the
  * dispatch it renders inside (lifecycle.md §7.2.3).
  */
 describe("a boundary fallback served by renderToString", () => {
@@ -441,7 +441,7 @@ describe("a boundary fallback served by renderToString", () => {
     return () => `ep_${++n}`;
   };
 
-  it("names the bootstrap episode, which records the panic after the init chain", async () => {
+  it("names the bootstrap episode, which records the panic as handled after the init chain", async () => {
     const result = await renderToString(withBoundary(), {
       providers: { "http.get": async () => ({ kind: "ok", value: { id: "u_1", name: "Yui" } }) },
       idGen: ids(),
@@ -460,6 +460,7 @@ describe("a boundary fallback served by renderToString", () => {
       message: "no avatar for Yui",
       location: "Profile",
       category: "tile-render",
+      handled: true,
     });
     expect(boot.status).toBe("panic");
     expect(result.snapshot.bootstrap).toBe(boot);

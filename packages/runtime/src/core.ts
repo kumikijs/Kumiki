@@ -1929,9 +1929,10 @@ export type RenderPanic = { rec: PanicRecord; episodeId: string | undefined };
 
 /**
  * Where a render pass records a panic caught inside it. `site` is where it was
- * caught, and becomes the step's `location`.
+ * caught, and becomes the step's `location`; `handled` says an
+ * `error-boundary` caught it, and becomes the step's `handled: true`.
  */
-export type RenderPanicSink = (e: unknown, site: string) => RenderPanic;
+export type RenderPanicSink = (e: unknown, site: string, handled?: boolean) => RenderPanic;
 
 /**
  * The one place a panic caught while rendering becomes a `panic` step
@@ -1943,15 +1944,18 @@ export type RenderPanicSink = (e: unknown, site: string) => RenderPanic;
  *
  * Recording is all it does. What else a site does with the panic — the
  * console report and `route.error` for one nothing caught, the fallback for one
- * a boundary caught — is that site's.
+ * a boundary caught — is that site's. Whether the panic was handled is the
+ * caller's to say: a boundary passes `handled`, and every other site leaves it
+ * out.
  */
 export function recordRenderPanic(
   logger: EpisodeLogger | null | undefined,
   e: unknown,
   site: string,
+  handled?: boolean,
 ): RenderPanic {
   const rec = panicInfo(e, "tile-render");
-  return { rec, episodeId: logger?.recordPanic({ ...rec, location: site }) };
+  return { rec, episodeId: logger?.recordPanic({ ...rec, location: site, handled }) };
 }
 
 /**
@@ -1977,7 +1981,9 @@ type RenderPanicHost = {
 /**
  * Record a panic caught inside the render pass now executing, on the episode
  * open around it — the `error-boundary` path, which `_s.boundaryPanic` takes
- * from generated code deep inside a tile expression with no mount in hand.
+ * from generated code deep inside a tile expression with no mount in hand. The
+ * boundary handled the panic, so the step says so (`handled: true`,
+ * runtime.md §10.5.1).
  *
  * A render from `applyReducer`'s tail runs before that dispatch's
  * `endTrigger`, so there the step lands on the episode the panic belongs to;
@@ -1991,7 +1997,7 @@ type RenderPanicHost = {
  */
 export function recordInRenderPass(e: unknown, site: string): RenderPanic {
   const sink = (globalThis as RenderPanicHost).__kumikiRenderPanic__;
-  return sink ? sink(e, site) : recordRenderPanic(undefined, e, site);
+  return sink ? sink(e, site, true) : recordRenderPanic(undefined, e, site);
 }
 
 /**
@@ -2632,8 +2638,8 @@ export function mountCore(
    * {@link fireAppError} answers it: a host logger written against an older
    * `EpisodeLogger` can record a step and answer nothing.
    */
-  function renderPanic(e: unknown, site: string): RenderPanic {
-    const { rec, episodeId } = recordRenderPanic(episode, e, site);
+  function renderPanic(e: unknown, site: string, handled?: boolean): RenderPanic {
+    const { rec, episodeId } = recordRenderPanic(episode, e, site, handled);
     return { rec, episodeId: episodeId ?? safeEpisodeId() };
   }
 

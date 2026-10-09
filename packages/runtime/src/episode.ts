@@ -125,8 +125,29 @@ export type EpisodeStep =
        * {@link PanicCategory} `"unknown"`.
        */
       category?: PanicCategory;
+      /**
+       * `true` when an `error-boundary` caught the panic and rendered its
+       * fallback (lifecycle.md §7.3) — the program handled it. Absent on every
+       * other panic step. Read it through {@link isUnhandledPanic}.
+       */
+      handled?: boolean;
       ts: number;
     };
+
+/** A `panic` step (runtime.md §10.5.1). */
+export type PanicStep = Extract<EpisodeStep, { kind: "panic" }>;
+
+/**
+ * Whether `step` is a panic nothing handled (runtime.md §10.5.1): a `panic`
+ * step that does not carry `handled: true`. A step without the field is
+ * unhandled, so a log written by a runtime that never writes it reads the same.
+ *
+ * The one place the question is answered — the dev panel's overlay asks it,
+ * and so should anything else that reports a panic to someone.
+ */
+export function isUnhandledPanic(step: EpisodeStep): step is PanicStep {
+  return step.kind === "panic" && step.handled !== true;
+}
 
 export type EpisodeStatus = "completed" | "panic" | "cancelled" | "ongoing";
 
@@ -267,6 +288,8 @@ export type EpisodeLogger = {
       name?: string | undefined;
       /** What that body read from the environment before it threw (§10.5.1). */
       envReads?: readonly EnvRead[] | undefined;
+      /** An `error-boundary` caught it; written to the step as `handled: true`. */
+      handled?: boolean | undefined;
     },
     token?: string,
   ): string | undefined;
@@ -499,6 +522,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       if (info.stack !== undefined) step.stack = info.stack;
       if (info.cause !== undefined && info.cause.length > 0) step.cause = info.cause;
       if (info.category !== undefined) step.category = info.category;
+      if (info.handled === true) step.handled = true;
       ep.steps.push(step);
       ep.status = "panic";
       return ep.id;

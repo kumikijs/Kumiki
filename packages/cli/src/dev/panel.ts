@@ -3,7 +3,9 @@
 //
 // Layout:
 //   - fixed bottom-right card with two tabs ("timeline" / "inspector")
-//   - full-screen modal overlay when the most recent episode ended in `panic`
+//   - full-screen modal overlay when the most recent episode holds a panic
+//     nothing handled (`isUnhandledPanic`, runtime.md §10.5.1) — one an
+//     `error-boundary` caught is listed on the timeline and raises nothing
 //
 // Public API: `installDevPanel({ logger, getApp })` returns:
 //   - `push()`: called by the client's `onEpisode` to refresh the timeline and
@@ -20,7 +22,12 @@
 // `innerHTML` writes happen anywhere in this module — see the helper
 // functions below.
 
-import type { AppShape, EpisodeLogger, EpisodeStep } from "@kumikijs/runtime";
+import {
+  type AppShape,
+  type EpisodeLogger,
+  type EpisodeStep,
+  isUnhandledPanic,
+} from "@kumikijs/runtime";
 
 type Options = {
   logger: EpisodeLogger;
@@ -204,10 +211,13 @@ export function installDevPanel(opts: Options): {
   function maybeShowOverlay(): void {
     const all = opts.logger.list();
     const latest = all.length > 0 ? all[all.length - 1] : undefined;
-    const lastStep = latest?.steps[latest.steps.length - 1];
-    if (latest && latest.status === "panic" && lastStep && lastStep.kind === "panic") {
+    // The first panic nothing handled, wherever it sits: the steps a dispatch
+    // records after one (an `app.error` reducer, a `signal-update`) do not
+    // handle it, and a panic a boundary caught is not one however late it lands.
+    const panic = latest?.steps.find(isUnhandledPanic);
+    if (panic) {
       if (overlay) return;
-      showOverlay("Kumiki panic", lastStep.message, lastStep.location ?? "");
+      showOverlay("Kumiki panic", panic.message, panic.location ?? "");
     } else if (overlay && latest && latest.status === "completed") {
       dismissOverlay();
     }
@@ -289,8 +299,10 @@ function formatStep(step: EpisodeStep): string {
       return `[effect-cancel] ${step.targetId}`;
     case "signal-update":
       return `[signal-update] dirty=[${step["dirty-slots"].join(",")}]`;
-    case "panic":
-      return `[panic] ${step.message}${step.location ? `  @ ${step.location}` : ""}`;
+    case "panic": {
+      const where = step.location ? `  @ ${step.location}` : "";
+      return `[panic] ${step.message}${where}${isUnhandledPanic(step) ? "" : "  (handled)"}`;
+    }
   }
 }
 

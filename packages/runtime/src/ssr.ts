@@ -177,7 +177,7 @@ export async function renderToString(
     const html = withRenderingApp(
       app,
       () => renderTileToString(pickRootTile(app, live)),
-      (e, site) => recordRenderPanic(logger, e, site),
+      (e, site, handled) => recordRenderPanic(logger, e, site, handled),
     );
     logger.endTrigger();
 

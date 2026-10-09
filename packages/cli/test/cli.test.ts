@@ -349,6 +349,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // render panic is now recorded through, and the render pass's sink the
     // boundary reaches it by. Both sit in core every app loads; a counter catches
     // no panic and still ships them.
+    //
+    // Still 64,000 (63,701 measured, from 63,682 at 15930c5): a `panic` step says
+    // whether an `error-boundary` handled it (runtime.md §10.5.1). The 19 bytes
+    // are the `handled` flag the boundary's path hands `recordRenderPanic`
+    // through the mount's render-panic sink, in core every app loads; a counter
+    // catches no panic and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
