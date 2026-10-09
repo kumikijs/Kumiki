@@ -285,6 +285,8 @@ A tile reference, or the target of a route definition, refers to an undefined ti
 > `Route "<path>" targets undefined tile "<name>"`
 > `Tile-test target "<name>" is a built-in tile — a tile-test can only name a tile the program defines`
 
+Where a tile is expected — a container's child, a `when` / `if` / `for` / `match` arm, a tile's body, a tile-test's `expect` — a name that names a value (a slot, a `fn`, a loop variable, a `match` binding) is [E0128](#e0128-value-as-child), whose fix is to show the value. E0105 there is a name that is neither a tile nor a value, such as a misspelt tile (`when(c, Hedaer)`), and is the one `kumiki fix` proposes a close name for.
+
 A **`tile-test` target** is held to more than existing: it must be a tile the program defines. Everywhere else a built-in is a tile like any other, but the generated test applies its target through `App._tilesById`, which is built from the user tiles alone — so `tile-test text` was the one naming that could not work whatever it was given. It passed `check`, and the module died with `App._tilesById.text is not a function`; nothing catches that, so every other test in the file lost its result with it.
 
 ### E0107 `undef-motion`
@@ -527,15 +529,24 @@ The count is all the check compares. The `fn`'s parameter types are not checked 
 
 ### E0128 `value-as-child`
 
-A value is written as a positional argument of a builtin that is not a value builtin — a builtin other than `text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image` and `icon`. Such a builtin renders a positional argument only when it is a tile: a `tile-expr` ([Language §1.7.1](./language.md#_1-7-1-syntax)) or the name of a tile the program defines. Containers (`column`, `row`, `card`, …) render it as a child; the others (`button`, `progress`, …) read no positional argument at all.
+A value is written where a tile is expected. Two kinds of place expect one ([Language §1.7.1](./language.md#_1-7-1-syntax)):
+
+- A positional argument of a builtin that is not a value builtin — a builtin other than `text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image` and `icon`. Such a builtin renders a positional argument only when it is a tile: a `tile-expr` or the name of a tile the program defines. Containers (`column`, `row`, `card`, …) render it as a child; the others (`button`, `progress`, …) read no positional argument at all.
+- A whole `tile-expr`: a `when` / `if` / `for` / `match` arm, a tile's body, and a tile-test's `expect`. The parser reads a name written there as a tile call, so a value named there — a slot, a `fn` call, a loop variable, a `match` binding — is a call of a tile that does not exist.
+
+In either place, a name that is neither a tile nor a value is [E0105](#e0105-undef-tile) instead.
 
 > ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
+> ``A value is not a tile: <place> has to be a tile. Show the value with a tile — `text(…)` ``
+> `` `<name>` is a builtin tile named without its call: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Call it — `<name>()` ``
 
-Codegen drops a value in that position, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
+The first is a value as a positional argument. The second is a value where a whole `tile-expr` stands, and `<place>` names it: ``a `when` arm``, ``an `if` arm``, ``a `for` arm``, ``a `match` arm``, `a tile's body` or `` a tile-test's `expect` ``. The third is a builtin tile's name written as a positional argument without its call: `column(divider)` names `divider` and renders nothing, where `column(divider())` renders it. In an arm or a body the parser reads the same name as the call, so `when(c, divider)` renders a divider and is not reported. A name that a value in scope has too — a loop variable called `spinner` — is that value, and draws the first form. A lower-cased call in a container is an expression, so it is a value whatever it calls: `column(greting())` draws the first form, where `when(c, greting())` is E0105.
 
-A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`).
+Codegen drops a value in a positional argument, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
 
-**Fix**: Show the value with a tile — `column(text(n.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that.
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
+
+**Fix**: Show the value with a tile — `column(text(n.show))`, `when(c, text(total.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that. Write a builtin tile's call where it is named — `column(divider())`.
 
 ### E0129 `unrendered-arg`
 

@@ -154,3 +154,160 @@ describe("the message", () => {
     expect(quoted?.replace("<builtin>", "column")).toBe(message("column"));
   });
 });
+
+// A tile body, a `when` / `if` / `for` / `match` arm and a tile-test's
+// `expect` are a tile-expr themselves. The parser reads a name there as a tile
+// call, so a value written as one — a slot, a `fn` call, a loop variable —
+// arrives as a call of a tile that does not exist. It is E0128 at the value,
+// as in a container; E0105 is a name that is neither a tile nor a value.
+const armProgram = (home: string) => `tile Home = ${home}
+tile Header = text("h")
+slot total : Int = 1
+slot c : Bool = true
+slot xs : List(Int) = [1, 2]
+type Shape = Circle | Square
+slot shape : Shape = Circle
+slot pick : Option(Int) = None
+fn greeting() -> Text = "hi"
+app R
+    caps   = []
+    routes = {"/" -> Home, "/404" -> Home}
+    init   = []
+`;
+
+const armDiagnostics = (home: string) =>
+  check(parse(lex(armProgram(home)))).map(
+    (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
+  );
+
+// `tile Home = ` is 12 columns wide on line 1; `at` is a substring of the body
+// that starts where the value does.
+const armAt = (home: string, at: string) => `1:${13 + home.indexOf(at)}`;
+
+const placed = (place: string) =>
+  `A value is not a tile: ${place} has to be a tile. Show the value with a tile — \`text(…)\``;
+
+const uncalled = (name: string, builtin: string) =>
+  `\`${name}\` is a builtin tile named without its call: ${builtin} renders a positional ` +
+  `argument only when it is a tile, so this one renders nothing. Call it — \`${name}()\``;
+
+describe("a value written as an arm or a tile body", () => {
+  it.each([
+    ["a slot in a when", "column(when(c, total))", "total", "a `when` arm"],
+    ["a fn call in a when", "column(when(c, greeting()))", "greeting", "a `when` arm"],
+    ["a loop variable in a when", "column(for x in xs when(c, x))", "x))", "a `when` arm"],
+    ["a builtin call in a when", `column(when(c, fmt("{0}", total)))`, "fmt", "a `when` arm"],
+    // A `$`-name is a value however it is bound: unbound here, it is E0103's
+    // to explain once it is shown with a tile.
+    ["an input the tile does not declare", "column(when(c, $1))", "$1", "a `when` arm"],
+    ["a slot in an if", "column(if c then total else Header)", "total", "an `if` arm"],
+    ["a fn call in an if", "column(if c then Header else greeting())", "greeting", "an `if` arm"],
+    [
+      "a loop variable in an if",
+      "column(for x in xs if c then Header else x)",
+      "x)",
+      "an `if` arm",
+    ],
+    [
+      "a slot in a match",
+      "match shape with | Circle -> total | Square -> Header",
+      "total",
+      "a `match` arm",
+    ],
+    [
+      "a fn call in a match",
+      "column(match shape with | Circle -> Header | Square -> greeting())",
+      "greeting",
+      "a `match` arm",
+    ],
+    [
+      "a loop variable in a match",
+      "column(for x in xs match shape with | Circle -> x | Square -> Header)",
+      "x |",
+      "a `match` arm",
+    ],
+    [
+      "a match binding in a match",
+      "match pick with | Some(v) -> v | None -> Header",
+      "v |",
+      "a `match` arm",
+    ],
+    ["a slot in a for", "column(for x in xs total)", "total", "a `for` arm"],
+    ["a fn call in a for", "column(for x in xs greeting())", "greeting", "a `for` arm"],
+    ["a loop variable in a for", "column(for x in xs x)", "x)", "a `for` arm"],
+    ["a slot as a tile body", "total", "total", "a tile's body"],
+    ["a fn call as a tile body", "greeting()", "greeting", "a tile's body"],
+  ])("is E0128 at the value: %s", (_, home, at, place) => {
+    expect(armDiagnostics(home)).toEqual([`E0128 ${armAt(home, at)} ${placed(place)}`]);
+  });
+
+  it("is E0128 at a value written as a tile-test's expect", () => {
+    const src = `${armProgram("Header")}test t = tile-test Header given={slots:{}} expect=total\n`;
+    const line = src.split("\n").length - 1;
+    expect(
+      check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
+    ).toEqual([`E0128 ${line}:51 ${placed("a tile-test's `expect`")}`]);
+  });
+
+  it("checks nothing written on the value", () => {
+    // As in a container: an argument or a prop on it is moved with it, and a
+    // diagnostic in there shows once it is.
+    const home = `column(when(c, greeting(nope)), if c then Header else total {id: nope})`;
+    expect(armDiagnostics(home)).toEqual([
+      `E0128 ${armAt(home, "greeting")} ${placed("a `when` arm")}`,
+      `E0128 ${armAt(home, "total")} ${placed("an `if` arm")}`,
+    ]);
+  });
+});
+
+describe("a name that is neither a tile nor a value", () => {
+  it.each([
+    ["a misspelt tile in a when", "column(when(c, Hedaer))", "Hedaer"],
+    ["a lower-cased name in a when", "column(when(c, totl))", "totl"],
+    ["a call in a when", "column(when(c, greting()))", "greting"],
+    ["a tile body", "Hedaer", "Hedaer"],
+    ["a lower-cased name in a container", 'column(text("a"), totl)', "totl"],
+  ])("is E0105 at the name: %s", (_, home, name) => {
+    expect(armDiagnostics(home)).toEqual([
+      `E0105 ${armAt(home, name)} Reference to undefined tile "${name}"`,
+    ]);
+  });
+
+  it("is a value when it is called in a container, which reads a call as a fn's", () => {
+    const home = "column(greting())";
+    expect(armDiagnostics(home)).toEqual([`E0128 ${armAt(home, "greting")} ${message("column")}`]);
+  });
+});
+
+describe("a builtin tile named without its call", () => {
+  it.each([
+    ["in a column", "column(divider)", "divider", "column"],
+    ["beside a sibling in a row", `row(text("a"), spinner)`, "spinner", "row"],
+  ])("is E0128 naming the call: %s", (_, home, name, builtin) => {
+    expect(armDiagnostics(home)).toEqual([`E0128 ${armAt(home, name)} ${uncalled(name, builtin)}`]);
+  });
+
+  it("is the value a loop variable of that name holds", () => {
+    const home = "column(for spinner in xs row(spinner))";
+    expect(armDiagnostics(home)).toEqual([`E0128 ${armAt(home, "spinner))")} ${message("row")}`]);
+  });
+
+  it("is a call of it in an arm, which reads a name as a tile call", () => {
+    // What it renders is pinned in `packages/tests/value-as-child.test.ts`.
+    expect(armDiagnostics("column(when(c, divider), if c then spinner else Header)")).toEqual([]);
+  });
+});
+
+describe("the messages for an arm, a body and a builtin", () => {
+  // The forms after the first quote in errors.md's E0128, in order.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  it.each([
+    ["docs/spec/errors.md"],
+    ["docs/ja/spec/errors.md"],
+  ])("are the ones %s documents", (file) => {
+    const md = readFileSync(path.join(here, "..", "..", "..", file), "utf8");
+    const section = md.slice(md.indexOf("### E0128"), md.indexOf("### E0129"));
+    const quoted = [...section.matchAll(/^> ``(.*)``$/gm)].map((m) => m[1]?.trim());
+    expect(quoted.slice(1)).toEqual([placed("<place>"), uncalled("<name>", "<builtin>")]);
+  });
+});

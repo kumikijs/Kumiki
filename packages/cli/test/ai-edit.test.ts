@@ -1608,6 +1608,57 @@ describe("planFixes: expanded auto-patch coverage", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("suggests a close tile name for a misspelt tile in a when arm (E0105)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0105-arm-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot open : Bool = true",
+        'tile Header = text("h")',
+        "tile App = column(when(open, Hedaer))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    expect(errors.map((e) => e.code)).toEqual(["E0105"]);
+    const patches = planFixes(store, errors);
+    expect(patches.map((p) => p.description)).toEqual([`replace "Hedaer" with "Header" at 3:30`]);
+    expect(check(parse(lex(patches[0]!.apply(readFileSync(file, "utf8")))))).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("proposes no tile for a slot in a when arm whose name is close to one", () => {
+    // `item` is a value, so the arm is E0128, which has no repair of its own:
+    // renaming it to the tile `Item` would render something else.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0128-arm-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "slot open : Bool = true",
+        'slot item : Text = "x"',
+        'tile Item = text("i")',
+        "tile App = column(when(open, item))",
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    expect(errors.map((e) => e.code)).toEqual(["E0128"]);
+    expect(planFixes(store, errors).map((p) => p.description)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("adds a missing capability to app.caps for E0301", () => {
     const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-e0301-"));
     const file = join(dir, "in.kumiki");
