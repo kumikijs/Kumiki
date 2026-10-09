@@ -30,6 +30,7 @@ import type {
   SlotDef,
   Statement,
   TestDef,
+  TileArg,
   TileDef,
   TileExpr,
   TypeDef,
@@ -1592,7 +1593,8 @@ function undefinedTile(name: string, pos: Pos): KumikiError {
 /**
  * Check a tile expression written in `place`. `null` is an argument no tile
  * is rendered from — a named argument, a user tile's input, a value builtin's
- * content — where a tile call's name is looked up as a tile and nothing else.
+ * argument past its content (its content is E0236's, `checkTileAsContent`) —
+ * where a tile call's name is looked up as a tile and nothing else.
  */
 function checkTileExpr(
   t: TileExpr,
@@ -1788,6 +1790,114 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
   });
 }
 
+/**
+ * E0236 at each tile written in a value builtin's content — the argument
+ * `contentArg` reads off `VALUE_BUILTIN_CONTENT`, as the lowering reads it —
+ * which the lowering shows as a value, so the tile is never rendered. Returns
+ * that argument when it holds a tile: it is moved whole, into a container or
+ * out for a value, so nothing else in it is checked, as for a value in a
+ * container (E0128).
+ */
+function checkTileAsContent(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): TileArg | undefined {
+  const content = contentArg(t);
+  if (!content) return undefined;
+  const tiles = tilesInContent(content.value, sym, ctx);
+  const shown =
+    content.name === undefined ? `${t.name}(x.show)` : `${t.name}(${content.name}=x.show)`;
+  for (const tile of tiles) {
+    errors.push({
+      code: "E0236",
+      kind: "tile-as-content",
+      message:
+        `A tile is not a value: ${t.name} shows a value as its content, so this tile is never ` +
+        `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
+        `value — \`${shown}\``,
+      pos: tile.pos,
+    });
+  }
+  return tiles.length > 0 ? content : undefined;
+}
+
+/**
+ * The tiles written in a value builtin's content `v`: `v` itself, or a tile in
+ * an arm of a value `if` / `match`, which is what the content is when that arm
+ * is taken.
+ *
+ * The parser reads the content as an expression — but for a `when` or a
+ * `for`, which only a `tile-expr` has — so a tile there is told from a value
+ * by the name it is written with, resolved as any expression resolves it: a
+ * value of that name wins (`namesValue`) — a slot or a loop variable named
+ * like a tile, a `fn` named like a builtin. Short of one, a call of a tile's
+ * name is a tile (`namesTile`: `column(…)`, `lower()`), and so is the bare
+ * name of a tile the program defines (`lower`); a builtin's bare name calls
+ * nothing, and is left to the expression's own check. A capitalised name is
+ * a variant tag to the parser (`Header`, `Card({label: "a"})`), which is a
+ * value when a union has that tag (`isUnionTag`).
+ */
+function tilesInContent(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): (Expr | TileExpr)[] {
+  if (isTileExpr(v)) return [v];
+  switch (v.kind) {
+    case "IfExpr":
+      return [...tilesInContent(v.consequent, sym, ctx), ...tilesInContent(v.alternate, sym, ctx)];
+    case "MatchExpr": {
+      const scrutType = inferType(v.scrutinee, sym, ctx);
+      return v.arms.flatMap((arm) =>
+        tilesInContent(arm.body, sym, armScope(arm, scrutType, sym, ctx)),
+      );
+    }
+    case "Call":
+      return namesTile(v.callee, sym) && !namesValue(v.callee, v.pos, sym, ctx) ? [v] : [];
+    case "Ref":
+      return sym.tiles.has(v.name) && !namesValue(v.name, v.pos, sym, ctx) ? [v] : [];
+    case "Variant":
+      return sym.tiles.has(v.name) && !isUnionTag(v.name, sym) ? [v] : [];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Whether a union has a variant tagged `name`: `Option`'s and `Result`'s, or
+ * a union written in a `type`'s body (the standard library's included) or in
+ * place as a slot's type, a tile's `in=`, a `fn`'s parameter or return type,
+ * or an effect's `in=` or `out=`.
+ */
+function isUnionTag(name: string, sym: SymbolTable): boolean {
+  if (name === "Some" || name === "None" || name === "Ok" || name === "Err") return true;
+  const declares = (t: TypeExpr): boolean => {
+    switch (t.kind) {
+      case "TypeUnion":
+        return t.variants.some((v) => v.name === name || v.payloads.some(declares));
+      case "TypeRecord":
+        return t.fields.some((f) => declares(f.type));
+      case "TypeApp":
+        return t.args.some(declares);
+      case "TypeNominal":
+      case "TypeRefinement":
+        return declares(t.inner);
+      case "TypePrim":
+      case "TypeRef":
+        return false;
+    }
+  };
+  const written: TypeExpr[] = [
+    ...[...sym.types.values()].map((d) => d.body),
+    ...[...sym.slots.values()].map((d) => d.type),
+    ...[...sym.tiles.values()].flatMap((d) => (d.in ? [d.in] : [])),
+    ...[...sym.fns.values()].flatMap((d) => [
+      ...d.params.map((p) => p.type),
+      ...(d.ret ? [d.ret] : []),
+    ]),
+    ...[...sym.effects.values()].flatMap((d) => [d.inType, d.outType]),
+  ];
+  return written.some(declares);
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -1808,6 +1918,7 @@ function checkTileCall(
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
   checkUnrenderedArgs(t, errors);
+  const tileContent = checkTileAsContent(t, sym, errors, ctx);
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
@@ -1868,6 +1979,9 @@ function checkTileCall(
     // (`checkUnrenderedArgs`), tile or value, and is moved or removed whole:
     // as for a value in a container, nothing inside it is checked.
     if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
+    // A value builtin's content that holds a tile is E0236
+    // (`checkTileAsContent`), and is moved whole too.
+    if (arg === tileContent) continue;
     // A positional argument of a builtin that renders its positional
     // arguments as children renders only as a tile (§1.7.1): codegen keeps a
     // tile, or the name of a tile the program defines, and drops anything

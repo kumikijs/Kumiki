@@ -522,7 +522,7 @@ tile が期待される位置に値が書かれている。tile を期待する�
 
 codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
 
-値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
+値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。値 builtin の内容にある tile は [E0236](#e0236-tile-as-content) である。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
 
 **修正**：値を tile で表示する —— `column(text(n.show))`、`when(c, text(total.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。名指した組み込み tile は呼び出しを書く —— `column(divider())`。
 
@@ -901,6 +901,26 @@ bind した `input` はテキストを bind 位置の基底型として読み、
 bind した型は先にエイリアスを解くので、`type Qty = Int where positive` や `nominal Int` はここでは `Int` である。それと照合されるのはリテラルの `type=` だけである。式で書かれた `type=` はここでは分からないので、その隣では 2 つ目の形だけが適用される。型が読めない bind は報告しない（[E0103](#e0103-undef-ref-undef-slot) など、それ自身のコードが示す）。bind 付きの `type="file"` は [E0205](#e0205-bind-on-file-input) である。
 
 **修正**：型と組み合わせられるフィールド種別を与える — `input(bind=age, type="number")`、`input(bind=due, type="date")` — か、フィールドが保持する型の slot を bind する。時刻だけなら `type="time"` のフィールドで `Text` として保持するか、`type="datetime-local"` のフィールドで `Time` を使う。`Option` はペイロードを `.get` で bind する。
+
+### E0236 `tile-as-content`
+
+値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から、`image` は `src=` から、`icon` は `name=` から読む（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。
+
+> ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
+
+`<content>` は、builtin が内容を読む位置に値を書いた形である：`text(x.show)`、内容を名前付き引数で書いた場合は `image(src=x.show)` / `label(text=x.show)`。
+
+そこにある tile とは次のいずれかである：
+
+- `when` か `for`。これらは `tile-expr` にしかない。
+- builtin の呼び出し（`text(column(…))`）か、プログラムが定義する tile の呼び出し（`text(Card({label: "a"}))`、`text(lower())`）、またはプログラムが定義する tile の名前（`text(Header)`）。
+- 値の `if` / `match` の腕にある tile —— `text(if c then Header else "b")`。その腕が選ばれたときの内容はそれである。tile の腕はそれぞれ報告する。
+
+内容は式として読まれるので、名前はまずそれが名指す値である：slot、`let` やループ変数、`match` の束縛、tile と同じ名前の `fn`（`fn label` がある場合の `heading(label(x))`）は値であり、union がタグとして持つ大文字の名前も値である。呼び出しを書かない builtin の名前（`text(code)`）は何も呼ばず、未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。腕が値である値の `if` / `match`（`text(match m with | A -> "a" | B -> "b")`）は値である。
+
+tile はそれぞれ書かれた位置で報告し、内容のそれ以外 —— tile 自身の引数、`if` の条件、もう一方の腕 —— は検査しない：内容は丸ごと、コンテナの中へ、あるいは値と入れ替えて移すものであり、その中の診断は移したときに出る。
+
+**修正**：tile をコンテナの子として書く —— `column(when(c, column(…)))`、`column(Header)`、`column(if c then Header else text("b"))` —— か、builtin で値を表示する —— `text(x.show)`。
 
 ### W0213 `handler-on-inert-tile` (warning)
 

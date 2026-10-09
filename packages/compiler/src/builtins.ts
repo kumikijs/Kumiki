@@ -315,10 +315,10 @@ export type ContentReading = { readonly positional: boolean; readonly named?: st
  *   argument at all, take theirs as `src=` / `name=`.
  *
  * The lowering reads the content through `contentArg`, and the checker reports
- * every argument this table says is dropped (E0129), so what `check` accepts
- * is what renders. A builtin in this table is a value builtin: its positional
- * argument parses as a value, never as a child tile — `heading("Hi")`,
- * `code("const x = 1", lang="ts")`.
+ * every argument this table says is dropped (E0129) and a tile written as the
+ * content (E0236), so what `check` accepts is what renders. A builtin in this
+ * table is a value builtin: its positional argument parses as a value, never
+ * as a child tile — `heading("Hi")`, `code("const x = 1", lang="ts")`.
  */
 export const VALUE_BUILTIN_CONTENT = {
   text: { positional: true },
