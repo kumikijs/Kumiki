@@ -30,7 +30,7 @@ export function compileToJs(source: string): ReturnType<typeof compile> {
   });
 }
 
-const PREVIEW_PREAMBLE = `globalThis.__kumikiMount = { router: "memory" };
+const SANDBOX_PREAMBLE = `globalThis.__kumikiMount = { router: "memory" };
 try { void localStorage.length; } catch (_e) {
   const _store = Object.create(null);
   Object.defineProperty(globalThis, "localStorage", {
@@ -42,28 +42,33 @@ try { void localStorage.length; } catch (_e) {
       clear: () => { for (const k in _store) delete _store[k]; },
     },
   });
-}
-globalThis.__kumikiProviders = {
+}`;
+
+const TELEMETRY_PROVIDER = `"telemetry.track": (input) => {
+    console.log("[telemetry]", input);
+    return { kind: "ok", value: null };
+  }`;
+
+export const TELEMETRY_ONLY = `globalThis.__kumikiProviders = { ${TELEMETRY_PROVIDER} };`;
+
+export const DEMO_PROVIDERS = `globalThis.__kumikiProviders = {
   "http.get": (input) => {
     const url = (input && input.url) || "";
     const response = url.indexOf("/api/quote") !== -1
       ? { kind: "ok", value: { text: "Make it work, make it right, make it fast.", author: "Kent Beck" } }
       : { kind: "err", value: { message: "no demo backend for " + url } };
-    // A sync return would jump Loading -> Loaded within one frame, so the
-    // Loading/spinner state would never paint. Resolve like a real network.
+    // A sync return would jump Loading -> Loaded within one frame, so the Loading state would never paint.
     return new Promise((resolve) => setTimeout(() => resolve(response), 1000));
   },
-  "telemetry.track": (input) => {
-    console.log("[telemetry]", input);
-    return { kind: "ok", value: null };
-  },
+  ${TELEMETRY_PROVIDER},
 };`;
 
-export function buildSrcdoc(js: string): string {
+export function buildSrcdoc(js: string, seams: string = DEMO_PROVIDERS): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
 <body><div id="root"></div>
-<script>${PREVIEW_PREAMBLE}</script>
+<script>${SANDBOX_PREAMBLE}
+${seams}</script>
 <script type="module">${js}</script></body></html>`;
 }
 

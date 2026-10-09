@@ -28,6 +28,7 @@ export default defineConfig({
         nav: [
           { text: "Guide", link: "/guide/getting-started" },
           { text: "Spec", link: "/spec/" },
+          { text: "Showcase", link: "/showcase" },
           { text: "Playground", link: "/guide/playground" },
         ],
         sidebar: {
@@ -75,6 +76,7 @@ export default defineConfig({
         nav: [
           { text: "ガイド", link: "/ja/guide/getting-started" },
           { text: "仕様", link: "/ja/spec/" },
+          { text: "ショーケース", link: "/ja/showcase" },
           { text: "Playground", link: "/ja/guide/playground" },
         ],
         sidebar: {
