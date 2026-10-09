@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +16,7 @@ import {
 } from "@kumikijs/cli";
 import type { TileDef } from "@kumikijs/compiler";
 import { afterEach, describe, expect, it } from "vitest";
-import { CLI_ARGV } from "./helpers/cli.ts";
+import { runCli, SPAWN } from "./helpers/cli.ts";
 import { defined } from "./helpers/defined.ts";
 
 let dir = "";
@@ -531,22 +530,11 @@ describe("every kind of definition", () => {
 });
 
 describe("kumiki add and replace, the commands", () => {
-  const SPAWN = { timeout: 70_000 };
-  const run = (args: string[]): { stdout: string; stderr: string; code: number } => {
-    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-      timeout: 60_000,
-    });
-    if (res.error) throw res.error;
-    return { stdout: res.stdout ?? "", stderr: res.stderr ?? "", code: res.status ?? Number.NaN };
-  };
-
   it("rejects a layer that labels no definition with 2, before reading the file", SPAWN, () => {
     dir = mkdtempSync(join(tmpdir(), "kumiki-def-header-"));
     const missing = join(dir, "missing.kumiki");
 
-    const { stderr, code } = run(["add", missing, "widget", "X", "Int = 0"]);
+    const { stderr, code } = runCli(["add", missing, "widget", "X", "Int = 0"]);
 
     expect(stderr).toContain("widget");
     // The alternatives, so the caller learns `motion` is one and `widget` is not.
@@ -558,7 +546,7 @@ describe("kumiki add and replace, the commands", () => {
   it("adds a motion", SPAWN, () => {
     const file = seed(KIND_BASE);
 
-    const { stderr, code } = run([
+    const { stderr, code } = runCli([
       "add",
       file,
       "motion",
@@ -574,7 +562,7 @@ describe("kumiki add and replace, the commands", () => {
   it("replace prints the clauses the body dropped", SPAWN, () => {
     const file = seed(BOUNDARY);
 
-    const { stdout, code } = run(["replace", file, "tile.Greeting", '= heading("Hello")']);
+    const { stdout, code } = runCli(["replace", file, "tile.Greeting", '= heading("Hello")']);
 
     expect(stdout).toContain("\n  dropped error-boundary");
     expect(code).toBe(0);

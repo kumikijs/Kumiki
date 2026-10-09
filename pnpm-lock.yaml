@@ -309,6 +309,9 @@ importers:
         specifier: 'catalog:'
         version: 8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.22.3)
     devDependencies:
+      '@kumikijs/examples':
+        specifier: workspace:*
+        version: link:../examples
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.1
@@ -331,6 +334,9 @@ importers:
         specifier: workspace:*
         version: link:../runtime
     devDependencies:
+      '@kumikijs/examples':
+        specifier: workspace:*
+        version: link:../examples
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.1
@@ -353,6 +359,9 @@ importers:
         specifier: 'catalog:'
         version: 1.61.1
     devDependencies:
+      '@kumikijs/examples':
+        specifier: workspace:*
+        version: link:../examples
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.61.1
@@ -362,6 +371,15 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.22.3
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/examples:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.9.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -403,6 +421,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@kumikijs/examples':
+        specifier: workspace:*
+        version: link:../examples
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.1
@@ -448,33 +469,24 @@ importers:
       '@kumikijs/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@kumikijs/examples':
+        specifier: workspace:*
+        version: link:../examples
       '@kumikijs/icons':
         specifier: workspace:*
         version: link:../icons
-      '@kumikijs/mcp':
-        specifier: workspace:*
-        version: link:../mcp
       '@kumikijs/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@kumikijs/syntax':
-        specifier: workspace:*
-        version: link:../syntax
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.1
       happy-dom:
         specifier: 'catalog:'
         version: 20.10.2
-      kumiki:
-        specifier: workspace:*
-        version: link:../kumiki
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
-      vitepress:
-        specifier: 'catalog:'
-        version: 1.6.4(@algolia/client-search@5.53.0)(@types/node@25.9.1)(lightningcss@1.32.0)(postcss@8.5.28)(search-insights@2.17.3)(typescript@6.0.3)
       vitest:
         specifier: 'catalog:'
         version: 4.1.11(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.22.3))
@@ -488,6 +500,9 @@ importers:
         specifier: workspace:*
         version: link:../runtime
     devDependencies:
+      '@kumikijs/examples':
+        specifier: workspace:*
+        version: link:../examples
       typescript:
         specifier: 'catalog:'
         version: 6.0.3

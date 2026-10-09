@@ -1,8 +1,7 @@
 import * as fs from "node:fs";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
   addDef,
   applyFixPlan,
@@ -34,6 +33,7 @@ import {
   viewHistory,
 } from "@kumikijs/cli";
 import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/compiler";
+import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -41,9 +41,8 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...actual };
 });
 
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
-const TODOMVC = resolve(here, "../../examples/apps/02-todomvc/app.kumiki");
+const COUNTER = app("01-counter");
+const TODOMVC = app("02-todomvc");
 
 function copy(src: string): string {
   const dir = mkdtempSync(join(tmpdir(), "kumiki-ai-"));

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import {
   type HttpFixture,
@@ -98,9 +98,8 @@ describe("the fetch double answers from the fixture, never from a host", () => {
 });
 
 describe("a fixture that is there, and one that is not", () => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const counter = resolve(here, "../../examples/apps/01-counter/app.kumiki");
-  const quotes = resolve(here, "../../examples/apps/07-app-http/app.kumiki");
+  const counter = app("01-counter");
+  const quotes = app("07-app-http");
 
   it("reads the fixture beside a source that has one", () => {
     expect(readHttpFixture(quotes)).toHaveProperty("GET /quote");

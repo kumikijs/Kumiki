@@ -1,11 +1,9 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { compile } from "@kumikijs/compiler";
+import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER_PATH = app("01-counter");
 
 const COUNTER = readFileSync(COUNTER_PATH, "utf8");
 

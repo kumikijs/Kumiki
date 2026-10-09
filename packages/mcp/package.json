@@ -52,12 +52,13 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@kumikijs/examples": "workspace:*",
     "@types/node": "catalog:",
     "happy-dom": "catalog:",
     "tsx": "catalog:",

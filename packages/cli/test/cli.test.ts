@@ -3,14 +3,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { app, feature } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CLI_ARGV } from "./helpers/cli.ts";
+import { CLI_ARGV, runCli } from "./helpers/cli.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
-const ROUTING_PATH = resolve(here, "../../examples/features/18-routing.kumiki");
-const STORAGE_PATH = resolve(here, "../../examples/features/20-effect-storage.kumiki");
-const INPUT_BIND_PATH = resolve(here, "../../examples/features/13-text-input-bind.kumiki");
+const COUNTER_PATH = app("01-counter");
+const ROUTING_PATH = feature("18-routing");
+const STORAGE_PATH = feature("20-effect-storage");
+const INPUT_BIND_PATH = feature("13-text-input-bind");
 const REPLAY_COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
 const REPLAY_COUNTER_LOG = resolve(here, "fixtures/replay/counter.log.jsonl");
 const REPLAY_PERSIST = resolve(here, "fixtures/replay/persist.kumiki");
@@ -187,19 +188,6 @@ describe("kumiki check --strict-icons", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function runCli(args: string[]): { out: string; code: number } {
-    try {
-      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-        stdio: "pipe",
-        encoding: "utf8",
-      });
-      return { out, code: 0 };
-    } catch (e) {
-      const err = e as { stdout?: string; stderr?: string; status?: number };
-      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-    }
-  }
-
   // `cheque` is a deliberate typo for `check`; not in @kumikijs/icons.
   const UNKNOWN = `slot _ : Text = ""
 tile Bad = icon(name="cheque")
@@ -285,19 +273,6 @@ describe("kumiki check --strict-selector-id", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function runCli(args: string[]): { out: string; code: number } {
-    try {
-      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-        stdio: "pipe",
-        encoding: "utf8",
-      });
-      return { out, code: 0 };
-    } catch (e) {
-      const err = e as { stdout?: string; stderr?: string; status?: number };
-      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-    }
-  }
-
   const MISMATCH = `slot x : Int = 0
 reducer add on=ui.submit(NewForm#nw) do= x := x + 1
 tile NewForm = form(text="a") {id: "new"}
@@ -366,18 +341,6 @@ describe("kumiki check (W0212 ui-event-tile-mismatch)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-    return {
-      stdout: res.stdout ?? "",
-      stderr: res.stderr ?? "",
-      code: res.status ?? (res.error ? 1 : 0),
-    };
-  }
-
   const W0212_SRC = `slot f : Text = ""
 reducer recordFocus on=ui.focus(Card) do= f := "focused"
 tile Card = box(text("hi"))
@@ -410,7 +373,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 });
 
 describe("kumiki smoke with a manifest-registered capability", () => {
-  const CUSTOM_CAP = resolve(here, "../../examples/features/27-custom-capability.kumiki");
+  const CUSTOM_CAP = feature("27-custom-capability");
 
   it("smokes a file whose capability is declared in kumiki.caps.json", { timeout: 30000 }, () => {
     const out = execFileSync(process.execPath, [...CLI_ARGV, "smoke", CUSTOM_CAP], {
@@ -518,7 +481,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 });
 
 describe("kumiki test (in-language test runner)", () => {
-  const TESTS = resolve(here, "../../examples/features/28-tests.kumiki");
+  const TESTS = feature("28-tests");
 
   it("runs reducer-test + tile-test definitions and reports pass", { timeout: 30000 }, () => {
     const out = execFileSync(process.execPath, [...CLI_ARGV, "test", TESTS], {
@@ -535,7 +498,7 @@ describe("kumiki test (in-language test runner)", () => {
   });
 
   it("refuses a batch the app's refinement rejects", { timeout: 30000 }, () => {
-    const file = resolve(here, "../../examples/features/63-reducer-batch-atomicity.kumiki");
+    const file = feature("63-reducer-batch-atomicity");
     const res = spawnSync(process.execPath, [...CLI_ARGV, "test", file], {
       stdio: "pipe",
       encoding: "utf8",
@@ -549,7 +512,7 @@ describe("kumiki test (in-language test runner)", () => {
   });
 
   it("runs a reducer that reads the route slot", { timeout: 30000 }, () => {
-    const file = resolve(here, "../../examples/features/80-route-in-tests.kumiki");
+    const file = feature("80-route-in-tests");
     const out = execFileSync(process.execPath, [...CLI_ARGV, "test", file], {
       stdio: "pipe",
       encoding: "utf8",
@@ -695,19 +658,6 @@ describe("kumiki fix --auto-patch (fix from a failing test)", () => {
   });
 
   /** Run the CLI, capturing stdout+stderr and the exit code without throwing. */
-  function runCli(args: string[]): { out: string; code: number } {
-    try {
-      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-        stdio: "pipe",
-        encoding: "utf8",
-      });
-      return { out, code: 0 };
-    } catch (e) {
-      const err = e as { stdout?: string; stderr?: string; status?: number };
-      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-    }
-  }
-
   // A tile-test whose rendered text comes from a single typo'd source literal.
   const BEHAVIORAL = `tile Title = heading("Helo")
 tile App = column(Title)
@@ -824,19 +774,6 @@ test msg-text =
 });
 
 describe("kumiki replay (episode log replay, §10.5.3)", () => {
-  function runCli(args: string[]): { out: string; code: number } {
-    try {
-      const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-        stdio: "pipe",
-        encoding: "utf8",
-      });
-      return { out, code: 0 };
-    } catch (e) {
-      const err = e as { stdout?: string; stderr?: string; status?: number };
-      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-    }
-  }
-
   it("replays a single episode and prints its steps + final slots", { timeout: 30000 }, () => {
     const { out, code } = runCli([
       "replay",
@@ -1046,18 +983,6 @@ describe("kumiki check (E0003 missing-app)", () => {
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
   });
-
-  function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-    return {
-      stdout: res.stdout ?? "",
-      stderr: res.stderr ?? "",
-      code: res.status ?? (res.error ? 1 : 0),
-    };
-  }
 
   function write(name: string, source: string): string {
     const file = join(dir, name);

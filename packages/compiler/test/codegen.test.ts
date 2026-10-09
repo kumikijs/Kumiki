@@ -2,11 +2,12 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
+import { app } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 
-const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER_PATH = app("01-counter");
 
 const TMP_ROOT = resolve(__dirname, "test-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });

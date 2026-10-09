@@ -7,8 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import {
   addDef,
   editDef,
@@ -21,12 +20,10 @@ import {
   renameDef,
   replaceDef,
 } from "@kumikijs/cli";
+import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const COUNTER = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../examples/apps/01-counter/app.kumiki",
-);
+const COUNTER = app("01-counter");
 
 let dir = "";
 let file = "";

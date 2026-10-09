@@ -1,14 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
+import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CLI_ARGV } from "./helpers/cli.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER_PATH = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER_PATH = app("01-counter");
 
 describe("kumiki build --minify", () => {
   let plainDir: string;

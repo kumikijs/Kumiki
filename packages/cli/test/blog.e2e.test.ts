@@ -1,11 +1,9 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildAndLoad } from "./helpers/build-and-load.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const BLOG = resolve(here, "../../examples/apps/03-blog/app.kumiki");
+const BLOG = app("03-blog");
 
 const flush = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
 

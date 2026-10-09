@@ -1,16 +1,11 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runMultiOnPage, runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { ConstraintRefusal, SubmitRefusal } from "@kumikijs/runtime";
 import { expect, type Page, test } from "@playwright/test";
 import { performAction } from "../src/browser.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "135-form-submit-gate.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("135-form-submit-gate"), "utf8");
 
 const sent = (page: Page): Promise<string> =>
   page.evaluate(() =>

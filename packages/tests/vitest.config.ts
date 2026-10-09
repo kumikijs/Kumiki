@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { sharedTestOptions } from "../../vitest.shared.ts";
 
 export default defineConfig({
   server: {
@@ -6,9 +7,9 @@ export default defineConfig({
   },
   test: {
     environment: "happy-dom",
-    globals: true,
-    include: ["**/*.test.ts"],
-    setupFiles: ["./helpers/setup.ts"],
+    ...sharedTestOptions,
+    include: ["src/**/*.test.ts"],
+    setupFiles: ["./src/helpers/setup.ts"],
     server: { deps: { external: [/\/\.smoke-tmp\/[^/]+\/app\.mjs(?:\?|$)/] } },
     testTimeout: 30000,
     env: { TZ: "America/Los_Angeles" },

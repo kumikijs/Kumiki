@@ -1,10 +1,8 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { testFile } from "../src/smoke.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const EXAMPLE = resolve(here, "../../examples/features/102-non-text-keys.kumiki");
+const EXAMPLE = feature("102-non-text-keys");
 
 describe("a key reader in a property-test invariant", () => {
   it("reads the keys back as the declared type", { timeout: 30_000 }, async () => {

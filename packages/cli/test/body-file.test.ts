@@ -1,35 +1,10 @@
-import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CLI_ARGV } from "./helpers/cli.ts";
+import { runCli } from "./helpers/cli.ts";
 
 /** Run the CLI, capturing stdout+stderr and the exit code without throwing. */
-function runCli(args: string[], input?: string): { out: string; code: number } {
-  if (input !== undefined) {
-    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: ["pipe", "pipe", "pipe"],
-      encoding: "utf8",
-      input,
-    });
-    return {
-      out: `${res.stdout ?? ""}${res.stderr ?? ""}`,
-      code: res.status ?? (res.error ? 1 : 0),
-    };
-  }
-  try {
-    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-    return { out, code: 0 };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; status?: number };
-    return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-  }
-}
-
 const SEED_SRC = `tile App = column(heading("hi"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
@@ -63,10 +38,9 @@ describe("kumiki add --body-file", () => {
   });
 
   it("reads the body from stdin when --body-file is '-'", { timeout: 30000 }, () => {
-    const { out, code } = runCli(
-      ["add", target, "slot", "count", "--body-file", "-"],
-      "Int\n  = 0",
-    );
+    const { out, code } = runCli(["add", target, "slot", "count", "--body-file", "-"], {
+      input: "Int\n  = 0",
+    });
     expect(code).toBe(0);
     expect(out).toMatch(/added slot\.count/);
     expect(readFileSync(target, "utf8")).toContain("Int\n  = 0");
@@ -172,10 +146,9 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("reads the replacement body from stdin when --body-file is '-'", { timeout: 30000 }, () => {
-    const { out, code } = runCli(
-      ["replace", target, "slot.count", "--body-file", "-"],
-      "Int\n    =    77",
-    );
+    const { out, code } = runCli(["replace", target, "slot.count", "--body-file", "-"], {
+      input: "Int\n    =    77",
+    });
     expect(code).toBe(0);
     expect(out).toMatch(/replaced slot\.count/);
     expect(readFileSync(target, "utf8")).toContain("Int\n    =    77");

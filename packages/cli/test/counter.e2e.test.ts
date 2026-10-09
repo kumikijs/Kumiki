@@ -1,11 +1,9 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildAndLoad } from "./helpers/build-and-load.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = app("01-counter");
 
 describe("counter e2e (built from .kumiki)", () => {
   let root: HTMLElement;

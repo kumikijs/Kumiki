@@ -1,14 +1,9 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const example = readFileSync(
-  join(here, "..", "..", "examples", "features", "157-theme-switch.kumiki"),
-  "utf8",
-);
+const example = readFileSync(feature("157-theme-switch"), "utf8");
 
 const source = example
   .replace(

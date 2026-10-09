@@ -1,12 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CLI_ARGV } from "./helpers/cli.ts";
-
-const CHILD_TIMEOUT_MS = 60_000;
-const SPAWN = { timeout: 70_000 };
+import { runCli, SPAWN } from "./helpers/cli.ts";
 
 let dir: string;
 
@@ -14,20 +10,6 @@ function write(name: string, source: string): string {
   const file = join(dir, name);
   writeFileSync(file, source);
   return file;
-}
-
-function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-  const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-    stdio: "pipe",
-    encoding: "utf8",
-    timeout: CHILD_TIMEOUT_MS,
-  });
-  if (res.error) throw res.error;
-  return {
-    stdout: res.stdout ?? "",
-    stderr: res.stderr ?? "",
-    code: res.status ?? Number.NaN,
-  };
 }
 
 const CLEAN = `slot count : Int = 0
@@ -249,13 +231,17 @@ describe("kumiki refs / view", () => {
   it("fails on a qname that is not defined under view --with-deps, as without it", SPAWN, () => {
     const file = write("view-deps.kumiki", CLEAN);
     const res = runCli(["view", file, "slot.nope", "--with-deps"]);
-    expect(res).toEqual({ stdout: "", stderr: 'Definition "slot.nope" not found\n', code: 1 });
+    expect(res).toMatchObject({
+      stdout: "",
+      stderr: 'Definition "slot.nope" not found\n',
+      code: 1,
+    });
     expect(runCli(["view", file, "slot.nope"])).toEqual(res);
   });
 
   it("prints a defined qname after its dependencies under view --with-deps", SPAWN, () => {
     const res = runCli(["view", write("view-deps-ok.kumiki", CLEAN), "tile.App", "--with-deps"]);
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       stdout: 'slot count : Int = 0\n\ntile App = column(heading("Count: " + count.show))\n',
       stderr: "",
       code: 0,

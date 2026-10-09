@@ -1,20 +1,6 @@
-import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { CASCADE_HELP } from "../src/mutate.ts";
-import { CLI_ARGV } from "./helpers/cli.ts";
-
-function runCli(args: string[]): { out: string; code: number } {
-  try {
-    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-    return { out, code: 0 };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; status?: number };
-    return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-  }
-}
+import { runCli } from "./helpers/cli.ts";
 
 const VERBS = ["list", "view", "refs", "remove", "rename", "lock", "unlock", "patch"];
 

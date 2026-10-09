@@ -14,10 +14,11 @@ import { hostname, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { addDef, lockDef, readOpLog, replaceDef } from "@kumikijs/cli";
+import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = app("01-counter");
 const MUTATE = pathToFileURL(resolve(here, "../src/mutate.ts")).href;
 const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 const WAIT_ENV = "KUMIKI_WRITE_LOCK_WAIT_MS";

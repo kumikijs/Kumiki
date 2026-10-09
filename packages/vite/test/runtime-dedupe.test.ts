@@ -2,12 +2,13 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { build } from "vite";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.kumiki");
+const COUNTER = app("01-counter");
 const TMP = join(here, "test-tmp");
 mkdirSync(TMP, { recursive: true });
 

@@ -1,14 +1,9 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "136-submit-button-click.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("136-submit-button-click"), "utf8");
 
 const counts = (page: Page): Promise<{ clicks: unknown; submits: unknown }> =>
   page.evaluate(() => {

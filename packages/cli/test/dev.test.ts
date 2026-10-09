@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -8,27 +8,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDevServer } from "../src/dev.ts";
-import { CLI_ARGV } from "./helpers/cli.ts";
+import { CLI_ARGV, runCli } from "./helpers/cli.ts";
 
-function runCli(args: string[]): { out: string; code: number } {
-  try {
-    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-    return { out, code: 0 };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; status?: number };
-    return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-  }
-}
-
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = app("01-counter");
 
 describe("kumiki dev", () => {
   let close: () => Promise<void>;

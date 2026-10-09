@@ -60,6 +60,7 @@
     "@kumikijs/runtime": "workspace:*"
   },
   "devDependencies": {
+    "@kumikijs/examples": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

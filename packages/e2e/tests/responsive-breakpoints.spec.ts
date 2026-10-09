@@ -1,14 +1,9 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "158-responsive-breakpoints.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("158-responsive-breakpoints"), "utf8");
 
 /** The same grid and column with no theme, so §4.2's default breakpoints apply. */
 const NO_THEME = `

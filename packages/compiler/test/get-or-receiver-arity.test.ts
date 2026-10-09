@@ -1,4 +1,4 @@
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
 const app = (defs: string): string =>
@@ -102,5 +102,55 @@ describe("a receiver the checker cannot decide stays silent", () => {
     const decls = `type F = All | Done\nslot f : F = All\nslot sink : Int = 0`;
     expect(codesOf(withCall(decls, `f.get-or(0)`))).not.toContain("E0213");
     expect(codesOf(withCall(decls, `f.get-or("k", 0)`))).not.toContain("E0213");
+  });
+});
+
+const FILLED_MAP = `slot m : Map(Text, Int) = {"k": 7}\nslot sink : Int = 0`;
+const FILLED_OPT = `slot o : Option(Int) = Some(5)\nslot sink : Int = 0`;
+
+describe("the receiver decides .get-or's arity, and check and build agree", () => {
+  it.each([
+    ["the Option reading on a Map", FILLED_MAP, `m.get-or("k")`],
+    ["the Map reading on an Option", FILLED_OPT, `o.get-or("k", 0)`],
+  ])("check reports %s", (_label, decls, call) => {
+    const codes = check(parse(lex(withCall(decls, call)))).map((e) => e.code);
+    expect(codes).toContain("E0213");
+  });
+
+  it.each([
+    ["the Option reading on a Map", FILLED_MAP, `m.get-or("k")`],
+    ["the Map reading on an Option", FILLED_OPT, `o.get-or("k", 0)`],
+  ])("build refuses to emit %s", (_label, decls, call) => {
+    const r = compile(withCall(decls, call), { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind).toBe("fail");
+    if (r.kind !== "fail") return;
+    expect(r.errors.map((e) => e.code)).toContain("E0213");
+  });
+
+  it("check and build both refuse a third argument on a receiver they cannot decide", () => {
+    const src = withCall(`slot sink : Int = 0`, `$event.get-or("k", 0, 99)`);
+    expect(check(parse(lex(src))).map((e) => e.code)).toContain("E0213");
+    const r = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind).toBe("fail");
+    if (r.kind !== "fail") return;
+    expect(r.errors.map((e) => e.code)).toContain("E0213");
+  });
+
+  it("still lowers the Map reading to mapGetOr", () => {
+    const r = compile(withCall(FILLED_MAP, `m.get-or("k", 0)`), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    expect(r.kind).toBe("ok");
+    if (r.kind !== "ok") return;
+    expect(r.js).toContain("_s.mapGetOr(");
+    expect(r.js).not.toContain("_s.getOr(");
+  });
+
+  it("still lowers the Option reading to getOr", () => {
+    const r = compile(withCall(FILLED_OPT, `o.get-or(0)`), { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind).toBe("ok");
+    if (r.kind !== "ok") return;
+    expect(r.js).toContain("_s.getOr(");
+    expect(r.js).not.toContain("_s.mapGetOr(");
   });
 });

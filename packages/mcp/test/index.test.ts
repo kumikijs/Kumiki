@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASCADE_HELP, gateComposed, lockDef } from "@kumikijs/cli";
 import { check, lex, parse } from "@kumikijs/compiler";
+import { app } from "@kumikijs/examples";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +27,7 @@ const FIX_REGRESSION = resolve(here, "fixtures/regression.kumiki");
 const FIX_FAILING_SINGLE = resolve(here, "fixtures/failing-single.kumiki");
 const FIX_WARNING_ONLY = resolve(here, "fixtures/warning-only.kumiki");
 const FIX_SMOKE_PANICS = resolve(here, "fixtures/smoke-panics.kumiki");
-const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = app("01-counter");
 
 type TextContent = { type: "text"; text: string };
 
@@ -677,11 +678,10 @@ describe("kumiki_episode_list / kumiki_episode_tail", () => {
     const logPath = `${source}.kumiki-episodes.jsonl`;
     writeFileSync(
       logPath,
-      [
-        JSON.stringify({ id: "ep_a", trigger: { kind: "init" }, steps: [], status: "completed" }),
-        "{ not json",
-        JSON.stringify({ id: "ep_b", trigger: { kind: "init" }, steps: [], status: "completed" }),
-      ].join("\n") + "\n",
+      `${JSON.stringify({ id: "ep_a", trigger: { kind: "init" }, steps: [], status: "completed" })}
+{ not json
+${JSON.stringify({ id: "ep_b", trigger: { kind: "init" }, steps: [], status: "completed" })}
+`,
     );
     await withClient(async (client) => {
       const listOut = await callTool(client, "kumiki_episode_list", { path: source });

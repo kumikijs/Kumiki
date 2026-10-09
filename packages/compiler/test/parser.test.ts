@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { AppDef, ReducerDef, SlotDef, Statement, TileDef, TypeDef } from "@kumikijs/compiler";
 import { lex, parse } from "@kumikijs/compiler";
+import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { tileCall, uiEvent } from "./helpers/ast.ts";
 import { defined } from "./helpers/defined.ts";
 
-const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER_PATH = app("01-counter");
 
 describe("parser", () => {
   it("parses the counter example end-to-end", () => {

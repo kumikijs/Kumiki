@@ -1,12 +1,10 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildAndLoad } from "./helpers/build-and-load.ts";
 import { defined } from "./helpers/defined.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const TODOMVC = resolve(here, "../../examples/apps/02-todomvc/app.kumiki");
+const TODOMVC = app("02-todomvc");
 
 const flush = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
 

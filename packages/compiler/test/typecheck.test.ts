@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { check, lex, parse } from "@kumikijs/compiler";
+import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 
-const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER_PATH = app("01-counter");
 
 const checkSrc = (src: string) => check(parse(lex(src)));
 

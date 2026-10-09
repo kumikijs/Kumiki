@@ -1,14 +1,15 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { app, feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.kumiki");
-const CUSTOM_CAP = join(here, "..", "..", "examples", "features", "27-custom-capability.kumiki");
+const COUNTER = app("01-counter");
+const CUSTOM_CAP = feature("27-custom-capability");
 
 const TMP = join(here, "test-tmp");
 mkdirSync(TMP, { recursive: true });

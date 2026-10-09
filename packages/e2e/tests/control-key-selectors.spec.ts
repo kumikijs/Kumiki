@@ -1,14 +1,9 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "109-control-key-focus-blur-selectors.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("109-control-key-focus-blur-selectors"), "utf8");
 
 const log = (page: Page): Promise<string> =>
   page.evaluate(() =>
