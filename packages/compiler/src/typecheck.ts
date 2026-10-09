@@ -45,7 +45,13 @@ import {
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
 } from "./builtin-calls.ts";
-import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "./builtins.ts";
+import {
+  BUILTIN_TILES,
+  contentArg,
+  contentReading,
+  positionalIsTile,
+  tileNamedAt,
+} from "./builtins.ts";
 import {
   BUILTIN_EFFECTS,
   builtinFieldOmittable,
@@ -1694,6 +1700,9 @@ function checkTileCall(
       checkTileExpr(v, sym, errors, ctx);
       continue;
     }
+    // The name of a tile the program defines, written where a tile belongs,
+    // is that tile — not a value, however else the name is defined.
+    if (tileNamedAt(t.name, arg, (name) => sym.tiles.has(name))) continue;
     // A positional argument of a builtin that is not a value builtin renders
     // only as a tile (§1.7.1): codegen keeps a tile, or the name of a tile the
     // program defines, and drops anything else — so a value there rendered
@@ -1702,11 +1711,7 @@ function checkTileCall(
     // one value that can hold a tile call, which reads as a `fn` call there
     // and would be reported wrongly, so a correct diagnostic under it (an
     // undefined name, say) waits until the value is moved too.
-    if (
-      arg.name === undefined &&
-      positionalIsTile(t.name) &&
-      !(v.kind === "Ref" && sym.tiles.has(v.name))
-    ) {
+    if (arg.name === undefined && positionalIsTile(t.name)) {
       errors.push({
         code: "E0128",
         kind: "value-as-child",

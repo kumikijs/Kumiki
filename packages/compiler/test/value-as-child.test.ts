@@ -106,11 +106,21 @@ describe("what renders in a child position is not reported", () => {
 });
 
 // The name of a tile the program defines renders as that tile in a child
-// position, so it is not a value there. A lower-cased one is still E0103 to
-// the checker, which looks it up as a value name; that is a separate gap, and
-// E0128 must not be added on top of it.
-it("the name of a tile in a child position is not E0128", () => {
-  expect(codes("column(lower)")).not.toContain("E0128");
+// position, so it is that tile there and not a value: it is not E0128, and it
+// is not looked up as a value name, where a `fn` that shares it would be one
+// named without its call. A value position still reads the `fn`.
+describe("the name of a tile in a child position is the tile", () => {
+  it("with no other definition of the name", () => {
+    expect(diagnostics("column(lower)")).toEqual([]);
+  });
+
+  it("beside a fn of the same name, which a value position still reads", () => {
+    const src = `fn lower() -> Text = "f"\n${program("column(lower, text(lower))")}`;
+    // `tile Home = ` on line 3 is 12 columns wide; `text(lower)` reads the fn.
+    expect(check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
+      "E0127 3:32",
+    ]);
+  });
 });
 
 describe("a value where a value belongs is still a value", () => {

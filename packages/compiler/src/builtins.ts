@@ -8,7 +8,8 @@
 // that class of drift structurally impossible — a tile listed here must be
 // handled by codegen, or the build fails loudly in CI via the registry test.
 
-import type { TileArg, TileExpr } from "./ast.ts";
+import type { Expr, TileArg, TileExpr } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 
 /**
  * Every tile the spec documents as built-in (stdlib §2.3). The parser uses this
@@ -88,6 +89,31 @@ export const BUILTIN_TILES = new Set<string>([
  */
 export function positionalIsTile(name: string): boolean {
   return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
+}
+
+/**
+ * The name `arg` gives a tile in a call of `callee`: a bare name written as a
+ * positional argument of a builtin whose positional argument is a tile
+ * (`positionalIsTile` — `column(leaf)`), where `isTile` says a tile has that
+ * name.
+ *
+ * There the name is the tile, whatever else shares it — a slot, a `fn` or a
+ * theme may (E0007 is per layer), and so may a local. Codegen lowers it as the
+ * tile (a container renders it as a child; the builtins that read no
+ * positional argument drop it, as they drop any tile), and the checker takes
+ * the name as the tile and checks nothing else about it. Anywhere else the
+ * name is a value: a value builtin's content (`text(leaf)`), a user tile's
+ * input (`Card(leaf)`), a named argument (`column(gap=leaf)`).
+ */
+export function tileNamedAt(
+  callee: string,
+  arg: TileArg,
+  isTile: (name: string) => boolean,
+): (Expr & { kind: "Ref" }) | undefined {
+  const v = arg.value;
+  if (arg.name !== undefined || !positionalIsTile(callee)) return undefined;
+  if (isTileExpr(v) || v.kind !== "Ref") return undefined;
+  return isTile(v.name) ? v : undefined;
 }
 
 /**

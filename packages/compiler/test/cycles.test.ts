@@ -138,9 +138,9 @@ ${TAIL}`;
     // A capitalised name inside a builtin parses as a `TileCall`; a lowercase
     // one parses as a `Ref`. Code generation resolves that `Ref` to a tile
     // before anything else and inlines it the same way — which is what made
-    // this shape crash the build — while the checker resolves it as a value.
-    // So the slots are what makes the program reach code generation at all:
-    // without them the names are E0103 and there is nothing to inline.
+    // this shape crash the build — and the checker reads it as the tile too.
+    // The slots of the same names are not what the children name, so they
+    // leave the loop in place.
     const src = `slot leaf : Int = 1
 slot other : Int = 2
 tile leaf = column(text("l"), other)
