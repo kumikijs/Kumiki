@@ -871,27 +871,31 @@ function checkRouteTargetArity(
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
-  // What a sub-route entry has to answer for: that its target exists, and that
-  // it takes no argument — or, for a redirect, which names a path rather than a
-  // tile, that it is not written at `/404`. One loop, so the redirect skip that
-  // guards the first question is the one that guards the second — two loops
-  // over the same array invite a merge that puts the second question behind
-  // the wrong guard.
+  // What a sub-route entry has to answer for: that it is not written at `/404`,
+  // and, when it names a tile rather than redirecting, that the tile exists and
+  // takes no argument. One loop, so each guard is the one every question after
+  // it shares — two loops over the same array invite a merge that puts a
+  // question behind the wrong guard.
   for (const sr of subRoutes) {
-    const where = `Sub-route "${sr.path}" in tile "${tile.name}"`;
-    if (sr.tile.startsWith(">>")) {
-      if (sr.path === "/404") {
-        errors.push(
-          notFoundRedirect(
-            sr,
-            `${where} is a redirect that never runs — no sub-route is matched at "/404", ` +
-              `which is the app's fallback. Remove it: a child path that no sub-route ` +
-              `matches renders the parent's default sub-route, or else the app's "/404"`,
-          ),
-        );
-      }
+    if (sr.path === "/404") {
+      // `/404` is the app's fallback (routing.md §3.1.3), and the router
+      // matches no sub-route against it, so the entry is dead whatever it
+      // targets. Its one report: removing it is the repair, which leaves its
+      // target nothing to answer for.
+      errors.push({
+        code: "E0001",
+        kind: "404-in-sub-routes",
+        message:
+          `Tile "${tile.name}" has a sub-route at "/404", which is reserved for the app's ` +
+          `fallback — no sub-route is matched against it. Remove it: a child path that no ` +
+          `sub-route matches renders the sub-route tile at the parent's own path if there ` +
+          `is one, or else the app's "/404"`,
+        pos: sr.pathPos,
+      });
       continue;
     }
+    if (sr.tile.startsWith(">>")) continue; // a redirect names a path, not a tile
+    const where = `Sub-route "${sr.path}" in tile "${tile.name}"`;
     if (!sym.tiles.has(sr.tile)) {
       errors.push({
         code: "E0105",
@@ -6687,17 +6691,6 @@ export function servesNotFound(routes: AppDef["routes"]): boolean {
   return entry !== undefined && !entry.tile.startsWith(">>");
 }
 
-/**
- * E0001 for a redirect written at `/404`, reported at the redirect: in
- * `app.routes`, where the fallback has to be a tile, and in a `sub-routes` map,
- * where no sub-route is matched at `/404`, so the redirect never runs.
- * Its own kind, because `missing-404` would ask for a `/404` entry the map has,
- * and a second one is E0008.
- */
-function notFoundRedirect(entry: RouteEntry, message: string): KumikiError {
-  return { code: "E0001", kind: "404-is-redirect", message, pos: entry.pathPos };
-}
-
 function checkApp(
   app: AppDef,
   sym: SymbolTable,
@@ -6737,13 +6730,16 @@ function checkApp(
       pos: app.pos,
     });
   } else if (notFound.tile.startsWith(">>")) {
-    errors.push(
-      notFoundRedirect(
-        notFound,
+    // Its own kind, reported at the redirect: `missing-404` would ask for a
+    // `/404` entry the map already has, and a second one is E0008.
+    errors.push({
+      code: "E0001",
+      kind: "404-is-redirect",
+      message:
         `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches ` +
-          `and has to render a tile — write "/404" -> <Tile>`,
-      ),
-    );
+        `and has to render a tile — write "/404" -> <Tile>`,
+      pos: notFound.pathPos,
+    });
   }
   const initCtx: Ctx = {
     // The scope codegen lowers these arguments in. It used to say `reducer`,

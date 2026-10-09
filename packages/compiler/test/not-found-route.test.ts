@@ -4,8 +4,10 @@
 // has a `/404` entry, and adding the one `missing-404` asks for writes the
 // pattern twice (E0008).
 //
-// A `sub-routes` map has no `/404` of its own: no sub-route is matched at
-// `/404`, so a `/404` redirect there never runs, and takes the same kind.
+// A `sub-routes` map has no `/404` of its own: `/404` is reserved for the app's
+// fallback, and no sub-route is matched against it. An entry written there is
+// E0001 `404-in-sub-routes`, whether it names a tile or redirects — dead either
+// way, so the one report for it.
 
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -82,23 +84,47 @@ describe('a redirect at "/404" in app.routes', () => {
 const LAYOUT = (subRoutes: string) => `${TILES}
 tile Settings sub-routes=${subRoutes} = column(route-outlet())`;
 
-const SUB_REDIRECT =
-  'Sub-route "/404" in tile "Settings" is a redirect that never runs — no sub-route is ' +
-  'matched at "/404", which is the app\'s fallback. Remove it: a child path that no ' +
-  "sub-route matches renders the parent's default sub-route, or else the app's \"/404\"";
+const IN_SUB_ROUTES =
+  'Tile "Settings" has a sub-route at "/404", which is reserved for the app\'s fallback — ' +
+  "no sub-route is matched against it. Remove it: a child path that no sub-route matches " +
+  "renders the sub-route tile at the parent's own path if there is one, or else the app's " +
+  '"/404"';
 
-describe('a redirect at "/404" in a sub-routes map', () => {
-  it("is reported, at the sub-route", () => {
-    const src = app(
-      '{"/" -> Home, "/settings/*" -> Settings, "/404" -> NotFound}',
-      LAYOUT('{"/settings" -> Home, "/404" ->> "/"}'),
-    );
-    const diagnostics = diagnose(src);
-    expect(diagnostics).toMatchObject([
-      { code: "E0001", kind: "404-is-redirect", message: SUB_REDIRECT },
-    ]);
-    const [d] = diagnostics;
-    expect(d && textAt(src, d)).toMatch(/^"\/404" ->> "\/"\}/);
+/** The app's routes, with a `/404` of its own, around a `Settings` layout. */
+const WITH_404 = '{"/" -> Home, "/settings/*" -> Settings, "/404" -> NotFound}';
+
+/** The two forms of a `/404` sub-route: one that names a tile, one that redirects. */
+const FORMS = {
+  tile: '"/404" -> NotFound',
+  redirect: '"/404" ->> "/"',
+};
+
+describe('an entry at "/404" in a sub-routes map', () => {
+  for (const [form, entry] of Object.entries(FORMS)) {
+    it(`is reported when it ${form === "tile" ? "names a tile" : "redirects"}, at the entry`, () => {
+      const src = app(WITH_404, LAYOUT(`{"/settings" -> Home, ${entry}}`));
+      const diagnostics = diagnose(src);
+      expect(diagnostics).toMatchObject([
+        { code: "E0001", kind: "404-in-sub-routes", message: IN_SUB_ROUTES },
+      ]);
+      const [d] = diagnostics;
+      expect(d && textAt(src, d).startsWith(`${entry}}`)).toBe(true);
+    });
+  }
+
+  it("is the entry's one report, so a target it names is not checked as well", () => {
+    // `Ghost` is no tile, and `Panel` takes an input: E0105 and E0213 at any
+    // other sub-route. Removing the entry is the repair for all of it.
+    const defs = `${TILES}
+tile Panel in=Text = column(text($1))
+tile Settings sub-routes=`;
+    for (const target of ["Ghost", "Panel"]) {
+      const src = app(
+        WITH_404,
+        `${defs}{"/settings" -> Home, "/404" -> ${target}} = column(route-outlet())`,
+      );
+      expect(diagnose(src).map((d) => [d.code, d.kind])).toEqual([["E0001", "404-in-sub-routes"]]);
+    }
   });
 
   it("is reported beside the app's own missing /404, which keeps its kind", () => {
@@ -107,7 +133,7 @@ describe('a redirect at "/404" in a sub-routes map', () => {
       LAYOUT('{"/settings" -> Home, "/404" ->> "/"}'),
     );
     expect(diagnose(src).map((d) => [d.code, d.kind, d.line])).toEqual([
-      ["E0001", "404-is-redirect", 3],
+      ["E0001", "404-in-sub-routes", 3],
       ["E0001", "missing-404", 4],
     ]);
   });

@@ -250,12 +250,13 @@ app A
     });
   });
 
-  it("when /404 is a redirect in a sub-routes map, which is not the app's routes", () => {
-    const source = `tile Landing  = page(heading("Landing"))
+  it("when a sub-routes map has an entry at /404, which is removed rather than added to", () => {
+    for (const entry of ['"/404" -> NotFound', '"/404" ->> "/"']) {
+      const source = `tile Landing  = page(heading("Landing"))
 tile NotFound = page(heading("Not found"))
 
 tile SettingsLayout
-    sub-routes = {"/settings" -> Landing, "/404" ->> "/"}
+    sub-routes = {"/settings" -> Landing, ${entry}}
     = page(heading("Settings"), route-outlet())
 
 app A
@@ -263,10 +264,11 @@ app A
     routes = {"/" -> Landing, "/settings/*" -> SettingsLayout, "/404" -> NotFound}
     init   = []
 `;
-    expect(planFor(source, "E0001")).toEqual({
-      patched: false,
-      reasons: ["e0001-404-is-a-redirect"],
-    });
+      expect(planFor(source, "E0001")).toEqual({
+        patched: false,
+        reasons: ["e0001-404-in-sub-routes"],
+      });
+    }
   });
 });
 

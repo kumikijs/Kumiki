@@ -36,7 +36,7 @@ app Counter
     init   = []
 ```
 
-`routes` には必ず `/404` を含める（無いと [E0001](../spec/errors.md#e0001-missing-404-404-is-redirect)）。
+`routes` には必ず `/404` を含める（無いと [E0001](../spec/errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes)）。
 
 ## 5. 検査して動かす
 

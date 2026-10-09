@@ -710,12 +710,17 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0001") {
-      // A redirect written at `/404` is E0001's `404-is-redirect`, repaired by
-      // replacing or removing the redirect rather than by adding an entry: the
-      // one this repair adds would write the pattern a second time beside it in
-      // the app's routes, which is E0008. There is no patch to offer.
+      // Adding an entry repairs `missing-404` alone. A redirect at the app's
+      // `/404` (`404-is-redirect`) is repaired by replacing it — the entry this
+      // repair adds would write the pattern a second time beside it, which is
+      // E0008 — and a sub-route at `/404` (`404-in-sub-routes`) by removing it.
+      // There is no patch to offer for either.
       if (err.kind === "404-is-redirect") {
         skip(err.code, "e0001-404-is-a-redirect", err.message);
+        continue;
+      }
+      if (err.kind === "404-in-sub-routes") {
+        skip(err.code, "e0001-404-in-sub-routes", err.message);
         continue;
       }
       // Planned the way E0301 is, so `fix` never lists a patch that `--apply`

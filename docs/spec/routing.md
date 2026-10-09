@@ -40,7 +40,7 @@ Specificity is compared segment by segment from the left: at the first segment w
 
 `/404` is the fallback used **when no route matches**. Including `/404 -> X` in `app.routes` is mandatory (omitting it is a compile error).
 
-The fallback renders a tile, so `X` is a tile and **`/404` may not be a redirect**. `"/404" ->> "/"` is [E0001](./errors.md#e0001-missing-404-404-is-redirect) (`404-is-redirect`), reported at the redirect:
+The fallback renders a tile, so `X` is a tile and **`/404` may not be a redirect**. `"/404" ->> "/"` is [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes) (`404-is-redirect`), reported at the redirect:
 
 ```kumiki invalid
 tile Home = column(text("h"))
@@ -49,7 +49,7 @@ app M caps=[] routes={"/" -> Home, "/404" ->> "/"} init=[]
 
 To send paths no route matches to another page, redirect a wildcard instead: `"/*" ->> "/"` owns every path that no more specific entry owns ([§3.1.2](#_3-1-2-match-order), [§3.10](#_3-10-redirects-static)). The `/404` tile is still required.
 
-A `sub-routes` map has no `/404` of its own: no sub-route is matched at `/404`, and a child path that no sub-route matches falls back as [§3.6.3](#_3-6-3-matching-rules) says. A `/404` redirect there would never run, and is E0001 (`404-is-redirect`) as well.
+`/404` belongs to `app.routes` alone. A `sub-routes` map ([§3.6.2](#_3-6-2-child-route-map)) has no `/404` of its own, and no sub-route is matched against `/404`, so an entry written there is never used, whether it names a tile or redirects. It is E0001 (`404-in-sub-routes`), reported at the entry. A child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([§3.6.3](#_3-6-3-matching-rules)).
 
 ### 3.1.4 A Route Target Takes No Argument
 
@@ -258,7 +258,7 @@ tile SettingsLayout
 - A parent's `sub-routes` map applies only when [§3.1.2](#_3-1-2-match-order) selects that parent for the path; a more specific sibling (`"/settings/:section"` beside `"/settings/*"`) takes the path and renders its own target, without the parent
 - Child routes are re-matched within the parent pattern `/settings/*`
 - If no child route matches, the parent's `/settings` (default) is used
-- If that also fails, fall through to the global `/404`
+- If that also fails, fall through to the global `/404`, the one in `app.routes` ([§3.1.3](#_3-1-3-404-is-reserved))
 - Multiple `route-outlet()` calls inside a single parent tile are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
 - The child renders **under** the parent: an `error-boundary` on the parent covers it, and a boundary the child declares itself wins ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)).
 
