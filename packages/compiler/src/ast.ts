@@ -431,6 +431,12 @@ export type Expr =
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
   /**
+   * `null`, which a program may not use (language.md §1.9.1): Kumiki has no
+   * null. It is read wherever an expression goes so that the checker reports
+   * it there, with the `Option` that replaces it (E0235); it has no lowering.
+   */
+  | { kind: "Null"; pos: Pos }
+  /**
    * `(a, b, …)` — the value a `Tuple(T1, …, Tn)` types and a tuple pattern
    * destructures. Two items minimum; one parenthesised expression is that
    * expression, which is the older and more common reading of `( … )`.

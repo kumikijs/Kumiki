@@ -23,6 +23,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { KEYWORDS } from "../src/lexer.ts";
 import { REFINEMENT_PREDS, refinementBases } from "../src/refinements.ts";
 import { UI_LIFTS } from "../src/ui-lifts.ts";
 
@@ -265,6 +266,38 @@ describe("§E0804's base table matches the refinement table", () => {
           new Set(refinementBases(pred)),
         );
       }
+    });
+  }
+});
+
+// The same guard for §1.2.2's list of reserved words, the published copy of
+// the lexer's keyword table. A word the lexer reserves is one no program can
+// use as a name, and the record field-name rule of §1.9 is stated against this
+// list, so a word missing from it is a rule the spec does not write down.
+describe("§1.2.2's reserved words are the lexer's keywords", () => {
+  /** The words of the code block under `### 1.2.2`, in the order written. */
+  function reservedWords(file: string): string[] {
+    const source = readFileSync(file, "utf8");
+    const start = source.search(/^### 1\.2\.2\b/m);
+    expect(start, `${file} has no §1.2.2 heading`).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(start + 1);
+    const end = rest.search(/^### /m);
+    const section = end < 0 ? rest : rest.slice(0, end);
+    const block = section.match(/^```[^\n]*\n([\s\S]*?)^```/m)?.[1];
+    expect(block, `${file} §1.2.2 has no code block`).toBeDefined();
+    return (block ?? "").split(/\s+/).filter((w) => w !== "");
+  }
+
+  const TRACKS = {
+    en: path.join(repoRoot, "docs", "spec", "language.md"),
+    ja: path.join(repoRoot, "docs", "ja", "spec", "language.md"),
+  } as const;
+
+  for (const [track, file] of Object.entries(TRACKS)) {
+    it(`lists each word the lexer reserves once, and no other, on the ${track} track`, () => {
+      const words = reservedWords(file);
+      expect(new Set(words).size, `${track} §1.2.2 lists a word twice`).toBe(words.length);
+      expect([...words].sort()).toEqual([...KEYWORDS].sort());
     });
   }
 });

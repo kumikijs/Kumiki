@@ -139,6 +139,13 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return e.value ? "true" : "false";
     case "Unit":
       return "null";
+    case "Null":
+      // E0235 wherever it is written, so only `codegen()` called without
+      // `check()` reaches here — and a JavaScript `null` would be a value of no
+      // Kumiki type, which every reader of it misreads.
+      throw new Error(
+        `\`null\` at ${e.pos.line}:${e.pos.col} has no lowering — run \`check\` for the diagnostic`,
+      );
     case "Ref": {
       if (ctx.localBinds.has(e.name)) return bindRef(ctx, e.name);
       if (e.name === "now") return `_s.now()`;

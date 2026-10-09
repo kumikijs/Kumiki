@@ -98,6 +98,7 @@ export function collectEmits(stmts: Statement[]): string[] {
       case "Str":
       case "Bool":
       case "Unit":
+      case "Null":
       case "Ref":
       case "Wildcard":
       case "TokenRef":
@@ -198,6 +199,7 @@ export function scanRunReducers(e: Expr | undefined, cb: (name: string) => void)
     case "Str":
     case "Bool":
     case "Unit":
+    case "Null":
     case "Ref":
     case "Wildcard":
     case "TokenRef":

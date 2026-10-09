@@ -86,28 +86,31 @@ export const PRIM_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The reserved words that are a whole value on their own (language.md §1.2.2),
- * each with the node `parsePrimary` reads it as.
+ * The reserved words that are a whole expression on their own (language.md
+ * §1.2.2), each with the node `parsePrimary` reads it as: the values `true`,
+ * `false` and `now`, and `null`, which is no value at all — it is read so that
+ * the checker reports it wherever an expression goes (E0235).
  *
- * Being a value is also what keeps one from naming a record field (§1.9): the
- * `true` in `{true: "on"}` is a whole expression, so it is a Map key, and the
- * literal is the `Map(Bool, Text)` it reads as. No other reserved word is an
- * expression on its own, so before a `:` one can only be a field name
- * (`{type: …}`, `{for: …}`).
+ * Being an expression is also what keeps one from naming a record field
+ * (§1.9): the `true` in `{true: "on"}` is a whole expression, so it is a Map
+ * key, and the literal is the `Map(Bool, Text)` it reads as. No other reserved
+ * word is an expression on its own, so before a `:` one can only be a field
+ * name (`{type: …}`, `{for: …}`).
  */
-const VALUE_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
+const EXPRESSION_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
   ["true", (pos: Pos): Expr => ({ kind: "Bool", value: true, pos })],
   ["false", (pos: Pos): Expr => ({ kind: "Bool", value: false, pos })],
   ["now", (pos: Pos): Expr => ({ kind: "Call", callee: "now", args: [], pos })],
+  ["null", (pos: Pos): Expr => ({ kind: "Null", pos })],
 ]);
 
 /**
  * The record field name `t` spells, if it spells one: an identifier, or a
- * reserved word that is not a value.
+ * reserved word that is not an expression on its own.
  */
 function fieldNameOf(t: Token): string | undefined {
   if (t.kind === "ident") return t.value;
-  if (t.kind === "kw" && !VALUE_KEYWORDS.has(t.value)) return t.value;
+  if (t.kind === "kw" && !EXPRESSION_KEYWORDS.has(t.value)) return t.value;
   return undefined;
 }
 
@@ -1147,10 +1150,10 @@ class Parser {
       this.next();
       return { kind: "Str", value: t.value, pos: t.pos };
     }
-    const valueKeyword = t.kind === "kw" ? VALUE_KEYWORDS.get(t.value) : undefined;
-    if (valueKeyword) {
+    const expressionKeyword = t.kind === "kw" ? EXPRESSION_KEYWORDS.get(t.value) : undefined;
+    if (expressionKeyword) {
       this.next();
-      return valueKeyword(t.pos);
+      return expressionKeyword(t.pos);
     }
     if (t.kind === "kw" && t.value === "if") {
       return this.parseIfExpr();
@@ -1440,11 +1443,11 @@ class Parser {
     }
     // The first key decides for the whole literal. A field name
     // (`fieldNameOf`: an identifier, or a reserved word such as `type` / `in`
-    // that is not a value) followed by `:` makes it a record; any other key
-    // before a `:` — `true`, a string, `(k)`, `Some(1)` — makes it a Map. A
-    // word followed by `=`, `,` or `}` starts no Map entry, so it is a
-    // record's first field, and the field loop below decides whether the word
-    // can name one.
+    // that is not an expression on its own) followed by `:` makes it a record;
+    // any other key before a `:` — `true`, `null`, a string, `(k)`, `Some(1)`
+    // — makes it a Map. A word followed by `=`, `,` or `}` starts no Map
+    // entry, so it is a record's first field, and the field loop below decides
+    // whether the word can name one.
     const k0 = this.peek();
     const k1 = this.peek(1);
     const isRecord =
@@ -1460,11 +1463,13 @@ class Parser {
         const keyTok = this.peek();
         const fieldName = fieldNameOf(keyTok);
         if (fieldName === undefined) {
-          // A value keyword here stands where a field name goes, and a value
-          // cannot be one.
+          // An expression keyword here stands where a field name goes, and an
+          // expression cannot be one — `null` least of all, being no value.
           if (keyTok.kind === "kw") {
             throw new ParseError(
-              `\`${keyTok.value}\` is a value, not a record field name`,
+              keyTok.value === "null"
+                ? "`null` is not a record field name, and not a value — Kumiki has no null"
+                : `\`${keyTok.value}\` is a value, not a record field name`,
               keyTok.pos,
             );
           }

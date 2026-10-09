@@ -887,6 +887,18 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 **修正**：型と組み合わせられるフィールド種別を与える — `input(bind=age, type="number")`、`input(bind=due, type="date")` — か、フィールドが保持する型の slot を bind する。時刻だけなら `type="time"` のフィールドで `Text` として保持するか、`type="datetime-local"` のフィールドで `Time` を使う。`Option` はペイロードを `.get` で bind する。
 
+### E0235 `null-value`
+
+式の位置に `null` が書かれている。`null` は予約語（[言語 §1.2.2](./language.md#_1-2-2-予約語)）であって値ではない。Kumiki に null は無い（[§1.9.1](./language.md#_1-9-1-禁止事項)）。値が無いことがある値は `Option(T)` であり、値の無さは `None` で表す。
+
+> `` `null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one ``
+
+パーサは式の位置ならどこでも `null` を読み、チェッカがその位置で修正方法とともに報告できるようにする：slot の初期値、レコードリテラルのフィールド、リストの要素、Map のキーや値、引数、オペランド（`x == null`）、分岐、reducer の書き込み、テストの `given` や `expect`。報告は `null` の位置に 1 つだけ出る。式は型を持たないので、それが置かれた位置が独自の不一致を報告することはない。`{null: 1}` は Map なので（[言語 §1.9](./language.md#_1-9-式言語)）、このエラーはそのキーで報告される。
+
+このコードにならない場所が 2 つある。レコードのフィールド名の位置 — `{null = 1}`、`{a, null}`、`{a: 1, null: 2}` — では、`true` と同じく `null` の位置で構文エラーになる。値ビルトインでないビルトインの位置引数（`column(null)`）では [E0128](#e0128-value-as-child) になり、値の中身は検査されない。
+
+**修正**：型を `Option(T)` と宣言し、値が無いところには `None`、あるところには `Some(x)` を書く — `slot picked : Option(TodoId) = None`。値があるかどうかは `== null` ではなく、`.is-none` / `.is-some`、`.get-or(d)`、あるいは `match` で問う。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。

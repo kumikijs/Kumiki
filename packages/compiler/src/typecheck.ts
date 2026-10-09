@@ -2952,6 +2952,17 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "Bool":
     case "Unit":
       return;
+    case "Null":
+      // The one report for it: `inferType` leaves its type undecided, so no
+      // position it lands in adds a mismatch of its own.
+      errors.push({
+        code: "E0235",
+        kind: "null-value",
+        message:
+          "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+        pos: e.pos,
+      });
+      return;
     case "Ref": {
       // An `app.init` argument is evaluated while `createApp()` builds the app
       // object; the route is installed later, by whichever mount follows. Both

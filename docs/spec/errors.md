@@ -909,6 +909,18 @@ The bound type is unaliased first, so `type Qty = Int where positive` and a `nom
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
 
+### E0235 `null-value`
+
+`null` is written where an expression goes. It is a reserved word ([Language §1.2.2](./language.md#_1-2-2-reserved-words)) and no value: Kumiki has no null ([§1.9.1](./language.md#_1-9-1-prohibitions)). A value that may be absent is an `Option(T)`, and `None` is its absence.
+
+> `` `null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one ``
+
+The parser reads `null` wherever an expression goes, so that the checker can report it there with the fix: a slot's initial value, a field of a record literal, an item of a list, a Map key or value, an argument, an operand (`x == null`), a branch, a reducer write, a test's `given` or `expect`. The report is at the `null`, and it is the only one about it: the expression has no type, so the position it lands in reports no mismatch of its own. `{null: 1}` is a Map ([Language §1.9](./language.md#_1-9-expression-language)), so this is reported at its key.
+
+Two places are not this code. Where a record field name goes — `{null = 1}`, `{a, null}`, `{a: 1, null: 2}` — `null` is a parse error at the `null`, as `true` is there. As a positional argument of a builtin that is not a value builtin (`column(null)`), it is [E0128](#e0128-value-as-child), which checks nothing inside the value.
+
+**Fix**: Declare the type `Option(T)` and write `None` where there is no value and `Some(x)` where there is one — `slot picked : Option(TodoId) = None`. Ask whether there is one with `.is-none` / `.is-some`, `.get-or(d)` or a `match`, not with `== null`.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.

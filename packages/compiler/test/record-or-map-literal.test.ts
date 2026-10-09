@@ -1,11 +1,12 @@
 // `{ … }` is a record literal or a Map literal, and the parser tells them
 // apart by the first key (language.md §1.9): a field name followed by `:`,
 // `=`, `,` or `}` makes the literal a record. A field name is an identifier
-// or a reserved word, except the reserved words that are a whole value on
-// their own — `true`, `false` and `now`. Those are keys, so
-// `{true: "on", false: "off"}` is a `Map(Bool, Text)`, and one written where
-// a field name goes (`{a, now}`, `{true}`) is a parse error that says it is a
-// value. Rendering each form is pinned in
+// or a reserved word, except the reserved words that are a whole expression
+// on their own — the values `true`, `false` and `now`, and `null`. Those are
+// keys, so `{true: "on", false: "off"}` is a `Map(Bool, Text)`, and one
+// written where a field name goes (`{a, now}`, `{true}`) is a parse error
+// that says it is a value (or, for `null`, that it is not one either).
+// Rendering each form is pinned in
 // `packages/tests/record-or-map-literal.test.ts`.
 
 import type { Expr } from "@kumikijs/compiler";
@@ -108,6 +109,35 @@ describe("a value keyword where a record field name goes", () => {
   ])("is refused as the first key of %s", (literal, keyword) => {
     expect(() => parsed(literal)).toThrow(
       `Parse error at 1:17: \`${keyword}\` is a value, not a record field name`,
+    );
+  });
+});
+
+// `null` is an expression on its own as well — the one Kumiki has no value
+// for, which the checker reports wherever an expression goes (E0235). So it is
+// a key where `true` is one, and no more a field name than `true` is.
+describe("`null` as a key", () => {
+  it("makes the literal a Map whose key is `null`", () => {
+    expect(parsed("{null: 1}")).toMatchObject({
+      kind: "MapLit",
+      entries: [{ key: { kind: "Null" }, value: { kind: "Num", value: 1 } }],
+    });
+  });
+
+  it("is E0235 at the key, and the Map is checked as any other", () => {
+    expect(diagnostics("slot m : Map(Int, Int) = {null: 1}")).toEqual([
+      "E0235 1:27 `null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+    ]);
+  });
+
+  it.each([
+    ["{null}", 17],
+    ["{null = 1}", 17],
+    ["{a: 1, null: 2}", 23],
+    ["{a, null}", 20],
+  ])("is refused where a record field name goes in %s", (literal, col) => {
+    expect(() => parsed(literal)).toThrow(
+      `Parse error at 1:${col}: \`null\` is not a record field name, and not a value — Kumiki has no null`,
     );
   });
 });

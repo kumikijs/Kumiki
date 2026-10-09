@@ -1,6 +1,11 @@
 import type { Pos, Token } from "./ast.ts";
 
-const KEYWORDS = new Set([
+/**
+ * The reserved words (language.md §1.2.2): each lexes as a `kw` token, never
+ * as an identifier. The spec's list is held to this one by
+ * `test/spec-drift.test.ts`.
+ */
+export const KEYWORDS: ReadonlySet<string> = new Set([
   "type",
   "slot",
   "effect",
