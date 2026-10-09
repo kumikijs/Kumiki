@@ -281,6 +281,33 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
   return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
+/** A prop as one tile call writes it: its value, and where its name is. */
+export type WrittenProp = { value: Expr; namePos: Pos };
+
+/**
+ * The prop a tile call writes under `name`, in either spelling a prop has: an
+ * entry of its `{…}` block (`{open: false}`) or a named argument (`open=false`)
+ * — one prop however it is written (language.md §1.7.1). The block wins when
+ * a call writes both. A tile written as a named argument is a child, not a
+ * prop value, and is not answered.
+ *
+ * Every reader of a prop asks here — the checker and the lowering alike — so
+ * no prop can be read from one spelling only. `block` is the block whose data
+ * the reader takes; the lowering of a tile-test's expected tree passes none,
+ * because a snapshot does not compare what the block says (testing.md §8.4).
+ */
+export function writtenProp(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  block: readonly TileProp[] = t.props,
+): WrittenProp | undefined {
+  const prop = block.find((p) => p.name === name);
+  if (prop) return { value: prop.value, namePos: prop.pos };
+  const arg = t.args.find((a) => a.name === name);
+  if (arg?.name === undefined || isTileExpr(arg.value)) return undefined;
+  return { value: arg.value, namePos: arg.namePos };
+}
+
 /**
  * The end of an exhaustive `switch` over a node union.
  *

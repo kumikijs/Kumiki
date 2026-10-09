@@ -118,4 +118,15 @@ describe("an input's field kind has to go with the bound type (E0226)", () => {
   it("still judges a bound type that no field kind goes with beside a type= expression", () => {
     expect(e0226(`input(bind=b, type=k)`)).toHaveLength(1);
   });
+
+  it("reads the bind and the field kind from the {…} block as from the arguments", () => {
+    // The lowering renders the field the block names, so the check is of that
+    // field — and when both spellings are written, of the block's.
+    expect(e0226(`input(bind=n) {type: "number"}`)).toEqual([]);
+    expect(e0226(`input(type="number") {bind: n}`)).toEqual([]);
+    expect(e0226(`input(bind=t) {type: "time"}`)).toHaveLength(1);
+    expect(e0226(`input() {bind: n}`)).toHaveLength(1);
+    expect(e0226(`input(bind=n, type="text") {type: "number"}`)).toEqual([]);
+    expect(e0226(`input(bind=n, type="number") {type: "text"}`)).toHaveLength(1);
+  });
 });

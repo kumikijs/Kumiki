@@ -657,6 +657,21 @@ describe("typecheck", () => {
       expect(codes.some((e) => e.message.includes("multiple"))).toBe(true);
     });
 
+    it("reads type, bind, accept and multiple in the {…} block as from the arguments", () => {
+      const codesOf = (input: string) =>
+        checkSrc(`
+        slot avatar : Option(File) = None
+        tile Picker = ${input}
+        tile App = column(Picker)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `).map((e) => e.code);
+      expect(codesOf(`input(accept="image/*") {type: "file"}`)).toEqual([]);
+      expect(codesOf(`input(type="file") {multiple: true}`)).toEqual([]);
+      expect(codesOf(`input() {accept: "image/*", multiple: true}`)).toEqual(["E0206", "E0206"]);
+      expect(codesOf(`input(type="file") {bind: avatar}`)).toContain("E0205");
+      expect(codesOf(`input(bind=avatar) {type: "file"}`)).toContain("E0205");
+    });
+
     it("does not flag accept/multiple on a file input", () => {
       const src = `
         slot avatar : Option(File) = None

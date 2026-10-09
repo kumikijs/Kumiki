@@ -34,6 +34,13 @@ describe("a call in a bind target", () => {
     expect(e?.pos).toMatchObject({ line: 4, col: 30 });
   });
 
+  it("is reported on a bind written in the {…} block", () => {
+    const codes = errsOf(app("tile App = column(input() {bind: d.get().title})")).map(
+      (e) => e.code,
+    );
+    expect(codes).toContain("E0602");
+  });
+
   it("is reported on every bind control, not only input", () => {
     const codes = errsOf(app("tile App = column(textarea(bind=d.get().title))")).map((e) => e.code);
     expect(codes).toContain("E0602");

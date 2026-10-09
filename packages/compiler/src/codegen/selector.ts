@@ -1,4 +1,4 @@
-import { isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
+import { type Expr, type TileExpr, type TileProp, type UiEventKind, writtenProp } from "../ast.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
 import { type EnclosingTiles, type EvalCtx, fieldKey, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr } from "./expr.ts";
@@ -21,7 +21,7 @@ export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string
  * One predicate rather than one list per loop: the top-level props, the `el`
  * payload and the named-argument fold all have to agree about what is not a
  * prop, and three copies of the list is three places for them to stop agreeing.
- * `forEl` adds the two the reducer payload alone excludes.
+ * `forEl` adds `style`, which the reducer payload alone excludes.
  */
 function isNotPropData(tile: string, name: string, forEl = false): boolean {
   if (HANDLER_NAMES.has(name)) return true;
@@ -35,9 +35,33 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   // not reducer data, and shipping it twice re-evaluates every `@token` ref.
   if (forEl && name === "style") return true;
   // An lvalue (`todos[i].done`), not a value: lowering it emits a read of the
-  // slot under a name nothing consults.
-  if (forEl && name === "bind") return true;
+  // slot under a name nothing consults. The control's own `bind` field carries
+  // it.
+  if (name === "bind") return true;
   return false;
+}
+
+/**
+ * The `{…}` block whose data one call's lowering reads: none in a tile-test's
+ * expected tree, which states what it compares with named arguments (see
+ * `GenCtx.expectedTree`).
+ */
+function blockOf(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): readonly TileProp[] {
+  return ctx.gen.expectedTree ? [] : t.props;
+}
+
+/**
+ * The value of the prop `name` on one call, from either spelling, as
+ * `writtenProp` reads it over the block this lowering reads. Every field a
+ * builtin lifts onto its node is read here, so the block and the argument
+ * reach the renderer alike.
+ */
+export function propValue(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  ctx: EvalCtx,
+): Expr | undefined {
+  return writtenProp(t, name, blockOf(t, ctx))?.value;
 }
 
 /** The ARIA a tile asked for: the `aria` map, plus each `aria-*` written on its own. */
@@ -155,9 +179,7 @@ export function propsFor(
   // reach the runtime — see `mergedAria`.
   const aria: AriaParts = { map: null, direct: [] };
 
-  // The `{…}` block's data; none in a tile-test's expected tree, which
-  // states what it compares with named arguments (see `GenCtx.expectedTree`).
-  const block = ctx.gen.expectedTree ? [] : t.props;
+  const block = blockOf(t, ctx);
   // props block. A handler is wiring rather than data: it is in
   // `explicitByHandler`, and is emitted with the lifted ones below.
   for (const p of block) {
@@ -221,9 +243,9 @@ export function propsFor(
   // A named argument carries the same prop as the block form of the same name.
   // The spec writes the two interchangeably — `button(text="Log in",
   // loading=loginPending)` in forms.md §5.2 next to `{variant: "ghost"}` in
-  // §5.9 — so they have to arrive alike. Per-kind lowering lifts the arguments
-  // each tile names (`text`, `src`, `type`, `bind`, …) into top-level TileNode
-  // fields; every OTHER named argument used to be dropped here, which is how
+  // §5.9 — so they have to arrive alike. Per-kind lowering lifts the props each
+  // tile names (`src`, `type`, `bind`, …, through `propValue`) into top-level
+  // TileNode fields; every OTHER named argument used to be dropped here, which is how
   // `image(alt="…")` satisfied the a11y check and then rendered no `alt`, and
   // how `button(disabled=true)` rendered an enabled button.
   //
@@ -234,14 +256,16 @@ export function propsFor(
   // are folded rather than enumerated away: a list of "what each kind already
   // took" would have to stay in step with forty lowering cases, and the day it
   // fell behind, a prop would go missing exactly the way this fixes.
-  const written = new Set(block.map((p) => p.name));
+  //
+  // An argument is folded when it is the value `writtenProp` reads for its
+  // name: not when the block writes the same prop, which wins, and not when it
+  // is a child written as an argument (`card(header=Some(…))`) — a tile is not
+  // prop data, and lowering one here would build a second copy of its node.
   for (const a of t.args) {
-    if (!a.name || written.has(a.name)) continue;
-    if (isNotPropData(t.name, a.name, true)) continue;
-    // Children arrive as arguments too (`card(header=Some(…))`). A tile is not
-    // prop data, and lowering one here would build a second copy of its node.
-    if (isTileExpr(a.value)) continue;
-    const js = jsOfExpr(a.value, ctx);
+    if (a.name === undefined || isNotPropData(t.name, a.name, true)) continue;
+    const written = writtenProp(t, a.name, block);
+    if (written === undefined || written.value !== a.value) continue;
+    const js = jsOfExpr(written.value, ctx);
     if (collectAria(a.name, () => js, aria)) continue;
     entries.push(`${jsProperty(a.name)}: ${js}`);
     elProps.push(`${fieldKey(a.name)}: ${js}`);

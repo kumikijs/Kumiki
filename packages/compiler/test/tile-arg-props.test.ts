@@ -87,6 +87,9 @@ describe("a named argument reaches props (#251)", () => {
   it("leaves an lvalue bind out of the props", () => {
     const js = propsOf(emit("input(bind=draft)", 'slot draft : Text = ""'));
     expect(js).not.toContain("bind:");
+    // In either spelling: the control's own `bind` field carries it.
+    const block = propsOf(emit("input() {bind: draft}", 'slot draft : Text = ""'));
+    expect(block).not.toContain("bind:");
   });
 
   it("lets the props block win over an argument of the same name", () => {
@@ -102,6 +105,74 @@ describe("a named argument reaches props (#251)", () => {
     // a host tile may refuse to enumerate.
     expect(js).toContain('aria: { ...({ "hidden": "true" }), "aria-label": "Main" }');
     expect(js).not.toContain("aria_label");
+  });
+});
+
+describe("a prop a kind lifts into its node reads either spelling", () => {
+  // A modal's `open`, a select's `options`, a list's `ordered` are fields of
+  // the node itself, which is where their renderers read them — so a block
+  // that only reached `props` rendered the default. The DOM half is
+  // `packages/tests/prop-spellings.test.ts`.
+
+  /**
+   * The fields the first node of `kind` is lowered with, up to its own props:
+   * its children's nodes, props included, are nested a level deeper.
+   */
+  const fieldsOf = (js: string, kind: string): string => {
+    const start = js.indexOf(`kind: ${JSON.stringify(kind)}`);
+    let depth = 0;
+    for (let i = start; start !== -1 && i < js.length; i++) {
+      const c = js[i] ?? "";
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth--;
+      else if (depth === 0 && js.startsWith("props:", i)) return js.slice(start, i);
+    }
+    throw new Error(`no ${kind} node with props`);
+  };
+  const SLOTS = 'slot pick : Text = "a"';
+
+  it.each([
+    ["modal", 'modal(text("m")) {open: false}', "open: !!(false)"],
+    ["drawer", 'drawer(text("m")) {open: false}', "open: !!(false)"],
+    ["popover", 'popover(text("m")) {open: false}', "open: !!(false)"],
+    ["details", 'details(text("m")) {open: true}', "open: !!(true)"],
+    ["list", 'list(text("a")) {ordered: true}', "ordered: !!(true)"],
+    ["select", 'select(bind=pick) {options: [{label: "A", value: "a"}]}', '"label": "A"'],
+    ["select", "select() {bind: pick}", 'bind: "pick"'],
+  ])("lowers %s's %s from the block", (kind, tile, field) => {
+    expect(fieldsOf(emit(tile, SLOTS), kind)).toContain(field);
+  });
+
+  it("lowers the value the block writes when both spellings are written", () => {
+    const js = emit('list(text("a"), ordered=false) {ordered: true}');
+    expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
+    expect(fieldsOf(js, "list")).not.toContain("false");
+  });
+
+  it("reads no block in a tile-test's expected tree, which compares arguments only", () => {
+    // testing.md §8.4: the block of an expected node is never compared, and a
+    // list whose `ordered` argument is left out carries `ordered: false`.
+    const source = `
+tile Probe = list(text("a")) {ordered: true}
+
+app P
+    caps   = []
+    routes = {"/" -> Probe, "/404" -> Probe}
+    init   = []
+
+test probe-list =
+    tile-test Probe
+        given  = {slots: {}}
+        expect = list(text("a")) {ordered: true}
+`;
+    const js = codegen(parse(lex(source)), {
+      runtimeSpecifier: "@kumikijs/runtime",
+      includeTests: true,
+    }).js;
+    const expected = js.slice(js.indexOf("const _expected = "));
+    expect(fieldsOf(expected, "list")).toContain("ordered: false");
+    // The tile itself is lowered with the block it is written with.
+    expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
   });
 });
 

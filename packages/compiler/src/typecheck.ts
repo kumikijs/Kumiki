@@ -35,7 +35,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { assertNever, isTileExpr } from "./ast.ts";
+import { assertNever, isTileExpr, writtenProp } from "./ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
@@ -1144,8 +1144,7 @@ const BIND_CONTROLS = new Set([
  * rendered empty and wrote nowhere. The unwrap step is `.get`.
  */
 function checkBindTargetSteps(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
-  const bind = t.args.find((a) => a.name === "bind");
-  let cur = bind?.value as Expr | undefined;
+  let cur = writtenProp(t, "bind")?.value;
   while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
     if (cur.kind === "MethodCall") {
       const hint =
@@ -1196,7 +1195,7 @@ function checkBindStrictProp(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
  */
 const TOGGLE_BIND_CONTROLS = new Set(["check", "switch", "radio"]);
 
-/** The argument each toggle reads for its selection when it has no `bind=`. */
+/** The prop each toggle reads for its selection when it has no `bind`. */
 const TOGGLE_UNBOUND_SELECTION: Readonly<Record<string, string>> = {
   check: "value",
   switch: "value",
@@ -1226,35 +1225,33 @@ function checkToggleBind(
   ctx: Ctx,
 ): void {
   if (!TOGGLE_BIND_CONTROLS.has(t.name)) return;
-  const bindArg = t.args.find((a) => a.name === "bind");
-  if (!bindArg || isTileExpr(bindArg.value)) return;
-  const bindExpr = bindArg.value;
+  const bind = writtenProp(t, "bind");
+  if (!bind) return;
+  const bindExpr = bind.value;
   const unread = TOGGLE_UNBOUND_SELECTION[t.name];
-  for (const arg of t.args) {
-    if (arg.name !== unread) continue;
+  const unreadProp = unread === undefined ? undefined : writtenProp(t, unread);
+  if (unreadProp) {
     errors.push({
       code: "W0216",
       kind: "selection-beside-bind",
       severity: "warning",
       message: `"${unread}" on ${t.name}() is not read beside bind= — the bound value decides whether it is ${t.name === "radio" ? "chosen" : "ticked"}. Remove it (see docs/spec/forms.md §5.1.1)`,
-      pos: arg.namePos ?? (arg.value as Expr).pos,
+      pos: unreadProp.namePos,
     });
   }
-  const valueArg = t.name === "radio" ? t.args.find((a) => a.name === "value") : undefined;
-  if (t.name === "radio" && !valueArg) {
+  const value = t.name === "radio" ? writtenProp(t, "value") : undefined;
+  if (t.name === "radio" && !value) {
     errors.push({
       code: "E0225",
       kind: "radio-bind-without-value",
       message: `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`,
-      pos: bindArg.namePos ?? bindExpr.pos,
+      pos: bind.namePos,
     });
   }
   const bound = inferType(bindExpr, sym, ctx);
   if (bound === null) return;
   if (t.name === "radio") {
-    if (valueArg && !isTileExpr(valueArg.value)) {
-      checkAgainst(valueArg.value, bound, sym, errors, ctx);
-    }
+    if (value) checkAgainst(value.value, bound, sym, errors, ctx);
     return;
   }
   if (assignable(bound, prim("Bool", bindExpr.pos), sym)) return;
@@ -1285,17 +1282,12 @@ function checkInputBindType(
   ctx: Ctx,
 ): void {
   if (t.name !== "input") return;
-  const bindArg = t.args.find((a) => a.name === "bind");
-  if (!bindArg || isTileExpr(bindArg.value)) return;
-  const typeArg = t.args.find((a) => a.name === "type")?.value;
-  const literal =
-    typeArg === undefined
-      ? "text"
-      : !isTileExpr(typeArg) && typeArg.kind === "Str"
-        ? typeArg.value
-        : null;
+  const bind = writtenProp(t, "bind")?.value;
+  if (!bind) return;
+  const typeExpr = writtenProp(t, "type")?.value;
+  const literal = typeExpr === undefined ? "text" : typeExpr.kind === "Str" ? typeExpr.value : null;
   if (literal === "file") return;
-  const bound = inferType(bindArg.value, sym, ctx);
+  const bound = inferType(bind, sym, ctx);
   const u = unaliasType(bound, sym);
   if (!u || u.kind === "TypeRef") return;
   const base = u.kind === "TypePrim" ? inputBindBase(u.name) : null;
@@ -1311,17 +1303,17 @@ function checkInputBindType(
       code: "E0226",
       kind: "input-bind-type",
       message: `input(bind=…) cannot bind a value of type ${typeName}: an input binds a Text, Int, Float or Time${payload} ${see}`,
-      pos: bindArg.value.pos,
+      pos: bind.pos,
     });
     return;
   }
-  const field = typeArg === undefined ? `no type= (a "text" field)` : `type="${literal}"`;
+  const field = typeExpr === undefined ? `no type= (a "text" field)` : `type="${literal}"`;
   const kinds = INPUT_BIND_TYPES[base].map((v) => `type="${v}"`).join(" / ");
   errors.push({
     code: "E0226",
     kind: "input-bind-type",
     message: `input(bind=…) with ${field} cannot bind a value of type ${typeName}: ${base === "Int" ? "an" : "a"} ${base} binds with ${kinds} ${see}`,
-    pos: typeArg !== undefined && !isTileExpr(typeArg) ? typeArg.pos : bindArg.value.pos,
+    pos: typeExpr !== undefined ? typeExpr.pos : bind.pos,
   });
 }
 
@@ -1350,10 +1342,8 @@ const BUTTON_TYPES = new Set(["submit", "button", "reset"]);
 
 function checkButtonType(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   if (t.name !== "button") return;
-  const arg = t.args.find((a) => a.name === "type");
-  if (!arg) return;
-  const v = arg.value as Expr;
-  if (v.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
+  const v = writtenProp(t, "type")?.value;
+  if (v?.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
   errors.push({
     code: "E0201",
     kind: "type-mismatch",
@@ -1402,7 +1392,7 @@ function checkA11y(
     // from — a `for` written as an argument reaches the DOM exactly as the
     // block form does, so a check that saw only one would bless the other.
     // Only a literal is resolvable; see `collectElementIds`.
-    const forProp = writtenValue(t, "for");
+    const forProp = writtenProp(t, "for")?.value;
     if (forProp?.kind === "Str" && !sym.elementIds.has(forProp.value)) {
       errors.push({
         code: "E0705",
@@ -1641,12 +1631,10 @@ function checkTileCall(
   checkToggleBind(t, sym, errors, ctx);
   checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
-    const bindArg = t.args.find((a) => a.name === "bind");
-    const typeArg = t.args.find((a) => a.name === "type");
-    const typeVal = typeArg?.value as Expr | undefined;
+    const bindVal = writtenProp(t, "bind")?.value;
+    const typeVal = writtenProp(t, "type")?.value;
     const isFileType = typeVal?.kind === "Str" && typeVal.value === "file";
-    if (bindArg && isFileType) {
-      const bindVal = bindArg.value as Expr;
+    if (bindVal && isFileType) {
       const slotName = bindVal.kind === "Ref" ? bindVal.name : "<expr>";
       errors.push({
         code: "E0205",
@@ -1662,14 +1650,14 @@ function checkTileCall(
         typeVal === undefined
           ? `no type, defaults to "text"`
           : `type="${(typeVal as Expr & { kind: "Str" }).value}"`;
-      for (const arg of t.args) {
-        if (arg.name !== "accept" && arg.name !== "multiple") continue;
-        const argVal = arg.value as Expr;
+      for (const name of ["accept", "multiple"]) {
+        const written = writtenProp(t, name);
+        if (!written) continue;
         errors.push({
           code: "E0206",
           kind: "file-only-prop",
-          message: `input prop "${arg.name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md §5.10)`,
-          pos: argVal.pos,
+          message: `input prop "${name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md §5.10)`,
+          pos: written.value.pos,
         });
       }
     }
@@ -2068,18 +2056,6 @@ function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
  * along with the fix. The same literal-only discipline `E0704` applies to icon
  * names.
  */
-/**
- * A value a tile-call was given under `name`, in either form it accepts: the
- * props block (`{for: "x"}`) or a named argument (`for="x"`). The block form
- * wins, matching what codegen emits when a tile writes both.
- */
-function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
-  const fromProp = t.props.find((p) => p.name === name)?.value;
-  if (fromProp !== undefined) return fromProp;
-  const fromArg = t.args.find((a) => a.name === name)?.value;
-  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
-}
-
 function collectElementIds(expr: TileExpr, out: Set<string>): void {
   switch (expr.kind) {
     case "TileFor":
@@ -2094,7 +2070,7 @@ function collectElementIds(expr: TileExpr, out: Set<string>): void {
       for (const arm of expr.arms) collectElementIds(arm.body, out);
       return;
     case "TileCall": {
-      const id = writtenValue(expr, "id");
+      const id = writtenProp(expr, "id")?.value;
       if (id?.kind === "Str") out.add(id.value);
       for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;

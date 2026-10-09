@@ -53,6 +53,13 @@ describe("button(type=…) reaches the tile node", () => {
     }
   });
 
+  it("reads and checks a type written in the {…} block as one written as an argument", () => {
+    const js = build(app("Send", 'tile Send = button(text="send") {type: "button"}'));
+    const node = js.slice(js.indexOf('kind: "button"'));
+    expect(node.slice(0, node.indexOf("props:"))).toContain('type: "button"');
+    expect(codes(app("Bad", 'tile Bad = button(text="x") {type: "submmit"}'))).toEqual(["E0201"]);
+  });
+
   it("takes an expression, not only a literal", () => {
     const src = app(
       "Send",
