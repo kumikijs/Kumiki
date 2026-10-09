@@ -1020,17 +1020,51 @@ describe("kumiki fix --auto-patch (fix from a failing test)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  /** Run the CLI, capturing stdout+stderr and the exit code without throwing. */
+  // A CLI process here is a node + tsx start, a compile and a test run:
+  // measured at 1–2.5 s with no other test run alongside, and at 16–23 s
+  // sharing one core with the compiler suite and ten busy loops. The limit is
+  // over twice the slowest of those, and the one exit-codes.test.ts gives a
+  // process.
+  //
+  // It is the child's limit because vitest cannot stop a test inside
+  // `execFileSync`: it checks the test's timeout only once the body returns,
+  // and then fails it under the test's name even when every assertion held.
+  // A child stopped at its limit fails the test naming the command instead.
+  // A test's budget is the limits of the processes it starts plus a margin, so
+  // the child's limit always comes first. Two tests start two: the repair,
+  // then `kumiki test` for the runner's own verdict on the repaired file.
+  const SPAWN_LIMIT_MS = 60_000;
+  const ONE_SPAWN = { timeout: SPAWN_LIMIT_MS + 10_000 };
+  const TWO_SPAWNS = { timeout: 2 * SPAWN_LIMIT_MS + 10_000 };
+
+  /**
+   * Run the CLI: its exit code, and its stdout, with stderr appended when the
+   * exit is non-zero. A non-zero exit is returned, not thrown.
+   */
   function runCli(args: string[]): { out: string; code: number } {
     try {
       const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
         stdio: "pipe",
         encoding: "utf8",
+        timeout: SPAWN_LIMIT_MS,
       });
       return { out, code: 0 };
     } catch (e) {
-      const err = e as { stdout?: string; stderr?: string; status?: number };
-      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
+      const err = e as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+        status?: number | null;
+      };
+      if (err.code === "ETIMEDOUT") {
+        throw new Error(
+          `\`kumiki ${args.join(" ")}\` was stopped after ${SPAWN_LIMIT_MS} ms, the time this test allows one CLI process`,
+        );
+      }
+      // No status: the process never started, or a signal stopped it. Reading
+      // that as exit 1 would let the `toBe(1)` cases pass without the CLI
+      // having run.
+      if (typeof err.status !== "number") throw err;
+      return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status };
     }
   }
 
@@ -1047,7 +1081,7 @@ test title-text =
         expect = heading("Hello")
 `;
 
-  it("dry-run proposes the literal patch and does not modify the file", { timeout: 30000 }, () => {
+  it("dry-run proposes the literal patch and does not modify the file", ONE_SPAWN, () => {
     const file = join(dir, "behavioral.kumiki");
     writeFileSync(file, BEHAVIORAL);
     const { out, code } = runCli(["fix", file, "--auto-patch", "title-text"]);
@@ -1059,7 +1093,7 @@ test title-text =
     expect(readFileSync(file, "utf8")).toContain('heading("Helo")');
   });
 
-  it("--apply patches the literal and the test then passes", { timeout: 30000 }, () => {
+  it("--apply patches the literal and the test then passes", TWO_SPAWNS, () => {
     const file = join(dir, "behavioral.kumiki");
     writeFileSync(file, BEHAVIORAL);
     const { out, code } = runCli(["fix", file, "--auto-patch", "title-text", "--apply"]);
@@ -1074,7 +1108,7 @@ test title-text =
     expect(verify.out).toContain("1/1 passed");
   });
 
-  it("repairs a compile error blocking the test, then runs it (AC3)", { timeout: 30000 }, () => {
+  it("repairs a compile error blocking the test, then runs it (AC3)", TWO_SPAWNS, () => {
     const file = join(dir, "compile-blocked.kumiki");
     writeFileSync(
       file,
@@ -1104,7 +1138,7 @@ test inc-works =
   });
 
   it("auto-patches a numeric slot mismatch by flipping the reducer operator (issue #156)", {
-    timeout: 30000,
+    ...ONE_SPAWN,
   }, () => {
     const file = join(dir, "arith-patch.kumiki");
     const source = `slot count : Int = 0
@@ -1134,7 +1168,7 @@ test dec-should-add =
   // test's own `given` data, the literal lives only in the `test` body. Patching
   // it would fake a PASS without fixing any production definition — so test
   // bodies are excluded from the literal search and no patch is offered.
-  it("does not patch a literal that lives only in a test fixture", { timeout: 30000 }, () => {
+  it("does not patch a literal that lives only in a test fixture", ONE_SPAWN, () => {
     const file = join(dir, "fixture-only.kumiki");
     const source = `slot msg : Text = "x"
 tile Msg = heading(msg.show)
