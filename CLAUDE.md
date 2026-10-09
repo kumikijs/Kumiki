@@ -72,7 +72,7 @@ Private packages:
 
 **The compiler keeps Node imports out of the core.** Anything touching the filesystem belongs in `src/node.ts`, injected into `compile()` (e.g. `readRuntimeBundle`) so the compiler runs unchanged in the browser. Preserve this boundary.
 
-**The runtime ships per-app.** A build includes only the runtime modules an app uses. A new `.ts` file directly under `packages/runtime/src/` becomes an anonymous shared chunk in tsdown and breaks that; put new modules in a subdirectory of an existing entry, or register a new entry everywhere entries are listed.
+**The runtime ships per-app.** A build includes only the runtime modules an app uses: each module is a tsdown entry in `packages/runtime/tsdown.config.ts`, and `preserveEntrySignatures: "allow-extension"` folds shared code into entry chunks instead of an anonymous shared chunk. Code a build should be able to leave out must be its own entry, registered wherever the compiler and CLI enumerate runtime modules.
 
 **3-tier verification** — `check`/`build` only guarantee syntax, types, and codegen. Whether an app actually mounts and survives interaction is a separate guarantee:
 1. **check / build** — lexer, parser, typechecker, codegen.
