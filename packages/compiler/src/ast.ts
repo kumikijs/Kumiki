@@ -1,6 +1,6 @@
 // AST types for Kumiki.
 
-import type { KeyKind } from "@kumikijs/runtime";
+import type { KeyKind, ShowShape } from "@kumikijs/runtime";
 
 export type Pos = { line: number; col: number };
 
@@ -425,7 +425,28 @@ export type { KeyKind };
  */
 export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
 
-export type Expr =
+/**
+ * What `show` is told about a value whose type its run-time form does not
+ * reveal: where a Map, a Set or a Tuple is in it (stdlib.md §2.2.7). Defined by
+ * the runtime that reads it (`ShowShape` in `@kumikijs/runtime`'s `stdlib.ts`)
+ * and imported here as a type only, as `KeyKind` is.
+ */
+export type { ShowShape };
+
+export type Expr = ExprForm & {
+  /**
+   * The shape of the expression's type, for `show` (see {@link ShowShape}).
+   * Recorded by the type checker on an expression in a position whose value
+   * can be shown — an operand of a `Text` `+`, the receiver of `.show`, an
+   * argument of `fmt` / `T.show`, a tile's argument — when its type has a
+   * Map, a Set or a Tuple in it. Codegen hands it to `_s.show` wherever it
+   * shows the expression. Absent where the type is not known, and when codegen
+   * runs without `check()`: the value is then read as itself.
+   */
+  showShape?: ShowShape;
+};
+
+type ExprForm =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }

@@ -146,11 +146,99 @@ describe("loopKeys (docs/spec/runtime.md §10.3.10)", () => {
     expect(new Set(_stdlibCore.loopKeys(["x", "x", "2|x", "1|2|x"], "App_0")).size).toBe(4);
   });
 
-  it("keys records by position, since every record shows alike", () => {
-    // `show` is not injective for a record, so the occurrence is all that is
-    // left to tell two of them apart (runtime.md §10.3.10).
+  it("keys records, Maps and Sets by position, whatever they hold", () => {
+    // A record, Map or Set element adds no shown value to its key, so the
+    // occurrence is all that tells two of them apart (runtime.md §10.3.10):
+    // a reorder or an edit of one keeps every key where it was.
     const keys = _stdlibCore.loopKeys([{ id: 2 }, { id: 1 }], "App_0");
-    expect(keys).toEqual(["App_0|1|[object Object]", "App_0|2|[object Object]"]);
+    expect(keys).toEqual(["App_0|1|", "App_0|2|"]);
+    expect(_stdlibCore.loopKeys([{ id: 1 }, { id: 2 }], "App_0")).toEqual(keys);
+    expect(_stdlibCore.loopKeys([{ id: 1, done: true }, { id: 2 }], "App_0")).toEqual(keys);
+  });
+
+  it("keys a List element and a variant by what they show", () => {
+    expect(_stdlibCore.loopKeys([[1, 2], { _tag: "Some", _0: 3 }], "App_0")).toEqual([
+      "App_0|1|[1, 2]",
+      "App_0|1|Some",
+    ]);
+  });
+});
+
+// `show` (docs/spec/stdlib.md §2.2.7): the one text form `+`, `.show`, `fmt`
+// and a tile's text render a value in. A structured value is written the way
+// a program writes it as a literal; the shape argument is what the checker
+// knows of its type and the value alone does not say — a Map, a Set and a
+// Tuple are a plain object, an object of keys and an array at run time.
+describe("show (docs/spec/stdlib.md §2.2.7)", () => {
+  const { show, mapInsert, setOf } = _stdlibCore;
+
+  it("writes a record as its fields, in the order it holds them", () => {
+    expect(show({ name: "ada", age: 3 })).toBe('{name: "ada", age: 3}');
+    expect(show({ "episode-id": { _tag: "None" }, ok: true })).toBe("{episode-id: None, ok: true}");
+  });
+
+  it("writes a record inside a record, and a List inside either, the same way", () => {
+    expect(show({ at: { x: 0, y: -1 }, tags: ["a", "b"] })).toBe(
+      '{at: {x: 0, y: -1}, tags: ["a", "b"]}',
+    );
+  });
+
+  it("writes a List in brackets, its Text members quoted", () => {
+    expect(show([1, 2])).toBe("[1, 2]");
+    expect(show(["a", 'say "hi"\n'])).toBe('["a", "say \\"hi\\"\\n"]');
+    expect(show([[1], []])).toBe("[[1], []]");
+    expect(show([])).toBe("[]");
+  });
+
+  it("leaves a Text on its own, and every other scalar, as it was", () => {
+    expect(show("ada")).toBe("ada");
+    expect(show('say "hi"')).toBe('say "hi"');
+    expect(show(1.5)).toBe("1.5");
+    expect(show(false)).toBe("false");
+    expect(show(null)).toBe("");
+    expect(show(undefined)).toBe("");
+    expect(show(new Uint8Array([104, 105]))).toBe("104,105");
+  });
+
+  it("writes a variant as its tag, inside a structure too", () => {
+    expect(show({ _tag: "Some", _0: 1 })).toBe("Some");
+    expect(show([{ _tag: "Some", _0: 1 }, { _tag: "None" }])).toBe("[Some, None]");
+    expect(show({ role: { _tag: "Admin" } })).toBe("{role: Admin}");
+  });
+
+  it("writes a Map as its entries, each key in its own literal form", () => {
+    expect(show(mapInsert(mapInsert({}, "a", 1), "b", 2), ["m", 0, 0, 0])).toBe('{"a": 1, "b": 2}');
+    expect(show(mapInsert({}, 3, "c"), ["m", "number", 0, 0])).toBe('{3: "c"}');
+    expect(show(mapInsert({}, true, 1), ["m", "bool", 0, 0])).toBe("{true: 1}");
+    expect(show(mapInsert({}, { y: 0, x: 1 }, "o"), ["m", "value", 0, 0])).toBe(
+      '{{x: 1, y: 0}: "o"}',
+    );
+    expect(show(mapInsert({}, [1, 2], 10), ["m", "value", ["t", 0, 0], 0])).toBe("{(1, 2): 10}");
+    expect(show({}, ["m", 0, 0, 0])).toBe("{}");
+  });
+
+  it("writes a Set as its members in brackets, as a Set literal is written", () => {
+    expect(show(setOf([1, 2]), ["s", "number", 0])).toBe("[1, 2]");
+    expect(show(setOf(["a"]), ["s", 0, 0])).toBe('["a"]');
+    expect(show(setOf([{ _tag: "Red" }]), ["s", "value", 0])).toBe("[Red]");
+    expect(show({}, ["s", 0, 0])).toBe("[]");
+  });
+
+  it("writes a Tuple in parentheses", () => {
+    expect(show([1, "a"], ["t", 0, 0])).toBe('(1, "a")');
+  });
+
+  it("follows a shape down through a record, a List and a Map's values", () => {
+    const tags = setOf(["x"]);
+    expect(show({ name: "ada", tags }, { tags: ["s", 0, 0] })).toBe('{name: "ada", tags: ["x"]}');
+    expect(show([tags, {}], ["l", ["s", 0, 0]])).toBe('[["x"], []]');
+    expect(show(mapInsert({}, "k", [1, "a"]), ["m", 0, 0, ["t", 0, 0]])).toBe('{"k": (1, "a")}');
+  });
+
+  it("is what `+` and `fmt` render, for a structured value too", () => {
+    expect(_stdlibCore.add("p: ", { name: "ada" })).toBe('p: {name: "ada"}');
+    expect(_stdlibCore.add([1, 2], "!")).toBe("[1, 2]!");
+    expect(_stdlibCore.fmt("{0} / {1}", { at: { x: 0 } }, ["a"])).toBe('{at: {x: 0}} / ["a"]');
   });
 });
 
@@ -217,8 +305,8 @@ describe("fmt (docs/spec/stdlib.md §2.4.5)", () => {
   });
 
   it("renders an argument through `show`", () => {
-    // `show`: a variant is its tag, a nullish is the empty string, everything
-    // else is `String(v)`.
+    // `show`: a variant is its tag, a nullish is the empty string, a scalar is
+    // its text form (the structured values are in the `show` block below).
     expect(_stdlibCore.fmt("{0}", { _tag: "None" })).toBe("None");
     expect(_stdlibCore.fmt("[{0}]", null)).toBe("[]");
     expect(_stdlibCore.fmt("{0}", true)).toBe("true");

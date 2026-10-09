@@ -348,6 +348,15 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // own, but together they add about 1,100 bytes and pass it. The budget moves
     // up one step, as it did to 63,000 and 64,000, rather than holding each
     // change at the line the one before it nearly reached.
+    //
+    // Still 65,000 (64,050 measured, from 63,597 on dev at f72685e): `show`
+    // writes a record, a List, a Tuple, a Map and a Set as the literal that
+    // builds it (stdlib.md §2.2.7), each member by the same rule with a `Text`
+    // quoted. The 453 bytes are that walk in
+    // `_stdlibCore.show`, which reads the shape codegen passes for a Map, a Set
+    // or a Tuple, and the check in `loopKeys` that keeps a record's text out of
+    // its key. A counter shows no record and still ships it, because `show`
+    // sits in the stdlib module every app loads.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

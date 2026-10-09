@@ -380,7 +380,8 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
      per loop in the source;
    - the **occurrence**: how many elements up to and including this one have
      the same shown value (1 for the first `7`, 2 for the second);
-   - the **shown value**, `_s.show(<loopVar>)`.
+   - the **shown value**, `_s.show(<loopVar>)` — none for a record, a Map or
+     a Set, which are keyed by their occurrence alone (below).
 
    *Informative:* the implementation names a loop by the tile definition it is
    written in and its ordinal among that definition's loops in source order
@@ -410,9 +411,10 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    - An insert or remove before a repeated value renumbers its later
      occurrences, so the elements of equal values may trade places, and the
      moves that makes can take a neighbouring row with them.
-   - Where `show` is not injective for the element type, the implicit key
-     **degenerates to position**. Every record shows alike
-     (`[object Object]`), and a variant shows only its tag, so `Done(1)` and
+   - Where the elements share a shown value, the implicit key
+     **degenerates to position**. A record, a Map and a Set add none to their
+     key, so editing one in place keeps its row's key, and the row's DOM
+     elements with it; and a variant shows only its tag, so `Done(1)` and
      `Done(2)` share one shown value. The occurrence is then the element's
      position, and a reorder, insert or remove patches rows in place instead
      of moving them: the guarantees above (minimum moves, `<input>` focus and

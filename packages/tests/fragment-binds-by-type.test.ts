@@ -73,7 +73,7 @@ describe("the type, not the length, decides", () => {
 ${NESTED}`;
     const rhs =
       'scores.entries.sort-by($2).map($1).join(",") + "|" + scores.filter($1 == "ann" && $2 == 2).size.show + "|" + nested.map($1.length).show';
-    expect(await run(program(defs, "Text", rhs))).toBe("bob,ann|1|2,3");
+    expect(await run(program(defs, "Text", rhs))).toBe("bob,ann|1|[2, 3]");
   });
 });
 

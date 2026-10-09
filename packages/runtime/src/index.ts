@@ -198,7 +198,7 @@ export {
   renderToString,
 } from "./ssr.ts";
 export { renderTileToString } from "./ssr-render.ts";
-export { _stdlibCore, type KeyKind } from "./stdlib.ts";
+export { _stdlibCore, type KeyKind, type ShowShape } from "./stdlib.ts";
 // Asked after the step: a `{submit}` the form held back is refused, not passed,
 // and so is one the browser's constraint validation stopped (browser tier only).
 export {

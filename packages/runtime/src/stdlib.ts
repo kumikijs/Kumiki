@@ -40,6 +40,34 @@ import {
  */
 export type KeyKind = "number" | "bool" | "value";
 
+/**
+ * What `show` is told about a value whose type its run-time form does not
+ * reveal (stdlib.md §2.2.7). A record and a Map are both plain objects, a Set
+ * is an object of its keys, and a Tuple is an array like a List, so the checker
+ * records the shape of a shown expression's type wherever a Map, a Set or a
+ * Tuple is in it, and codegen hands it to `show` beside the value:
+ *
+ * - `0` — nothing to add: the value is read as itself (an array is a List, an
+ *   object a record).
+ * - `{ field: shape }` — a record, with the shape of each field that has one.
+ * - `["l", element]` — a List.
+ * - `["t", ...members]` — a Tuple, one shape per position.
+ * - `["m", key kind, key, value]` — a Map: how its keys read back (`KeyKind`,
+ *   `0` for a `Text` key) and the shapes of a key and a value.
+ * - `["s", element kind, element]` — a Set, its members read back the same way.
+ *
+ * A type that contains itself has a shape that refers back to itself, which
+ * the value it describes, being finite, never follows forever. Like `KeyKind`,
+ * this is the one definition: the compiler's AST imports it as a type.
+ */
+export type ShowShape =
+  | 0
+  | { readonly [field: string]: ShowShape }
+  | readonly ["l", ShowShape]
+  | readonly ["t", ...ShowShape[]]
+  | readonly ["m", KeyKind | 0, ShowShape, ShowShape]
+  | readonly ["s", KeyKind | 0, ShowShape];
+
 /** A stored object key, restored to the kind of value it was written from. */
 function restoreKey(key: string, kind: KeyKind | undefined): unknown {
   switch (kind) {
@@ -569,28 +597,57 @@ export const _stdlibCore = {
    * siblings alike. The exception is one loop in the source expanded twice into
    * one parent's children, whose expansions are the same loop. The first
    * occurrence of a value keeps its key wherever it moves, which is what keyed
-   * reconcile matches on. Where `show` is not injective (every record shows
-   * alike, a variant shows its tag), the occurrence is the element's position
-   * among equal shows, so the key is positional. The loop and the count are
-   * written before the value and hold no `|`, so no value's `show` can spell
-   * another element's key.
+   * reconcile matches on. A record, Map or Set element adds no shown value, and
+   * a variant shows only its tag, so among those the occurrence is the
+   * element's position and the key is positional: a row edited in place keeps
+   * its key, and its element. The loop and the count are written before the
+   * value and hold no `|`, so no value's `show` can spell another element's
+   * key.
    */
   loopKeys(xs: readonly unknown[], loop: string): string[] {
     const seen = new Map<string, number>();
     return xs.map((x) => {
-      const shown = _stdlibCore.show(x);
+      const bag = typeof x === "object" && x !== null && isPlainDataBag(x) && !("_tag" in x);
+      const shown = bag ? "" : _stdlibCore.show(x);
       const n = (seen.get(shown) ?? 0) + 1;
       seen.set(shown, n);
       return `${loop}|${n}|${shown}`;
     });
   },
-  show(v: unknown): string {
+  /**
+   * `x.show` (stdlib.md §2.2.7) — the one text form of a value, which `+`
+   * with a `Text`, `fmt` and a tile's text render too. A nullish is the empty
+   * string, a variant its tag, any other scalar its `String` form. A structure
+   * is written as its literal is: a record `{name: "ada"}`, a List and a Set
+   * `[1, 2]`, a Tuple `(1, "a")`, a Map `{"a": 1}`. Each member is shown by
+   * this same rule, except that a `Text` member is quoted as JSON quotes a
+   * string. A Map's keys and a Set's members are the values `keys` and
+   * `to-list` read back. `shape` is what the type says and the value does not
+   * (`ShowShape`).
+   */
+  show(v: unknown, shape?: ShowShape): string {
     if (v === null || v === undefined) return "";
-    if (typeof v === "object" && v && "_tag" in v) {
-      const obj = v as { _tag: string };
-      return obj._tag;
-    }
-    return String(v);
+    if (typeof v !== "object" || v instanceof Uint8Array) return String(v);
+    // A descriptor's tag, then its slots; what a slot holds depends on the tag.
+    const d: readonly unknown[] = Array.isArray(shape) ? shape : [];
+    const tag = d[0];
+    if (!tag && "_tag" in v) return (v as { _tag: string })._tag;
+    const at = (x: unknown, s: unknown): string =>
+      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s as ShowShape);
+    const list = Array.isArray(v);
+    const o = v as Record<string, unknown>;
+    // A List's element shape is `d[1]`, a Tuple's member shapes start there,
+    // and a Map's or Set's `d[1]` is its key kind: a Set is read as the Map of
+    // its members to `true`, and shows the keys alone.
+    const items = list
+      ? v.map((x, i) => at(x, d[tag === "t" ? i + 1 : 1]))
+      : tag
+        ? (_stdlibCore.mapEntries(o, (d[1] || undefined) as KeyKind) as [unknown, unknown][]).map(
+            ([k, x]) => at(k, d[2]) + (tag === "m" ? `: ${at(x, d[3])}` : ""),
+          )
+        : Object.keys(o).map((k) => `${k}: ${at(o[k], (shape as Record<string, ShowShape>)?.[k])}`);
+    const [open, close] = tag === "t" ? "()" : list || tag === "s" ? "[]" : "{}";
+    return open + items.join(", ") + close;
   },
   /**
    * `fmt(template, ...args)` (stdlib.md §2.4.5). A placeholder is `{`, decimal

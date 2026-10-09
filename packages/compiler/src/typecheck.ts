@@ -74,6 +74,7 @@ import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
 import { RESERVED_BIND_NAMES } from "./reserved-binds.ts";
+import { showShapeOf } from "./show-shape.ts";
 import {
   hasMember,
   isOwnMember,
@@ -1719,6 +1720,9 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    // A builtin shows the arguments it renders as text (its content, a
+    // button's label, a tooltip's text, …), and only codegen knows which.
+    if (BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
@@ -1756,6 +1760,9 @@ function checkTileCall(
       }
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      // An explicit key is the shown value (runtime.md §10.3.10), and a
+      // builtin may render a prop as text (a link's `{text: …}`).
+      if (prop.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(prop.value, sym, ctx);
     }
   }
 }
@@ -3103,6 +3110,11 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       // E0204 already named the operand; the operand-family check would only
       // repeat it in different words.
       if (!effectIdMisuse) checkBinOpOperands(e, sym, errors, ctx);
+      // A `+` with a `Text` side shows both sides (stdlib.md §2.4.5).
+      if (e.op === "+" && isPrimNamed(binOpResult(e, sym, ctx), sym, "Text")) {
+        noteShown(e.lhs, sym, ctx);
+        noteShown(e.rhs, sym, ctx);
+      }
       return;
     }
     case "UnaryOp": {
@@ -3122,6 +3134,8 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
     case "FieldAccess":
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
+      // The member, not a record's own field that happens to be named `show`.
+      if (e.field === "show" && e.accessKind !== "field") noteShown(e.base, sym, ctx);
       return;
     case "Index":
       checkExpr(e.base, sym, errors, ctx);
@@ -3140,6 +3154,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       }
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
+      for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
@@ -3200,6 +3215,7 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
+      if (e.method === "show") noteShown(e.receiver, sym, ctx);
       {
         // Only a key reader or a call with a fragment to bind needs the
         // receiver's type; an argument-less member that reads no keys skips
@@ -3476,6 +3492,30 @@ function checkSortKey(
     message: `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${typeToString(t as TypeExpr)}`,
     pos,
   });
+}
+
+/**
+ * Record on `e`, an expression in a position whose value can be shown, the
+ * shape `show` needs to write a value of its type (stdlib.md §2.2.7). Nothing
+ * is recorded for a type with no Map, Set or Tuple in it, or one that is not
+ * known: the value is then read as itself.
+ */
+function noteShown(e: Expr, sym: SymbolTable, ctx: Ctx): void {
+  const shape = showShapeOf(inferType(e, sym, ctx), sym);
+  if (shape !== 0) e.showShape = shape;
+}
+
+/**
+ * The arguments a call shows: every one of `fmt`'s, and the value of
+ * `T.show(v)` — `show` on any capitalised qualifier, the spelling codegen
+ * lowers.
+ */
+function shownArgs(e: Expr & { kind: "Call" }): Expr[] {
+  if (e.callee === "fmt") return e.args;
+  const dot = e.callee.indexOf(".");
+  return dot > 0 && isQualifierName(e.callee.slice(0, dot)) && e.callee.slice(dot + 1) === "show"
+    ? e.args
+    : [];
 }
 
 function binOpResult(e: Expr & { kind: "BinOp" }, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
