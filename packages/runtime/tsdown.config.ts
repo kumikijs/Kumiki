@@ -28,14 +28,16 @@ import { publishedOutputOptions } from "../../tsdown.shared.ts";
 //   compiler's list, so a generated chunk name it cannot know ships as a
 //   dangling import. `packages/tests/modular-build.test.ts` compares this
 //   directory against the compiler's tables exactly, which is what catches it.
-// - `dist/text-distance.js` — the `./text-distance` subpath, built on its own so
-//   a consumer that wants the did-you-mean metric (the compiler does, on every
-//   `kumiki check`) does not evaluate the whole runtime to reach it. A SEPARATE
-//   config rather than a second entry beside `index`: two entries in one build
-//   would make `index.js` import this file instead of inlining it, and
-//   `inlineRuntime` needs `dist/index.js` to be one self-contained file. The
-//   duplicated copy that costs is a few hundred bytes, and the same trade the
-//   granular modules already make.
+// - `dist/text-distance.js` and `dist/positive-int.js` — the `./text-distance`
+//   and `./positive-int` subpaths, built on their own so a consumer that wants
+//   the did-you-mean metric or the positive-Int rule (the compiler wants both,
+//   on every `kumiki check`) does not evaluate the whole runtime to reach them.
+//   A SEPARATE config rather than more entries beside `index`: two entries in
+//   one build would make `index.js` import these files instead of inlining
+//   them, and `inlineRuntime` needs `dist/index.js` to be one self-contained
+//   file. The duplicated copy that costs is a few hundred bytes, and the same
+//   trade the granular modules already make. The two share no code, so one
+//   config builds both without a shared chunk.
 export default defineConfig([
   {
     entry: { index: "src/index.ts" },
@@ -46,7 +48,7 @@ export default defineConfig([
     outputOptions: publishedOutputOptions,
   },
   {
-    entry: { "text-distance": "src/text-distance.ts" },
+    entry: { "text-distance": "src/text-distance.ts", "positive-int": "src/positive-int.ts" },
     format: "esm",
     dts: true,
     fixedExtension: false,

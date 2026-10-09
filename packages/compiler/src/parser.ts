@@ -1,3 +1,4 @@
+import { isPositiveInt } from "@kumikijs/runtime/positive-int";
 import type {
   AppAnalyticsConfig,
   AppDef,
@@ -39,7 +40,6 @@ import type {
 } from "./ast.ts";
 import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "./builtins.ts";
-import { isPositiveInt } from "./positive-int.ts";
 import { REFINEMENT_PREDS } from "./refinements.ts";
 
 export class ParseError extends Error {

@@ -19,6 +19,7 @@ import {
   reportRejectedBatch,
   withEnvReplay,
 } from "./core.ts";
+import { isPositiveInt } from "./positive-int.ts";
 import { valueEqual } from "./stdlib.ts";
 
 /**
@@ -105,6 +106,17 @@ function _jsonStr(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+/**
+ * A property-test `count` as it was handed over: `-0`, `NaN` and `Infinity`
+ * as JavaScript spells them (JSON has no `-0` and prints the other two as
+ * `null`), and anything that is not a number as JSON, so `"5"` keeps the
+ * quotes that say it is text.
+ */
+function _countStr(v: unknown): string {
+  if (typeof v !== "number") return _jsonStr(v);
+  return Object.is(v, -0) ? "-0" : String(v);
 }
 
 // ----- reducer-test `expect` wildcards (spec/testing.md §8.2.2) -----
@@ -1316,6 +1328,12 @@ export const _stdlibTest = {
    * cases for the `vars` descriptors with a seeded PRNG (reproducible), check
    * `trial(binds) === true` each time, and on failure shrink to a minimal
    * counterexample (unless `shrink === false`).
+   *
+   * A `count` that is not a whole number, 1 or more (§8.3.1), fails the test
+   * without running a case. The parser refuses one written in the source; a
+   * test definition built without the parser reaches this runner unchecked,
+   * and the loop below would report a pass having run no case for `0`, `-3`
+   * or `NaN`, and not end on `Infinity` while the invariant holds.
    */
   runPropertyTest(input: {
     name: string;
@@ -1326,7 +1344,17 @@ export const _stdlibTest = {
     seed?: number;
   }): TestResult {
     const { name, vars, trial } = input;
-    const count = input.count ?? 100;
+    const count = input.count === undefined ? 100 : input.count;
+    if (!isPositiveInt(count)) {
+      return {
+        name,
+        pass: false,
+        expected: "count is a whole number, 1 or more",
+        actual: `count = ${_countStr(count)}`,
+        diffAt: "(count)",
+        cases: 0,
+      };
+    }
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
     // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
