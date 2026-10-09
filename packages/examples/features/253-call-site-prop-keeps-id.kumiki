@@ -1,0 +1,38 @@
+# Feature (language.md §1.7.3, §1.6.2): a data prop written where a user tile
+# is called is merged onto what the tile renders one prop at a time. It
+# replaces the prop of the same name, and every prop the call site does not
+# write stays as the tile wrote it, in the rendered element and in the `$el` a
+# reducer reads alike.
+#
+# `Plain` and `Ghost` render the same kind of button, each with an id. Only
+# `Ghost`'s call site writes a prop, `variant`, which is not `id`: the button
+# keeps the id "ghost", so `ui.click(Ghost#ghost)` fires for it as
+# `ui.click(Plain#plain)` does for `Plain`.
+#
+# `Del` gives its button the id "del" and the payload field `todoId`. Its call
+# site writes `id: "x"`, which replaces the id: `ui.click(Del#x)` fires, and the
+# `$el` it reads still carries the `todoId` the call site did not write.
+
+slot log : Text = ""
+
+tile Plain = button(text="Plain", id="plain")
+tile Ghost = button(text="Ghost", id="ghost")
+tile Del   = button(text="Delete", id="del") {todoId: 7}
+
+reducer hitPlain on=ui.click(Plain#plain) do= log := log + "plain;"
+reducer hitGhost on=ui.click(Ghost#ghost) do= log := log + "ghost;"
+reducer hitDel   on=ui.click(Del#x)       do= log := log + "x" + $el.todoId.show + ";"
+
+tile App
+    = column(
+        heading("a call-site prop replaces only the prop it names"),
+        Plain,
+        Ghost {variant: "ghost"},
+        Del {id: "x"},
+        text("log: " + log))
+      {pad: "lg", gap: "md"}
+
+app CallSitePropKeepsId
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

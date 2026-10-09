@@ -14,15 +14,26 @@ function _children(...xs) {
   return out;
 }
 // _attachProps — merges a user-tile call site's data props onto what the
-// tile's body rendered. A body that renders a list (a for) gets them on every
-// node in it, as _named does; merging into the array itself made an object of
-// its indices with no kind. No props leaves the node exactly as it was.
+// tile's body rendered (language.md §1.7.3). A body that renders a list (a for)
+// gets them on every node in it, as _named does; merging into the array itself
+// would make an object of its indices with no kind. No props leaves the node
+// exactly as it was.
 function _attachProps(node, props) {
   if (node === null || node === undefined || !props) return node;
   if (Array.isArray(node)) return node.map((n) => _attachProps(n, props));
   if (typeof node !== "object" || typeof node.kind !== "string") return node;
   if (Object.keys(props).length === 0) return node;
-  return { ...node, props: { ...(node.props || {}), ...props } };
+  return { ...node, props: _mergeProps(node.props || {}, props) };
+}
+// _mergeProps — a prop the call site writes replaces the tile's prop of that
+// name; every other prop stays as the tile wrote it. el (the $el payload, where
+// the Tile#id filter reads the id) and aria (one entry per aria-* attribute,
+// carried in el too) each gather several props, so they merge a field at a time.
+function _mergeProps(own, call, inEl) {
+  const out = { ...own, ...call };
+  if (own.aria && call.aria) out.aria = { ...own.aria, ...call.aria };
+  if (!inEl && own.el && call.el) out.el = _mergeProps(own.el, call.el, true);
+  return out;
 }
 function _named(node, name) {
   if (node === null || node === undefined) return node;
