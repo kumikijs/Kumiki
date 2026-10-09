@@ -112,21 +112,51 @@ function hashBody(body: string): string {
   return createHash("sha256").update(body).digest("hex").slice(0, 16);
 }
 
+/** A torn last line of the op log that a read skipped: the log, and the line's number from 1. */
+export type SkippedOpLogLine = { path: string; line: number };
+
+/** The op log as read: its entries, oldest first, and the torn last line it skipped, if any. */
+export type OpLogRead = { entries: OpLogEntry[]; skipped: SkippedOpLogLine | null };
+
 /**
- * The op log's entries, oldest first.
+ * What the caller of a verb that reads the op log hears about the read.
  *
- * Each entry is one line that ends in a newline. A last line with no newline
- * after it that is not valid JSON is skipped with a warning naming the log and
- * the line, and the next op logged replaces it. Any other line that is not an
- * op is an error naming the log and the line.
+ * `onSkipped` is handed the torn last line the read skipped, once per call and
+ * before the verb returns or throws, so the caller hears of it even when the
+ * verb then fails (a `patch revert` of the op-id that was on that line, say).
+ * The library prints nothing of it: the CLI's `onSkipped` prints it, and the
+ * MCP tools' returns it.
  */
-export function readOpLog(path: string): OpLogEntry[] {
-  return readOpLogFile(path).entries;
+export type OpLogOptions = { onSkipped?: (skipped: SkippedOpLogLine) => void };
+
+/** The warning for a skipped line, as the CLI prints it and the MCP tools return it. */
+export function describeSkipped(skipped: SkippedOpLogLine): string {
+  return `${skipped.path}:${skipped.line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`;
 }
 
-/** The op log as read: its entries, and where the next one goes. */
-type OpLogRead = {
-  entries: OpLogEntry[];
+/**
+ * The op log as read.
+ *
+ * Each entry is one line that ends in a newline. A last line with no newline
+ * after it that is not valid JSON is skipped, and `skipped` names it; the next
+ * op logged replaces it. Any other line that is not an op is an error naming
+ * the log and the line.
+ */
+export function readOpLogResult(path: string): OpLogRead {
+  const { entries, skipped } = readOpLogFile(path);
+  return { entries, skipped };
+}
+
+/**
+ * The op log's entries, oldest first: `readOpLogResult` without the line it
+ * skipped, for a caller that has no use for it.
+ */
+export function readOpLog(path: string): OpLogEntry[] {
+  return readOpLogResult(path).entries;
+}
+
+/** The op log as read, and where the next entry goes. */
+type OpLogFile = OpLogRead & {
   /** Where the log's complete lines end; `null` when there is no log. */
   end: OpLogEnd | null;
 };
@@ -141,15 +171,16 @@ type OpLogEnd = {
   unterminated: boolean;
 };
 
-function readOpLogFile(path: string): OpLogRead {
+/** The one reader of the op log, which every other reads through. */
+function readOpLogFile(path: string): OpLogFile {
   const p = opLogPath(path);
-  if (!existsSync(p)) return { entries: [], end: null };
+  if (!existsSync(p)) return { entries: [], skipped: null, end: null };
   // Sizes are counted in the bytes, not the decoded text: a byte that is not
   // valid UTF-8 decodes to U+FFFD, which takes three.
   const bytes = readFileSync(p);
   const lines = bytes.toString("utf8").split(/\r?\n/);
   const entries: OpLogEntry[] = [];
-  let torn = false;
+  let skipped: SkippedOpLogLine | null = null;
   for (const [i, line] of lines.entries()) {
     if (!line.trim()) continue;
     let entry: unknown;
@@ -157,13 +188,8 @@ function readOpLogFile(path: string): OpLogRead {
       entry = JSON.parse(line);
     } catch (e) {
       // The last piece of the split is the only line with no newline after it.
-      // Warned at once, not by `process.emitWarning`, which waits a tick: a
-      // verb that then fails exits before the warning is printed.
       if (i === lines.length - 1) {
-        console.warn(
-          `warning: ${p}:${i + 1}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
-        );
-        torn = true;
+        skipped = { path: p, line: i + 1 };
         continue;
       }
       throw new Error(`${p}:${i + 1}: not valid JSON (${messageOf(e)})`);
@@ -176,11 +202,20 @@ function readOpLogFile(path: string): OpLogRead {
     if (problem !== undefined) throw new Error(`${p}:${i + 1}: ${problem}`);
     entries.push(op);
   }
+  const torn = skipped !== null;
   const size = torn ? bytes.lastIndexOf("\n") + 1 : bytes.length;
   return {
     entries,
+    skipped,
     end: { size, torn, unterminated: size > 0 && bytes[size - 1] !== 0x0a },
   };
+}
+
+/** Read the op log for a verb, handing the line the read skipped to the verb's caller. */
+function readOpLogFor(path: string, options: OpLogOptions): OpLogFile {
+  const log = readOpLogFile(path);
+  if (log.skipped !== null) options.onSkipped?.(log.skipped);
+  return log;
 }
 
 /**
@@ -278,9 +313,9 @@ function depsFromBody(store: Store, body: string, selfName: string): string[] {
   return [...refs].sort();
 }
 
-function logOp(path: string, op: RawOp): string {
+function logOp(path: string, op: RawOp, options: OpLogOptions): string {
   const id = newId("op");
-  const log = readOpLogFile(path);
+  const log = readOpLogFor(path, options);
   const parents = log.entries.at(-1)?.["op-id"];
   const dependsOn = op.body !== undefined ? computeDependsOn(path, op.layer, op.name, op.body) : [];
   const entry: OpLogEntry = {
@@ -602,9 +637,15 @@ export function describeEdit(report: EditReport): string {
   }
 }
 
-export function addDef(path: string, layer: string, name: string, body: string): string {
+export function addDef(
+  path: string,
+  layer: string,
+  name: string,
+  body: string,
+  options: OpLogOptions = {},
+): string {
   enforceLock(path, `${layer}.${name}`);
-  return withWriteLock(path, () => addDefs(path, [{ layer, name, body }]));
+  return withWriteLock(path, () => addDefs(path, [{ layer, name, body }], options));
 }
 
 /**
@@ -614,7 +655,11 @@ export function addDef(path: string, layer: string, name: string, body: string):
  * because they may reference each other: a cascade's dependents do not
  * typecheck on their own, without the definition they depend on.
  */
-function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
+function addDefs(
+  path: string,
+  defs: readonly [DefSpec, ...DefSpec[]],
+  options: OpLogOptions,
+): string {
   for (const d of defs) {
     if (!isDefinitionName(d.name)) {
       throw new Error(
@@ -637,7 +682,7 @@ function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
   const inserted = [main, ...rest].map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
   const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
   return commit(path, next, "add", () =>
-    logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) }),
+    logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) }, options),
   );
 }
 
@@ -675,15 +720,17 @@ export function replaceDef(
   path: string,
   qname: string,
   body: string,
+  options: OpLogOptions = {},
 ): { opId: string; dropped: string[] } {
   enforceLock(path, qname);
-  return withWriteLock(path, () => replaceDefLocked(path, qname, body));
+  return withWriteLock(path, () => replaceDefLocked(path, qname, body, options));
 }
 
 function replaceDefLocked(
   path: string,
   qname: string,
   body: string,
+  options: OpLogOptions,
 ): { opId: string; dropped: string[] } {
   enforceLock(path, qname);
   const store = load(path);
@@ -696,7 +743,11 @@ function replaceDefLocked(
   const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
   const next = [...before, ...inserted, ...after].join("\n");
   const opId = commit(path, next, "replace", () =>
-    logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev }),
+    logOp(
+      path,
+      { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev },
+      options,
+    ),
   );
   const now = headerItems(load(path).byQName.get(qname)?.def);
   return { opId, dropped: headerItems(entry.def).filter((item) => !now.includes(item)) };
@@ -827,15 +878,17 @@ export function removeDef(
   path: string,
   qname: string,
   cascade: boolean,
+  options: OpLogOptions = {},
 ): { opId: string; removed: RemovedNames } {
   enforceLock(path, qname);
-  return withWriteLock(path, () => removeDefLocked(path, qname, cascade));
+  return withWriteLock(path, () => removeDefLocked(path, qname, cascade, options));
 }
 
 function removeDefLocked(
   path: string,
   qname: string,
   cascade: boolean,
+  options: OpLogOptions,
 ): { opId: string; removed: RemovedNames } {
   enforceLock(path, qname);
   const store = load(path);
@@ -870,7 +923,7 @@ function removeDefLocked(
   }
   toRemove.delete(qname);
   const set: RemovedNames = [qname, ...[...toRemove].sort(compareQNames)];
-  return removeSet(path, store, set, cascade);
+  return removeSet(path, store, set, cascade, options);
 }
 
 /**
@@ -891,6 +944,7 @@ function removeSet(
   store: Store,
   set: RemovedNames,
   cascade: boolean,
+  options: OpLogOptions,
 ): { opId: string; removed: RemovedNames } {
   enforceLock(path, set[0]);
   const missing = set.filter((q) => !store.byQName.has(q));
@@ -931,30 +985,46 @@ function removeSet(
   // absence means "not a cascade" rather than "a cascade with no dependents".
   // A replay removes that recorded set (`applyOne`).
   const opId = commit(path, lines.join("\n"), "remove", () =>
-    logOp(path, {
-      op: "remove",
-      layer: main.layer,
-      name: main.name,
-      cascade,
-      ...(cascade ? { removed: set } : {}),
-      bodies: [main, ...rest],
-    }),
+    logOp(
+      path,
+      {
+        op: "remove",
+        layer: main.layer,
+        name: main.name,
+        cascade,
+        ...(cascade ? { removed: set } : {}),
+        bodies: [main, ...rest],
+      },
+      options,
+    ),
   );
   return { opId, removed: set };
 }
 
-export function renameDef(path: string, qname: string, newName: string): string {
+export function renameDef(
+  path: string,
+  qname: string,
+  newName: string,
+  options: OpLogOptions = {},
+): string {
   enforceLock(path, qname);
-  return withWriteLock(path, () => renameDefLocked(path, qname, newName));
+  return withWriteLock(path, () => renameDefLocked(path, qname, newName, options));
 }
 
-function renameDefLocked(path: string, qname: string, newName: string): string {
+function renameDefLocked(
+  path: string,
+  qname: string,
+  newName: string,
+  options: OpLogOptions,
+): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const old = entry.name;
-  if (old === newName) return logOp(path, { op: "rename", layer: entry.layer, name: old, newName });
+  if (old === newName) {
+    return logOp(path, { op: "rename", layer: entry.layer, name: old, newName }, options);
+  }
   if (store.byQName.has(`${entry.layer}.${newName}`)) {
     throw new Error(`Cannot rename ${qname}: ${entry.layer}.${newName} already exists`);
   }
@@ -1015,7 +1085,7 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
 
   const next = lines.join("\n");
   return commit(path, next, "rename", () =>
-    logOp(path, { op: "rename", layer: entry.layer, name: old, newName }),
+    logOp(path, { op: "rename", layer: entry.layer, name: old, newName }, options),
   );
 }
 
@@ -1051,12 +1121,17 @@ function defNamePos(store: Store, entry: DefEntry, name: string): Pos {
  * written, when the text it replaces is not where it says: in the definition
  * for `find`, on line `<line>` of it for a per-line patch.
  */
-export function editDef(path: string, qname: string, patch: unknown): string {
+export function editDef(
+  path: string,
+  qname: string,
+  patch: unknown,
+  options: OpLogOptions = {},
+): string {
   enforceLock(path, qname);
-  return withWriteLock(path, () => editDefLocked(path, qname, patch));
+  return withWriteLock(path, () => editDefLocked(path, qname, patch, options));
 }
 
-function editDefLocked(path: string, qname: string, patch: unknown): string {
+function editDefLocked(path: string, qname: string, patch: unknown, options: OpLogOptions): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -1099,14 +1174,18 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
     const updatedStore = load(path);
     const updatedEntry = updatedStore.byQName.get(qname);
     const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
-    return logOp(path, {
-      op: "edit",
-      layer: entry.layer,
-      name: entry.name,
-      patch,
-      ...(newBody !== undefined ? { body: newBody } : {}),
-      prev,
-    });
+    return logOp(
+      path,
+      {
+        op: "edit",
+        layer: entry.layer,
+        name: entry.name,
+        patch,
+        ...(newBody !== undefined ? { body: newBody } : {}),
+        prev,
+      },
+      options,
+    );
   });
 }
 
@@ -1177,11 +1256,15 @@ function isPerLinePatch(p: unknown): p is Record<string, string> {
  * the matching mutation. On any failure the file is restored to its state
  * before the call.
  */
-export function patchApplyFile(path: string, opsFile: string): string[] {
-  return withWriteLock(path, () => patchApplyFileLocked(path, opsFile));
+export function patchApplyFile(
+  path: string,
+  opsFile: string,
+  options: OpLogOptions = {},
+): string[] {
+  return withWriteLock(path, () => patchApplyFileLocked(path, opsFile, options));
 }
 
-function patchApplyFileLocked(path: string, opsFile: string): string[] {
+function patchApplyFileLocked(path: string, opsFile: string, options: OpLogOptions): string[] {
   const original = readFileSync(path, "utf8");
   const originalLog = existsSync(opLogPath(path)) ? readFileSync(opLogPath(path), "utf8") : null;
   const lines = readFileSync(opsFile, "utf8")
@@ -1190,9 +1273,11 @@ function patchApplyFileLocked(path: string, opsFile: string): string[] {
     .filter(Boolean);
   const ids: string[] = [];
   try {
+    // Each op reads the log, but only the first can find a torn last line:
+    // logging the op cuts it off.
     for (const line of lines) {
       const op = JSON.parse(line) as RawOp;
-      ids.push(applyOne(path, op));
+      ids.push(applyOne(path, op, options));
     }
     return ids;
   } catch (e) {
@@ -1213,28 +1298,32 @@ function patchApplyFileLocked(path: string, opsFile: string): string[] {
   }
 }
 
-function applyOne(path: string, op: RawOp): string {
+function applyOne(path: string, op: RawOp, options: OpLogOptions): string {
   const problem = opShapeProblem(op);
   if (problem !== undefined) throw new Error(problem);
   switch (op.op) {
     case "add":
       if (op.body === undefined) throw new Error("add op missing body");
-      return addDefs(path, [{ layer: op.layer, name: op.name, body: op.body }, ...(op.with ?? [])]);
+      return addDefs(
+        path,
+        [{ layer: op.layer, name: op.name, body: op.body }, ...(op.with ?? [])],
+        options,
+      );
     case "replace":
       if (op.body === undefined) throw new Error("replace op missing body");
-      return replaceDef(path, `${op.layer}.${op.name}`, op.body).opId;
+      return replaceDef(path, `${op.layer}.${op.name}`, op.body, options).opId;
     case "edit":
       if (op.patch === undefined) throw new Error("edit op missing patch");
-      return editDef(path, `${op.layer}.${op.name}`, op.patch);
+      return editDef(path, `${op.layer}.${op.name}`, op.patch, options);
     case "rename":
       if (!op.newName) throw new Error("rename op missing newName");
-      return renameDef(path, `${op.layer}.${op.name}`, op.newName);
+      return renameDef(path, `${op.layer}.${op.name}`, op.newName, options);
     case "remove": {
       const main = `${op.layer}.${op.name}`;
-      if (op.removed === undefined) return removeDef(path, main, op.cascade ?? false).opId;
+      if (op.removed === undefined) return removeDef(path, main, op.cascade ?? false, options).opId;
       // `opShapeProblem` checked that the recorded set starts with `main`.
       const [, ...rest] = op.removed;
-      return removeSet(path, load(path), [main, ...rest], true).opId;
+      return removeSet(path, load(path), [main, ...rest], true, options).opId;
     }
     default:
       throw new Error(`unknown op kind "${op.op}"`);
@@ -1246,29 +1335,33 @@ function applyOne(path: string, op: RawOp): string {
  * the target op, and replaying the original source up to just before it. This
  * is the simplest correct strategy for the PoC; op volume is small.
  */
-export function patchRevert(path: string, opId: string): string {
-  return withWriteLock(path, () => patchRevertLocked(path, opId));
+export function patchRevert(path: string, opId: string, options: OpLogOptions = {}): string {
+  return withWriteLock(path, () => patchRevertLocked(path, opId, options));
 }
 
-function patchRevertLocked(path: string, opId: string): string {
-  const log = readOpLog(path);
+function patchRevertLocked(path: string, opId: string, options: OpLogOptions): string {
+  const log = readOpLogFor(path, options).entries;
   const idx = log.findIndex((e) => e["op-id"] === opId);
   if (idx === -1) throw new Error(`patch revert: op-id "${opId}" not found in log`);
   const target = log[idx]!;
+  // The op that reverts it reads the log again to log itself, under the same
+  // write lock, so a line it skips is the one skipped above, which has been
+  // handed over already.
+  const again: OpLogOptions = {};
   switch (target.op) {
     case "add": {
       // Inverse of add = remove. An add that restored a cascade removes exactly
       // the set it added — not what references the named definition now.
       const main = `${target.layer}.${target.name}`;
-      if (target.with === undefined) return removeDef(path, main, false).opId;
+      if (target.with === undefined) return removeDef(path, main, false, again).opId;
       const set: RemovedNames = [main, ...target.with.map((d) => `${d.layer}.${d.name}`)];
-      return removeSet(path, load(path), set, true).opId;
+      return removeSet(path, load(path), set, true, again).opId;
     }
     case "remove": {
       // Inverse of remove = add, of every definition the op removed — a
       // cascade is one op (§9.4.1), so its inverse is one too.
       const [first, ...rest] = removedDefs(log, idx, opId);
-      return addDefs(path, [writableBody(first), ...rest.map(writableBody)]);
+      return addDefs(path, [writableBody(first), ...rest.map(writableBody)], again);
     }
     case "replace": {
       // The body the op replaced, as it recorded it. One logged before ops
@@ -1278,7 +1371,7 @@ function patchRevertLocked(path: string, opId: string): string {
         throw new Error(`patch revert: no prior body found for ${target.layer}.${target.name}`);
       }
       const { layer, name, body } = writableBody({ ...target, body: prev });
-      return replaceDefLocked(path, `${layer}.${name}`, body).opId;
+      return replaceDefLocked(path, `${layer}.${name}`, body, again).opId;
     }
     case "edit": {
       // As for `replace`: the recorded body, or the log's best guess at it.
@@ -1289,11 +1382,11 @@ function patchRevertLocked(path: string, opId: string): string {
         );
       }
       const { layer, name, body } = writableBody({ ...target, body: prev });
-      return replaceDefLocked(path, `${layer}.${name}`, body).opId;
+      return replaceDefLocked(path, `${layer}.${name}`, body, again).opId;
     }
     case "rename": {
       if (!target.newName) throw new Error("patch revert: rename op missing newName");
-      return renameDef(path, `${target.layer}.${target.newName}`, target.name);
+      return renameDef(path, `${target.layer}.${target.newName}`, target.name, again);
     }
     default:
       throw new Error(`patch revert: unsupported op kind "${target.op}"`);
@@ -1374,9 +1467,9 @@ function priorBody(
  * ops named after it, and the ops that took or restored it alongside another
  * definition (a cascade's `removed`, a restore's `with`).
  */
-export function viewHistory(path: string, qname: string): OpLogEntry[] {
+export function viewHistory(path: string, qname: string, options: OpLogOptions = {}): OpLogEntry[] {
   const [layer, name] = splitQname(qname);
-  return readOpLog(path).filter(
+  return readOpLogFor(path, options).entries.filter(
     (e) =>
       (e.layer === layer && e.name === name) ||
       e.removed?.includes(qname) === true ||

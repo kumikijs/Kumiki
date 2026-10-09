@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { describeEdit, replaceDef } from "../mutate.ts";
 import { resolveBody } from "./_shared/body-input.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { requireValue } from "./_shared/value.ts";
 
 const USAGE = "Usage: kumiki replace <file> <qname> <body>";
@@ -35,7 +36,7 @@ export function registerReplace(program: Command): void {
         }
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         try {
-          const result = replaceDef(resolve(process.cwd(), file), qname, body);
+          const result = replaceDef(resolve(process.cwd(), file), qname, body, WARN_SKIPPED);
           console.log(describeEdit({ op: "replace", qname, ...result }));
         } catch (e) {
           console.error(String(e));

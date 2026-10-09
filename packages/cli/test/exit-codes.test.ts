@@ -14,22 +14,11 @@
 // stdout and exits 0 turns `kumiki fix --apply && next-step` into a pipeline
 // that proceeds on a broken file.
 
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CLI_ARGV } from "./helpers/cli.ts";
-
-// Each case pays for a node + tsx module load, not for compiler work, and the
-// whole file is spawns — so the limits are generous enough to survive a
-// saturated machine running the rest of the suite alongside it.
-//
-// The child gets its own: `spawnSync` blocks the worker's event loop, so a hung
-// CLI cannot be interrupted by vitest's timeout — the run would stop rather
-// than fail. The child's limit is the shorter one so it always fires first.
-const CHILD_TIMEOUT_MS = 60_000;
-const SPAWN = { timeout: 70_000 };
+import { runCli, SPAWN } from "./helpers/cli.ts";
 
 let dir: string;
 
@@ -37,24 +26,6 @@ function write(name: string, source: string): string {
   const file = join(dir, name);
   writeFileSync(file, source);
   return file;
-}
-
-function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
-  const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-    stdio: "pipe",
-    encoding: "utf8",
-    timeout: CHILD_TIMEOUT_MS,
-  });
-  // A process that never started, or one a signal killed, has `status: null`.
-  // Folding that into 1 would make every `toBe(1)` in this file pass without
-  // the CLI running at all, which is the one result a test about exit codes
-  // must not accept.
-  if (res.error) throw res.error;
-  return {
-    stdout: res.stdout ?? "",
-    stderr: res.stderr ?? "",
-    code: res.status ?? Number.NaN,
-  };
 }
 
 const CLEAN = `slot count : Int = 0

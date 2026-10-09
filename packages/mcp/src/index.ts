@@ -11,6 +11,7 @@ import {
   addDef,
   applyFixPlan,
   describeEdit,
+  describeSkipped,
   editDef,
   episodeLogPathFor,
   findReferences,
@@ -18,6 +19,7 @@ import {
   LAYERS,
   listDefs,
   load,
+  type OpLogOptions,
   planFix,
   plural,
   removeDef,
@@ -26,6 +28,7 @@ import {
   runFixFromTest,
   runScenarioSource,
   runTests,
+  type SkippedOpLogLine,
   smokeSource,
   viewDef,
   viewHistory,
@@ -295,19 +298,53 @@ function readEpisodeLog(logPath: string): EpisodeLogRead {
   };
 }
 
+/** The kind of warning about a line of a JSONL log that a tool could not read. */
+const MALFORMED_JSONL = "malformed-jsonl";
+
 function buildEpisodeWarnings(
   skipped: number,
   firstMalformedLine: number | undefined,
 ): Array<{ kind: string; message: string }> {
   return [
     {
-      kind: "malformed-jsonl",
+      kind: MALFORMED_JSONL,
       message:
         firstMalformedLine !== undefined
           ? `skipped ${skipped} malformed line(s); first at line ${firstMalformedLine}`
           : `skipped ${skipped} malformed line(s)`,
     },
   ];
+}
+
+/** What the description of a tool that reads the op log says about a line it skips. */
+const SKIPPED_LINE_NOTE =
+  ' When the op log\'s last line is torn and skipped, a second text block follows: `{"warnings": [{"kind": "malformed-jsonl", "message"}]}`, naming the log and the line.';
+
+/**
+ * Answer with `answer` of what a verb that reads the op log returned.
+ *
+ * A client does not read the server's stderr, so a torn last line the read
+ * skipped (docs/spec/ai-edit.md §9.2.2) is reported in the result: after the
+ * answer, a second text block holds a `warnings` field with a
+ * `malformed-jsonl` warning, as the episode tools report a line they could
+ * not read, in the words of the CLI's warning. The answer is the same either
+ * way, as the CLI's stdout is, so a client that reads the op-id off the first
+ * block reads it whether or not a line was skipped.
+ */
+function opLogAnswer<T>(
+  run: (options: OpLogOptions) => T,
+  answer: (value: T) => string,
+): CallToolResult {
+  const skipped: SkippedOpLogLine[] = [];
+  const result = text(answer(run({ onSkipped: (line) => skipped.push(line) })));
+  if (skipped.length === 0) return result;
+  const warnings = skipped.map((line) => ({
+    kind: MALFORMED_JSONL,
+    message: describeSkipped(line),
+  }));
+  return {
+    content: [...result.content, ...text(JSON.stringify({ warnings }, null, 2)).content],
+  };
 }
 
 function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
@@ -635,7 +672,7 @@ export function createServer(): McpServer {
     "kumiki_add",
     {
       title: "Add a definition",
-      description: "Append a new definition to a .kumiki file. Returns the new op-id.",
+      description: `Append a new definition to a .kumiki file. Returns the new op-id.${SKIPPED_LINE_NOTE}`,
       inputSchema: {
         path: z.string(),
         // The labels `kumiki_list` filters by, so a kind of definition it
@@ -649,10 +686,11 @@ export function createServer(): McpServer {
           ),
       },
     },
-    async ({ path, layer, name, body }) => {
-      const opId = addDef(resolve(process.cwd(), path), layer, name, body);
-      return text(describeEdit({ op: "add", qname: `${layer}.${name}`, opId }));
-    },
+    async ({ path, layer, name, body }) =>
+      opLogAnswer(
+        (options) => addDef(resolve(process.cwd(), path), layer, name, body, options),
+        (opId) => describeEdit({ op: "add", qname: `${layer}.${name}`, opId }),
+      ),
   );
 
   tool(
@@ -660,13 +698,15 @@ export function createServer(): McpServer {
     {
       title: "Replace a definition",
       description:
-        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has; one that starts with `=` drops them. Returns the new op-id, and a `dropped` line for each clause or parameter the definition no longer has.",
+        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has; one that starts with `=` drops them. Returns the new op-id, and a `dropped` line for each clause or parameter the definition no longer has." +
+        SKIPPED_LINE_NOTE,
       inputSchema: { path: z.string(), name: z.string(), body: z.string() },
     },
-    async ({ path, name, body }) => {
-      const result = replaceDef(resolve(process.cwd(), path), name, body);
-      return text(describeEdit({ op: "replace", qname: name, ...result }));
-    },
+    async ({ path, name, body }) =>
+      opLogAnswer(
+        (options) => replaceDef(resolve(process.cwd(), path), name, body, options),
+        (result) => describeEdit({ op: "replace", qname: name, ...result }),
+      ),
   );
 
   tool(
@@ -676,26 +716,29 @@ export function createServer(): McpServer {
       description:
         "Remove a definition. Set cascade=true to also remove definitions that only it referenced. " +
         "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
-        "line for each further definition the cascade took.",
+        "line for each further definition the cascade took." +
+        SKIPPED_LINE_NOTE,
       inputSchema: { path: z.string(), name: z.string(), cascade: z.boolean().optional() },
     },
-    async ({ path, name, cascade }) => {
-      const result = removeDef(resolve(process.cwd(), path), name, cascade ?? false);
-      return text(describeEdit({ op: "remove", qname: name, ...result }));
-    },
+    async ({ path, name, cascade }) =>
+      opLogAnswer(
+        (options) => removeDef(resolve(process.cwd(), path), name, cascade ?? false, options),
+        (result) => describeEdit({ op: "remove", qname: name, ...result }),
+      ),
   );
 
   tool(
     "kumiki_rename",
     {
       title: "Rename a definition",
-      description: "Rename a definition and update all references. Returns the new op-id.",
+      description: `Rename a definition and update all references. Returns the new op-id.${SKIPPED_LINE_NOTE}`,
       inputSchema: { path: z.string(), name: z.string(), newName: z.string() },
     },
-    async ({ path, name, newName }) => {
-      const opId = renameDef(resolve(process.cwd(), path), name, newName);
-      return text(describeEdit({ op: "rename", qname: name, newName, opId }));
-    },
+    async ({ path, name, newName }) =>
+      opLogAnswer(
+        (options) => renameDef(resolve(process.cwd(), path), name, newName, options),
+        (opId) => describeEdit({ op: "rename", qname: name, newName, opId }),
+      ),
   );
 
   tool(
@@ -703,7 +746,8 @@ export function createServer(): McpServer {
     {
       title: "Edit part of a definition",
       description:
-        "Apply a partial patch to a definition body (e.g. inside a reducer's do=). Patch shape: {find,replace} for a single textual swap, or {body:<line>: \"replace 'a' -> 'b'\"} for per-line edits. Returns the new op-id.",
+        "Apply a partial patch to a definition body (e.g. inside a reducer's do=). Patch shape: {find,replace} for a single textual swap, or {body:<line>: \"replace 'a' -> 'b'\"} for per-line edits. Returns the new op-id." +
+        SKIPPED_LINE_NOTE,
       inputSchema: {
         path: z.string(),
         name: z.string().describe("Qualified name, e.g. reducer.addTodo"),
@@ -715,10 +759,11 @@ export function createServer(): McpServer {
           .describe("Patch object (see description)"),
       },
     },
-    async ({ path, name, patch }) => {
-      const opId = editDef(resolve(process.cwd(), path), name, patch);
-      return text(describeEdit({ op: "edit", qname: name, opId }));
-    },
+    async ({ path, name, patch }) =>
+      opLogAnswer(
+        (options) => editDef(resolve(process.cwd(), path), name, patch, options),
+        (opId) => describeEdit({ op: "edit", qname: name, opId }),
+      ),
   );
 
   tool(
@@ -726,14 +771,15 @@ export function createServer(): McpServer {
     {
       title: "Show edit history",
       description:
-        "Return the op-log entries that touched this definition, in chronological order. Each entry has op-id, op kind, ts, author, parent-ops, depends-on, and (for add/replace) the body or patch.",
+        "Return the op-log entries that touched this definition, in chronological order. Each entry has op-id, op kind, ts, author, parent-ops, depends-on, and (for add/replace) the body or patch." +
+        SKIPPED_LINE_NOTE,
       inputSchema: { path: z.string(), name: z.string() },
     },
-    async ({ path, name }) => {
-      const log = viewHistory(requireSourceFile(path), name);
-      if (log.length === 0) return text(`(no history for ${name})`);
-      return text(JSON.stringify(log, null, 2));
-    },
+    async ({ path, name }) =>
+      opLogAnswer(
+        (options) => viewHistory(requireSourceFile(path), name, options),
+        (log) => (log.length === 0 ? `(no history for ${name})` : JSON.stringify(log, null, 2)),
+      ),
   );
 
   tool(

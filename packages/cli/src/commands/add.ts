@@ -3,6 +3,7 @@ import { Argument, type Command } from "commander";
 import { addDef, describeEdit } from "../mutate.ts";
 import { LAYERS } from "../store.ts";
 import { resolveBody } from "./_shared/body-input.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { requireValue } from "./_shared/value.ts";
 
 const USAGE = "Usage: kumiki add <file> <layer> <name> <body>";
@@ -41,7 +42,7 @@ export function registerAdd(program: Command): void {
         }
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         try {
-          const opId = addDef(resolve(process.cwd(), file), layer, name, body);
+          const opId = addDef(resolve(process.cwd(), file), layer, name, body, WARN_SKIPPED);
           console.log(describeEdit({ op: "add", qname: `${layer}.${name}`, opId }));
         } catch (e) {
           console.error(String(e));

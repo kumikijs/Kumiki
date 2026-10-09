@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { viewHash, viewHistory } from "../mutate.ts";
 import { load, viewDef, viewWithDeps } from "../store.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 
 const USAGE = "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]";
 
@@ -19,7 +20,7 @@ export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
       console.error(`File "${path}" not found`);
       process.exit(1);
     }
-    const log = viewHistory(path, qname);
+    const log = viewHistory(path, qname, WARN_SKIPPED);
     if (log.length === 0) {
       console.log(`(no history for ${qname})`);
       return;

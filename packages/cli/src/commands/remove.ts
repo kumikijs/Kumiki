@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { describeEdit, removeDef } from "../mutate.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 
 const USAGE = "Usage: kumiki remove <file> <qname> [--cascade]";
 
@@ -19,7 +20,12 @@ export function registerRemove(program: Command): void {
           process.exit(2);
         }
         try {
-          const result = removeDef(resolve(process.cwd(), file), qname, Boolean(options.cascade));
+          const result = removeDef(
+            resolve(process.cwd(), file),
+            qname,
+            Boolean(options.cascade),
+            WARN_SKIPPED,
+          );
           console.log(describeEdit({ op: "remove", qname, ...result }));
         } catch (e) {
           console.error(String(e));

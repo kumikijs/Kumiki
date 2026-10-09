@@ -1,5 +1,12 @@
 import * as fs from "node:fs";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,14 +49,23 @@ async function withClient(fn: (client: Client) => Promise<void>): Promise<void> 
   }
 }
 
+/** Each text block of a tool's answer, in order. */
+async function callToolBlocks(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string[]> {
+  const res = await client.callTool({ name, arguments: args });
+  const content = res.content as TextContent[];
+  return content.map((c) => c.text);
+}
+
 async function callTool(
   client: Client,
   name: string,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const res = await client.callTool({ name, arguments: args });
-  const content = res.content as TextContent[];
-  return content.map((c) => c.text).join("\n");
+  return (await callToolBlocks(client, name, args)).join("\n");
 }
 
 describe("kumiki_check strict options", () => {
@@ -1177,6 +1193,142 @@ describe("what an edit tool reports about the edit it made", () => {
       expect(opId).toBeDefined();
       const history = await callTool(client, "kumiki_history", { path: file, name: "slot.step" });
       expect(history).toContain(opId);
+    });
+  });
+});
+
+// A torn last line of the op log is skipped (docs/spec/ai-edit.md §9.2.2), and
+// the server's stderr is not something a client reads. So a tool that read the
+// log with one answers as it would without it, and then says which line it
+// skipped in a second block: a `warnings` field holding a `malformed-jsonl`
+// warning, as the episode tools report a line they could not read.
+describe("a tool that reads an op log whose last line is torn", () => {
+  let workdir: string;
+  let file: string;
+  let log: string;
+  beforeEach(() => {
+    workdir = mkdtempSync(join(tmpdir(), "kumiki-mcp-torn-"));
+    file = join(workdir, "counter.kumiki");
+    log = `${file}.kumiki-ops.jsonl`;
+    copyFileSync(COUNTER, file);
+  });
+  afterEach(() => rmSync(workdir, { recursive: true, force: true }));
+
+  /** The start of an op-log line, cut off mid-key. */
+  const TORN = '{"op":"replace","layer":"slot","na';
+
+  /** The second block of an answer from a log whose line `line` was skipped. */
+  const skipped = (line: number) => ({
+    warnings: [
+      {
+        kind: "malformed-jsonl",
+        message: `${log}:${line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
+      },
+    ],
+  });
+
+  /** Log one op, then the start of another cut off. The logged op's id. */
+  const seedTorn = async (client: Client): Promise<string> => {
+    const out = await callTool(client, "kumiki_replace", {
+      path: file,
+      name: "slot.count",
+      body: "N = 1",
+    });
+    appendFileSync(log, TORN);
+    return /\((op_\w+)\)/.exec(out)?.[1] ?? "(no op-id)";
+  };
+
+  it("kumiki_history answers with the complete entries, then the skipped line", async () => {
+    await withClient(async (client) => {
+      const first = await seedTorn(client);
+
+      const blocks = await callToolBlocks(client, "kumiki_history", {
+        path: file,
+        name: "slot.count",
+      });
+
+      expect(blocks).toHaveLength(2);
+      const [entries = "", warnings = ""] = blocks;
+      const ids = (JSON.parse(entries) as Array<{ "op-id": string }>).map((e) => e["op-id"]);
+      expect(ids).toEqual([first]);
+      expect(JSON.parse(warnings)).toEqual(skipped(2));
+    });
+  });
+
+  it("kumiki_history of a log that is only the torn line has no history to list", async () => {
+    writeFileSync(log, TORN);
+    await withClient(async (client) => {
+      const blocks = await callToolBlocks(client, "kumiki_history", {
+        path: file,
+        name: "slot.count",
+      });
+
+      expect(blocks).toHaveLength(2);
+      const [answer, warnings = ""] = blocks;
+      expect(answer).toBe("(no history for slot.count)");
+      expect(JSON.parse(warnings)).toEqual(skipped(1));
+    });
+  });
+
+  it.each([
+    [
+      "kumiki_add",
+      { layer: "slot", name: "step", body: "Int = 1" },
+      /^added slot\.step {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_replace",
+      { name: "slot.count", body: "N = 5" },
+      /^replaced slot\.count {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_edit",
+      { name: "slot.count", patch: { find: "1", replace: "2" } },
+      /^edited slot\.count {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_rename",
+      { name: "slot.count", newName: "total" },
+      /^renamed slot\.count -> total {2}\(op_\w+\)$/,
+    ],
+    ["kumiki_remove", { name: "app.Counter" }, /^removed app\.Counter {2}\(op_\w+\)$/],
+  ])("%s answers with its edit, then the skipped line", async (tool, args, answer) => {
+    await withClient(async (client) => {
+      await seedTorn(client);
+
+      const blocks = await callToolBlocks(client, tool, { path: file, ...args });
+
+      expect(blocks).toHaveLength(2);
+      const [edit, warnings = ""] = blocks;
+      expect(edit).toMatch(answer);
+      expect(JSON.parse(warnings)).toEqual(skipped(2));
+    });
+  });
+
+  it("answers with the answer alone when there is nothing to skip", async () => {
+    await withClient(async (client) => {
+      // No log yet, then a log of complete entries, then an empty one.
+      const first = await callToolBlocks(client, "kumiki_replace", {
+        path: file,
+        name: "slot.count",
+        body: "N = 1",
+      });
+      expect(first).toHaveLength(1);
+      const history = await callToolBlocks(client, "kumiki_history", {
+        path: file,
+        name: "slot.count",
+      });
+      expect(history).toHaveLength(1);
+      expect(JSON.parse(history[0] ?? "")).toHaveLength(1);
+      writeFileSync(log, "");
+      const added = await callToolBlocks(client, "kumiki_add", {
+        path: file,
+        layer: "slot",
+        name: "step",
+        body: "Int = 1",
+      });
+      expect(added).toHaveLength(1);
+      expect(added[0]).toMatch(/^added slot\.step {2}\(op_\w+\)$/);
     });
   });
 });

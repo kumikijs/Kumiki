@@ -99,11 +99,9 @@ beforeEach(() => {
   file = join(dir, "c.kumiki");
   log = `${file}.kumiki-ops.jsonl`;
   writeFileSync(file, "slot a : Int = 0\n");
-  vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 afterEach(() => {
   reset();
-  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
 });
 
