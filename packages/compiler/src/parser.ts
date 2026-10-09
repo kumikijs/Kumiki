@@ -139,16 +139,31 @@ const VALUE_NAMED_ARGS = new Set([
   "aspect",
 ]);
 
+/** A chain the parser is reading with a loop; see `Parser.startChain`. */
+interface Chain {
+  /** What the enclosing measurement had reached, handed back by `endChain`. */
+  enclosing: number;
+  /** How many levels under the chain's own its first operand and the steps so far reach. */
+  below: number;
+}
+
 class Parser {
   private i = 0;
+  /** The level the parser is reading at: one per `descend` it is inside. */
   private depth = 0;
+  /**
+   * The deepest level a node of the part being measured sits at (see
+   * `measure`). Each `descend` records the level it enters, and each chain the
+   * levels its steps reach.
+   */
+  private reached = 0;
   constructor(private tokens: Token[]) {}
 
   /** The one place the budget is refused, so every caller reports alike. */
-  private refuseDepth(): never {
+  private refuseDepth(at: Pos): never {
     throw new ParseError(
       `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
-      this.peek().pos,
+      at,
     );
   }
 
@@ -162,8 +177,9 @@ class Parser {
    * level down because that is where its node will sit.
    */
   private descend<T>(parseNested: () => T): T {
-    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth();
+    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth(this.peek().pos);
     this.depth += 1;
+    if (this.depth > this.reached) this.reached = this.depth;
     try {
       return parseNested();
     } finally {
@@ -172,17 +188,71 @@ class Parser {
   }
 
   /**
-   * Charge `built` levels against the same budget without recursing.
-   *
-   * A left-associative chain — `1 + 1 + 1 + …`, `x.trim().trim()…`, a run of
-   * prefix operators, a type's `where`s, an assignment target's `s.a[0]…`
-   * path — is parsed by a loop, so it costs the parser no stack. It still
-   * builds one node per step, each nested inside the last, and everything
-   * downstream walks that by recursion, so each such loop charges one level
-   * per node of its own chain.
+   * Start measuring how deep the part the parser reads next goes. Returns what
+   * the enclosing measurement had reached, for `measured` to fold back in.
    */
-  private widen(built: number): void {
-    if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
+  private measure(): number {
+    const enclosing = this.reached;
+    this.reached = this.depth;
+    return enclosing;
+  }
+
+  /**
+   * How many levels under the current one the part read since `measure`
+   * reaches. The enclosing measurement keeps the deeper of the two.
+   */
+  private measured(enclosing: number): number {
+    const below = this.reached - this.depth;
+    if (enclosing > this.reached) this.reached = enclosing;
+    return below;
+  }
+
+  /**
+   * Put a node `below` levels under the current one without recursing:
+   * refused at `at` when that is the bound or past it, and otherwise recorded
+   * for the enclosing measurement.
+   */
+  private charge(below: number, at: Pos): void {
+    if (this.depth + below >= MAX_NESTING_DEPTH) this.refuseDepth(at);
+    if (this.depth + below > this.reached) this.reached = this.depth + below;
+  }
+
+  /**
+   * Start a chain read by a loop: `1 + 1 + …`, `x.trim()[0]…`, a type's
+   * `where`s, an assignment target's `s.a[0]…` path. Its first operand is
+   * what the parser reads next.
+   *
+   * The loop costs the parser no stack, but it builds one node per step, each
+   * over everything built before it, and everything downstream walks those by
+   * recursion. An operand read at an early step therefore ends up under every
+   * later step, and so does whatever is nested in it: a parenthesised chain,
+   * an index that is an index chain of its own. So the chain measures each
+   * operand as it is read, and each step is charged for the deepest of them.
+   */
+  private startChain(): Chain {
+    return { enclosing: this.measure(), below: 0 };
+  }
+
+  /**
+   * One more step of `chain`, at the current token, which a refusal points at.
+   * The step's node goes over the first operand and every earlier step's
+   * operands, so it puts the deepest of them one level further down.
+   *
+   * What the step reads after this token sits under its node and is read at
+   * that level: an index or an argument through `parseExpr`, a right operand
+   * through `descend`. A refinement and a `.field` are leaves. It is measured
+   * up to the next step or to `endChain`, and a later step that pushes it past
+   * the bound is refused there.
+   */
+  private chainStep(chain: Chain): void {
+    chain.below = Math.max(chain.below, this.measured(chain.enclosing)) + 1;
+    this.charge(chain.below, this.peek().pos);
+    chain.enclosing = this.measure();
+  }
+
+  /** Close `chain`: how deep it reached goes to the enclosing measurement. */
+  private endChain(chain: Chain): void {
+    this.measured(chain.enclosing);
   }
 
   // ----- low-level token utilities -----
@@ -368,6 +438,8 @@ class Parser {
   }
 
   private parseTypeExprNested(): TypeExpr {
+    // The `where`s below are a chain whose first operand is the type they refine.
+    const chain = this.startChain();
     // Union: parse first, then check for `|` follow-up
     const first = this.parseTypeUnionAtom();
     if (this.matchOp("|")) {
@@ -378,6 +450,7 @@ class Parser {
         this.next();
         variants.push(this.typeAsVariant(this.parseTypeUnionAtom()));
       }
+      this.endChain(chain);
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
     // Refinement. `refinement-type ::= type-expr 'where' pred-expr` is recursive
@@ -387,18 +460,17 @@ class Parser {
     // folded onto the `nominal` node as a property, or wrapping a bare atom —
     // and a second `if` here is what used to cap the form at two, with a third
     // reported as a parse error while the grammar said otherwise. Each `where`
-    // this loop takes wraps the type in one more node and is charged to the
-    // depth budget. The first, taken by `parseTypeUnionAtom`, is not, which is
-    // why a `where` chain is refused one step later than the expression chains.
+    // this loop takes wraps the type in one more node and is a step of the
+    // chain. The first, taken by `parseTypeUnionAtom`, is not, which is why a
+    // `where` chain is refused one step later than the expression chains.
     let refined = first;
-    let built = 0;
     while (this.matchKw("where")) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       this.next();
       const ref = this.parseRefinement();
       refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
     }
+    this.endChain(chain);
     return refined;
   }
 
@@ -857,22 +929,20 @@ class Parser {
   /**
    * An assignment target: a slot and its `.field` / `[index]` steps. Each step
    * wraps the path so far, the way `x.a[0]…` read as an expression does, so it
-   * is charged to the depth budget the same way.
+   * is a chain the same way.
    */
   private parseLvalue(): Lvalue {
+    const chain = this.startChain();
     const tok = this.eat("ident");
     let lv: Lvalue = { kind: "LSlot", name: tok.value, pos: tok.pos };
-    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         this.next();
         const f = this.eat("ident");
         lv = { kind: "LField", base: lv, field: f.value, pos: f.pos };
       } else if (this.matchOp("[")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         const t = this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -881,6 +951,7 @@ class Parser {
         break;
       }
     }
+    this.endChain(chain);
     return lv;
   }
 
@@ -915,22 +986,26 @@ class Parser {
     return this.parseLogicOr();
   }
 
+  // Each binary operator below is a chain (`startChain`). Its right operand
+  // sits under the operator's node, so it is read a level down, through
+  // `descend`, the way an index or an argument is through `parseExpr`.
+
   private parseLogicOr(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseLogicAnd();
     // `||` always works as bool OR. `|` also works as bool OR EXCEPT when it
     // clearly starts a match arm — i.e. it's immediately followed by a pattern
     // (capital-letter variant or `_`) and a `->`. This lets `a | b` mean bool
     // OR in expression context while still letting `not x | Done -> ...` be
     // parsed as a match arm separator.
-    let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = "|" as BinOp;
       this.next();
-      const rhs = this.parseLogicAnd();
+      const rhs = this.descend(() => this.parseLogicAnd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
@@ -970,54 +1045,54 @@ class Parser {
     return after.kind === "op" && after.value === "->";
   }
   private parseLogicAnd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseCmp();
     // `&&` and `&` are both accepted as boolean AND — `&` is a tolerance alias
     // for LLMs that bring C-style habits. (`|` would conflict with type union
     // and match arm separator; only `&` can be safely aliased.)
-    let built = 0;
     while (this.matchOp("&&") || this.matchOp("&")) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       this.next();
-      const rhs = this.parseCmp();
+      const rhs = this.descend(() => this.parseCmp());
       lhs = { kind: "BinOp", op: "&", lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
   private parseCmp(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseAdd();
-    let built = 0;
     while (this.matchAnyOp(["==", "!=", "<", ">", "<=", ">="])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseAdd();
+      const rhs = this.descend(() => this.parseAdd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
   private parseAdd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseMul();
-    let built = 0;
     while (this.matchAnyOp(["+", "-"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseMul();
+      const rhs = this.descend(() => this.parseMul());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
   private parseMul(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseUnary();
-    let built = 0;
     while (this.matchAnyOp(["*", "/", "%"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseUnary();
+      const rhs = this.descend(() => this.parseUnary());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
   private parseUnary(): Expr {
@@ -1032,8 +1107,16 @@ class Parser {
       else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
       else break;
     }
-    this.widen(prefixes.length);
+    // The run is one node per operator over the operand, which is read after
+    // all of them, at this level. So the run is charged at the operand's first
+    // token before it is read, and again once it is known how deep it goes;
+    // with no operator, nothing goes over the operand.
+    const at = this.peek().pos;
+    this.charge(prefixes.length, at);
+    if (prefixes.length === 0) return this.parsePostfix();
+    const enclosing = this.measure();
     let e = this.parsePostfix();
+    this.charge(this.measured(enclosing) + prefixes.length, at);
     for (const prefix of prefixes.reverse()) {
       e = { kind: "UnaryOp", op: prefix.op, rhs: e, pos: prefix.pos };
     }
@@ -1041,12 +1124,11 @@ class Parser {
   }
 
   private parsePostfix(): Expr {
+    const chain = this.startChain();
     let e = this.parsePrimary();
-    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         const dotTok = this.next();
         const fldTok = this.peek();
         // `slot s : Float = 1.` at the end of a line: the member name is
@@ -1114,8 +1196,7 @@ class Parser {
           e = { kind: "FieldAccess", base: e, field: fld, pos: e.pos };
         }
       } else if (this.matchOp("[")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -1124,6 +1205,7 @@ class Parser {
         break;
       }
     }
+    this.endChain(chain);
     return e;
   }
 
