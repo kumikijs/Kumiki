@@ -1,23 +1,42 @@
-// Which definitions is a definition written in terms of, and does that relation
-// close a loop?
+// Which definitions is a definition written in terms of, does that relation
+// close a loop, and — for tiles, which code generation inlines — how deep does
+// the tree go once it is followed?
 //
-// Four layers answer that question with the same shape but different edges, so
-// the traversal lives here once. It deals in names and positions only: the
-// diagnostics themselves are pushed by the typechecker, which is where every
-// coded diagnostic belongs.
+// Four layers answer the first two questions with the same shape but different
+// edges, so the traversal lives here once. It deals in names, positions and
+// levels only: the diagnostics themselves are pushed by the typechecker, which
+// is where every coded diagnostic belongs.
 //
-// The search over definitions is iterative. Recursion there would be the same
-// defect the tile walk had — a program is free to declare a chain of
-// definitions longer than the call stack, and a cycle checker that overflows on
-// one is no better than the crash it exists to prevent. Walking a single tile
-// body does recurse, which is safe for a different reason: a body is bounded by
-// the parser's nesting limit, and nothing bounds the graph between definitions.
+// The searches over definitions are iterative. Recursion there would be the
+// same defect the tile walk had — a program is free to declare a chain of
+// definitions longer than the call stack, and a checker that overflows on one
+// is no better than the crash it exists to prevent. Walking a single tile body
+// does recurse, which is safe for a different reason: a body is bounded by the
+// parser's nesting limit, and the graph between definitions is not — a loop in
+// it, or a chain of any length, is what these searches are there to find.
 
 import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };
+
+/**
+ * A tile edge, placed at the level of the tree its target renders under.
+ *
+ * `level` counts from the root of the tile that holds the edge, which is 1.
+ * The target's body hangs one level below it, which is where code generation
+ * inlines it.
+ */
+export type PlacedEdge = GraphEdge & { readonly level: number };
+
+/** A tile as written, before any tile it names is inlined. */
+export type TileExpansion = {
+  /** The level of its deepest node — how deep it nests on its own. */
+  readonly depth: number;
+  /** The tiles it expands into, each placed at the level of its call. */
+  readonly edges: readonly PlacedEdge[];
+};
 
 export type Cycle = {
   /**
@@ -43,24 +62,41 @@ export type Cycle = {
  * before anything else, so a slot of the same name is not the target.
  *
  * A tile's own `error-boundary` is an edge too, but it belongs to the
- * definition rather than to its body — `boundaryTarget` is where it is taken
- * from. `sub-routes` is not an edge: a sub-route is selected by the router
- * through `route-outlet`, never inlined.
+ * definition rather than to its body — `tileExpansion` is where it is added.
+ * `sub-routes` is not an edge: a sub-route is selected by the router through
+ * `route-outlet`, never inlined.
  */
-export function expansionTargets(body: TileExpr): readonly GraphEdge[] {
-  const out: GraphEdge[] = [];
-  walkTileBody(body, out);
-  return out;
+export function expansionTargets(body: TileExpr): readonly PlacedEdge[] {
+  const edges: PlacedEdge[] = [];
+  walkTileBody(body, 1, edges);
+  return edges;
 }
 
 /**
- * The tile a definition falls back to when its render throws, if it declares
- * one. Code generation inlines the boundary's body at every call site of the
- * tile that declares it, so it expands exactly like a child does.
+ * A tile's own depth, and its edges — its body's (`expansionTargets`) and its
+ * `error-boundary` — each placed at the level of the tree it renders under.
+ *
+ * Every node of the tile tree is a level, as the parser counts one inside a
+ * definition: a call, builtin or user, and a `for` / `when` / `if` / `match`.
+ * A tile written as a bare identifier is a call to it, one level below the
+ * call it is an argument of. What is not a tile is not a level — an argument
+ * that is a value, and a named argument, which nothing renders.
+ *
+ * An `error-boundary` is a level as well. Code generation wraps every call of
+ * the tile that declares it in the `try` the boundary lowers to, and inlines
+ * the fallback's body into the `catch`, so the tile's body and the fallback's
+ * both hang beneath it — the body one level further down than it would be
+ * without one.
  */
-export function boundaryTarget(def: TileDef): GraphEdge | null {
-  if (!def.errorBoundary) return null;
-  return { to: def.errorBoundary, pos: def.errorBoundaryPos ?? def.pos };
+export function tileExpansion(def: TileDef): TileExpansion {
+  const edges: PlacedEdge[] = [];
+  const depth = walkTileBody(def.body, 1, edges);
+  if (!def.errorBoundary) return { depth, edges };
+  const boundary = { to: def.errorBoundary, pos: def.errorBoundaryPos ?? def.pos, level: 1 };
+  return {
+    depth: depth + 1,
+    edges: [...edges.map((e) => ({ ...e, level: e.level + 1 })), boundary],
+  };
 }
 
 /**
@@ -278,21 +314,28 @@ export function aliasTarget(
   return null;
 }
 
-function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
+/**
+ * Collects the edges under `t`, which sits at `level`, and answers the level of
+ * the deepest node there.
+ */
+function walkTileBody(t: TileExpr, level: number, out: PlacedEdge[]): number {
   switch (t.kind) {
     case "TileFor":
     case "TileWhen":
-      walkTileBody(t.body, out);
-      return;
+      return walkTileBody(t.body, level + 1, out);
     case "TileIf":
-      walkTileBody(t.consequent, out);
-      walkTileBody(t.alternate, out);
-      return;
-    case "TileMatch":
-      for (const arm of t.arms) walkTileBody(arm.body, out);
-      return;
+      return Math.max(
+        walkTileBody(t.consequent, level + 1, out),
+        walkTileBody(t.alternate, level + 1, out),
+      );
+    case "TileMatch": {
+      let deepest = level;
+      for (const arm of t.arms) deepest = Math.max(deepest, walkTileBody(arm.body, level + 1, out));
+      return deepest;
+    }
     case "TileCall": {
-      out.push({ to: t.name, pos: t.pos });
+      out.push({ to: t.name, pos: t.pos, level });
+      let deepest = level;
       for (const a of t.args) {
         const v = a.value;
         // A named argument is a prop, and nothing renders a tile written as
@@ -310,21 +353,25 @@ function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
         // undefined one (E0102) — never an expansion edge either way, which
         // is why this `continue` needs no case of its own.
         if (a.name !== undefined) continue;
-        if (isTileExpr(v)) walkTileBody(v, out);
+        if (isTileExpr(v)) deepest = Math.max(deepest, walkTileBody(v, level + 1, out));
         else if ((v as Expr).kind === "Ref") {
+          // Not counted in this body's own depth, since the name may be a
+          // value. If it names a tile, its edge counts it as the call it
+          // lowers to, at `level + 1`, with the tile's body beneath.
           const ref = v as Expr & { kind: "Ref" };
-          out.push({ to: ref.name, pos: ref.pos });
+          out.push({ to: ref.name, pos: ref.pos, level: level + 1 });
         }
       }
-      return;
+      return deepest;
     }
     default: {
       // A new `TileExpr` kind must be given its edges here rather than
       // silently having none — a kind that expands into children and is
-      // missed is a cycle the search cannot see.
+      // missed is a cycle the search cannot see, and a level it adds is
+      // depth the limit cannot see.
       const exhaustive: never = t;
       void exhaustive;
-      return;
+      return level;
     }
   }
 }
@@ -394,4 +441,83 @@ export function findCycles(
     }
   }
   return cycles;
+}
+
+/** How deep a node's tree goes once every edge is followed. */
+export type Expansion = {
+  readonly depth: number;
+  /** The edge the deepest path leaves by; `null` where the node's own depth is the deepest. */
+  readonly via: PlacedEdge | null;
+};
+
+/**
+ * The depth of every tree reachable from `nodes`, each target hung beneath the
+ * edge to it: the deepest of `level + depth(target)` over the edges, and the
+ * node's `ownDepth`.
+ *
+ * A node that reaches a loop is absent. Its tree is infinite, and the loop is
+ * `findCycles`'s to report — a depth for it would be a second report of the
+ * same mistake, with a number in it that means nothing.
+ *
+ * Each node is measured once and the answer shared, so a tile reached along
+ * many paths — every tile calling the next one twice — costs one visit rather
+ * than one per path.
+ */
+export function expansionDepths(
+  nodes: Iterable<string>,
+  edgesOf: (node: string) => readonly PlacedEdge[],
+  ownDepth: (node: string) => number,
+): ReadonlyMap<string, Expansion> {
+  type Frame = {
+    node: string;
+    edges: readonly PlacedEdge[];
+    next: number;
+    best: Expansion;
+    reachesLoop: boolean;
+  };
+  const measured = new Map<string, Expansion>();
+  const unbounded = new Set<string>();
+  // The nodes on the current path: an edge back to one of them closes a loop.
+  const open = new Set<string>();
+  const enter = (node: string): Frame => {
+    open.add(node);
+    const best = { depth: ownDepth(node), via: null };
+    return { node, edges: edgesOf(node), next: 0, best, reachesLoop: false };
+  };
+  // Leaving `frame` by `edge` reaches `target`'s tree, `edge.level` further down.
+  const follow = (frame: Frame, edge: PlacedEdge, target: Expansion | undefined): void => {
+    if (!target) {
+      frame.reachesLoop = true;
+      return;
+    }
+    const depth = edge.level + target.depth;
+    if (depth > frame.best.depth) frame.best = { depth, via: edge };
+  };
+
+  for (const root of nodes) {
+    if (measured.has(root) || unbounded.has(root)) continue;
+    const frames: Frame[] = [enter(root)];
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (!frame) break;
+      const edge = frame.edges[frame.next];
+      if (edge) {
+        frame.next += 1;
+        if (open.has(edge.to) || unbounded.has(edge.to)) follow(frame, edge, undefined);
+        else if (measured.has(edge.to)) follow(frame, edge, measured.get(edge.to));
+        else frames.push(enter(edge.to));
+        continue;
+      }
+      frames.pop();
+      open.delete(frame.node);
+      if (frame.reachesLoop) unbounded.add(frame.node);
+      else measured.set(frame.node, frame.best);
+      // The node below took the edge that entered this one, and is waiting
+      // on its answer.
+      const below = frames[frames.length - 1];
+      const entered = below?.edges[below.next - 1];
+      if (below && entered) follow(below, entered, measured.get(frame.node));
+    }
+  }
+  return measured;
 }

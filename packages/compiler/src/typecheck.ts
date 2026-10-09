@@ -61,15 +61,20 @@ import {
 } from "./codegen.ts";
 import {
   aliasTarget,
-  boundaryTarget,
+  type Expansion,
+  expansionDepths,
   expansionTargets,
   findCycles,
   type GraphEdge,
+  type PlacedEdge,
+  type TileExpansion,
+  tileExpansion,
 } from "./def-graph.ts";
 import { type FnScopeBind, fnScope } from "./fn-scope.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "./input-bind.ts";
 import { keyRepresentation } from "./key-representation.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "./parse-reading.ts";
+import { MAX_NESTING_DEPTH } from "./parser.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "./refinement-positions.ts";
 import { type RefinementProblem, refinementBaseProblem, refinementProblem } from "./refinements.ts";
@@ -394,10 +399,11 @@ function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
 
 /**
  * A tile that expands into itself, a `fn` that calls itself, and a `type` whose
- * alias chain returns to itself.
+ * alias chain returns to itself — and, over the same tile edges, a tile tree
+ * that inlines deeper than the limit.
  *
- * The three are checked together because the question is the same one — does
- * the definition graph close a loop — and only the edges differ. Slots are
+ * The three loops are checked together because the question is the same one —
+ * does the definition graph close a loop — and only the edges differ. Slots are
  * absent: an initializer may not read another slot at all (`E0304`), which
  * leaves a slot loop unreachable.
  */
@@ -408,17 +414,15 @@ function checkCycles(
   errors: KumikiError[],
 ): void {
   const tiles = program.defs.filter((d): d is TileDef => d.kind === "TileDef");
-  const tileEdges = (name: string): readonly GraphEdge[] => {
-    const def = sym.tiles.get(name);
-    if (!def) return [];
-    const boundary = boundaryTarget(def);
-    const targets = boundary
-      ? [...expansionTargets(def.body), boundary]
-      : expansionTargets(def.body);
+  // Each body is walked once, for the loop search and the depth alike.
+  const tileGraph = new Map<string, TileExpansion>();
+  for (const [name, def] of sym.tiles) {
+    const { depth, edges } = tileExpansion(def);
     // Builtins terminate — they have no body to expand — so only names that
     // resolve to a declared tile are edges.
-    return targets.filter((e) => sym.tiles.has(e.to));
-  };
+    tileGraph.set(name, { depth, edges: edges.filter((e) => sym.tiles.has(e.to)) });
+  }
+  const tileEdges = (name: string): readonly PlacedEdge[] => tileGraph.get(name)?.edges ?? [];
   for (const cycle of findCycles(
     tiles.map((t) => t.name),
     tileEdges,
@@ -430,6 +434,7 @@ function checkCycles(
       pos: cycle.pos,
     });
   }
+  checkTileDepth(tileGraph, errors);
 
   const fns = program.defs.filter((d): d is FnDef => d.kind === "FnDef");
   const fnEdges = (name: string): readonly GraphEdge[] => {
@@ -477,6 +482,76 @@ function checkCycles(
       pos: cycle.pos,
     });
   }
+}
+
+/**
+ * A tile whose tree, once every user tile in it is inlined, nests deeper than
+ * one definition may (`E0237`, language.md §1.2.3).
+ *
+ * Code generation inlines each call, so the module it emits nests as deep as
+ * that tree, and the parser — which sees one definition at a time — bounds none
+ * of it: a chain of definitions, none of them deep, adds up to a module the
+ * engine will not load. `tileGraph` is each tile's body as written, with its
+ * edges to declared tiles, in declaration order.
+ *
+ * Reported once for each tile nothing measured expands into. Every tile that
+ * something does is inside that one's tree, over the limit only because it is
+ * deep there, and naming each of them would bury the one report in a chain's
+ * worth of copies. A tile that reaches a loop has no depth, and is `E0005`'s.
+ */
+function checkTileDepth(
+  tileGraph: ReadonlyMap<string, TileExpansion>,
+  errors: KumikiError[],
+): void {
+  const edgesOf = (name: string): readonly PlacedEdge[] => tileGraph.get(name)?.edges ?? [];
+  const ownDepth = (name: string): number => tileGraph.get(name)?.depth ?? 0;
+  const depths = expansionDepths(tileGraph.keys(), edgesOf, ownDepth);
+  const inside = new Set<string>();
+  for (const name of depths.keys()) for (const e of edgesOf(name)) inside.add(e.to);
+
+  for (const name of tileGraph.keys()) {
+    const root = depths.get(name);
+    if (!root || root.depth <= MAX_NESTING_DEPTH || inside.has(name)) continue;
+    const over = whereDepthGoesOver(name, depths, ownDepth);
+    // A tree that is over with nothing inlined on its deepest path is one
+    // definition on its own, which the parser refuses before this runs.
+    if (!over) continue;
+    errors.push({
+      code: "E0237",
+      kind: "tile-depth",
+      message: `Tile "${name}" nests ${root.depth} levels deep once the tiles in it are inlined, past the limit of ${MAX_NESTING_DEPTH}; it goes over where "${over.from}" expands into "${over.edge.to}"`,
+      pos: over.edge.pos,
+    });
+  }
+}
+
+/**
+ * Where `root`'s tree goes past the limit: down its deepest path, the first
+ * edge whose target's body — on its own, before anything in it is inlined —
+ * reaches below the bound. Everything above that edge is within it.
+ *
+ * For a tree over the limit that edge exists: each tile on the path is within
+ * the bound on its own, so the path crosses it at one of the edges between
+ * them. Should the walk end without crossing, the last edge stands in, so the
+ * tree is still reported. `null` only for a path with no edge on it.
+ */
+function whereDepthGoesOver(
+  root: string,
+  depths: ReadonlyMap<string, Expansion>,
+  ownDepth: (name: string) => number,
+): { readonly from: string; readonly edge: PlacedEdge } | null {
+  // The level of `root`'s tree that `from`'s body hangs below.
+  let base = 0;
+  let from = root;
+  let last: { readonly from: string; readonly edge: PlacedEdge } | null = null;
+  for (let edge = depths.get(root)?.via; edge; edge = depths.get(from)?.via) {
+    last = { from, edge };
+    const at = base + edge.level;
+    if (at + ownDepth(edge.to) > MAX_NESTING_DEPTH) return last;
+    base = at;
+    from = edge.to;
+  }
+  return last;
 }
 
 // ----- motion layer -----

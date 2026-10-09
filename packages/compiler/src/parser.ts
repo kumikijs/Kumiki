@@ -69,8 +69,12 @@ type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
  * covers both. The limit is far above anything written in practice — no
  * program in this repository's examples or benchmarks comes close, and the
  * corpus gates would fail if one ever did.
+ *
+ * The parse sees one definition at a time, but code generation inlines every
+ * user tile at its call, so the tree it emits is the tiles' trees added up. The
+ * typechecker holds that sum to this same bound (E0237).
  */
-const MAX_NESTING_DEPTH = 256;
+export const MAX_NESTING_DEPTH = 256;
 
 /** The primitive type names, which a type position reads as `TypePrim`. */
 export const PRIM_TYPES: ReadonlySet<string> = new Set([

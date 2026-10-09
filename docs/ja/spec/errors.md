@@ -887,6 +887,18 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 **修正**：型と組み合わせられるフィールド種別を与える — `input(bind=age, type="number")`、`input(bind=due, type="date")` — か、フィールドが保持する型の slot を bind する。時刻だけなら `type="time"` のフィールドで `Text` として保持するか、`type="datetime-local"` のフィールドで `Time` を使う。`Option` はペイロードを `.get` で bind する。
 
+### E0237 `tile-depth`
+
+tile の木が、その中のユーザー tile を展開すると 256 段より深く入れ子になる（[§1.2.3](./language.md#_1-2-3-設計判断)）。コード生成はユーザー tile の呼び出しをすべてインライン展開するので、互いを呼ぶ tile の深さは足し合わされ、一度に一つの定義しか見ないパーサはその和を何も制限しない。次の定義を呼ぶ定義の連鎖は、どの定義も深くないのに、JavaScript エンジンが読み込めないモジュール（V8 はパース中にスタックを使い切る）に達し、さらに長ければコード生成そのものを溢れさせる。上限はパーサ自身のもので、それをモジュールの元になる木に掛ける。
+
+> `Tile "<root>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "<from>" expands into "<to>"`
+
+段の数え方は [§1.2.3](./language.md#_1-2-3-設計判断) のとおりである：builtin でもユーザーでも呼び出しはそれぞれ 1 段、`for` / `when` / `if` / `match` もそれぞれ 1 段、ユーザー tile の本体はその呼び出しの下にぶら下がり、`error-boundary` はさらに 1 段で、フォールバックの本体は tile 自身の本体と並んでその下にある。`tile T0 = column(T1)`、`tile T1 = column(T2)`、… という連鎖は 1 リンクあたり 2 段なので、129 番目のリンクで上限を超える。
+
+ほかのどの tile も展開しない tile——ルートの対象、あるいはどこからも名指されない tile——ごとに 1 件報告する。それより下の tile はすべて、その木の中での位置のせいで上限を超えているにすぎないからである。位置は木が上限を超える箇所である：`<root>` から最も深い経路をたどって下り、対象の本体が 256 段目より下へ届く、`<from>` の中の呼び出し（または `error-boundary` 節）。自分自身へ展開する tile には深さが無く、[E0005](#e0005-tile-cycle) だけが報告する。
+
+**修正**：木を浅くする。定義の連鎖で 1 段ずつ書き下している繰り返しはコレクションに対する `for` に、描き分けは `when` / `match` に属し、いずれも描画する要素や分岐がいくつあっても 1 段である。木の一部を別の tile に移しても助けにならない：呼び出された場所へ再びインライン展開される。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
