@@ -23,12 +23,12 @@ import { atomicWriteFileSync } from "./write-lock.ts";
 
 /**
  * How much of the source a patch's `apply` disturbs — the only thing that
- * decides what order a plan may be composed in.
+ * decides what order a plan may be composed in (`applicationOrder`).
  *
- * A repair whose replacement is a different length shifts everything after it,
- * and the regression gate reads a diagnostic's identity as `code@line:col`. So
- * a patch applied before another that writes to its left turns that other one's
- * diagnostic into an "introduced" one and rolls the whole plan back.
+ * A `span` or `line` patch writes at a position measured on the source the
+ * plan was made from. A patch composed before it that writes to its left, or
+ * adds lines above it, moves the text that position named, and the repair then
+ * misses: it finds nothing to replace there, or replaces something else.
  *
  * `span` is the precise case and composes from the right. `line` cannot: it
  * rewrites the first match on its line wherever that is, so it can move a
@@ -37,6 +37,13 @@ import { atomicWriteFileSync } from "./write-lock.ts";
  * or extended elsewhere in the file (which moves whole lines), and the
  * offset-addressed splices `planTestPatch` builds, which are applied alone. It
  * goes last.
+ *
+ * A `region` patch is composed after every other tier, and nothing orders one
+ * `region` patch against another, so the text its `apply` is handed may have
+ * been moved by any other patch in the plan. It therefore finds where to write
+ * in that text, as `appendToAppClause` does, and never at a line, a line range
+ * or an offset read off the plan's source. A `planTestPatch` splice keeps its
+ * offsets only because it is applied alone, to the source it was planned on.
  */
 export type PatchAnchor =
   | { kind: "span"; pos: Pos }
@@ -444,7 +451,7 @@ export function planFixesExplained(
       patches.push({ ...patch, anchor });
     };
     // For the repairs that add or extend a region elsewhere in the file, which
-    // moves every line after it.
+    // moves every line after it. `PatchAnchor` says where such an `apply` looks.
     const addElsewhere = (patch: Omit<AutoPatch, "anchor">): void => {
       patches.push({ ...patch, anchor: { kind: "region" } });
     };
@@ -833,17 +840,22 @@ export function planFixesExplained(
 }
 
 /**
- * The order a plan may be composed in, by how much of the source each patch
+ * The order a plan is composed in, by how much of the source each patch
  * disturbs (see `PatchAnchor`): every `span` first and from the right, then
- * every `line`, then every `region`. Within a tier the plan's own order is
- * kept, which for `line` matters: two repairs of the same misspelling on one
- * line each take the first remaining match.
+ * every `line`, then every `region`.
  *
- * This is only about not invalidating the *positions* patches were measured
- * at. A diagnostic that no patch repairs still moves when a patch to its left
- * lands, and the regression gate — which compares `code@line:col` — still
- * calls the moved one introduced and rolls the plan back. Ordering cannot
- * reach that; only a position-independent identity could.
+ * Patches the tiers do not tell apart — two `span` patches at one position,
+ * two `line` patches, any two `region` patches — keep the order the plan lists
+ * them in, which is the order of the diagnostics they repair. The sort is
+ * stable, and for `line` that is load-bearing: two repairs of the same
+ * misspelling on one line each take the first remaining match. For `region` it
+ * is nothing a patch may lean on, since the order `check` reports diagnostics
+ * in is not arranged for it; `PatchAnchor` says what a `region` patch does
+ * instead.
+ *
+ * This is only about the positions patches were measured at. A diagnostic no
+ * patch repairs moves too, and the regression gate does not mind: it
+ * identifies a diagnostic without its position (`diagnosticKey`).
  */
 const ANCHOR_TIER: Record<PatchAnchor["kind"], number> = { span: 0, line: 1, region: 2 };
 

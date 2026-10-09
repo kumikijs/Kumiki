@@ -1884,6 +1884,59 @@ describe("planFixes: expanded auto-patch coverage", () => {
     const after = readFileSync(file, "utf8");
     expect(after).toMatch(/caps\s*=\s*\[storage\.read,\s*log\.write\]/);
   });
+
+  it("composes the E0001 and E0301 repairs in either order", () => {
+    // Both are `region` patches, which compose in the order their diagnostics
+    // arrive. E0001's prepends a tile, which moves every line of the app, and
+    // E0301's lengthens the caps clause, which moves every offset after it, so
+    // whichever lands first moves what the other writes to. Each order is
+    // planned and composed here, rather than only the one `check` reports.
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-region-order-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "effect logHello cap=log.write",
+        "                in=Text",
+        "                out=Unit",
+        "",
+        'reducer greet on=app.start do= emit logHello("hi")',
+        'tile App = heading("hi")',
+        "app A",
+        "    caps   = []",
+        '    routes = {"/" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const errors = check(store.program);
+    expect(errors.map((e) => e.code).sort()).toEqual(["E0001", "E0301"]);
+    for (const arrived of [errors, [...errors].reverse()]) {
+      const order = arrived.map((e) => e.code).join(" then ");
+      const { patches } = planFixesExplained(store, arrived);
+      // The plan keeps the arrival order, so the two orders really are two.
+      expect(patches.map((p) => p.code)).toEqual(arrived.map((e) => e.code));
+      expect(patches.map((p) => p.anchor.kind)).toEqual(["region", "region"]);
+      const after = patches.reduce((text, p) => p.apply(text), store.source);
+      const program = parse(lex(after));
+      const app = program.defs.find((d) => d.kind === "AppDef");
+      if (app?.kind !== "AppDef") throw new Error(`${order}: the composed source has no app`);
+      expect(app.caps, order).toEqual(["log.write"]);
+      expect(
+        app.routes.map((r) => [r.path, r.tile]),
+        order,
+      ).toEqual([
+        ["/", "App"],
+        ["/404", "NotFound"],
+      ]);
+      expect(
+        check(program).map((e) => `${e.code} ${e.message}`),
+        order,
+      ).toEqual([]);
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 // M4b+ / #156 review C4: regression gate.
