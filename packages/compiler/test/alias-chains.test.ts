@@ -175,6 +175,53 @@ test gen =
     const result = compile(slotOver(20_000, wheres), { runtimeSpecifier: "@kumikijs/runtime" });
     expect(result.kind === "fail" ? result.errors : []).toEqual([]);
   }, 60_000);
+
+  // The same chain one position down. A slot whose type carries a predicate
+  // below its own chain is gated by a walk of the value (§1.3.3), which
+  // follows the chain at that position to its end too — when it is built, and
+  // when it checks a value.
+  const POSITIONS: readonly [string, (t: string) => string, (v: number) => unknown, unknown][] = [
+    ["a record field", (t) => `slot x : {v: ${t}} = {v: 7}`, (v) => ({ v }), "v"],
+    ["a list element", (t) => `slot x : List(${t}) = [7]`, (v) => [7, v], 1],
+  ];
+
+  it.each(POSITIONS)(
+    "compiles a chain of 20,000 definitions under %s, and names the predicate a value fails there",
+    async (_, slot, holding, step) => {
+      const src = program(`${chain("T", 20_000, 1)}\n${slot(top("T", 20_000))}`);
+      const x = defined((await slotsOf(src)).x, "slot x");
+      const failure = defined(x.refineFailure, "x's walk");
+      expect(failure(holding(7))).toBeUndefined();
+      expect(failure(holding(-1))).toEqual({ kind: "between", args: [0, 1000], path: [step] });
+      expect(failure(holding(51))).toEqual({ kind: "between", args: [-1000, 50], path: [step] });
+      expect(failure(holding(8))).toEqual({ kind: "one-of", args: [-1, 7, 51], path: [step] });
+    },
+    60_000,
+  );
+
+  // A chain of generics, each applied to its parameter and adding `where`s.
+  // A generic's parameter is judged where the generic is applied (§1.3.3), so
+  // an application's arguments are judged against every refinement its body
+  // puts over them, through every generic below it: a long chain of them, or a
+  // shorter one with many `where`s at each level, is more than the call stack
+  // holds when each level and each `where` is a call.
+  it.each([
+    [2000, 1],
+    [40, 250],
+  ])(
+    "compiles a chain of %i generics of %i `where` each, each applying the one below",
+    (generics, wheres) => {
+      const lines = Array.from(
+        { length: generics },
+        (_, i) =>
+          `type G${i}(T) = ${i === 0 ? "T" : `G${i - 1}(T)`}${" where between(0, 1000)".repeat(wheres)}`,
+      );
+      const src = program(`${lines.join("\n")}\nslot x : G${generics - 1}(Int) = 5`);
+      const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime" });
+      expect(result.kind === "fail" ? result.errors : []).toEqual([]);
+    },
+    120_000,
+  );
 });
 
 describe("how long checking a chain of definitions takes", () => {

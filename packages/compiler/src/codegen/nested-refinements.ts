@@ -41,7 +41,8 @@ import { fieldKey } from "./context.ts";
  * a function that calls itself rather than a walk that never ends. The value
  * is finite, and a position it does not have fails the shape check instead of
  * recursing (`type Loop = {next: Loop, …}` on a value with no `next`), so the
- * check is too.
+ * check is too. The names a type's own chain passes through on the way to its
+ * end are part of that one helper rather than one each (`chainJs`).
  */
 
 /** A failure as the runtime reads it back: see `RefinementFailure` in core.ts. */
@@ -125,26 +126,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       case "TypeApp":
         return expandNamed(t, env) ? named(t, generics) : containerJs(t, generics);
       case "TypeNominal":
-      case "TypeRefinement": {
-        // Base outward (§1.3.1): whatever the type under the wrappers refuses
-        // is named first, then each predicate from the innermost out. A run of
-        // wrappers is one check, taken in a loop: a helper per wrapper, each
-        // calling the next, would be a frame per `where` at runtime too.
-        const outermostFirst: Refinement[] = [];
-        let under: TypeExpr = t;
-        while (under.kind === "TypeNominal" || under.kind === "TypeRefinement") {
-          if (under.refinement) outermostFirst.push(under.refinement);
-          under = under.inner;
-        }
-        const steps: string[] = [];
-        const inner = explain(under, generics);
-        if (inner) steps.push(`if ((f = ${named$(inner)}(v, o))) return f;`);
-        for (const r of outermostFirst.reverse()) {
-          const body = refinementBodyJs(r);
-          if (body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
-        }
-        return fnOf(steps);
-      }
+      case "TypeRefinement":
+        return chainJs(t, generics);
       case "TypeRecord":
         return walk(
           t,
@@ -190,23 +173,75 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     const key = typeKey(t);
     const known = helpers.get(key);
     if (known) return known;
+    const inner = entering(t, generics);
+    // Registered before the body is lowered, so a recursive occurrence inside
+    // it becomes a call to this helper. What the body lowers to depends on the
+    // key alone, so the helper is the same wherever the type occurs.
+    const name = `_rq${next++}`;
+    helpers.set(key, name);
+    const fn = chainJs(body, inner);
+    if (fn === undefined) {
+      throw new Error(`nested refinement lowering: "${t.name}" carries a refinement with no walk`);
+    }
+    decls.push(`const ${name} = ${isHelper(fn) ? `(v, o) => ${fn}(v, o)` : fn};`);
+    return name;
+  };
+
+  /** The generics being expanded once `t` is entered, refusing one nested in itself past the limit. */
+  const entering = (
+    t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
+    generics: readonly string[],
+  ): readonly string[] => {
     const inner = t.kind === "TypeApp" ? [...generics, t.name] : generics;
     if (inner.filter((n) => n === t.name).length > GENERIC_SELF_NESTING_LIMIT) {
       throw new Error(
         `nested refinement lowering: "${t.name}" nests inside itself past the limit, which the checker reports as E0803 before codegen runs`,
       );
     }
-    // Registered before the body is lowered, so a recursive occurrence inside
-    // it becomes a call to this helper. What the body lowers to depends on the
-    // key alone, so the helper is the same wherever the type occurs.
-    const name = `_rq${next++}`;
-    helpers.set(key, name);
-    const fn = explain(body, inner);
-    if (fn === undefined) {
-      throw new Error(`nested refinement lowering: "${t.name}" carries a refinement with no walk`);
+    return inner;
+  };
+
+  /**
+   * The check for `t`'s own chain — its `nominal`s and `where`s and the names
+   * it is declared through — followed in a loop to the type the chain ends
+   * at. Base outward (§1.3.1): whatever that type refuses is named first, then
+   * each predicate met on the way, from the innermost out.
+   *
+   * The whole chain is one check. A helper per name or per wrapper, each
+   * calling the next, would be a frame per step at runtime as well as here,
+   * and nothing bounds how long a chain is. A name that already has a helper
+   * ends the chain and is called instead — that is how a recursive type refers
+   * to itself, and how a chain lowered once is shared.
+   */
+  const chainJs = (t: TypeExpr, generics: readonly string[]): string | undefined => {
+    const outermostFirst: Refinement[] = [];
+    const entered = new Set<string>();
+    let inner = generics;
+    let cur = t;
+    for (;;) {
+      if (cur.kind === "TypeNominal" || cur.kind === "TypeRefinement") {
+        if (cur.refinement) outermostFirst.push(cur.refinement);
+        cur = cur.inner;
+        continue;
+      }
+      if (cur.kind !== "TypeRef" && cur.kind !== "TypeApp") break;
+      const body = expandNamed(cur, env);
+      if (!body) break;
+      const key = typeKey(cur);
+      if (helpers.has(key) || entered.has(key)) break;
+      entered.add(key);
+      inner = entering(cur, inner);
+      cur = body;
     }
-    decls.push(`const ${name} = ${isHelper(fn) ? `(v, o) => ${fn}(v, o)` : fn};`);
-    return name;
+    const end = explain(cur, inner);
+    if (outermostFirst.length === 0) return end;
+    const steps: string[] = [];
+    if (end) steps.push(`if ((f = ${named$(end)}(v, o))) return f;`);
+    for (const r of outermostFirst.reverse()) {
+      const body = refinementBodyJs(r);
+      if (body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
+    }
+    return fnOf(steps);
   };
 
   /**

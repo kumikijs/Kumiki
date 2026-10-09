@@ -7169,7 +7169,7 @@ function reportApplied(run: AppliedRun, r: Refinement, message: string): void {
 
 /**
  * The messages for {@link checkApplication}, added to `run`: `name` applied
- * to `writtenArgs`, set against `writtenJudged`, the same application as the
+ * to `args`, set against `judged`, the same application as the
  * definitions around it were already checked with — every parameter still
  * opaque there, opaque. A refinement whose base already had a problem under
  * the judged arguments was reported where that definition was checked, and
@@ -7181,69 +7181,122 @@ function reportApplied(run: AppliedRun, r: Refinement, message: string): void {
  * only ever substituted into a body and normalised, so this changes no base
  * and no message; it is what lets two paths that hand down the same argument
  * meet as one application.
+ *
+ * The walk keeps a stack of what is left to do rather than recursing: a chain
+ * of generics, each applying the one below, is as long as the program makes
+ * it, and each level is an application entered from inside the last. Work is
+ * pushed in reverse and taken from the top, so it is done in the order a
+ * depth-first walk does it — a body's parts in the order they are written, a
+ * nested application's body before the arguments written in it — and the
+ * messages come out in that order.
  */
 function appliedBaseProblems(
   name: string,
-  writtenArgs: readonly TypeExpr[],
-  writtenJudged: readonly TypeExpr[],
+  args: readonly TypeExpr[],
+  judged: readonly TypeExpr[],
   run: AppliedRun,
   scope: AppliedScope,
 ): void {
+  const todo: AppliedWork[] = [{ kind: "enter", name, args, judged, scope }];
+  for (let work = todo.pop(); work !== undefined; work = todo.pop()) {
+    if (work.kind === "enter") enterApplied(work, run, todo);
+    else walkApplied(work.t, work.at, run, todo);
+  }
+}
+
+/** What {@link appliedBaseProblems} has left to do: an application to enter, or part of a body. */
+type AppliedWork =
+  | {
+      readonly kind: "enter";
+      readonly name: string;
+      readonly args: readonly TypeExpr[];
+      readonly judged: readonly TypeExpr[];
+      readonly scope: AppliedScope;
+    }
+  | { readonly kind: "walk"; readonly t: TypeExpr; readonly at: AppliedBody };
+
+/** A body being walked: its parameters as applied, as judged, and the scope inside it. */
+type AppliedBody = {
+  readonly applied: ReadonlyMap<string, TypeExpr>;
+  readonly before: ReadonlyMap<string, TypeExpr>;
+  readonly inside: AppliedScope;
+};
+
+/** `name` applied to `args`, set against `judged`: its body, queued to be walked. */
+function enterApplied(
+  work: AppliedWork & { kind: "enter" },
+  run: AppliedRun,
+  todo: AppliedWork[],
+): void {
+  const { name, scope } = work;
   const { sym } = run;
   const def = sym.types.get(name);
   // A mismatched arity is E0210's, and a parameter with no argument would be
   // read as whatever top-level type shares its name. Re-entering a name is a
   // chain E0009 reports, and the walk has to end on the way there.
-  if (!def || hasEntered(scope, name) || def.params.length !== writtenArgs.length) return;
-  const args = writtenArgs.map((a) => forwardedHead(a, sym));
-  const judged = writtenJudged.map((a) => forwardedHead(a, sym));
-  // The walk below reads nothing but the argument nodes and the guard, so a
-  // second walk with the same nodes from the same scope adds no message.
+  if (!def || hasEntered(scope, name) || def.params.length !== work.args.length) return;
+  const args = work.args.map((a) => forwardedHead(a, sym));
+  const judged = work.judged.map((a) => forwardedHead(a, sym));
+  // The walk of the body reads nothing but the argument nodes and the guard,
+  // so a second walk with the same nodes from the same scope adds no message.
   if (walkedFrom(scope, name, args, judged)) return;
   scope.walked ??= [];
   scope.walked.push({ name, args, judged });
-  const applied = paramSubstitution(def.params, args);
-  const before = paramSubstitution(def.params, judged);
-  const inside: AppliedScope = { entered: name, from: scope, walked: null };
-  const walk = (t: TypeExpr): void => {
-    switch (t.kind) {
-      case "TypePrim":
-      case "TypeRef":
-        return;
-      case "TypeApp": {
-        const nested = t.args.map((a) => substituteType(a, applied));
-        const nestedBefore = t.args.map((a) => substituteType(a, before));
-        appliedBaseProblems(t.name, nested, nestedBefore, run, inside);
-        for (const a of t.args) walk(a);
-        return;
-      }
-      case "TypeRecord":
-        for (const f of t.fields) walk(f.type);
-        return;
-      case "TypeUnion":
-        for (const v of t.variants) for (const p of v.payloads) walk(p);
-        return;
-      case "TypeNominal":
-      case "TypeRefinement": {
-        const r = t.refinement;
-        // A problem with the arguments is the definition's, reported there.
-        if (r && !refinementProblem(r)) {
-          const was = judgedBase(substituteType(t.inner, before), sym);
-          const now = judgedBase(substituteType(t.inner, applied), sym);
-          if (now && !(was && refinementBaseProblem(r, was))) {
-            const over = `${run.shown} applies it over ${typeToString(now)}`;
-            const message = refinementBaseProblem(r, now, over);
-            if (message) reportApplied(run, r, message);
-          }
-        }
-        walk(t.inner);
-        return;
-      }
-      default:
-        assertNever(t);
+  const at: AppliedBody = {
+    applied: paramSubstitution(def.params, args),
+    before: paramSubstitution(def.params, judged),
+    inside: { entered: name, from: scope, walked: null },
+  };
+  todo.push({ kind: "walk", t: def.body, at });
+}
+
+/** One part of a body: the refinement it puts over its arguments, and its own parts queued. */
+function walkApplied(t: TypeExpr, at: AppliedBody, run: AppliedRun, todo: AppliedWork[]): void {
+  const parts = (xs: readonly TypeExpr[]): void => {
+    for (let i = xs.length - 1; i >= 0; i -= 1) {
+      const x = xs[i];
+      if (x) todo.push({ kind: "walk", t: x, at });
     }
   };
-  walk(def.body);
+  switch (t.kind) {
+    case "TypePrim":
+    case "TypeRef":
+      return;
+    case "TypeApp":
+      parts(t.args);
+      todo.push({
+        kind: "enter",
+        name: t.name,
+        args: t.args.map((a) => substituteType(a, at.applied)),
+        judged: t.args.map((a) => substituteType(a, at.before)),
+        scope: at.inside,
+      });
+      return;
+    case "TypeRecord":
+      parts(t.fields.map((f) => f.type));
+      return;
+    case "TypeUnion":
+      parts(t.variants.flatMap((v) => v.payloads));
+      return;
+    case "TypeNominal":
+    case "TypeRefinement": {
+      const r = t.refinement;
+      // A problem with the arguments is the definition's, reported there.
+      if (r && !refinementProblem(r)) {
+        const was = judgedBase(substituteType(t.inner, at.before), run.sym);
+        const now = judgedBase(substituteType(t.inner, at.applied), run.sym);
+        if (now && !(was && refinementBaseProblem(r, was))) {
+          const over = `${run.shown} applies it over ${typeToString(now)}`;
+          const message = refinementBaseProblem(r, now, over);
+          if (message) reportApplied(run, r, message);
+        }
+      }
+      todo.push({ kind: "walk", t: t.inner, at });
+      return;
+    }
+    default:
+      assertNever(t);
+  }
 }
 
 /**

@@ -43,11 +43,35 @@ recorded once per compile, so a later walk stops at a name it has already
 followed. `unaliasType` and `refinementsOf` are one walk, so they cannot
 disagree about where a chain goes.
 
+The same chain one position down, `slot x : {v: T39} = {v: 7}` or a `List`
+of it, is gated by a walk of the value (§1.3.3). That walk was emitted as a
+helper per name, each calling the next, and was built by a call per name as
+well. Before, a chain of 1,000 one-`where` definitions under a record field
+took 52 s to compile, and one of 1,500 crashed. After, the chain at a
+position is one check: the check of the type it ends at comes first, then every
+predicate, base outward. A record field or list element over 20,000 definitions
+compiles in about a second, and its check makes no call per name when it
+runs. An alias of a type that carries a nested refinement no longer gets a
+helper of its own that only calls the next one.
+
+A chain of generics, each applying the one below
+(`type G1(T) = G0(T) where between(0, 1000)`), crashed as well. The check that
+judges an application's arguments against the refinements its body puts over
+them (E0804) walked each body with a call per generic and per `where`. Before,
+2,000 such generics overflowed, as did 40 generics of 250 `where`s each; with
+one `where` per generic, the limit moved between about 1,300 and 2,000 from run
+to run. After, that walk keeps a list of what is left to do and takes it in the
+same order, so its messages are the same and come in the same order. Both chains
+compile. Checking a chain of generics still takes longer than its length alone
+accounts for: 10 to 20 s for 2,000.
+
 A check carrying more than one predicate is emitted as one statement per
 predicate (`if (!(…)) return false;`) instead of one `&&` expression.
 Node loads the `&&` form at any length. Rollup and rolldown both walk an `&&`
 chain by recursion, though, and fail on one a few thousand terms long, which a
 chain like the one above reaches. With the checker fixed and the `&&` form
 kept, a Vite build of the program above crashed in rolldown. A
-check with a single predicate is emitted as before. Every example except the
-two with conjoined predicates builds byte for byte as it did.
+check with a single predicate is emitted as before. Every example builds byte
+for byte as it did, except three. The two with conjoined predicates use the
+statement form. `111-applied-type-qualifier` has one helper fewer: its alias
+`OrderId = Tagged(Int)` no longer gets a helper that only calls `Tagged`'s.
