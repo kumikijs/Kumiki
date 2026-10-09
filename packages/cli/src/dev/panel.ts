@@ -208,8 +208,6 @@ export function installDevPanel(opts: Options): {
   };
 }
 
-// --- helpers ----------------------------------------------------------------
-
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,

@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
+import { seed } from "./helpers/files.ts";
+import { logPath } from "./helpers/op-log.ts";
 
 const SOURCE = `slot count : Int = 0
 
@@ -18,17 +19,13 @@ app Counter
     init   = []
 `;
 
-let dir: string;
 let file: string;
 let opLog: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-edit-line-"));
-  file = join(dir, "c.kumiki");
-  opLog = `${file}.kumiki-ops.jsonl`;
-  writeFileSync(file, SOURCE);
+  file = seed(SOURCE, "c.kumiki");
+  opLog = logPath(file);
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("a per-line edit patch whose text is not on its line", () => {
   it("is rejected by `edit`: exit 1, file untouched, nothing logged", SPAWN, () => {
@@ -52,7 +49,7 @@ describe("a per-line edit patch whose text is not on its line", () => {
   });
 
   it("is rejected by `patch apply`: exit 1, file untouched, nothing logged", SPAWN, () => {
-    const ops = join(dir, "ops.jsonl");
+    const ops = join(dirname(file), "ops.jsonl");
     const op = {
       op: "edit",
       layer: "reducer",

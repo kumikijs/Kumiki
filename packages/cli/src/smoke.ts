@@ -3,11 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile, type KumikiError } from "@kumikijs/compiler";
-import {
-  nodeEpisodeLogReader,
-  nodeRuntimeBundleReader,
-  resolveBuiltinIcons,
-} from "@kumikijs/compiler/node";
+import { nodeEpisodeLogReader, nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
   type AppShape,
   createEpisodeLogger,
@@ -28,7 +24,9 @@ import {
   readHttpFixture,
   useHttpFixture,
 } from "./harness.ts";
+import { builtinIconSubset } from "./icons.ts";
 import { loadSource } from "./store.ts";
+import { messageOf } from "./text.ts";
 
 let domReady: Promise<void> | null = null;
 export function ensureDom(): Promise<void> {
@@ -67,19 +65,10 @@ export async function loadApp(
   }
 
   let result = first;
-  if (opts.sourcePath && first.usedIcons.length > 0) {
-    const registry = await resolveBuiltinIcons(opts.sourcePath);
-    if (registry) {
-      const subset: Record<string, string> = {};
-      for (const name of first.usedIcons) {
-        const path = registry[name];
-        if (typeof path === "string") subset[name] = path;
-      }
-      if (Object.keys(subset).length > 0) {
-        const second = compile(source, { ...baseOpts, icons: subset });
-        if (second.kind === "ok") result = second;
-      }
-    }
+  const icons = opts.sourcePath ? await builtinIconSubset(opts.sourcePath, first.usedIcons) : null;
+  if (icons) {
+    const second = compile(source, { ...baseOpts, icons });
+    if (second.kind === "ok") result = second;
   }
 
   const patched = result.js.replace(/mount\(App, document\.getElementById\("root"\)[^;]*\);?/, "");
@@ -127,14 +116,20 @@ export async function smokeSource(
         : null,
   );
   const app = await loadApp(source, capabilities, opts);
+  return inFreshRoot((root) =>
+    smoke(app, root, {
+      settleMs: opts.settleMs ?? 20,
+      diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
+    }),
+  );
+}
+
+async function inFreshRoot<T>(run: (root: HTMLElement) => Promise<T>): Promise<T> {
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
-    return await smoke(app, root, {
-      settleMs: opts.settleMs ?? 20,
-      diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
-    });
+    return await run(root);
   } finally {
     root.remove();
   }
@@ -197,17 +192,9 @@ export async function runScenarioSource(
   const app = await loadApp(source, capabilities, {
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });
-  const doc = (globalThis as unknown as { document: Document }).document;
-  const root = doc.createElement("div");
-  doc.body.appendChild(root);
-  try {
-    return await runScenario(app, root, scenario, {
-      settleMs: 20,
-      episodeLogger: opts.episodeLogger ?? null,
-    });
-  } finally {
-    root.remove();
-  }
+  return inFreshRoot((root) =>
+    runScenario(app, root, scenario, { settleMs: 20, episodeLogger: opts.episodeLogger ?? null }),
+  );
 }
 
 function loadScenario(path: string): Scenario {
@@ -215,13 +202,13 @@ function loadScenario(path: string): Scenario {
   try {
     raw = readFileSync(path, "utf8");
   } catch (e) {
-    throw new Error(`could not read scenario ${path}: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`could not read scenario ${path}: ${messageOf(e)}`);
   }
   let doc: unknown;
   try {
     doc = JSON.parse(raw);
   } catch (e) {
-    throw new Error(`${path} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`${path} is not valid JSON: ${messageOf(e)}`);
   }
   const steps = (doc as { steps?: unknown } | null)?.steps;
   if (!Array.isArray(steps)) {
@@ -271,8 +258,6 @@ export async function runCmd(
   if (!report.ok) process.exit(1);
 }
 
-// ----- `kumiki test` — run in-language `test` definitions -----
-
 type TestRunner = { name: string; kind: string; run: () => TestResult };
 
 /** Compile a source with tests included, import it, and run every `test` definition. */
@@ -298,7 +283,7 @@ export async function testFile(path: string, capabilities: string[] = []): Promi
   return runTestsSource(readFileSync(path, "utf8"), capabilities, { sourcePath: path });
 }
 
-/** Render a scalar leaf value for the §8.7.1 value arrow (strings get quoted). */
+/** A scalar leaf value as the `expected -> actual` arrow shows it (strings get quoted). */
 function leafStr(v: unknown): string {
   try {
     return JSON.stringify(v) ?? String(v);
@@ -317,7 +302,7 @@ function matchesFilter(name: string, filter: string | undefined): boolean {
 type CoverageCat = { total: string[]; used: string[] };
 export type Coverage = { reducers: CoverageCat; tiles: CoverageCat; effects: CoverageCat };
 
-/** Print the §8.7 coverage report (per reducer / effect / tile), listing the uncovered. */
+/** Prints coverage per reducer / effect / tile, listing the uncovered. */
 function printCoverage(cov: Coverage): void {
   console.log("\ncoverage");
   for (const [label, cat] of [
@@ -334,15 +319,11 @@ function printCoverage(cov: Coverage): void {
 export type TestReport = {
   /** Test results after applying `filter`. */
   results: TestResult[];
-  /** Filter that produced `results`, verbatim (for callers rendering "no tests match …"). */
   filter: string | undefined;
-  /** Sum of `results` (post-filter). */
   total: number;
-  /** Count of `results[i].pass === true`. */
   passed: number;
-  /** `total - passed`. */
   failed: number;
-  /** §8.7 coverage snapshot, populated only when `opts.coverage === true`. */
+  /** Populated only when `opts.coverage === true`. */
   coverage?: Coverage;
 };
 
@@ -379,7 +360,7 @@ function printTestReport(report: TestReport): number {
     return 0;
   }
   for (const r of report.results) {
-    // §8.7.1 tag: `(1ms)`, or `(100 cases, 23ms)` for a property-test.
+    // `(1ms)`, or `(100 cases, 23ms)` for a property-test.
     const bits: string[] = [];
     if (r.cases !== undefined) bits.push(`${r.cases} cases`);
     if (r.ms !== undefined) bits.push(`${r.ms}ms`);
@@ -401,7 +382,7 @@ function printTestReport(report: TestReport): number {
   return report.failed;
 }
 
-/** CLI entry: run `test` definitions, print the §8.7.1 report, exit non-zero on any failure. */
+/** CLI entry: run `test` definitions, print the report, exit non-zero on any failure. */
 export async function testCmd(
   path: string,
   filter: string | undefined,
@@ -417,7 +398,7 @@ export async function testCmd(
       try {
         await runOnce();
       } catch (e) {
-        console.error(`test run failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`test run failed: ${messageOf(e)}`);
       }
     };
     await runSafe();

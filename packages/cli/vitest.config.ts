@@ -11,6 +11,7 @@ export default defineConfig({
     environment: "happy-dom",
     ...sharedTestOptions,
     testTimeout: 30000,
+    unstubEnvs: true,
     server: {
       deps: {
         external: [/\/test-tmp\/[^/]+\/app\.mjs(?:\?|$)/, /\/kumiki-smoke-[^/]+\/app\.mjs(?:\?|$)/],

@@ -7,12 +7,12 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startDevServer } from "../src/dev.ts";
 import { CLI_ARGV, runCli } from "./helpers/cli.ts";
+import { tempDir } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
 
@@ -22,7 +22,7 @@ describe("kumiki dev", () => {
   let tmpRoot: string;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "kumiki-dev-"));
+    tmpRoot = tempDir();
   });
 
   afterEach(async () => {
@@ -59,7 +59,7 @@ describe("kumiki dev", () => {
   it("reads a capability manifest at the project root, as check does", {
     timeout: 60_000,
   }, async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "kumiki-dev-caps-"));
+    const projectRoot = tempDir();
     mkdirSync(join(projectRoot, "src"), { recursive: true });
     writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ name: "p" }));
     writeFileSync(

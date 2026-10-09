@@ -28,7 +28,6 @@ const logger = createEpisodeLogger({
 
 const panel = installDevPanel({ logger, getApp: () => currentApp });
 
-// cannot inherit one of theirs by accident.
 const mountOptions = {
   episodeLogger: logger,
   onDiagnostic: (d: RuntimeDiagnostic) => {

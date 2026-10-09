@@ -6,10 +6,9 @@ import { fileURLToPath } from "node:url";
 export function specDir(): string {
   const env = process.env.KUMIKI_SPEC_DIR;
   if (env) return env;
-  // From packages/mcp/src, walk up to the repo root, then into docs/spec.
+  // src/ and dist/ both sit three levels below the repo root.
   const here = dirname(fileURLToPath(import.meta.url));
-  const candidate = join(here, "..", "..", "..", "docs", "spec");
-  return candidate;
+  return join(here, "..", "..", "..", "docs", "spec");
 }
 
 export function listSpecDocs(): string[] {

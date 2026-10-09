@@ -1,27 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { applyFixPlan } from "@kumikijs/cli";
-import { afterEach, describe, expect, it } from "vitest";
-
-let dir = "";
-const fixture = (prefix: string, lines: string[]): string => {
-  dir = mkdtempSync(join(tmpdir(), prefix));
-  const file = join(dir, "in.kumiki");
-  writeFileSync(file, `${lines.join("\n")}\n`);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
+import { describe, expect, it } from "vitest";
+import { seedLines } from "./helpers/files.ts";
 
 const at = (e: { code: string; pos: { line: number; col: number } }): string =>
   `${e.code}@${e.pos.line}:${e.pos.col}`;
 
 describe("a diagnostic a repair merely moved is not an introduced one", () => {
   it("along its line — the repair is shorter than what it replaced", () => {
-    const file = fixture("kumiki-gate-column-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       "reducer clicked on=ui.click(B) do= seen := $route.path + qqqqqqqqqq",
       'tile B = button(text="go")',
@@ -42,7 +29,7 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
   });
 
   it("down the file — the repair inserts lines above it", () => {
-    const file = fixture("kumiki-gate-row-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       'reducer clicked on=ui.click(B) do= seen := "x"',
       'tile B = button(text="go")',
@@ -62,7 +49,7 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
   });
 
   it("when two diagnostics share a code and only one is repairable", () => {
-    const file = fixture("kumiki-gate-samecode-", [
+    const file = seedLines([
       "slot counter : Int = 0",
       "slot n : Int = 0",
       "reducer r on=ui.click(B) do= n := countr + qqqqqqqqqq",
@@ -85,7 +72,7 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
 
 describe("a repair that leaves the file no cleaner still rolls back", () => {
   it("when it rewords a diagnostic while another repair resolves one", () => {
-    const file = fixture("kumiki-gate-reworded-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       'tile Button = button(text="go")',
       "reducer Bttn on=ui.click(Bttn) do= seen := $route.path",
@@ -109,7 +96,7 @@ describe("a repair that leaves the file no cleaner still rolls back", () => {
   });
 
   it("when it swaps one diagnostic for another", () => {
-    const file = fixture("kumiki-gate-swap-", [
+    const file = seedLines([
       "effect logHello cap=lgo",
       "                in=Text",
       "                out=Unit",
@@ -135,7 +122,7 @@ describe("a repair that leaves the file no cleaner still rolls back", () => {
   });
 
   it("when the repair creates a type error where a name error was", () => {
-    const file = fixture("kumiki-gate-introduced-", [
+    const file = seedLines([
       "slot n  : Int  = 0",
       'slot cn : Text = ""',
       "reducer bump on=ui.click(Btn) do= n := cnt + 1",

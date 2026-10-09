@@ -1,11 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { hostname, tmpdir } from "node:os";
+import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { writeLockPath } from "../src/write-lock.ts";
+import { tempDir } from "./helpers/files.ts";
 import type { ThreadWriter } from "./helpers/write-lock-thread.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -17,7 +18,7 @@ let file = "";
 let events = "";
 let workers: Worker[] = [];
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-write-lock-threads-"));
+  dir = tempDir();
   file = join(dir, "c.kumiki");
   events = join(dir, "events");
   writeFileSync(file, "");
@@ -26,7 +27,6 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await Promise.all(workers.map((w) => w.terminate()));
-  rmSync(dir, { recursive: true, force: true });
 });
 
 /** Start a writer thread; resolves once it has exited. */

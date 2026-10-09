@@ -7,6 +7,7 @@ import { plural } from "../fix.ts";
 import { load } from "../store.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 import { applyStrictFlags } from "./_shared/strict-flags.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE =
   "Usage: kumiki check <input.kumiki> [--strict-a11y] [--strict-icons] [--strict-selector-id] [--types] [--refs] [--effects]";
@@ -91,7 +92,7 @@ function scopesFrom(options: CheckOptions): CheckScope[] {
   return scopes;
 }
 
-export function registerCheck(program: Command): void {
+export function registerCheck(program: Command): string {
   const cmd = program
     .command("check")
     .description(
@@ -103,10 +104,7 @@ export function registerCheck(program: Command): void {
     .option("--effects", "narrow to effect errors (E03*)")
     .allowExcessArguments(false)
     .action(async (input: string | undefined, options: CheckOptions) => {
-      if (!input) {
-        console.error(USAGE);
-        process.exit(2);
-      }
+      if (!input) exitWithUsage(USAGE);
       await checkCmd(
         input,
         Boolean(options.strictA11y),
@@ -116,4 +114,5 @@ export function registerCheck(program: Command): void {
       );
     });
   applyStrictFlags(cmd);
+  return USAGE;
 }

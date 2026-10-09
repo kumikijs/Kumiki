@@ -1,16 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { createLogger, createServer, type ViteDevServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
-
-const APP = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+import { APP_A as APP, TMP } from "./helpers/plugin.ts";
 
 let server: ViteDevServer | undefined;
 afterEach(async () => {

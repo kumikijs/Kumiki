@@ -1,20 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fixCmd, fixFromTest, runFixFromTest } from "@kumikijs/cli";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-let dir = "";
-const fixture = (prefix: string, lines: string[]): string => {
-  dir = mkdtempSync(join(tmpdir(), prefix));
-  const file = join(dir, "in.kumiki");
-  writeFileSync(file, `${lines.join("\n")}\n`);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
+import { describe, expect, it, vi } from "vitest";
+import { seedLines } from "./helpers/files.ts";
 
 const REPAIR_INTRODUCES_AN_ERROR = [
   "slot n  : Int  = 0",
@@ -34,7 +21,7 @@ const REPAIR_INTRODUCES_AN_ERROR = [
 
 describe("tier-1 repair is gated the way every other write is", () => {
   it("rolls back a repair that introduces an error, and leaves the file alone", async () => {
-    const file = fixture("kumiki-tier1-gate-", REPAIR_INTRODUCES_AN_ERROR);
+    const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
     const before = readFileSync(file, "utf8");
 
     const outcome = await runFixFromTest(file, "bumps", true);
@@ -54,7 +41,7 @@ describe("tier-1 repair is gated the way every other write is", () => {
   });
 
   it("prints the refusal in the same words `fix --apply` prints", async () => {
-    const file = fixture("kumiki-tier1-print-", REPAIR_INTRODUCES_AN_ERROR);
+    const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -79,7 +66,7 @@ describe("tier-1 repair is gated the way every other write is", () => {
   });
 
   it("still reports the planned count in a dry run, which is what it proposes", async () => {
-    const file = fixture("kumiki-tier1-dry-", REPAIR_INTRODUCES_AN_ERROR);
+    const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
     const before = readFileSync(file, "utf8");
 
     const outcome = await runFixFromTest(file, "bumps", false);
@@ -90,7 +77,7 @@ describe("tier-1 repair is gated the way every other write is", () => {
   });
 
   it("still reaches compile-remaining when the gate passes and errors are left", async () => {
-    const file = fixture("kumiki-tier1-remaining-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       "reducer clicked on=ui.click(B) do= seen := $route.path",
       "reducer other   on=ui.click(B) do= seen := nowhere",

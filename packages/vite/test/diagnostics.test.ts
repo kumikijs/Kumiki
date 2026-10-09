@@ -1,40 +1,10 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
-
-type Reported = {
-  message: string;
-  id?: string;
-  loc?: { file: string; line: number; column: number };
-};
-
-/** Run the transform with a context that records what `this.error` was given. */
-async function failureOf(src: string, file: string, opts?: KumikiPluginOptions): Promise<Reported> {
-  const plugin = kumiki(opts);
-  const t = plugin.transform;
-  const fn = typeof t === "function" ? t : t?.handler;
-  if (!fn) throw new Error("plugin has no transform hook");
-  let reported: Reported | undefined;
-  const ctx = {
-    error(e: unknown): never {
-      reported = typeof e === "string" ? { message: e } : (e as Reported);
-      throw new Error("ctx.error");
-    },
-    warn(): void {},
-  };
-  await expect(fn.call(ctx as never, src, file)).rejects.toThrow();
-  if (!reported) throw new Error("transform failed without calling ctx.error");
-  return reported;
-}
+import { APP_A, failureOf, TMP, transformCode } from "./helpers/plugin.ts";
 
 describe("a source that does not parse", () => {
-  const BAD_PARSE = `tile App = column(text("x")\napp A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+  const BAD_PARSE = `tile App = column(text("x")\n${APP_A}`;
 
   it("reports the position the parser stopped at", async () => {
     const r = await failureOf(BAD_PARSE, "/abs/bad.kumiki");
@@ -59,7 +29,7 @@ describe("a source that does not parse", () => {
 
   it("reports a nesting-depth refusal where the parser stopped", async () => {
     const deep = `tile App = ${"box(".repeat(400)}text("x")${")".repeat(400)}
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+${APP_A}`;
     const r = await failureOf(deep, "/abs/deep.kumiki");
     expect(r.message).toContain("Nesting is deeper than");
     expect(r.loc?.file).toBe("/abs/deep.kumiki");
@@ -67,10 +37,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
   });
 
   it("leaves a type error's diagnostic as it was", async () => {
-    const r = await failureOf(
-      `tile App = column(text(nope))\napp A caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
-      "/abs/type.kumiki",
-    );
+    const r = await failureOf(`tile App = column(text(nope))\n${APP_A}`, "/abs/type.kumiki");
     expect(r.message).toContain("Kumiki compile failed");
     expect(r.message).toContain("E0103");
     expect(r.loc?.file).toBe("/abs/type.kumiki");
@@ -97,27 +64,13 @@ describe("the capability manifest a project actually has", () => {
     return { root, file };
   }
 
-  async function transform(file: string, src: string): Promise<string> {
-    const plugin = kumiki();
-    const t = plugin.transform;
-    const fn = typeof t === "function" ? t : t?.handler;
-    const ctx = {
-      error(e: unknown): never {
-        throw new Error(typeof e === "string" ? e : (e as { message: string }).message);
-      },
-      warn(): void {},
-    };
-    const out = (await fn?.call(ctx as never, src, file)) as { code: string };
-    return out.code;
-  }
-
   it("accepts a manifest at the project root, not only beside the source", async () => {
     const p = project();
     writeFileSync(
       join(p.root, "kumiki.caps.json"),
       JSON.stringify({ capabilities: ["telemetry.track"] }),
     );
-    expect(await transform(p.file, CUSTOM_CAP_APP)).toContain("export default App;");
+    expect(await transformCode(CUSTOM_CAP_APP, p.file)).toContain("export default App;");
   });
 
   it("names the directories it searched when no manifest was found", async () => {
@@ -142,7 +95,7 @@ describe("the capability manifest a project actually has", () => {
     const p = project();
     const r = await failureOf(
       `tile App = column(text(nope))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+${APP_A}`,
       p.file,
     );
     expect(r.message).toContain("E0103");

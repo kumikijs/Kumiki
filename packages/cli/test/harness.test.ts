@@ -1,6 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import {
@@ -11,6 +10,7 @@ import {
   useHttpFixture,
 } from "../src/harness.ts";
 import { smokeSource } from "../src/smoke.ts";
+import { seed } from "./helpers/files.ts";
 
 installTestDoubles();
 
@@ -110,15 +110,9 @@ describe("a fixture that is there, and one that is not", () => {
   });
 
   it("does not call a directory in the fixture's place 'no fixture'", () => {
-    const dir = mkdtempSync(join(tmpdir(), "kumiki-fixture-"));
-    const source = join(dir, "app.kumiki");
-    writeFileSync(source, "");
-    mkdirSync(join(dir, "app.http.json"));
-    try {
-      expect(() => readHttpFixture(source)).toThrow();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const source = seed("");
+    mkdirSync(join(dirname(source), "app.http.json"));
+    expect(() => readHttpFixture(source)).toThrow();
   });
 
   it("refuses a path that is not a Kumiki source", () => {

@@ -2,11 +2,12 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { fixCmd, fixFromTest } from "../fix.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE =
   "Usage: kumiki fix <file> [--apply] [<code>]\n       kumiki fix <file> --auto-patch <test-name> [--apply]";
 
-export function registerFix(program: Command): void {
+export function registerFix(program: Command): string {
   program
     .command("fix")
     .description("Suggest / apply auto-patches for a diagnostic or a failing test")
@@ -21,10 +22,7 @@ export function registerFix(program: Command): void {
         code: string | undefined,
         options: { apply?: boolean; autoPatch?: string },
       ) => {
-        if (!file) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!file) exitWithUsage(USAGE);
         const apply = Boolean(options.apply);
         const fixPath = resolve(process.cwd(), file);
         if (options.autoPatch !== undefined) {
@@ -41,4 +39,5 @@ export function registerFix(program: Command): void {
         process.exitCode = fixCmd(fixPath, apply, code, capsFor(fixPath).capabilities);
       },
     );
+  return USAGE;
 }

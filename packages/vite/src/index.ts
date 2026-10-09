@@ -47,7 +47,7 @@ export type KumikiPluginOptions = {
   strictSelectorId?: boolean;
 };
 
-/** Write `path` only if its current contents differ — avoids spurious watch churn. */
+/** Rewriting unchanged contents would retrigger the watcher. */
 function writeIfChanged(path: string, content: string): void {
   if (existsSync(path) && readFileSync(path, "utf8") === content) return;
   writeFileSync(path, content);
@@ -131,10 +131,7 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
       const file = kumikiFile(id);
       if (file === null) return null;
 
-      // When --strict-icons is on, resolve @kumikijs/icons up front so the closed name set reaches `check()` on the first pass.
-      // The resolver is cached per project root, so this is a one-time cost.
-      // When the registry is absent or strictIcons is off, `iconNames` stays empty — `theme.icons` then defines the domain.
-      // The degraded-mode warning is emitted through Rollup's plugin context so it shows up in the build log next to other Vite diagnostics.
+      // Without the registry, `theme.icons` alone defines the strict-icons domain.
       let iconNames: string[] = [];
       if (options.strictIcons) {
         const registry = await resolveBuiltinIcons(file);
@@ -164,15 +161,14 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
         ...(options.strictSelectorId ? { strictSelectorId: true as const } : {}),
       } as const;
 
-      // A lex or parse error leaves `compile` as an exception rather than a result — the likeliest failure while typing, and the one that used to reach the overlay as a stack trace with no line to jump to.
+      // A lex or parse error leaves `compile` as an exception rather than a result.
       let first: CompileResult;
       try {
         first = compile(code, baseOpts);
       } catch (e) {
         reportThrown(this, e, file);
       }
-      // Surface non-fatal warnings (W02xx) through Rollup's plugin context so they show in Vite's overlay/build log without breaking the import.
-      // Emit BEFORE the error-bail path so warnings detected alongside a fatal error aren't silently lost when `this.error` throws.
+      // Emitted before the error bail-out: `this.error` throws, and warnings found alongside a fatal error would be lost.
       for (const w of first.warnings) {
         this.warn({
           message: `${w.code} ${w.kind}: ${w.message}`,
@@ -186,18 +182,11 @@ export function kumiki(options: KumikiPluginOptions = {}): Plugin {
           ? `\n  ${describeCapabilitySearch(caps)}`
           : "";
         const message = `Kumiki compile failed (${file}):\n${detail}${note}`;
-        // Hand the first error's source position to Rollup so Vite's overlay links straight to the offending character instead of just naming the file.
-        // `first.errors` is non-empty here (kind !== "ok" ⇒ errors.length > 0) but TS can't infer that.
         const head = first.errors[0];
-        if (head) {
-          this.error({ message, id: file, loc: locOf(file, head.pos) });
-        } else {
-          this.error(message);
-        }
+        this.error({ message, id: file, ...(head ? { loc: locOf(file, head.pos) } : {}) });
       }
 
-      // Auto-bundle referenced icons. When the project has @kumikijs/icons installed, look up each name surfaced by the first pass and re-codegen with `icons` populated so only used paths reach the output.
-      // When the package is absent we fall through; theme.icons remains the manual escape hatch.
+      // Re-codegen with only the icons the first pass used, so unused paths never reach the output.
       let result = first;
       if (first.usedIcons.length > 0) {
         const registry = await resolveBuiltinIcons(file);

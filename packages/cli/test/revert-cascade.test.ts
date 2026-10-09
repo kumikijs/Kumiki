@@ -1,6 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   addDef,
   listDefs,
@@ -14,49 +13,16 @@ import {
   replaceDef,
   viewHistory,
 } from "@kumikijs/cli";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { seed as seedFile } from "./helpers/files.ts";
+import { logPath, rewriteLogEntry, snapshot } from "./helpers/op-log.ts";
 
-let dir = "";
-const seed = (source: string): string => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-revert-cascade-"));
-  const file = join(dir, "c.kumiki");
-  writeFileSync(file, source);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
-
-const logPath = (file: string): string => `${file}.kumiki-ops.jsonl`;
+const seed = (source: string): string => seedFile(source, "c.kumiki");
 
 const qnames = (file: string): string[] =>
   listDefs(load(file))
     .map((d) => `${d.layer}.${d.name}`)
     .sort();
-
-/** The file and its op log, byte for byte — what "nothing was written" compares. */
-const snapshot = (file: string): { source: string; log: string } => ({
-  source: readFileSync(file, "utf8"),
-  log: readFileSync(logPath(file), "utf8"),
-});
-
-/** Rewrite one op-log entry in place, as an older version of the CLI would have logged it. */
-const rewriteLogEntry = (
-  file: string,
-  opId: string,
-  edit: (entry: Record<string, unknown>) => void,
-): void => {
-  const lines = readFileSync(logPath(file), "utf8").split("\n");
-  const out = lines.map((line) => {
-    if (!line.trim()) return line;
-    const entry = JSON.parse(line) as Record<string, unknown>;
-    if (entry["op-id"] !== opId) return line;
-    edit(entry);
-    return JSON.stringify(entry);
-  });
-  writeFileSync(logPath(file), out.join("\n"));
-};
 
 /** `slot.b` with two tiles hanging off it, every body in the op log. */
 const cascadeFixture = (): { file: string; removeId: string } => {
@@ -292,7 +258,7 @@ describe("patch apply of cascade ops", () => {
     // Put the file back as it was after the cascade, without reverting anything.
     writeFileSync(file, afterCascade.source);
     writeFileSync(logPath(file), afterCascade.log);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     writeFileSync(bundle, `${JSON.stringify(restore)}\n`);
 
     patchApplyFile(file, bundle);
@@ -308,7 +274,7 @@ describe("patch apply of cascade ops", () => {
     const removal = readOpLog(file).find((e) => e["op-id"] === revertId)!;
     writeFileSync(file, beforeRevert.source);
     writeFileSync(logPath(file), beforeRevert.log);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     writeFileSync(bundle, `${JSON.stringify(removal)}\n`);
 
     patchApplyFile(file, bundle);
@@ -320,7 +286,7 @@ describe("patch apply of cascade ops", () => {
     const file = seed("slot a : Int = 0\n");
     addDef(file, "slot", "b", "Int = 1");
     const before = snapshot(file);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     const op = {
       op: "add",
       layer: "slot",
@@ -339,7 +305,7 @@ describe("patch apply of cascade ops", () => {
     const file = seed("slot a : Int = 0\n");
     addDef(file, "slot", "b", "Int = 1");
     const before = snapshot(file);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     const op = {
       op: "replace",
       layer: "slot",

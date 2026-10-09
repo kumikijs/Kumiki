@@ -7,7 +7,7 @@ import { runScenarioSource } from "../src/smoke.ts";
 const COUNTER = app("01-counter");
 
 describe("kumiki run --episode-log", () => {
-  it("records §10.5.1-shaped episodes for every reducer fired by the scenario", async () => {
+  it("records an episode for every reducer the scenario fires", async () => {
     const source = readFileSync(COUNTER, "utf8");
     const logger = createEpisodeLogger();
     await runScenarioSource(

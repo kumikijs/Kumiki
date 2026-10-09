@@ -1,6 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   addDef,
   describeEdit,
@@ -9,30 +8,18 @@ import {
   load,
   patchApplyFile,
   patchRevert,
-  readOpLog,
   removeDef,
   replaceDef,
   viewDef,
 } from "@kumikijs/cli";
 import type { TileDef } from "@kumikijs/compiler";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
 import { defined } from "./helpers/defined.ts";
+import { seed as seedFile, tempDir } from "./helpers/files.ts";
+import { lastOp, logPath, rewriteLogEntry } from "./helpers/op-log.ts";
 
-let dir = "";
-const seed = (source: string): string => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-def-header-"));
-  const file = join(dir, "h.kumiki");
-  writeFileSync(file, source);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
-
-const logPath = (file: string): string => `${file}.kumiki-ops.jsonl`;
-const lastOp = (file: string) => defined(readOpLog(file).at(-1), "an op in the log");
+const seed = (source: string): string => seedFile(source, "h.kumiki");
 /** The op-id of the op just logged, read off the log rather than off the verb's result. */
 const lastOpId = (file: string): string => lastOp(file)["op-id"];
 const textOf = (file: string, qname: string): string =>
@@ -45,23 +32,6 @@ const handEdit = (file: string, from: string, to: string): void => {
   const source = readFileSync(file, "utf8");
   expect(source).toContain(from);
   writeFileSync(file, source.replace(from, to));
-};
-
-/** Rewrite one op-log entry in place, as an earlier version of the CLI would have logged it. */
-const rewriteLogEntry = (
-  file: string,
-  opId: string,
-  edit: (entry: Record<string, unknown>) => void,
-): void => {
-  const lines = readFileSync(logPath(file), "utf8").split("\n");
-  const out = lines.map((line) => {
-    if (!line.trim()) return line;
-    const entry = JSON.parse(line) as Record<string, unknown>;
-    if (entry["op-id"] !== opId) return line;
-    edit(entry);
-    return JSON.stringify(entry);
-  });
-  writeFileSync(logPath(file), out.join("\n"));
 };
 
 const APP = `app A
@@ -445,7 +415,7 @@ describe("a logged body means one thing", () => {
     replaceDef(file, "tile.X", 'text("b")');
     const { op, layer, name, body } = lastOp(file);
     handEdit(file, 'tile X = text("b")', 'tile X error-boundary=Oops = text("b")');
-    const ops = join(dir, "ops.jsonl");
+    const ops = join(dirname(file), "ops.jsonl");
     writeFileSync(ops, `${JSON.stringify({ op, layer, name, body })}\n`);
 
     patchApplyFile(file, ops);
@@ -531,8 +501,7 @@ describe("every kind of definition", () => {
 
 describe("kumiki add and replace, the commands", () => {
   it("rejects a layer that labels no definition with 2, before reading the file", SPAWN, () => {
-    dir = mkdtempSync(join(tmpdir(), "kumiki-def-header-"));
-    const missing = join(dir, "missing.kumiki");
+    const missing = join(tempDir(), "missing.kumiki");
 
     const { stderr, code } = runCli(["add", missing, "widget", "X", "Int = 0"]);
 

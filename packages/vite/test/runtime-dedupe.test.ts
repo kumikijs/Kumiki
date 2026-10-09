@@ -1,47 +1,20 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { app } from "@kumikijs/examples";
-import { build } from "vite";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
+import { buildInto, configOf, project, resolveIdOf, transformCode } from "./helpers/plugin.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = app("01-counter");
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
 
 /** A literal the runtime carries and nothing else does — one hit set per copy. */
 const RUNTIME_MARK = "kumiki-state-styles";
 
-/**
- * Build a one-entry project and return the concatenated output. `where` is the directory the throwaway project is created, which defaults to a location within the workspace where `@kumikijs/runtime` is resolved from the project itself.
- */
-async function buildProject(
-  main: string,
-  opts?: KumikiPluginOptions,
-  where: string = TMP,
-): Promise<string> {
-  const root = mkdtempSync(join(where, "build-"));
-  mkdirSync(join(root, "src"), { recursive: true });
-  writeFileSync(join(root, "src", "app.kumiki"), readFileSync(COUNTER, "utf8"));
-  writeFileSync(join(root, "src", "main.ts"), main);
-  await build({
-    root,
-    logLevel: "silent",
-    plugins: [kumiki(opts)],
-    build: {
-      outDir: join(root, "dist"),
-      emptyOutDir: true,
-      lib: { entry: join(root, "src", "main.ts"), formats: ["es"], fileName: "out" },
-      minify: false,
-    },
-  });
-  const outDir = join(root, "dist");
-  return readdirSync(outDir)
-    .map((f) => readFileSync(join(outDir, f), "utf8"))
-    .join("\n");
+/** `where` defaults to the workspace, where the project itself resolves `@kumikijs/runtime`. */
+function buildProject(main: string, opts?: KumikiPluginOptions, where?: string): Promise<string> {
+  const root = project(readFileSync(COUNTER, "utf8"), main, where);
+  return buildInto(root, join(root, "dist"), [kumiki(opts)]);
 }
 
 const marks = (code: string): number => code.split(RUNTIME_MARK).length - 1;
@@ -77,23 +50,16 @@ describe("the built app carries one runtime", () => {
   }, 60_000);
 
   it("compiles to a module that imports the runtime by default", async () => {
-    const plugin = kumiki();
-    const t = plugin.transform;
-    const fn = typeof t === "function" ? t : t?.handler;
-    const src = readFileSync(COUNTER, "utf8");
-    const out = (await fn?.call({ warn() {} } as never, src, COUNTER)) as { code: string };
-    expect(out.code).toMatch(/from "@kumikijs\/runtime"/);
-    expect(out.code).not.toContain(RUNTIME_MARK);
+    const code = await transformCode(readFileSync(COUNTER, "utf8"), COUNTER);
+    expect(code).toMatch(/from "@kumikijs\/runtime"/);
+    expect(code).not.toContain(RUNTIME_MARK);
   });
 });
 
 describe("resolving the runtime", () => {
   /** The hook, plus a context whose `resolve` answers however the case needs. */
   function resolverWith(answer: unknown) {
-    const plugin = kumiki();
-    const r = plugin.resolveId;
-    const fn = typeof r === "function" ? r : r?.handler;
-    if (!fn) throw new Error("plugin has no resolveId hook");
+    const fn = resolveIdOf();
     const calls: unknown[][] = [];
     const ctx = {
       resolve(...args: unknown[]) {
@@ -129,10 +95,7 @@ describe("resolving the runtime", () => {
   });
 
   it("asks the bundler to keep one copy of the runtime", () => {
-    const plugin = kumiki();
-    const c = plugin.config;
-    const fn = typeof c === "function" ? c : c?.handler;
-    const partial = fn?.call({} as never, {}, { command: "build", mode: "production" }) as
+    const partial = configOf().call({} as never, {}, { command: "build", mode: "production" }) as
       | { resolve?: { dedupe?: string[] } }
       | null
       | undefined;

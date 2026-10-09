@@ -8,6 +8,7 @@ import {
   replayEpisodes,
 } from "@kumikijs/runtime";
 import { ensureDom, loadApp } from "./smoke.ts";
+import { messageOf } from "./text.ts";
 
 export type ReplayCmdOptions = {
   fromLog: string;
@@ -43,7 +44,7 @@ export function parseMockArg(arg: string): { effect: string; policy: EpisodeMock
     try {
       value = JSON.parse(payload);
     } catch (e) {
-      throw new Error(`invalid --mock '${arg}': value is not valid JSON — ${(e as Error).message}`);
+      throw new Error(`invalid --mock '${arg}': value is not valid JSON — ${messageOf(e)}`);
     }
   }
   return { effect: name, policy: { policy: "fixed", outcome, value } };
@@ -143,7 +144,7 @@ export async function replayCmd(
   try {
     parsed = parseEpisodeLogText(raw) as EpisodeLogEntry[];
   } catch (e) {
-    console.error(`invalid episode log '${opts.fromLog}': ${(e as Error).message}`);
+    console.error(`invalid episode log '${opts.fromLog}': ${messageOf(e)}`);
     process.exit(1);
   }
 

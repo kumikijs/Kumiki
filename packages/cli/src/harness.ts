@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { messageOf } from "./text.ts";
 
 /** One scripted response. `json` and `text` are alternatives; `json` wins. */
 export type HttpResponseFixture = {
@@ -42,7 +43,7 @@ export function readHttpFixture(kumikiPath: string): HttpFixture | null {
   try {
     return JSON.parse(raw) as HttpFixture;
   } catch (e) {
-    throw new Error(`${path} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`${path} is not valid JSON: ${messageOf(e)}`);
   }
 }
 

@@ -3,19 +3,19 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { hostname, tmpdir } from "node:os";
+import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { addDef, lockDef, readOpLog, replaceDef } from "@kumikijs/cli";
 import { app } from "@kumikijs/examples";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { seedCopy } from "./helpers/files.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = app("01-counter");
@@ -23,21 +23,16 @@ const MUTATE = pathToFileURL(resolve(here, "../src/mutate.ts")).href;
 const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 const WAIT_ENV = "KUMIKI_WRITE_LOCK_WAIT_MS";
 
-let dir = "";
 let file = "";
 let lock = "";
 let holders: ChildProcess[] = [];
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-concurrent-"));
-  file = join(dir, "c.kumiki");
+  file = seedCopy(COUNTER, "c.kumiki");
   lock = `${file}.kumiki-write.lock`;
-  copyFileSync(COUNTER, file);
   holders = [];
 });
 afterEach(() => {
   for (const h of holders) h.kill();
-  delete process.env[WAIT_ENV];
-  rmSync(dir, { recursive: true, force: true });
 });
 
 /** Run a script under tsx in a child process; resolves with its stdout. */
@@ -138,7 +133,7 @@ const RACER = [
 const RACE_ATTEMPTS = 3;
 
 async function race(setup: () => void = () => {}): Promise<Racer[]> {
-  const racer = join(dir, "racer.mts");
+  const racer = join(dirname(file), "racer.mts");
   writeFileSync(racer, RACER);
   const names = Array.from({ length: 4 }, (_, i) => `extra${i + 1}`);
   for (let attempt = 1; ; attempt++) {
@@ -194,8 +189,8 @@ describe("concurrent write verbs", () => {
   it("wait for a live writer's lock and write only after it is released", {
     timeout: 60_000,
   }, async () => {
-    process.env[WAIT_ENV] = "20000";
-    const seen = join(dir, "seen.kumiki");
+    vi.stubEnv(WAIT_ENV, "20000");
+    const seen = join(dirname(file), "seen.kumiki");
     await holdLock(1500, seen);
     const t0 = Date.now();
     addDef(file, "slot", "extra1", "Int = 0");
@@ -208,8 +203,8 @@ describe("concurrent write verbs", () => {
   it("reject after KUMIKI_WRITE_LOCK_WAIT_MS, naming the holder and the lock, with nothing written or logged", {
     timeout: 20_000,
   }, async () => {
-    process.env[WAIT_ENV] = "300";
-    const pid = await holdLock(60_000, join(dir, "seen.kumiki"));
+    vi.stubEnv(WAIT_ENV, "300");
+    const pid = await holdLock(60_000, join(dirname(file), "seen.kumiki"));
     const before = readFileSync(file, "utf8");
     const t0 = Date.now();
     const error = (() => {
@@ -231,7 +226,7 @@ describe("concurrent write verbs", () => {
   });
 
   it("take over a lock whose holder has exited", { timeout: 60_000 }, () => {
-    process.env[WAIT_ENV] = "20000";
+    vi.stubEnv(WAIT_ENV, "20000");
     writeFileSync(lock, JSON.stringify({ pid: exitedPid(), host: hostname() }));
     const t0 = Date.now();
     addDef(file, "slot", "extra1", "Int = 0");
@@ -241,7 +236,7 @@ describe("concurrent write verbs", () => {
   });
 
   it("take over a lock this process left behind", { timeout: 60_000 }, () => {
-    process.env[WAIT_ENV] = "20000";
+    vi.stubEnv(WAIT_ENV, "20000");
     writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname() }));
     addDef(file, "slot", "extra1", "Int = 0");
     expect(slotsInFile()).toEqual(["extra1"]);
@@ -260,7 +255,7 @@ describe("concurrent write verbs", () => {
       timeout: 60_000,
     },
     (_, content) => {
-      process.env[WAIT_ENV] = "20000";
+      vi.stubEnv(WAIT_ENV, "20000");
       writeFileSync(lock, content);
       const old = new Date(Date.now() - 60_000);
       utimesSync(lock, old, old);
@@ -273,7 +268,7 @@ describe("concurrent write verbs", () => {
   it("leave a fresh empty lock alone, since its writer may still be filling it in", {
     timeout: 20_000,
   }, () => {
-    process.env[WAIT_ENV] = "300";
+    vi.stubEnv(WAIT_ENV, "300");
     writeFileSync(lock, "");
     expect(() => addDef(file, "slot", "extra1", "Int = 0")).toThrow("nothing was written");
     expect(existsSync(lock)).toBe(true);
@@ -284,8 +279,8 @@ describe("concurrent write verbs", () => {
     timeout: 60_000,
   }, async () => {
     lockDef(file, "agent:other", "slot.count");
-    process.env[WAIT_ENV] = "20000";
-    await holdLock(60_000, join(dir, "seen.kumiki"));
+    vi.stubEnv(WAIT_ENV, "20000");
+    await holdLock(60_000, join(dirname(file), "seen.kumiki"));
     const t0 = Date.now();
     expect(() => replaceDef(file, "slot.count", "N = 1")).toThrow("lock violation");
     expect(Date.now() - t0).toBeLessThan(5_000);

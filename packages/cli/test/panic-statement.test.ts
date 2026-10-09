@@ -1,17 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { testFile } from "../src/smoke.ts";
+import { seed } from "./helpers/files.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "kumiki-panic-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
-
-function write(name: string, source: string): string {
-  const path = join(dir, name);
-  writeFileSync(path, source);
-  return path;
-}
+const write = (name: string, source: string): string => seed(source, name);
 
 const SOURCE = `slot armed : Bool = false
 slot n     : Int  = 0

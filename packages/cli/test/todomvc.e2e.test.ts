@@ -84,7 +84,6 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     submitForm(root);
     await flush();
     expect(rowTexts(root)).toEqual(["Buy milk"]);
-    // Draft should be cleared.
     expect(getInput(root).value).toBe("");
   });
 
@@ -130,7 +129,6 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     await typeInto(root, "todo2");
     submitForm(root);
     await flush();
-    // Toggle the first row done.
     const firstCheckbox = defined(
       root.querySelectorAll<HTMLInputElement>(
         '[data-kumiki-tile="check"] input[type="checkbox"]',
@@ -140,7 +138,6 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     firstCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
 
-    // Find the filter buttons (text "All" / "Active" / "Done").
     const allBtns = Array.from(
       root.querySelectorAll<HTMLButtonElement>('[data-kumiki-tile="button"]'),
     );

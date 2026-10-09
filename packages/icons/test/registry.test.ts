@@ -77,20 +77,14 @@ const SPEC_NAMES: readonly string[] = [
 ];
 
 describe("@kumikijs/icons", () => {
-  it("exports named SVG path data for documented icons", () => {
-    expect(typeof check).toBe("string");
-    expect(check.length).toBeGreaterThan(0);
-    expect(typeof plus).toBe("string");
-    expect(plus.length).toBeGreaterThan(0);
-  });
-
-  it("groups every named export into ALL_ICONS keyed by spec-form name", () => {
+  it("keys each named export in ALL_ICONS by its kebab-case name", () => {
     expect(ALL_ICONS.check).toBe(check);
+    expect(ALL_ICONS.plus).toBe(plus);
     expect(ALL_ICONS["check-circle"]).toBeDefined();
     expect(ALL_ICONS["external-link"]).toBeDefined();
   });
 
-  it("ICON_NAMES matches spec/style.md §4.8.1 exactly", () => {
+  it("ICON_NAMES is exactly the documented name set, sorted", () => {
     expect(ICON_NAMES).toEqual(SPEC_NAMES);
   });
 

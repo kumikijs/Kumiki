@@ -1,9 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import type { KumikiError } from "@kumikijs/compiler";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { applyFixPlan, fixCmd, planFix, runFixFromTest } from "../src/fix.ts";
+import { seedLines } from "./helpers/files.ts";
 
 /** A `box` cannot fire `focus`, so subscribing to one is W0212 and nothing else. */
 const WARNING = [
@@ -29,17 +28,10 @@ const APP = [
 
 const REPAIRED_TILE = 'tile Title = heading("Hello")';
 
-let dir: string;
 let file: string;
 
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-fix-warn-"));
-  file = join(dir, "in.kumiki");
-});
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
 const write = (lines: string[]): string => {
-  writeFileSync(file, `${lines.join("\n")}\n`);
+  file = seedLines(lines);
   return file;
 };
 

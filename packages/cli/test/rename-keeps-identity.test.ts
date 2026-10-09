@@ -1,6 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
 import {
   addDef,
   editDef,
@@ -14,32 +12,16 @@ import {
   viewHash,
   viewHistory,
 } from "@kumikijs/cli";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { seed as seedFile } from "./helpers/files.ts";
+import { rewriteLogEntry, snapshot } from "./helpers/op-log.ts";
 
-let dir = "";
-const seed = (source: string): string => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-rename-identity-"));
-  const file = join(dir, "h.kumiki");
-  writeFileSync(file, source);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
+const seed = (source: string): string => seedFile(source, "h.kumiki");
 
 const view = (file: string, qname: string): string | null => viewDef(load(file), qname);
 const hashOf = (file: string, qname: string): string => viewHash(load(file), qname);
 const historyOf = (file: string, qname: string): string[] =>
   viewHistory(file, qname).map((e) => e["op-id"]);
-
-const logPath = (file: string): string => `${file}.kumiki-ops.jsonl`;
-
-/** The file and its op log, byte for byte — what "nothing was written" compares. */
-const snapshot = (file: string): { source: string; log: string } => ({
-  source: readFileSync(file, "utf8"),
-  log: readFileSync(logPath(file), "utf8"),
-});
 
 /** `slot.count` added, replaced, then renamed to `total`; the op ids in order. */
 const renamedFixture = (): { file: string; add: string; replace: string; rename: string } => {
@@ -137,23 +119,6 @@ describe("history across a rename", () => {
     expect(historyOf(file, "tile.Show")).toEqual([cascade, restore, rename]);
   });
 });
-
-/** Rewrite one op-log entry in place, as an older version of the CLI would have logged it. */
-const rewriteLogEntry = (
-  file: string,
-  opId: string,
-  edit: (entry: Record<string, unknown>) => void,
-): void => {
-  const lines = readFileSync(logPath(file), "utf8").split("\n");
-  const out = lines.map((line) => {
-    if (!line.trim()) return line;
-    const entry = JSON.parse(line) as Record<string, unknown>;
-    if (entry["op-id"] !== opId) return line;
-    edit(entry);
-    return JSON.stringify(entry);
-  });
-  writeFileSync(logPath(file), out.join("\n"));
-};
 
 const TREE = "slot a : Int = 0\n\ntype Tree = { v: Int, kids: List(Tree) }\n";
 

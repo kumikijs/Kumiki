@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { Argument, type Command } from "commander";
 import { LAYERS, listDefs, load } from "../store.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki list <input.kumiki> [layer]";
 
@@ -12,7 +13,7 @@ export function listCmd(inputArg: string, layer?: string): void {
   }
 }
 
-export function registerList(program: Command): void {
+export function registerList(program: Command): string {
   program
     .command("list")
     .description("List every definition in a .kumiki file (optionally filtered by layer)")
@@ -20,10 +21,8 @@ export function registerList(program: Command): void {
     .addArgument(new Argument("[layer]", "definition label to filter by").choices([...LAYERS]))
     .allowExcessArguments(false)
     .action((input: string | undefined, layer: string | undefined) => {
-      if (!input) {
-        console.error(USAGE);
-        process.exit(2);
-      }
+      if (!input) exitWithUsage(USAGE);
       listCmd(input, layer);
     });
+  return USAGE;
 }

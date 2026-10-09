@@ -5,11 +5,12 @@ import { fileURLToPath } from "node:url";
 import { kumiki as kumikiVitePlugin } from "@kumikijs/vite";
 import type { Plugin, ViteDevServer } from "vite";
 import { createServer } from "vite";
+import { messageOf } from "./text.ts";
 
 const require = createRequire(import.meta.url);
 
 export type DevCmdOptions = {
-  /** TCP port to bind. Defaults to 5173 to match the spec example. `0` picks an ephemeral port. */
+  /** TCP port to bind; defaults to Vite's 5173. `0` picks an ephemeral port. */
   port?: number;
   /** Absolute path to append every committed Episode to (one JSON per line, matching `kumiki run`). */
   episodeLog?: string;
@@ -57,7 +58,7 @@ export async function startDevServer(
   await server.listen();
 
   const address = server.httpServer?.address();
-  const boundPort = address && typeof address === "object" ? address.port : (opts.port ?? port);
+  const boundPort = address && typeof address === "object" ? address.port : port;
   const url = `http://localhost:${boundPort}/`;
   return { server, url };
 }
@@ -80,8 +81,6 @@ export async function devCmd(kumikiPath: string, opts: DevCmdOptions = {}): Prom
     process.once("SIGTERM", stop);
   });
 }
-
-// --- internal Vite plugin ----------------------------------------------------
 
 type InternalOptions = {
   targetAbs: string;
@@ -128,14 +127,14 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
           try {
             JSON.parse(body);
           } catch (e) {
-            fail(400, `invalid episode JSON: ${(e as Error).message}`);
+            fail(400, `invalid episode JSON: ${messageOf(e)}`);
             return;
           }
           if (opts.episodeLog) {
             try {
               appendFileSync(opts.episodeLog, `${body}\n`);
             } catch (e) {
-              fail(500, `failed to append episode log: ${(e as Error).message}`);
+              fail(500, `failed to append episode log: ${messageOf(e)}`);
               return;
             }
           }

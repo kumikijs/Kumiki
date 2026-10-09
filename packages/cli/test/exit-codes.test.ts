@@ -1,16 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
+import { seed, tempDir } from "./helpers/files.ts";
 
-let dir: string;
-
-function write(name: string, source: string): string {
-  const file = join(dir, name);
-  writeFileSync(file, source);
-  return file;
-}
+const write = (name: string, source: string): string => seed(source, name);
 
 const CLEAN = `slot count : Int = 0
 tile App = column(heading("Count: " + count.show))
@@ -55,14 +49,6 @@ test inc-works =
         given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
         expect = {slots: {count: 1}, effects: []}
 `;
-
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-exit-"));
-});
-
-afterAll(() => {
-  rmSync(dir, { recursive: true, force: true });
-});
 
 describe("kumiki fix", () => {
   it("exits 1 in dry-run while the errors are still on disk", SPAWN, () => {
@@ -255,7 +241,7 @@ describe("kumiki refs / view", () => {
   });
 
   it("fails when --history names a file that does not exist", SPAWN, () => {
-    const missing = join(dir, "not-here.kumiki");
+    const missing = join(tempDir(), "not-here.kumiki");
     const { stderr, code } = runCli(["view", missing, "slot.count", "--history"]);
     expect(stderr).toContain(missing);
     expect(code).toBe(1);
@@ -306,13 +292,14 @@ describe("argument shape", () => {
 
 describe("kumiki run", () => {
   it("names the scenario file when it does not exist", SPAWN, () => {
-    const missing = join(dir, "no-scenario.json");
+    const missing = join(tempDir(), "no-scenario.json");
     const { stderr, code } = runCli(["run", write("run-a.kumiki", CLEAN), missing]);
     expect(stderr).toContain(missing);
     expect(code).toBe(1);
   });
 
   it("names the scenario file when it is a directory", SPAWN, () => {
+    const dir = tempDir();
     const { stderr, code } = runCli(["run", write("run-b.kumiki", CLEAN), dir]);
     expect(stderr).toContain(dir);
     expect(code).toBe(1);

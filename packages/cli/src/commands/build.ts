@@ -3,10 +3,11 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { compile } from "@kumikijs/compiler";
-import { resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import type { Command } from "commander";
 import { formatDiagnostic } from "../diagnostic.ts";
+import { builtinIconSubset } from "../icons.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -112,19 +113,10 @@ export async function buildCmd(
     console.error(formatDiagnostic(w));
   }
   let result = first;
-  if (first.usedIcons.length > 0) {
-    const registry = await resolveBuiltinIcons(inputPath);
-    if (registry) {
-      const subset: Record<string, string> = {};
-      for (const name of first.usedIcons) {
-        const path = registry[name];
-        if (typeof path === "string") subset[name] = path;
-      }
-      if (Object.keys(subset).length > 0) {
-        const second = compile(source, { ...baseOpts, icons: subset });
-        if (second.kind === "ok") result = second;
-      }
-    }
+  const icons = await builtinIconSubset(inputPath, first.usedIcons);
+  if (icons) {
+    const second = compile(source, { ...baseOpts, icons });
+    if (second.kind === "ok") result = second;
   }
   const linked = result.runtimeModules.length;
   let artifacts: Artifacts = {
@@ -153,7 +145,7 @@ export async function buildCmd(
   );
 }
 
-export function registerBuild(program: Command): void {
+export function registerBuild(program: Command): string {
   program
     .command("build")
     .description("Compile a .kumiki file and write app.js + runtime/ + index.html into <outdir>")
@@ -168,14 +160,12 @@ export function registerBuild(program: Command): void {
         outdir: string | undefined,
         options: { minify?: boolean; bundle?: boolean },
       ) => {
-        if (!input || !outdir) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!input || !outdir) exitWithUsage(USAGE);
         await buildCmd(input, outdir, {
           minify: options.minify === true,
           bundle: options.bundle === true,
         });
       },
     );
+  return USAGE;
 }

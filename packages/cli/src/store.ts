@@ -63,7 +63,6 @@ function buildEntries(program: Program, lines: string[], tokens: Token[]): DefEn
     const layer = LAYER_OF[d.kind];
     const name = "name" in d ? d.name : "_";
     const start = (d as { pos?: { line: number } }).pos?.line ?? 1;
-    // End line: just before the next def's start (or last line of file).
     const next = program.defs[i + 1];
     const nextStart = next && (next as { pos?: { line: number } }).pos?.line;
     const endLine = nextStart ? nextStart - 1 : lines.length;

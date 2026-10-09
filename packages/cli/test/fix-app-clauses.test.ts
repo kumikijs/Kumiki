@@ -1,25 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fixCmd, planFix } from "@kumikijs/cli";
+import { readFileSync } from "node:fs";
+import { applyFixPlan, fixCmd, planFix } from "@kumikijs/cli";
 import { type AppDef, lex, type Program, parse, type TileDef } from "@kumikijs/compiler";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-let dir: string;
-
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-fix-app-clauses-"));
-});
-
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
-});
-
-function writeSource(source: string): string {
-  const file = join(dir, "app.kumiki");
-  writeFileSync(file, source);
-  return file;
-}
+import { describe, expect, it } from "vitest";
+import { seed as writeSource } from "./helpers/files.ts";
 
 /** Run `kumiki fix <file> --apply` on `source`; the exit code and the file it left. */
 function fixApply(source: string): { code: number; after: string; program: Program } {
@@ -219,6 +202,27 @@ app A
 });
 
 describe("E0301: the capability is a new item of app.caps", () => {
+  it("as the only item of an empty caps list", () => {
+    const { code, program } = fixApply(`${SAVES}
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    expect(code).toBe(0);
+    expect(appOf(program).caps).toEqual(["storage.write"]);
+  });
+
+  it("not a second time when the cap is already listed", () => {
+    const file = writeSource(`${SAVES}
+app A
+    caps   = [storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    expect(applyFixPlan(file, "E0301")).toMatchObject({ applied: 0, remaining: [] });
+  });
+
   it("ahead of a comment after the last cap, which stays a comment", () => {
     const { code, after, program } = fixApply(`${SAVES}
 app A
