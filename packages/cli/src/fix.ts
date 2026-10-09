@@ -7,11 +7,13 @@ import {
   calleeCandidates,
   check,
   collectTimerNames,
+  constructorTags,
   LexError,
   lex,
   nearestName,
   ParseError,
   parse,
+  qualifierCandidates,
   servesNotFound,
   typeCandidates,
   variantTagsOf,
@@ -279,6 +281,26 @@ function suggestNameFrom(candidates: Iterable<string>, missing: string): string 
   return nearestName(missing, candidates);
 }
 
+/**
+ * The names an E0116 of `kind` may be repaired to — the ones the checker
+ * resolves that kind against, so a suggestion here is the one its diagnostic
+ * printed — and the skip reason when none is close.
+ */
+function undefinedNameCandidates(
+  kind: string,
+  store: Store,
+  missing: string,
+): [candidates: string[], noneClose: string] {
+  if (kind === "undef-variant") return [constructorTags(store.program), "e0116-no-close-variant"];
+  if (kind === "undef-qualifier") {
+    return [qualifierCandidates(store.program), "e0116-no-close-qualifier"];
+  }
+  const fnNames = listDefs(store)
+    .filter((e) => e.layer === "fn")
+    .map((e) => e.name);
+  return [calleeCandidates(fnNames, missing), "e0116-no-close-callee"];
+}
+
 function suggestName(store: Store, missing: string): string | null {
   return suggestNameFrom(
     listDefs(store).map((e) => e.name),
@@ -502,24 +524,27 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0116") {
-      // Message shape: `Call to undefined function "<name>"`. The candidate set
-      // is the fn namespace plus the built-in calls — NOT every definition. A
-      // slot or tile is in a different namespace, so proposing one produces
-      // E0116 again at the same position: the patch fails the regression gate,
-      // is rolled back, and the repair loop has spent a round on a name that
-      // could never have resolved.
+      // Message shape: `Call to undefined function "<name>"`,
+      // `Reference to undefined variant "<name>"`, or
+      // `Reference to undefined qualifier "<name>" in "<name>.<member>"` — the
+      // first quoted name is the one at the reported position. The candidate
+      // set is the namespace that kind resolves in: for a callee the fn
+      // namespace plus the built-in calls, for a variant the tags, for a
+      // qualifier the tags, types and namespaces — NOT every definition. A slot
+      // or tile is in a different namespace, so proposing one produces E0116
+      // again at the same position: the patch fails the regression gate, is
+      // rolled back, and the repair loop has spent a round on a name that could
+      // never have resolved.
       const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
       if (quoted.length === 0) {
         skip(err.code, "e0116-quoted-name-extract-failed", err.message);
         continue;
       }
       const missing = quoted[0]!;
-      const fnNames = listDefs(store)
-        .filter((e) => e.layer === "fn")
-        .map((e) => e.name);
-      const suggested = suggestNameFrom(calleeCandidates(fnNames, missing), missing);
+      const [candidates, noneClose] = undefinedNameCandidates(err.kind, store, missing);
+      const suggested = suggestNameFrom(candidates, missing);
       if (!suggested) {
-        skip(err.code, "e0116-no-close-callee", err.message);
+        skip(err.code, noneClose, err.message);
         continue;
       }
       add({

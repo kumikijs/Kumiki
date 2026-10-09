@@ -139,6 +139,19 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
 ]);
 
 /**
+ * The tags of the standard library's unions that no definition in
+ * `STDLIB_TYPES` declares. `Option` and `Result` are generic constructors with
+ * no body to read their tags from, and `HttpBody` (http.md §6.1.3) is read by
+ * the HTTP runtime by tag alone — its `Json` payload is a `JsonValue` no type
+ * names. `FormValue` has a definition, so its tags are read from that.
+ */
+export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["Option", ["Some", "None"]],
+  ["Result", ["Ok", "Err"]],
+  ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
+]);
+
+/**
  * The primitive type names (stdlib §2.1.1). The grammar turns these into
  * `TypePrim` rather than a name lookup, so they never reach the symbol table —
  * but a *misspelling* of one does, as an unresolvable `TypeRef`, which is

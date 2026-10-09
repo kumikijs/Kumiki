@@ -2760,6 +2760,79 @@ describe("planFixesExplained: skip-reason classification", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  /** `request` as an effect's `map-request`, and `value` bound by a reducer's `let`. */
+  const fixedEndToEnd = (request: string, value: string): string[] => {
+    const dir = mkdtempSync(join(tmpdir(), "kumiki-fix-variant-"));
+    const file = join(dir, "in.kumiki");
+    writeFileSync(
+      file,
+      [
+        "type Status = Idle | Busy",
+        "slot s : Status = Idle",
+        "fn idel(x: Int) -> Int = x",
+        `effect load cap=http.get in=Unit out=Result(Text, HttpError) map-request=${request}`,
+        `reducer go on=ui.click(B) do= let next = ${value}`,
+        "    s := next",
+        "    emit load()",
+        'tile B = button(text="b")',
+        "tile App = column(B, text(s.show))",
+        "app A",
+        "    caps   = [http.get]",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const store = load(file);
+    const patches = planFixes(store, check(store.program));
+    let patched = readFileSync(file, "utf8");
+    for (const p of patches) patched = p.apply(patched);
+    rmSync(dir, { recursive: true, force: true });
+    expect(check(parse(lex(patched)))).toEqual([]);
+    return patches.map((p) => p.description);
+  };
+
+  it("e0116: a variant no type declares is repaired from the tags, not the callees", () => {
+    // `Idel` is one edit from the fn `idel` and two from the tag `Idle`. A
+    // capitalised name is a constructor, so only a tag resolves it — the fn
+    // would be E0116 again at the same position.
+    expect(fixedEndToEnd('{url: "/x", decode: Decoder.Text}', "Idel")).toEqual([
+      'replace "Idel" with "Idle" at 5:42',
+    ]);
+  });
+
+  it("e0116: a qualifier that names nothing is repaired from the qualifiers", () => {
+    expect(fixedEndToEnd('{url: "/x", decode: Decodr.None}', "Idle")).toEqual([
+      'replace "Decodr" with "Decoder" at 4:94',
+    ]);
+  });
+
+  it("e0116-no-close-variant / e0116-no-close-qualifier: too far from every candidate", () => {
+    const store = writeAndLoad(
+      ["type Status = Idle | Busy", 'tile App = heading("hi")', ""].join("\n"),
+    );
+    const at = { line: 1, col: 1 };
+    const { patches, skipped } = planFixesExplained(store, [
+      {
+        code: "E0116",
+        kind: "undef-variant",
+        message: 'Reference to undefined variant "ZZZZZZZZZZ"',
+        pos: at,
+      },
+      {
+        code: "E0116",
+        kind: "undef-qualifier",
+        message: 'Reference to undefined qualifier "ZZZZZZZZZZ" in "ZZZZZZZZZZ.show"',
+        pos: at,
+      },
+    ]);
+    expect(patches).toEqual([]);
+    expect(skipped.map((s) => s.reason)).toEqual([
+      "e0116-no-close-variant",
+      "e0116-no-close-qualifier",
+    ]);
+  });
+
   it("e0117-quoted-name-extract-failed: E0117 message without a quoted name", () => {
     const store = writeAndLoad('tile A = heading("hi")\n');
     const { patches, skipped } = planFixesExplained(store, [synth("E0117", "some undefined type")]);

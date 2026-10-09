@@ -100,6 +100,176 @@ describe("E0116 undef-call", () => {
   });
 });
 
+/**
+ * A program whose effect's `map-request` is `request`: a position no declared
+ * type judges, so a capitalised name there is decided by nothing but its own
+ * resolution. `Status` is declared below its first use, so a tag cannot depend
+ * on the order of the definitions.
+ */
+function inRequest(request: string): string {
+  return `slot s : Status = Idle
+effect load cap=http.post in=Unit out=Result(Text, HttpError) map-request=${request}
+reducer go on=ui.click(B) do= emit load()
+tile B = button(text="b")
+tile App = column(B, text(s.show))
+app A caps=[http.post] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+`;
+}
+
+/** `expr` bound by a `let` in a reducer body, the other position no type judges. */
+function inLet(expr: string): string {
+  return `slot t : Text = ""
+reducer go on=ui.click(B) do= let v = ${expr}
+    t := "x"
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+type Load(T) = Waiting | Loaded(T)
+type Cents = nominal Int
+`;
+}
+
+const messages = (src: string) => check(parse(lex(src))).map((e) => e.message);
+
+describe("E0116 undef-variant / undef-qualifier", () => {
+  it("reports a tag no type declares", () => {
+    expect(check(parse(lex(inRequest('{url: "/x", decode: Nonsense}'))))).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-variant",
+        message: 'Reference to undefined variant "Nonsense"',
+        pos: { line: 2, col: 95 },
+      },
+    ]);
+  });
+
+  it("reports the qualifier of a bare member when the qualifier names nothing", () => {
+    expect(check(parse(lex(inRequest('{url: "/x", decode: Decodr.None}'))))).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-qualifier",
+        message:
+          'Reference to undefined qualifier "Decodr" in "Decodr.None" — did you mean "Decoder"?',
+        pos: { line: 2, col: 95 },
+      },
+    ]);
+  });
+
+  it("refuses to build one", () => {
+    expect(() => loweringOf("Nonsense")).toThrow("compile failed: E0116");
+    expect(() => loweringOf("Decodr.None")).toThrow("compile failed: E0116");
+  });
+
+  it("suggests the closest tag a type declares, or a built-in one", () => {
+    expect(messages(inLet("Idel"))).toEqual([
+      'Reference to undefined variant "Idel" — did you mean "Idle"?',
+    ]);
+    expect(messages(inLet("Loadd(1)"))).toEqual([
+      'Reference to undefined variant "Loadd" — did you mean "Loaded"?',
+    ]);
+    expect(messages(inLet("Som(1)"))).toEqual([
+      'Reference to undefined variant "Som" — did you mean "Some"?',
+    ]);
+    expect(messages(inLet('Jsn({"a": 1})'))).toEqual([
+      'Reference to undefined variant "Jsn" — did you mean "Json"?',
+    ]);
+  });
+
+  it("reports a type's name written as a constructor", () => {
+    // A type is no tag. A nominal takes its base's values as they are — there
+    // is no construction form — so `Cents(1)` is a variant record where a
+    // number belongs, and a `Map(Cents, …)` keyed by it never meets `1`.
+    expect(messages(inLet("Cents(1)"))).toEqual(['Reference to undefined variant "Cents"']);
+    expect(messages(inLet("Status"))).toEqual(['Reference to undefined variant "Status"']);
+  });
+
+  it("suggests a tag for the qualifier of a tag's member", () => {
+    expect(messages(inLet("Idel.show"))).toEqual([
+      'Reference to undefined qualifier "Idel" in "Idel.show" — did you mean "Idle"?',
+    ]);
+  });
+
+  it("accepts every tag a type declares, wherever the type is written", () => {
+    // A tag declared below its use, a generic union's, one declared inline in a
+    // slot type and in a record field, the standard library's `FormValue`, and
+    // the built-in `Option` / `Result` ones — in positions no type judges, so
+    // nothing but the tag's own resolution stands between them and a report.
+    // A tag or a type qualifies a bare member too.
+    const src = `slot inline : Red | Green = Red
+slot rec : {mode: On | Off} = {mode: Off}
+slot t : Text = ""
+reducer go on=ui.click(B) do= let a = Busy
+    let b = Loaded(1)
+    let c = Green
+    let d = On
+    let e = Some(1)
+    let f = None
+    let g = Ok(1)
+    let h = Err("x")
+    let i = TextV("x")
+    let j = Idle.show
+    let k = Time.now
+    t := match a with | Idle -> "i" | Busy -> "b"
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+type Load(T) = Waiting | Loaded(T)
+`;
+    expect(codes(src)).toEqual([]);
+  });
+
+  it("accepts each HttpBody variant as a request body", () => {
+    for (const body of [
+      'Json({"a": 1})',
+      'Form({"a": "b"})',
+      'Multipart({"a": TextV("b")})',
+      'Text("t")',
+      'Bytes(Bytes.from-text("b"))',
+      "Empty",
+    ]) {
+      expect(codes(inRequest(`{url: "/x", body: ${body}, decode: Decoder.Text}`)), body).toEqual(
+        [],
+      );
+    }
+  });
+
+  it("reads the argument of Decoder.Json as the type it spells", () => {
+    for (const type of ["Status", "Map(Text, Status)", "{id: Text, s: Status}", "List(Text)"]) {
+      expect(codes(inRequest(`{url: "/x", decode: Decoder.Json(${type})}`)), type).toEqual([]);
+    }
+  });
+
+  it("leaves a tag in a position a type declares to that type's own report", () => {
+    // The declared type names the tags the position accepts, so its report is
+    // the more precise one — and a second at the same name would be one mistake
+    // reported twice, with two repairs aimed at it.
+    const typed = (defs: string) => `${defs}
+effect save cap=storage.write in=Status out=Result(Unit, Text)
+tile App = column(text("a"))
+app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+`;
+    expect(codes(typed("slot s : Status = Zork"))).toEqual(["E0216"]);
+    expect(codes(typed("slot n : Int = Zork"))).toEqual(["E0201"]);
+    expect(codes(typed("reducer r on=app.start do= emit save(Zork)"))).toEqual(["E0216"]);
+  });
+
+  it("leaves a capitalised reducer named by confirm to the reducer-name report", () => {
+    const src = `slot n : Int = 0
+reducer Yes on=app.start do= n := 1
+reducer no on=app.start do= n := 2
+reducer ask on=ui.click(B) do= emit confirm({title: "sure?", onYes: Yes, onNo: no})
+tile B = button(text="ask")
+tile App = column(B, text(n.show))
+app A caps=[notification.show] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codes(src)).toEqual(["E0202"]);
+  });
+});
+
 describe("E0213 call-arity-mismatch", () => {
   it("reports too many arguments to a declared fn", () => {
     expect(check(parse(lex(inReducer("a := double(a, a)"))))).toEqual([

@@ -1,3 +1,4 @@
+import { nearestName } from "@kumikijs/runtime/text-distance";
 import {
   assignable,
   constructorArity,
@@ -83,6 +84,7 @@ import {
   UNIVERSAL_MEMBERS,
 } from "./stdlib-members.ts";
 import { isPrimTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
+import { constructorTags, qualifierCandidates } from "./symbols.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -282,6 +284,23 @@ type SymbolTable = {
    * see `collectElementIds`.
    */
   elementIds: Set<string>;
+  /**
+   * Every tag a variant constructor may name (`constructorTags`), the
+   * program's own first so a did-you-mean tie goes to one of them.
+   */
+  constructorTags: ReadonlySet<string>;
+  /** Every name the qualifier of a bare `Q.member` may name (`qualifierCandidates`). */
+  qualifiers: ReadonlySet<string>;
+  /**
+   * The variants a declared type judged (`checkVariantAgainst`). A tag no type
+   * declares is reported there too — E0216, or E0201 / E0202 when the type is
+   * no union — and that report names the type the position wants, so the
+   * undef-variant `checkExpr` made for the same variant is dropped: one
+   * mistake, one diagnostic, whichever walk reached the variant first.
+   */
+  judgedVariants: WeakSet<Expr>;
+  /** The variant each undef-variant report is about, for the drop above. */
+  undefinedVariants: Map<KumikiError, Expr>;
   app?: AppDef;
 };
 
@@ -306,6 +325,10 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    constructorTags: new Set(constructorTags(program)),
+    qualifiers: new Set(qualifierCandidates(program)),
+    judgedVariants: new WeakSet(),
+    undefinedVariants: new Map(),
   };
 
   for (const def of program.defs) {
@@ -375,7 +398,10 @@ function checkAll(
   checkCycles(program, sym, index, errors);
   checkDuplicateNames(program, errors);
 
-  return errors;
+  return errors.filter((d) => {
+    const variant = sym.undefinedVariants.get(d);
+    return variant === undefined || !sym.judgedVariants.has(variant);
+  });
 }
 
 /** A definition declared twice (`E0007`), and a name written twice (`E0008`). */
@@ -2396,7 +2422,8 @@ function checkStmt(
     const confirmArg = s.effect === "confirm" && s.args.length === 1 ? s.args[0] : undefined;
     if (confirmArg && confirmArg.kind === "RecordLit") {
       for (const f of confirmArg.fields) {
-        if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+        const names = f.name === "onYes" || f.name === "onNo";
+        if (names && f.value.kind === "Ref") {
           if (!sym.reducers.has(f.value.name)) {
             errors.push({
               code: "E0103",
@@ -2407,6 +2434,10 @@ function checkStmt(
           }
           continue;
         }
+        // A capitalised name parses as a variant tag, but the position names a
+        // reducer: the argument's check against `ReducerRef` above reports it
+        // as no reducer name, and resolving it as a tag would report it twice.
+        if (names && f.value.kind === "Variant" && f.value.payload.length === 0) continue;
         checkExpr(f.value, sym, errors, ctx);
       }
       return;
@@ -3074,6 +3105,19 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     }
     case "Variant":
+      // Any capitalised name is a `Variant` to the parser, and codegen builds
+      // one from any spelling — so a tag no type declares is a record that
+      // compares unequal to every value and reads `undefined` off every field.
+      if (!sym.constructorTags.has(e.name)) {
+        const report: KumikiError = {
+          code: "E0116",
+          kind: "undef-variant",
+          message: `Reference to undefined variant "${e.name}"${didYouMean(e.name, sym.constructorTags)}`,
+          pos: e.pos,
+        };
+        errors.push(report);
+        sym.undefinedVariants.set(report, e);
+      }
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
     case "BinOp": {
@@ -3120,7 +3164,25 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       return;
     }
     case "FieldAccess":
-      checkExpr(e.base, sym, errors, ctx);
+      // `Q.member` with no argument list, where `Q` is a capitalised name.
+      // The parser reads a namespace's member as a call (`Decoder.None`), so a
+      // `Q` here is a tag whose value the member is read off (`Idle.show`), a
+      // type (`Time.now`), or nothing — and a qualifier that names nothing is
+      // a field read on a variant no type declares, which evaluates to
+      // `undefined`. So `Q` is resolved as a qualifier, not as the variant it
+      // parsed as: a type is a qualifier and no tag, and a misspelt one is
+      // reported once, as the qualifier.
+      if (e.base.kind === "Variant" && e.base.payload.length === 0) {
+        if (!sym.qualifiers.has(e.base.name)) {
+          errors.push({
+            code: "E0116",
+            kind: "undef-qualifier",
+            message: `Reference to undefined qualifier "${e.base.name}" in "${e.base.name}.${e.field}"${didYouMean(e.base.name, sym.qualifiers)}`,
+            pos: e.base.pos,
+          });
+          return;
+        }
+      } else checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
       return;
     case "Index":
@@ -3138,7 +3200,10 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      for (const a of e.args) {
+        if (e.callee === "Decoder.Json") checkTypeSpelling(a, sym, errors, ctx);
+        else checkExpr(a, sym, errors, ctx);
+      }
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       return;
     case "MethodCall": {
@@ -3368,6 +3433,32 @@ function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): 
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       return;
   }
+}
+
+/** ` — did you mean "<name>"?` for the closest of `candidates`, or nothing when none is close. */
+function didYouMean(written: string, candidates: Iterable<string>): string {
+  const near = nearestName(written, candidates);
+  return near === null ? "" : ` — did you mean "${near}"?`;
+}
+
+/**
+ * The argument of `Decoder.Json(T)`, which is a type written in expression
+ * position (http.md §6.1.4): `Map(TodoId, Todo)` arrives as variants and
+ * `{id: TodoId}` as a record literal, and codegen's `decodedType` reads the two
+ * back as the type they spell. A capitalised name there is a type's, not a
+ * tag, so it is not resolved as one; anything of another shape is the
+ * expression it is.
+ */
+function checkTypeSpelling(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "Variant") {
+    for (const p of e.payload) checkTypeSpelling(p, sym, errors, ctx);
+    return;
+  }
+  if (e.kind === "RecordLit") {
+    for (const f of e.fields) checkTypeSpelling(f.value, sym, errors, ctx);
+    return;
+  }
+  checkExpr(e, sym, errors, ctx);
 }
 
 /**
@@ -3909,6 +4000,11 @@ function checkRecordLit(
  * A variant constructor is the one expression whose type comes entirely from
  * the position it sits in: `Idle` names a tag, and only the declared type says
  * which union that tag belongs to.
+ *
+ * A tag no type declares is reported here as well, and always — it is in no
+ * union, and a type that is not a union takes no variant — so the variant is
+ * recorded as judged and `checkExpr`'s undef-variant for it gives way to the
+ * report that names the type.
  */
 function checkVariantAgainst(
   e: Expr & { kind: "Variant" },
@@ -3919,6 +4015,7 @@ function checkVariantAgainst(
   ctx: Ctx,
   code: MismatchCode,
 ): void {
+  sym.judgedVariants.add(e);
   const payloadsOf = (): TypeExpr[] | "unknown-tag" | null => {
     if (d.kind === "TypeUnion") {
       const v = d.variants.find((variant) => variant.name === e.name);

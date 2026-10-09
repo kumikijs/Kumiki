@@ -85,7 +85,12 @@ export { refinementToJs } from "./refinements.ts";
 // Same reasoning as the call tables above: the definitions themselves stay
 // internal, and only the candidate-set question a repair asks is published.
 export { typeCandidates } from "./stdlib-types.ts";
-export { collectTimerNames, variantTagsOf } from "./symbols.ts";
+export {
+  collectTimerNames,
+  constructorTags,
+  qualifierCandidates,
+  variantTagsOf,
+} from "./symbols.ts";
 export {
   A11Y_CODES,
   check,
