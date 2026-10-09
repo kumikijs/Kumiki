@@ -475,68 +475,7 @@ function tileCallJs(
   if (!BUILTIN_TILES.has(name)) {
     const def = gen.tiles.find((x) => x.name === name);
     if (!def) throw new Error(`Tile "${name}" not found`);
-    // The callee's body is lowered in a scope of its own. A tile is a pure
-    // function of the slots and its `in` argument (language.md §1.7.2
-    // Invariant 1), so none of the caller's `for` / `match` bindings are
-    // visible in it: a name the body reads as a slot stays the slot wherever
-    // the tile is called from.
-    const inner = makeEvalCtx(gen, new Set<string>());
-    // The first positional argument, which is the set `checkTileInput` counts:
-    // the two have to read the same one, or a call the checker approved lowers
-    // to something else. A named argument is a prop and goes to `propsFor`.
-    const arg1 = firstPositional(t);
-    // The handlers written here — plus any handed down from call sites this one
-    // is the root of — belong to the nodes the body renders at its root, so
-    // they go down to each one's `propsFor` and join what is wired there. The
-    // props left for `_attachProps` to merge are data only: a handler spread
-    // over the finished node would replace the ones it already has.
-    const handlers = explicitHandlers(t, rootHandlers);
-    const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
-    const bodyHandlers = handlers.size > 0 ? handlers : undefined;
-    if (arg1) {
-      const v = arg1.value;
-      // `checkTileInput` rejects a tile expression as the positional argument
-      // (E0213 without `in=`, E0201 with it), so a checked program never
-      // passes one here.
-      if (isTileExpr(v)) {
-        throw new Error(`Tile "${name}" called with a tile as its positional argument`);
-      }
-      // Evaluate the positional arg and props in the OUTER context (where
-      // `_d_1` still refers to the enclosing tile's `$1`), then pass them in
-      // as arguments so the inner IIFE can rebind `_d_1` without colliding
-      // with the outer scope.
-      const oneJs = jsOfExpr(v as Expr, ctx);
-      const propsJs = callSiteProps();
-      const bodyCtx = addBind(inner, "$1");
-      const bodyJs = tileExprJs(
-        def.body,
-        gen,
-        bodyCtx,
-        under(enclosingTiles, def.name),
-        undefined,
-        bodyHandlers,
-      );
-      return wrap(
-        placedTileJs(
-          def,
-          `_attachProps(${bodyJs}, _propsOuter)`,
-          gen,
-          enclosingTiles,
-          (marked) =>
-            `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${marked}; })(${oneJs}, ${propsJs})`,
-        ),
-      );
-    }
-    const propsJs = callSiteProps();
-    const bodyJs = tileExprJs(
-      def.body,
-      gen,
-      inner,
-      under(enclosingTiles, def.name),
-      undefined,
-      bodyHandlers,
-    );
-    return wrap(placedTileJs(def, `_attachProps(${bodyJs}, ${propsJs})`, gen, enclosingTiles));
+    return wrap(userTileCallJs(t, def, gen, ctx, enclosingTiles, rootHandlers));
   }
 
   // Builtin tiles. Each case returns the object-literal JS for one node.
@@ -888,6 +827,83 @@ function tileCallJs(
 }
 
 /**
+ * The call `t` of the user tile `def`, lowered where it is written: in `ctx`,
+ * under `enclosingTiles`. Its tree is placed as every position a user tile
+ * renders in is (`placedTileJs`); what a call adds is its argument, bound as
+ * the body's `$1`, and its props. The caller has resolved `def`, and applies
+ * the call's key.
+ */
+function userTileCallJs(
+  t: TileExpr & { kind: "TileCall" },
+  def: TileDef,
+  gen: GenCtx,
+  ctx: EvalCtx,
+  enclosingTiles?: EnclosingTiles,
+  rootHandlers?: HandlerWiring,
+): string {
+  // The callee's body is lowered in a scope of its own. A tile is a pure
+  // function of the slots and its `in` argument (language.md §1.7.2
+  // Invariant 1), so none of the caller's `for` / `match` bindings are
+  // visible in it: a name the body reads as a slot stays the slot wherever
+  // the tile is called from.
+  const inner = makeEvalCtx(gen, new Set<string>());
+  // The first positional argument, which is the set `checkTileInput` counts:
+  // the two have to read the same one, or a call the checker approved lowers
+  // to something else. A named argument is a prop and goes to `propsFor`.
+  const arg1 = firstPositional(t);
+  // The handlers written here — plus any handed down from call sites this one
+  // is the root of — belong to the nodes the body renders at its root, so
+  // they go down to each one's `propsFor` and join what is wired there. The
+  // props left for `_attachProps` to merge are data only: a handler spread
+  // over the finished node would replace the ones it already has.
+  const handlers = explicitHandlers(t, rootHandlers);
+  const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
+  const bodyHandlers = handlers.size > 0 ? handlers : undefined;
+  if (arg1) {
+    const v = arg1.value;
+    // `checkTileInput` rejects a tile expression as the positional argument
+    // (E0213 without `in=`, E0201 with it), so a checked program never
+    // passes one here.
+    if (isTileExpr(v)) {
+      throw new Error(`Tile "${t.name}" called with a tile as its positional argument`);
+    }
+    // Evaluate the positional arg and props in the OUTER context (where
+    // `_d_1` still refers to the enclosing tile's `$1`), then pass them in
+    // as arguments so the inner IIFE can rebind `_d_1` without colliding
+    // with the outer scope.
+    const oneJs = jsOfExpr(v as Expr, ctx);
+    const propsJs = callSiteProps();
+    const bodyCtx = addBind(inner, "$1");
+    const bodyJs = tileExprJs(
+      def.body,
+      gen,
+      bodyCtx,
+      under(enclosingTiles, def.name),
+      undefined,
+      bodyHandlers,
+    );
+    return placedTileJs(
+      def,
+      `_attachProps(${bodyJs}, _propsOuter)`,
+      gen,
+      enclosingTiles,
+      (marked) =>
+        `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${marked}; })(${oneJs}, ${propsJs})`,
+    );
+  }
+  const propsJs = callSiteProps();
+  const bodyJs = tileExprJs(
+    def.body,
+    gen,
+    inner,
+    under(enclosingTiles, def.name),
+    undefined,
+    bodyHandlers,
+  );
+  return placedTileJs(def, `_attachProps(${bodyJs}, ${propsJs})`, gen, enclosingTiles);
+}
+
+/**
  * The first positional argument of a user tile call: its input. A named
  * argument is a prop wherever it is written. A builtin's content is read by
  * the same rule, through `contentArg`.
@@ -909,6 +925,20 @@ function asExpr(v: Expr | TileExpr): Expr {
   return v as Expr;
 }
 
+/**
+ * The children a builtin container renders: its positional arguments that are
+ * tiles (language.md §1.7.1), each lowered where it is written.
+ *
+ * A tile expression is lowered as written. The name of a tile the program
+ * defines is that tile called with nothing passed: the parser reads a
+ * lower-cased name there as a name, since a slot may share it, so
+ * `column(leaf)` arrives as a `Ref` where `column(Leaf)` arrives as a call. It
+ * is lowered as that call (`userTileCallJs`), so it renders as the call does —
+ * marked for `tile.mount` / `tile.unmount`, inside its own `error-boundary`,
+ * its body in a scope of its own. It is the program's tile of that name, the
+ * one the checker took it for, even where a builtin shares the name. Anything
+ * else renders nothing, and is E0128 at check time.
+ */
 function collectChildren(
   args: { kind: "TileArg"; name?: string; value: Expr | TileExpr }[],
   gen: GenCtx,
@@ -921,11 +951,17 @@ function collectChildren(
     const v = a.value;
     if (isTileExpr(v)) {
       parts.push(tileExprJs(v, gen, ctx, enclosingTiles));
-    } else if ((v as Expr).kind === "Ref") {
-      const refName = (v as Expr & { name: string }).name;
-      const def = gen.tiles.find((x) => x.name === refName);
+    } else if (v.kind === "Ref") {
+      const def = gen.tiles.find((x) => x.name === v.name);
       if (def) {
-        parts.push(tileExprJs(def.body, gen, ctx, under(enclosingTiles, def.name)));
+        const call: TileExpr & { kind: "TileCall" } = {
+          kind: "TileCall",
+          name: def.name,
+          args: [],
+          props: [],
+          pos: v.pos,
+        };
+        parts.push(userTileCallJs(call, def, gen, ctx, enclosingTiles));
       } else {
         parts.push("null");
       }

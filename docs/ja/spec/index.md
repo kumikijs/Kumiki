@@ -300,5 +300,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `215-boundary-fallback-mount.kumiki` | slot, reducer, tile | ライフサイクル | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
 | `254-fallback-own-boundary.kumiki` | slot, reducer, tile | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
 | `255-whole-body-tile-mount.kumiki` | slot, reducer, tile | ライフサイクル | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
+| `256-lowercase-tile-child.kumiki` | slot, reducer, tile | ライフサイクル | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
 <!-- examples:end -->
 :::

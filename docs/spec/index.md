@@ -300,5 +300,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `215-boundary-fallback-mount.kumiki` | slot, reducer, tile | lifecycle | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
 | `254-fallback-own-boundary.kumiki` | slot, reducer, tile | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
 | `255-whole-body-tile-mount.kumiki` | slot, reducer, tile | lifecycle | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
+| `256-lowercase-tile-child.kumiki` | slot, reducer, tile | lifecycle | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
 <!-- examples:end -->
 :::
