@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASCADE_HELP, gateComposed, lockDef } from "@kumikijs/cli";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -152,15 +153,20 @@ describe("the diagnostic wire shape", () => {
     });
   });
 
-  // `kumiki_auto_patch`'s `compileErrors` and `blocked.introduced` are asserted
-  // in its own block, beside the outcomes that carry them.
+  // `kumiki_auto_patch`'s `compileErrors`, `blocked.introduced` and `warnings`
+  // are asserted in its own block, beside the outcomes that carry them.
   it("gives every diagnostic a severity, whichever tool reports it", async () => {
     const file = writeMixed();
     await withClient(async (client) => {
+      // The failed build lists the warning beside the error that failed it,
+      // in the order `kumiki build` prints them: warnings, then errors.
       const built = await callTool(client, "kumiki_build", { path: file });
       const [head, ...json] = built.split("\n");
       expect(head).toBe("build failed:");
-      expect(pairs(JSON.parse(json.join("\n")) as WireDiagnostic[])).toEqual([["E0103", "error"]]);
+      expect(pairs(JSON.parse(json.join("\n")) as WireDiagnostic[])).toEqual([
+        ["W0212", "warning"],
+        ["E0103", "error"],
+      ]);
 
       // Nothing here has an auto-patch, so the apply envelope reports the file
       // as it is: the error under `remaining`, the warning under `warnings`.
@@ -179,6 +185,46 @@ describe("the diagnostic wire shape", () => {
     });
   });
 
+  it("kumiki_build hands a successful build's warnings back in a second content item", async () => {
+    // `kumiki_check` on this file lists W0212 and is not `isError`. The build
+    // succeeds too, and has to say the same about the file. The first item is
+    // what it always is — the summary, or with `includeJs` the module itself,
+    // which a client writes to disk as it stands — so the warnings come after.
+    const items = (res: Awaited<ReturnType<Client["callTool"]>>) =>
+      (res.content as TextContent[]).map((c) => c.text);
+    const expected = compile(readFileSync(FIX_WARNING_ONLY, "utf8"), {
+      runtimeSpecifier: "./runtime.js",
+      bundle: true,
+      readRuntimeBundle: nodeRuntimeBundleReader,
+      capabilities: [],
+    });
+    if (expected.kind !== "ok") throw new Error("the warning-only fixture does not compile");
+    await withClient(async (client) => {
+      const summary = await client.callTool({
+        name: "kumiki_build",
+        arguments: { path: FIX_WARNING_ONLY },
+      });
+      expect(summary.isError ?? false).toBe(false);
+      expect(items(summary)).toHaveLength(2);
+      const [head = "", warnings = ""] = items(summary);
+      expect(head).toBe(
+        `build ok — ${expected.js.length} bytes of JS (pass includeJs=true for the source)`,
+      );
+      expect(pairs(JSON.parse(warnings) as WireDiagnostic[])).toEqual([["W0212", "warning"]]);
+
+      const withJs = await client.callTool({
+        name: "kumiki_build",
+        arguments: { path: FIX_WARNING_ONLY, includeJs: true },
+      });
+      expect(withJs.isError ?? false).toBe(false);
+      expect(items(withJs)).toEqual([expected.js, warnings]);
+
+      // A build with nothing to report keeps to the one item.
+      const clean = await client.callTool({ name: "kumiki_build", arguments: { path: COUNTER } });
+      expect(items(clean)).toHaveLength(1);
+    });
+  });
+
   it("says what `severity` means in every tool that returns diagnostics", async () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
@@ -187,6 +233,18 @@ describe("the diagnostic wire shape", () => {
         expect(description, name).toContain('`severity` is `"error"`');
         expect(description, name).toContain('or `"warning"`');
       }
+    });
+  });
+
+  it("says where the tools that compile put the warnings", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const description = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
+      expect(description("kumiki_build")).toContain(
+        "a second content item holds them as a JSON list of diagnostics",
+      );
+      expect(description("kumiki_build")).toContain("the warnings, then the errors that failed it");
+      expect(description("kumiki_auto_patch")).toContain("Every outcome carries `warnings`");
     });
   });
 });
@@ -438,6 +496,79 @@ describe("kumiki_auto_patch", () => {
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
+  // `kumiki_check` lists W0212 for these files, so the outcome lists it too —
+  // under `warnings`, apart from `compileErrors`, which holds what blocks the
+  // test. One case per tier: the compile tier stops on the error, the
+  // behavioural tier repairs the test beside the warning.
+  describe("puts the file's warnings beside the outcome", () => {
+    const WARNING = [
+      'slot f : Text = ""',
+      'reducer recordFocus on=ui.focus(Card) do= f := "focused"',
+      'tile Card = box(text("hi"))',
+    ];
+    const FAILING_TEST = [
+      "test t =",
+      "    tile-test Title",
+      "        given  = {slots: {}}",
+      '        expect = heading("Hello")',
+    ];
+    const APP = [
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App, "/404" -> App}',
+      "    init   = []",
+    ];
+    type Wire = { code: string; severity: string };
+    type Outcome = { status: string; compileErrors?: Wire[]; warnings?: Wire[] };
+    const pairs = (ds: Wire[] | undefined) => ds?.map((d) => [d.code, d.severity]);
+
+    async function autoPatch(lines: string[], apply: boolean): Promise<Outcome> {
+      const file = join(workdir, "warned.kumiki");
+      writeFileSync(file, `${lines.join("\n")}\n`);
+      let outcome: Outcome = { status: "" };
+      await withClient(async (client) => {
+        outcome = JSON.parse(
+          await callTool(client, "kumiki_auto_patch", { path: file, testName: "t", apply }),
+        ) as Outcome;
+      });
+      return outcome;
+    }
+
+    it("on the compile tier, apart from the error that blocks the test", {
+      timeout: 30000,
+    }, async () => {
+      const outcome = await autoPatch(
+        [
+          ...WARNING,
+          'tile Title = heading("Helo")',
+          "tile App = column(Card, Title, Missing)",
+          ...APP,
+          ...FAILING_TEST,
+        ],
+        false,
+      );
+      expect(outcome.status).toBe("no-patch");
+      expect(pairs(outcome.compileErrors)).toEqual([["E0105", "error"]]);
+      expect(pairs(outcome.warnings)).toEqual([["W0212", "warning"]]);
+    });
+
+    it("on the behavioural tier, after the repair it wrote", { timeout: 30000 }, async () => {
+      const outcome = await autoPatch(
+        [
+          ...WARNING,
+          'tile Title = heading("Helo")',
+          "tile App = column(Card, Title)",
+          ...APP,
+          ...FAILING_TEST,
+        ],
+        true,
+      );
+      expect(outcome.status).toBe("applied");
+      expect(outcome.compileErrors).toBeUndefined();
+      expect(pairs(outcome.warnings)).toEqual([["W0212", "warning"]]);
+    });
+  });
+
   it("serialises a refusal over unparseable source as compile-blocked, with the parser's message", () => {
     // No repair rule writes unparseable source, so no file reaches this
     // refusal. The outcome is built from the gate's verdict on hand-written
@@ -482,6 +613,7 @@ describe("kumiki_auto_patch", () => {
         },
       ],
       blocked: { reason: "parse-error", message },
+      warnings: [],
     });
   });
 

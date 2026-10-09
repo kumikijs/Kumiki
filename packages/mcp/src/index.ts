@@ -91,8 +91,12 @@ const ACTION_SHAPES: Record<(typeof HEADLESS_ACTION_KEYS)[number], string> = {
 };
 const SCENARIO_ACTIONS = HEADLESS_ACTION_KEYS.map((k) => ACTION_SHAPES[k]).join(", ");
 
-function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
+/**
+ * A tool answer, one text content item per part. Most tools answer in one; a
+ * tool that answers in more says in its description what each item holds.
+ */
+function text(...parts: string[]) {
+  return { content: parts.map((s) => ({ type: "text" as const, text: s })) };
 }
 
 /**
@@ -174,7 +178,10 @@ function errText(e: unknown) {
  */
 export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
-  const base = { ok: o.ok, status: o.status };
+  // `warnings` is on every status, as it is on the outcome: the advisory half
+  // of the call's last typecheck, which `compileErrors` and
+  // `blocked.introduced` leave out.
+  const base = { ok: o.ok, status: o.status, warnings: toDiagnostics(o.warnings) };
   switch (o.status) {
     case "no-patch":
       return {
@@ -461,7 +468,7 @@ export function createServer(): McpServer {
     "kumiki_build",
     {
       title: "Build Kumiki source",
-      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. Returns the generated JS, or \`build failed:\` followed by a JSON list of the diagnostics that failed it. ${DIAGNOSTIC_SHAPE}`,
+      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. On success the first content item is a size summary, or with \`includeJs\` the generated JS and nothing else; when the compile reported warnings, a second content item holds them as a JSON list of diagnostics, and the build still succeeds. On failure the result is \`isError\` and its one item is \`build failed:\` followed by a JSON list of every diagnostic: the warnings, then the errors that failed it. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -482,13 +489,20 @@ export function createServer(): McpServer {
         readRuntimeBundle: nodeRuntimeBundleReader,
         capabilities: capsForInput(input),
       });
+      // `compile` has already split the diagnostics by severity. Both halves go
+      // out — on failure in the order `kumiki build` prints them — so this
+      // tool reports what `kumiki_check` reports for the same file.
       if (result.kind === "fail") {
-        return failed(`build failed:\n${JSON.stringify(toDiagnostics(result.errors), null, 2)}`);
+        const reported = toDiagnostics([...result.warnings, ...result.errors]);
+        return failed(`build failed:\n${JSON.stringify(reported, null, 2)}`);
       }
-      if (input.includeJs) return text(result.js);
-      return text(
-        `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`,
-      );
+      const head = input.includeJs
+        ? result.js
+        : `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`;
+      // A second item rather than a suffix: with `includeJs` the first item is
+      // the module itself, which a client writes out as it stands.
+      if (result.warnings.length === 0) return text(head);
+      return text(head, JSON.stringify(toDiagnostics(result.warnings), null, 2));
     },
   );
 
@@ -942,7 +956,7 @@ export function createServer(): McpServer {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
         "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes and no test that passed before fails; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result) or `regressed` (with the test names). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay). " +
-        `\`compileErrors\` and \`blocked.introduced\` are lists of diagnostics. ${DIAGNOSTIC_SHAPE}`,
+        `\`compileErrors\` and \`blocked.introduced\` are lists of diagnostics, errors only. Every outcome carries \`warnings\`: the diagnostics with \`severity\` \`"warning"\` from the last typecheck the call ran, listed there and nowhere else. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),
