@@ -1,4 +1,4 @@
-import type { AppShape, MountedApp } from "@kumikijs/runtime";
+import type { AppShape, MountedApp, TestResult } from "@kumikijs/runtime";
 import {
   _stdlib,
   builtinEffects,
@@ -614,16 +614,52 @@ describe("in-language test runner helpers", () => {
     ).toBe(true);
   });
 
+  it("runTileTest reports a tile that panicked as it rendered as an unexpected panic", () => {
+    const r = _stdlib.runTileTest({
+      name: "t",
+      actual: null,
+      panic: "Index 0 is out of range for a List of length 0",
+      expected: { kind: "heading", text: "First: 1" },
+    });
+    expect(r).toEqual({
+      name: "t",
+      pass: false,
+      expected: 'heading("First: 1")',
+      actual: 'panic: "Index 0 is out of range for a List of length 0"',
+      diffAt: "(unexpected panic)",
+    });
+  });
+
+  it("an unexpected panic reads the same in a tile-test as in a reducer-test", () => {
+    const tile = _stdlib.runTileTest({
+      name: "t",
+      actual: null,
+      panic: "boom",
+      expected: { kind: "text", text: "x" },
+    });
+    const reducer = _stdlib.runReducerTest({
+      name: "t",
+      target: "r",
+      givenSlots: {},
+      slotMetas: {},
+      result: null,
+      panic: "boom",
+      expect: { kind: "state", slots: { n: 1 }, effects: [] },
+    });
+    const shape = (r: TestResult) => ({ pass: r.pass, actual: r.actual, diffAt: r.diffAt });
+    expect(shape(tile)).toEqual(shape(reducer));
+  });
+
   it("runTileTest compares structure, ignoring handlers", () => {
     const actual = {
       kind: "column",
       children: [{ kind: "button", text: "+1", props: { onClick: () => undefined } }],
     };
     const expected = { kind: "column", children: [{ kind: "button", text: "+1", props: {} }] };
-    expect(_stdlib.runTileTest({ name: "t", actual, expected }).pass).toBe(true);
+    expect(_stdlib.runTileTest({ name: "t", actual, panic: null, expected }).pass).toBe(true);
 
     const mismatch = { kind: "column", children: [{ kind: "button", text: "-1" }] };
-    const res = _stdlib.runTileTest({ name: "t", actual: mismatch, expected });
+    const res = _stdlib.runTileTest({ name: "t", actual: mismatch, panic: null, expected });
     expect(res.pass).toBe(false);
     expect(res.diffAt).toContain("text");
   });
@@ -681,6 +717,7 @@ describe("in-language test runner helpers", () => {
     const r = _stdlib.runTileTest({
       name: "t",
       actual: { kind: "row" },
+      panic: null,
       expected: { kind: "column" },
     });
     expect(r.pass).toBe(false);
@@ -706,6 +743,7 @@ describe("in-language test runner helpers", () => {
     const r = _stdlib.runTileTest({
       name: "t",
       actual: { kind: "heading", text: "Cont: 5" },
+      panic: null,
       expected: { kind: "heading", text: "Count: 5" },
     });
     expect(r.pass).toBe(false);
@@ -732,6 +770,7 @@ describe("in-language test runner helpers", () => {
     const r = _stdlib.runTileTest({
       name: "t",
       actual: { kind: "row" },
+      panic: null,
       expected: { kind: "column" },
     });
     expect(r.pass).toBe(false);

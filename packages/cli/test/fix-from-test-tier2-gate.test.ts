@@ -81,16 +81,19 @@ const DIGIT_IN_NUMBER = [
   ...ADDS_TWO_TEST,
 ];
 
-/** A tile-test whose target reads `items[0]` of an empty list, a panic as it renders. */
+/**
+ * A tile-test whose own `given` reads past the end of a list, so its body
+ * throws before its target renders. `count` is the fixture's slot.
+ */
 const THROWING_TEST = [
   "slot items : List(Int) = []",
   'tile First = heading("First: " + items[0].show)',
   "test first-shows =",
   "    tile-test First",
-  "        given  = {slots: {items: []}}",
+  "        given  = {slots: {items: [1], count: [0][1]}}",
   '        expect = heading("First: 1")',
 ];
-const THROWN = "Index 0 is out of range for a List of length 0";
+const THROWN = "Index 1 is out of range for a List of length 1";
 
 /** A failing reducer-test result on `slots.count`, for calling the planner directly. */
 const failingLeaf = (actual: unknown, expected: unknown): TestResult => ({

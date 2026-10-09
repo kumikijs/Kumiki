@@ -378,11 +378,15 @@ describe("codegen refuses what check refuses", () => {
     tile-test Card
         given  = {slots: {}, in: "x"}
         expect = text("x")`);
-    // With the argument: `_tilesById["Card"](undefined)` contains the bare
-    // call too, so the substring the buggy lowering also emitted guards
-    // nothing — and the argument is the whole of what this change is about.
-    expect(
-      codegen(parse(lex(ok)), { runtimeSpecifier: "@kumikijs/runtime", includeTests: true }).js,
-    ).toContain(`_tilesById["Card"]("x")`);
+    // The argument is bound ahead of the render, with the test's own
+    // expressions, and the target is applied to that binding. A lowering that
+    // dropped the argument would bind `undefined` and apply the same name, so
+    // the bound value is what carries the assertion.
+    const js = codegen(parse(lex(ok)), {
+      runtimeSpecifier: "@kumikijs/runtime",
+      includeTests: true,
+    }).js;
+    expect(js).toContain(`const _in = "x";`);
+    expect(js).toContain(`_tilesById["Card"](_in)`);
   });
 });

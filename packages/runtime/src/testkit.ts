@@ -363,6 +363,21 @@ function serializeTileNode(node: unknown, shape: unknown = node): string {
   return `${kind}(${parts.join(", ")})`;
 }
 
+/** A panic as a test report prints it, on its `expected:` or `actual:` line. */
+function panicLine(panic: string): string {
+  return `panic: ${_jsonStr(panic)}`;
+}
+
+/**
+ * The failure of a test whose code under test panicked where the test asked
+ * for a result: a reducer-test that expects state (§8.2.4), a tile-test, which
+ * expects a tile (§8.4). `expected` is what the test asked for, as its report
+ * prints it.
+ */
+function unexpectedPanic(name: string, expected: string, panic: string): TestResult {
+  return { name, pass: false, expected, actual: panicLine(panic), diffAt: "(unexpected panic)" };
+}
+
 type ReducerExpect =
   | { kind: "panic"; message: string }
   | {
@@ -389,20 +404,12 @@ function compareReducerExpect(
     return {
       name,
       pass,
-      expected: `panic: ${_jsonStr(expect.message)}`,
-      actual: panic === null ? "(no panic)" : `panic: ${_jsonStr(panic)}`,
+      expected: panicLine(expect.message),
+      actual: panic === null ? "(no panic)" : panicLine(panic),
       ...(pass ? {} : { diffAt: "(panic)" }),
     };
   }
-  if (panic !== null) {
-    return {
-      name,
-      pass: false,
-      expected: _jsonStr(expect.slots),
-      actual: `panic: ${_jsonStr(panic)}`,
-      diffAt: "(unexpected panic)",
-    };
-  }
+  if (panic !== null) return unexpectedPanic(name, _jsonStr(expect.slots), panic);
   // M2 (§8.5): a mocked `err` that no `.err` reducer consumes is a dropped error
   // — a clear test failure rather than a silent pass.
   if (unhandledErr !== null) {
@@ -1596,8 +1603,21 @@ export const _stdlibTest = {
     }
     return { name, pass: true };
   },
-  /** Structurally compare a rendered tile against the expected tile structure. */
-  runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {
+  /**
+   * Structurally compare a rendered tile against the expected tile structure
+   * (§8.4). `panic` is the message the target threw as it rendered, null when
+   * it rendered `actual`; a tile-test has no form that expects a panic, so one
+   * is always its unexpected panic.
+   */
+  runTileTest(input: {
+    name: string;
+    actual: unknown;
+    panic: string | null;
+    expected: unknown;
+  }): TestResult {
+    if (input.panic !== null) {
+      return unexpectedPanic(input.name, serializeTileNode(input.expected), input.panic);
+    }
     const cmp = tileStructEqual(input.expected, input.actual);
     return {
       name: input.name,

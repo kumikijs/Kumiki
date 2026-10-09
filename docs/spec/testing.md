@@ -137,6 +137,15 @@ test addTodo-empty =
         expect = {panic: "draft cannot be empty"}
 ```
 
+A test that expects a panic passes when the reducer panics with a message that contains `expect.panic`, and fails at `diff at: (panic)` on another message or on no panic. A reducer that panics where its test expects state fails that test as an **unexpected panic**, with the panic's message where the state would be — here, the test above written with `expect = {slots: {todos: {}, draft: ""}}`:
+
+```
+FAIL  addTodo-empty
+  expected: {"todos":{},"draft":""}
+  actual:   panic: "draft cannot be empty"
+  diff at:  (unexpected panic)
+```
+
 ### 8.2.5 The route slot
 
 `route` is maintained by the runtime rather than declared by a program ([§3.2](./routing.md#_3-2-current-route-state)), so there is no `slot route` for `given.slots` to override — and the harness would otherwise build its slot table without one, leaving a reducer that reads `route.path` to panic on an absent slot.
@@ -262,6 +271,27 @@ Each `aria-*` attribute is a field of its own, however it was written (as `aria-
 
 A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
 
+A tile that panics as it renders fails its test as an **unexpected panic**, in the lines a reducer-test gives a reducer that panics ([§8.2.4](#_8-2-4-expecting-a-panic)), with the snapshot as what was expected:
+
+```kumiki fragment
+slot items : List(Int) = []
+tile First = heading("First: " + items[0].show)
+
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+```
+
+```
+FAIL  first-shows
+  expected: heading("First: 1")
+  actual:   panic: "Index 0 is out of range for a List of length 0"
+  diff at:  (unexpected panic)
+```
+
+A tile-test cannot expect the panic: its `expect` is a tile, with no section to write one in, so a panic is expected only in a reducer-test. Only a panic in the target's render is reported this way: the test's own `given` and `expect` are evaluated apart from the render, so a panic in one of them is a throw in the test's body, reported on an `error:` line ([§8.7.1](#_8-7-1-output)).
+
 ```
 tile-test ::= 'tile-test' identifier
               'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
@@ -374,7 +404,7 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report.
+A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report. A panic in the reducer or the tile under test is not such a throw: it is the test's outcome, expected or unexpected ([§8.2.4](#_8-2-4-expecting-a-panic), [§8.4](#_8-4-tile-snapshot-tests)).
 
 A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
 

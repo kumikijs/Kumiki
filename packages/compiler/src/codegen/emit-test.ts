@@ -216,9 +216,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       const _el = ${elJs};
       const _r = App.reducers.find((r) => r.name === ${JSON.stringify(t.target)});
       if (!_r) throw new Error("reducer ${t.target} not found");
-      let _res = null, _panic = null;
-      try { _res = _r.apply(App.live, { $el: _el, $event: _el }); }
-      catch (e) { _panic = (e && e.message) ? e.message : String(e); }
+      ${underTestJs("_res", "_r.apply(App.live, { $el: _el, $event: _el })")}
       return _s.runReducerTest({ name: ${nameJs}, target: ${JSON.stringify(t.target)}, givenSlots: { ...App.live }, slotMetas: App.slots, result: _res, panic: _panic, expect: ${expectJs} });
     },
   },`;
@@ -229,13 +227,13 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   const inField = givenSection(t, "tile-test", "in");
   // A tile-test applies its target, so `given.in` is that application's single
   // argument and has to agree with the target's `in=`. Emitting the
-  // disagreement is what produced a `TypeError: Cannot read properties of
-  // undefined` carrying no test name, no position and no code — nothing catches
-  // it, so it reached the CLI and took the rest of the file's results with it —
-  // or, the other way, a snapshot compared against a render that silently never
-  // saw the value. E0213 refuses both at check time, so the throw is for a
-  // caller that skipped `check`, as with `effectListJs` and `episodeMockJs`; it
-  // names the code so the last line of defence is as identifiable as the first.
+  // disagreement applies the target to `undefined`, whose first read of it
+  // throws a `TypeError: Cannot read properties of undefined` with no position
+  // and no code, reported as the tile's own panic — or, the other way, compares
+  // the snapshot against a render that silently never saw the value. E0213
+  // refuses both at check time, so the throw is for a caller that skipped
+  // `check`, as with `effectListJs` and `episodeMockJs`; it names the code so
+  // the last line of defence is as identifiable as the first.
   // The checker defers two shapes instead: a `given` with a section nothing
   // reads (E0714), which this would still count as a missing argument — but
   // `compile()` stops at that error, so the two never answer the same program —
@@ -263,11 +261,26 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     kind: "tile-test",
     run: () => {
       _s.resetLive(App.live, App.slots, ${slotsJs});
-      const _actual = App._tilesById[${JSON.stringify(t.target)}](${inJs});
+      const _in = ${inJs};
+      ${underTestJs("_actual", `App._tilesById[${JSON.stringify(t.target)}](_in)`)}
       const _expected = ${expectedJs};
-      return _s.runTileTest({ name: ${nameJs}, actual: _actual, expected: _expected });
+      return _s.runTileTest({ name: ${nameJs}, actual: _actual, panic: _panic, expected: _expected });
     },
   },`;
+}
+
+/**
+ * Run what a test is about — a reducer-test's reducer, a tile-test's render —
+ * binding what `call` returns to `result`, and the message of what it throws
+ * to `_panic` (null when it throws nothing). That throw is the test's panic:
+ * one its `expect` asks for, or else its unexpected panic (§8.2.4, §8.4). The
+ * test's own `given` and `expect` are evaluated outside it, so a panic there
+ * is a throw in the test's body, for the runner's `error:` line (§8.7.1).
+ */
+function underTestJs(result: string, call: string): string {
+  return `let ${result} = null, _panic = null;
+      try { ${result} = ${call}; }
+      catch (e) { _panic = (e && e.message) ? e.message : String(e); }`;
 }
 
 /**
