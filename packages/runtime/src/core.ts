@@ -2104,7 +2104,7 @@ export function mountCore(
     (effect, outcome, value, key, token) => {
       handleEffectResult(effect, outcome, value, key, token);
     },
-    handleCapabilityRefusal,
+    handleRefusedEmit,
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
     episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
     episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
@@ -2629,8 +2629,8 @@ export function mountCore(
    * is the only thing standing between a handler that panics and an unbounded
    * recursion.
    *
-   * Split out of {@link handleLivePanic} for the capability refusal, which has
-   * a record but no throw, so that both reach `app.error` down one path.
+   * Split out of {@link handleLivePanic} for a refused emit, which has a
+   * record but no throw, so that both reach `app.error` down one path.
    *
    * `token` names a deferred-policy claim; see `EpisodeLogger.recordPanic`.
    */
@@ -2661,16 +2661,17 @@ export function mountCore(
   }
 
   /**
-   * §10.4.2's second clause on the live path: an emit whose capability
-   * `app.caps` does not declare is refused, and the refusal is reported — to
-   * the console the tiers watch, to the episode, and to `app.error`.
+   * §10.4.1 and §10.4.2's second clause on the live path: an emit naming no
+   * effect in `app.effects`, or one whose capability `app.caps` does not
+   * declare, is refused, and the refusal is reported — to the console the
+   * tiers watch, to the episode, and to `app.error`.
    *
    * The dispatcher calls this through a seam rather than reporting itself,
    * because it is built before `app.error` can be dispatched to and has no
    * reducer machinery of its own.
    */
-  function handleCapabilityRefusal(effect: string, cap: string, token?: string): void {
-    const rec = reportCapabilityRefusal(effect, cap);
+  function handleRefusedEmit(effect: string, why: EmitRefusal, token?: string): void {
+    const rec = reportRefusedEmit(effect, why);
     fireAppError(rec, rec.location, {}, token);
   }
 
@@ -3303,10 +3304,18 @@ type Dispatcher = {
 };
 
 /**
- * Print a refused effect (§10.4.2's second clause) and hand the caller the
- * record to route onward — the `panic` step and the `app.error` `$event`. The
- * live path and the server render pass share it, so the wording and the
- * channel are one thing rather than two that agree today.
+ * Why the dispatcher could not run an emit, as the category its report
+ * carries: `effect` when the emit names no effect in `app.effects` (§10.4.1),
+ * `capability` when the effect's `cap` is not in `app.caps` (§10.4.2).
+ */
+export type EmitRefusal = { category: "effect" } | { category: "capability"; cap: string };
+
+/**
+ * Print an emit the dispatcher refused (§10.4.1, and §10.4.2's second clause)
+ * and hand the caller the record to route onward — the `panic` step and the
+ * `app.error` `$event`. The live path and the server render pass share it, and
+ * so do the two reasons, so the wording and the channel are one thing rather
+ * than several that agree today.
  *
  * It reports as well as builds, and is named for the reporting half: the
  * console line is the part a second copy would break, since `smoke` and
@@ -3316,17 +3325,20 @@ type Dispatcher = {
  * was thrown: there is no stack that would point at the program, and no cause.
  * `location` is assembled once, here, and travels on the record.
  */
-export function reportCapabilityRefusal(
+export function reportRefusedEmit(
   effect: string,
-  cap: string,
+  why: EmitRefusal,
 ): PanicRecord & { location: string } {
   const location = `effect "${effect}"`;
   const rec: PanicRecord & { location: string } = {
-    message: `capability "${cap}" is not declared in app.caps`,
+    message:
+      why.category === "effect"
+        ? `effect "${effect}" is not declared in app.effects`
+        : `capability "${why.cap}" is not declared in app.caps`,
     location,
     stack: undefined,
     cause: undefined,
-    category: "capability",
+    category: why.category,
   };
   reportPanicRecord(location, rec, "panic");
   return rec;
@@ -3342,15 +3354,15 @@ function makeEffectDispatcher(
     key: unknown,
     token: string,
   ) => void,
-  // §10.4.2's second clause. The dispatcher refuses the emit; reporting the
-  // refusal needs `app.error` and the episode, neither of which it has.
-  // Required, unlike the episode seams below: those are absent when the mount
-  // attached no logger, this one has no such case, and a construction path
-  // that forgot it would be #366 again — no console line, no episode step, no
-  // `app.error`, and nothing in any tier that could see it.
+  // §10.4.1, and §10.4.2's second clause. The dispatcher refuses the emit;
+  // reporting the refusal needs `app.error` and the episode, neither of which
+  // it has. Required, unlike the episode seams below: those are absent when
+  // the mount attached no logger, this one has no such case, and a
+  // construction path that forgot it would be #366 again — no console line,
+  // no episode step, no `app.error`, and nothing in any tier that could see it.
   // `token` is the deferred-policy claim (debounce, queue), so the panic can
   // name the episode that owns the `effect-start` rather than the empty stack.
-  onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
+  onRefusal: (effect: string, why: EmitRefusal, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   // Policy-induced cancel of a pending effect-start that was already claimed
@@ -3409,7 +3421,7 @@ function makeEffectDispatcher(
         // from a timer or a promise tail, so by now `endTrigger` has balanced
         // out and there is no episode in focus to record against — only the
         // token still names the episode that claimed the `effect-start`.
-        onCapabilityRefusal(eff.name, eff.cap, presetToken);
+        onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
       } finally {
         // Deferred-policy dispatch already recorded an effect-start on the
         // originating episode before the timer fired. Bailing out here without
@@ -3455,7 +3467,13 @@ function makeEffectDispatcher(
   return {
     dispatch(emit: EmitSpec): void {
       const eff = app.effects[emit.effect];
-      if (!eff) return;
+      if (!eff) {
+        // §10.4.1. No token: a policy is a property of an effect, so with none
+        // to read one off nothing defers this, and the episode that owns the
+        // emit is the one in focus.
+        onRefusal(emit.effect, { category: "effect" });
+        return;
+      }
       // §6.4: `cap=http.cancel` is a meta-effect — its `input` IS an
       // `EffectId` (the `${name}:${key}` string produced by codegen and the
       // launch path). Abort the matching in-flight controller AND clear any
@@ -4038,7 +4056,7 @@ function reportPanic(where: string, e: unknown): void {
 
 /**
  * The one place the runtime's console report is formatted — {@link reportPanic}
- * for a caught throw, {@link reportCapabilityRefusal} for a record that was
+ * for a caught throw, {@link reportRefusedEmit} for a record that was
  * built rather than caught. One header shape for everything, because `smoke`
  * and `scenario` read this channel whole and a second format would be a second
  * thing for a reader to recognise.

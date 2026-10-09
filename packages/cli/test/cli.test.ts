@@ -342,6 +342,13 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,723 measured, from 63,597 on dev at f72685e): an emit
+    // naming no effect in `app.effects` is reported under `category: "effect"`
+    // (runtime.md §10.4.1). The 126 bytes are the dispatcher's branch for it
+    // and the second message in the one refusal reporter it shares with the
+    // capability check, which sit in core every app loads; a counter emits
+    // nothing and still ships them.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

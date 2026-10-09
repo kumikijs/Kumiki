@@ -36,7 +36,7 @@ import {
   type RedirectEntry,
   type RoutingImpl,
   readStatus,
-  reportCapabilityRefusal,
+  reportRefusedEmit,
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
@@ -201,6 +201,27 @@ export async function renderToString(
 }
 
 /**
+ * The standard effects (stdlib.md §2.6), by name. A mount installs them onto
+ * `app.effects` — `log` in core, the navigation effects and `scroll-to` with
+ * the routing module, `toast` and `confirm` from their own — and this pass
+ * installs none and runs none, so on the server an emit of one finds no entry
+ * there. It still names an effect, one this pass does not run, so it is
+ * skipped rather than reported as naming none (runtime.md §10.4.1).
+ *
+ * `test/capability-refusal.test.ts` holds this list to what a full `mount`
+ * installs.
+ */
+export const STANDARD_EFFECTS: ReadonlySet<string> = new Set([
+  "log",
+  "navigate",
+  "navigate-replace",
+  "navigate-back",
+  "scroll-to",
+  "toast",
+  "confirm",
+]);
+
+/**
  * Run one effect emit on the SSR pass: invoke the capability, record
  * `effect-start` / `effect-end`, then propagate the result through any
  * matching `{kind: "effect", outcome}` reducer (which may emit further
@@ -223,7 +244,16 @@ async function dispatchEmit(
   logger: EpisodeLogger,
 ): Promise<void> {
   const effect = app.effects[emit.effect];
-  if (!effect) return;
+  if (!effect) {
+    // A standard effect names an effect, one this pass does not run.
+    if (STANDARD_EFFECTS.has(emit.effect)) return;
+    // §10.4.1, on the live dispatcher's terms: the `panic` step on the episode
+    // in focus, and no `effect-start` / `effect-cancel` pair around it — there
+    // is no effect to have started, so nothing is claimed and nothing left
+    // pending to keep the bootstrap episode from committing.
+    logger.recordPanic(reportRefusedEmit(emit.effect, { category: "effect" }));
+    return;
+  }
   // EmitSpec args are positional; the live dispatcher passes `args[0]` as the
   // effect input (the compiler emits a single-value tuple even for unary
   // effects). Mirror that here so SSR and CSR share the same effect signature.
@@ -246,7 +276,10 @@ async function dispatchEmit(
     // already been handed without. Reading it back, the reason precedes the
     // consequence it explains.
     const token = logger.recordEffectStart(emit.effect, input);
-    logger.recordPanic(reportCapabilityRefusal(emit.effect, effect.cap), token);
+    logger.recordPanic(
+      reportRefusedEmit(emit.effect, { category: "capability", cap: effect.cap }),
+      token,
+    );
     logger.cancelPendingEffect(token, emit.effect);
     return;
   }

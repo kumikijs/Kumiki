@@ -42,13 +42,15 @@ export type EnvRead = { kind: EnvReadKind; value: unknown };
 
 /**
  * What the runtime was doing when a panic was reported (docs/spec/runtime.md
- * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, `hydrate`
- * and `capability`; `effect` and `unknown` stay reserved values so consumers
+ * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, `hydrate`,
+ * `capability` and `effect`; `unknown` stays a reserved value so consumers
  * can exhaustive-switch without a fallthrough case as future callsites are
  * wired in.
  *
- * `capability` is the one category for something nothing threw: a refused
- * effect (§10.4.2) is a program that cannot work rather than a caught error,
+ * `effect` and `capability` are the two categories for something nothing
+ * threw: the dispatcher could not run an emit — it names no effect in
+ * `app.effects` (§10.4.1), or its effect's capability is not in `app.caps`
+ * (§10.4.2). Each is a program that cannot work rather than a caught error,
  * so its record carries no `stack` and no `cause`.
  */
 export type PanicCategory =
@@ -118,10 +120,10 @@ export type EpisodeStep =
       /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
       cause?: PanicCauseLink[];
       /**
-       * What the runtime was doing when the panic was reported. For
-       * `capability` that is a refusal rather than a caught throw, so the step
-       * carries no `stack` and no `cause`. Omitted in episode logs written
-       * before this field existed; readers should treat absence as
+       * What the runtime was doing when the panic was reported. For `effect`
+       * and `capability` that is a refused emit rather than a caught throw, so
+       * the step carries no `stack` and no `cause`. Omitted in episode logs
+       * written before this field existed; readers should treat absence as
        * {@link PanicCategory} `"unknown"`.
        */
       category?: PanicCategory;
