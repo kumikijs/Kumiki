@@ -530,6 +530,62 @@ function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
 }
 
 /**
+ * The shape {@link genForm} builds each form in: its literal text, with a run
+ * of letters (or hex digits) wherever it draws a word. Every value in it passes
+ * the runtime's own check for the form — `packages/tests` holds the two to each
+ * other over what generation and shrinking produce — and a shrunk form stays in
+ * it, so a counterexample reads like the value it was shrunk from.
+ */
+const FORM_SHAPES: Record<"email" | "url" | "uuid", RegExp> = {
+  email: /^[a-z]+@[a-z]+\.example\.com$/,
+  url: /^https:\/\/[a-z]+\.example\.com\/[a-z]+$/,
+  uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+};
+
+/**
+ * The literals a `one-of` descriptor lists, or `undefined` when it lists none.
+ * They name the whole domain, whatever base type they refine, so generation,
+ * admission and shrinking all answer them ahead of the type.
+ */
+function choicesOf(desc: GenDesc): (number | string)[] | undefined {
+  return "oneOf" in desc && desc.oneOf && desc.oneOf.length > 0 ? desc.oneOf : undefined;
+}
+
+/** A descriptor whose values shrinking proposes directly, rather than out of parts. */
+type ScalarDesc = Extract<GenDesc, { t: "Int" | "Float" | "Text" }>;
+
+/**
+ * Whether `v` is in the domain `desc` declares — the constraints its
+ * refinements folded into it, read from the same fields {@link genValue}
+ * builds a value to: one of its `one-of` literals; an `Int` or `Float` within
+ * `min` / `max` (an `Int` whole); a `Text` within `minLen` / `maxLen` and, for
+ * a form, in the shape that form is generated in. The spans an unbounded type
+ * is sampled from (±1000, 50 characters) are where generation looks, not part
+ * of the domain.
+ *
+ * Every number and text {@link shrinkCandidates} proposes passes it, so a
+ * shrunk counterexample is one the `for-all` could have generated.
+ */
+function admits(desc: ScalarDesc, v: unknown): boolean {
+  const choices = choicesOf(desc);
+  if (choices) return choices.includes(v as number | string);
+  if (desc.t === "Text") {
+    return (
+      typeof v === "string" &&
+      v.length >= (desc.minLen ?? 0) &&
+      v.length <= (desc.maxLen ?? Number.POSITIVE_INFINITY) &&
+      (desc.form === undefined || FORM_SHAPES[desc.form].test(v))
+    );
+  }
+  return (
+    typeof v === "number" &&
+    (desc.t === "Float" || Number.isInteger(v)) &&
+    v >= (desc.min ?? Number.NEGATIVE_INFINITY) &&
+    v <= (desc.max ?? Number.POSITIVE_INFINITY)
+  );
+}
+
+/**
  * How many steps into a recursive type generation takes freely. Past it, every
  * choice takes the way that ends soonest — a union's or a `Result`'s `base`
  * choices, `None`, an empty collection — so a value of a recursive type ends
@@ -543,11 +599,8 @@ type GenScope = { types: ReadonlyMap<string, GenDesc>; depth: number };
 const GEN_TOP: GenScope = { types: new Map(), depth: 0 };
 
 function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN_TOP): unknown {
-  // `one-of` names the whole domain, whatever the base type is, so it is
-  // answered ahead of the type it refines.
-  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
-    return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
-  }
+  const choices = choicesOf(desc);
+  if (choices) return choices[Math.floor(rng() * choices.length)];
   const gen = (d: GenDesc): unknown => genValue(d, rng, scope);
   const ending = scope.depth >= GEN_DEPTH;
   switch (desc.t) {
@@ -644,20 +697,32 @@ function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN_TOP): 
 
 /**
  * Values "simpler" than `v` that are still values of `desc`, for shrinking a
- * counterexample: a number toward zero within its bounds, a text toward its
- * shortest length, a collection toward fewer elements, `Some` toward `None`,
- * and a record or a tuple one part at a time. A candidate outside the type
- * would be a value the generator never produces — one a slot may refuse —
- * and the counterexample reported would be one no generated trial was run on.
+ * counterexample, simplest first. A candidate outside the type would be a
+ * value the generator never produces — one a slot may refuse — and the
+ * counterexample reported would be one no generated trial was run on.
+ *
+ * - A `one-of` value: the literals listed before it, the first one first.
+ * - A number: the value nearest zero its bounds allow (zero itself when they
+ *   hold it), and the point halfway there.
+ * - A text: its prefix of the shortest length allowed and its prefix of half
+ *   its length; a form's text also each text one character shorter, which is
+ *   how it shortens a word and keeps its literal parts.
+ * - A collection: no elements, and each one element fewer.
+ * - `Some`: `None`.
+ * - A record or a tuple: each part's own candidates, one part at a time.
+ *
+ * A number's and a text's candidates are the ones {@link admits} passes; a
+ * structure's are made of those, or of the parts it was generated with.
  */
 function shrinkCandidates(
   v: unknown,
   desc: GenDesc,
   types: ReadonlyMap<string, GenDesc>,
 ): unknown[] {
-  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
-    const first = desc.oneOf[0];
-    return v === first ? [] : [first];
+  const choices = choicesOf(desc);
+  if (choices) {
+    const at = choices.indexOf(v as number | string);
+    return at > 0 ? choices.slice(0, at) : [];
   }
   switch (desc.t) {
     case "Int":
@@ -669,16 +734,17 @@ function shrinkCandidates(
       );
       if (v === target) return [];
       const half = target + Math.trunc((v - target) / 2);
-      return half === target ? [target] : [target, half];
+      return (half === target ? [target] : [target, half]).filter((c) => admits(desc, c));
     }
     case "Text": {
-      // A shape (`email`, …) has no shorter instance that is still one.
-      if (typeof v !== "string" || desc.form) return [];
-      const shortest = desc.minLen ?? 0;
-      if (v.length <= shortest) return [];
-      const least = v.slice(0, shortest);
-      const half = v.slice(0, Math.max(shortest, Math.floor(v.length / 2)));
-      return half === least ? [least] : [least, half];
+      if (typeof v !== "string") return [];
+      const out = new Set([
+        v.slice(0, desc.minLen ?? 0),
+        v.slice(0, Math.max(desc.minLen ?? 0, Math.floor(v.length / 2))),
+      ]);
+      if (desc.form) for (let i = 0; i < v.length; i++) out.add(v.slice(0, i) + v.slice(i + 1));
+      out.delete(v);
+      return [...out].filter((c) => admits(desc, c));
     }
     case "List":
       if (!Array.isArray(v) || v.length === 0) return [];
@@ -701,6 +767,7 @@ function shrinkCandidates(
     case "Option":
       return (v as { _tag?: unknown } | null)?._tag === "Some" ? [{ _tag: "None" }] : [];
     case "Record": {
+      if (!v || typeof v !== "object") return [];
       const o = v as Record<string, unknown>;
       return desc.fields.flatMap((f) =>
         shrinkCandidates(o[f.name], f.desc, types).map((c) => ({ ...o, [f.name]: c })),
@@ -723,7 +790,10 @@ function shrinkCandidates(
   }
 }
 
-/** Greedily minimize a failing binding set, holding each var's failure. */
+/**
+ * Greedily minimize a failing binding set, each var by its own descriptor: a
+ * candidate is taken when `fails` still holds for it.
+ */
 function shrinkCounterexample(
   vars: Record<string, GenDesc>,
   fails: (b: Record<string, unknown>) => boolean,
@@ -754,7 +824,18 @@ function shrinkCounterexample(
  * the trial it is in, and the property runner gives the rejection as the
  * reason (testing.md §8.3.1).
  */
-class RejectedStep extends Error {}
+class RejectedStep extends Error {
+  /**
+   * How the batch was refused: the reducer, and each slot with the predicate
+   * that refused it — not the value written, which differs from one input to
+   * the next. Shrinking a refused case keeps to candidates refused this way.
+   */
+  readonly way: string;
+  constructor(reducer: string, rejected: readonly RefinementRejection[]) {
+    super(rejectedBatchText(reducer, rejected));
+    this.way = JSON.stringify([reducer, rejected.map((r) => [r.slot, r.kind, r.args])]);
+  }
+}
 
 // ----- shared per-episode executor (spec/testing.md §8.6 + runtime.md §10.5.3) -----
 // Drives the reducer queue, applies effect mocks, and emits observer events.
@@ -1412,7 +1493,7 @@ export const _stdlibTest = {
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
     const rejected = batchRejections(res, app.slots);
-    if (rejected.length > 0) throw new RejectedStep(rejectedBatchText(name, rejected));
+    if (rejected.length > 0) throw new RejectedStep(name, rejected);
     const next: Record<string, unknown> = { ...slots };
     for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
     return { slots: next };
@@ -1423,6 +1504,10 @@ export const _stdlibTest = {
    * `trial(binds) === true` each time, and on failure shrink to a minimal
    * counterexample (unless `shrink === false`). A trial whose `run-reducer`
    * batch was rejected fails, and the rejection follows the counterexample.
+   *
+   * Shrinking keeps the failure it started from: a candidate is taken only
+   * when it fails the same way — its invariant false with every step run, or
+   * a step refused as the generated case's was ({@link RejectedStep.way}).
    */
   runPropertyTest(input: {
     name: string;
@@ -1437,21 +1522,25 @@ export const _stdlibTest = {
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
     // Why the trial on `b` fails, or `undefined` when it holds. A throw counts
-    // as a failure; a rejected `run-reducer` batch is one that has a reason.
-    const failure = (b: Record<string, unknown>): { reason?: string } | undefined => {
+    // as a failure; a rejected `run-reducer` batch is one that names its step.
+    const failure = (b: Record<string, unknown>): { refused?: RejectedStep } | undefined => {
       try {
         return trial(b) === true ? undefined : {};
       } catch (e) {
-        return e instanceof RejectedStep ? { reason: e.message } : {};
+        return e instanceof RejectedStep ? { refused: e } : {};
       }
     };
-    const fails = (b: Record<string, unknown>): boolean => failure(b) !== undefined;
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
-      if (fails(binds)) {
-        const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
-        const reason = failure(minimal)?.reason;
+      const first = failure(binds);
+      if (first) {
+        const sameWay = (b: Record<string, unknown>): boolean => {
+          const f = failure(b);
+          return f !== undefined && f.refused?.way === first.refused?.way;
+        };
+        const minimal = doShrink ? shrinkCounterexample(vars, sameWay, binds) : binds;
+        const reason = failure(minimal)?.refused?.message;
         return {
           name,
           pass: false,

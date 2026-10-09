@@ -119,3 +119,53 @@ test inc-stays-in-range =
     );
   });
 });
+
+describe("a shrunk counterexample", () => {
+  // The issue's program, and a form beside it: each counterexample is shrunk
+  // inside the domain its refinement gives the generator.
+  const REFINED = `slot count : Int = 0
+reducer go on=ui.click(GoBtn) do= count := count + 1
+tile GoBtn = button(text="go")
+app A caps=[] routes={"/" -> GoBtn, "/404" -> GoBtn} init=[]
+
+test positive-is-never-negative =
+    property-test
+        for-all   = {v: Int where positive}
+        given     = {slots: {}, event: {type: ui.click, target: GoBtn}}
+        invariant = v < 0
+
+test an-address-is-long =
+    property-test
+        for-all   = {e: Text where email}
+        given     = {slots: {}, event: {type: ui.click, target: GoBtn}}
+        invariant = e.length > 100`;
+
+  it("stays inside the domain its refinement declares", { timeout: 30_000 }, async () => {
+    const [positive, address] = await run(REFINED);
+    expect(positive?.actual).toBe('counterexample (case 1/100): {"v":1}');
+    expect(address?.actual).toMatch(
+      /^counterexample \(case 1\/100\): \{"e":"[a-z]@[a-z]\.example\.com"\}$/,
+    );
+  });
+
+  // `dec` is refused at n = 0 and commits 0..10 for n in 1..11, so the
+  // invariant fails both ways. The generated case ran, so the counterexample
+  // is the smallest input on which `dec` ran and the invariant failed.
+  const REFUSED = `slot count : Int where between(0, 100) = 0
+reducer dec on=ui.click(DecBtn) do= count := count - 1
+tile DecBtn = button(text="-1")
+app A caps=[] routes={"/" -> DecBtn, "/404" -> DecBtn} init=[]
+
+test dec-stays-above-ten =
+    property-test
+        for-all   = {n: Int where between(0, 100)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: DecBtn}}
+        invariant = run-reducer(dec).slots.count > 10`;
+
+  it("fails the way the generated case did, so is not one whose batch was refused", {
+    timeout: 30_000,
+  }, async () => {
+    const [result] = await run(REFUSED);
+    expect(result?.actual).toBe('counterexample (case 1/100): {"n":1}');
+  });
+});
