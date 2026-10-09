@@ -50,7 +50,11 @@ function _named(node, name) {
 // calls another for-bodied tile, or is a for of its own — so each node keeps
 // the key its own for gave it. Each takes the pair of the call site's key and
 // its own key — or its position in the flattened list, when it has none —
-// encoded as JSON, so no two pairs can spell the same string.
+// encoded as a JSON array. A node's own key that is itself such an array (see
+// _keySegments) contributes its elements rather than itself, so a key holds
+// one element per level of nesting and its length grows linearly with the
+// depth. No two pairs spell the same string: an array extended this way has
+// three or more elements, and a pair that is not has two.
 function _wk(node, key) {
   if (node === null || node === undefined) return node;
   if (key === undefined || key === null || key === "") {
@@ -62,9 +66,30 @@ function _wk(node, key) {
   }
   if (Array.isArray(node)) {
     return _children(node).map((n, i) =>
-      _wk(n, JSON.stringify([key, typeof n.key === "string" ? n.key : i])),
+      _wk(n, JSON.stringify([key, ...(typeof n.key === "string" ? _keySegments(n.key) : [i])])),
     );
   }
   return { ...node, key: key };
+}
+// _keySegments — what a node's own key adds after the call site's key when
+// _wk keys a list: the elements of the key when it is the JSON text of an
+// array of two or more elements, spelled exactly as JSON.stringify writes it
+// (the form _wk gives a node of a list); otherwise the key itself, as one
+// element. Anything else stays whole so that no two keys add the same
+// elements: an array spelled another way would add what its JSON.stringify
+// spelling adds, and a one-element array what its element adds. A key that
+// does not start with "[" is returned unparsed; every implicit key starts
+// with its loop's name.
+function _keySegments(k) {
+  if (k.charAt(0) !== "[") return [k];
+  let segments;
+  try {
+    segments = JSON.parse(k);
+  } catch {
+    return [k];
+  }
+  return Array.isArray(segments) && segments.length > 1 && JSON.stringify(segments) === k
+    ? segments
+    : [k];
 }
 `;
