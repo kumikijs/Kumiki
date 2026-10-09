@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppShape, MountedApp, RefinementFailure } from "../src/core.ts";
-import { mount, showRefinementPath, slotAccepts } from "../src/index.ts";
+import { showRefinementPath, slotAccepts } from "../src/index.ts";
+import { bareApp, mountApp } from "./helpers/app.ts";
+import { captureConsole } from "./helpers/console.ts";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -13,13 +15,10 @@ const failure = (v: unknown): RefinementFailure | undefined => {
 };
 
 function makeApp(value: unknown, root: NonNullable<AppShape["root"]>): AppShape {
-  return {
+  return bareApp({
     slots: {
       form: { value, refineFailure: failure },
     },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "breakIt",
@@ -28,23 +27,13 @@ function makeApp(value: unknown, root: NonNullable<AppShape["root"]>): AppShape 
       },
     ],
     root,
-  };
-}
-
-function mountApp(app: AppShape): MountedApp {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  mount(app, root);
-  return app as MountedApp;
+  });
 }
 
 let errors: string[];
 
 beforeEach(() => {
-  errors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
+  errors = captureConsole("error");
 });
 
 afterEach(() => {
@@ -98,7 +87,7 @@ describe("slotAccepts", () => {
 });
 
 describe("showRefinementPath", () => {
-  it("writes each step the way language.md §1.3.3 does", () => {
+  it("writes each step in path notation", () => {
     expect(showRefinementPath([])).toBe("");
     expect(showRefinementPath(["rows", 2, "email"])).toBe(".rows[2].email");
     expect(showRefinementPath([{ variant: "Some" }, { variant: "Pair", payload: 1 }])).toBe(

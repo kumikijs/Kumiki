@@ -2,12 +2,14 @@ import type { AppShape, MountedApp, TileNode } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { noteBindWrite, refusedBindControls, refusedBindShown } from "../src/core.ts";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** `slot contact : Text where email`, an input bound to it, and its error tile. */
 function makeApp(): AppShape {
-  const app: AppShape = {
+  const app: AppShape = bareApp({
     slots: {
       contact: {
         value: "ada@example.com",
@@ -17,9 +19,6 @@ function makeApp(): AppShape {
       },
       saved: { value: 0 },
     },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "save",
@@ -39,13 +38,12 @@ function makeApp(): AppShape {
         { kind: "error", field: "contact" },
       ],
     }),
-  };
+  });
   return app;
 }
 
 function mountApp(): { app: MountedApp; input: HTMLInputElement; error: () => string } {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  const root = freshRoot();
   const app = makeApp();
   mount(app, root);
   const input = root.querySelector("input") as HTMLInputElement;
@@ -188,11 +186,8 @@ function mountControl(c: ControlCase): {
   control: HTMLElement;
   error: () => string;
 } {
-  const app: AppShape = {
+  const app: AppShape = bareApp({
     slots: { f: c.meta, saved: { value: 0 } },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "save",
@@ -210,9 +205,8 @@ function mountControl(c: ControlCase): {
         kind: "column",
         children: [c.node(app.live?.f ?? c.meta.value), { kind: "error", field: "f" }],
       }) as TileNode,
-  };
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  });
+  const root = freshRoot();
   mount(app, root);
   const control = root.querySelector(`[data-kumiki-tile="${c.name}"]`) as HTMLElement;
   const error = () => (root.querySelector('[data-kumiki-tile="error"]')?.textContent ?? "").trim();

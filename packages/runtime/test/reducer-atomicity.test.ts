@@ -1,10 +1,12 @@
-import type { AppShape, MountedApp, ReducerSpec } from "@kumikijs/runtime";
-import { _stdlib, mount, renderToString } from "@kumikijs/runtime";
+import type { AppShape, ReducerSpec } from "@kumikijs/runtime";
+import { _stdlib, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp, mountApp } from "./helpers/app.ts";
+import { captureConsole } from "./helpers/console.ts";
 
 /** `count` is capped at 3; `mirror` and `log` are unconstrained bystanders. */
 function makeApp(overrides: Partial<AppShape> = {}): AppShape {
-  const app: AppShape = {
+  return bareApp({
     slots: {
       count: {
         value: 0,
@@ -16,30 +18,15 @@ function makeApp(overrides: Partial<AppShape> = {}): AppShape {
       log: { value: "" },
       trace: { value: "", volatile: true },
     },
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
     root: () => ({ kind: "text", text: "app" }),
     ...overrides,
-  };
-  return app;
-}
-
-function mountApp(app: AppShape): MountedApp {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  mount(app, root);
-  return app as MountedApp;
+  });
 }
 
 let errors: string[];
 
 beforeEach(() => {
-  errors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
+  errors = captureConsole("error");
 });
 
 afterEach(() => {

@@ -40,7 +40,6 @@ describe("panicInfo", () => {
   });
 
   it("does not loop when a mid-chain link points back to an earlier link", () => {
-    // top -> mid -> root -> mid (cycle inside the chain)
     const mid = new Error("mid") as Error & { cause?: unknown };
     const root = new Error("root", { cause: mid });
     mid.cause = root;
@@ -51,7 +50,6 @@ describe("panicInfo", () => {
   });
 
   it("caps the chain at PANIC_CAUSE_MAX_DEPTH = 8", () => {
-    // Build a 20-deep chain — the collector must trim it, not walk the lot.
     let prev: Error | undefined;
     for (let i = 0; i < 20; i++) {
       prev = new Error(`link-${i}`, prev !== undefined ? { cause: prev } : undefined);
@@ -89,7 +87,6 @@ describe("panicInfo", () => {
     expect(rec.cause).toBeDefined();
     expect(rec.cause!.length).toBe(1);
     expect(rec.cause![0]!.message).toBe("disk full");
-    // Non-Error links have no stack.
     expect(rec.cause![0]!.stack).toBeUndefined();
   });
 
@@ -106,7 +103,6 @@ describe("panicInfo", () => {
       }
     }
     const rec = panicInfo(new Hostile(), "reducer");
-    // Must not throw; must degrade gracefully.
     expect(rec.category).toBe("reducer");
     expect(typeof rec.message).toBe("string");
     expect(rec.stack).toBeUndefined();

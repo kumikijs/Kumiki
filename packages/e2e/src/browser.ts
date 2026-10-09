@@ -1,173 +1,62 @@
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
+  type BrowserAction,
+  type BrowserExpect,
   type ControlVerb,
   constraintFault,
   controlFault,
   type DispatchTarget,
+  describeAction,
   dispatchFault,
   judgeRefusal,
+  partialMatch,
+  type ScenarioStep as RuntimeScenarioStep,
   readControl,
   readInvalidControls,
-  type Action as ScenarioAction,
+  type ScenarioReport,
+  type StepOutcome,
   StepRefusal,
+  showValue,
+  stateMismatches,
   submitFault,
+  textMismatches,
+  validateScenario as validateScenarioFor,
 } from "@kumikijs/runtime";
 import { type ConsoleMessage, chromium, type Locator, type Page, type Route } from "playwright";
 
-export type Action =
-  | { dispatch: string; payload?: Record<string, unknown> }
-  | { clickText: string }
-  | { click: string }
-  | { focus: string }
-  | { blur: string }
-  | { fill: string; value: string }
-  | { choose: string; value: string }
-  | { navigate: string }
-  | { setProperty: string; property: string; value: unknown }
-  /** Submit the form at, or above, the element the selector matches. */
-  | { submit: string }
-  /** Wait this many milliseconds on top of the step's own settle. */
-  | { wait: number };
-
-export type Expect = {
-  noErrors?: boolean;
-  actionErrorIncludes?: string[];
-  state?: Record<string, unknown>;
-  domIncludes?: string[];
-  domExcludes?: string[];
-  /** Browser-only: a CSS selector that must be the focused element. */
-  focused?: string;
-  /** Browser-only: text that must be actually visible (computed style, not just present). */
-  visible?: string[];
-  /** Browser-only: text that must NOT be visible. */
-  hidden?: string[];
-  animating?: string[];
-  elementState?: Record<string, Record<string, unknown>>;
-};
-
-export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
+export type Action = BrowserAction;
+export type Expect = BrowserExpect;
+export type ScenarioStep = RuntimeScenarioStep<Action, Expect>;
 export type Scenario = { steps: ScenarioStep[] };
 
-const EXPECT_KEYS = [
-  "noErrors",
-  "actionErrorIncludes",
-  "state",
-  "domIncludes",
-  "domExcludes",
-  "focused",
-  "visible",
-  "hidden",
-  "animating",
-  "elementState",
-] as const satisfies readonly (keyof Expect)[];
-
-const SCENARIO_EXPECT_KEYS = ["errorIncludes"] as const;
-
-const SCENARIO_ACTION_KEYS = ["key", "hover"] as const satisfies readonly ScenarioOnly[];
-
-type ScenarioActionKind = ScenarioAction extends infer A
-  ? A extends unknown
-    ? keyof A
-    : never
-  : never;
-type ScenarioOnly = Exclude<ScenarioActionKind, ActionKind | (typeof ACTION_MODIFIERS)[number]>;
-
-const ACTION_KEYS = [
-  "dispatch",
-  "clickText",
-  "click",
-  "focus",
-  "blur",
-  "fill",
-  "choose",
-  "navigate",
-  "submit",
-  "wait",
-  "setProperty",
-] as const satisfies readonly ActionKind[];
-
-/** Fields that accompany an action kind rather than naming one. */
-const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
-
-type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
-
-/** How long a `wait` may ask for — the scenario tier's bound, so a fixture promotes unchanged. */
-const MAX_WAIT_MS = 60_000;
-
 export function validateScenario(scenario: Scenario): string[] {
-  const problems: string[] = [];
-  if ((scenario as { effects?: unknown }).effects !== undefined) {
-    problems.push('"effects" is not supported by the browser tier: it drives a real browser');
-  }
-  for (const key of Object.keys(scenario as Record<string, unknown>)) {
-    if (key === "steps" || key === "effects") continue;
-    problems.push(`unknown scenario key "${key}" (steps)`);
-  }
-  if (!Array.isArray(scenario.steps)) {
-    problems.push('a fixture needs a "steps" array');
-    return problems;
-  }
-  if (scenario.steps.length === 0) {
-    problems.push("a fixture with no steps asserts nothing");
-  }
-  const steps = scenario.steps;
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (!step) continue;
-    const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
-    if (step.do !== undefined) problems.push(...validateAction(step.do, where));
-    for (const key of Object.keys((step.expect ?? {}) as Record<string, unknown>)) {
-      if ((EXPECT_KEYS as readonly string[]).includes(key)) continue;
-      if ((SCENARIO_EXPECT_KEYS as readonly string[]).includes(key)) {
-        problems.push(
-          `${where}: "${key}" is a scenario-tier assertion; this tier treats every reported error as fatal`,
-        );
-        continue;
-      }
-      problems.push(`${where}: unknown expect key "${key}" (${EXPECT_KEYS.join(", ")})`);
-    }
-  }
-  return problems;
+  return validateScenarioFor(scenario, "browser");
 }
 
-export type StepResult = {
-  label?: string;
-  action?: string;
-  ok: boolean;
-  actionError?: string;
-  expectedActionError?: string;
-  errors: string[];
-  state: Record<string, unknown>;
-  visibleText: string;
-  failures: string[];
-};
+export type StepResult = StepOutcome & { visibleText: string };
 
-export type BrowserReport = { ok: boolean; steps: StepResult[] };
+export type BrowserReport = ScenarioReport<StepResult>;
 
 export type BrowserOptions = { headed?: boolean; settleMs?: number };
 
-// Escape any literal `</script` so it can't terminate the inline module.
 const escapeScript = (js: string): string => js.replace(/<\/script/gi, "<\\/script");
 
-function buildHtml(js: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8">
-<style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
-<body><div id="root"></div><script type="module">${escapeScript(js)}</script></body></html>`;
-}
+const moduleScript = (js: string): string => `<script type="module">${escapeScript(js)}</script>`;
 
-/** Root `i` is `#kumiki-root-<i>`; inline module scripts execute in document order. */
-function buildHtmlMulti(bundles: string[]): string {
-  const body = bundles
-    .map(
-      (js, i) =>
-        `<div id="kumiki-root-${i}"></div><script type="module">${escapeScript(js)}</script>`,
-    )
-    .join("\n");
+function htmlPage(body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
 <body>${body}</body></html>`;
 }
+
+const buildHtml = (js: string): string => htmlPage(`<div id="root"></div>${moduleScript(js)}`);
+
+/** Root `i` is `#kumiki-root-<i>`; inline module scripts execute in document order. */
+const buildHtmlMulti = (bundles: string[]): string =>
+  htmlPage(
+    bundles.map((js, i) => `<div id="kumiki-root-${i}"></div>${moduleScript(js)}`).join("\n"),
+  );
 
 function patchBundleForMulti(js: string, index: number): string {
   const retargeted = replaceOrThrow(
@@ -379,9 +268,8 @@ async function serveScenario(
   return { ok: steps.every((s) => s.ok), steps };
 }
 
-// Serialized into the page to read sanitized slot state.
-const snapshotStateFn = `(() => {
-  const live = (window.__kumikiApp && window.__kumikiApp.live) || {};
+// Evaluated in the page: copies an app's slots without functions, cycles or the route.
+const sanitizeLiveSrc = `
   const seen = new WeakSet();
   const san = (v) => {
     if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
@@ -392,81 +280,22 @@ const snapshotStateFn = `(() => {
     for (const k of Object.keys(v)) { if (typeof v[k] !== "function") o[k] = san(v[k]); }
     return o;
   };
-  const out = {};
-  for (const k of Object.keys(live)) { if (k !== "route") out[k] = san(live[k]); }
-  return out;
-})()`;
-
-const snapshotMultiStateFn = `(() => {
-  const apps = window.__kumikiApps || [];
-  const seen = new WeakSet();
-  const san = (v) => {
-    if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
-    if (seen.has(v)) return "[circular]";
-    seen.add(v);
-    if (Array.isArray(v)) return v.map(san);
-    const o = {};
-    for (const k of Object.keys(v)) { if (typeof v[k] !== "function") o[k] = san(v[k]); }
-    return o;
-  };
-  const out = {};
-  apps.forEach((app, i) => {
+  const slotsOf = (app) => {
     const live = (app && app.live) || {};
     const o = {};
     for (const k of Object.keys(live)) { if (k !== "route") o[k] = san(live[k]); }
-    out[String(i)] = o;
-  });
-  return out;
+    return o;
+  };`;
+
+const snapshotStateFn = `(() => {${sanitizeLiveSrc}
+  return slotsOf(window.__kumikiApp);
 })()`;
 
-function validateAction(action: Action, where: string): string[] {
-  const keys = Object.keys(action as Record<string, unknown>);
-  const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
-  const scenarioOnly = kinds.filter((k) => (SCENARIO_ACTION_KEYS as readonly string[]).includes(k));
-  if (scenarioOnly.length > 0) {
-    return [
-      `${where}: "${scenarioOnly[0]}" is a scenario-tier action; run this fixture with kumiki run`,
-    ];
-  }
-  const unknown = kinds.filter((k) => !(ACTION_KEYS as readonly string[]).includes(k));
-  if (unknown.length > 0) {
-    return [`${where}: unknown action "${unknown[0]}" (${ACTION_KEYS.join(", ")})`];
-  }
-  if (kinds.length === 0) return [`${where}: "do" names no action (${ACTION_KEYS.join(", ")})`];
-  if (kinds.length > 1) {
-    return [`${where}: "do" names ${kinds.join(" and ")}; a step does exactly one thing`];
-  }
-  const kind = kinds[0];
-  const a = action as Record<string, unknown>;
-  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
-    return [`${where}: "${kind}" needs a string "value"`];
-  }
-  if (kind === "setProperty" && typeof a.property !== "string") {
-    return [`${where}: "setProperty" needs a "property" name`];
-  }
-  if (
-    kind === "wait" &&
-    !(typeof a.wait === "number" && Number.isFinite(a.wait) && a.wait >= 0 && a.wait <= MAX_WAIT_MS)
-  ) {
-    return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
-  }
-  return [];
-}
-
-function describeAction(a: Action): string {
-  if ("dispatch" in a) return `dispatch ${a.dispatch}`;
-  if ("clickText" in a) return `clickText "${a.clickText}"`;
-  if ("click" in a) return `click ${a.click}`;
-  if ("focus" in a) return `focus ${a.focus}`;
-  if ("blur" in a) return `blur ${a.blur}`;
-  if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
-  if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
-  if ("submit" in a) return `submit ${a.submit}`;
-  if ("wait" in a) return `wait ${a.wait}ms`;
-  if ("setProperty" in a)
-    return `setProperty ${a.setProperty}.${a.property}=${JSON.stringify(a.value)}`;
-  return `navigate ${a.navigate}`;
-}
+const snapshotMultiStateFn = `(() => {${sanitizeLiveSrc}
+  const out = {};
+  (window.__kumikiApps || []).forEach((app, i) => { out[String(i)] = slotsOf(app); });
+  return out;
+})()`;
 
 async function refuse(loc: Locator, verb: ControlVerb, where: string): Promise<void> {
   const state = await loc.evaluate(readControl, undefined, { timeout: 3000 });
@@ -635,7 +464,6 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     );
     return;
   }
-  // choose
   const loc = page.locator(a.choose).first();
   await refuse(loc, "choose", describeAction(a));
   await loc
@@ -655,16 +483,8 @@ async function evaluateExpect(
   if (expect.noErrors && errors.length > 0) {
     failures.push(`expected no errors but got: ${errors.join("; ")}`);
   }
-  for (const [key, want] of Object.entries(expect.state ?? {})) {
-    const got = readPath(state, key);
-    if (!matches(want, got)) failures.push(`state ${key}: expected ${j(want)}, got ${j(got)}`);
-  }
-  for (const s of expect.domIncludes ?? []) {
-    if (!visibleText.includes(s)) failures.push(`visible text should include "${s}"`);
-  }
-  for (const s of expect.domExcludes ?? []) {
-    if (visibleText.includes(s)) failures.push(`visible text should NOT include "${s}"`);
-  }
+  failures.push(...stateMismatches(expect.state ?? {}, state));
+  failures.push(...textMismatches(expect, visibleText, "visible text"));
   if (expect.focused) {
     const isFocused = await page
       .evaluate((sel: string) => !!document.activeElement?.matches(sel), expect.focused)
@@ -716,40 +536,14 @@ async function evaluateExpect(
       continue;
     }
     for (const [prop, want] of Object.entries(props)) {
-      if (!matches(want, got[prop])) {
-        failures.push(`elementState ${sel}.${prop}: expected ${j(want)}, got ${j(got[prop])}`);
+      if (!partialMatch(want, got[prop])) {
+        failures.push(
+          `elementState ${sel}.${prop}: expected ${showValue(want)}, got ${showValue(got[prop])}`,
+        );
       }
     }
   }
   return failures;
-}
-
-function readPath(obj: Record<string, unknown>, path: string): unknown {
-  let cur: unknown = obj;
-  for (const seg of path.split(".")) {
-    if (cur === null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-function matches(want: unknown, got: unknown): boolean {
-  if (want === null || typeof want !== "object") return want === got;
-  if (Array.isArray(want)) {
-    if (!Array.isArray(got) || got.length !== want.length) return false;
-    return want.every((w, i) => matches(w, got[i]));
-  }
-  if (got === null || typeof got !== "object") return false;
-  const g = got as Record<string, unknown>;
-  return Object.entries(want as Record<string, unknown>).every(([k, w]) => matches(w, g[k]));
-}
-
-function j(v: unknown): string {
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
 }
 
 declare global {

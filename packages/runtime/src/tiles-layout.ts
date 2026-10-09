@@ -57,7 +57,6 @@ function renderBox(
   const div = document.createElement("div");
   div.dataset.kumikiTile = node.kind;
   if (node.kind === "card") {
-    // Default padding only if the prop didn't override it.
     if (!node.props || node.props.pad === undefined) div.style.padding = "16px";
     div.style.marginBottom = "12px";
     div.style.borderRadius = "8px";
@@ -139,7 +138,5 @@ export const layoutPatchers: TilePatchers = {
   divider(el, _oldNode, newNode) {
     applyDividerOrientation(el as HTMLElement, newNode.props);
   },
-  "route-outlet"() {
-    // No own data — subtree children reconcile handles the inner routing.
-  },
+  "route-outlet"() {},
 };

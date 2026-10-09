@@ -1,5 +1,4 @@
 import type {
-  AppShape,
   EnvScopeOutcome,
   EnvScopeReport,
   EpisodeLogEntry,
@@ -7,30 +6,23 @@ import type {
 } from "@kumikijs/runtime";
 import {
   _stdlibCore,
-  createEpisodeLogger,
   KumikiPanic,
-  mount,
   renderToString,
-  replayEpisodes,
   withEnvRecord,
   withEnvReplay,
 } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-
-type ReplayableApp = AppShape & { live: Record<string, unknown> };
+import { bareApp } from "./helpers/app.ts";
+import {
+  type ReplayableApp,
+  recordDispatch,
+  replayableApp,
+  replayInto,
+} from "./helpers/episode-apps.ts";
 
 function makeDiceApp(): ReplayableApp {
-  const slots = {
-    roll: { value: 0 },
-    stamped: { value: "" },
-    id: { value: "" },
-  };
-  const app: ReplayableApp = {
-    live: {},
-    slots,
-    caps: [],
-    effects: {},
-    init: [],
+  return replayableApp({
+    slots: { roll: { value: 0 }, stamped: { value: "" }, id: { value: "" } },
     reducers: [
       {
         name: "roll6",
@@ -45,33 +37,13 @@ function makeDiceApp(): ReplayableApp {
         }),
       },
     ],
-    root: () => ({ kind: "text", text: "" }),
-  };
-  for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
-  return app;
+  });
 }
 
-/** Drive one click through the live runtime and return the episode it wrote. */
 function recordOneRoll(): EpisodeLogEntry {
-  const app = makeDiceApp();
-  const logger = createEpisodeLogger({ memoryMax: 10 });
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  try {
-    const { dispose } = mount(app, root, { episodeLogger: logger });
-    const dispatch = (
-      app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void }
-    )._dispatch;
-    dispatch("roll6", {});
-    dispose();
-    const eps = logger.list();
-    expect(eps).toHaveLength(1);
-    // Round-trip through JSON: an episode reaches replay as a log line, and a
-    // field that does not survive serialization is not a recording.
-    return JSON.parse(JSON.stringify(eps[0])) as EpisodeLogEntry;
-  } finally {
-    root.remove();
-  }
+  const eps = recordDispatch(makeDiceApp(), "roll6");
+  expect(eps).toHaveLength(1);
+  return eps[0] as EpisodeLogEntry;
 }
 
 function reducerStep(ep: EpisodeLogEntry): Extract<EpisodeStep, { kind: "reducer" }> {
@@ -86,13 +58,7 @@ function afterOf(ep: EpisodeLogEntry, slot: string): unknown {
 }
 
 function replayOnce(ep: EpisodeLogEntry): Record<string, unknown> {
-  const app = makeDiceApp();
-  return replayEpisodes({
-    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
-    episodes: [ep],
-    mocks: {},
-    observer: () => "continue",
-  }).finalSlots;
+  return replayInto(makeDiceApp(), [ep]).finalSlots;
 }
 
 /**
@@ -104,7 +70,7 @@ function ok<T>(out: EnvScopeOutcome<T>): { value: T; env: EnvScopeReport } {
   return out;
 }
 
-describe("environment reads in an episode (#337, §10.5.1)", () => {
+describe("environment reads in an episode", () => {
   it("records what each read returned, in the order the reducer asked", () => {
     const ep = recordOneRoll();
     const reads = reducerStep(ep)["env-reads"] ?? [];
@@ -249,7 +215,7 @@ describe("the environment journal", () => {
   });
 });
 
-describe("a malformed env-reads list (#337)", () => {
+describe("a malformed env-reads list", () => {
   it("rejects an entry with no usable value instead of handing the body undefined", () => {
     const out = ok(
       withEnvReplay([{ kind: "now" }, { kind: "random", value: "half" }], () => ({
@@ -275,16 +241,11 @@ describe("a malformed env-reads list (#337)", () => {
   });
 });
 
-describe("a reducer that panicked (#337)", () => {
+describe("a reducer that panicked", () => {
   /** The shape codegen emits for a reducer whose body reads, then panics. */
   function makePanicApp(): ReplayableApp {
-    const slots = { roll: { value: 0 } };
-    const app: ReplayableApp = {
-      live: {},
-      slots,
-      caps: [],
-      effects: {},
-      init: [],
+    return replayableApp({
+      slots: { roll: { value: 0 } },
       reducers: [
         {
           name: "risky",
@@ -296,30 +257,14 @@ describe("a reducer that panicked (#337)", () => {
           },
         },
       ],
-      root: () => ({ kind: "text", text: "" }),
-    };
-    for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
-    return app;
+    });
   }
 
   /** Dispatch until the reducer panics, and return that episode. */
   function recordAPanic(): EpisodeLogEntry {
     for (let attempt = 0; attempt < 200; attempt++) {
-      const app = makePanicApp();
-      const logger = createEpisodeLogger({ memoryMax: 10 });
-      const root = document.createElement("div");
-      document.body.appendChild(root);
-      try {
-        const { dispose } = mount(app, root, { episodeLogger: logger });
-        (
-          app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void }
-        )._dispatch("risky", {});
-        dispose();
-        const ep = logger.list()[0];
-        if (ep?.status === "panic") return JSON.parse(JSON.stringify(ep)) as EpisodeLogEntry;
-      } finally {
-        root.remove();
-      }
+      const ep = recordDispatch(makePanicApp(), "risky")[0];
+      if (ep?.status === "panic") return ep;
     }
     throw new Error("no panic in 200 dispatches — the fixture is not random");
   }
@@ -340,13 +285,7 @@ describe("a reducer that panicked (#337)", () => {
       | Extract<EpisodeStep, { kind: "panic" }>
       | undefined;
     for (let i = 0; i < 5; i++) {
-      const app = makePanicApp();
-      const report = replayEpisodes({
-        app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
-        episodes: [ep],
-        mocks: {},
-        observer: () => "continue",
-      });
+      const report = replayInto(makePanicApp(), [ep]);
       // Without the panic step's `env-reads` this re-rolls and passes ~50% of
       // the time — and `kumiki replay` would exit 0 on a recorded crash.
       expect(report.panics.map((p) => p.message)).toEqual([recorded?.message]);
@@ -355,9 +294,9 @@ describe("a reducer that panicked (#337)", () => {
   });
 });
 
-describe("the other two recording paths (#337)", () => {
+describe("the other two recording paths", () => {
   it("the SSR bootstrap episode journals its reducers' reads", async () => {
-    const app: AppShape = {
+    const app = bareApp({
       slots: { seededAt: { value: "" }, token: { value: "" } },
       caps: ["http.get"],
       effects: {
@@ -382,7 +321,7 @@ describe("the other two recording paths (#337)", () => {
         },
       ],
       root: () => ({ kind: "text", text: "" }),
-    };
+    });
     const rendered = await renderToString(app, {
       providers: { "http.get": async () => ({ kind: "ok", value: null }) },
     });
@@ -400,11 +339,8 @@ describe("the other two recording paths (#337)", () => {
   });
 
   it("a reducer whose batch a refinement rejected still records what it read", () => {
-    const app: AppShape = {
+    const app = bareApp({
       slots: { roll: { value: 1, refine: (v) => (v as number) > 0.5 } },
-      caps: [],
-      effects: {},
-      init: [],
       reducers: [
         {
           name: "reroll",
@@ -413,25 +349,11 @@ describe("the other two recording paths (#337)", () => {
         },
       ],
       root: () => ({ kind: "text", text: "" }),
-    };
-    const logger = createEpisodeLogger({ memoryMax: 10 });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    try {
-      const { dispose } = mount(app, root, { episodeLogger: logger });
-      (app as unknown as { _dispatch: (n: string, p: Record<string, unknown>) => void })._dispatch(
-        "reroll",
-        {},
-      );
-      dispose();
-      const ep = logger.list()[0];
-      const step = ep?.steps.find((s) => s.kind === "reducer") as
-        | Extract<EpisodeStep, { kind: "reducer" }>
-        | undefined;
-      expect(step?.["slot-diffs"]).toEqual([]);
-      expect(step?.["env-reads"]?.map((r) => r.kind)).toEqual(["random"]);
-    } finally {
-      root.remove();
-    }
+    });
+    const step = recordDispatch(app, "reroll")[0]?.steps.find((s) => s.kind === "reducer") as
+      | Extract<EpisodeStep, { kind: "reducer" }>
+      | undefined;
+    expect(step?.["slot-diffs"]).toEqual([]);
+    expect(step?.["env-reads"]?.map((r) => r.kind)).toEqual(["random"]);
   });
 });

@@ -15,7 +15,7 @@ npm i @kumikijs/runtime
 - `@kumikijs/runtime` — the runtime API (`mount`, `runScenario`, `smoke`, …).
 - `@kumikijs/runtime/bundle` — the prebuilt, self-contained runtime bundle as a single unminified file, embedded verbatim into generated apps (smoke/run/test and the playground).
 - `@kumikijs/runtime/bundle.min` — the same bundle, minified, for hosts that want the full runtime as one file.
-- `@kumikijs/runtime/modules/*` — the granular feature modules (minified ESM): `core`, `stdlib`, `testkit`, `router`, `effects-{storage,http,toast}`, `tiles-{layout,text,input,collection,overlay,media,status}`. `kumiki build` ships only the ones a compiled app imports (#71), so an app that never routes or renders tables carries no router/table code.
+- `@kumikijs/runtime/modules/*` — the granular feature modules (minified ESM): `core`, `stdlib`, `testkit`, `router`, `effects-{storage,http,toast}`, `tiles-{layout,text,input,collection,overlay,media,status}`. `kumiki build` ships only the ones a compiled app imports, so an app that never routes or renders tables carries no router/table code.
 
 ## License
 

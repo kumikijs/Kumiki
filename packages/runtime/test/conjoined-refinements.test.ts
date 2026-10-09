@@ -1,10 +1,11 @@
-import type { AppShape, MountedApp } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
+import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp, mountApp } from "./helpers/app.ts";
+import { captureConsole } from "./helpers/console.ts";
 
 /** `handle : nominal Text where len-gt(3) where len-lt(9)`, as codegen emits it. */
 function makeApp(overrides: Partial<AppShape> = {}): AppShape {
-  return {
+  return bareApp({
     slots: {
       handle: {
         value: "kumiki",
@@ -17,9 +18,6 @@ function makeApp(overrides: Partial<AppShape> = {}): AppShape {
         ],
       },
     },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "short",
@@ -39,23 +37,13 @@ function makeApp(overrides: Partial<AppShape> = {}): AppShape {
     ],
     root: () => ({ kind: "text", text: "app" }),
     ...overrides,
-  };
-}
-
-function mountApp(app: AppShape): MountedApp {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  mount(app, root);
-  return app as MountedApp;
+  });
 }
 
 let errors: string[];
 
 beforeEach(() => {
-  errors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
+  errors = captureConsole("error");
 });
 
 afterEach(() => {

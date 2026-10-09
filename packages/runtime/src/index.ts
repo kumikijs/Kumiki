@@ -153,15 +153,32 @@ export {
 } from "./episode.ts";
 export { routing } from "./router.ts";
 export {
+  partialMatch,
+  readDottedPath,
+  showValue,
+  stateMismatches,
+  textMismatches,
+} from "./scenario/expect.ts";
+export {
   type Action,
-  type EffectScript,
+  BROWSER_ACTION_KEYS,
+  BROWSER_EXPECT_KEYS,
+  type BrowserAction,
+  type BrowserExpect,
+  describeAction,
   type Expect,
   HEADLESS_ACTION_KEYS,
   HEADLESS_EXPECT_KEYS,
+  type ScenarioStep,
+  type ScenarioTier,
+  type StepOutcome,
+  validateScenario,
+} from "./scenario/vocabulary.ts";
+export {
+  type EffectScript,
   runScenario,
   type Scenario,
   type ScenarioReport,
-  type ScenarioStep,
   type StepResult,
 } from "./scenario.ts";
 export {

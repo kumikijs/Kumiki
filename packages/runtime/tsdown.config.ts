@@ -69,6 +69,9 @@ export default defineConfig([
     fixedExtension: false,
     minify: true,
     clean: false,
+    // The CLI ships modules by entry name, so code an entry shares with another entry must
+    // merge into one of them rather than into an unnamed chunk.
+    inputOptions: { preserveEntrySignatures: "allow-extension" },
     outputOptions: publishedOutputOptions,
   },
 ]);

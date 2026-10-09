@@ -9,152 +9,18 @@ import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
+import { stateMismatches, textMismatches } from "./scenario/expect.ts";
+import {
+  type Action,
+  describeAction,
+  type Expect,
+  type ScenarioStep,
+  type StepOutcome,
+  unhandledAction,
+  validateScenario,
+} from "./scenario/vocabulary.ts";
 import { submitFault } from "./submit-check.ts";
 import { standInValue } from "./testkit.ts";
-
-/** One thing to do to the app. Exactly one field should be set. */
-export type Action =
-  | { dispatch: string; payload?: Record<string, unknown> }
-  | { clickText: string }
-  | { click: string }
-  | { focus: string }
-  | { blur: string }
-  /** Press a key on the element the selector matches — what a `ui.key` reducer listens for. */
-  | { key: string; value: string }
-  /** Enter the element the selector matches — what a `ui.hover` reducer listens for. */
-  | { hover: string }
-  | { fill: string; value: string }
-  | { choose: string; value: string }
-  | { navigate: string }
-  | { submit: string }
-  /** Settle for this many milliseconds — a debounce window, a retry backoff, a timer. */
-  | { wait: number };
-
-/** Assertions evaluated against the snapshot taken after a step. */
-export type Expect = {
-  /** No runtime errors since the previous step. */
-  noErrors?: boolean;
-  errorIncludes?: string[];
-  actionErrorIncludes?: string[];
-  /** Partial match against the slot state (slot name → expected value). */
-  state?: Record<string, unknown>;
-  /** Substrings that must appear in the rendered text. */
-  domIncludes?: string[];
-  /** Substrings that must NOT appear in the rendered text. */
-  domExcludes?: string[];
-};
-
-export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
-
-export const HEADLESS_EXPECT_KEYS = [
-  "noErrors",
-  "errorIncludes",
-  "actionErrorIncludes",
-  "state",
-  "domIncludes",
-  "domExcludes",
-] as const satisfies readonly (keyof Expect)[];
-const BROWSER_EXPECT_KEYS = ["focused", "visible", "hidden", "animating", "elementState"] as const;
-
-export const HEADLESS_ACTION_KEYS = [
-  "dispatch",
-  "clickText",
-  "click",
-  "focus",
-  "blur",
-  "key",
-  "hover",
-  "fill",
-  "choose",
-  "navigate",
-  "submit",
-  "wait",
-] as const satisfies readonly ActionKind[];
-const BROWSER_ACTION_KEYS = ["setProperty"] as const;
-
-type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
-
-/** Fields that accompany an action kind rather than naming one. */
-const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
-
-/** The whole document is a closed set too — see `validateScenario`. */
-const SCENARIO_KEYS = ["steps", "effects", "defaultEffect"] as const;
-
-const BROWSER_TIER = "a browser-tier assertion; run this fixture with @kumikijs/e2e";
-
-const MAX_WAIT_MS = 60_000;
-
-const isWaitable = (ms: unknown): boolean =>
-  typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= MAX_WAIT_MS;
-
-function validateScenario(scenario: Scenario): string[] {
-  const problems: string[] = [];
-  for (const key of Object.keys(scenario as Record<string, unknown>)) {
-    if ((SCENARIO_KEYS as readonly string[]).includes(key)) continue;
-    problems.push(`unknown scenario key "${key}" (${SCENARIO_KEYS.join(", ")})`);
-  }
-  if (!Array.isArray(scenario.steps)) {
-    problems.push('a scenario needs a "steps" array');
-    return problems;
-  }
-  if (scenario.steps.length === 0) {
-    problems.push("a scenario with no steps asserts nothing");
-  }
-  const steps = scenario.steps;
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (!step) continue;
-    const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
-    if (step.do !== undefined) problems.push(...validateAction(step.do, where));
-    if (step.expect !== undefined) problems.push(...validateExpect(step.expect, where));
-  }
-  return problems;
-}
-
-function validateAction(action: Action, where: string): string[] {
-  const keys = Object.keys(action as Record<string, unknown>);
-  const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
-  const browser = kinds.filter((k) => (BROWSER_ACTION_KEYS as readonly string[]).includes(k));
-  if (browser.length > 0) {
-    return [`${where}: "${browser[0]}" is ${BROWSER_TIER}`];
-  }
-  const known = kinds.filter((k) => (HEADLESS_ACTION_KEYS as readonly string[]).includes(k));
-  const unknown = kinds.filter((k) => !(HEADLESS_ACTION_KEYS as readonly string[]).includes(k));
-  if (unknown.length > 0) {
-    return [`${where}: unknown action "${unknown[0]}" (${HEADLESS_ACTION_KEYS.join(", ")})`];
-  }
-  if (known.length === 0) {
-    return [`${where}: "do" names no action (${HEADLESS_ACTION_KEYS.join(", ")})`];
-  }
-  if (known.length > 1) {
-    return [`${where}: "do" names ${known.join(" and ")}; a step does exactly one thing`];
-  }
-  const kind = known[0];
-  const a = action as Record<string, unknown>;
-  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
-    return [`${where}: "${kind}" needs a string "value"`];
-  }
-  if (kind === "key" && (typeof a.value !== "string" || a.value.length === 0)) {
-    return [`${where}: "key" needs a non-empty string "value" (the key to press)`];
-  }
-  if (kind === "wait" && !isWaitable(a.wait)) {
-    return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
-  }
-  return [];
-}
-
-function validateExpect(expect: Expect, where: string): string[] {
-  const problems: string[] = [];
-  for (const key of Object.keys(expect as Record<string, unknown>)) {
-    if ((HEADLESS_EXPECT_KEYS as readonly string[]).includes(key)) continue;
-    if ((BROWSER_EXPECT_KEYS as readonly string[]).includes(key)) {
-      problems.push(`${where}: "${key}" is ${BROWSER_TIER}`);
-      continue;
-    }
-    problems.push(`${where}: unknown expect key "${key}" (${HEADLESS_EXPECT_KEYS.join(", ")})`);
-  }
-  return problems;
-}
 
 export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
 
@@ -166,22 +32,14 @@ export type Scenario = {
   defaultEffect?: EffectScript;
 };
 
-export type StepResult = {
-  label?: string;
-  action?: string;
-  ok: boolean;
-  errors: string[];
+export type StepResult = StepOutcome & {
   expectedErrors: string[];
-  actionError?: string;
-  expectedActionError?: string;
   emits: { effect: string; args: unknown[] }[];
-  state: Record<string, unknown>;
   domText: string;
-  failures: string[];
   diagnostics: RuntimeDiagnostic[];
 };
 
-export type ScenarioReport = { ok: boolean; steps: StepResult[] };
+export type ScenarioReport<S = StepResult> = { ok: boolean; steps: S[] };
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -366,26 +224,6 @@ function mkStep(
   return step;
 }
 
-function unhandledAction(a: never): never {
-  throw new Error(`unhandled action: ${JSON.stringify(a)}`);
-}
-
-function describeAction(a: Action): string {
-  if ("dispatch" in a) return `dispatch ${a.dispatch}`;
-  if ("clickText" in a) return `clickText "${a.clickText}"`;
-  if ("click" in a) return `click ${a.click}`;
-  if ("focus" in a) return `focus ${a.focus}`;
-  if ("blur" in a) return `blur ${a.blur}`;
-  if ("key" in a) return `key ${a.key} "${a.value}"`;
-  if ("hover" in a) return `hover ${a.hover}`;
-  if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
-  if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
-  if ("submit" in a) return `submit ${a.submit}`;
-  if ("wait" in a) return `wait ${a.wait}ms`;
-  if ("navigate" in a) return `navigate ${a.navigate}`;
-  return unhandledAction(a);
-}
-
 function requireSeam<K extends keyof typeof WITHOUT_SEAM>(
   app: Dispatchable,
   seam: K,
@@ -540,22 +378,8 @@ function evaluateExpect(
       );
     }
   }
-  if (expect.state) {
-    const state = snapshotState(app);
-    for (const [key, want] of Object.entries(expect.state)) {
-      const got = readPath(state, key);
-      if (!matches(want, got)) {
-        failures.push(`state ${key}: expected ${j(want)}, got ${j(got)}`);
-      }
-    }
-  }
-  const text = root.textContent ?? "";
-  for (const s of expect.domIncludes ?? []) {
-    if (!text.includes(s)) failures.push(`DOM should include "${s}"`);
-  }
-  for (const s of expect.domExcludes ?? []) {
-    if (text.includes(s)) failures.push(`DOM should NOT include "${s}"`);
-  }
+  if (expect.state) failures.push(...stateMismatches(expect.state, snapshotState(app)));
+  failures.push(...textMismatches(expect, root.textContent ?? "", "DOM"));
   return failures;
 }
 
@@ -578,35 +402,6 @@ function sanitize(v: unknown): unknown {
     out[k] = sanitize(val);
   }
   return out;
-}
-
-function readPath(obj: Record<string, unknown>, path: string): unknown {
-  let cur: unknown = obj;
-  for (const seg of path.split(".")) {
-    if (cur === null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-/** Partial structural match: every key/element in `want` must be present in `got`. */
-function matches(want: unknown, got: unknown): boolean {
-  if (want === null || typeof want !== "object") return want === got;
-  if (Array.isArray(want)) {
-    if (!Array.isArray(got) || got.length !== want.length) return false;
-    return want.every((w, i) => matches(w, got[i]));
-  }
-  if (got === null || typeof got !== "object") return false;
-  const g = got as Record<string, unknown>;
-  return Object.entries(want as Record<string, unknown>).every(([k, w]) => matches(w, g[k]));
-}
-
-function j(v: unknown): string {
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
 }
 
 function errStr(e: unknown): string {

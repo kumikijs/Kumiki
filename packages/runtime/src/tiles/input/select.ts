@@ -45,7 +45,6 @@ function reconcileSelectOptions(
     const k = valueKey(opt.value);
     const existingAt = sel.options[i + offset];
     if (existingAt && existingAt.value === k) {
-      // Same key at this slot: only update label + selection.
       if (existingAt.textContent !== String(opt.label)) {
         existingAt.textContent = String(opt.label);
       }
@@ -72,7 +71,6 @@ function reconcileSelectOptions(
       sel.insertBefore(o, sel.options[i + offset] ?? null);
     }
   }
-  // Drop any trailing options that are no longer in the target list.
   while (sel.options.length > options.length + offset) {
     const last = sel.options[sel.options.length - 1];
     if (!last) break;

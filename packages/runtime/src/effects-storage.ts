@@ -18,7 +18,7 @@ async function readFrom(backend: Backend, input: unknown): Promise<EffectResult>
   }
 }
 
-/** An `err` whose value is the message itself, the declared `Text` (http.md §6.7). */
+/** An `err` whose value is the message itself, the declared `Text`. */
 function failed(message: string): EffectResult {
   return { kind: "err", value: message };
 }

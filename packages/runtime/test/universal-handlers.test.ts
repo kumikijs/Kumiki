@@ -1,7 +1,9 @@
 import type { AppShape, TileNode, TileProps } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp } from "./helpers/app.ts";
 import { defined } from "./helpers/defined.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 /** The four, with the event each one listens for and how to fire it. */
 const UNIVERSAL = {
@@ -31,19 +33,14 @@ function handlerApp(calls: Record<string, unknown>[]) {
   let live: readonly Universal[] = [];
   let payload: Record<string, unknown> = { seq: 1 };
   let renders = 0;
-  const app: AppShape = {
-    slots: {},
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
+  const app: AppShape = bareApp({
     root: (): TileNode => {
       renders += 1;
       const props: TileProps = { el: payload };
       for (const name of live) props[name] = (el: Record<string, unknown>) => calls.push(el);
       return { kind: "input", value: `v${renders}`, props };
     },
-  };
+  });
   return {
     app,
     /** Set which of the four the next render carries, and optionally its `el` payload. */
@@ -59,8 +56,7 @@ describe("a universally-lifted handler across renders", () => {
   let root: HTMLElement;
 
   beforeEach(() => {
-    root = document.createElement("div");
-    document.body.appendChild(root);
+    root = freshRoot();
   });
   afterEach(() => {
     root.remove();
@@ -90,24 +86,7 @@ describe("a universally-lifted handler across renders", () => {
     dispose();
   });
 
-  it.each(NAMES)("%s stops reaching it when a later render drops it", (handler) => {
-    const calls: Record<string, unknown>[] = [];
-    const { app, set, rerender } = handlerApp(calls);
-    set([handler]);
-    const { dispose } = mount(app, root);
-
-    const el = theInput();
-    UNIVERSAL[handler].fire(el);
-    expect(calls).toHaveLength(1);
-
-    set([]);
-    rerender();
-    UNIVERSAL[handler].fire(theInput(el));
-    expect(calls, "the slot no longer carries it").toHaveLength(1);
-    dispose();
-  });
-
-  it.each(NAMES)("%s comes back after a render that dropped it", (handler) => {
+  it.each(NAMES)("%s stops reaching it when a render drops it, and comes back after", (handler) => {
     const calls: Record<string, unknown>[] = [];
     const { app, set, rerender } = handlerApp(calls);
     set([handler]);
@@ -178,14 +157,9 @@ describe("a universally-lifted handler across renders", () => {
   it("registers no listener at all for a tile that never carries one", () => {
     const spy = vi.spyOn(HTMLElement.prototype, "addEventListener");
     try {
-      const app: AppShape = {
-        slots: {},
-        caps: [],
-        effects: {},
-        init: [],
-        reducers: [],
+      const app: AppShape = bareApp({
         root: (): TileNode => ({ kind: "input", value: "", props: {} }),
-      };
+      });
       const { dispose } = mount(app, root);
       const registered = spy.mock.calls.map((call) => String(call[0]));
       // The input renderer wires its own — `input`, `change`, and the IME

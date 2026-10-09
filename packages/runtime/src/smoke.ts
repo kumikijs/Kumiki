@@ -147,7 +147,7 @@ export async function smoke(
     try {
       dispose?.();
     } catch {
-      // ignore disposal errors
+      // The report is already built; a fault on the way out does not change it.
     }
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);

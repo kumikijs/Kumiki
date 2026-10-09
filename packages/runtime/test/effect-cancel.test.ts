@@ -1,8 +1,8 @@
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-
-const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
+import { freshRoot } from "./helpers/dom.ts";
+import { tick } from "./helpers/time.ts";
 
 type AbortLog = { aborted: boolean; signal?: AbortSignal | undefined };
 
@@ -39,7 +39,6 @@ function makeCancelApp(): {
       cancel: {
         name: "cancel",
         cap: "http.cancel",
-        // Dispatcher never calls invoke for cap=http.cancel — kept for shape.
         invoke: async () => ({ kind: "ok", value: null }),
       },
     },
@@ -87,17 +86,14 @@ function makeCancelApp(): {
 describe("dispatcher http.cancel", () => {
   it("aborts an in-flight effect and surfaces aborted to the .err reducer", async () => {
     const { app, log, lastErr } = makeCancelApp();
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
         app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
       )._dispatch;
-      // The search effect is `policy=latest` so the dispatcher creates a
-      // controller and stores it under `search:_`.
       dispatch("go", {});
-      await tick();
+      await tick(5);
       expect(log.signal).toBeDefined();
       expect(log.aborted).toBe(false);
 
@@ -113,8 +109,7 @@ describe("dispatcher http.cancel", () => {
 
   it("is a silent no-op for an unknown effect id (no throw, no .err)", async () => {
     const { app, lastErr } = makeCancelApp();
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
@@ -122,7 +117,6 @@ describe("dispatcher http.cancel", () => {
       )._dispatch;
       dispatch("killGhost", {});
       await tick(10);
-      // No in-flight effect → cancel must not surface a spurious `.err`.
       expect(lastErr?.value).toBeNull();
       dispose();
     } finally {
@@ -130,7 +124,7 @@ describe("dispatcher http.cancel", () => {
     }
   });
 
-  it("does NOT clear a throttle window on cancel (review fix)", async () => {
+  it("does NOT clear a throttle window on cancel", async () => {
     let calls = 0;
     const app: AppShape = {
       slots: { last: { value: "" } },
@@ -172,8 +166,7 @@ describe("dispatcher http.cancel", () => {
         },
       ],
     };
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
@@ -181,12 +174,10 @@ describe("dispatcher http.cancel", () => {
       )._dispatch;
       dispatch("fire", {});
       await tick(5);
-      // First call launches (throttle window opens).
       expect(calls).toBe(1);
       dispatch("kill", {});
       await tick(5);
-      // Cancel does NOT reset the throttle marker, so a second emit inside the
-      // window is suppressed.
+      // Cancel leaves the throttle window open, so a second emit inside it is suppressed.
       dispatch("fire", {});
       await tick(10);
       expect(calls).toBe(1);
@@ -199,15 +190,14 @@ describe("dispatcher http.cancel", () => {
   it("records an effect-cancel step in the episode logger", async () => {
     const { app } = makeCancelApp();
     const logger = createEpisodeLogger({ memoryMax: 10 });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root, { episodeLogger: logger });
       const dispatch = (
         app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
       )._dispatch;
       dispatch("go", {});
-      await tick();
+      await tick(5);
       dispatch("kill", {});
       await tick(20);
       const cancelSteps = logger
@@ -223,7 +213,7 @@ describe("dispatcher http.cancel", () => {
   });
 });
 
-describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
+describe("a latest-per-key emit that carries its key", () => {
   function makeKeyedApp(emitted: { effect: string; args: unknown[]; key?: string }): {
     app: AppShape;
     log: AbortLog;
@@ -282,15 +272,14 @@ describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
     kill: "killA" | "killB",
   ): Promise<boolean> {
     const { app, log } = makeKeyedApp(emitted);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
         app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
       )._dispatch;
       dispatch("go", {});
-      await tick();
+      await tick(5);
       expect(log.signal).toBeDefined();
       dispatch(kill, {});
       await tick(20);

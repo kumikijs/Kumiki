@@ -14,13 +14,12 @@ beforeEach(() => {
 });
 
 describe("submitFault", () => {
-  it("says nothing when no form held the submit back", () => {
-    expect(submitFault("submit #e", null)).toBeUndefined();
-    expect(submitFault("submit #e", undefined)).toBeUndefined();
-  });
-
-  it("says nothing for an empty record, which holds nothing back", () => {
-    expect(submitFault("submit #e", [])).toBeUndefined();
+  it.each([
+    ["no form held the submit back", null],
+    ["no form held the submit back", undefined],
+    ["the record is empty, which holds nothing back", []],
+  ])("says nothing when %s", (_why, held) => {
+    expect(submitFault("submit #e", held)).toBeUndefined();
   });
 
   it("names the one field that held it back", () => {
@@ -34,7 +33,7 @@ describe("submitFault", () => {
     );
     expect(fault?.message).toBe(
       "submit #e: the form held the submit back — the field bound to email fails its validation," +
-        " so no `ui.submit` reducer ran (forms.md §5.2.2) — a step that means to assert the" +
+        " so no `ui.submit` reducer ran — a step that means to assert the" +
         ' refusal says {"expect": {"actionErrorIncludes": ["the field bound to email fails its' +
         ' validation"]}}',
     );
@@ -49,8 +48,7 @@ describe("submitFault", () => {
     expect(fault?.fields).toEqual(["email", "code", "age"]);
   });
 
-  // The record the form kept is handed in, so the refusal must not alias it.
-  it("keeps its own frozen copy of the fields", () => {
+  it("keeps its own frozen copy of the record the form kept", () => {
     const record = ["email"];
     const fault = submitFault("submit #e", record);
     record.push("code");

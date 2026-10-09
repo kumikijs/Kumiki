@@ -5,7 +5,7 @@ import { expect, type Page, test } from "@playwright/test";
 
 const source = readFileSync(feature("158-responsive-breakpoints"), "utf8");
 
-/** The same grid and column with no theme, so §4.2's default breakpoints apply. */
+/** The same grid and column with no theme, so the default breakpoints apply. */
 const NO_THEME = `
 tile App = column(
     grid(text("a"), text("b"), text("c"), text("d")) {cols: {base: 1, md: 2, lg: 4}, id: "tracks"},
@@ -86,7 +86,9 @@ for (const [width, cols, g] of [
   [800, 2, "24px"],
   [1100, 4, "24px"],
 ] as const) {
-  test(`with no theme, ${width}px uses the §4.2 defaults (${cols} column(s))`, async ({ page }) => {
+  test(`with no theme, ${width}px uses the default breakpoints (${cols} column(s))`, async ({
+    page,
+  }) => {
     await mountAt(page, width, NO_THEME);
     expect(await columnCount(page)).toBe(cols);
     expect(await gap(page)).toBe(g);

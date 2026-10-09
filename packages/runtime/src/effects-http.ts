@@ -7,9 +7,7 @@ export type HttpCfg = {
   on401?: string;
   on403?: string;
   on5xx?: string;
-  // Timeout in milliseconds; spec http.md §6.9 default is 30s.
   timeout?: number;
-  // fetch credentials mode; spec http.md §6.9 default is "same-origin".
   credentials?: RequestCredentials;
 };
 

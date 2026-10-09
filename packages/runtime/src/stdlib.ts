@@ -545,7 +545,6 @@ export const _stdlibCore = {
   /** Set(T).to-list / Option(T).to-list → List(T). */
   toList(v: unknown, kind?: KeyKind): unknown[] {
     if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
-      // Option: Some(x) → [x], None → [].
       const o = v as { _tag: string; _0?: unknown };
       return o._tag === "Some" ? [o._0] : [];
     }

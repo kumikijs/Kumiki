@@ -78,7 +78,6 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
     if ("redirectTo" in r) continue;
     const m = matchPattern(r.pattern, path);
     if (m) {
-      // §3.6: when the parent declares sub-routes, re-match within them.
       if (r.subRoutes && r.subRoutes.length > 0) {
         for (const sr of ranked(r.subRoutes)) {
           if ("redirectTo" in sr) continue;
@@ -114,7 +113,6 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
       return { path, pattern: r.pattern, params: m, query, hash };
     }
   }
-  // 404 fallback
   return { path, pattern: "/404", params: {}, query, hash };
 }
 
@@ -134,7 +132,7 @@ function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | n
   return child && "redirectTo" in child ? child.redirectTo : null;
 }
 
-/** The entry of `list` that owns `path`: its first match in §3.1.2's order. */
+/** The entry of `list` that owns `path`: its first match in specificity order. */
 function firstMatch(list: RouteList, path: string): RouteList[number] | null {
   for (const r of ranked(list)) if (matchPattern(r.pattern, path)) return r;
   return null;
@@ -142,13 +140,13 @@ function firstMatch(list: RouteList, path: string): RouteList[number] | null {
 
 type RouteList = NonNullable<AppShape["routes"]>;
 
-/** A segment's rank in §3.1.2's order: static 0, parameter 1, wildcard 2. */
+/** A segment's rank in specificity order: static 0, parameter 1, wildcard 2. */
 function segmentRank(seg: string | undefined): number {
   if (seg === undefined) return 0;
   return seg === "*" ? 2 : seg.startsWith(":") ? 1 : 0;
 }
 
-/** Negative when `a` is the more specific pattern (§3.1.2), 0 on a tie. */
+/** Negative when `a` is the more specific pattern, 0 on a tie. */
 function compareSpecificity(a: string, b: string): number {
   const as = a.split("/").filter(Boolean);
   const bs = b.split("/").filter(Boolean);

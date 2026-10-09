@@ -8,7 +8,7 @@ export class SubmitRefusal extends StepRefusal {
   readonly fields: readonly [string, ...string[]];
 
   constructor(headline: string, suggestion: string, fields: readonly [string, ...string[]]) {
-    super(headline, ", so no `ui.submit` reducer ran (forms.md §5.2.2)", suggestion);
+    super(headline, ", so no `ui.submit` reducer ran", suggestion);
     this.name = "SubmitRefusal";
     this.fields = Object.freeze([...fields]) as readonly [string, ...string[]];
   }

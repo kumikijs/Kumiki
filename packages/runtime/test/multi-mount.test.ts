@@ -1,18 +1,12 @@
-import type { AppShape } from "@kumikijs/runtime";
+import type { AppShape, MountedApp } from "@kumikijs/runtime";
 import { defineKumikiElement, mount, resolveApp } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-type AppLive = AppShape & {
-  _setSlot?: (name: string, value: unknown) => void;
-};
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot, freshTag } from "./helpers/dom.ts";
 
 function makeBindApp(): AppShape {
-  const app: AppShape = {
+  const app: AppShape = bareApp({
     slots: { text: { value: "" } },
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
     root: () => ({
       kind: "column",
       children: [
@@ -20,17 +14,13 @@ function makeBindApp(): AppShape {
         { kind: "text", text: `Text: ${app.live?.text ?? ""}` },
       ],
     }),
-  };
+  });
   return app;
 }
 
 function makeIconApp(iconPath: string): AppShape {
-  const app: AppShape = {
+  const app: AppShape = bareApp({
     slots: { n: { value: 0 } },
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
     icons: { star: iconPath },
     themes: { plain: {} },
     themeName: "plain",
@@ -41,7 +31,7 @@ function makeIconApp(iconPath: string): AppShape {
         { kind: "text", text: `n: ${app.live?.n ?? 0}` },
       ],
     }),
-  };
+  });
   return app;
 }
 
@@ -50,28 +40,18 @@ function typeInto(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-let tagCounter = 0;
-const freshTag = (): string => `kumiki-mm-${++tagCounter}`;
-
 describe("multi-mount isolation (WeakMap app registry)", () => {
   let host: HTMLElement;
   beforeEach(() => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
+    host = freshRoot();
   });
   afterEach(() => {
     host.remove();
   });
 
-  const freshRoot = (): HTMLElement => {
-    const el = document.createElement("div");
-    host.appendChild(el);
-    return el;
-  };
-
-  it("registers the mount root and resolves apps from inner elements (T1)", () => {
+  it("registers the mount root and resolves apps from inner elements", () => {
     const app = makeBindApp();
-    const root = freshRoot();
+    const root = freshRoot(host);
     const handle = mount(app, root);
 
     expect(root.hasAttribute("data-kumiki-root")).toBe(true);
@@ -85,11 +65,11 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(resolveApp(root)).toBeUndefined();
   });
 
-  it("routes bind write-back to the app owning the tree, not the last mount (T2)", () => {
+  it("routes bind write-back to the app owning the tree, not the last mount", () => {
     const app1 = makeBindApp();
     const app2 = makeBindApp();
-    const root1 = freshRoot();
-    const root2 = freshRoot();
+    const root1 = freshRoot(host);
+    const root2 = freshRoot(host);
     mount(app1, root1);
     mount(app2, root2); // last mount — must NOT capture app1's events
 
@@ -103,7 +83,7 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
   });
 
   it("keeps two light-DOM custom elements independent under real input events (T3, shadow:false)", () => {
-    const tag = freshTag();
+    const tag = freshTag("kumiki-mm");
     defineKumikiElement(tag, makeBindApp, { shadow: false });
     type SlotEl = HTMLElement & { getSlot(n: string): unknown };
     const el1 = document.createElement(tag) as SlotEl;
@@ -123,7 +103,7 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
   });
 
   it("keeps two shadow-DOM custom elements independent under real input events (T4, shadow:true)", () => {
-    const tag = freshTag();
+    const tag = freshTag("kumiki-mm");
     defineKumikiElement(tag, makeBindApp, { shadow: true });
     type SlotEl = HTMLElement & { getSlot(n: string): unknown };
     const el1 = document.createElement(tag) as SlotEl;
@@ -140,11 +120,11 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(el2.getSlot("text")).toBe("second");
   });
 
-  it("drops real events on a detached tree after dispose instead of misdelivering (T6)", () => {
+  it("drops real events on a detached tree after dispose instead of misdelivering", () => {
     const app1 = makeBindApp();
     const app2 = makeBindApp();
-    const root1 = freshRoot();
-    const root2 = freshRoot();
+    const root1 = freshRoot(host);
+    const root2 = freshRoot(host);
     const handle1 = mount(app1, root1);
     mount(app2, root2);
 
@@ -158,16 +138,12 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(app2.live?.text).toBe("");
   });
 
-  it("restores the rendering context across a nested synchronous mount (T7)", () => {
+  it("restores the rendering context across a nested synchronous mount", () => {
     const inner = makeIconApp("M9 9 L8 8");
-    const innerHost = freshRoot();
+    const innerHost = freshRoot(host);
     let innerMounted = false;
-    const outer: AppShape = {
+    const outer: AppShape = bareApp({
       slots: { n: { value: 0 } },
-      caps: [],
-      effects: {},
-      init: [],
-      reducers: [],
       icons: { star: "M1 1 L2 2" },
       themes: { plain: {} },
       themeName: "plain",
@@ -184,8 +160,8 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
           ],
         };
       },
-    };
-    const outerRoot = freshRoot();
+    });
+    const outerRoot = freshRoot(host);
     mount(outer, outerRoot);
 
     expect(outerRoot.querySelector("path")?.getAttribute("d")).toBe("M1 1 L2 2");
@@ -195,16 +171,16 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(resolveApp(outerRoot.querySelector('[data-kumiki-tile="icon"]') as Element)).toBe(outer);
   });
 
-  it("resolves icons per app on re-render, even after another app mounts (T5)", () => {
+  it("resolves icons per app on re-render, even after another app mounts", () => {
     const app1 = makeIconApp("M1 1 L2 2");
     const app2 = makeIconApp("M9 9 L8 8");
-    const root1 = freshRoot();
-    const root2 = freshRoot();
+    const root1 = freshRoot(host);
+    const root2 = freshRoot(host);
     mount(app1, root1);
     mount(app2, root2);
 
-    // Re-render app1 AFTER app2 mounted — icon lookup must still hit app1.
-    (app1 as AppLive)._setSlot?.("n", 1);
+    // Re-render app1 after app2 mounted: icon lookup must still hit app1.
+    (app1 as MountedApp)._setSlot("n", 1);
 
     const d1 = root1.querySelector("path")?.getAttribute("d");
     const d2 = root2.querySelector("path")?.getAttribute("d");
@@ -212,10 +188,10 @@ describe("multi-mount isolation (WeakMap app registry)", () => {
     expect(d2).toBe("M9 9 L8 8");
   });
 
-  it("resolves both roots of one shape to that shape, and survives one being dropped (T8)", () => {
+  it("resolves both roots of one shape to that shape, and survives one being dropped", () => {
     const app = makeBindApp();
-    const root1 = freshRoot();
-    const root2 = freshRoot();
+    const root1 = freshRoot(host);
+    const root2 = freshRoot(host);
     const first = mount(app, root1);
     mount(app, root2);
 

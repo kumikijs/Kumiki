@@ -23,7 +23,7 @@ export function dispatchFault(
   }
   if (target.id !== null && payload.id !== target.id) {
     return (
-      `reducer "${written}" is scoped to #${target.id} (§1.6.2), so this step drives nothing` +
+      `reducer "${written}" is scoped to #${target.id}, so this step drives nothing` +
       ` — pass payload {"id": "${target.id}"}`
     );
   }

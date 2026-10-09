@@ -1,4 +1,12 @@
-import type { BindReader, BindSegment, EventHandler, MountedApp, TileProps } from "../../core.ts";
+import type {
+  BindReader,
+  BindSegment,
+  EventHandler,
+  MountedApp,
+  TilePatcher,
+  TileProps,
+  TileRenderer,
+} from "../../core.ts";
 import {
   _setPathHelper,
   attrValue,
@@ -169,3 +177,45 @@ export function applyControlState(el: HTMLElement, props?: TileProps): void {
   if (auto !== undefined) el.setAttribute("autocomplete", String(auto));
   else el.removeAttribute("autocomplete");
 }
+
+type ToggleKind = "check" | "switch";
+
+/** A checkbox wrapped in a label: the `check` and `switch` tiles differ only in kind and role. */
+export function toggleTile<K extends ToggleKind>(kind: K, role?: string): TileRenderer<K> {
+  return (node) => {
+    const wrap = document.createElement("label");
+    wrap.dataset.kumikiTile = kind;
+    if (role) wrap.setAttribute("role", role);
+    const id = tileId(node);
+    if (id) wrap.id = id;
+    const inp = document.createElement("input");
+    inp.type = "checkbox";
+    inp.checked = node.checked;
+    if (node.bind) bindDataset(inp, node.bind, node.bindPath);
+    setHandlers(inp, inputHandlers(node));
+    inp.addEventListener("change", () => {
+      const state = INPUT_STATE.get(inp);
+      if (state?.bind) {
+        const app = liveApp(inp);
+        if (app) writeBind(app, inp, state.bind, state.bindPath, inp.checked);
+      }
+      if (state?.onClick) state.onClick(state.el ?? {});
+      if (state?.onChange) state.onChange({ ...(state.el ?? {}), checked: inp.checked });
+    });
+    wrap.appendChild(inp);
+    applyControlState(inp, node.props);
+    return wrap;
+  };
+}
+
+export const patchToggle: TilePatcher<ToggleKind> = (el, _oldNode, newNode) => {
+  reconcileId(el, newNode);
+  const inp = el.firstElementChild as HTMLInputElement | null;
+  if (inp) {
+    if (inp.checked !== newNode.checked) inp.checked = newNode.checked;
+    if (newNode.bind) bindDataset(inp, newNode.bind, newNode.bindPath);
+    else clearBindDataset(inp);
+    setHandlers(inp, inputHandlers(newNode));
+  }
+  applyControlState(el.querySelector("input") ?? el, newNode.props);
+};

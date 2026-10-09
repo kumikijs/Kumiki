@@ -1,5 +1,5 @@
 import { httpFetch } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 type FetchCall = { url: string; init: RequestInit };
 
@@ -15,12 +15,8 @@ function stubFetch(responder: (call: FetchCall) => Response | Promise<Response>)
   return { calls };
 }
 
-describe("httpFetch (#78)", () => {
+describe("httpFetch", () => {
   const originalFetch = globalThis.fetch;
-
-  beforeEach(() => {
-    // Snapshot the real fetch so per-test stubs don't leak.
-  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -83,8 +79,7 @@ describe("httpFetch (#78)", () => {
     expect(v.message).toMatch(/aborted/i);
   });
 
-  // issue #102 — http.cancel + EffectId returned at emit time.
-  it("normalizes external-signal abort to {status:0, message:'aborted'} (#102)", async () => {
+  it("normalizes external-signal abort to {status:0, message:'aborted'}", async () => {
     globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       return new Promise<Response>((_, reject) => {
         init?.signal?.addEventListener("abort", () => {
@@ -111,7 +106,7 @@ describe("httpFetch (#78)", () => {
     expect(v.body).toBe("");
   });
 
-  it("returns immediately with aborted when external signal is already aborted (#102)", async () => {
+  it("returns immediately with aborted when external signal is already aborted", async () => {
     globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       return new Promise<Response>((_, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));

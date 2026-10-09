@@ -1,24 +1,21 @@
 import type { AppShape, OutletFill, RouteEntry, TileNode } from "@kumikijs/runtime";
 import { KumikiPanic, mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 const text = (t: string): TileNode => ({ kind: "text", text: t, props: {} });
 const outlet = (): TileNode => ({ kind: "route-outlet", children: [], props: {} });
 
 /** An app whose only route is a `/shell/*` parent with one `/shell/a` child. */
 function shellApp(parent: RouteEntry["tile"], child: RouteEntry): AppShape {
-  return {
-    slots: {},
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
+  return bareApp({
     routes: [
       { pattern: "/shell/*", name: "Shell", tile: parent, subRoutes: [child] },
       { pattern: "/404", name: "NotFound", tile: () => text("nf") },
     ],
     root: () => text(""),
-  };
+  });
 }
 
 describe("a hand-built route entry and the outlet fill", () => {
@@ -33,8 +30,7 @@ describe("a hand-built route entry and the outlet fill", () => {
   });
 
   const mountAt = (app: AppShape, path: string): HTMLElement => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
+    host = freshRoot();
     disposeFn = mount(app, host, { router: "memory", initialPath: path }).dispose;
     return host;
   };

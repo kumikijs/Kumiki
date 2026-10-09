@@ -30,6 +30,19 @@ function resolveIconPath(name: string): string | null {
   return null;
 }
 
+function iconSvg(d: string, size: string): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("width", size);
+  svg.setAttribute("height", size);
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", d);
+  svg.appendChild(path);
+  return svg;
+}
+
 export const iconTile: TileRenderer<"icon"> = (node) => {
   const span = document.createElement("span");
   span.dataset.kumikiTile = "icon";
@@ -43,17 +56,7 @@ export const iconTile: TileRenderer<"icon"> = (node) => {
     return span;
   }
 
-  const size = resolveIconSize(sizeRaw);
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "currentColor");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("width", size);
-  svg.setAttribute("height", size);
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", d);
-  svg.appendChild(path);
-  span.appendChild(svg);
+  span.appendChild(iconSvg(d, resolveIconSize(sizeRaw)));
   return span;
 };
 
@@ -71,22 +74,10 @@ export const iconPatcher: TilePatcher<"icon"> = (el, oldNode, newNode) => {
       span.textContent = `[${newNode.name}]`;
       return;
     }
-    // Clear any placeholder text-node left from a prior "unresolved" render.
     if (priorPlaceholder && priorPlaceholder.nodeType === 3) span.removeChild(priorPlaceholder);
-    const size = resolveIconSize(sizeRaw);
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("fill", "currentColor");
-    svg.setAttribute("aria-hidden", "true");
-    svg.setAttribute("width", size);
-    svg.setAttribute("height", size);
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    svg.appendChild(path);
-    span.appendChild(svg);
+    span.appendChild(iconSvg(d, resolveIconSize(sizeRaw)));
     return;
   }
-  // Same name — only size may have changed.
   const svg = span.querySelector("svg");
   if (svg) {
     const size = resolveIconSize(sizeRaw);

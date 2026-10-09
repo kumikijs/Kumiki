@@ -130,7 +130,6 @@ export const linkPatcher: TilePatcher<"link"> = (el, _oldNode, newNode) => {
   const a = el as HTMLAnchorElement;
   if (a.getAttribute("href") !== newNode.to) a.href = newNode.to;
   if (a.textContent !== newNode.text) a.textContent = newNode.text;
-  // Route the click listener at the CURRENT `to` — see LINK_STATE note.
   LINK_STATE.set(a, { to: newNode.to, external: isExternal(newNode.props) });
   applyExternal(a, newNode.props);
 };

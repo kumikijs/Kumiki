@@ -1,6 +1,8 @@
 import type { AppShape, EffectSpec, EpisodeStep, userPanicInfo } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureConsole } from "./helpers/console.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 type PanicInfo = ReturnType<typeof userPanicInfo>;
 
@@ -41,16 +43,9 @@ let warnings: string[];
 let root: HTMLElement;
 
 beforeEach(() => {
-  errors = [];
-  warnings = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
-  vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
-    warnings.push(args.map(String).join(" "));
-  });
-  root = document.createElement("div");
-  document.body.appendChild(root);
+  errors = captureConsole("error");
+  warnings = captureConsole("warn");
+  root = freshRoot();
 });
 
 afterEach(() => {
@@ -68,12 +63,9 @@ describe("a refused effect is reported to the app (live)", () => {
     const { dispose } = mount(app, root);
     await vi.waitFor(() => expect(seen).toHaveLength(1));
 
-    // The first clause still holds: refused means not executed.
     expect(ran).toEqual([]);
     const info = seen[0];
     expect(info?.category).toBe("capability");
-    // The message names both halves of the question a reader has — which
-    // capability, and that `app.caps` is where it was looked for.
     expect(info?.message).toBe(`capability "storage.write" is not declared in app.caps`);
     expect(info?.location).toBe(`effect "save"`);
     dispose();
@@ -89,8 +81,6 @@ describe("a refused effect is reported to the app (live)", () => {
     expect(errors[0]).toBe(
       `[kumiki] panic in effect "save": capability "storage.write" is not declared in app.caps`,
     );
-    // And nothing on the channel it used to take, so a reader cannot be left
-    // thinking the refusal is reported twice.
     expect(warnings).toEqual([]);
     dispose();
   });
@@ -103,7 +93,6 @@ describe("a refused effect is reported to the app (live)", () => {
 
     expect(seen[0]?.cause).toEqual({ _tag: "None" });
     expect(seen[0]).not.toHaveProperty("stack");
-    // The console line is the header alone — no stack continuation lines.
     expect(errors[0]?.split("\n")).toHaveLength(1);
     dispose();
   });
@@ -129,8 +118,7 @@ describe("a refused effect is reported to the app (live)", () => {
       location: `effect "save"`,
       message: `capability "storage.write" is not declared in app.caps`,
     });
-    // The join: the id the `$event` carries names the episode that holds the
-    // step, which is the whole point of shipping an id at all (§7.2.3).
+    // The id the `$event` carries names the episode that holds the step.
     const owner = eps.find((e) => panicSteps(e.steps).length > 0);
     expect(seen[0]?.["episode-id"]).toEqual({ _tag: "Some", _0: owner?.id });
     dispose();

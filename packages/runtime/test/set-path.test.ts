@@ -44,6 +44,7 @@ describe("a segment that is not a field name", () => {
 
   it("takes a numeric segment as a key", () => {
     expect(_setPathHelper({ 2: "a" }, seg([2]), "b")).toEqual({ 2: "b" });
+    expect(_setPathHelper({}, [5], "x")).toEqual({ 5: "x" });
   });
 });
 
@@ -98,32 +99,17 @@ describe("an index into a List", () => {
 });
 
 describe("an index that names no element of a List", () => {
-  it("panics for an index past the end", () => {
-    expect(() => _setPathHelper([1, 2, 3], [3], 7)).toThrow(KumikiPanic);
-    expect(() => _setPathHelper([1, 2, 3], [3], 7)).toThrow(
-      "Index 3 is out of range for a List of length 3",
-    );
-  });
-
-  it("panics for an index past the end with more of the path behind it", () => {
-    expect(() => _setPathHelper([{ n: 1 }], [5, "n"], 7)).toThrow(KumikiPanic);
-  });
-
-  it("panics for a negative index", () => {
-    expect(() => _setPathHelper([1, 2, 3], [-1], 7)).toThrow(
-      "Index -1 is out of range for a List of length 3",
-    );
-  });
-
-  // The checker requires an `Int` for a List index, so these reach the setter
-  // only through a value the types do not describe.
-  it("panics for a number that is not a whole one", () => {
-    expect(() => _setPathHelper([1, 2, 3], [0.5], 7)).toThrow(KumikiPanic);
-    expect(() => _setPathHelper([1, 2, 3], seg([Number.NaN]), 7)).toThrow(KumikiPanic);
-  });
-
-  it("panics for a whole number spelled as text", () => {
-    expect(() => _setPathHelper([1, 2, 3], seg(["0"]), 7)).toThrow(KumikiPanic);
+  it.each([
+    ["past the end", [1, 2, 3], [3], "Index 3 is out of range for a List of length 3"],
+    ["negative", [1, 2, 3], [-1], "Index -1 is out of range for a List of length 3"],
+    ["past the end with more of the path behind it", [{ n: 1 }], [5, "n"], undefined],
+    // The checker requires an `Int`, so these reach the setter only through an untyped value.
+    ["not a whole number", [1, 2, 3], [0.5], undefined],
+    ["NaN", [1, 2, 3], [Number.NaN], undefined],
+    ["a whole number spelled as text", [1, 2, 3], ["0"], undefined],
+  ])("panics for an index %s", (_what, list, path, message) => {
+    expect(() => _setPathHelper(list, seg(path), 7)).toThrow(KumikiPanic);
+    if (message) expect(() => _setPathHelper(list, seg(path), 7)).toThrow(message);
   });
 });
 
@@ -150,10 +136,6 @@ describe("an index into a Map", () => {
     expect(_setPathHelper({ t1: { done: false, x: 1 } }, ["t1", "done"], true)).toEqual({
       t1: { done: true, x: 1 },
     });
-  });
-
-  it("inserts under a numeric key", () => {
-    expect(_setPathHelper({}, [5], "x")).toEqual({ 5: "x" });
   });
 });
 
@@ -226,16 +208,9 @@ describe("an index step", () => {
 });
 
 describe("an unwrap segment", () => {
-  it("edits the payload of a Some and leaves the tag", () => {
-    expect(_setPathHelper({ _tag: "Some", _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({
-      _tag: "Some",
-      _0: { t: "b" },
-    });
-  });
-
-  it("edits the payload of an Ok", () => {
-    expect(_setPathHelper({ _tag: "Ok", _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({
-      _tag: "Ok",
+  it.each(["Some", "Ok"])("edits the payload of %s and leaves the tag", (tag) => {
+    expect(_setPathHelper({ _tag: tag, _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({
+      _tag: tag,
       _0: { t: "b" },
     });
   });

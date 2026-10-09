@@ -10,7 +10,7 @@ export type SlotDiff = { name: string; before: unknown; after: unknown };
 
 export type EnvReadKind = "now" | "random" | "fresh-id" | "prefers-dark";
 
-/** One environment read and what it answered (runtime.md §10.5.1). */
+/** One environment read and what it answered. */
 export type EnvRead = { kind: EnvReadKind; value: unknown };
 
 export type PanicCategory =
@@ -78,7 +78,7 @@ export type EpisodeLocalStorage = {
 };
 
 export type EpisodeLoggerOptions = {
-  /** In-memory ring buffer cap (§10.5.2, default 100). */
+  /** In-memory ring buffer cap, default 100. */
   memoryMax?: number;
   localStorage?: boolean;
   localStorageMax?: number;
@@ -118,7 +118,7 @@ export type EpisodeLogger = {
       category?: PanicCategory | undefined;
       /** The reducer that threw, when the throw came from a reducer body. */
       name?: string | undefined;
-      /** What that body read from the environment before it threw (§10.5.1). */
+      /** What that body read from the environment before it threw. */
       envReads?: readonly EnvRead[] | undefined;
     },
     token?: string,

@@ -1,12 +1,11 @@
-import type { AppShape, CapabilityProvider } from "@kumikijs/runtime";
+import type { AppShape, CapabilityProvider, MountedApp } from "@kumikijs/runtime";
 import { defineKumikiElement } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot, freshTag } from "./helpers/dom.ts";
+import { tick } from "./helpers/time.ts";
 
 const CAP = "telemetry.track";
-
-type AppLive = AppShape & {
-  _dispatch?: (name: string, el: Record<string, unknown>) => void;
-};
 
 function makeApp(): AppShape {
   const app: AppShape = {
@@ -53,11 +52,8 @@ function makeApp(): AppShape {
 }
 
 function makeTimerApp(): AppShape {
-  const app: AppShape = {
+  return bareApp({
     slots: { count: { value: 0 } },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "tick",
@@ -66,26 +62,21 @@ function makeTimerApp(): AppShape {
       },
     ],
     root: () => ({ kind: "column", children: [{ kind: "heading", text: "timer" }] }),
-  };
-  return app;
+  });
 }
 
-let tagCounter = 0;
-const freshTag = (): string => `kumiki-test-${++tagCounter}`;
-const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-const fire = (app: AppShape, name: string): void => (app as AppLive)._dispatch?.(name, {});
+const fire = (app: AppShape, name: string): void => (app as MountedApp)._dispatch(name, {});
 
 describe("defineKumikiElement (outbound web-component seam)", () => {
   let host: HTMLElement;
   beforeEach(() => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
+    host = freshRoot();
   });
   afterEach(() => {
     host.remove();
   });
 
-  it("mounts the app into the element on connect and renders (AC1)", () => {
+  it("mounts the app into the element on connect and renders", () => {
     const tag = freshTag();
     defineKumikiElement(tag, makeApp());
     const el = document.createElement(tag);
@@ -93,7 +84,7 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     expect(el.textContent ?? "").toContain("Count: 0");
   });
 
-  it("disposes the mount on disconnect — timers stop (AC2)", () => {
+  it("disposes the mount on disconnect — timers stop", () => {
     vi.useFakeTimers();
     try {
       const tag = freshTag();
@@ -101,9 +92,9 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
       defineKumikiElement(tag, app);
       const el = document.createElement(tag);
       host.appendChild(el);
-      vi.advanceTimersByTime(250); // 2 ticks
+      vi.advanceTimersByTime(250);
       expect((app.live as Record<string, unknown>).count).toBe(2);
-      el.remove(); // disconnect → dispose
+      el.remove();
       const frozen = (app.live as Record<string, unknown>).count;
       vi.advanceTimersByTime(500);
       expect((app.live as Record<string, unknown>).count).toBe(frozen);
@@ -112,7 +103,7 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     }
   });
 
-  it("forwards host providers to the embedded mount (AC3)", async () => {
+  it("forwards host providers to the embedded mount", async () => {
     const tag = freshTag();
     const app = makeApp();
     const seen: unknown[] = [];
@@ -124,11 +115,11 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     const el = document.createElement(tag);
     host.appendChild(el);
     fire(app, "fire");
-    await tick();
+    await tick(0);
     expect(seen).toEqual([{ n: 0 }]);
   });
 
-  it("surfaces a custom-cap effect as a DOM CustomEvent when listed in events (AC4)", async () => {
+  it("surfaces a custom-cap effect as a DOM CustomEvent when listed in events", async () => {
     const tag = freshTag();
     const app = makeApp();
     defineKumikiElement(tag, app, { events: [CAP] });
@@ -137,11 +128,11 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     const details: unknown[] = [];
     el.addEventListener(CAP, (e) => details.push((e as CustomEvent).detail));
     fire(app, "fire");
-    await tick();
+    await tick(0);
     expect(details).toEqual([{ n: 0 }]);
   });
 
-  it("lets a host provider override the events passthrough for the same cap (AC5)", async () => {
+  it("lets a host provider override the events passthrough for the same cap", async () => {
     const tag = freshTag();
     const app = makeApp();
     let providerCalls = 0;
@@ -157,12 +148,12 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
       eventFired = true;
     });
     fire(app, "fire");
-    await tick();
+    await tick(0);
     expect(providerCalls).toBe(1);
     expect(eventFired).toBe(false);
   });
 
-  it("setSlot/setSlots update live state and re-render; refine rejects (AC6)", () => {
+  it("setSlot/setSlots update live state and re-render; refine rejects", () => {
     const tag = freshTag();
     const app = makeApp();
     defineKumikiElement(tag, app);
@@ -179,11 +170,11 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     el.setSlots({ name: "ada" });
     expect(el.slots.name).toBe("ada");
     expect(el.textContent ?? "").toContain("Name: ada");
-    el.setSlot("count", -1); // violates refine (>= 0) → rejected
+    el.setSlot("count", -1);
     expect(el.getSlot("count")).toBe(5);
   });
 
-  it("binds an observed attribute to a slot via attributeSlots (AC7)", () => {
+  it("binds an observed attribute to a slot via attributeSlots", () => {
     const tag = freshTag();
     const app = makeApp();
     defineKumikiElement(tag, app, {
@@ -198,33 +189,32 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     expect((app.live as Record<string, unknown>).count).toBe(9);
   });
 
-  it("is idempotent — re-defining the same tag does not throw (AC8)", () => {
+  it("is idempotent — re-defining the same tag does not throw", () => {
     const tag = freshTag();
     defineKumikiElement(tag, makeApp());
     expect(() => defineKumikiElement(tag, makeApp())).not.toThrow();
   });
 
-  it("renders into an open shadow root when shadow is enabled (AC-shadow-1)", () => {
+  it("renders into an open shadow root when shadow is enabled", () => {
     const tag = freshTag();
     defineKumikiElement(tag, makeApp(), { shadow: true });
     const el = document.createElement(tag);
     host.appendChild(el);
     expect(el.shadowRoot).toBeTruthy();
-    // content lives in the shadow root, not the element's light DOM
     expect(el.shadowRoot?.textContent ?? "").toContain("Count: 0");
     expect(el.textContent ?? "").not.toContain("Count: 0");
   });
 
-  it("injects the runtime style nodes into the shadow root, not the document head (AC-shadow-2)", () => {
+  it("injects the runtime style nodes into the shadow root, not the document head", () => {
     const tag = freshTag();
     defineKumikiElement(tag, makeApp(), { shadow: true });
     const el = document.createElement(tag);
     host.appendChild(el);
-    // motion styles always inject (they carry the prefers-reduced-motion guard)
+    // Motion styles always inject: they carry the prefers-reduced-motion guard.
     expect(el.shadowRoot?.getElementById("kumiki-motions")).toBeTruthy();
   });
 
-  it("scopes theme background to the shadow container, leaving document.body untouched (AC-shadow-3)", () => {
+  it("scopes theme background to the shadow container, leaving document.body untouched", () => {
     const tag = freshTag();
     const app = makeApp();
     app.themes = {
@@ -238,17 +228,14 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     const el = document.createElement(tag);
     host.appendChild(el);
     const container = el.shadowRoot?.firstElementChild as HTMLElement;
-    // happy-dom preserves the authored hex (jsdom used to normalize it to rgb()).
     expect(container.style.background).toBe("#101010");
     expect(el.shadowRoot?.getElementById("kumiki-theme-base")).toBeTruthy();
-    // isolation: the page <body> was not themed
     expect(document.body.style.background).toBe(bodyBefore);
   });
 
   it("gives each element independent state when passed a createApp factory (multi-instance)", () => {
     const tag = freshTag();
-    // `makeApp` itself is a factory (fresh app per call) — like the compiled
-    // module's `createApp`. Each element instance gets its own state.
+    // `makeApp` returns a fresh app per call, like the compiled module's `createApp`.
     defineKumikiElement(tag, makeApp);
     type SlotEl = HTMLElement & {
       setSlot(n: string, v: unknown): void;
@@ -260,12 +247,12 @@ describe("defineKumikiElement (outbound web-component seam)", () => {
     host.appendChild(el2);
     el1.setSlot("count", 7);
     expect(el1.getSlot("count")).toBe(7);
-    expect(el2.getSlot("count")).toBe(0); // independent — no shared live
+    expect(el2.getSlot("count")).toBe(0);
     expect(el1.textContent ?? "").toContain("Count: 7");
     expect(el2.textContent ?? "").toContain("Count: 0");
   });
 
-  it("disposes the shadow mount on disconnect (AC-shadow-4)", () => {
+  it("disposes the shadow mount on disconnect", () => {
     vi.useFakeTimers();
     try {
       const tag = freshTag();

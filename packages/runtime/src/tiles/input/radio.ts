@@ -65,7 +65,6 @@ export const radioPatcher: TilePatcher<"radio"> = (el, _oldNode, newNode) => {
     setHandlers(inp, inputHandlers(newNode));
     setRadioValue(inp, newNode.value);
   }
-  // Reconcile the trailing label span if the label text changed.
   const nextLabel = (newNode.props?.label as string | undefined) ?? "";
   const span = wrap.querySelector("span");
   if (nextLabel) {

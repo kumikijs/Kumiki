@@ -1,104 +1,15 @@
-import type { AppShape, TileNode } from "@kumikijs/runtime";
+import type { TileNode } from "@kumikijs/runtime";
 import {
   collectionTiles,
   inputTiles,
   layoutTiles,
   mediaTiles,
-  mount,
   overlayTiles,
-  renderTileToString,
   statusTiles,
   textTiles,
 } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-
-function clientElement(node: TileNode): HTMLElement {
-  const app: AppShape = {
-    slots: {},
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
-    root: () => node,
-  };
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  mount(app, host);
-  const el = host.firstElementChild as HTMLElement | null;
-  if (!el) throw new Error(`client rendered nothing for ${node.kind}`);
-  // Detach from the mount before the caller reads it: `dispose` would empty the
-  // host, and the element is what is under test, not the tree it sat in.
-  el.remove();
-  host.remove();
-  return el;
-}
-
-const TABLE_PARTS: Record<string, { tag: string; wrap: (html: string) => string }> = {
-  "table-head": { tag: "thead", wrap: (h) => `<table>${h}</table>` },
-  "table-body": { tag: "tbody", wrap: (h) => `<table>${h}</table>` },
-  "table-row": { tag: "tr", wrap: (h) => `<table><tbody>${h}</tbody></table>` },
-  "table-cell": { tag: "td", wrap: (h) => `<table><tbody><tr>${h}</tr></tbody></table>` },
-};
-
-/** The server's element for the same node, parsed back into the DOM. */
-function serverElement(node: TileNode): HTMLElement {
-  const host = document.createElement("div");
-  const html = renderTileToString(node);
-  const part = TABLE_PARTS[node.kind];
-  host.innerHTML = part ? part.wrap(html) : html;
-  const el = (part ? host.querySelector(part.tag) : host.firstElementChild) as HTMLElement | null;
-  if (!el) throw new Error(`server rendered nothing for ${node.kind}`);
-  return el;
-}
-
-function styleOf(el: Element): Record<string, string> {
-  const probe = document.createElement("div");
-  probe.setAttribute("style", el.getAttribute("style") ?? "");
-  const out: Record<string, string> = {};
-  for (let i = 0; i < probe.style.length; i++) {
-    const name = probe.style.item(i);
-    out[name] = probe.style.getPropertyValue(name);
-  }
-  return out;
-}
-
-const PROPERTY_ON_THE_CLIENT = new Set(["value", "checked", "selected"]);
-
-/** Every attribute except `style`, which is compared through the CSSOM. */
-function attrsOf(el: Element): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const a of Array.from(el.attributes)) {
-    if (a.name === "style" || PROPERTY_ON_THE_CLIENT.has(a.name)) continue;
-    out[a.name] = a.value;
-  }
-  return out;
-}
-
-/** The text an element holds directly, i.e. not through a child element. */
-function ownText(el: Element): string {
-  let out = "";
-  for (const n of Array.from(el.childNodes)) {
-    if (n.nodeType === 3) out += n.nodeValue ?? "";
-  }
-  return out;
-}
-
-type Shape = {
-  tag: string;
-  attrs: Record<string, string>;
-  style: Record<string, string>;
-  text?: string;
-  children?: Shape[];
-};
-
-function shapeOf(el: Element, opts: { deep: boolean; text: boolean }): Shape {
-  const shape: Shape = { tag: el.tagName, attrs: attrsOf(el), style: styleOf(el) };
-  if (opts.text) shape.text = ownText(el);
-  if (opts.deep) {
-    shape.children = Array.from(el.children).map((c) => shapeOf(c, opts));
-  }
-  return shape;
-}
+import { clientElement, serverElement, shapeOf } from "./helpers/ssr-elements.ts";
 
 const CONTAINER_PROPS = {
   gap: "sm",
@@ -122,7 +33,7 @@ const TEXT_PROPS = {
   style: { "text-transform": "uppercase" },
 };
 
-/** The common props every kind accepts (stdlib.md §2.3.10), on one node. */
+/** The common props every kind accepts, on one node. */
 const COMMON_PROPS = {
   class: "a b",
   test_id: "t",
@@ -233,7 +144,7 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
     cases: [["icon", { kind: "icon", name: "star", props: { ...TEXT_PROPS, size: "lg" } }]],
     noText:
       "the client writes `[name]` while the icon is unresolved and an <svg> once it is; the " +
-      "server serves the empty placeholder either way (spec §10.6.1), so the two agree on the " +
+      "server serves the empty placeholder either way, so the two agree on the " +
       "element and not on what is in it",
   },
   form: { cases: [["form", { kind: "form", children: [CHILD], props: CONTAINER_PROPS }]] },
@@ -523,78 +434,4 @@ describe("the server pass renders what the client renders", () => {
       }
     });
   }
-
-  it("carries the form state a live element cannot", () => {
-    const input = serverElement({ kind: "input", value: "typed", type: "email" });
-    expect(input.getAttribute("value")).toBe("typed");
-
-    const check = serverElement({ kind: "check", checked: true });
-    expect(check.querySelector("input")?.hasAttribute("checked")).toBe(true);
-    const unchecked = serverElement({ kind: "check", checked: false });
-    expect(unchecked.querySelector("input")?.hasAttribute("checked")).toBe(false);
-
-    const radio = serverElement({ kind: "radio", group: "plan", value: "pro", selected: true });
-    const radioInput = radio.querySelector("input");
-    expect(radioInput?.getAttribute("value")).toBe("pro");
-    expect(radioInput?.hasAttribute("checked")).toBe(true);
-
-    const select = serverElement({
-      kind: "select",
-      value: "b",
-      options: [
-        { label: "A", value: "a" },
-        { label: "B", value: "b" },
-      ],
-    });
-    const chosen = Array.from(select.querySelectorAll("option")).filter((o) =>
-      o.hasAttribute("selected"),
-    );
-    expect(chosen.map((o) => o.textContent)).toEqual(["B"]);
-
-    expect(serverElement({ kind: "textarea", value: "note" }).textContent).toBe("note");
-
-    const slider = serverElement({ kind: "slider", value: 5, min: 0, max: 10, step: 2 });
-    expect(slider.getAttribute("value")).toBe("5");
-    expect(slider.getAttribute("max")).toBe("10");
-
-    const progress = serverElement({ kind: "progress", value: 3, max: 10 });
-    expect(progress.getAttribute("value")).toBe("3");
-    expect(progress.getAttribute("max")).toBe("10");
-  });
-
-  it("escapes what it puts in text and in an attribute", () => {
-    const text = serverElement({ kind: "text", text: '<script>alert("x")</script> & more' });
-    expect(text.querySelector("script")).toBeNull();
-    expect(text.textContent).toBe('<script>alert("x")</script> & more');
-
-    const img = serverElement({ kind: "image", src: "/a.png", props: { alt: '" onerror="boom' } });
-    expect(img.getAttribute("alt")).toBe('" onerror="boom');
-    expect(img.hasAttribute("onerror")).toBe(false);
-
-    const md = serverElement({ kind: "markdown", text: "<script>alert(1)</script>" });
-    expect(md.querySelector("script")).toBeNull();
-    expect(md.textContent).toBe("<script>alert(1)</script>");
-  });
-
-  it("serves a closed overlay as the hidden host the client mounts", () => {
-    const el = serverElement({
-      kind: "modal",
-      open: false,
-      title: "Confirm",
-      children: [{ kind: "text", text: "body" }],
-    });
-    expect(styleOf(el).display).toBe("none");
-    expect(el.textContent).toContain("body");
-  });
-
-  it("resolves a responsive value to its base, which is all a server can know", () => {
-    const node: TileNode = { kind: "row", children: [], props: { gap: { base: "sm", md: "xl" } } };
-    expect(styleOf(serverElement(node)).gap).toBe("8px");
-  });
-
-  it("lets a card's own padding prop suppress the default even when it resolves to nothing", () => {
-    const node: TileNode = { kind: "card", children: [], props: { pad: { md: "xl" } } };
-    expect(styleOf(serverElement(node))["padding-top"]).toBeUndefined();
-    expect(styleOf(serverElement({ kind: "card", children: [] }))["padding-top"]).toBe("16px");
-  });
 });

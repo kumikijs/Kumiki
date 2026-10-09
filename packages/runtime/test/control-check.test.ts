@@ -36,6 +36,8 @@ const ACTIVE: ControlState = {
   contentEditable: null,
 };
 
+const FROZEN: ControlState = { ...ACTIVE, tag: "div", contentEditable: "false" };
+
 const el = (html: string): Element => {
   document.body.innerHTML = html;
   const found = document.body.firstElementChild;
@@ -92,11 +94,8 @@ describe("the message a refusal carries", () => {
   });
 
   it("puts the explanation between the two, outside the headline", () => {
-    const fault = controlFault("fill", "fill #e", {
-      ...ACTIVE,
-      tag: "div",
-      contentEditable: "false",
-    });
+    const fault = controlFault("fill", "fill #e", FROZEN);
+    expect(fault?.reason).toBe("not editable");
     expect(fault?.headline).toBe("fill #e: <div> is not editable, so it takes no typing");
     expect(fault?.message).toBe(
       "fill #e: <div> is not editable, so it takes no typing" +
@@ -114,25 +113,8 @@ describe("readonly and contenteditable=false refuse the typing alone", () => {
     expect(fault?.headline).toContain("<input> is readonly, so it takes no typing");
   });
 
-  it("fill is refused on contenteditable=false, and says what renders it", () => {
-    const fault = controlFault("fill", "fill #frozen", {
-      ...ACTIVE,
-      tag: "div",
-      contentEditable: "false",
-    });
-    expect(fault?.reason).toBe("not editable");
-    expect(fault?.headline).toContain("<div> is not editable");
-    expect(fault?.message).toContain(
-      "is what an `editable` renders when it is disabled or read-only",
-    );
-  });
-
   it("the explanation of not-editable is not matchable as disabled or readonly", () => {
-    const fault = controlFault("fill", "fill #frozen", {
-      ...ACTIVE,
-      tag: "div",
-      contentEditable: "false",
-    });
+    const fault = controlFault("fill", "fill #frozen", FROZEN);
     expect(fault?.headline).not.toContain("disabled");
     expect(fault?.headline).not.toContain("read");
     expect(fault?.message).toContain("disabled");
@@ -143,13 +125,7 @@ describe("readonly and contenteditable=false refuse the typing alone", () => {
   });
 
   it("click is allowed on contenteditable=false", () => {
-    expect(
-      controlFault("click", "click #frozen", {
-        ...ACTIVE,
-        tag: "div",
-        contentEditable: "false",
-      }),
-    ).toBeUndefined();
+    expect(controlFault("click", "click #frozen", FROZEN)).toBeUndefined();
   });
 });
 
@@ -159,10 +135,8 @@ describe("the rule says nothing where the platform says nothing", () => {
     expect(CONTROL_DEMANDS[verb]).toBe("none");
   });
 
-  it("a control in neither state is driven", () => {
-    for (const verb of DRIVES) {
-      expect(controlFault(verb, `${verb} #x`, ACTIVE)).toBeUndefined();
-    }
+  it.each(DRIVES)("%s drives a control in neither state", (verb) => {
+    expect(controlFault(verb, `${verb} #x`, ACTIVE)).toBeUndefined();
   });
 
   it("a selector that resolved to no control at all", () => {
@@ -175,7 +149,7 @@ describe("refusesControl answers the same question as controlFault", () => {
     ACTIVE,
     { ...ACTIVE, disabled: true },
     { ...ACTIVE, readonly: true },
-    { ...ACTIVE, tag: "div", contentEditable: "false" },
+    FROZEN,
   ];
   for (const verb of Object.keys(CONTROL_DEMANDS) as ControlVerb[]) {
     it(verb, () => {
@@ -217,8 +191,12 @@ describe("readControl finds the control a verb would drive", () => {
     );
   });
 
-  it("does not reach into a container that merely holds a control", () => {
-    expect(readControl(el('<div id="a"><input disabled></div>'))).toBeNull();
+  it.each([
+    ["a container that merely holds a control", '<div id="a"><input disabled></div>'],
+    ["a container with no control in it", '<div id="a">text</div>'],
+    ["an empty <label>", '<label id="a">just text</label>'],
+  ])("finds nothing in %s", (_what, html) => {
+    expect(readControl(el(html))).toBeNull();
   });
 
   it("ascends to a disabled control the selector landed inside", () => {
@@ -237,14 +215,6 @@ describe("readControl finds the control a verb would drive", () => {
         el('<button id="b"><span id="a">go</span></button>').querySelector("#a") as Element,
       ),
     ).toBeNull();
-  });
-
-  it("a container with no control in it", () => {
-    expect(readControl(el('<div id="a">text</div>'))).toBeNull();
-  });
-
-  it("an empty <label>", () => {
-    expect(readControl(el('<label id="a">just text</label>'))).toBeNull();
   });
 });
 
@@ -288,11 +258,7 @@ describe("judgeRefusal", () => {
   });
 
   it("matches the headline, so one reason's prose cannot satisfy another", () => {
-    const fault = controlFault("fill", "fill #frozen", {
-      ...ACTIVE,
-      tag: "div",
-      contentEditable: "false",
-    });
+    const fault = controlFault("fill", "fill #frozen", FROZEN);
     if (!fault) throw new Error("expected a refusal");
     const arg = { message: fault.message, refusal: fault };
     expect(judgeRefusal(["<div> is not editable"], arg).claimed).toBe(fault.message);

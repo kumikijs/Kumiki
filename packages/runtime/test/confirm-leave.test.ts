@@ -1,18 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AppShape, ParsedRoute } from "../src/core.ts";
-import { installConfirm } from "../src/effects-confirm.ts";
+import type { AppShape, MountedApp, ParsedRoute } from "../src/core.ts";
 import { mount } from "../src/index.ts";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
-type Hooked = AppShape & {
-  _dispatch?: (name: string, el: Record<string, unknown>) => void;
-  _navigate?: (path: string, replace?: boolean) => void;
-  _resolveLeave?: (outcome: "yes" | "no") => void;
-};
+type Hooked = Partial<MountedApp> & AppShape;
 
 let target: HTMLElement;
 beforeEach(() => {
-  target = document.createElement("div");
-  document.body.appendChild(target);
+  target = freshRoot();
 });
 afterEach(() => {
   target.remove();
@@ -118,22 +114,11 @@ function getModal(): HTMLElement | null {
 
 describe("installConfirm — confirm effect registration", () => {
   it("registers the confirm effect behind notification.show", async () => {
-    const app: AppShape = {
-      slots: {},
-      caps: ["notification.show"],
-      reducers: [],
-      effects: {},
-      init: [],
-      routes: [],
-    };
+    const app = bareApp({ caps: ["notification.show"], routes: [] });
     const handle = mount(app, target);
     expect(app.effects.confirm).toBeDefined();
     expect(app.effects.confirm?.cap).toBe("notification.show");
     handle.dispose();
-  });
-
-  it("installConfirm itself can be wired alongside mountCore-style mounts", () => {
-    expect(typeof installConfirm).toBe("function");
   });
 });
 
@@ -142,24 +127,19 @@ describe("route.leave guard with confirm — Yes commits the transition", () => 
     const app = leaveGuardApp() as Hooked;
     const handle = mount(app, target, { router: "memory", initialPath: "/edit" });
     try {
-      // Mark dirty so the leave guard will emit confirm.
       app._dispatch?.("edit", {});
       expect(app.live?.dirty).toBe(true);
       expect(getModal()).toBeNull();
 
-      // Trigger navigation away from /edit — leave guard emits confirm.
       app._navigate?.("/");
-      // Effect dispatch resolves on a microtask; let it run.
       await Promise.resolve();
       await Promise.resolve();
       const modal = getModal();
       expect(modal, "confirm modal must appear").not.toBeNull();
-      // The OLD route's tile is still showing underneath.
       expect(target.textContent).toContain("Editor");
       expect(target.textContent).not.toContain("Home");
 
-      // Click Yes — continueLeave runs first (clears dirty), then the
-      // held transition commits and route.enter("/") fires.
+      // continueLeave runs first, then the held transition commits.
       const yes = modal?.querySelector<HTMLButtonElement>(
         "button[data-kumiki-confirm-action='yes']",
       );
@@ -169,7 +149,6 @@ describe("route.leave guard with confirm — Yes commits the transition", () => 
       expect(getModal()).toBeNull();
       expect(app.live?.dirty).toBe(false);
       expect(target.textContent).toContain("Home");
-      // The route.enter("/") reducer fired.
       expect(app.live?.visits).toBe(1);
     } finally {
       handle.dispose();
@@ -195,8 +174,6 @@ describe("route.leave guard with confirm — No reverts the transition", () => {
       await Promise.resolve();
 
       expect(getModal()).toBeNull();
-      // dirty stays true — stayHere is a noop and the runtime reverted the
-      // nav without firing the Home `route.enter` (visits is still 0).
       expect(app.live?.dirty).toBe(true);
       expect(app.live?.visits).toBe(0);
       expect(target.textContent).toContain("Editor");
@@ -210,8 +187,6 @@ describe("route.leave guard with confirm — No reverts the transition", () => {
     const app = leaveGuardApp() as Hooked;
     const handle = mount(app, target, { router: "memory", initialPath: "/edit" });
     try {
-      // dirty is initially false — the leave guard emits nothing, nav goes
-      // through without a modal.
       app._navigate?.("/");
       await Promise.resolve();
       expect(getModal()).toBeNull();
@@ -242,7 +217,7 @@ async function settle(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("route.leave guard — what counts as leaving (routing §3.4)", () => {
+describe("route.leave guard — what counts as leaving", () => {
   it("a query-only move stays on the route, so the guard never asks", async () => {
     const app = leaveGuardApp() as Hooked;
     const handle = mountDirtyAt(app, "/edit?tab=a");

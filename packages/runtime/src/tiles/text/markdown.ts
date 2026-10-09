@@ -3,7 +3,6 @@ import type { TilePatcher, TileRenderer } from "../../core.ts";
 export const markdownTile: TileRenderer<"markdown"> = (node) => {
   const div = document.createElement("div");
   div.dataset.kumikiTile = "markdown";
-  // Minimal markdown: paragraphs split on blank lines, single line breaks preserved.
   const text = node.text ?? "";
   const paragraphs = text.split(/\n\s*\n/);
   for (const para of paragraphs) {
@@ -32,7 +31,6 @@ export const markdownPatcher: TilePatcher<"markdown"> = (el, _oldNode, newNode) 
       div.appendChild(p);
     }
   }
-  // Drop trailing extras when the paragraph count shrunk.
   for (let i = existing.length - 1; i >= paragraphs.length; i--) {
     const p = existing[i];
     if (p) div.removeChild(p);

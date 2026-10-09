@@ -12,26 +12,21 @@ const cfg: IndexedDbCfg = {
   stores: [{ name: "notes", key: "id" }],
 };
 
-describe("indexed-* without config (#79)", () => {
-  it("indexedRead returns a clean error when cfg is absent", async () => {
-    const r = await indexedRead({ store: "notes", key: "a" }, undefined);
-    // The err value is the `Text` an `indexed-*` effect's `out=Result(_, Text)`
-    // declares (http.md §6.7), not a record wrapping it.
-    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
-  });
-
-  it("indexedWrite returns a clean error when cfg is absent", async () => {
-    const r = await indexedWrite({ store: "notes", key: "a", value: { id: "a" } }, undefined);
-    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
-  });
-
-  it("indexedDelete returns a clean error when cfg is absent", async () => {
-    const r = await indexedDelete({ store: "notes", key: "a" }, undefined);
-    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
+describe("indexed-* without config", () => {
+  // The err value is the `Text` the effect's `Result(_, Text)` declares, not a record wrapping it.
+  it.each([
+    ["indexedRead", () => indexedRead({ store: "notes", key: "a" }, undefined)],
+    [
+      "indexedWrite",
+      () => indexedWrite({ store: "notes", key: "a", value: { id: "a" } }, undefined),
+    ],
+    ["indexedDelete", () => indexedDelete({ store: "notes", key: "a" }, undefined)],
+  ])("%s returns a clean error when cfg is absent", async (_name, run) => {
+    expect(await run()).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 });
 
-describe("indexed-* unavailable backend (#79)", () => {
+describe("indexed-* unavailable backend", () => {
   const original = (globalThis as { indexedDB?: unknown }).indexedDB;
   beforeEach(() => {
     (globalThis as { indexedDB?: unknown }).indexedDB = undefined;
@@ -48,7 +43,7 @@ describe("indexed-* unavailable backend (#79)", () => {
   });
 });
 
-describe("indexed-* happy path with in-memory mock (#79)", () => {
+describe("indexed-* happy path with in-memory mock", () => {
   const original = (globalThis as { indexedDB?: unknown }).indexedDB;
 
   beforeEach(() => {

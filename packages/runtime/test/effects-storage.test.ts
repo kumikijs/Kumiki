@@ -11,7 +11,7 @@ import {
 
 function message(r: EffectResult): string {
   expect(r.kind).toBe("err");
-  // The declared `Text`, not a record wrapping it (http.md §6.7).
+  // The declared `Text`, not a record wrapping it.
   expect(typeof r.value).toBe("string");
   return r.value as string;
 }

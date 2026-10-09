@@ -68,9 +68,7 @@ export const collectionPatchers: TilePatchers = {
     }
     applyContainerProps(list, newNode.props);
   },
-  "list-item"() {
-    // <li> has no own data props; children walk via the outer reconcile.
-  },
+  "list-item"() {},
   table() {},
   "table-head"() {},
   "table-body"() {},

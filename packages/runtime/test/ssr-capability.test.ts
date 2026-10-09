@@ -2,6 +2,8 @@ import type { AppShape, CapabilityProvider, EffectSpec } from "@kumikijs/runtime
 import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureConsole } from "./helpers/console.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 type Built = {
   app: AppShape;
@@ -44,10 +46,7 @@ function makeApp(cap: string, declared: string[]): Built {
 let errors: string[];
 
 beforeEach(() => {
-  errors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
+  errors = captureConsole();
 });
 
 afterEach(() => {
@@ -66,22 +65,17 @@ describe("the SSR pass gates an effect on its capability", () => {
     expect(html).toContain("saved: none");
   });
 
-  it("invokes one whose capability is declared", async () => {
-    const { app, ran } = makeApp("storage.write", ["storage.write"]);
+  it.each([
+    ["declared", "storage.write", ["storage.write"]],
+    ["a standard presentation effect's empty", "", []],
+  ])("invokes one whose capability is %s", async (_what, cap, declared) => {
+    const { app, ran } = makeApp(cap, declared);
 
     const { html, snapshot } = await renderToString(app);
 
     expect(ran).toEqual(["stored:draft"]);
     expect(snapshot.slots.saved).toBe("stored");
     expect(html).toContain("saved: stored");
-  });
-
-  it("exempts a standard presentation effect, whose cap is empty", async () => {
-    const { app, ran } = makeApp("", []);
-
-    await renderToString(app);
-
-    expect(ran).toEqual(["stored:draft"]);
   });
 
   it("reports in the words the live dispatcher uses", async () => {
@@ -154,20 +148,12 @@ describe("the SSR pass gates an effect on its capability", () => {
 });
 
 describe("the bootstrap episode records the skip", () => {
-  it("commits rather than stranding on a start that never ends", async () => {
+  it("shows the effect that would have run, then why, then its cancel, and commits", async () => {
     const { app } = makeApp("storage.write", []);
 
     const { bootstrapEpisode } = await renderToString(app);
 
     expect(bootstrapEpisode.status).toBe("panic");
-    expect(bootstrapEpisode.steps.at(-1)).toMatchObject({ kind: "effect-cancel" });
-  });
-
-  it("shows the effect that would have run, then why, then its cancel", async () => {
-    const { app } = makeApp("storage.write", []);
-
-    const { bootstrapEpisode } = await renderToString(app);
-
     expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual([
       "effect-start",
       "panic",
@@ -197,10 +183,7 @@ describe("after hydration", () => {
   it("leaves the slot at its default, because init does not run again", async () => {
     const { app, ran } = makeApp("storage.write", []);
     const rendered = await renderToString(app);
-    const target = document.createElement("div");
-    document.body.appendChild(target);
-
-    const handle = hydrate(app, target, rendered, { episodeLogger: createEpisodeLogger() });
+    const handle = hydrate(app, freshRoot(), rendered, { episodeLogger: createEpisodeLogger() });
 
     expect(app.live?.saved).toBe("none");
     expect(ran).toEqual([]);

@@ -1,8 +1,8 @@
 import type { AppShape, EffectResult } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-
-const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms));
+import { freshRoot } from "./helpers/dom.ts";
+import { tick } from "./helpers/time.ts";
 
 async function until(done: () => boolean, limitMs = 2000): Promise<void> {
   const deadline = Date.now() + limitMs;
@@ -68,7 +68,7 @@ function makeApp(args: {
   };
 }
 
-describe("EffectSpec.retry (#83)", () => {
+describe("EffectSpec.retry", () => {
   it("retries 5xx until success (linear)", async () => {
     const state = makeApp({
       retry: { kind: "linear", n: 3, ms: 1 },
@@ -78,8 +78,7 @@ describe("EffectSpec.retry (#83)", () => {
         { kind: "ok", value: { hello: "world" } },
       ],
     });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(state.app, root);
       await until(() => state.attempts === 3);
@@ -97,8 +96,7 @@ describe("EffectSpec.retry (#83)", () => {
       retry: { kind: "linear", n: 5, ms: 1 },
       responses: [{ kind: "err", value: { status: 404, message: "not found" } }],
     });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(state.app, root);
       await tick(30);
@@ -119,8 +117,7 @@ describe("EffectSpec.retry (#83)", () => {
         { kind: "err", value: { status: 0, message: "net" } },
       ],
     });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(state.app, root);
       await until(() => state.attempts === 3);
@@ -136,8 +133,7 @@ describe("EffectSpec.retry (#83)", () => {
     const state = makeApp({
       responses: [{ kind: "err", value: { status: 500, message: "x" } }],
     });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(state.app, root);
       await tick(30);

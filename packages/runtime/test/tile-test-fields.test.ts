@@ -13,6 +13,9 @@ describe("a tile-test compares the named arguments in props", () => {
     expect(r.pass).toBe(false);
     expect(r.diffAt).toBe("button.disabled");
     expect(r.leaf).toEqual({ expected: true, actual: undefined });
+    // A field the actual node lacks prints as missing, not as a value.
+    expect(r.expected).toBe('button("Go", disabled=true)');
+    expect(r.actual).toBe('button("Go")');
   });
 
   it("fails a wrong alt", () => {
@@ -208,14 +211,5 @@ describe("the expected / actual lines", () => {
       children: [{ kind: "icon", name: "plus", props: {} }],
     };
     expect(run(node, node).expected).toBe('button("Add", icon(name="plus"))');
-  });
-
-  it("print a field the actual node lacks as missing, not as a value", () => {
-    const r = run(
-      { kind: "button", text: "Go", props: { disabled: true } },
-      { kind: "button", text: "Go", props: {} },
-    );
-    expect(r.expected).toBe('button("Go", disabled=true)');
-    expect(r.actual).toBe('button("Go")');
   });
 });
