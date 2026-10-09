@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
-import { describeEdit, removeDef } from "../mutate.ts";
+import { CASCADE_HELP, describeEdit, removeDef } from "../mutate.ts";
 import { WARN_SKIPPED } from "./_shared/op-log.ts";
 
 const USAGE = "Usage: kumiki remove <file> <qname> [--cascade]";
@@ -11,7 +11,7 @@ export function registerRemove(program: Command): void {
     .description("Remove a definition")
     .argument("[file]", "target .kumiki file")
     .argument("[qname]", "qualified name")
-    .option("--cascade", "also remove definitions that reference <qname>")
+    .option("--cascade", CASCADE_HELP)
     .allowExcessArguments(false)
     .action(
       (file: string | undefined, qname: string | undefined, options: { cascade?: boolean }) => {

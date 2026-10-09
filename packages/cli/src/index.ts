@@ -14,6 +14,8 @@ export {
   type FixPlan,
   fixCmd,
   fixFromTest,
+  type GateVerdict,
+  gateComposed,
   iterStringLiterals,
   planFix,
   planFixes,
@@ -36,6 +38,7 @@ export {
 } from "./harness.ts";
 export {
   addDef,
+  CASCADE_HELP,
   type DefSpec,
   describeEdit,
   describeSkipped,

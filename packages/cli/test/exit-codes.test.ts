@@ -157,15 +157,11 @@ app Demo
     expect(after.code).toBe(0);
   });
 
-  it("reports the parser's message when a patch breaks the file", SPAWN, () => {
-    // The `}` inside the route string is what makes this reachable: the
-    // missing-404 patch finds the end of the routes map by scanning for the
-    // first `}`, so here it splices its entry into the middle of a string
-    // literal and the result no longer parses. Nothing is written.
-    //
-    // A broken patch sets `regressionBlocked` too, so asking about the
-    // rollback first told the reader the patch "would have introduced new
-    // errors" and never that it had made the file unparseable.
+  it("exits 0 when the missing-404 patch repairs a routes map with a `}` in a route", SPAWN, () => {
+    // The patch used to end the routes map at the first `}`, so here it spliced
+    // its entry into the middle of the string literal, the result no longer
+    // parsed, and `fix` exited 1 with the parser's message. It finds the map's
+    // own closing brace from the tokens now.
     const src = `slot count : Int = 0
 tile App = column(heading("Count: " + count.show))
 app Demo
@@ -173,12 +169,11 @@ app Demo
     routes = {"/a}b" -> App}
     init   = []
 `;
-    const file = write("fix-breaks.kumiki", src);
+    const file = write("fix-brace-in-route.kumiki", src);
     const { stdout, code } = runCli(["fix", file, "--apply"]);
-    expect(stdout).toContain("fixes broke the file:");
-    expect(stdout).not.toContain("rolled back");
-    expect(readFileSync(file, "utf8")).toBe(src);
-    expect(code).toBe(1);
+    expect(stdout).toContain("file now clean");
+    expect(readFileSync(file, "utf8")).toContain('routes = {"/a}b" -> App, "/404" -> NotFound}');
+    expect(code).toBe(0);
   });
 
   it("holds --auto-patch to the same rule as the diagnostic path", SPAWN, () => {
@@ -281,6 +276,22 @@ describe("kumiki refs / view", () => {
     const { stderr, code } = runCli(["refs", write("refs.kumiki", CLEAN), "slot.nope"]);
     expect(stderr).toContain('Definition "slot.nope" not found');
     expect(code).toBe(1);
+  });
+
+  it("fails on a qname that is not defined under view --with-deps, as without it", SPAWN, () => {
+    const file = write("view-deps.kumiki", CLEAN);
+    const res = runCli(["view", file, "slot.nope", "--with-deps"]);
+    expect(res).toEqual({ stdout: "", stderr: 'Definition "slot.nope" not found\n', code: 1 });
+    expect(runCli(["view", file, "slot.nope"])).toEqual(res);
+  });
+
+  it("prints a defined qname after its dependencies under view --with-deps", SPAWN, () => {
+    const res = runCli(["view", write("view-deps-ok.kumiki", CLEAN), "tile.App", "--with-deps"]);
+    expect(res).toEqual({
+      stdout: 'slot count : Int = 0\n\ntile App = column(heading("Count: " + count.show))\n',
+      stderr: "",
+      code: 0,
+    });
   });
 
   it("succeeds for a defined qname with no referrers", SPAWN, () => {

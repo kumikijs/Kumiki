@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import {
   addDef,
   applyFixPlan,
+  CASCADE_HELP,
   describeEdit,
   describeSkipped,
   editDef,
@@ -154,8 +155,11 @@ function errText(e: unknown) {
  * `Diagnostic[]`, and preserve the discriminated union so the client can
  * `switch (r.status)` on the response. The `applied` variant always carries
  * `regressed: []`: a patch that would regress a test is `test-blocked`.
+ *
+ * Exported so a test can serialise an outcome no file reaches today, such as a
+ * refusal over composed source that does not parse.
  */
-function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
+export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
   const base = { ok: o.ok, status: o.status };
   switch (o.status) {
@@ -714,7 +718,8 @@ export function createServer(): McpServer {
     {
       title: "Remove a definition",
       description:
-        "Remove a definition. Set cascade=true to also remove definitions that only it referenced. " +
+        `Remove a definition. Set cascade=true to ${CASCADE_HELP}. ` +
+        "Without it, removing a definition that something references is refused. " +
         "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
         "line for each further definition the cascade took." +
         SKIPPED_LINE_NOTE,

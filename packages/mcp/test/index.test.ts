@@ -10,11 +10,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lockDef } from "@kumikijs/cli";
+import { CASCADE_HELP, gateComposed, lockDef } from "@kumikijs/cli";
+import { check, lex, parse } from "@kumikijs/compiler";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createServer } from "../src/index.ts";
+import { createServer, serialiseFixFromTest } from "../src/index.ts";
 
 // Re-materialize the `node:fs` namespace as a plain object so per-test
 // `vi.spyOn(fs, ...)` works — see the same pattern in packages/cli/test/ai-edit.test.ts.
@@ -346,6 +347,52 @@ describe("kumiki_auto_patch", () => {
       expect(parsed.compileFixes).toBeUndefined();
     });
     expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("serialises a refusal over unparseable source as compile-blocked, with the parser's message", () => {
+    // No repair rule writes unparseable source, so no file reaches this
+    // refusal. The outcome is built from the gate's verdict on hand-written
+    // broken text instead: a composed routes map that lost its closing brace.
+    const source = [
+      'tile App = column(heading("hi"))',
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App}',
+      "    init   = []",
+      "",
+    ].join("\n");
+    const errors = check(parse(lex(source))).filter((e) => e.severity !== "warning");
+    const broken = source.replace('{"/" -> App}', '{"/" -> App, "/404" -> NotFound');
+    let message = "";
+    try {
+      parse(lex(broken));
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toMatch(/^Parse error at /);
+    const verdict = gateComposed(errors, broken);
+    if (verdict.blocked === undefined) throw new Error("the gate passed text that does not parse");
+    const wire = serialiseFixFromTest({
+      ok: false,
+      status: "compile-blocked",
+      compileErrors: errors,
+      blocked: verdict.blocked,
+      warnings: [],
+    });
+    expect(wire).toEqual({
+      ok: false,
+      status: "compile-blocked",
+      compileErrors: [
+        {
+          code: "E0001",
+          kind: "missing-404",
+          message: 'app.routes must include a "/404" entry',
+          line: 2,
+          col: 1,
+        },
+      ],
+      blocked: { reason: "parse-error", message },
+    });
   });
 
   it("dry-run reports 'proposed' (or already-pass) without writing", {
@@ -827,16 +874,39 @@ describe("failure reporting", () => {
 
   it("refs and view give the same answer for a name that is not defined", async () => {
     await withClient(async (client) => {
-      for (const name of ["kumiki_refs", "kumiki_view"]) {
+      const calls = [
+        { name: "kumiki_refs", arguments: {} },
+        { name: "kumiki_view", arguments: {} },
+        { name: "kumiki_view", arguments: { withDeps: true } },
+      ];
+      for (const call of calls) {
+        const label = `${call.name} ${JSON.stringify(call.arguments)}`;
         const res = await client.callTool({
-          name,
-          arguments: { path: FIX_COUNTER_TESTS, name: "slot.nope" },
+          name: call.name,
+          arguments: { path: FIX_COUNTER_TESTS, name: "slot.nope", ...call.arguments },
         });
-        expect(res.isError, name).toBe(true);
+        expect(res.isError, label).toBe(true);
         const body = (res.content as TextContent[]).map((c) => c.text).join("\n");
         const parsed = JSON.parse(body) as { error: { message: string } };
-        expect(parsed.error.message, name).toBe('Definition "slot.nope" not found');
+        expect(parsed.error.message, label).toBe('Definition "slot.nope" not found');
       }
+    });
+  });
+
+  it("view with withDeps returns a defined name after its dependencies", async () => {
+    await withClient(async (client) => {
+      const res = await client.callTool({
+        name: "kumiki_view",
+        arguments: { path: FIX_COUNTER_TESTS, name: "reducer.inc", withDeps: true },
+      });
+      expect(res.isError).not.toBe(true);
+      expect((res.content as TextContent[]).map((c) => c.text).join("\n")).toBe(
+        [
+          "slot count : Int = 0",
+          'tile IncBtn = button(text="+1", onClick=inc)',
+          "reducer inc on=ui.click(IncBtn) do= count := count + 1",
+        ].join("\n\n"),
+      );
     });
   });
 });
@@ -1106,6 +1176,18 @@ describe("what an edit tool reports about the edit it made", () => {
       // The requested definition is the headline, not one of its own casualties.
       expect(cascaded(out)).not.toContain("slot.count");
       expect(out).toMatch(OP_ID);
+    });
+  });
+
+  // The cascade above takes what references `slot.count`, out to the `app`,
+  // and the description an agent reads before calling the tool says so.
+  it("describes the cascade as taking the target's dependents", async () => {
+    await withClient(async (client) => {
+      const { tools } = await client.listTools();
+      const remove = tools.find((t) => t.name === "kumiki_remove");
+      const description = (remove?.description ?? "").replace(/\s+/g, " ");
+      expect(description).toContain(CASCADE_HELP);
+      expect(description).toContain("every definition that references it");
     });
   });
 
