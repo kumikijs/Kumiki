@@ -11,7 +11,7 @@
 // and passes them across the `page.evaluate` boundary, where a `ReducerSpec`
 // (it carries `apply`, a function) could not go.
 
-import { nearestName } from "./text-distance.ts";
+import { nearestNames } from "./text-distance.ts";
 
 /** A reducer as a `{dispatch}` step sees it: its name, and the id it is scoped to. */
 export type DispatchTarget = {
@@ -41,11 +41,14 @@ export function dispatchFault(
 ): string | undefined {
   const target = targets.find((t) => t.name === written);
   if (!target) {
-    const near = nearestName(
+    const near = nearestNames(
       written,
       targets.map((t) => t.name),
     );
-    const hint = near === null ? "" : ` — did you mean "${near}"?`;
+    // A tie names every reducer in it. This message only prints, so it can hand
+    // the choice to its reader, where naming the one declared first would let
+    // declaration order answer what the distance does not.
+    const hint = near.length === 0 ? "" : ` — did you mean ${orList(near)}?`;
     // The written name is quoted for the same reason `clickText`'s refusal
     // quotes its text: it came from the fixture, and trailing whitespace or a
     // stray character in it is invisible unquoted — which is the typo a reader
@@ -59,4 +62,11 @@ export function dispatchFault(
     );
   }
   return undefined;
+}
+
+/** `"a"`, `"a" or "b"`, `"a", "b" or "c"`. */
+function orList(names: readonly string[]): string {
+  const quoted = names.map((n) => `"${n}"`);
+  const last = quoted.pop() ?? "";
+  return quoted.length === 0 ? last : `${quoted.join(", ")} or ${last}`;
 }

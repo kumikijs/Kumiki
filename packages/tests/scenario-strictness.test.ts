@@ -396,6 +396,32 @@ app Todos
     expect(fault).not.toContain("did you mean");
   });
 
+  // Reducers one edit away each say nothing about which one was meant. Naming
+  // the first one declared reads as an answer the app does not give, and
+  // naming none hides the names a reader would choose between — so the message
+  // names every one of them, in an order the declarations cannot change.
+  it.each([
+    [["addA", "addB"], '"addA" or "addB"'],
+    [["addB", "addA"], '"addA" or "addB"'],
+    [["addC", "addA", "addB"], '"addA", "addB" or "addC"'],
+  ])("names every reducer equally close (declared %j)", async (names, named) => {
+    const app = await loadSource(
+      [
+        "slot n : Int = 0",
+        ...names.map((r) => `reducer ${r} on=ui.click(Btn${r}) do= n := n + 1`),
+        ...names.map((r) => `tile Btn${r} = button(text="${r}", onClick=${r})`),
+        `tile App = column(${names.map((r) => `Btn${r}`).join(", ")}, text("n: " + n.show))`,
+        "app Adds",
+        "    caps   = []",
+        '    routes = {"/" -> App, "/404" -> App}',
+        "    init   = []",
+        "",
+      ].join("\n"),
+    );
+    const report = await runScenario(app, freshRoot(), { steps: [{ do: { dispatch: "add" } }] });
+    expect(report.steps[0]?.actionError).toBe(`no reducer named "add" — did you mean ${named}?`);
+  });
+
   it("still dispatches the reducer that does exist", async () => {
     const app = await loadSource(RENAMED);
     const report = await runScenario(app, freshRoot(), {

@@ -9,7 +9,7 @@ import {
   collectTimerNames,
   LexError,
   lex,
-  nearestName,
+  nearestNames,
   ParseError,
   parse,
   servesNotFound,
@@ -69,6 +69,12 @@ export type SkipReason = {
   code: string;
   reason: string;
   message: string;
+  /**
+   * The names a `close-names-tied` skip would have had to choose between,
+   * sorted. Each is as close to the name written as the others, so which one
+   * was meant is the author's to say. Absent on every other reason.
+   */
+  candidates?: string[];
 };
 
 /**
@@ -266,21 +272,28 @@ function applyNameFix(anchor: PatchAnchor, missing: string, suggested: string) {
 }
 
 /**
- * Closest candidate name for `missing`, argument-ordered the way this file's
- * call sites read. Takes candidates as an iterable so callers can supply a
- * scoped set — top-level defs for the generic `NAME_SUGGEST_CODES` codes, timer
- * names for E0106, variant tags for E0209.
+ * The candidate names closest to `missing`, argument-ordered the way this
+ * file's call sites read. Takes candidates as an iterable so callers can supply
+ * a scoped set — top-level defs for the generic `NAME_SUGGEST_CODES` codes,
+ * timer names for E0106, variant tags for E0209. A namespace that holds
+ * built-in names beside the program's own passes the program's as `declared`,
+ * which outrank a built-in name at the same distance.
  *
- * The rule itself is `nearestName`, shared with the verification tiers' own
- * unknown-name message. It used to live here, and the threshold — not the
- * metric — is the half that drifts when a rule has two homes.
+ * The rule itself is `nearestNames`, shared with the verification tiers' own
+ * unknown-name message: the threshold — not the metric — is the half that
+ * drifts when a rule has two homes. More than one name is a tie, which no
+ * branch repairs (see `soleName` in `planFixesExplained`).
  */
-function suggestNameFrom(candidates: Iterable<string>, missing: string): string | null {
-  return nearestName(missing, candidates);
+function suggestNamesFrom(
+  candidates: Iterable<string>,
+  missing: string,
+  declared?: Iterable<string>,
+): string[] {
+  return nearestNames(missing, candidates, declared);
 }
 
-function suggestName(store: Store, missing: string): string | null {
-  return suggestNameFrom(
+function suggestNames(store: Store, missing: string): string[] {
+  return suggestNamesFrom(
     listDefs(store).map((e) => e.name),
     missing,
   );
@@ -388,7 +401,7 @@ function append404Route(text: string): string | null {
 /**
  * Diagnostic codes whose message shape is `... "<name>" ...` and whose repair
  * is "replace the misspelled name with a close top-level definition name".
- * `planFixes` extracts the quoted name and consults `suggestName` (which pulls
+ * `planFixes` extracts the quoted name and consults `suggestNames` (which pulls
  * from `listDefs(store)`) for every code in this set.
  *
  * Handled with a *scoped* candidate set in their own branch below (not in this
@@ -403,7 +416,7 @@ function append404Route(text: string): string | null {
  *     effects, which no program declares and which the shared list therefore
  *     never held.
  * Adding either code back to *this* set silently corrupts the source: the
- * shared candidate list has no timer / variant entries, so `suggestName`
+ * shared candidate list has no timer / variant entries, so `suggestNames`
  * would propose an unrelated tile or reducer whose name happens to be close.
  */
 const NAME_SUGGEST_CODES: ReadonlySet<string> = new Set([
@@ -430,9 +443,13 @@ export function planFixesExplained(
 ): { patches: AutoPatch[]; skipped: SkipReason[] } {
   const patches: AutoPatch[] = [];
   const skipped: SkipReason[] = [];
-  const skip = (code: string, reason: string, message: string): void => {
-    skipped.push({ code, reason, message });
-    debugSkip(`planFixes:${code}`, reason, message);
+  const skip = (code: string, reason: string, message: string, candidates?: string[]): void => {
+    skipped.push(candidates ? { code, reason, message, candidates } : { code, reason, message });
+    debugSkip(
+      `planFixes:${code}`,
+      reason,
+      candidates ? `${message} (${candidates.join(", ")})` : message,
+    );
   };
   for (const err of errors) {
     // Every patch repairs exactly one diagnostic, so the position comes from
@@ -448,6 +465,17 @@ export function planFixesExplained(
     const addElsewhere = (patch: Omit<AutoPatch, "anchor">): void => {
       patches.push({ ...patch, anchor: { kind: "region" } });
     };
+    // The one name a close-name repair writes, or `undefined` once the reason
+    // there is none is recorded: nothing close enough (`none`, the branch's own
+    // reason), or a tie. A tie is the distance declining to say which name was
+    // meant, and writing the first of it would let the order of the program's
+    // definitions answer instead — so it is skipped, naming the tied names.
+    const soleName = (near: string[], none: string): string | undefined => {
+      if (near.length === 1) return near[0];
+      if (near.length === 0) skip(err.code, none, err.message);
+      else skip(err.code, "close-names-tied", err.message, near);
+      return undefined;
+    };
     const beforePatches = patches.length;
     const beforeSkipped = skipped.length;
     if (NAME_SUGGEST_CODES.has(err.code)) {
@@ -460,11 +488,8 @@ export function planFixesExplained(
         continue;
       }
       const missing = err.code === "E0211" ? quoted[quoted.length - 1]! : quoted[0]!;
-      const suggested = suggestName(store, missing);
-      if (!suggested) {
-        skip(err.code, "no-close-name-suggestion", err.message);
-        continue;
-      }
+      const suggested = soleName(suggestNames(store, missing), "no-close-name-suggestion");
+      if (suggested === undefined) continue;
       const anchor = nameAnchor(store, err.pos, missing);
       addAnchored(anchor, {
         code: err.code,
@@ -488,11 +513,8 @@ export function planFixesExplained(
         skip(err.code, "e0106-empty-timer-namespace", err.message);
         continue;
       }
-      const suggested = suggestNameFrom(timers, missing);
-      if (!suggested) {
-        skip(err.code, "e0106-no-close-timer", err.message);
-        continue;
-      }
+      const suggested = soleName(suggestNamesFrom(timers, missing), "e0106-no-close-timer");
+      if (suggested === undefined) continue;
       const anchor = nameAnchor(store, err.pos, missing);
       addAnchored(anchor, {
         code: err.code,
@@ -517,11 +539,11 @@ export function planFixesExplained(
       const fnNames = listDefs(store)
         .filter((e) => e.layer === "fn")
         .map((e) => e.name);
-      const suggested = suggestNameFrom(calleeCandidates(fnNames, missing), missing);
-      if (!suggested) {
-        skip(err.code, "e0116-no-close-callee", err.message);
-        continue;
-      }
+      const suggested = soleName(
+        suggestNamesFrom(calleeCandidates(fnNames, missing), missing, fnNames),
+        "e0116-no-close-callee",
+      );
+      if (suggested === undefined) continue;
       add({
         code: err.code,
         message: err.message,
@@ -548,11 +570,11 @@ export function planFixesExplained(
       const userTypes = listDefs(store)
         .filter((e) => e.layer === "type")
         .map((e) => e.name);
-      const suggested = suggestNameFrom(typeCandidates(userTypes), missing);
-      if (!suggested) {
-        skip(err.code, "e0117-no-close-type", err.message);
-        continue;
-      }
+      const suggested = soleName(
+        suggestNamesFrom(typeCandidates(userTypes), missing, userTypes),
+        "e0117-no-close-type",
+      );
+      if (suggested === undefined) continue;
       add({
         code: err.code,
         message: err.message,
@@ -575,15 +597,14 @@ export function planFixesExplained(
         continue;
       }
       const missing = quoted[0]!;
-      const candidates = listDefs(store)
+      const effects = listDefs(store)
         .filter((e) => e.layer === "effect")
-        .map((e) => e.name)
-        .concat([...BUILTIN_EFFECT_CAPS.keys()]);
-      const suggested = suggestNameFrom(candidates, missing);
-      if (!suggested) {
-        skip(err.code, "e0104-no-close-effect", err.message);
-        continue;
-      }
+        .map((e) => e.name);
+      const suggested = soleName(
+        suggestNamesFrom([...effects, ...BUILTIN_EFFECT_CAPS.keys()], missing, effects),
+        "e0104-no-close-effect",
+      );
+      if (suggested === undefined) continue;
       add({
         code: err.code,
         message: err.message,
@@ -605,11 +626,8 @@ export function planFixesExplained(
       const candidates = listDefs(store)
         .filter((e) => e.layer === "theme" || e.layer === "slot")
         .map((e) => e.name);
-      const suggested = suggestNameFrom(candidates, missing);
-      if (!suggested) {
-        skip(err.code, "e0118-no-close-theme", err.message);
-        continue;
-      }
+      const suggested = soleName(suggestNamesFrom(candidates, missing), "e0118-no-close-theme");
+      if (suggested === undefined) continue;
       add({
         code: err.code,
         message: err.message,
@@ -631,11 +649,8 @@ export function planFixesExplained(
         skip(err.code, "e0216-unresolved-variant-type", err.message);
         continue;
       }
-      const suggested = suggestNameFrom(tags, missing);
-      if (!suggested) {
-        skip(err.code, "e0216-no-close-tag", err.message);
-        continue;
-      }
+      const suggested = soleName(suggestNamesFrom(tags, missing), "e0216-no-close-tag");
+      if (suggested === undefined) continue;
       add({
         code: err.code,
         message: err.message,
@@ -662,11 +677,8 @@ export function planFixesExplained(
         skip(err.code, "e0209-unresolved-variant-type", err.message);
         continue;
       }
-      const suggested = suggestNameFrom(tags, missing);
-      if (!suggested) {
-        skip(err.code, "e0209-no-close-tag", err.message);
-        continue;
-      }
+      const suggested = soleName(suggestNamesFrom(tags, missing), "e0209-no-close-tag");
+      if (suggested === undefined) continue;
       const anchor = nameAnchor(store, err.pos, missing);
       addAnchored(anchor, {
         code: err.code,

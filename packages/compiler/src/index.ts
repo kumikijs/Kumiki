@@ -7,8 +7,8 @@
 // names the same way — re-exported here so the CLI's import is unchanged.
 // Imported through the `text-distance` subpath rather than the barrel: this
 // module is loaded on every `kumiki check`, and the barrel would pull the whole
-// runtime module graph in to reach two pure functions.
-export { levenshtein, nearestName } from "@kumikijs/runtime/text-distance";
+// runtime module graph in to reach a few pure functions.
+export { levenshtein, nearestName, nearestNames } from "@kumikijs/runtime/text-distance";
 export type * from "./ast.ts";
 // The name tables themselves stay internal: splitting them three ways is an
 // implementation choice (one lowers by full name, one by member, one not at

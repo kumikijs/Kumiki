@@ -82,6 +82,28 @@ app Demo
 /** The warning above plus a repairable typo — the two must not interfere. */
 const WARN_AND_FIXABLE = WARN_ONLY.replace("count.show", "cnt.show");
 
+/**
+ * `count` is one edit from `countA` and one from `countB` — one E0103 with two
+ * equally close names, and nothing in the program to say which was meant.
+ * `first` is the slot declared first, so a repair decided by source order
+ * answers differently for the two orders.
+ */
+const tied = (first: string, second: string): string => `slot ${first} : Int = 0
+slot ${second} : Int = 0
+
+reducer bumpA on=ui.click(BtnA) do= countA := countA + 1
+reducer bumpB on=ui.click(BtnB) do= countB := countB + 1
+
+tile BtnA = button(text="a", onClick=bumpA)
+tile BtnB = button(text="b", onClick=bumpB)
+tile App  = column(BtnA, BtnB, text("total: " + count.show))
+
+app Tie
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
 /** No `app`, so E0003 — a diagnostic `planFixes` has no repair branch for. */
 const UNFIXABLE = `slot count : Int = 0
 tile App = column(heading("Count: " + count.show))
@@ -128,6 +150,35 @@ describe("kumiki fix", () => {
     const { stdout, code } = runCli(["fix", write("fix-apply.kumiki", FIXABLE), "--apply"]);
     expect(stdout).toContain("file now clean");
     expect(code).toBe(0);
+  });
+
+  // A tie is not a repair. Proposing one of the two names is a guess the
+  // program does not support, and `--apply` writing it leaves a file `check`
+  // calls clean — exit 0 on a coin flip, which `fix --apply && next-step`
+  // walks straight past.
+  describe.each([
+    ["countA", "countB"],
+    ["countB", "countA"],
+  ])("with %s declared before %s, two names equally close", (first, second) => {
+    it("proposes neither and exits 1", SPAWN, () => {
+      const { stdout, stderr, code } = runCli([
+        "fix",
+        write(`tie-${first}.kumiki`, tied(first, second)),
+      ]);
+      expect(stdout).not.toContain('replace "count"');
+      expect(stdout).toContain("(no auto-patches available)");
+      expect(stderr).toContain('E0103 Reference to undefined name "count"');
+      expect(code).toBe(1);
+    });
+
+    it("writes neither with --apply and exits 1", SPAWN, () => {
+      const source = tied(first, second);
+      const file = write(`tie-apply-${first}.kumiki`, source);
+      const { stdout, code } = runCli(["fix", file, "--apply"]);
+      expect(stdout).not.toContain("file now clean");
+      expect(readFileSync(file, "utf8")).toBe(source);
+      expect(code).toBe(1);
+    });
   });
 
   it("exits 1 when --apply leaves errors behind", SPAWN, () => {

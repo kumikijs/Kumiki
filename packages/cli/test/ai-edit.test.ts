@@ -1944,7 +1944,7 @@ describe("applyFixPlan: regression gate", () => {
   });
 
   it("no resolutions: rolled back even when nothing new is introduced", () => {
-    // A `suggestName` that finds no viable neighbor emits no patch, so this
+    // A `suggestNames` that finds no viable neighbor emits no patch, so this
     // case doesn't naturally arise from planFixes. Directly construct a plan
     // via `applyFixPlan` with a code that has no repair — the pre-existing
     // errors survive and we assert the file wasn't touched.
@@ -2605,10 +2605,10 @@ describe("planFixesExplained: skip-reason classification", () => {
   });
 
   it("no-close-name-suggestion: missing name equals the only candidate (self-match gate)", () => {
-    // Regression pin for `suggestNameFrom`'s self-skip. Without it, a
+    // Regression pin for `nearestNames`' self-skip. Without it, a
     // diagnostic that quotes a name that IS a top-level def name would
     // produce a `replace "A" with "A"` no-op patch. Self is skipped in the
-    // loop, so with no other candidate the sweep leaves `best` null.
+    // loop, so with no other candidate there is nothing to suggest.
     const store = writeAndLoad('tile A = heading("hi")\n');
     const { patches, skipped } = planFixesExplained(store, [
       synth("E0102", 'reducer refers to undefined name "A"'),
@@ -2621,7 +2621,7 @@ describe("planFixesExplained: skip-reason classification", () => {
 
   it("self-match does not eclipse a close alternative candidate", () => {
     // With a self-match at distance 0 AND a genuinely close alternative,
-    // `suggestNameFrom` must skip self and still surface the alternative
+    // `nearestNames` must skip self and still surface the alternative
     // (here `Apps` at distance 1 from `App`). A naive `bestScore === 0`
     // bail after the loop would drop the alternative too — this pins that
     // it does not.
@@ -2633,6 +2633,173 @@ describe("planFixesExplained: skip-reason classification", () => {
     ]);
     expect(patches).toHaveLength(1);
     expect(patches[0]?.description).toContain('replace "App" with "Apps"');
+  });
+
+  // Two candidates equally close say nothing about which one the author meant,
+  // and a repair writes whichever name it is handed — so a tie is refused, and
+  // the skip names what it would have had to choose between. Asked of every
+  // branch that repairs a misspelt name, each with its two tied definitions in
+  // both orders: a branch that keeps the first name it meets passes one order
+  // and fails the other.
+  describe("close-names-tied: two names equally close, so nothing is written", () => {
+    // `defs(a, b)` declares the two tied names, `a` first. The name the message
+    // quotes is one edit from each.
+    const TIED: {
+      code: string;
+      defs: (a: string, b: string) => string[];
+      message: string;
+      tied: [string, string];
+    }[] = [
+      {
+        code: "E0102",
+        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        message: 'reducer refers to undefined name "count"',
+        tied: ["countA", "countB"],
+      },
+      {
+        code: "E0103",
+        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        message: 'Reference to undefined name "count"',
+        tied: ["countA", "countB"],
+      },
+      {
+        code: "E0105",
+        defs: (a, b) => [`tile ${a} = heading("a")`, `tile ${b} = heading("b")`],
+        message: 'Reference to undefined tile "Card"',
+        tied: ["CardA", "CardB"],
+      },
+      {
+        code: "E0107",
+        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        message: 'Reference to undefined motion "fade"',
+        tied: ["fadeA", "fadeB"],
+      },
+      {
+        // The last quoted name is the one E0211 repairs.
+        code: "E0211",
+        defs: (a, b) => [`tile ${a} = heading("a")`, `tile ${b} = heading("b")`],
+        message: 'Reducer "bump" selects undefined tile "Card"',
+        tied: ["CardA", "CardB"],
+      },
+      {
+        code: "E0106",
+        defs: (a, b) => [
+          `reducer a on=timer(100ms, name=${a}) do= n := n + 1`,
+          `reducer b on=timer(100ms, name=${b}) do= n := n + 1`,
+        ],
+        message: 'stop-timer refers to undefined timer name "tick"',
+        tied: ["tickA", "tickB"],
+      },
+      {
+        code: "E0116",
+        defs: (a, b) => [`fn ${a}(x: Int) -> Int = x`, `fn ${b}(x: Int) -> Int = x`],
+        message: 'Call to undefined function "score"',
+        tied: ["scoreA", "scoreB"],
+      },
+      {
+        code: "E0117",
+        defs: (a, b) => [`type ${a} = Int`, `type ${b} = Int`],
+        message: 'Reference to undefined type "Shape"',
+        tied: ["ShapeA", "ShapeB"],
+      },
+      {
+        code: "E0104",
+        defs: (a, b) => [
+          `effect ${a} cap=log.write in=Text out=Unit`,
+          `effect ${b} cap=log.write in=Text out=Unit`,
+        ],
+        message: 'Reference to undefined effect "save"',
+        tied: ["saveA", "saveB"],
+      },
+      {
+        code: "E0118",
+        defs: (a, b) => [`slot ${a} : Text = "a"`, `slot ${b} : Text = "b"`],
+        message: 'Reference to undefined theme "mode"',
+        tied: ["modeA", "modeB"],
+      },
+      {
+        code: "E0216",
+        defs: (a, b) => [`type S = ${a} | ${b}`],
+        message: 'Variant "Idle" is not a member of type "S"',
+        tied: ["IdleA", "IdleB"],
+      },
+      {
+        code: "E0209",
+        defs: (a, b) => [`type S = ${a} | ${b}`],
+        message: 'Variant "Idle" is not a member of scrutinee type "S"',
+        tied: ["IdleA", "IdleB"],
+      },
+    ];
+
+    it.each(TIED)("$code", ({ code, defs, message, tied: [a, b] }) => {
+      for (const order of [defs(a, b), defs(b, a)]) {
+        const store = writeAndLoad(["slot n : Int = 0", ...order, ""].join("\n"));
+        const { patches, skipped } = planFixesExplained(store, [synth(code, message)]);
+        expect(patches).toEqual([]);
+        expect(skipped).toEqual([
+          { code, reason: "close-names-tied", message, candidates: [a, b] },
+        ]);
+      }
+    });
+
+    it("plans the program `check` reports the tie in, whichever slot it declares first", () => {
+      const program = (first: string, second: string): string =>
+        [
+          `slot ${first} : Int = 0`,
+          `slot ${second} : Int = 0`,
+          "reducer bumpA on=ui.click(BtnA) do= countA := countA + 1",
+          "reducer bumpB on=ui.click(BtnB) do= countB := countB + 1",
+          'tile BtnA = button(text="a", onClick=bumpA)',
+          'tile BtnB = button(text="b", onClick=bumpB)',
+          'tile App  = column(BtnA, BtnB, text("total: " + count.show))',
+          "app Tie",
+          "    caps   = []",
+          '    routes = {"/" -> App, "/404" -> App}',
+          "    init   = []",
+          "",
+        ].join("\n");
+      for (const [first, second] of [
+        ["countA", "countB"],
+        ["countB", "countA"],
+      ] as const) {
+        const store = writeAndLoad(program(first, second));
+        const errors = check(store.program);
+        expect(errors.map((e) => e.code)).toEqual(["E0103"]);
+        const { patches, skipped } = planFixesExplained(store, errors);
+        expect(patches).toEqual([]);
+        expect(skipped.map((s) => [s.reason, s.candidates])).toEqual([
+          ["close-names-tied", ["countA", "countB"]],
+        ]);
+      }
+    });
+
+    it("refuses a tie among built-in names too", () => {
+      // `Duration.x` is one edit from four units. Writing one of them would
+      // change how long something waits by a factor nothing in the program
+      // chose.
+      const store = writeAndLoad('tile App = heading("hi")\n');
+      const { patches, skipped } = planFixesExplained(store, [
+        synth("E0116", 'Call to undefined function "Duration.x"'),
+      ]);
+      expect(patches).toEqual([]);
+      expect(skipped.map((s) => [s.reason, s.candidates])).toEqual([
+        ["close-names-tied", ["Duration.d", "Duration.h", "Duration.m", "Duration.s"]],
+      ]);
+    });
+
+    it("lets a declared fn outrank a built-in call at the same distance", () => {
+      // `nox` is one edit from the declared `nov` and from the built-in `now`.
+      // The program's own name wins, as a declared type does over a built-in
+      // one for E0117 and a declared effect over a standard one for E0104.
+      const store = writeAndLoad(
+        ["fn nov(x: Int) -> Int = x", 'tile App = heading("hi")', ""].join("\n"),
+      );
+      const { patches, skipped } = planFixesExplained(store, [
+        synth("E0116", 'Call to undefined function "nox"'),
+      ]);
+      expect(skipped).toEqual([]);
+      expect(patches.map((p) => p.description)).toEqual(['replace "nox" with "nov" at 1:1']);
+    });
   });
 
   it("e0106-quoted-name-extract-failed: E0106 without a quoted name", () => {

@@ -16,10 +16,10 @@
  * Levenshtein edit distance.
  *
  * The threshold is deliberately not here: what counts as "close enough" belongs
- * to the candidate set being searched. {@link nearestName} carries the rule for
- * a set of user-written top-level names; `nearestSection` in the compiler
- * carries a different one, because a closed three-word vocabulary can afford an
- * abbreviation rule and can refuse a tie by printing the whole set instead.
+ * to the candidate set being searched. {@link nearestNames} carries the rule for
+ * the names a program writes; `nearestSection` in the compiler carries a
+ * different one, because a closed three-word vocabulary can afford an
+ * abbreviation rule, and answers a tie by printing the whole set.
  */
 export function levenshtein(a: string, b: string): number {
   const n = b.length;
@@ -37,37 +37,73 @@ export function levenshtein(a: string, b: string): number {
 }
 
 /**
- * The closest candidate to `written`, or `null` when none is close enough — a
- * suggestion that is not the name the author meant sends the repair at the
- * wrong one, which is worse than no suggestion at all.
+ * The candidates closest to `written`, sorted, or none when none is close
+ * enough — a suggestion that is not the name the author meant sends the repair
+ * at the wrong one, which is worse than no suggestion at all.
  *
  * Close enough is at most 2 edits, or at most a quarter of the written name's
  * length, whichever is more forgiving: a long name mistyped in three places is
  * still recognisable, a three-character one mistyped twice is not.
  *
- * The candidate set is user-written top-level names — the definitions in a
- * program for `kumiki fix`, the reducers in an app shape for the verification
- * tiers. Sharing the rule and not just the metric is the point: the metric was
- * never the half that drifts.
+ * At the same distance, a candidate in `preferred` outranks one that is not.
+ * That is how a caller searching a program's own names beside built-in ones
+ * says which half the author more likely meant: `Filtre` is two edits from the
+ * declared `Filter` and from the built-in `File`, and the declared type is the
+ * one being written about. Distance still comes first — a built-in one edit
+ * away beats a declared name two edits away.
+ *
+ * More than one candidate left is a tie, and every tied candidate is answered:
+ * `count` is one edit from `countA` and from `countB`, and nothing in the
+ * distance says which the author meant. Keeping whichever the candidates
+ * listed first would let the order of a program's definitions pick the name,
+ * so the answer carries them all in sorted order and each caller decides what
+ * a tie means to it — a repair that writes a name writes none, a message that
+ * prints one prints them all. A name listed twice is one candidate, not a tie.
+ *
+ * The candidates are names a program can write: its definitions (and, where a
+ * namespace has them, the built-in names beside them) for `kumiki fix`, the
+ * reducers in an app shape for the verification tiers. Sharing the rule and
+ * not just the metric is the point: the metric was never the half that drifts.
  *
  * A candidate equal to `written` is skipped, so a caller that searches a set
  * the name is already in still gets a genuine alternative rather than an echo.
- * A tie goes to the first candidate met, which is what `kumiki fix` has always
- * done; `nearestSection`'s opposite choice (refuse the tie, print the whole
- * vocabulary) is available to it because its vocabulary is three words long and
- * printable, and a program's definitions are not.
  */
-export function nearestName(written: string, candidates: Iterable<string>): string | null {
-  let best: string | null = null;
+export function nearestNames(
+  written: string,
+  candidates: Iterable<string>,
+  preferred: Iterable<string> = [],
+): string[] {
+  const prefer = new Set(preferred);
+  let best = new Set<string>();
+  // Lower is better on both: edits, then 0 for a preferred name and 1 otherwise.
   let bestScore = Number.POSITIVE_INFINITY;
+  let bestTier = Number.POSITIVE_INFINITY;
   for (const cand of candidates) {
     const d = levenshtein(written, cand);
     if (d === 0) continue;
-    if (d < bestScore) {
+    const tier = prefer.has(cand) ? 0 : 1;
+    if (d > bestScore || (d === bestScore && tier > bestTier)) continue;
+    if (d < bestScore || tier < bestTier) {
       bestScore = d;
-      best = cand;
+      bestTier = tier;
+      best = new Set();
     }
+    best.add(cand);
   }
-  if (best === null) return null;
-  return bestScore <= 2 || bestScore <= Math.ceil(written.length * 0.25) ? best : null;
+  const close = bestScore <= 2 || bestScore <= Math.ceil(written.length * 0.25);
+  return close ? [...best].sort() : [];
+}
+
+/**
+ * The one candidate closest to `written`, or `null` when none is close enough
+ * or several are equally close — {@link nearestNames} for a caller that can
+ * act on one name only, so a tie is no answer rather than the first of it.
+ */
+export function nearestName(
+  written: string,
+  candidates: Iterable<string>,
+  preferred: Iterable<string> = [],
+): string | null {
+  const near = nearestNames(written, candidates, preferred);
+  return near.length === 1 ? near[0]! : null;
 }

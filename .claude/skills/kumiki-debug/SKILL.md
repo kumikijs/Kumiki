@@ -65,6 +65,8 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 
 For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` on a `let` read outside the scope that declared it is not a misspelling: do not apply a rename `fix` proposes for it — it would read a different value and still type-check.
 
+When two or more names are equally close (`count` beside `countA` and `countB`), `fix` proposes none — picking one would be a guess — and leaves the error for you to resolve: its skip reason is `close-names-tied`, with the tied names in the skip's `candidates`. A name the program declares does outrank a built-in one at the same distance (`Filtre` → the declared `Filter`, not the built-in `File`).
+
 ```sh
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes
 pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file> --apply  # apply them

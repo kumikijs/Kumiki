@@ -175,11 +175,13 @@ export function isPrimTypeName(name: string): name is PrimName {
  * candidate set `kumiki fix` suggests from for E0117 — a name from another
  * namespace would be E0117 again at the same position, so only type names
  * belong here.
+ *
+ * The order decides nothing. Which of two equally close names wins is the
+ * ranking's to say, and `kumiki fix` hands it the program's own names as the
+ * preferred ones: `Filtre` is two edits from both the declared `Filter` and the
+ * built-in `File`, and the declared type is the one the author meant.
  */
 export function typeCandidates(userTypeNames: Iterable<string>): string[] {
-  // The program's own names come first so an equidistant tie resolves to one
-  // of them: `Filtre` is two edits from both the declared `Filter` and the
-  // built-in `File`, and the declared type is the one the author meant.
   return [
     ...userTypeNames,
     ...STDLIB_TYPES.map((t) => t.name),

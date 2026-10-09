@@ -228,7 +228,7 @@ export {
 // reducer names with them without the runtime depending on the compiler. The
 // `@kumikijs/runtime/text-distance` subpath is the cheap door for a consumer
 // that wants only these — this barrel evaluates the whole runtime.
-export { levenshtein, nearestName } from "./text-distance.ts";
+export { levenshtein, nearestName, nearestNames } from "./text-distance.ts";
 export { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
 export { inputPatchers, inputTiles } from "./tiles-input.ts";
 export { layoutPatchers, layoutTiles } from "./tiles-layout.ts";
