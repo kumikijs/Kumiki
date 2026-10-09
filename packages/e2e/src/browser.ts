@@ -855,33 +855,64 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("setProperty" in a) {
-    await page.evaluate(
-      (arg: { sel: string; prop: string; val: unknown }) => {
-        const el = document.querySelector(arg.sel);
-        if (!el) return;
-        // Dotted paths land on nested holders like `dataset.foo` or
-        // `style.color`. Walk everything but the last segment (must exist),
-        // then assign the last segment. Non-existent intermediate props are
-        // a no-op (a common test-author mistake worth staying silent about).
-        const segs = arg.prop.split(".");
-        let host: Record<string, unknown> = el as unknown as Record<string, unknown>;
-        for (let i = 0; i < segs.length - 1; i++) {
-          const nextRaw = host[segs[i] as string];
-          if (nextRaw == null || typeof nextRaw !== "object") return;
-          host = nextRaw as Record<string, unknown>;
-        }
-        host[segs[segs.length - 1] as string] = arg.val;
-      },
-      { sel: a.setProperty, prop: a.property, val: a.value },
-    );
+    // Found through a locator, as every other verb finds its element: a render
+    // gets the same 3s to attach it, and a selector matching nothing fails the
+    // step in the same words theirs does.
+    await page
+      .locator(a.setProperty)
+      .first()
+      .evaluate(
+        (el: Element, arg: { prop: string; val: unknown }) => {
+          // Dotted paths land on nested holders like `dataset.foo` or
+          // `style.color`. Walk everything but the last segment (must exist),
+          // then assign the last segment. Non-existent intermediate props are
+          // a no-op (a common test-author mistake worth staying silent about).
+          const segs = arg.prop.split(".");
+          let host: Record<string, unknown> = el as unknown as Record<string, unknown>;
+          for (let i = 0; i < segs.length - 1; i++) {
+            const nextRaw = host[segs[i] as string];
+            if (nextRaw == null || typeof nextRaw !== "object") return;
+            host = nextRaw as Record<string, unknown>;
+          }
+          host[segs[segs.length - 1] as string] = arg.val;
+        },
+        { prop: a.property, val: a.value },
+        { timeout: 3000 },
+      );
     return;
   }
   // choose
   const loc = page.locator(a.choose).first();
   await refuse(loc, "choose", describeAction(a));
-  await loc
-    .selectOption({ label: a.value }, { timeout: 3000 })
-    .catch(() => loc.selectOption(a.value));
+  // Which option the value names, decided once, in the page, through the
+  // locator `refuse` just resolved: the one with that label, else the one with
+  // that value. Playwright is handed the index, so nothing matches a second
+  // time, and a select with neither fails here in the scenario tier's words
+  // rather than in Playwright's timeout, which never names the value.
+  const picked = await loc.evaluate(
+    (el: Element, value: string) => {
+      // `selectOption` follows a <label> to its control, so this does too.
+      const select = el instanceof HTMLSelectElement ? el : el.closest("label")?.control;
+      if (!(select instanceof HTMLSelectElement)) return { tag: el.tagName.toLowerCase() };
+      // Whitespace collapsed on both sides, as Playwright's own label match
+      // does: `option.label` is the option's text with its runs of whitespace
+      // already collapsed, so a label copied from source still finds it.
+      const norm = (s: string): string => s.trim().replace(/\s+/g, " ");
+      const options = [...select.options];
+      const byLabel = options.findIndex((o) => norm(o.label) === norm(value));
+      return { index: byLabel !== -1 ? byLabel : options.findIndex((o) => o.value === value) };
+    },
+    a.value,
+    { timeout: 3000 },
+  );
+  if ("tag" in picked) {
+    throw new Error(
+      `${a.choose} matched <${picked.tag}>, which holds no options to choose — ` +
+        "choose targets a select",
+    );
+  }
+  if (picked.index === -1) throw new Error(`no option "${a.value}" in select ${a.choose}`);
+  await loc.selectOption({ index: picked.index }, { timeout: 3000 });
 }
 
 async function evaluateExpect(

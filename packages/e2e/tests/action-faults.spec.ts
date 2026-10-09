@@ -10,7 +10,7 @@
 // drifts from an input onto its wrapper. Playwright refuses it too, but only
 // after spending the actionability timeout, and without saying what it matched.
 
-import { runOnPage } from "@kumikijs/e2e";
+import { type Action, runOnPage } from "@kumikijs/e2e";
 import { expect, test } from "@playwright/test";
 
 const SOURCE = `slot note : Text = ""
@@ -61,6 +61,67 @@ test("a selector matching nothing fails the step off the error channel", async (
   expect(report.steps[0]?.failures).toEqual([]);
   expect(report.steps[1]?.actionError).toBeTruthy();
   expect(report.steps[1]?.errors).toEqual([]);
+});
+
+// The other verbs that take a selector, one test each so a verb that waits out
+// the test's own timeout is named rather than taking its neighbours down with
+// it. Each answers a selector matching nothing as `click` and `fill` do: a
+// failed step on `actionError`, naming the selector, within the same 3s budget.
+const UNMATCHED: Action[] = [
+  { submit: "#typo" },
+  { choose: "#typo", value: "x" },
+  { setProperty: "#typo", property: "value", value: "x" },
+];
+
+for (const action of UNMATCHED) {
+  test(`${Object.keys(action)[0]} on a selector matching nothing fails the step`, async ({
+    page,
+  }) => {
+    const report = await runOnPage(page, SOURCE, { steps: [{ do: action }] });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toContain("#typo");
+    expect(report.steps[0]?.errors).toEqual([]);
+  });
+}
+
+// `choose` takes an option by its label, and by its value only when no option
+// carries that label. The `select` tile writes each value into its <option> as
+// JSON, so `"b"` (quotes included) is the value of the option labelled Bee and
+// the label of the third one: a rule that took either attribute in document
+// order, or the value first, would land on Bee.
+const CHOOSE_SOURCE = `slot pick : Text = "a"
+fn picks() -> List({label: Text, value: Text})
+   = [{label: "Ay", value: "a"}, {label: "Bee", value: "b"}, {label: "\\"b\\"", value: "c"}]
+tile Pick = select(bind=pick, options=picks()) {id: "pick"}
+tile App  = column(Pick, text("pick: " + pick))
+app Chooses
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+test("choose takes the label first, and a value no label carries", async ({ page }) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [
+      { do: { choose: "#pick", value: '"b"' }, expect: { state: { pick: "c" } } },
+      { do: { choose: "#pick", value: '"a"' }, expect: { state: { pick: "a" } } },
+    ],
+  });
+  expect(report.steps.map((s) => s.actionError)).toEqual([undefined, undefined]);
+  expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+  expect(report.ok).toBe(true);
+});
+
+test("choose on a select with no such option fails the step, naming the value", async ({
+  page,
+}) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [{ do: { choose: "#pick", value: "Zed" } }],
+  });
+  expect(report.ok).toBe(false);
+  expect(report.steps[0]?.actionError).toContain('no option "Zed" in select #pick');
+  expect(report.steps[0]?.errors).toEqual([]);
+  expect(report.steps[0]?.state.pick).toBe("a");
 });
 
 // `{dispatch}` is the verb where the two tiers could most easily drift: it names
