@@ -275,7 +275,7 @@ An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other s
 
 ### 6.4.1 Behavior
 
-- A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation).
+- A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation), and records no `effect-cancel` step in the episode log ([runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)).
 - The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: ""}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
 - A cancel acts on the one request its id names. Any other request of the same effect that is in flight keeps running and delivers its own `.ok` / `.err`.
 - Under `queue`, a cancel affects only the entry its id names. An entry still waiting is removed from the queue: its request is never made and no `.err` fires. An entry that is running is aborted like any in-flight request, and the queue goes on with the next entry. Every other entry runs as it would have.

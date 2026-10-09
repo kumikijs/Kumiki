@@ -342,6 +342,12 @@ describe("kumiki build CLI (per-app DCE, #71)", () => {
     // `runWithRetry` returns it without another attempt. The 9 bytes are that
     // check in the retry loop, which sits in core every app loads; a counter
     // retries nothing and still ships it.
+    //
+    // Still 64,000 (63,877 measured, from 63,853 on the base at 4f8d2a6; dev at
+    // f72685e measures 63,597): an `http.cancel` records an `effect-cancel`
+    // step only when it released what its id names (runtime.md §10.5.1). The
+    // 24 bytes are the flag the cancel branch sets at each release, in the
+    // dispatcher every app loads; a counter cancels nothing and still ships it.
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);

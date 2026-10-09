@@ -3407,6 +3407,10 @@ function makeEffectDispatcher(
   // name the episode that owns the `effect-start` rather than the empty stack.
   onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
+  // An `http.cancel` that released what its id names — aborted the request in
+  // flight, removed the queued entry, cleared the debounce timer — reported
+  // with that id (spec §10.5.1). A cancel that released nothing is not
+  // reported: the reducer step's `emits` already says it was emitted.
   onCancel?: (targetId: string) => void,
   // Policy-induced cancel of a pending effect-start that was already claimed
   // on its originating episode (spec §10.5.1). The seam fires for: a debounce
@@ -3519,18 +3523,23 @@ function makeEffectDispatcher(
       // §6.4: `cap=http.cancel` is a meta-effect — its `input` IS an
       // `EffectId` ({@link emitId}). Abort the in-flight request it names, or
       // drop the pending launch it names — a queued entry that has not
-      // started, or an emit waiting on its debounce timer — then surface the
-      // cancel intent to the episode log. Unknown / already-completed ids are
-      // a silent no-op (cancellation is an idempotent intent, not a contract
-      // violation — user code shouldn't have to guard a rapidly-clicked
-      // Cancel button).
+      // started, or an emit waiting on its debounce timer — and, when one of
+      // those was released, record the cancel on the episode log
+      // (runtime.md §10.5.1). Unknown / already-completed ids are a silent
+      // no-op that records nothing (cancellation is an idempotent intent, not
+      // a contract violation — user code shouldn't have to guard a
+      // rapidly-clicked Cancel button).
       if (eff.cap === "http.cancel") {
         const target = String(emit.args[0] ?? "");
+        // Set at each release below and nowhere else, so the episode step
+        // records what this branch released rather than a second lookup.
+        let released = false;
         if (target.length > 0) {
           const ic = state.inflight.get(target);
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+            released = true;
           }
           // A queued entry that has not started is the same pending launch as
           // a debounce timer: it holds an episode token and would run after
@@ -3541,16 +3550,19 @@ function makeEffectDispatcher(
             if (i === -1) continue;
             const [e] = q.pending.splice(i, 1);
             if (e?.token) onPolicyCancel?.(e.token, e.effectName);
+            released = true;
             break;
           }
           // Only debounce timers represent a pending launch we want to drop.
           // A throttle timer is the open-window marker for an already-issued
           // launch — clearing it would let the very next emit slip through
-          // ahead of the rate limit (spec §6.4.1).
+          // ahead of the rate limit (spec §6.4.1) — so a cancel that finds
+          // only that window has released nothing.
           for (const [name, t] of state.timers) {
             if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
             state.timers.delete(name);
+            released = true;
             // The pending debounce already claimed an effect-start on its
             // originating episode. Without releasing the token here, that
             // episode stays in `closedAwaiting` forever — symmetric with the
@@ -3560,8 +3572,8 @@ function makeEffectDispatcher(
             }
             break;
           }
-          onCancel?.(target);
         }
+        if (released) onCancel?.(target);
         return;
       }
       const input = emit.args[0];

@@ -212,8 +212,10 @@ export type EpisodeLogger = {
   recordEffectEnd(token: string, name: string, result: "ok" | "err", value: unknown): () => void;
   /**
    * Append a `{kind: "effect-cancel", ...}` step to the open episode. Used by
-   * the dispatcher's `http.cancel` branch (spec http.md §6.4) so the trace
-   * carries both the cancel intent AND the cancelled effect's `.err`
+   * the dispatcher's `http.cancel` branch (spec http.md §6.4) when the cancel
+   * released what `targetId` names — a request in flight, a queued entry, a
+   * pending debounce timer — and only then (spec §10.5.1), so the trace
+   * carries both the cancel AND the cancelled effect's `.err`
    * (`message: "aborted"`) — without the cancel step the `.err` looks like a
    * generic network failure. For a deferred-policy launch (debounce) that
    * was claimed at dispatch time but never actually fired, see the sibling
