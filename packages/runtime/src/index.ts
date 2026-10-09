@@ -168,6 +168,8 @@ export {
   type EpisodeTrigger,
   type SlotDiff,
 } from "./episode.ts";
+// What a step's DOM assertions read besides the mount root, at both tiers.
+export { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
 export { routing } from "./router.ts";
 export {
   type Action,

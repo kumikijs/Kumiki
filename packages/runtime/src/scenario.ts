@@ -19,6 +19,7 @@ import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
+import { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
 import { submitFault } from "./submit-check.ts";
 import { standInValue } from "./testkit.ts";
 
@@ -78,9 +79,13 @@ export type Expect = {
   actionErrorIncludes?: string[];
   /** Partial match against the slot state (slot name → expected value). */
   state?: Record<string, unknown>;
-  /** Substrings that must appear in the rendered text. */
+  /**
+   * Substrings that must appear in the rendered text: the mount root's, and
+   * that of every runtime overlay this run opened (`RUNTIME_OVERLAY_SELECTORS`
+   * — a toast banner, a confirm dialog), which render outside the root.
+   */
   domIncludes?: string[];
-  /** Substrings that must NOT appear in the rendered text. */
+  /** Substrings that must NOT appear in the rendered text, read as `domIncludes` reads it. */
   domExcludes?: string[];
 };
 
@@ -309,6 +314,7 @@ export type StepResult = {
   expectedActionError?: string;
   emits: { effect: string; args: unknown[] }[];
   state: Record<string, unknown>;
+  /** The text `domIncludes` / `domExcludes` read after this step, whitespace collapsed. */
   domText: string;
   failures: string[];
   /**
@@ -325,6 +331,8 @@ export type StepResult = {
 export type ScenarioReport = { ok: boolean; steps: StepResult[] };
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+const OVERLAYS = RUNTIME_OVERLAY_SELECTORS.join(", ");
 
 type Dispatchable = AppShape & {
   _dispatch?: (name: string, el: Record<string, unknown>) => void;
@@ -345,6 +353,19 @@ export async function runScenario(
 ): Promise<ScenarioReport> {
   const settleMs = opts.settleMs ?? 25;
   const steps: StepResult[] = [];
+
+  // --- what a step reads ---
+  // The runtime appends its overlays to `document.body`, outside `root`, and a
+  // step reads them with the root — the ones this run opens, and no others:
+  // whatever an earlier run or test left in the document was there before this
+  // mount, and must not answer this run's assertions. The `finally` below
+  // removes the ones it opened.
+  const preexisting = new Set(Array.from(document.querySelectorAll(OVERLAYS)));
+  const opened = (): Element[] =>
+    Array.from(document.querySelectorAll(OVERLAYS)).filter((el) => !preexisting.has(el));
+  // Apart rather than run together, so a substring cannot match across the
+  // boundary between the root and an overlay.
+  const rendered = (): string => [root, ...opened()].map((el) => el.textContent ?? "").join("\n");
 
   // --- error capture ---
   let errorBuf: string[] = [];
@@ -423,13 +444,15 @@ export async function runScenario(
     // report a missing selector instead of the key that is wrong.
     const problems = validateScenario(scenario);
     if (problems.length > 0) {
-      steps.push(mkStep("scenario document", undefined, [], [], app, root, problems));
+      steps.push(mkStep("scenario document", undefined, [], [], app, rendered(), problems));
       return finish();
     }
     try {
       dispose = mount(app, root, mountOpts).dispose;
     } catch (e) {
-      steps.push(mkStep(undefined, "mount", [`mount threw: ${errStr(e)}`], [], app, root, []));
+      steps.push(
+        mkStep(undefined, "mount", [`mount threw: ${errStr(e)}`], [], app, rendered(), []),
+      );
       return finish();
     }
     await settle(settleMs);
@@ -445,7 +468,7 @@ export async function runScenario(
     // a caller reading `steps[0]` sees what it always saw.
     if (errorBuf.length > 0) {
       steps.push(
-        mkStep("mount", undefined, [...errorBuf], [...emitBuf], app, root, [], [...diagBuf]),
+        mkStep("mount", undefined, [...errorBuf], [...emitBuf], app, rendered(), [], [...diagBuf]),
       );
     }
 
@@ -483,16 +506,18 @@ export async function runScenario(
       // lead the list, since whether the action happened at all comes before
       // anything observed after it.
       const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
+      // Read once, so the assertions and the trace's `domText` see one text.
+      const text = rendered();
       const result = mkStep(
         step.label,
         actionDesc,
         unexpected,
         [...emitBuf],
         app,
-        root,
+        text,
         [
           ...verdict.failures,
-          ...evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, root),
+          ...evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, text),
         ],
         [...diagBuf],
         expected,
@@ -509,6 +534,10 @@ export async function runScenario(
       // The report is already built. A fault on the way out is worth less than
       // the run it would replace, and the same choice `runSmoke` makes.
     }
+    // The root's DOM went with the mount; these were never under it. A toast
+    // still has its timer running and a confirm may be unanswered, and either
+    // would otherwise outlive the report, in a document the next run shares.
+    for (const el of opened()) el.remove();
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);
     w.removeEventListener?.("unhandledrejection", onRejection);
@@ -525,7 +554,7 @@ function mkStep(
   errors: string[],
   emits: { effect: string; args: unknown[] }[],
   app: AppShape,
-  root: HTMLElement,
+  text: string,
   failures: string[],
   diagnostics: RuntimeDiagnostic[] = [],
   expectedErrors: string[] = [],
@@ -538,7 +567,7 @@ function mkStep(
     expectedErrors,
     emits,
     state: snapshotState(app),
-    domText: (root.textContent ?? "").replace(/\s+/g, " ").trim(),
+    domText: text.replace(/\s+/g, " ").trim(),
     failures,
     diagnostics,
   };
@@ -808,7 +837,7 @@ function evaluateExpect(
   // compile and would quietly invert what `noErrors` and `errorIncludes` mean.
   reported: { all: string[]; unexpected: string[] },
   app: AppShape,
-  root: HTMLElement,
+  text: string,
 ): string[] {
   if (!expect) return [];
   const failures: string[] = [];
@@ -840,7 +869,6 @@ function evaluateExpect(
       }
     }
   }
-  const text = root.textContent ?? "";
   for (const s of expect.domIncludes ?? []) {
     if (!text.includes(s)) failures.push(`DOM should include "${s}"`);
   }

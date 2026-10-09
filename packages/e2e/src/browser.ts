@@ -12,6 +12,7 @@ import {
   type DispatchTarget,
   dispatchFault,
   judgeRefusal,
+  RUNTIME_OVERLAY_SELECTORS,
   readControl,
   readInvalidControls,
   type Action as ScenarioAction,
@@ -52,6 +53,7 @@ export type Expect = {
    */
   actionErrorIncludes?: string[];
   state?: Record<string, unknown>;
+  /** Read off the mount roots and the runtime's overlays, as at the scenario tier (`STEP_TEXT`). */
   domIncludes?: string[];
   domExcludes?: string[];
   /** Browser-only: a CSS selector that must be the focused element. */
@@ -248,6 +250,7 @@ export type StepResult = {
   expectedActionError?: string;
   errors: string[];
   state: Record<string, unknown>;
+  /** The text `domIncludes` / `domExcludes` read after this step (`STEP_TEXT`). */
   visibleText: string;
   failures: string[];
 };
@@ -277,6 +280,15 @@ function buildHtmlMulti(bundles: string[]): string {
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
 <body>${body}</body></html>`;
 }
+
+/**
+ * What a step's `domIncludes` / `domExcludes` read: the root(s) the two pages
+ * above mount into, then the runtime's overlays — a toast banner, a confirm
+ * dialog — which it appends to `<body>`, outside them. The overlays are the
+ * scenario tier's definition, so the two tiers read the same DOM. Each run
+ * loads a fresh page, so every overlay in it is this run's.
+ */
+const STEP_TEXT = ["#root", "[id^='kumiki-root-']", ...RUNTIME_OVERLAY_SELECTORS].join(", ");
 
 /**
  * Re-target one compiled bundle for co-mounting: auto-mount into its own root
@@ -496,9 +508,15 @@ async function serveScenario(
         await page.waitForTimeout(settleMs);
       }
       const state = (await page.evaluate(stateFn).catch(() => ({}))) as Record<string, unknown>;
+      // Each element's text apart, in document order, as at the scenario tier.
       const visibleText = await page
-        .locator("body")
-        .innerText()
+        .evaluate(
+          (sel: string) =>
+            Array.from(document.querySelectorAll<HTMLElement>(sel), (el) => el.innerText).join(
+              "\n",
+            ),
+          STEP_TEXT,
+        )
         .catch(() => "");
       // The same verdict the scenario tier takes, from the same function — the
       // two used to be a verbatim copy of each other that had already drifted
