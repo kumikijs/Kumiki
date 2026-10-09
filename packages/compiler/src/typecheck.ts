@@ -64,6 +64,7 @@ import {
   boundaryTarget,
   expansionTargets,
   findCycles,
+  forwardedParams,
   type GraphEdge,
 } from "./def-graph.ts";
 import { type FnScopeBind, fnScope } from "./fn-scope.ts";
@@ -453,10 +454,11 @@ function checkCycles(
 
   const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
   const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const forwarded = forwardedParams(typeOf, "through");
   const typeEdges = (name: string): readonly GraphEdge[] => {
     const def = typeOf(name);
     if (!def) return [];
-    const target = aliasTarget(def, typeOf);
+    const target = aliasTarget(def, typeOf, forwarded);
     // `sym.types` holds the program's definitions over the standard library's
     // (`STDLIB_TYPES`), so a stdlib *domain* type — `Route`, `HttpError` — is
     // followed like any other definition, and a program that redeclares one

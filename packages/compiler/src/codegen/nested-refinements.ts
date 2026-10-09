@@ -126,14 +126,23 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         return expandNamed(t, env) ? named(t, generics) : containerJs(t, generics);
       case "TypeNominal":
       case "TypeRefinement": {
-        // Base outward (§1.3.1): whatever the inner type refuses is named
-        // before the predicate written on top of it.
+        // Base outward (§1.3.1): whatever the type under the wrappers refuses
+        // is named first, then each predicate from the innermost out. A run of
+        // wrappers is one check, taken in a loop: a helper per wrapper, each
+        // calling the next, would be a frame per `where` at runtime too.
+        const outermostFirst: Refinement[] = [];
+        let under: TypeExpr = t;
+        while (under.kind === "TypeNominal" || under.kind === "TypeRefinement") {
+          if (under.refinement) outermostFirst.push(under.refinement);
+          under = under.inner;
+        }
         const steps: string[] = [];
-        const inner = explain(t.inner, generics);
+        const inner = explain(under, generics);
         if (inner) steps.push(`if ((f = ${named$(inner)}(v, o))) return f;`);
-        const r = t.refinement;
-        const body = r ? refinementBodyJs(r) : undefined;
-        if (r && body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
+        for (const r of outermostFirst.reverse()) {
+          const body = refinementBodyJs(r);
+          if (body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
+        }
         return fnOf(steps);
       }
       case "TypeRecord":

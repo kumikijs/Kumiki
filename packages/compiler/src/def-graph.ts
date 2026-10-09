@@ -255,13 +255,17 @@ export function forwardedParams(
  * The hop loop needs no guard of its own: each hop moves to a head strictly
  * inside the arguments of the previous one, so it is bounded by the body's
  * nesting depth, which the parser bounds.
+ *
+ * `forwarded` is `forwardedParams` over the same `lookup`. A caller asking for
+ * the edge of every definition passes one classifier to all of them, so each
+ * generic is classified once rather than once per definition written over it.
  */
 export function aliasTarget(
   def: TypeDef,
   lookup: (name: string) => TypeDef | undefined,
+  forwarded: (def: TypeDef) => number | null = forwardedParams(lookup, "through"),
 ): GraphEdge | null {
   const params = new Set(def.params);
-  const forwarded = forwardedParams(lookup, "through");
   let head = headOf(def.body, params);
   while (head?.kind === "name") {
     const edge = { to: head.name, pos: head.pos };

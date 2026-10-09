@@ -11,52 +11,23 @@
 // not a byte count, so they stay true as the runtime grows. The sizes those
 // copies cost are recorded once, in runtime.md §10.8.1.
 
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build } from "vite";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
+import { buildProject as buildApp } from "./helpers/build-project.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.kumiki");
-const TMP = join(here, "test-tmp");
-mkdirSync(TMP, { recursive: true });
 
 /** A literal the runtime carries and nothing else does — one hit set per copy. */
 const RUNTIME_MARK = "kumiki-state-styles";
 
-/**
- * Build a one-entry project and return the concatenated output. `where` is the
- * directory the throwaway project is created under — inside the workspace by
- * default, where `@kumikijs/runtime` resolves from the project itself.
- */
-async function buildProject(
-  main: string,
-  opts?: KumikiPluginOptions,
-  where: string = TMP,
-): Promise<string> {
-  const root = mkdtempSync(join(where, "build-"));
-  mkdirSync(join(root, "src"), { recursive: true });
-  writeFileSync(join(root, "src", "app.kumiki"), readFileSync(COUNTER, "utf8"));
-  writeFileSync(join(root, "src", "main.ts"), main);
-  await build({
-    root,
-    logLevel: "silent",
-    plugins: [kumiki(opts)],
-    build: {
-      outDir: join(root, "dist"),
-      emptyOutDir: true,
-      lib: { entry: join(root, "src", "main.ts"), formats: ["es"], fileName: "out" },
-      minify: false,
-    },
-  });
-  const outDir = join(root, "dist");
-  return readdirSync(outDir)
-    .map((f) => readFileSync(join(outDir, f), "utf8"))
-    .join("\n");
-}
+/** Build the counter behind `main` and return the concatenated output. */
+const buildProject = (main: string, opts?: KumikiPluginOptions, where?: string) =>
+  buildApp(readFileSync(COUNTER, "utf8"), main, opts, where);
 
 const marks = (code: string): number => code.split(RUNTIME_MARK).length - 1;
 

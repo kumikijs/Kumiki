@@ -1,11 +1,46 @@
-import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
+import { refinementsOf } from "../assignable.ts";
+import type { Refinement, TypeExpr } from "../ast.ts";
 import { refinementBodyJs, refinementToJs } from "../refinements.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
 
-/** Translate a type into a property-test generation descriptor (spec §8.3.2). */
+/**
+ * Translate a type into a property-test generation descriptor (spec §8.3.2).
+ *
+ * The type's own chain — the names it is declared through, and the `nominal`s
+ * and `where`s on the way — is followed in a loop, since nothing bounds how
+ * long it is, and the refinements met on it are folded into the descriptor of
+ * the type it ends at, base outward.
+ */
 export function typeToGenDesc(t: TypeExpr, gen: GenCtx, seen: Set<string>): GenDescData {
+  const outermostFirst: Refinement[] = [];
+  let names = seen;
+  let cur = t;
+  for (;;) {
+    if (cur.kind === "TypeNominal" || cur.kind === "TypeRefinement") {
+      if (cur.refinement) outermostFirst.push(cur.refinement);
+      cur = cur.inner;
+      continue;
+    }
+    const def =
+      cur.kind === "TypeRef" && !names.has(cur.name) ? gen.types.get(cur.name) : undefined;
+    if (!def) break;
+    if (names === seen) names = new Set(seen);
+    names.add(def.name);
+    cur = def.body;
+  }
+  let desc = endGenDesc(cur, gen, names);
+  for (const r of outermostFirst.reverse()) desc = applyRefine(desc, r);
+  return desc;
+}
+
+/** {@link typeToGenDesc} of the type a chain ends at, which is no wrapper. */
+function endGenDesc(
+  t: Exclude<TypeExpr, { kind: "TypeNominal" | "TypeRefinement" }>,
+  gen: GenCtx,
+  seen: Set<string>,
+): GenDescData {
   switch (t.kind) {
     case "TypePrim":
       return primGenDesc(t.name);
@@ -20,17 +55,9 @@ export function typeToGenDesc(t: TypeExpr, gen: GenCtx, seen: Set<string>): GenD
       if (t.name === "Result") return { t: "Result", ok: d(a[0]), err: d(a[1]) };
       return { t: "Unknown" };
     }
-    case "TypeRef": {
-      if (seen.has(t.name)) return { t: "Unknown" };
-      const def = gen.types.get(t.name);
-      if (!def) return { t: "Unknown" };
-      const next = new Set(seen);
-      next.add(t.name);
-      return typeToGenDesc(def.body, gen, next);
-    }
-    case "TypeNominal":
-    case "TypeRefinement":
-      return applyRefine(typeToGenDesc(t.inner, gen, seen), t.refinement);
+    // A name the chain has already entered, or one nothing declares.
+    case "TypeRef":
+      return { t: "Unknown" };
     case "TypeRecord":
       return {
         t: "Record",
@@ -114,102 +141,6 @@ export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDe
 }
 
 /**
- * Every refinement a type carries, base outward.
- *
- * A type may be written with more than one `where` (spec/language.md §1.3.1),
- * and the predicates conjoin. The parser folds the first onto a `nominal` node
- * as a property and wraps each one after it, so the predicates sit on nested
- * nodes rather than in a list — and a named type reached through a `TypeRef`
- * hides its own underneath that. Reading exactly one layer, which is what this
- * module used to do, emitted the outermost predicate and dropped every other
- * (#353): `nominal Text where len-gt(3) where nonempty` accepted `"ab"`.
- *
- * The order is the one the chain the type denotes is read in, from the base
- * outward (§1.3.6, inv. 1). Inside a single type expression that is the order
- * the predicates are written in; across names it is not, and it does not depend
- * on which definition was declared first — on `type Handle = nominal Short
- * where len-gt(3)` over `type Short = Text where len-lt(9)`, `len-lt` comes
- * first wherever the two definitions sit in the file, because `Short` is what
- * `Handle` is declared over. It is the order a failed predicate is named in.
- *
- * The edges are the ones normalization (`unaliasType`) follows: an alias, a
- * `nominal` wrapper, a `where`, and a program-defined generic applied to its
- * arguments — `type NonEmpty(T) = T where nonempty` makes `NonEmpty(Handle)`
- * carry Handle's predicates and then `nonempty`. The walk stops at a structural
- * type: nothing written inside a record, a union or a container is a refinement
- * of the type itself, and a stdlib constructor (`List`, `Option`, …) has no
- * definition here to follow.
- *
- * `seen` is what makes a name written in terms of itself terminate: a generic
- * is guarded by its name like an alias. Its body is walked under `seen` plus
- * that name, but an argument is not part of the body — it is syntax of the
- * application site — so a parameter the body reaches is walked in the scope the
- * application was written in, under the `seen` in force there. Substituting the
- * argument into the body and walking it under the body's `seen` instead would
- * let the outer guard swallow a nested application of the same generic:
- * `NonEmpty(NonEmpty(Short))` would lose Short's predicates and the inner
- * `nonempty`. Arguments are sub-expressions of the caller's syntax, so the walk
- * still ends — `type Loop(T) = Loop(T) where nonempty` stops at the inner
- * `Loop`, and `type A = NonEmpty(A)` at the argument `A`. The cycle is E0009's
- * to report, and this walk still has to end on the way there.
- */
-export function refinementsOf(t: TypeExpr, gen: Pick<GenCtx, "types">): Refinement[] {
-  return collectRefinements(t, gen, { seen: new Set(), params: new Map() });
-}
-
-/**
- * Where a type expression is read: the names already entered on the way to it
- * and, inside a generic's body, what each parameter was applied to and where.
- * A parameter is looked up here before the program's definitions, so one that
- * shares its name with a top-level type reads as its argument; one with no
- * argument (an arity mismatch, the checker's to report) reads as nothing.
- */
-type Scope = {
-  seen: ReadonlySet<string>;
-  params: ReadonlyMap<string, { arg: TypeExpr; scope: Scope } | undefined>;
-};
-
-function collectRefinements(t: TypeExpr, gen: Pick<GenCtx, "types">, scope: Scope): Refinement[] {
-  switch (t.kind) {
-    case "TypeRef":
-    case "TypeApp": {
-      if (t.kind === "TypeRef" && scope.params.has(t.name)) {
-        const bound = scope.params.get(t.name);
-        return bound ? collectRefinements(bound.arg, gen, bound.scope) : [];
-      }
-      if (scope.seen.has(t.name)) return [];
-      const def = gen.types.get(t.name);
-      if (!def) return [];
-      // A plain alias's body has no parameters; a generic's are bound to the
-      // arguments as written here, to be read back in this scope.
-      const params = new Map<string, { arg: TypeExpr; scope: Scope } | undefined>();
-      if (t.kind === "TypeApp") {
-        def.params.forEach((p, i) => {
-          const arg = t.args[i];
-          params.set(p, arg ? { arg, scope } : undefined);
-        });
-      }
-      return collectRefinements(def.body, gen, { seen: new Set([...scope.seen, t.name]), params });
-    }
-    case "TypeNominal":
-    case "TypeRefinement": {
-      const inner = collectRefinements(t.inner, gen, scope);
-      return t.refinement ? [...inner, t.refinement] : inner;
-    }
-    // A type in its own right. Listed rather than defaulted so `assertNever`
-    // reports the next node kind added to `TypeExpr` instead of silently losing
-    // its refinements.
-    case "TypePrim":
-    case "TypeRecord":
-    case "TypeUnion":
-      return [];
-    default:
-      assertNever(t);
-      return [];
-  }
-}
-
-/**
  * The runtime test for a slot's type: every predicate it carries, conjoined.
  * `undefined` when the type carries none — the slot then has no `refine` at
  * all, which is what the runtime reads to mean "unrefined".
@@ -226,7 +157,12 @@ export function refinementJs(t: TypeExpr, gen: GenCtx): string | undefined {
   // `refine` that answers `true` to every value reads as a gate and is not one.
   if (bodies.length === 0) return undefined;
   if (bodies.length === 1) return `(v) => ${bodies[0]}`;
-  return `(v) => ${bodies.map((b) => `(${b})`).join(" && ")}`;
+  // One statement per predicate, in chain order, rather than one `&&` chain
+  // of them: a chain of definitions carries as many predicates as the program
+  // gives it, and Rollup and rolldown both walk a `&&` chain by recursion and
+  // fail on one a few thousand terms long — the module would load in Node and
+  // break the first bundler it reached.
+  return `(v) => { ${bodies.map((b) => `if (!(${b})) return false;`).join(" ")} return true; }`;
 }
 
 /**

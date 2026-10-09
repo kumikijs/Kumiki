@@ -99,7 +99,7 @@ type RefinementEntry = {
   /**
    * The predicate's condition over `v`, without the arrow around it: a type may
    * carry several `where` clauses and they conjoin (#353), so the bodies are
-   * what `refinementJs` joins with `&&`. Absent means the predicate is
+   * what `refinementJs` conjoins, one test after another. Absent means the predicate is
    * registered and not lowered, which is {@link refinementProblem}'s
    * `unimplemented-refinement` — never a check that passes.
    */

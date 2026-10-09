@@ -21,7 +21,7 @@
 // rather than a value that would fail, which is the whole purpose of writing
 // `nominal` (language.md §1.3.5). Every other rule keeps the reading above.
 
-import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
+import type { Pos, Refinement, TypeDef, TypeExpr } from "./ast.ts";
 import { forwardedParams, type NominalReading } from "./def-graph.ts";
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
 
@@ -58,7 +58,46 @@ export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
  * check, and normalisation has to terminate whether or not one exists.
  */
 export function unaliasType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
-  return unaliasFrom(t, new Set(), newWalk(env));
+  return followChain(t, newWalk(env), null);
+}
+
+/**
+ * Every refinement a type carries, base outward.
+ *
+ * A type may be written with more than one `where` (spec/language.md §1.3.1),
+ * and the predicates conjoin. The parser folds the first onto a `nominal` node
+ * as a property and wraps each one after it, so the predicates sit on nested
+ * nodes rather than in a list, and a named type reached through a `TypeRef`
+ * hides its own underneath that. They are the predicates on the chain
+ * `unaliasType` follows — an alias, a `nominal` wrapper, a `where`, and a
+ * program-defined generic applied to its arguments, so `type NonEmpty(T) = T
+ * where nonempty` makes `NonEmpty(Handle)` carry Handle's predicates and then
+ * `nonempty` — and this is that walk with the predicates it passes kept. It
+ * stops where normalisation does: nothing written inside a record, a union or
+ * a container is a refinement of the type itself, and a stdlib constructor
+ * (`List`, `Option`, …) has no definition here to follow.
+ *
+ * The order is the one the chain the type denotes is read in, from the base
+ * outward (§1.3.6, inv. 1). Inside a single type expression that is the order
+ * the predicates are written in; across names it is not, and it does not
+ * depend on which definition was declared first — on `type Handle = nominal
+ * Short where len-gt(3)` over `type Short = Text where len-lt(9)`, `len-lt`
+ * comes first wherever the two definitions sit in the file, because `Short` is
+ * what `Handle` is declared over. It is the order a failed predicate is named
+ * in.
+ *
+ * An argument is read under the guard of the syntax it was written in, as
+ * normalisation reads it (`ArgOrigins`), so `NonEmpty(NonEmpty(Short))` keeps
+ * Short's predicates and the inner `nonempty`. A name written in terms of
+ * itself ends the walk with the predicates met before it — `type Loop(T) =
+ * Loop(T) where nonempty` stops at the inner `Loop`, and `type A =
+ * NonEmpty(A)` at the argument `A`. The cycle is E0009's to report, and this
+ * walk still has to end on the way there.
+ */
+export function refinementsOf(t: TypeExpr, env: TypeEnv): Refinement[] {
+  const outermostFirst: Refinement[] = [];
+  followChain(t, newWalk(env), outermostFirst);
+  return outermostFirst.reverse();
 }
 
 /**
@@ -75,8 +114,7 @@ export function unaliasType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
  *
  * The walk still ends — every argument is a strict part of the syntax it was
  * written in, and a name reached through a body rather than an argument
- * (`type Loop(T) = Loop(T)`) meets the body's guard. This is the reading
- * `refinementsOf` takes in codegen.
+ * (`type Loop(T) = Loop(T)`) meets the body's guard.
  *
  * Keyed on a fresh copy of each argument made at the application, so an
  * argument node shared by two applications carries the guard of each.
@@ -85,41 +123,103 @@ type ArgOrigins = WeakMap<TypeExpr, ReadonlySet<string>>;
 
 /**
  * One normalisation, or one nominal chain: the type definitions, where each
- * substituted argument was written, and which generics hand a parameter
- * straight back (`def-graph.ts#forwardedParams`) under each reading of
- * `nominal`.
+ * substituted argument was written, and what the table of definitions has
+ * already answered.
  */
 type Walk = {
   readonly env: TypeEnv;
   readonly origins: ArgOrigins;
-  readonly forwarded: Forwarded;
+  readonly facts: TableFacts;
 };
 
 type Forwarded = Readonly<Record<NominalReading, (def: TypeDef) => number | null>>;
 
 /**
- * The forwarding classifiers, one pair per table of definitions. `TypeEnv`
+ * What one table of definitions answers however often it is asked. `TypeEnv`
  * hands this module the table read-only, so an answer read from it holds for
- * as long as the table does — and the checker asks the same few generics
- * again for every type it compares.
+ * as long as the table does — a check and a build each make their own — and
+ * the checker asks the same generics and the same names again for every type
+ * it compares.
  */
-const forwardedByTable = new WeakMap<TypeEnv["types"], Forwarded>();
+type TableFacts = {
+  /**
+   * Which generics hand a parameter straight back
+   * (`def-graph.ts#forwardedParams`), under each reading of `nominal`.
+   */
+  readonly forwarded: Forwarded;
+  /**
+   * Each name's normal form: `unaliasType` of the name on its own, recorded
+   * by the first normalisation that passes through it. A chain of definitions
+   * is followed once this way, rather than once from every type written over
+   * some part of it — which the checker does for every `where` it judges.
+   */
+  readonly normal: Map<string, TypeExpr | null>;
+};
 
-function forwardedIn(env: TypeEnv): Forwarded {
-  let forwarded = forwardedByTable.get(env.types);
-  if (!forwarded) {
+const factsByTable = new WeakMap<TypeEnv["types"], TableFacts>();
+
+function factsOf(env: TypeEnv): TableFacts {
+  let facts = factsByTable.get(env.types);
+  if (!facts) {
     const lookup = (name: string) => env.types.get(name);
-    forwarded = {
-      through: forwardedParams(lookup, "through"),
-      stop: forwardedParams(lookup, "stop"),
+    facts = {
+      forwarded: {
+        through: forwardedParams(lookup, "through"),
+        stop: forwardedParams(lookup, "stop"),
+      },
+      normal: new Map(),
     };
-    forwardedByTable.set(env.types, forwarded);
+    factsByTable.set(env.types, facts);
   }
-  return forwarded;
+  return facts;
 }
 
 function newWalk(env: TypeEnv): Walk {
-  return { env, origins: new WeakMap(), forwarded: forwardedIn(env) };
+  return { env, origins: new WeakMap(), facts: factsOf(env) };
+}
+
+/**
+ * The names a walk has entered, grown in place while nothing else holds them.
+ *
+ * An application records the set in force as its arguments' guard
+ * (`applyDef`), and an argument is then read under the set recorded for it;
+ * either way the set is shared from then on, and is copied before it grows.
+ * Every other step enters a name in constant time, which is what keeps a walk
+ * down a chain of aliases linear in the chain rather than in its square.
+ */
+class Guard {
+  private names: ReadonlySet<string>;
+  private own: Set<string> | null = null;
+
+  constructor(names: ReadonlySet<string>) {
+    this.names = names;
+  }
+
+  has(name: string): boolean {
+    return this.names.has(name);
+  }
+
+  /** The names in force, handed to the caller to keep: the next entry copies them first. */
+  share(): ReadonlySet<string> {
+    this.own = null;
+    return this.names;
+  }
+
+  /** Read on under the guard recorded for an argument, if `t` is one. */
+  readAs(t: TypeExpr, origins: ArgOrigins): void {
+    const recorded = origins.get(t);
+    if (recorded === undefined) return;
+    this.names = recorded;
+    this.own = null;
+  }
+
+  enter(name: string): void {
+    if (this.own === null) {
+      this.own = new Set(this.names);
+      this.names = this.own;
+    }
+    this.own.add(name);
+  }
 }
 
 /**
@@ -136,7 +236,7 @@ export function forwardedHead(t: TypeExpr, env: TypeEnv): TypeExpr {
   // Asked of every argument a walk substitutes: one that is no application
   // is answered before the table is looked up.
   if (t.kind !== "TypeApp") return t;
-  const forwarded = forwardedIn(env);
+  const { forwarded } = factsOf(env);
   let cur: TypeExpr = t;
   for (;;) {
     if (cur.kind !== "TypeApp") return cur;
@@ -165,10 +265,11 @@ export function forwardedHead(t: TypeExpr, env: TypeEnv): TypeExpr {
 function applyDef(
   t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
   def: TypeDef,
-  seen: ReadonlySet<string>,
+  guard: Guard,
   origins: ArgOrigins,
 ): TypeExpr {
   if (t.kind === "TypeRef") return def.body;
+  const seen = guard.share();
   const sub = new Map<string, TypeExpr>();
   def.params.forEach((p, i) => {
     const arg = t.args[i];
@@ -200,29 +301,76 @@ function forwardedArg(
   return i === null ? null : (t.args[i] ?? null);
 }
 
-function unaliasFrom(t: TypeExpr | null, outer: ReadonlySet<string>, walk: Walk): TypeExpr | null {
-  if (!t) return null;
-  const seen = walk.origins.get(t) ?? outer;
-  if (t.kind === "TypeRef" || t.kind === "TypeApp") {
-    const def = walk.env.types.get(t.name);
+/**
+ * Follow `t`'s chain — aliases, generics applied to their arguments, `nominal`
+ * and `where` — to where it ends: the form comparisons are written against, or
+ * `null` when the chain closes on itself. `unaliasType` and `refinementsOf`
+ * are both this walk, so the two cannot disagree about where a chain goes.
+ *
+ * `predicates`, when given, collects every `where` the chain passes, outermost
+ * first, and every application is expanded: taking a generic that hands a
+ * parameter straight back in one step would pass over whatever predicates its
+ * body puts on the way. Without it, that step is taken, and a name whose
+ * normal form is already known ends the walk there. Every name reached on its
+ * own is then given the walk's answer as its normal form — an argument is read
+ * under the guard of the syntax it was written in, so the rest of the walk is
+ * what `unaliasType` of that name would take — and a later walk that reaches
+ * one stops there.
+ *
+ * A loop rather than a recursion: nothing bounds how many definitions a chain
+ * passes through or how many `where`s each adds — the depth budget is per type
+ * expression — so a walk that recursed once per step would run out of stack on
+ * a chain the parser accepts.
+ */
+function followChain(
+  t: TypeExpr | null,
+  walk: Walk,
+  predicates: Refinement[] | null,
+): TypeExpr | null {
+  const { normal } = walk.facts;
+  const named: string[] = [];
+  const settle = (form: TypeExpr | null): TypeExpr | null => {
+    for (const name of named) normal.set(name, form);
+    return form;
+  };
+  const guard = new Guard(new Set());
+  let cur = t;
+  for (;;) {
+    if (!cur) return settle(null);
+    guard.readAs(cur, walk.origins);
+    if (cur.kind === "TypeNominal" || cur.kind === "TypeRefinement") {
+      if (predicates && cur.refinement) predicates.push(cur.refinement);
+      cur = cur.inner;
+      continue;
+    }
+    if (cur.kind !== "TypeRef" && cur.kind !== "TypeApp") return settle(cur);
+    const def = walk.env.types.get(cur.name);
     // A `TypeRef` naming nothing is opaque; a stdlib constructor (`List`,
     // `Option`, …) has no definition to expand into and is already in its
     // comparison form.
-    if (!def) return t;
+    if (!def) return settle(cur);
     // Re-entry answers `null` for both: the chain has closed on itself, so
     // there is no normal form to compare against. Returning the application
     // instead handed comparisons a type that looks usable and is not —
     // `type A = Alias(B)` / `type B = Alias(A)` reported `Expected A but got
     // Int` on the literal, blaming the value for a type with no body. E0009 is
     // what names that.
-    if (seen.has(t.name)) return null;
-    const arg = forwardedArg(t, def, walk.forwarded.through);
-    if (arg) return unaliasFrom(arg, seen, walk);
-    return unaliasFrom(applyDef(t, def, seen, walk.origins), new Set([...seen, t.name]), walk);
+    if (guard.has(cur.name)) return settle(null);
+    if (!predicates) {
+      if (cur.kind === "TypeRef") {
+        if (normal.has(cur.name)) return settle(normal.get(cur.name) ?? null);
+        named.push(cur.name);
+      }
+      const arg = forwardedArg(cur, def, walk.facts.forwarded.through);
+      if (arg) {
+        cur = arg;
+        continue;
+      }
+    }
+    const name = cur.name;
+    cur = applyDef(cur, def, guard, walk.origins);
+    guard.enter(name);
   }
-  if (t.kind === "TypeNominal" || t.kind === "TypeRefinement")
-    return unaliasFrom(t.inner, seen, walk);
-  return t;
 }
 
 /**
@@ -259,21 +407,33 @@ function nominalDecl(
   outer: ReadonlySet<string>,
   walk: Walk,
 ): { readonly name: string; readonly over: TypeExpr } | null {
-  if (!t) return null;
-  const seen = walk.origins.get(t) ?? outer;
-  if (t.kind === "TypeRefinement") return nominalDecl(t.inner, seen, walk);
-  if (t.kind !== "TypeRef" && t.kind !== "TypeApp") return null;
-  if (seen.has(t.name)) return null;
-  const def = walk.env.types.get(t.name);
-  if (!def) return null;
-  // A generic that hands its argument back without passing a `nominal` on
-  // the way declares nothing itself, so the answer is the argument's.
-  const arg = forwardedArg(t, def, walk.forwarded.stop);
-  if (arg) return nominalDecl(arg, seen, walk);
-  const body = applyDef(t, def, seen, walk.origins);
-  const bare = bareType(body);
-  if (bare.kind === "TypeNominal") return { name: t.name, over: bare.inner };
-  return nominalDecl(body, new Set([...seen, t.name]), walk);
+  // A loop for the reason `followChain` is one.
+  const guard = new Guard(outer);
+  let cur = t;
+  for (;;) {
+    if (!cur) return null;
+    guard.readAs(cur, walk.origins);
+    if (cur.kind === "TypeRefinement") {
+      cur = cur.inner;
+      continue;
+    }
+    if (cur.kind !== "TypeRef" && cur.kind !== "TypeApp") return null;
+    if (guard.has(cur.name)) return null;
+    const def = walk.env.types.get(cur.name);
+    if (!def) return null;
+    // A generic that hands its argument back without passing a `nominal` on
+    // the way declares nothing itself, so the answer is the argument's.
+    const arg = forwardedArg(cur, def, walk.facts.forwarded.stop);
+    if (arg) {
+      cur = arg;
+      continue;
+    }
+    const body = applyDef(cur, def, guard, walk.origins);
+    const bare = bareType(body);
+    if (bare.kind === "TypeNominal") return { name: cur.name, over: bare.inner };
+    guard.enter(cur.name);
+    cur = body;
+  }
 }
 
 /**
