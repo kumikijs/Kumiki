@@ -298,5 +298,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `215-boundary-fallback-mount.kumiki` | slot, reducer, tile | lifecycle | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
+| `254-fallback-own-boundary.kumiki` | slot, reducer, tile | lifecycle | [§7.3](./lifecycle.md#_7-3-error-boundaries-per-tile) |
 <!-- examples:end -->
 :::

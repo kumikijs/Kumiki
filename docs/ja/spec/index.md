@@ -298,5 +298,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `215-boundary-fallback-mount.kumiki` | slot, reducer, tile | ライフサイクル | [§7.1.6](./lifecycle.md#_7-1-6-tile-mount-tile-unmount) |
+| `254-fallback-own-boundary.kumiki` | slot, reducer, tile | ライフサイクル | [§7.3](./lifecycle.md#_7-3-エラー境界-タイル単位) |
 <!-- examples:end -->
 :::

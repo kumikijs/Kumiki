@@ -1,0 +1,50 @@
+# Feature: an `error-boundary` fallback's own `error-boundary` holds where the
+# fallback renders (spec/lifecycle.md §7.3).
+#
+# `Chart` reads `data.get`, which panics while `data` is `None`, so its
+# boundary shows `ChartFallback` in its place. `ChartFallback` shows the cached
+# value, `cached.get`, which panics too while nothing is cached — so the
+# fallback's own boundary shows `LastResort` in the fallback's place, with
+# `location` naming the fallback. "cache" fills `cached`: the fallback renders
+# and `LastResort` leaves. "load" fills `data`: `Chart` renders its own body.
+#
+# A chain that comes back to a tile already on it (`ChartFallback` naming
+# itself as its own boundary) has no end, and is E0005 at check time.
+
+slot data            : Option(Int) = None
+slot cached          : Option(Int) = None
+slot lastResortShown : Int         = 0
+slot lastResortGone  : Int         = 0
+
+reducer sawLastResort on=tile.mount(LastResort) do= lastResortShown := lastResortShown + 1
+reducer sawLastResortGone on=tile.unmount(LastResort) do= lastResortGone := lastResortGone + 1
+reducer doCache on=ui.click(CacheBtn) do= cached := Some(7)
+reducer doLoad on=ui.click(LoadBtn) do= data := Some(42)
+
+tile LastResort
+    in=PanicInfo
+    = text("chart unavailable: " + $1.message + " in " + $1.location) {color: "danger"}
+
+tile ChartFallback
+    in=PanicInfo
+    error-boundary = LastResort
+    = text("cached chart: " + cached.get.show + " (" + $1.message + ")")
+
+tile Chart
+    error-boundary = ChartFallback
+    = column(text("chart: " + data.get.show))
+
+tile CacheBtn = button(text="cache", onClick=doCache)
+tile LoadBtn  = button(text="load", onClick=doLoad)
+
+tile App = column(
+    heading("Fallback with its own boundary"),
+    Chart,
+    row(CacheBtn, LoadBtn) {gap: "sm"},
+    text("last resort shown " + lastResortShown.show + ", gone " + lastResortGone.show))
+  {pad: "lg", gap: "md"}
+
+app FallbackOwnBoundary
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

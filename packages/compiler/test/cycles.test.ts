@@ -200,9 +200,9 @@ app SubCycle caps=[] routes={"/a/*" -> Outer, "/b/*" -> Inner, "/404" -> NotFoun
   });
 
   it("follows error-boundary", () => {
-    // The boundary's body is inlined into the `catch` at every call site of
-    // the tile that declares it, so a boundary that leads back is a cycle
-    // like any other. Reached through a call rather than a bare identifier
+    // The boundary's body is inlined into the `catch` wherever the tile that
+    // declares it renders, so a boundary that leads back is a cycle like any
+    // other. Reached through a call rather than a bare identifier
     // because only the call site emits the wrapper.
     const src = `tile A error-boundary=B = column(text("a"))
 tile B = column(text("b"), A())

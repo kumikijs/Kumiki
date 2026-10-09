@@ -158,7 +158,7 @@ A tile expands into itself, directly or through other tiles ([Tile Layer Invaria
 
 > `Tile "<name>" expands into itself (<A> → <B> → <A>)`
 
-The edges are the ones code generation follows: nested tile calls, an identifier argument standing in for a tile, the branches of `for` / `when` / `if` / `match`, and the tile's own `error-boundary` — the boundary's body is inlined into the `catch` at every call site of the tile that declares it, so a boundary that leads back closes a loop like any other child. `sub-routes` is not an edge: a sub-route is selected by the router through `route-outlet` and is never inlined.
+The edges are the ones code generation follows: nested tile calls, an identifier argument standing in for a tile, the branches of `for` / `when` / `if` / `match`, and the tile's own `error-boundary` — the boundary's body is inlined into the `catch` wherever the tile that declares it renders: at a call site, as a route target, and as another tile's fallback ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)). So a boundary that leads back closes a loop like any other child, and so does a chain of fallbacks that comes back to itself: `tile Oops in=PanicInfo error-boundary=Oops` is `Oops → Oops`, reported at its `error-boundary` clause. `sub-routes` is not an edge: a sub-route is selected by the router through `route-outlet` and is never inlined.
 
 **Fix**: Break the loop. Repetition belongs in `for` over a collection, and an alternative rendering in `when` / `match` — neither of which needs a tile to contain itself.
 

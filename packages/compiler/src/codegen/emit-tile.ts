@@ -35,16 +35,38 @@ function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles 
 }
 
 /**
- * A user tile's rendered tree, marked as that tile's: the `_named(…)` marker
- * the runtime diffs `tile.mount` / `tile.unmount` against (lifecycle.md
- * §7.1.6). Each position a user tile renders in — a call site, a route target,
- * an `error-boundary` fallback — is marked through this one rule. Builtin tiles
- * are not marked: only user-defined tiles fire mount / unmount. A node carries
- * one marker and keeps the outermost: a tile whose whole tree is another user
- * tile's marks that tree as its own.
+ * A user tile lowered for one position it renders in: a call site, a route
+ * target, or another tile's `error-boundary` fallback. Every one of them goes
+ * through here, so each gets the same two things, in the same order:
+ *
+ * - the `_named(…)` marker the runtime diffs `tile.mount` / `tile.unmount`
+ *   against (lifecycle.md §7.1.6). Builtin tiles are not marked: only
+ *   user-defined tiles fire mount / unmount. A node carries one marker and
+ *   keeps the outermost: a tile whose whole tree is another user tile's marks
+ *   that tree as its own.
+ * - the tile's own `error-boundary` (§7.3), around the marker. It belongs to
+ *   the tile, so it holds wherever the tile renders — a fallback's boundary
+ *   catches a panic in the fallback, as a call site's catches one in the tile.
+ *
+ * `tree` is the tile's body, already lowered for the position. `around` is
+ * what a position puts between the two: a route target's outlet fill
+ * (`genRouteTile`), or the call that evaluates a call site's argument and binds
+ * it as `$1`. Both are inside the boundary, so a panic in either is caught as
+ * the tile's.
  */
-function namedJs(tree: string, tile: TileDef): string {
-  return `_named(${tree}, ${JSON.stringify(tile.name)})`;
+function placedTileJs(
+  def: TileDef,
+  tree: string,
+  gen: GenCtx,
+  enclosingTiles?: EnclosingTiles,
+  around: (marked: string) => string = (marked) => marked,
+): string {
+  return boundaryJs(
+    def,
+    around(`_named(${tree}, ${JSON.stringify(def.name)})`),
+    gen,
+    enclosingTiles,
+  );
 }
 
 /**
@@ -54,17 +76,22 @@ function namedJs(tree: string, tile: TileDef): string {
  * rather than caught, is `_s.boundaryPanic`'s decision.
  *
  * It wraps `body` from the outside, so the *panicking* tile's marker is
- * discarded along with the tree it was on, and the fallback's tree carries the
- * fallback's marker. What the runtime diffs mount / unmount against is the tree
- * that actually rendered: the fallback mounts when it is shown, and unmounts
- * when it leaves — when `def` renders without panicking, or leaves itself.
+ * discarded along with the tree it was on. The fallback is placed like any
+ * other user tile (`placedTileJs`), so its tree carries the fallback's marker
+ * and its own boundary goes around it: a panic in the fallback is caught there,
+ * and so on along the chain. What the runtime diffs mount / unmount against is
+ * the tree that actually rendered: the fallback mounts when it is shown, and
+ * unmounts when it leaves — when `def` renders without panicking, or leaves
+ * itself. A chain of boundaries that comes back to a tile on it is an infinite
+ * tree, which `E0005` refuses before code generation runs.
  *
  * `enclosingTiles` is the chain the PANICKING tile's call site sits in, and
  * `def` is deliberately not on it. The fallback renders where `def`'s tree
  * would have been, so a selector on anything `def` was rendered under still
  * reaches it — that is the §1.6.2 rule that the reach is decided by the path.
  * `def` itself is the one name that does not carry over: its tree, and the
- * `_named(…, def)` marker with it, is what was discarded.
+ * `_named(…, def)` marker with it, is what was discarded. The fallback is
+ * placed in the same chain, so a fallback of its own renders there too.
  */
 function boundaryJs(
   def: TileDef,
@@ -83,17 +110,17 @@ function boundaryJs(
     );
   const fbCtx = makeEvalCtx(gen, ["$1"]);
   const fbBody = tileExprJs(fb.body, gen, fbCtx, under(enclosingTiles, fb.name));
-  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${namedJs(fbBody, fb)}; } })())`;
+  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${placedTileJs(fb, fbBody, gen, enclosingTiles)}; } })())`;
 }
 
 /**
  * A tile lowered for the position a route names it in.
  *
- * A route target is a call site of that tile, so it gets what every other call
- * site gets: the `_named(…)` marker the runtime diffs `tile.mount` /
- * `tile.unmount` against (lifecycle.md §7.1.6), and its `error-boundary`
- * (§7.3, which scopes the boundary to renders *under that tile* — a statement
- * about the tile, not about where it was written).
+ * A route target is a position the tile renders in, so it is placed as a call
+ * site is (`placedTileJs`): the `_named(…)` marker the runtime diffs
+ * `tile.mount` / `tile.unmount` against (lifecycle.md §7.1.6), and its
+ * `error-boundary` (§7.3, which scopes the boundary to renders *under that
+ * tile* — a statement about the tile, not about where it was written).
  *
  * Separate from `genTile` because that has another caller: the `_tilesById`
  * table a `tile-test` compares against, which wants the bare tree — the
@@ -122,8 +149,9 @@ export function genRouteTile(tile: TileDef, gen: GenCtx, where: string, fill?: s
   // Unreachable: E0213 refuses the entry. It used to lower anyway, and the
   // mount died with `_d_1 is not defined` after `check` and `build` said ok.
   if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
-  const named = namedJs(genTile(tile, gen), tile);
-  return boundaryJs(tile, fill ? `${fill}(${named})` : named, gen);
+  return placedTileJs(tile, genTile(tile, gen), gen, undefined, (marked) =>
+    fill ? `${fill}(${marked})` : marked,
+  );
 }
 
 /**
@@ -456,7 +484,6 @@ function tileCallJs(
     // the two have to read the same one, or a call the checker approved lowers
     // to something else. A named argument is a prop and goes to `propsFor`.
     const arg1 = firstPositional(t);
-    const wrapBoundary = (body: string): string => boundaryJs(def, body, gen, enclosingTiles);
     // The handlers written here — plus any handed down from call sites this one
     // is the root of — belong to the nodes the body renders at its root, so
     // they go down to each one's `propsFor` and join what is wired there. The
@@ -489,8 +516,13 @@ function tileCallJs(
         bodyHandlers,
       );
       return wrap(
-        wrapBoundary(
-          `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${namedJs(`_attachProps(${bodyJs}, _propsOuter)`, def)}; })(${oneJs}, ${propsJs})`,
+        placedTileJs(
+          def,
+          `_attachProps(${bodyJs}, _propsOuter)`,
+          gen,
+          enclosingTiles,
+          (marked) =>
+            `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${marked}; })(${oneJs}, ${propsJs})`,
         ),
       );
     }
@@ -503,7 +535,7 @@ function tileCallJs(
       undefined,
       bodyHandlers,
     );
-    return wrap(wrapBoundary(namedJs(`_attachProps(${bodyJs}, ${propsJs})`, def)));
+    return wrap(placedTileJs(def, `_attachProps(${bodyJs}, ${propsJs})`, gen, enclosingTiles));
   }
 
   // Builtin tiles. Each case returns the object-literal JS for one node.

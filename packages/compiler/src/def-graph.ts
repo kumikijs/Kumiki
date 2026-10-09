@@ -55,8 +55,10 @@ export function expansionTargets(body: TileExpr): readonly GraphEdge[] {
 
 /**
  * The tile a definition falls back to when its render throws, if it declares
- * one. Code generation inlines the boundary's body at every call site of the
- * tile that declares it, so it expands exactly like a child does.
+ * one. Code generation inlines the boundary's body wherever the tile that
+ * declares it renders — at a call site, as a route target, and as another
+ * tile's fallback — so it expands exactly like a child does, and a chain of
+ * fallbacks that comes back to itself is a loop like any other.
  */
 export function boundaryTarget(def: TileDef): GraphEdge | null {
   if (!def.errorBoundary) return null;

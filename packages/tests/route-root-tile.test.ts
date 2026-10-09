@@ -440,8 +440,8 @@ app M caps=[] routes={"/" -> Home, "/404" -> Missing} init=[]
   });
 
   it("names the declaring tile when its own fallback panics", async () => {
-    // The fallback is lowered inside the boundary's catch, so a panic in it
-    // leaves the factory the way an unguarded one would, and takes the same
+    // The fallback declares no boundary of its own, so a panic in it leaves
+    // the factory the way an unguarded one would, and takes the same
     // attribution path: the route target is `Boom`, and the fallback is not a
     // route target.
     const root = await at(`slot xs : List(Int) = []
