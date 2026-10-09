@@ -308,8 +308,25 @@ function validate(
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
   }
-  const locked = lockViolation(path, touchedDefinitions(before, src));
+  const locked = touchedLockViolation(path, before, src);
   return locked === undefined ? { ok: true } : { ok: false, message: locked };
+}
+
+/**
+ * The refusal for writing `after` over `before` on `path`, when a definition
+ * the write touches is locked by another agent (§9.8.3): the first of them in
+ * qualified-name order. `undefined` when the write may land.
+ *
+ * Every write of a source asks this, so a definition is held to its lock
+ * whichever way the write reached it: the mutators through `validate`, and
+ * `fix` before it writes a repair.
+ */
+export function touchedLockViolation(
+  path: string,
+  before: string,
+  after: string,
+): string | undefined {
+  return lockViolation(path, touchedDefinitions(before, after));
 }
 
 /** The one order qualified names are listed in, in reports and in checks. */
@@ -418,7 +435,7 @@ function patternToRegExp(pattern: string): RegExp {
 /**
  * The refusal for the first of `qnames` another agent holds a lock on, if any.
  * The one matcher both lock checks use: `enforceLock` on the named definition,
- * and `validate` on everything the write touches.
+ * and `touchedLockViolation` on everything the write touches.
  */
 function lockViolation(path: string, qnames: readonly string[]): string | undefined {
   const locks = readLocks(path);

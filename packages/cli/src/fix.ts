@@ -17,6 +17,7 @@ import {
   variantTagsOf,
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
+import { touchedLockViolation } from "./mutate.ts";
 import { runTestsSource, testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
 import { atomicWriteFileSync } from "./write-lock.ts";
@@ -995,7 +996,7 @@ export type FixPlan = {
  * Apply the planned patches to `path`, re-typecheck the result, and return
  * before/after source plus the residual diagnostic set.
  *
- * The result carries two mutually-exclusive failure modifiers, each of which
+ * The result carries three mutually-exclusive failure modifiers, each of which
  * pins `applied: 0` and leaves the on-disk file byte-identical:
  *  - `regressionBlocked`: the gate refused the write. `blocked` says which of
  *    its three conditions it was — the composed patches would introduce a
@@ -1003,6 +1004,9 @@ export type FixPlan = {
  *    it did, or the composed source does not parse. The last also sets
  *    `parseError` and puts a synthetic `E0000` in `remaining`, so the
  *    empty-⇔-clean invariant holds for a caller that reads neither.
+ *  - `blocked` with `reason: "locked"`: the composed patches passed the gate
+ *    and change a definition another agent holds an ownership lock on
+ *    (§9.8.3). `message` is the refusal the write verbs give.
  *  - `writeError`: the composed patches passed the gate but the atomic write
  *    threw (EACCES / ENOSPC / EBUSY, …). Raw message preserved for the caller
  *    to render.
@@ -1054,21 +1058,16 @@ export function applyFixPlan(
       ...(gate.blocked.reason === "parse-error" ? { parseError: gate.blocked.message } : {}),
     };
   }
-  try {
-    atomicWriteFileSync(path, after);
-  } catch (e) {
-    // Symmetric with the `parseError` / `regressionBlocked` short-circuit
-    // above: I/O failure is a structured return, not a raw stack. The atomic
-    // helper guarantees the on-disk file is unchanged on throw, so
-    // `remaining` echoes the pre-patch diagnostics.
-    // The gate approved these; the filesystem is what refused them. Passed as
-    // an argument rather than spread over afterwards, so reordering the fields
-    // cannot silently lose the count on the one path it exists for.
-    return {
-      ...nothingWritten(plan, before, applied),
-      remaining: plan.errors,
-      writeError: e instanceof Error ? e.message : String(e),
-    };
+  const refused = writeFix(path, before, after);
+  if (refused !== undefined) {
+    // Symmetric with the gate's short-circuit above: a lock refusal or an I/O
+    // failure is a structured return, not a raw stack. Either way the file is
+    // unchanged, so `remaining` echoes the pre-patch diagnostics.
+    // The gate approved these; the lock or the filesystem is what refused
+    // them. Passed as an argument rather than spread over afterwards, so
+    // reordering the fields cannot silently lose the count on the paths it
+    // exists for.
+    return { ...nothingWritten(plan, before, applied), remaining: plan.errors, ...refused };
   }
   return {
     applied,
@@ -1079,6 +1078,35 @@ export function applyFixPlan(
     warnings: gate.warnings,
     skipped: plan.skipped,
   };
+}
+
+/**
+ * Why a write `fix` made did not land: the ownership lock refused it, or the
+ * filesystem did. Each member is the field it becomes on the result.
+ */
+type WriteRefusal =
+  | { blocked: Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "locked" }> }
+  | { writeError: string };
+
+/**
+ * The one place `fix` writes a source: `after`, a repair composed from
+ * `before`, over `path`. Returns why it did not land, or `undefined` once it
+ * has.
+ *
+ * A repair is held to the ownership lock (§9.8.3) by the check every write
+ * verb makes: when it adds, removes or changes a definition another agent
+ * holds, it is refused before anything is written. The write goes through a
+ * sibling file and a rename, so one that throws leaves `path` as it was.
+ */
+function writeFix(path: string, before: string, after: string): WriteRefusal | undefined {
+  const locked = touchedLockViolation(path, before, after);
+  if (locked !== undefined) return { blocked: { reason: "locked", message: locked } };
+  try {
+    atomicWriteFileSync(path, after);
+  } catch (e) {
+    return { writeError: e instanceof Error ? e.message : String(e) };
+  }
+  return undefined;
 }
 
 /**
@@ -1094,7 +1122,10 @@ export function applyFixPlan(
  */
 export type GateVerdict =
   | { blocked?: undefined; remaining: KumikiError[]; warnings: KumikiError[] }
-  | { blocked: NonNullable<FixApplyResult["blocked"]>; remaining: KumikiError[] };
+  | {
+      blocked: Exclude<NonNullable<FixApplyResult["blocked"]>, { reason: "locked" }>;
+      remaining: KumikiError[];
+    };
 
 /**
  * The regression gate: may `after`, the source a plan composed, replace a file
@@ -1168,8 +1199,9 @@ export type FixApplyResult = {
   /**
    * The patches the regression gate approved. Equal to `applied` on every path
    * that reached disk, and `0` wherever the gate refused or there was nothing
-   * to write. The two differ on exactly one path — a write that threw — where
-   * nothing landed and this is what the filesystem refused.
+   * to write. The two differ on the two paths where the gate approved a write
+   * that did not land — the ownership lock refused it, or it threw — and this
+   * is what was refused.
    */
   approved: number;
   /** Source before writing. Equal to `after` when `applied === 0`. */
@@ -1197,14 +1229,16 @@ export type FixApplyResult = {
    */
   parseError?: string;
   /**
-   * True when the regression gate rolled the write back and `applied` is `0`.
-   * Absent means either the patch cleanly applied or there was nothing to
-   * apply. `blocked` says which of the gate's two conditions it was.
+   * True when the regression gate rolled the write back and `applied` is `0`;
+   * `blocked` says which of the gate's three conditions it was. Absent on every
+   * other path, including a write the gate approved and the ownership lock
+   * refused (`blocked.reason: "locked"`).
    */
   regressionBlocked?: boolean;
   /**
-   * Why the gate rolled back — one member per condition, so a reader never has
-   * to consult a second field to learn which it was.
+   * Why the write was refused — one member per condition, so a reader never has
+   * to consult a second field to learn which it was. The first three are the
+   * regression gate's; `locked` is the ownership lock's.
    *
    * `introduced` carries the diagnostics the composed source has that the
    * original did not, by `diagnosticKey` — so a diagnostic a repair only moved
@@ -1216,11 +1250,18 @@ export type FixApplyResult = {
    * reading only this field would otherwise be told the repair was pointless
    * when what happened was that a repair rule emitted source that does not
    * parse — the opposite conclusion, and a defect on the compiler's side.
+   *
+   * `locked` is a composed source the gate approved that adds, removes or
+   * changes a definition another agent holds an ownership lock on (§9.8.3).
+   * `message` is the refusal the write verbs give for the same write, naming
+   * the first such definition in qualified-name order and its owner.
+   * `remaining` carries the pre-patch diagnostics.
    */
   blocked?:
     | { reason: "introduced"; introduced: KumikiError[] }
     | { reason: "resolved-none" }
-    | { reason: "parse-error"; message: string };
+    | { reason: "parse-error"; message: string }
+    | { reason: "locked"; message: string };
   /**
    * Raw filesystem error message when the composed patches passed the
    * regression gate but the write threw (EACCES / ENOSPC / EBUSY, …). When
@@ -1228,8 +1269,9 @@ export type FixApplyResult = {
    * pre-patch diagnostics, and the on-disk target file is byte-identical to
    * `before` — `atomicWriteFileSync` stages content in a sibling tmp file and
    * atomically renames it into place, so a throw at any stage leaves the
-   * target untouched. Mutually exclusive with `parseError` and
-   * `regressionBlocked` — those short-circuit before the write.
+   * target untouched. Mutually exclusive with `blocked` (and so with
+   * `parseError` and `regressionBlocked`) — every refusal short-circuits
+   * before the write.
    */
   writeError?: string;
   /**
@@ -1304,9 +1346,9 @@ function surplus(a: readonly KumikiError[], b: readonly KumikiError[]): KumikiEr
 }
 
 /**
- * The one sentence describing a write this gate refused, for whichever verb is
- * printing. Two verbs cannot describe one rollback differently if only one of
- * them spells it.
+ * The one sentence describing a write the gate or the ownership lock refused,
+ * for whichever verb is printing. Two verbs cannot describe one rollback
+ * differently if only one of them spells it.
  *
  * Reads `blocked` alone, which carries one member per condition — so no branch
  * here depends on being asked before another.
@@ -1320,6 +1362,10 @@ export function rollbackLine(r: {
       return `fixes broke the file: ${r.blocked.message}`;
     case "resolved-none":
       return "(auto-patch rolled back — it resolved none of the reported diagnostics)";
+    case "locked":
+      // The write verbs' own sentence, so the refusal reads the same whichever
+      // verb met the lock.
+      return `(auto-patch rolled back — ${r.blocked.message})`;
     case "introduced": {
       // Named rather than summarised as "new errors": these are diagnostics the
       // file would have gained, and the position is where the repair would have
@@ -1438,14 +1484,16 @@ export function fixCmd(
  * Compile-tier failures short-circuit before the test can run:
  *   `no-patch` (compile-blocked, nothing repairable) |
  *   `compile-proposed` (dry-run: repairable compile errors) |
- *   `compile-blocked` (apply: the regression gate refused the write) |
+ *   `compile-blocked` (apply: the regression gate or the ownership lock
+ *   refused the write) |
  *   `compile-remaining` (apply: still broken after the compile-tier write).
  *
  * The behavioural tier covers the compiling file:
  *   `not-found` | `already-pass` | `no-patch` (no deterministic patch) |
  *   `proposed` (dry-run patch; not gated) |
  *   `applied` (patch passed the gate and is written) |
- *   `test-blocked` (the gate refused the patch; it was not written).
+ *   `test-blocked` (the gate or the ownership lock refused the patch; it was
+ *   not written).
  *
  * Independent of tier: `write-failed` fires when a patch was chosen but
  * `atomicWriteFileSync` threw. `phase` (`compile` | `test`) picks the site,
@@ -1486,14 +1534,16 @@ type FixFromTestStatus =
     }
   | {
       /**
-       * The regression gate refused the compile-tier write, so the file on disk is
+       * The compile-tier write was refused, so the file on disk is
        * byte-identical to before the call. Distinct from `no-patch`, which
-       * means no repair was found at all: here one was, and applying it would
-       * have left the file no cleaner. `compileErrors` is the author's own set
-       * — the diagnostics the refused patch was offered for, never the ones it
-       * would have created, which `blocked` names instead. `blocked` also says
-       * which of the gate's three conditions refused it, including the one
-       * where the composed source did not parse.
+       * means no repair was found at all: here one was, and either applying it
+       * would have left the file no cleaner or it changes a definition another
+       * agent holds an ownership lock on. `compileErrors` is the author's own
+       * set — the diagnostics the refused patch was offered for, never the ones
+       * it would have created, which `blocked` names instead. `blocked` also
+       * says which condition refused it: one of the regression gate's three,
+       * including the one where the composed source did not parse, or
+       * `locked`.
        */
       ok: false;
       status: "compile-blocked";
@@ -1547,11 +1597,11 @@ type FixFromTestStatus =
     }
   | {
       /**
-       * A behavioural patch was found and the gate refused it, so that patch
-       * was not written. The file is exactly as the compile tier left it:
-       * byte-identical to the start of the call when `compileFixes` is
-       * absent, and carrying those `compileFixes` compile repairs when
-       * present. The behavioural counterpart of `compile-blocked`: `blocked`
+       * A behavioural patch was found and the gate or the ownership lock
+       * refused it, so that patch was not written. The file is exactly as
+       * the compile tier left it: byte-identical to the start of the call
+       * when `compileFixes` is absent, and carrying those `compileFixes`
+       * compile repairs when present. The behavioural counterpart of `compile-blocked`: `blocked`
        * says which condition refused it.
        */
       ok: false;
@@ -1581,7 +1631,8 @@ type FixFromTestStatus =
     };
 
 /**
- * Why the behavioural gate refused a patch.
+ * Why a behavioural patch was refused: by the behavioural gate, or by the
+ * ownership lock.
  *
  *  - `parse-error` / `introduced`: the patched source fails to parse or
  *    typecheck — the same two arms, with the same payloads, as the compile
@@ -1597,9 +1648,15 @@ type FixFromTestStatus =
  *  - `still-fails`: the named test ran and failed; carries its result.
  *  - `regressed`: tests that passed before and would fail — or not run at
  *    all — after.
+ *  - `locked`: the patch passed the gate and changes a definition another
+ *    agent holds an ownership lock on (§9.8.3) — the compile tier's arm, with
+ *    its payload.
  */
 export type TestPatchBlock =
-  | Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "parse-error" | "introduced" }>
+  | Extract<
+      NonNullable<FixApplyResult["blocked"]>,
+      { reason: "parse-error" | "introduced" | "locked" }
+    >
   | { reason: "test-runner-threw"; message: string }
   | { reason: "named-test-missing" }
   | { reason: "still-fails"; failingTest: TestResult }
@@ -2261,9 +2318,10 @@ function noCompilePatch(
  * `applyFixPlan` so the test can run. The behavioural tier plans a
  * deterministic literal repair from the failing test with `planTestPatch`;
  * a dry run proposes it as is, and `apply` writes it only when
- * `gateTestPatch` accepts it (otherwise `test-blocked`, and the patch is not
- * written). Every branch returns via the `FixFromTestOutcome` discriminated
- * union — no stdout side effects. `fixFromTest` wraps this and adds the CLI
+ * `gateTestPatch` accepts it and it changes no definition another agent has
+ * locked (otherwise `test-blocked`, and the patch is not written). Every
+ * branch returns via the `FixFromTestOutcome` discriminated union — no stdout
+ * side effects. `fixFromTest` wraps this and adds the CLI
  * printer. The outcome carries compile-tier errors (`compileErrors`), the
  * failing test itself (`failingTest`) and the gate's refusal (`blocked`) so
  * MCP callers can render diagnostics without stdout scraping.
@@ -2306,9 +2364,10 @@ export async function runFixFromTest(
     }
     // The same write every other `fix --apply` makes, through the same
     // regression gate: composed, re-parsed, re-typechecked, and rolled back
-    // unless the file comes out strictly cleaner. One gate and one write, so a
-    // repair this verb accepts is one `fix --apply` would accept — and an
-    // error a repair creates can never be reported to the author as their own.
+    // unless the file comes out strictly cleaner, then held to the ownership
+    // lock. One gate and one write, so a repair this verb accepts is one
+    // `fix --apply` would accept — and an error a repair creates can never be
+    // reported to the author as their own.
     const result = applyFixPlan(path, undefined, capabilities);
     warnings = result.warnings;
     if (result.applied === 0) {
@@ -2417,23 +2476,24 @@ export async function runFixFromTest(
   // and fails nothing that passed before reaches disk. A refusal leaves the
   // file as the compile tier left it (its repairs, if any, stay).
   const refused = await gateTestPatch(patched, testName, before, path, capabilities);
-  if (refused !== null) {
+  // Written by the compile tier's writer, so the ownership lock refuses this
+  // patch as it refuses a compile repair.
+  const unwritten = refused === null ? writeFix(path, curSource, patched) : { blocked: refused };
+  if (unwritten !== undefined && "blocked" in unwritten) {
     return stamp({
       ok: false,
       status: "test-blocked",
       patch,
-      blocked: refused,
+      blocked: unwritten.blocked,
       ...(compileFixes ? { compileFixes } : {}),
     });
   }
-  try {
-    atomicWriteFileSync(path, patched);
-  } catch (e) {
+  if (unwritten !== undefined) {
     return stamp({
       ok: false,
       status: "write-failed",
       phase: "test",
-      writeError: e instanceof Error ? e.message : String(e),
+      writeError: unwritten.writeError,
       patch,
       ...(compileFixes ? { compileFixes } : {}),
     });
@@ -2461,7 +2521,7 @@ async function gateTestPatch(
   before: readonly TestResult[],
   path: string,
   capabilities: string[],
-): Promise<TestPatchBlock | null> {
+): Promise<Exclude<TestPatchBlock, { reason: "locked" }> | null> {
   let parsed: ReturnType<typeof parse>;
   try {
     parsed = parse(lex(patched));
@@ -2626,7 +2686,11 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
       const b = outcome.blocked;
       if (b.reason === "introduced")
         for (const e of b.introduced) console.error(`  ${e.code} ${e.message}`);
-      else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
+      else if (
+        b.reason === "parse-error" ||
+        b.reason === "test-runner-threw" ||
+        b.reason === "locked"
+      )
         console.error(`  ${b.message}`);
       else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);
       else if (b.reason === "still-fails") {

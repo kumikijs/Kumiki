@@ -39,11 +39,16 @@ function write(name: string, source: string): string {
   return file;
 }
 
-function runCli(args: string[]): { stdout: string; stderr: string; code: number } {
+/** `env` is laid over this process's environment, e.g. to name the `KUMIKI_AUTHOR` of an op. */
+function runCli(
+  args: string[],
+  env: Record<string, string> = {},
+): { stdout: string; stderr: string; code: number } {
   const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
     stdio: "pipe",
     encoding: "utf8",
     timeout: CHILD_TIMEOUT_MS,
+    env: { ...process.env, ...env },
   });
   // A process that never started, or one a signal killed, has `status: null`.
   // Folding that into 1 would make every `toBe(1)` in this file pass without
@@ -234,6 +239,63 @@ test inc-works =
       "inc-works",
     ]);
     expect(passing.code).toBe(0);
+  });
+
+  // The ownership lock (§9.8.3) covers the source `fix --apply` writes as it
+  // covers every write verb's: a repair that changes a definition another
+  // agent holds is refused, and one the author may make is written.
+  describe("--apply under an ownership lock", () => {
+    /** `cout` is a typo for `count`, so the one repair rewrites `reducer.inc`. */
+    const TYPO_IN_REDUCER = `slot count : Int = 0
+reducer inc on=ui.click(Btn) do= count := cout + 1
+tile Btn = button(text="+", onClick=inc)
+tile App = column(Btn, text(count.show))
+app C
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+    /** The program above, with `pattern` locked by agent:a through the `lock` verb. */
+    function lockedBy(name: string, pattern: string): string {
+      const file = write(name, TYPO_IN_REDUCER);
+      expect(runCli(["lock", file, "agent:a", pattern], { KUMIKI_AUTHOR: "agent:a" }).code).toBe(0);
+      return file;
+    }
+
+    it(
+      "exits 1 and writes nothing when the repair changes another agent's definition",
+      SPAWN,
+      () => {
+        const file = lockedBy("fix-locked.kumiki", "*");
+        const { stdout, stderr, code } = runCli(["fix", file, "--apply"], {
+          KUMIKI_AUTHOR: "agent:b",
+        });
+        expect(stdout).toBe(
+          '(auto-patch rolled back — lock violation: reducer.inc is locked by agent:a (pattern "*"). Set KUMIKI_AUTHOR=agent:a to edit.)\n',
+        );
+        // The error the repair was for is still in the file, and still reported.
+        expect(stderr).toBe('E0103 Reference to undefined name "cout"\n');
+        expect(readFileSync(file, "utf8")).toBe(TYPO_IN_REDUCER);
+        expect(code).toBe(1);
+      },
+    );
+
+    it("applies the repair for the lock's owner", SPAWN, () => {
+      const file = lockedBy("fix-locked-owner.kumiki", "*");
+      const { stdout, code } = runCli(["fix", file, "--apply"], { KUMIKI_AUTHOR: "agent:a" });
+      expect(stdout).toBe("applied 1 fix(es) — file now clean\n");
+      expect(readFileSync(file, "utf8")).toBe(TYPO_IN_REDUCER.replace("cout", "count"));
+      expect(code).toBe(0);
+    });
+
+    it("applies a repair that changes no locked definition", SPAWN, () => {
+      const file = lockedBy("fix-locked-other.kumiki", "slot.*");
+      const { stdout, code } = runCli(["fix", file, "--apply"], { KUMIKI_AUTHOR: "agent:b" });
+      expect(stdout).toBe("applied 1 fix(es) — file now clean\n");
+      expect(readFileSync(file, "utf8")).toBe(TYPO_IN_REDUCER.replace("cout", "count"));
+      expect(code).toBe(0);
+    });
   });
 
   it("applies a patch to a file that also has a warning", SPAWN, () => {

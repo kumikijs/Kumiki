@@ -38,7 +38,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 type Scenario = Parameters<typeof runScenarioSource>[1];
 
-import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
+import type { AutoPatch, FixApplyResult, FixFromTestOutcome, TestPatchBlock } from "@kumikijs/cli";
 import type { KumikiError } from "@kumikijs/compiler";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import {
@@ -147,6 +147,19 @@ function errText(e: unknown) {
 }
 
 /**
+ * Why a repair was not written, for the wire: `introduced` as `Diagnostic[]`,
+ * every other member as it is. Each `reason` keeps its own payload, so reading
+ * `reason` alone is never misleading.
+ */
+function blockedWire(
+  b: NonNullable<FixApplyResult["blocked"]> | TestPatchBlock,
+): Record<string, unknown> {
+  return b.reason === "introduced"
+    ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
+    : b;
+}
+
+/**
  * Serialise a `FixFromTestOutcome` for the MCP wire: drop the un-serialisable
  * `apply` closure from every `AutoPatch`, convert `KumikiError[]` →
  * `Diagnostic[]`, and preserve the discriminated union so the client can
@@ -178,17 +191,11 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
     case "compile-blocked":
       // `compileErrors` is the author's own set; `blocked` is what the refused
       // patch would have done. A client that merged the two would report a
-      // diagnostic that is not in the file. Each `reason` keeps its own
-      // payload, so reading `reason` alone is never misleading.
+      // diagnostic that is not in the file.
       return {
         ...base,
         compileErrors: toDiagnostics(o.compileErrors),
-        blocked:
-          o.blocked.reason === "introduced"
-            ? { reason: o.blocked.reason, introduced: toDiagnostics(o.blocked.introduced) }
-            : o.blocked.reason === "parse-error"
-              ? { reason: o.blocked.reason, message: o.blocked.message }
-              : { reason: o.blocked.reason },
+        blocked: blockedWire(o.blocked),
       };
     case "compile-remaining":
       return {
@@ -222,18 +229,13 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
         regressed: o.regressed,
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
       };
-    case "test-blocked": {
-      const b = o.blocked;
+    case "test-blocked":
       return {
         ...base,
         patch: patchWire(o.patch),
-        blocked:
-          b.reason === "introduced"
-            ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
-            : b,
+        blocked: blockedWire(o.blocked),
         ...(o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {}),
       };
-    }
     case "write-failed":
       // I/O failure surfaces on the wire so MCP callers see it as a
       // structured outcome rather than a transport-level error. `phase`
@@ -844,7 +846,7 @@ export function createServer(): McpServer {
     {
       title: "Plan or apply rule-based auto-fixes",
       description:
-        'Typecheck a file and either propose auto-patches for repairable errors (e.g. misspelled names) or write them to disk. Default is dry-run (`apply: false`); pass `apply: true` to close the loop and persist the fixes. On apply, returns `{ applied, before, after, remaining }` with the residual diagnostics after re-typechecking. Use `only` (e.g. "E0103") to restrict to a single diagnostic code.',
+        'Typecheck a file and either propose auto-patches for repairable errors (e.g. misspelled names) or write them to disk. Default is dry-run (`apply: false`); pass `apply: true` to close the loop and persist the fixes. On apply, returns `{ applied, before, after, remaining }` with the residual diagnostics after re-typechecking. A refused write leaves the file unchanged with `applied: 0`, and `blocked.reason` says why: `introduced` (with the diagnostics the repair would have added), `resolved-none` or `parse-error` (with the parser `message`) from the regression gate, or `locked` (with the refusal `message`) when the repair changes a definition another agent holds an ownership lock on. Use `only` (e.g. "E0103") to restrict to a single diagnostic code.',
       inputSchema: {
         path: z.string(),
         apply: z
@@ -881,11 +883,12 @@ export function createServer(): McpServer {
             warnings: toDiagnostics(r.warnings),
             // Surface every non-success modifier on the wire so callers
             // can distinguish "no patch was needed" (`applied === 0`,
-            // no modifier) from a rollback / parser-break / I/O failure.
-            // Without these fields the three failure shapes collapse into
-            // one indistinguishable `applied: 0`.
+            // no modifier) from a rollback / parser-break / lock refusal /
+            // I/O failure. Without these fields the failure shapes collapse
+            // into one indistinguishable `applied: 0`.
             ...(r.parseError ? { parseError: r.parseError } : {}),
             ...(r.regressionBlocked ? { regressionBlocked: r.regressionBlocked } : {}),
+            ...(r.blocked ? { blocked: blockedWire(r.blocked) } : {}),
             ...(r.writeError ? { writeError: r.writeError } : {}),
           },
           null,
@@ -929,7 +932,7 @@ export function createServer(): McpServer {
     {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
-        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes and no test that passed before fails; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result) or `regressed` (with the test names). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay).",
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes, no test that passed before fails and it changes no definition another agent holds an ownership lock on; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result), `regressed` (with the test names) or `locked` (with the refusal `message`). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and refused — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none` or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair) from the regression gate, or `locked` (with the refusal `message`) when the repair changes a definition another agent holds an ownership lock on. `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay).",
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),
