@@ -872,12 +872,26 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
   // What a sub-route entry has to answer for: that its target exists, and that
-  // it takes no argument. One loop, so the redirect skip that guards the first
-  // question is the one that guards the second — two loops over the same array
-  // invite a merge that puts the second question behind the wrong guard.
+  // it takes no argument — or, for a redirect, which names a path rather than a
+  // tile, that it is not written at `/404`. One loop, so the redirect skip that
+  // guards the first question is the one that guards the second — two loops
+  // over the same array invite a merge that puts the second question behind
+  // the wrong guard.
   for (const sr of subRoutes) {
-    if (sr.tile.startsWith(">>")) continue; // a redirect names a path, not a tile
     const where = `Sub-route "${sr.path}" in tile "${tile.name}"`;
+    if (sr.tile.startsWith(">>")) {
+      if (sr.path === "/404") {
+        errors.push(
+          notFoundRedirect(
+            sr,
+            `${where} is a redirect that never runs — no sub-route is matched at "/404", ` +
+              `which is the app's fallback. Remove it: a child path that no sub-route ` +
+              `matches renders the parent's default sub-route, or else the app's "/404"`,
+          ),
+        );
+      }
+      continue;
+    }
     if (!sym.tiles.has(sr.tile)) {
       errors.push({
         code: "E0105",
@@ -6642,16 +6656,46 @@ function routeChainResolver(sym: SymbolTable): RouteChainResolver {
   };
 }
 
+type RouteEntry = AppDef["routes"][number];
+
+/**
+ * The `/404` entry E0001 reads in `routes`: the first that renders a tile, or
+ * else the first redirect written at `/404`, or `undefined` when there is
+ * neither. A redirect is answered only when no tile is: a tile serves the
+ * fallback, and a redirect beside it is a second `/404`, which is E0008's.
+ */
+function notFoundEntry(routes: AppDef["routes"]): RouteEntry | undefined {
+  let redirect: RouteEntry | undefined;
+  for (const r of routes) {
+    if (r.path !== "/404") continue;
+    if (!r.tile.startsWith(">>")) return r;
+    redirect ??= r;
+  }
+  return redirect;
+}
+
 /**
  * Whether `routes` has the `/404` entry E0001 asks for: a route at `/404` that
- * renders a tile. A redirect there does not count, which is why the check
- * reports a `/404` redirect as missing.
+ * renders a tile (routing.md §3.1.3). A redirect there does not count; the
+ * check reports it as a redirect.
  *
  * Exported because `kumiki fix` repairs E0001, and its repair has to agree with
  * this check about when there is nothing to add.
  */
 export function servesNotFound(routes: AppDef["routes"]): boolean {
-  return routes.some((r) => r.path === "/404" && !r.tile.startsWith(">>"));
+  const entry = notFoundEntry(routes);
+  return entry !== undefined && !entry.tile.startsWith(">>");
+}
+
+/**
+ * E0001 for a redirect written at `/404`, reported at the redirect: in
+ * `app.routes`, where the fallback has to be a tile, and in a `sub-routes` map,
+ * where no sub-route is matched at `/404`, so the redirect never runs.
+ * Its own kind, because `missing-404` would ask for a `/404` entry the map has,
+ * and a second one is E0008.
+ */
+function notFoundRedirect(entry: RouteEntry, message: string): KumikiError {
+  return { code: "E0001", kind: "404-is-redirect", message, pos: entry.pathPos };
 }
 
 function checkApp(
@@ -6684,13 +6728,22 @@ function checkApp(
     }
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
   }
-  if (!servesNotFound(app.routes)) {
+  const notFound = notFoundEntry(app.routes);
+  if (notFound === undefined) {
     errors.push({
       code: "E0001",
       kind: "missing-404",
       message: `app.routes must include a "/404" entry`,
       pos: app.pos,
     });
+  } else if (notFound.tile.startsWith(">>")) {
+    errors.push(
+      notFoundRedirect(
+        notFound,
+        `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches ` +
+          `and has to render a tile — write "/404" -> <Tile>`,
+      ),
+    );
   }
   const initCtx: Ctx = {
     // The scope codegen lowers these arguments in. It used to say `reducer`,

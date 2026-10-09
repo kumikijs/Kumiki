@@ -36,7 +36,7 @@ app Counter
     init   = []
 ```
 
-`routes` must always include `/404` (otherwise [E0001](../spec/errors.md#e0001-missing-404)).
+`routes` must always include `/404` (otherwise [E0001](../spec/errors.md#e0001-missing-404-404-is-redirect)).
 
 ## 5. Check and Run
 

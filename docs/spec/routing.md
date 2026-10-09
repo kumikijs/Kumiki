@@ -40,6 +40,17 @@ Specificity is compared segment by segment from the left: at the first segment w
 
 `/404` is the fallback used **when no route matches**. Including `/404 -> X` in `app.routes` is mandatory (omitting it is a compile error).
 
+The fallback renders a tile, so `X` is a tile and **`/404` may not be a redirect**. `"/404" ->> "/"` is [E0001](./errors.md#e0001-missing-404-404-is-redirect) (`404-is-redirect`), reported at the redirect:
+
+```kumiki invalid
+tile Home = column(text("h"))
+app M caps=[] routes={"/" -> Home, "/404" ->> "/"} init=[]
+```
+
+To send paths no route matches to another page, redirect a wildcard instead: `"/*" ->> "/"` owns every path that no more specific entry owns ([§3.1.2](#_3-1-2-match-order), [§3.10](#_3-10-redirects-static)). The `/404` tile is still required.
+
+A `sub-routes` map has no `/404` of its own: no sub-route is matched at `/404`, and a child path that no sub-route matches falls back as [§3.6.3](#_3-6-3-matching-rules) says. A `/404` redirect there would never run, and is E0001 (`404-is-redirect`) as well.
+
 ### 3.1.4 A Route Target Takes No Argument
 
 A route entry names a tile and gives it nothing, so **the tile it names may not declare `in=`** — one that does is [E0213](./errors.md#e0213-call-arity-mismatch), reported at the entry.

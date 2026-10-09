@@ -44,7 +44,7 @@ type KumikiError = {
 
 | コード | 自動修正 | 方針 |
 |---|---|---|
-| `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。app に `routes` 節がないとき、および `/404` がリダイレクトのときはパッチを出さない：E0001 はリダイレクトを数えず、`/404` をもう 1 つ書けば `E0008` になる。 |
+| `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。app に `routes` 節がないとき、および `404-is-redirect` にはパッチを出さない：後者はエントリの追加ではなく、リダイレクトの置き換えか削除で直すものであり、app の `routes` でその隣に追加すれば `/404` が 2 つになる（`E0008`）。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
 | `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
@@ -92,13 +92,19 @@ type KumikiError = {
 
 **修正**：報告された位置の構文を直す。この文書の他のコードはすべて、パースできるファイルを前提にしている。
 
-### E0001 `missing-404`
+### E0001 `missing-404` / `404-is-redirect`
 
-`app.routes` を宣言したアプリは、`/404` パターンのルートを必ず含めなければならない。未マッチのパスはここへフォールバックする。
+`/404` はどのルートにもマッチしないパスのフォールバックであり、フォールバックは tile を描画する（[ルーティング §3.1.3](./routing.md#_3-1-3-404-is-reserved)）。
 
-> `app.routes must include a "/404" entry`
+- `missing-404`：`app.routes` に `/404` のエントリがない。app の位置で報告する。
+  > `app.routes must include a "/404" entry`
+- `404-is-redirect`：`/404` がリダイレクト（`"/404" ->> "/"`）として書かれている。リダイレクトの位置で報告する。`app.routes` では、マップに `/404` のエントリはあるが、フォールバックが描画する tile がない。`/404` のエントリをもう 1 つ書けば [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) になる — そのため `missing-404` ではない。`/404` の tile と並んだ `/404` のリダイレクトは、その E0008 だけになる：tile がフォールバックを担うからである。
+  > `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches and has to render a tile — write "/404" -> <Tile>`
 
-**修正**：`route "/404" -> NotFound` のような 404 用 tile へのルートを追加する。詳細は [ルーティング](./routing.md)。
+  tile の `sub-routes` マップは自前の `/404` を持たない：`/404` でマッチするサブルートはない（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）ので、そこに書いたリダイレクトは決して実行されない。
+  > `Sub-route "/404" in tile "<tile>" is a redirect that never runs — no sub-route is matched at "/404", which is the app's fallback. Remove it: a child path that no sub-route matches renders the parent's default sub-route, or else the app's "/404"`
+
+**修正**：app 自身の `routes` で `/404` を tile へ向ける（`"/404" -> NotFound` など）。そこにリダイレクトがあれば置き換える。マッチしないパスを別のページへ送るには、ワイルドカードをリダイレクトし（`"/*" ->> "/"`）、`/404` の tile は残す。`sub-routes` マップの `/404` のリダイレクトは削除する。詳細は [ルーティング](./routing.md)。
 
 ### E0002 `duplicate-timer-name`
 

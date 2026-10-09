@@ -51,7 +51,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | コード | kind | 層 | 機能 |
 |---|---|---|---|
 | [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | コア |
-| [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | ルーティング |
+| [E0001](./errors.md#e0001-missing-404-404-is-redirect) | `missing-404` / `404-is-redirect` | app | ルーティング |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | ライフサイクル |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | コア |
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | コア |

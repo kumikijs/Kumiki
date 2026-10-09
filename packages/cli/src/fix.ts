@@ -710,12 +710,11 @@ export function planFixesExplained(
       });
     }
     if (err.code === "E0001") {
-      // E0001 counts only a `/404` route that renders a tile. When `/404` is
-      // taken by a redirect, the entry this repair adds would write the pattern
-      // a second time, which is E0008, so there is no patch to offer.
-      const app = store.program.defs.find((d): d is AppDef => d.kind === "AppDef");
-      const routes = app?.routes ?? [];
-      if (routes.some((r) => r.path === "/404") && !servesNotFound(routes)) {
+      // A redirect written at `/404` is E0001's `404-is-redirect`, repaired by
+      // replacing or removing the redirect rather than by adding an entry: the
+      // one this repair adds would write the pattern a second time beside it in
+      // the app's routes, which is E0008. There is no patch to offer.
+      if (err.kind === "404-is-redirect") {
         skip(err.code, "e0001-404-is-a-redirect", err.message);
         continue;
       }

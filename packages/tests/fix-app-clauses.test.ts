@@ -249,6 +249,25 @@ app A
       reasons: ["e0001-404-is-a-redirect"],
     });
   });
+
+  it("when /404 is a redirect in a sub-routes map, which is not the app's routes", () => {
+    const source = `tile Landing  = page(heading("Landing"))
+tile NotFound = page(heading("Not found"))
+
+tile SettingsLayout
+    sub-routes = {"/settings" -> Landing, "/404" ->> "/"}
+    = page(heading("Settings"), route-outlet())
+
+app A
+    caps   = []
+    routes = {"/" -> Landing, "/settings/*" -> SettingsLayout, "/404" -> NotFound}
+    init   = []
+`;
+    expect(planFor(source, "E0001")).toEqual({
+      patched: false,
+      reasons: ["e0001-404-is-a-redirect"],
+    });
+  });
 });
 
 describe("E0301: the capability is a new item of app.caps", () => {
