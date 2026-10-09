@@ -160,7 +160,7 @@ describe("string escapes", () => {
 
 describe("what a tuple lowers to", () => {
   it("is the array a tuple pattern destructures", () => {
-    // `tupleArm` guards with `Array.isArray` and reads by index, so the two
+    // `patternArm` guards with `Array.isArray` and reads by index, so the two
     // halves have to agree on the shape — and nothing else reaches the
     // generated code for a tuple.
     const out = compile(`fn pair(a: Int, b: Text) -> Tuple(Int, Text) = (a, b)${APP}`, {

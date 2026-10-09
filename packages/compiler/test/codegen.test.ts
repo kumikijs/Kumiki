@@ -595,7 +595,7 @@ describe("codegen", () => {
 
   // issue #91 — tile-match must accept tuple patterns too (§1.4 grammar now
   // mirrors §1.9). Covers the TileMatch lowering path that delegates to the
-  // shared `tupleArm` helper.
+  // shared `patternArm` helper.
   it("emits an Array.isArray guard for a tuple pattern in tile-match (§1.4)", () => {
     const src = `
       type Tag = A | B
