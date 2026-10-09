@@ -934,6 +934,37 @@ describe("ownership locks", () => {
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(fs.existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
   });
+
+  it("each editing tool refuses a lock file not in the shape `lock` writes, writing nothing", async () => {
+    const file = join(workdir, "c.kumiki");
+    copyFileSync(COUNTER, file);
+    const locks = `${file}.kumiki-locks.json`;
+    // `patterns` is one string, not a list of one: read a character at a time,
+    // its `*` would lock every definition.
+    const held = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+    writeFileSync(locks, held);
+    const source = readFileSync(file, "utf8");
+    const message = `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
+    const calls: ReadonlyArray<readonly [tool: string, args: Record<string, unknown>]> = [
+      ["kumiki_add", { path: file, layer: "tile", name: "Spare", body: 'text("s")' }],
+      ["kumiki_replace", { path: file, name: "tile.IncBtn", body: 'button(text="++")' }],
+      ["kumiki_remove", { path: file, name: "reducer.reset", cascade: true }],
+      ["kumiki_rename", { path: file, name: "tile.ResetBtn", newName: "ClearBtn" }],
+      ["kumiki_edit", { path: file, name: "tile.IncBtn", patch: { find: '"+"', replace: '"++"' } }],
+    ];
+    await withClient(async (client) => {
+      for (const [tool, args] of calls) {
+        const res = await client.callTool({ name: tool, arguments: args });
+        expect(res.isError, tool).toBe(true);
+        expect((res.content as TextContent[]).map((c) => c.text).join("\n"), tool).toBe(
+          JSON.stringify({ error: { kind: "error", message } }, null, 2),
+        );
+      }
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(readFileSync(locks, "utf8")).toBe(held);
+    expect(fs.existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
 });
 
 // `isError` follows one rule so no tool needs its own: it is set exactly when

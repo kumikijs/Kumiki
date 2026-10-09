@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
+import { resolve } from "node:path";
 import { check, type Def, LexError, lex, type Pos, parse, type Token } from "@kumikijs/compiler";
 import {
   type DefEntry,
@@ -391,12 +392,66 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * The lock file as `lock` writes it: an entry for each agent that holds a
+ * lock, with the globs it holds. The file and its entries may carry other
+ * fields, which are ignored and kept when the file is rewritten.
+ */
 type LockFile = { entries: Array<{ agent: string; patterns: string[] }> };
 
+/**
+ * The ownership locks on `path` (§9.8.3): none when it has no lock file, and
+ * otherwise what the lock file holds, or a throw that names the lock file and
+ * what in it is not the shape `lock` writes. Every reader of the lock file
+ * comes here, the lock check of each op as well as `lock` and `unlock`, so no
+ * reader acts on a lock table it misread.
+ */
 function readLocks(path: string): LockFile {
   const p = lockPath(path);
   if (!existsSync(p)) return { entries: [] };
-  return JSON.parse(readFileSync(p, "utf8")) as LockFile;
+  const text = readFileSync(p, "utf8");
+  let locks: unknown;
+  try {
+    locks = JSON.parse(text);
+  } catch {
+    throw unreadableLockFile(p, "it is not JSON");
+  }
+  const problem = lockFileProblem(locks);
+  if (problem !== undefined) throw unreadableLockFile(p, problem);
+  return locks as LockFile;
+}
+
+function unreadableLockFile(lockFile: string, problem: string): Error {
+  return new Error(
+    `Lock file "${resolve(lockFile)}" is unreadable: ${problem}. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`,
+  );
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** How a field that is not `shape` is reported: missing, or there and something else. */
+const misshapen = (field: string, value: unknown, shape: string): string =>
+  value === undefined ? `${field} is missing` : `${field} is not ${shape}`;
+
+/**
+ * What in a parsed lock file is not the shape `LockFile` describes, if
+ * anything: the first such field, by its path in the file.
+ */
+function lockFileProblem(locks: unknown): string | undefined {
+  if (!isObject(locks)) return "the top level is not an object";
+  const { entries } = locks;
+  if (!Array.isArray(entries)) return misshapen("entries", entries, "a list");
+  for (const [i, entry] of entries.entries()) {
+    const at = `entries[${i}]`;
+    if (!isObject(entry)) return misshapen(at, entry, "an object");
+    const { agent, patterns } = entry;
+    if (typeof agent !== "string") return misshapen(`${at}.agent`, agent, "text");
+    if (!Array.isArray(patterns)) return misshapen(`${at}.patterns`, patterns, "a list");
+    const j = patterns.findIndex((p) => typeof p !== "string");
+    if (j !== -1) return `${at}.patterns[${j}] is not text`;
+  }
+  return undefined;
 }
 
 function writeLocks(path: string, locks: LockFile): void {
