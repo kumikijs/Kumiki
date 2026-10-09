@@ -123,6 +123,57 @@ describe("a chain of tiles nests no deeper than the limit once inlined", () => {
   });
 });
 
+describe("a check that follows tiles into the tiles they inline reaches the report", () => {
+  // W0212 and W0213 ask what a tile renders anywhere in its tree, which takes
+  // following every call into the callee's body. A chain longer than the call
+  // stack is over the limit, and E0237 is what it gets; these pin that the
+  // checker gets there, and that the walk reached the leaf on the way.
+  const LONG = 20_000;
+  const head = "slot c : Int = 0\n";
+  const observed = (e: { code: string; message: string }) =>
+    `${e.code} ${e.message.match(/observed in body: [^)]*/)?.[0]}`;
+
+  it("answers a ui.click reducer on the head of the chain", () => {
+    const result = build(
+      program([...chain(LONG), "reducer r on=ui.click(T0) do= c := c + 1"], head),
+    );
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0237"]);
+    expect(result.warnings.map(observed)).toEqual(["W0212 observed in body: column, text"]);
+  });
+
+  it("answers a handler prop on a call to the head of the chain", () => {
+    const result = build(
+      program(
+        [
+          "tile Top = column(T0 {onClick: r})",
+          ...chain(LONG),
+          "reducer r on=ui.click(_) do= c := c + 1",
+        ],
+        head,
+      ),
+    );
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0237"]);
+    expect(result.warnings.map(observed)).toEqual(["W0213 observed in body: column, text"]);
+  });
+
+  it("walks each tile once, however many calls ask about the tiles it inlines", () => {
+    // Every link hands a handler to the next, so each asks about the rest of
+    // the chain: a walk per question is quadratic in its length.
+    const links = chain(LONG).map((l) => l.replace(/column\((T\d+)\)/, "column($1 {onClick: r})"));
+    const result = build(program([...links, "reducer r on=ui.click(_) do= c := c + 1"], head));
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0237"]);
+    const answers = new Set(result.warnings.map(observed));
+    expect([...answers]).toEqual(["W0213 observed in body: column, text"]);
+    expect(result.warnings).toHaveLength(LONG - 1);
+  });
+});
+
 describe("what counts as a level", () => {
   const head = `slot xs : List(Int) = [1]
 slot c : Bool = true

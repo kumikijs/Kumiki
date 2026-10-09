@@ -36,6 +36,15 @@ level of its own with the tile's body and the fallback's beneath it. Siblings do
 not add up. The check is iterative and measures each tile once, so a
 5,000-tile chain is reported rather than overflowing the checker.
 
+The walk W0212 and W0213 take through the tiles a tile inlines, to learn what
+it renders, is iterative too. Before, it recursed once per tile: from about
+6,500 tiles, a chain with a `reducer … on=ui.click(T0)`, or a handler prop on a
+call to `T0`, made `check()` throw `RangeError: Maximum call stack size
+exceeded`, and a handler prop on every link took time quadratic in the chain
+(about 8 s at 6,000 tiles). Now each tile is walked once however many positions
+ask about it, so a 20,000-tile chain gets its E0237 and its warnings in well
+under a second.
+
 A chain `tile Tn = column(Tn+1)` is two levels a link, so 128 links compile and
 the 129th is refused — a chain of 129 to about 250 tiles, which compiled and
 loaded before, is refused now. The longest of those loaded on V8 only just: the

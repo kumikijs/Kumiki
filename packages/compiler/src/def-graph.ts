@@ -1,19 +1,19 @@
 // Which definitions is a definition written in terms of, does that relation
 // close a loop, and — for tiles, which code generation inlines — how deep does
-// the tree go once it is followed?
+// the tree go once it is followed, and what does it reach?
 //
 // Four layers answer the first two questions with the same shape but different
 // edges, so the traversal lives here once. It deals in names, positions and
 // levels only: the diagnostics themselves are pushed by the typechecker, which
 // is where every coded diagnostic belongs.
 //
-// The searches over definitions are iterative. Recursion there would be the
+// Every search over definitions is iterative. Recursion there would be the
 // same defect the tile walk had — a program is free to declare a chain of
 // definitions longer than the call stack, and a checker that overflows on one
 // is no better than the crash it exists to prevent. Walking a single tile body
 // does recurse, which is safe for a different reason: a body is bounded by the
-// parser's nesting limit, and the graph between definitions is not — a loop in
-// it, or a chain of any length, is what these searches are there to find.
+// parser's nesting limit, and the graph between definitions is not — it may
+// close a loop, or run longer than any stack.
 
 import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
@@ -441,6 +441,84 @@ export function findCycles(
     }
   }
   return cycles;
+}
+
+/**
+ * What a node reaches: `own` of every node reachable from it along `edgesOf`,
+ * itself included, gathered into one set.
+ *
+ * Asked one node at a time, and every answer the walk passes through is kept
+ * for the next question, so each node is visited once however many questions
+ * reach it. The nodes on one loop reach exactly the same nodes, so they are
+ * answered together, as the walk leaves the first of them it entered (Tarjan's
+ * strongly connected components). A loop is not this search's to report —
+ * `findCycles` does — only a set of nodes that share an answer.
+ */
+export function reachedFrom<T>(
+  edgesOf: (node: string) => readonly GraphEdge[],
+  own: (node: string) => readonly T[],
+): (root: string) => ReadonlySet<T> {
+  type Frame = {
+    node: string;
+    edges: readonly GraphEdge[];
+    next: number;
+    /** When the node was entered — the first entered on its loop answers for it. */
+    at: number;
+    /** The earliest-entered node it is known to be on a loop with. */
+    low: number;
+    reached: Set<T>;
+  };
+  const answers = new Map<string, ReadonlySet<T>>();
+  return (root) => {
+    const known = answers.get(root);
+    if (known) return known;
+    // Every node a question enters is answered before it returns, so the
+    // entry order only has to last for one question.
+    const order = new Map<string, number>();
+    // The nodes entered and not yet answered, in entry order: the nodes of a
+    // loop are the run of them from its first.
+    const unanswered: string[] = [];
+    const enter = (node: string): Frame => {
+      const at = order.size;
+      order.set(node, at);
+      unanswered.push(node);
+      return { node, edges: edgesOf(node), next: 0, at, low: at, reached: new Set(own(node)) };
+    };
+    const frames: Frame[] = [enter(root)];
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (!frame) break;
+      const edge = frame.edges[frame.next];
+      if (edge) {
+        frame.next += 1;
+        const answered = answers.get(edge.to);
+        const entered = order.get(edge.to);
+        if (answered) for (const v of answered) frame.reached.add(v);
+        else if (entered === undefined) frames.push(enter(edge.to));
+        // Entered and not yet answered: it is on a loop with a node still on
+        // the path to this one, so this node is on that loop too.
+        else frame.low = Math.min(frame.low, entered);
+        continue;
+      }
+      frames.pop();
+      // The node below took the edge that entered this one, so it reaches
+      // everything this one does.
+      const below = frames[frames.length - 1];
+      if (below) for (const v of frame.reached) below.reached.add(v);
+      if (frame.low < frame.at) {
+        // On a loop with a node below it, which answers for the whole loop.
+        if (below) below.low = Math.min(below.low, frame.low);
+        continue;
+      }
+      for (;;) {
+        const member = unanswered.pop();
+        if (member === undefined) break;
+        answers.set(member, frame.reached);
+        if (member === frame.node) break;
+      }
+    }
+    return answers.get(root) ?? new Set();
+  };
 }
 
 /** How deep a node's tree goes once every edge is followed. */

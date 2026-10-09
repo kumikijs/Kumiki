@@ -67,6 +67,7 @@ import {
   findCycles,
   type GraphEdge,
   type PlacedEdge,
+  reachedFrom,
   type TileExpansion,
   tileExpansion,
 } from "./def-graph.ts";
@@ -287,6 +288,11 @@ type SymbolTable = {
    * see `collectElementIds`.
    */
   elementIds: Set<string>;
+  /**
+   * Every builtin a tile's render tree may contain (`collectTileBuiltinKinds`),
+   * each answer kept for the next position that asks.
+   */
+  builtinKindsIn: (tileName: string) => ReadonlySet<string>;
   app?: AppDef;
 };
 
@@ -296,13 +302,14 @@ function checkAll(
   iconDomain: Set<string>,
 ): KumikiError[] {
   const errors: KumikiError[] = [];
+  const tiles = new Map<string, TileDef>();
   const sym: SymbolTable = {
     // Seeded before the program's own definitions, so `type Route = …` in a
     // program shadows the standard-library one rather than colliding with it.
     types: new Map(STDLIB_TYPES.map((t) => [t.name, t])),
     slots: new Map(),
     reducers: new Map(),
-    tiles: new Map(),
+    tiles,
     fns: new Map(),
     effects: new Map(),
     timerNames: new Set(),
@@ -311,6 +318,9 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    // Read as the definitions are checked, by which point every tile below
+    // has been registered.
+    builtinKindsIn: collectTileBuiltinKinds(tiles),
   };
 
   for (const def of program.defs) {
@@ -1923,7 +1933,7 @@ function checkHandlerTarget(
   // An undeclared name is E0105's to report; guessing at what it renders would
   // add a second diagnostic saying the same thing less precisely.
   if (!sym.tiles.has(tileName)) return;
-  const kinds = collectTileBuiltinKinds(tileName, sym);
+  const kinds = sym.builtinKindsIn(tileName);
   // Nothing was learned, so there is nothing to say: exactly how W0212 treats
   // the same empty answer. Reached only when the unresolvable thing is the
   // tile's own root (`tile Inner = Nope()`, `tile Inner = Inner()`) — one
@@ -1962,9 +1972,14 @@ function inertHandler(
 
 /**
  * Collect every BUILTIN_TILES kind that may appear as a (descendant) part of
- * a named tile's render tree. Returns an empty set when nothing can be
+ * a named tile's render tree. Answers an empty set when nothing can be
  * statically inferred (cycle, undeclared name, or only dynamic bodies
  * without resolvable children).
+ *
+ * The answers are kept (`reachedFrom`): a tile is walked once however many
+ * reducers and handler props ask about it, or about a tile that inlines it.
+ * The walk is iterative because it follows every tile into the tiles it
+ * inlines, and nothing bounds how long a program may chain them.
  *
  * Two checks read it, and a descendant match means opposite things to them —
  * worth knowing before either is narrowed. For `W0212` a descendant is the
@@ -1976,28 +1991,19 @@ function inertHandler(
  * prove it is dropped.
  */
 function collectTileBuiltinKinds(
-  tileName: string,
-  sym: SymbolTable,
-  visited: Set<string> = new Set(),
-): Set<string> {
-  // `visited` is shared across the whole walk on purpose, and does two things:
-  // it stops a cycle from recurring (`E0005` is what reports one), and it stops
-  // a name reached twice through different branches from being re-expanded.
-  // The second is why it must not be per-branch — a diamond over a deep tile
-  // would otherwise re-walk the shared part once per path.
-  if (visited.has(tileName)) return new Set();
-  visited.add(tileName);
-  if (BUILTIN_TILES.has(tileName)) return new Set([tileName]);
-  const def = sym.tiles.get(tileName);
-  if (!def) return new Set();
-  // The same edges a cycle is looked for along: what this body expands into is
-  // what its render tree is made of. A name that resolves to neither a builtin
-  // nor a declared tile contributes nothing.
-  const out = new Set<string>();
-  for (const target of expansionTargets(def.body)) {
-    for (const kind of collectTileBuiltinKinds(target.to, sym, visited)) out.add(kind);
-  }
-  return out;
+  tiles: ReadonlyMap<string, TileDef>,
+): (tileName: string) => ReadonlySet<string> {
+  // The same edges a cycle is looked for along: what a body expands into is
+  // what its render tree is made of. A builtin has no body, and a name that
+  // resolves to neither a builtin nor a declared tile contributes nothing.
+  return reachedFrom(
+    (name) => {
+      if (BUILTIN_TILES.has(name)) return [];
+      const def = tiles.get(name);
+      return def ? expansionTargets(def.body) : [];
+    },
+    (name) => (BUILTIN_TILES.has(name) ? [name] : []),
+  );
 }
 
 /**
@@ -2372,7 +2378,7 @@ function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): v
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
     const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
     if (allowed != null) {
-      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const descendants = sym.builtinKindsIn(r.on.selector.tile);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       // Empty set = unresolvable (cycle / undeclared / dynamic-only body) →
       // conservative skip, no warning.
