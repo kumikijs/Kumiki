@@ -1555,6 +1555,7 @@ describe("typecheck", () => {
       /** The one W0213 that `tile D` draws, given its definition. */
       const w0213 = (tiles: string) => {
         const src = `
+          slot done : Bool = false
           slot note : Text = ""
           slot hits : Int = 0
           reducer r on=app.start do= hits := hits + 1
@@ -1624,6 +1625,111 @@ describe("typecheck", () => {
         expect(
           w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onChange: r})'),
         ).toContain(`— Inner renders nothing that fires it (observed in body: box, text). `);
+      });
+
+      // `onFocus` / `onBlur` are attached to whatever element the renderer
+      // returned, and for a check, a radio, a switch or a details that is the
+      // wrapper around the element that takes focus. Neither event bubbles
+      // there, so the handler never runs: the reason W0212 gives for
+      // `ui.focus` / `ui.blur` on the same kind.
+      describe("on a wrapped control, says focus / blur do not bubble to the wrapper", () => {
+        const FOCUS_ONTO =
+          "Put it on button / editable / input / link / select / slider / textarea / video";
+
+        it("says so of onFocus on a check", () => {
+          const message = w0213("tile D = check(value=done, onFocus=r)");
+          expect(message).toBe(
+            `"onFocus" on check() is dropped — a check listens on the <label> around its <input>, ` +
+              `and the "focus" that <input> fires does not bubble to the <label>. ` +
+              `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+          );
+          expect(message).toContain(`— ${reasonOf("focus", "tile D = check(value=done)")}. `);
+        });
+
+        it("says so of onBlur on a radio", () => {
+          const message = w0213('tile D = radio(group="g", selected=done, onBlur=r)');
+          expect(message).toBe(
+            `"onBlur" on radio() is dropped — a radio listens on the <label> around its <input>, ` +
+              `and the "blur" that <input> fires does not bubble to the <label>. ` +
+              `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+          );
+          expect(message).toContain(
+            `— ${reasonOf("blur", 'tile D = radio(group="g", selected=done)')}. `,
+          );
+        });
+
+        it("says so of onFocus on a switch, in the props-block form", () => {
+          expect(w0213("tile D = switch(value=done) {onFocus: r}")).toBe(
+            `"onFocus" on switch() is dropped — a switch listens on the <label> around its <input>, ` +
+              `and the "focus" that <input> fires does not bubble to the <label>. ` +
+              `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+          );
+        });
+
+        it("says so of onFocus and onBlur on a details", () => {
+          const faq = 'details(summary="Q", text("a"))';
+          for (const [handler, ev] of [
+            ["onFocus", "focus"],
+            ["onBlur", "blur"],
+          ] as const) {
+            expect(w0213(`tile D = details(summary="Q", text("a"), ${handler}=r)`)).toBe(
+              `"${handler}" on details() is dropped — ` +
+                `${reasonOf(ev, `tile D = ${faq}`)}. ` +
+                `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+            );
+          }
+        });
+
+        it("says so of a user tile whose body renders only such controls", () => {
+          const message = w0213(
+            "tile Inner = check(value=done)\ntile D = column(Inner(onFocus=r))",
+          );
+          expect(message).toBe(
+            `"onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: ` +
+              `a check listens on the <label> around its <input>, and the "focus" that <input> fires ` +
+              `does not bubble to the <label> (observed in body: check). ` +
+              `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+          );
+          expect(
+            w0213(
+              "tile Inner = if done then check(value=done) else switch(value=done)\n" +
+                "tile D = column(Inner() {onBlur: r})",
+            ),
+          ).toContain(
+            `— Inner renders nothing where "blur" reaches it: a check / switch listens on the <label> ` +
+              `around its <input>, and the "blur" that <input> fires does not bubble to the <label> ` +
+              `(observed in body: check, switch). `,
+          );
+        });
+
+        // Each of these runs: the element takes focus itself, or the event
+        // reaches the wrapper (a keydown bubbles to the <label> and to the
+        // <details>), or the renderer calls the handler. The user tile may
+        // render its `input`, so the drop is not certain.
+        const RUNS = {
+          "onFocus on an input": "input(bind=note, onFocus=r)",
+          "onClick on a check": "check(value=done, onClick=r)",
+          "onChange on a check": "check(value=done, onChange=r)",
+          "onKeyDown on a check": "check(value=done, onKeyDown=r)",
+          "onKeyDown on a details": 'details(summary="Q", text("a"), onKeyDown=r)',
+          "onMouseEnter on a radio": 'radio(group="g", selected=done, onMouseEnter=r)',
+          "onFocus on a user tile that may render an input":
+            "Inner(onFocus=r)\ntile Inner = if done then check(value=done) else input(bind=note)",
+        } as const;
+        for (const [what, tile] of Object.entries(RUNS)) {
+          it(`says nothing of ${what}`, () => {
+            const src = `
+              slot done : Bool = false
+              slot note : Text = ""
+              slot hits : Int = 0
+              reducer r on=app.start do= hits := hits + 1
+              tile D = ${tile}
+              tile App = column(D)
+              app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+            `;
+            expect(checkSrc(src).map((e) => e.code)).toEqual([]);
+          });
+        }
       });
     });
   });

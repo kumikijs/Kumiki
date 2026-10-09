@@ -41,7 +41,9 @@ import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
  *    `wrappedUnreached` or `firesUnheardIn` names when one names one;
  *    `checkTile` resolves an explicit handler's value as a reducer name
  *    rather than an expression, and `checkHandlerTarget` emits W0213 with the
- *    reason `firesUnheardIn` names for the handler's row.
+ *    reason `firesUnheardIn` names for the handler's row, or, for a handler
+ *    the runtime attaches to any element, the one `wrapperNeverReceives`
+ *    names.
  *  - `references.ts` — the same resolution for the AI-editing verbs, so
  *    `refs` / `rename` / `remove --cascade` see the handler → reducer edge.
  *  - `docs/spec/errors.md` §W0212 — published version of this table.
@@ -109,8 +111,10 @@ const FOCUSABLE_ROOT = [
  * so the runtime's listeners sit on the `wrapper` and not on the `focused`
  * element. Which events reach the wrapper is `ROOT_LISTENED_BUBBLES`: `focus`
  * and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on the
- * wrapper ever runs, and W0212 is correct to emit for them. `keydown` BUBBLES,
- * so a listener on the wrapper hears it, together with the keydown of anything
+ * wrapper ever runs, and W0212 is correct to emit for them. An `onFocus` /
+ * `onBlur` written on the tile is attached to the same wrapper and never runs
+ * either, which W0213 reports (`wrapperNeverReceives`). `keydown` BUBBLES, so
+ * a listener on the wrapper hears it, together with the keydown of anything
  * else the wrapper holds (`holdsChildren`):
  *
  * - `check` / `radio` / `switch`: a `<label>` around their `<input>` and
@@ -119,7 +123,8 @@ const FOCUSABLE_ROOT = [
  *   panel. A control in the panel that the `key` row lists carries the same
  *   subscription lifted onto it, and its keydown bubbles on to the
  *   `<details>`, so a listener there would run the reducer a second time for
- *   each key. No `key` listener is lifted onto a `details` either.
+ *   each key. No `key` listener is lifted onto a `details` either. An
+ *   `onKeyDown` written on it does run, on the keys of its panel as well.
  *
  * The focused element does fire the event in every case, so W0212 gives that
  * reason (`wrappedUnreached`) rather than saying no descendant fires it. These
@@ -193,7 +198,8 @@ export type WrappedUnreached = {
  * element does not fire at all (`submit`).
  *
  * W0212 reads it to say so. For these kinds "no descendant fires it" is
- * untrue, because the focused element does.
+ * untrue, because the focused element does. W0213 reads the part of it that
+ * holds of a handler written on the tile (`wrapperNeverReceives`).
  */
 export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): WrappedUnreached[] {
   if (!isRootListened(ev)) return [];
@@ -212,6 +218,22 @@ export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): Wrap
     groups.set(at, group);
   }
   return [...groups.values()];
+}
+
+/**
+ * The groups of `wrappedUnreached(ev, kinds)` whose wrapper never receives
+ * `ev`, because it does not bubble there from the focused element. A handler
+ * written on one of these kinds (`check(onFocus=r)`) is attached to the wrapper,
+ * the element the renderer returned (`applyUiEventHandlers`), so it never runs.
+ * W0213 reads this to say so, giving the reason W0212 gives for the group.
+ *
+ * A group whose `ev` bubbles is left out. Its wrapper does receive the event,
+ * from the tiles it holds as well as from the focused element. That is why no
+ * selector lifts a listener onto it, and not a reason a handler written there
+ * misses: `details(onKeyDown=r)` runs on every key pressed inside it.
+ */
+export function wrapperNeverReceives(ev: UiEventKind, kinds: Iterable<string>): WrappedUnreached[] {
+  return wrappedUnreached(ev, kinds).filter((g) => !g.bubbles);
 }
 
 export const UI_LIFTS: ReadonlyArray<UiLift> = [
@@ -332,10 +354,11 @@ function liftTilesFor(handler: string): ReadonlySet<string> | null {
  * one that is neither `contenteditable` nor given a `tabindex` — never fires
  * them, and `keydown` reaches a container only from a focusable descendant.
  * (`editable` is the `contenteditable` case, which is why it sits in those
- * rows of the lift table.) Reporting them would need a focusability answer
- * for the tile's root. `FOCUSABLE_ROOT` above is one, but this table does not
- * consult it, and whether it should is an open question rather than a
- * settled "different check".
+ * rows of the lift table.) W0213 reports one of these only where the element
+ * is a wrapper the event never reaches (`wrapperNeverReceives`): `onFocus` /
+ * `onBlur` on a `check`, `radio`, `switch` or `details`. Reporting one on a
+ * container would need a focusability answer for the tile's root, which
+ * nothing here gives.
  */
 export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
   onClick: liftTilesFor("onClick"),

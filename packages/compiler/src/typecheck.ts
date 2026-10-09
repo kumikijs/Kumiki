@@ -113,6 +113,7 @@ import {
   UI_EVENT_TILE_KINDS,
   type WrappedUnreached,
   wrappedUnreached,
+  wrapperNeverReceives,
 } from "./ui-lifts.ts";
 import {
   describeDuplicate,
@@ -1816,7 +1817,9 @@ function checkHandlerBinding(
  * A handler prop written on a tile whose renderer never reads it.
  * `row(text("card"), onClick=open)` compiles, renders, and does nothing: the
  * container renderer wires layout and style, and clicks reach whatever
- * descendant handles them — or nothing.
+ * descendant handles them — or nothing. `check(onFocus=r)` is the same drop
+ * for another reason: the listener is on the `<label>` the check renders, and
+ * the focus its `<input>` takes does not bubble there.
  *
  * A warning rather than an error, matching W0212: the same silent-drop
  * situation, and the same reason to report it rather than break the build.
@@ -1824,23 +1827,21 @@ function checkHandlerBinding(
  * container with any clickable descendant satisfies it.
  *
  * A user tile is the same failure, and is asked with `collectTileBuiltinKinds`
- * — the walk W0212 already uses. Finding no kind whose renderer calls the
- * handler anywhere in the render tree is the answer that reports.
+ * — the walk W0212 already uses. Finding no kind the handler reaches anywhere
+ * in the render tree is the answer that reports.
  *
- * The reason given is the one W0212 gives for the same kinds under the
- * handler's event (`firesUnheardClauses`). Where the element fires the event
- * and its renderer never calls the handler (every kind under `onClick`, and
- * the kinds the `input` row records), it says so. Otherwise it says the tile
- * does not fire the event.
+ * Which kinds the handler reaches, and the reason given for one it misses,
+ * are `handlerReach`'s: the reason is the one W0212 gives for the same kinds
+ * under the handler's event, so the two forms say the same of a kind.
  *
  * That under-reports rather than over-reports, deliberately: codegen merges
  * these props onto the node the tile renders as its ROOT (`tileCallJs`), so
  * `Card = box(button(…))` drops the handler too and is not reported here,
  * because the walk does not tell a root from a descendant. Every case it does
- * report is a certain drop — a tree with no firing kind in it has no firing
- * kind at its root — which is what keeps the warning off the working shapes.
- * `spec-divergences.test.ts` pins the gap, so narrowing this to the root
- * later is a visible change rather than a surprise.
+ * report is a certain drop — a tree with no kind the handler reaches has no
+ * such kind at its root — which is what keeps the warning off the working
+ * shapes. `spec-divergences.test.ts` pins the gap, so narrowing this to the
+ * root later is a visible change rather than a surprise.
  */
 function checkHandlerTarget(
   tileName: string,
@@ -1849,15 +1850,12 @@ function checkHandlerTarget(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  const allowed = HANDLER_PROP_TILES[handler];
-  if (allowed == null) return;
-  const ev = liftForHandler(handler)?.ev;
-  const unheard = (kinds: Iterable<string>): string[] =>
-    ev === undefined ? [] : firesUnheardClauses(ev, kinds);
+  const reach = handlerReach(handler);
+  if (reach === null) return;
   if (BUILTIN_TILES.has(tileName)) {
-    if (allowed.has(tileName)) return;
-    const [because = `${tileName} does not fire it`] = unheard([tileName]);
-    errors.push(inertHandler(tileName, handler, because, allowed, pos));
+    if (reach.reaches(tileName)) return;
+    const [because = `${tileName} does not fire it`] = reach.misses([tileName]);
+    errors.push(inertHandler(tileName, handler, because, reach.onto, pos));
     return;
   }
   // An undeclared name is E0105's to report; guessing at what it renders would
@@ -1871,14 +1869,59 @@ function checkHandlerTarget(
   // those are a true answer about the root, so the warning stands beside the
   // E0105 / E0005 that names the unresolvable part.
   if (kinds.size === 0) return;
-  if ([...kinds].some((k) => allowed.has(k))) return;
+  if ([...kinds].some((k) => reach.reaches(k))) return;
   const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
-  const clauses = unheard(kinds);
+  const clauses = reach.misses(kinds);
   const because =
     clauses.length === 0
       ? `${tileName} renders nothing that fires it ${observed}`
-      : `${tileName} renders nothing that calls it: ${clauses.join("; ")} ${observed}`;
-  errors.push(inertHandler(tileName, handler, because, allowed, pos));
+      : `${tileName} renders nothing ${reach.missedAs}: ${clauses.join("; ")} ${observed}`;
+  errors.push(inertHandler(tileName, handler, because, reach.onto, pos));
+}
+
+/**
+ * Which kinds a handler written on a tile runs on, read from `ui-lifts.ts`,
+ * and why one it misses misses it — W0212's clauses for the same kinds.
+ *
+ *  - A handler `HANDLER_PROP_TILES` constrains runs on the kinds it lists,
+ *    whose renderers call it. A kind it leaves out whose element fires the
+ *    event gets `firesUnheardClauses`: its renderer never calls the handler.
+ *  - A handler the runtime attaches to whatever element the tile produced
+ *    (`null` there) runs on every kind but a wrapped one whose wrapper never
+ *    receives the event (`wrapperNeverReceives`), which gets `wrappedClause`.
+ *    Whether a container takes focus is not asked, so none is reported.
+ *
+ * `null` for `onMouseEnter`, which every element receives.
+ */
+type HandlerReach = {
+  readonly reaches: (kind: string) => boolean;
+  /** Where to put the handler instead, named in the message. */
+  readonly onto: ReadonlySet<string>;
+  /** W0212's clauses for the kinds among these the handler misses. */
+  readonly misses: (kinds: Iterable<string>) => string[];
+  /** How a user tile's message says its body misses the handler. */
+  readonly missedAs: string;
+};
+
+function handlerReach(handler: string): HandlerReach | null {
+  const allowed = HANDLER_PROP_TILES[handler];
+  const lift = liftForHandler(handler);
+  if (allowed != null) {
+    return {
+      reaches: (kind) => allowed.has(kind),
+      onto: allowed,
+      misses: (kinds) => (lift === undefined ? [] : firesUnheardClauses(lift.ev, kinds)),
+      missedAs: "that calls it",
+    };
+  }
+  if (lift === undefined || lift.tiles === null) return null;
+  const { ev, tiles } = lift;
+  return {
+    reaches: (kind) => wrapperNeverReceives(ev, [kind]).length === 0,
+    onto: tiles,
+    misses: (kinds) => wrapperNeverReceives(ev, kinds).map((g) => wrappedClause(ev, g)),
+    missedAs: `where "${ev}" reaches it`,
+  };
 }
 
 /** One W0213, whichever side — builtin or user tile — asked for it. */
@@ -2368,7 +2411,8 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
 /**
  * One group of `wrappedUnreached`, as W0212 states it: an event that does not
  * bubble to the wrapper, or one that does and would arrive there from the
- * other tiles the wrapper holds as well.
+ * other tiles the wrapper holds as well. W0213 states the first the same way
+ * (`handlerReach`).
  */
 function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
   const kinds = kindsPhrase(g.kinds);

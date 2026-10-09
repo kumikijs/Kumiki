@@ -367,6 +367,20 @@ app A
     expect(codes(src('tile Card = box(button(text="go"))'))).toEqual([]);
     expect(codes(src('tile Deep = button(text="go")\ntile Card = box(Deep)'))).toEqual([]);
   });
+
+  // The same gap under `onFocus`. A `details` written with the handler is
+  // reported (`details(…, onFocus=r)`), since its `<summary>`'s focus does not
+  // bubble to the `<details>` the listener is on. Rendered as a user tile's
+  // root it drops the handler the same way, and the `text` in its panel, which
+  // the walk cannot tell from a root, keeps it quiet.
+  it("and says nothing about onFocus on a details root that holds a panel", () => {
+    const focused = src('tile Card = details(summary="Q", text("a"))').replace(
+      "Card {onClick: open}",
+      "Card {onFocus: open}",
+    );
+    expect(focused).toContain("Card {onFocus: open}");
+    expect(codes(focused)).toEqual([]);
+  });
 });
 
 // The selector half of the same wiring. `editable`'s renderer registers an

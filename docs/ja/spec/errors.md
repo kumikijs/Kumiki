@@ -750,9 +750,9 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。メッセージもそう述べる：`<input>` はイベントを発火するが、リスナのある `<label>` へはバブルしない。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されない — [#821](https://github.com/kumikijs/Kumiki/issues/821)。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。メッセージもそう述べる：`<input>` はイベントを発火するが、リスナのある `<label>` へはバブルしない。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
 
-`details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取る。そこに書いた `onFocus=` / `onBlur=` は、#821 が check について記録しているのと同じ理由で実行されない。
+`details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取るので、W0213 はこれを報告しない。そこに書いた `onFocus=` / `onBlur=` は、check の場合と同じ理由で実行されず、W0213 が報告する。
 
 `video` が何を受け取るかは Chromium で計測した。`controls` があれば Tab は `<video>` に止まり、`focus` / `blur` は focus がそれ全体に入るとき・出るときに発火する。自身の再生・音量・全画面ボタンの間を移動しても、どちらも発火しない。`<video>` 自体が focus を持つ間に押したキーは `ui.key` の reducer に届き（そのあと Space で再生・一時停止する）、それらのボタンの 1 つが focus を持つ間に押したキーは届かない。`controls` が無ければ focusable ではない：Tab は素通りし、`.focus()` やクリックでも focus は移らないので、3 つのどれも発火しない。`video` が `controls` を持つかはインスタンスの性質で、コンパイル時の表には見えないため、行はどちらの場合も `video` を載せる。`disabled` な control も同様で、その kind は載っているが focusable ではない。
 
@@ -911,7 +911,7 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 ### W0213 `handler-on-inert-tile` (warning)
 
-ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
+ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など — か、そのイベントが要素に決して届かないタイルに書かれている（`check(onFocus=r)`、後述）。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
 
 > `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
@@ -921,6 +921,12 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 >
 > `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
+`onFocus` / `onBlur` はタイルが描画した要素にそのまま付くが、`check` / `radio` / `switch` / `details` ではその要素は focus を受ける要素を包むものである：control の `<input>` を包む `<label>`、`<summary>` を包む `<details>`。どちらのイベントも包む要素へはバブルしないので、ハンドラは決して実行されない。理由は W0212 が同じ kind への `ui.focus` / `ui.blur` について述べる節であり、同じ記録から読む（そちらの `key` / `focus` / `blur` についての注記を参照）。移す先として名指すタイルは、その `focus` / `blur` 行に載るものである:
+
+> `"onFocus" on check() is dropped — a check listens on the <label> around its <input>, and the "focus" that <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+>
+> `"onBlur" on details() is dropped — a details listens on the <details> around its <summary>, and the "blur" that <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
 **user tile** にも同じ問いを立て、2 つ目の形で答える。user tile に書かれたハンドラは、その tile が描画するノードにマージされる（[§1.7.3](./language.md#_1-7-3-event-handler-props)）ので、発火するかどうかは何を描画するかで決まる — `tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` は、描画はされるが何も配線されない。まさにこの警告が存在する理由の失敗である。ほかに気づける層が無い：この警告は非致命なので `check` は 0 で終了し（`ok (1 warning)`）、`build` も emit を出し、`smoke` から見えるのは「正しく描画され、クリックする対象が無い」タイルでしかない。
 
 > `"<handler>" on <tile>() is dropped — <tile> renders nothing that fires it (observed in body: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
@@ -929,15 +935,19 @@ body の kind がイベントを発火するのに、そのレンダラがハン
 
 > `"onClick" on Inner() is dropped — Inner renders nothing that calls it: a box / text fires "click", and its renderer never calls onClick (observed in body: box, text). Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
-`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。報告するのは、そのツリーのどこにも発火する種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。逆に、報告するものはすべて確実に捨てられる。
+`onFocus` / `onBlur` で、body のすべての kind が上の包まれた control である場合は、それらについての W0212 の節を述べる。`tile Inner = check(value=done)` に対する `Inner(onFocus=r)` なら:
+
+> `"onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: a check listens on the <label> around its <input>, and the "focus" that <input> fires does not bubble to the <label> (observed in body: check). Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。報告するのは、そのツリーのどこにもハンドラが届く種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。同様に `tile Faq = details(summary="Q", text("a"))` は root の `<details>` で `Faq(onFocus=r)` を捨てるが、パネルにある `text` のために報告しない。逆に、報告するものはすべて確実に捨てられる。
 
 走査が種類を 1 つも見つけられなかった場合は報告しない — その tile の root 自体が、builtin でも宣言済み tile でもない名前である場合（`tile Inner = Nope()`、あるいは循環 `tile Inner = Inner()`）で、走査は何も学べていない。W0212 も同じ空の答えを前にして黙る。これらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。解決できない名前が解決可能な body の**内側**にある場合（`tile Inner = box(Nope())`）は別の話で、その周囲の種類は root についての正しい答えなので、W0213 は解決できない部分を名指す符号と並んで報告される。
 
-`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付ける。ただしそれは「リスナが付く」ことであって「イベントが届く」ことではない — `focus` と `blur` はバブリングしないので、フォーカス可能でないコンテナでは発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
+`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。フォーカス可能でないコンテナでは `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
 [W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — 対象のタイルが `<ev>` をどの reducer にも渡さない `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
-**修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む — user tile なら、呼び出し側でも、その tile の中で root が発火するタイルになるようにしてもよい。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。
+**修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む — user tile なら、呼び出し側でも、その tile の中で root が発火するタイルになるようにしてもよい。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。`check` / `radio` / `switch` / `details` はどちらの形でも `focus` / `blur` を届けない — それらへの `ui.focus(<Tile>)` も W0212 である — ので、focus で実行すべき reducer は、自身が focus を受けるタイルに置く。
 
 ### W0214 `fmt-placeholder-argument-mismatch` (warning)
 

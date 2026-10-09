@@ -13,6 +13,7 @@ import {
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
   wrappedUnreached,
+  wrapperNeverReceives,
 } from "../src/ui-lifts.ts";
 
 const ALL_UI_EVENT_KINDS: ReadonlyArray<UiEventKind> = [
@@ -116,6 +117,30 @@ describe("wrappedUnreached", () => {
       { kinds: ["details"], ...DETAILS, bubbles: false },
     ]);
     expect(wrappedUnreached("focus", ["box", "text", "video"])).toEqual([]);
+  });
+});
+
+// A handler written on a wrapped kind is attached to its wrapper, so it misses
+// exactly the events that do not bubble there. A `details`' wrapper does
+// receive `keydown`: what keeps a `ui.key` listener off it is its panel, and a
+// handler written on it runs.
+describe("wrapperNeverReceives", () => {
+  const WRAPPED = ["check", "radio", "switch", "details"];
+
+  it("answers focus and blur as wrappedUnreached does", () => {
+    for (const ev of ["focus", "blur"] as const) {
+      expect(wrapperNeverReceives(ev, WRAPPED)).toEqual(wrappedUnreached(ev, WRAPPED));
+      expect(wrapperNeverReceives(ev, WRAPPED)).toHaveLength(2);
+    }
+  });
+
+  it("answers no other event, key on a details included", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, WRAPPED).length > 0,
+    );
+    expect(answered.sort()).toEqual(["blur", "focus"]);
+    expect(wrappedUnreached("key", ["details"])).toHaveLength(1);
+    expect(wrapperNeverReceives("key", ["details"])).toEqual([]);
   });
 });
 
