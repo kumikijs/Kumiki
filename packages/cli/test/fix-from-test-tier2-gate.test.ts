@@ -81,6 +81,17 @@ const DIGIT_IN_NUMBER = [
   ...ADDS_TWO_TEST,
 ];
 
+/** A tile-test whose target reads `items[0]` of an empty list, a panic as it renders. */
+const THROWING_TEST = [
+  "slot items : List(Int) = []",
+  'tile First = heading("First: " + items[0].show)',
+  "test first-shows =",
+  "    tile-test First",
+  "        given  = {slots: {items: []}}",
+  '        expect = heading("First: 1")',
+];
+const THROWN = "Index 0 is out of range for a List of length 0";
+
 /** A failing reducer-test result on `slots.count`, for calling the planner directly. */
 const failingLeaf = (actual: unknown, expected: unknown): TestResult => ({
   name: "t",
@@ -377,6 +388,33 @@ describe("the gate judges only tests that passed before", () => {
       "        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}",
       "        expect = {slots: {count: 2}, effects: []}",
     ]);
+    const outcome = await runFixFromTest(file, "inc-adds-two", true);
+
+    expect(outcome.status).toBe("applied");
+    expect(readFileSync(file, "utf8")).toContain("fn step() -> Int = 2");
+  });
+});
+
+describe("a test whose body throws", () => {
+  it("is a failing test that says what it threw, with no patch planned from it", async () => {
+    const file = fixture([...DIGIT_IN_IDENTIFIER, ...THROWING_TEST]);
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
+    vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
+
+    const outcome = await fixFromTest(file, "first-shows", false);
+
+    expect(outcome.status).toBe("no-patch");
+    if (outcome.status === "no-patch") expect(outcome.failingTest?.error).toBe(THROWN);
+    const out = lines.join("\n");
+    expect(out).toContain('(no auto-patch available) for failing test "first-shows":');
+    expect(out).toContain(`  error:    ${THROWN}`);
+  });
+
+  it("does not keep another test in the file from being repaired", async () => {
+    // `first-shows` fails before the patch and after it, so the gate does not
+    // count it against the patch.
+    const file = fixture([...DIGIT_IN_IDENTIFIER, ...THROWING_TEST]);
     const outcome = await runFixFromTest(file, "inc-adds-two", true);
 
     expect(outcome.status).toBe("applied");

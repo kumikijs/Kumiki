@@ -17,7 +17,7 @@ import {
   variantTagsOf,
 } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
-import { runTestsSource, testFile } from "./smoke.ts";
+import { failureLines, runTestsSource, testFile } from "./smoke.ts";
 import { directDeps, listDefs, load, type Store } from "./store.ts";
 import { atomicWriteFileSync } from "./write-lock.ts";
 
@@ -2555,11 +2555,8 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
         return;
       }
       if (outcome.failingTest) {
-        const t = outcome.failingTest;
         console.log(`(no auto-patch available) for failing test "${testName}":`);
-        if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
-        if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
-        if (t.diffAt !== undefined) console.log(`  diff at:  ${t.diffAt}`);
+        for (const line of failureLines(outcome.failingTest)) console.log(line);
         if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
         return;
       }
@@ -2630,10 +2627,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path?: 
         console.error(`  ${b.message}`);
       else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);
       else if (b.reason === "still-fails") {
-        const t = b.failingTest;
-        if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
-        if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
-        if (t.diffAt !== undefined) console.log(`  diff at:  ${t.diffAt}`);
+        for (const line of failureLines(b.failingTest)) console.log(line);
       }
       return;
     }

@@ -364,9 +364,21 @@ export async function runTestsSource(
   const tests = (globalThis as unknown as { __kumikiTests?: TestRunner[] }).__kumikiTests ?? [];
   return tests.map((t) => {
     const t0 = performance.now();
-    const r = t.run();
+    const r = runOne(t);
     return { ...r, ms: Math.round(performance.now() - t0) };
   });
+}
+
+/**
+ * Run one test. A body that throws fails that test, with what it threw as its
+ * `error`; it does not end the run, so the file's other tests still report.
+ */
+function runOne(t: TestRunner): TestResult {
+  try {
+    return t.run();
+  } catch (e) {
+    return { name: t.name, pass: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function testFile(path: string, capabilities: string[] = []): Promise<TestResult[]> {
@@ -380,6 +392,23 @@ function leafStr(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+/**
+ * The §8.7.1 lines under a failing test's `FAIL` line: what it expected and
+ * got, where they diverge, and what its body threw. `kumiki fix` prints a
+ * failing test through the same lines.
+ */
+export function failureLines(r: TestResult): string[] {
+  const lines: string[] = [];
+  if (r.expected !== undefined) lines.push(`  expected: ${r.expected}`);
+  if (r.actual !== undefined) lines.push(`  actual:   ${r.actual}`);
+  if (r.diffAt !== undefined) {
+    const arrow = r.leaf ? `  ${leafStr(r.leaf.expected)} -> ${leafStr(r.leaf.actual)}` : "";
+    lines.push(`  diff at:  ${r.diffAt}${arrow}`);
+  }
+  if (r.error !== undefined) lines.push(`  error:    ${r.error}`);
+  return lines;
 }
 
 /** Match a test name against a filter: exact, or a `prefix-*` / `prefix*` wildcard. */
@@ -478,12 +507,7 @@ function printTestReport(report: TestReport): number {
       continue;
     }
     console.log(`FAIL  ${r.name}${tag}`);
-    if (r.expected !== undefined) console.log(`  expected: ${r.expected}`);
-    if (r.actual !== undefined) console.log(`  actual:   ${r.actual}`);
-    if (r.diffAt !== undefined) {
-      const arrow = r.leaf ? `  ${leafStr(r.leaf.expected)} -> ${leafStr(r.leaf.actual)}` : "";
-      console.log(`  diff at:  ${r.diffAt}${arrow}`);
-    }
+    for (const line of failureLines(r)) console.log(line);
   }
   console.log(`\n${report.passed}/${report.total} passed`);
   if (report.coverage) printCoverage(report.coverage);

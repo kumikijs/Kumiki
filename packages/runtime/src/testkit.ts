@@ -97,6 +97,8 @@ export type TestResult = {
   cases?: number;
   /** Wall-clock milliseconds the test took (filled in by the runner, §8.7.1). */
   ms?: number;
+  /** The message a test's body threw; set only when it threw (§8.7.1 `error:`). */
+  error?: string;
 };
 
 function _jsonStr(v: unknown): string {
