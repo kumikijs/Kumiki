@@ -108,7 +108,6 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | lifecycle |
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | forms |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | forms |
-| [E0235](./errors.md#e0235-null-value) | `null-value` | all | core |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
@@ -298,6 +297,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
-| `172-map-literal-bool-keys.kumiki` | slot, reducer, tile | core | [§1.9](./language.md#_1-9-expression-language) |
+| `171-property-test-count.kumiki` | slot, reducer, tile | testing | [§8.3.1](./testing.md#_8-3-1-syntax) |
 <!-- examples:end -->
 :::
