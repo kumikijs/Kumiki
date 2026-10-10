@@ -1,5 +1,5 @@
-# Feature (language.md §1.7.2 Invariant 1): a user tile is a pure function of the
-# slots and its `in` argument, and its body is not inside its caller's `for`.
+# Feature: a user tile is a pure function of the slots and its `in` argument,
+# and its body is not inside its caller's `for`.
 #
 # The filter bar below is the common shape: the loop variable and the slot
 # share the name `filter`. The loop variable reaches each button as its `$1`;

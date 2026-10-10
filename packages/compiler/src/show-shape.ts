@@ -2,31 +2,17 @@ import { type TypeEnv, typeToString, unaliasType } from "./assignable.ts";
 import type { KeyKind, ShowShape, TypeExpr } from "./ast.ts";
 import { keyRepresentation } from "./key-representation.ts";
 
-/**
- * What `show` needs to be told to write a value of type `t` (stdlib.md
- * §2.2.7): the `ShowShape` of every Map, Set and Tuple in it, which the value
- * alone does not reveal, or `0` when there is none — a record, a List, a
- * scalar and a variant are written from the value itself.
- *
- * Followed through aliases, generics, `nominal` and `where`, as
- * `keyRepresentation` follows a key type. A variant shows its tag only, so an
- * `Option`, a `Result` and a union add nothing whatever they carry. A type
- * that contains itself (`type Tree = {kids: List(Tree), tags: Set(Text)}`)
- * gets a shape that refers back to itself, which `showShapeJs` in codegen
- * writes out.
- */
+/** `0` when `t` has no Map, Set or Tuple outside a variant: the value alone then says how to show it. */
 export function showShapeOf(t: TypeExpr | null, env: TypeEnv): ShowShape {
   return shapeOf(t, env, new Map());
 }
 
-/** A type definition the walk expands, by the name it is written with. */
 function definedName(t: TypeExpr, env: TypeEnv): string | null {
   return (t.kind === "TypeRef" || t.kind === "TypeApp") && env.types.has(t.name)
     ? typeToString(t)
     : null;
 }
 
-/** Whether a Map, a Set or a Tuple is anywhere in `t`, outside a variant. */
 function hasShape(t: TypeExpr | null, env: TypeEnv, seen: Set<string>): boolean {
   if (!t) return false;
   const name = definedName(t, env);
@@ -41,11 +27,8 @@ function hasShape(t: TypeExpr | null, env: TypeEnv, seen: Set<string>): boolean 
   return u.name === "Map" || u.name === "Set" || u.name === "Tuple";
 }
 
-/**
- * The shape of `t`. A definition's shape is registered under its name before
- * its parts are walked and filled in after, so a part that names it again is
- * given that same shape.
- */
+// A definition's shape is registered under its name before its parts are walked, so a type
+// that contains itself gets a shape that refers back to itself.
 function shapeOf(t: TypeExpr | null, env: TypeEnv, building: Map<string, ShowShape>): ShowShape {
   if (!t || !hasShape(t, env, new Set())) return 0;
   const name = definedName(t, env);
@@ -62,14 +45,12 @@ function shapeOf(t: TypeExpr | null, env: TypeEnv, building: Map<string, ShowSha
     return fields;
   }
   if (u?.kind !== "TypeApp") return 0;
-  // Filled in place below, so a part that names this definition again holds
-  // the finished shape: the array is the shape, written before it is complete.
+  // Filled in place below, so a part that names this definition again holds the finished shape.
   const parts: (ShowShape | KeyKind | string)[] = [];
   const shape = parts as unknown as ShowShape;
   if (name !== null) building.set(name, shape);
   const arg = (i: number): ShowShape => shapeOf(u.args[i] ?? null, env, building);
-  // How a key reads back, as `keyKind` tells the key readers; a `Text` key —
-  // and one the walk cannot place — stays the string it is stored as.
+  // A `Text` key, and one the walk cannot place, stays the string it is stored as.
   const key = (): KeyKind | 0 => {
     const kind = keyRepresentation(u.args[0] ?? null, env);
     return kind === "text" || kind === null ? 0 : kind;

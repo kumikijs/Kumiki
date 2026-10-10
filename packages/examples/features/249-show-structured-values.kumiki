@@ -1,5 +1,5 @@
-# Feature (stdlib.md §2.2.7): `show` writes a record, a List, a Tuple, a Map
-# and a Set as the literal that builds it.
+# Feature: `show` writes a record, a List, a Tuple, a Map and a Set as the
+# literal that builds it.
 #
 #   record  {name: "ada", age: 3}
 #   List    [1, 2]
