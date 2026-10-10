@@ -4,7 +4,7 @@
 
 Record a boundary-caught panic on the episode its `episode-id` names
 
-`docs/spec/lifecycle.md` §7.2.3 calls `PanicInfo.episode-id` the join between a
+`docs/spec/lifecycle.md` calls `PanicInfo.episode-id` the join between a
 panic a user saw and what `kumiki replay` / `kumiki_episode_tail` read back. On
 the `error-boundary` path that join led nowhere. The boundary catches inside the
 tile expression, where neither the render catch nor `app.error` sees the throw,
@@ -32,7 +32,7 @@ always `fallback episode: (none)`. The render is the last step of the `app.init`
 chain that produced the page, so it now runs inside the bootstrap episode: a
 served fallback carries the bootstrap's id, and the bootstrap carries the
 `panic` step after the chain's steps. A render nothing panics in adds nothing,
-so the bootstrap of every other app is unchanged. `runtime.md` §10.5.1.1 says
+so the bootstrap of every other app is unchanged. `runtime.md` says
 so, in both language tracks.
 
 One function, `recordRenderPanic`, now builds and records every render panic —

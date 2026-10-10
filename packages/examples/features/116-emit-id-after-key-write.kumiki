@@ -1,5 +1,5 @@
 # Feature: a `latest-per-key` key is evaluated where the `emit` runs, so it sees
-# a write the same reducer made to the slot it reads (http.md §6.4).
+# a write the same reducer made to the slot it reads.
 #
 # `load` is keyed by `noteKey`. `open` writes `noteKey := "b"` and then emits,
 # so the id it keeps is `"load:b"`, not `"load:a"`. `Cancel` hands that id to

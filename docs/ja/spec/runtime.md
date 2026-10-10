@@ -422,7 +422,7 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 4. **`TileWhen` / `TileIf` / `TileMatch`** は透過。タイルを emit する分岐に
    暗黙 key を素通しで伝える。
 
-**runtime の消費**  `packages/runtime/src/core.ts` の reconciler が
+**runtime の消費**  `packages/runtime/src/core/reconcile.ts` の reconciler が
 `oldNode.key` と `newNode.key` を子リストレベルで参照する。`key` は
 `TILE_SKIP_TOP` に含まれ、key の変化だけでは親の `replaceWithFreshTile` を
 起こさない — key は「どの旧子がどの新子と対応するか」を決めるだけで、
