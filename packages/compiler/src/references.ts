@@ -17,7 +17,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
+import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -465,8 +465,7 @@ class Walker {
 
   private slotValues(rec: Expr, locals: ReadonlySet<string>): void {
     for (const f of recordFieldsOf(rec)) {
-      this.addUnpositioned("slot", f.name);
-      this.expr(f.value, locals);
+      this.recordKey("slot", f, () => this.expr(f.value, locals));
     }
   }
 
@@ -484,8 +483,7 @@ class Walker {
 
   private mocks(rec: Expr, locals: ReadonlySet<string>): void {
     for (const m of recordFieldsOf(rec)) {
-      this.addUnpositioned("effect", m.name);
-      this.mockScript(m.value, locals);
+      this.recordKey("effect", m, () => this.mockScript(m.value, locals));
     }
   }
 
@@ -501,9 +499,19 @@ class Walker {
     }
   }
 
-  private addUnpositioned(layer: RefLayer, name: string): void {
-    if (!this.index[layer].has(name)) return;
-    this.out.push({ layer, name });
+  // `{count}` is one token for the key and its value. When the value names something else
+  // (a `for-all` name, a mock's script), a rewrite for the key would change it too, so the key
+  // gets no position and `rename` refuses the name.
+  private recordKey(layer: RefLayer, f: RecordField, walkValue: () => void): void {
+    if (!isWrittenAsItsValue(f)) {
+      this.add(layer, f.name, f.pos);
+      walkValue();
+      return;
+    }
+    const from = this.out.length;
+    walkValue();
+    if (this.out.slice(from).some((r) => r.layer === layer && r.name === f.name)) return;
+    if (this.index[layer].has(f.name)) this.out.push({ layer, name: f.name });
   }
 
   app(a: AppDef): void {
@@ -530,6 +538,11 @@ class Walker {
       }
     }
   }
+}
+
+/** `{name}`: the parser reads it as `{name: name}`, its value a `Ref` at the key's own token. */
+function isWrittenAsItsValue(f: RecordField): boolean {
+  return f.value.kind === "Ref" && f.value.pos.line === f.pos.line && f.value.pos.col === f.pos.col;
 }
 
 function withPatternBinds(

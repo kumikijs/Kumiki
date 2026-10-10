@@ -207,8 +207,11 @@ test inc-increments =
       ]);
     });
 
-    it("names the slots its given/expect blocks key on, without a position", () => {
-      expect(refsOf(src, "test.inc-increments")).toContain("slot.count@-");
+    it("names the slots its given/expect blocks key on, at each key", () => {
+      expect(refsOf(src, "test.inc-increments").filter((r) => r.startsWith("slot."))).toEqual([
+        "slot.count@6:27",
+        "slot.count@7:27",
+      ]);
     });
   });
 
@@ -277,7 +280,7 @@ ${decls}test t =
         mocks  = {}
         expect = {slots-equal: {items: []}, effects: [persist(items)]}
 `;
-      expect(refsOf(episode, "test.t")).toEqual(["slot.items@-"]);
+      expect(refsOf(episode, "test.t")).toEqual(["slot.items@13:33"]);
       expect(codesOf(episode)).toContain("E0714");
     });
 
@@ -306,7 +309,7 @@ tile B = button(text="b", onClick=inc)
         given  = {mocks: {persist: delay(twice(5), ok(twice(1)))}, event: {type: ui.click, target: B}}
         expect = {effects: []}
 `;
-        expect(mockRefs(src)).toEqual(["effect.persist@-", "fn.twice@13:42", "fn.twice@13:55"]);
+        expect(mockRefs(src)).toEqual(["effect.persist@13:27", "fn.twice@13:42", "fn.twice@13:55"]);
       });
 
       it("in an episode-test names its effect by key, and fns only in its values", () => {
@@ -316,7 +319,11 @@ tile B = button(text="b", onClick=inc)
         mocks  = {persist: err(twice(1)), load: ignore}
         expect = {no-errors: true}
 `;
-        expect(mockRefs(src)).toEqual(["effect.persist@-", "fn.twice@14:32", "effect.load@-"]);
+        expect(mockRefs(src)).toEqual([
+          "effect.persist@14:19",
+          "fn.twice@14:32",
+          "effect.load@14:43",
+        ]);
       });
     });
 
@@ -337,10 +344,10 @@ test t =
 `;
         expect(refsOf(src, "test.t")).toEqual([
           "reducer.r@7:18",
-          "slot.mocks@-",
+          "slot.mocks@8:27",
           "fn.ok@8:41",
           "tile.B@8:82",
-          "slot.mocks@-",
+          "slot.mocks@9:27",
         ]);
       });
 
@@ -359,18 +366,22 @@ tile B = button(text="b", onClick=r)
         given  = {event: {type: ui.click, target: B}}
         expect = {slots: {n: 1}, mocks: {save: ok(twice(1))}}
 `;
-        expect(refsOf(inExpect, "test.t")).toEqual(["reducer.r@7:18", "tile.B@8:51", "slot.n@-"]);
+        expect(refsOf(inExpect, "test.t")).toEqual([
+          "reducer.r@7:18",
+          "tile.B@8:51",
+          "slot.n@9:27",
+        ]);
         const inPropertyGiven = `${decls}test t =
     property-test
         for-all   = {k: Int}
         given     = {slots: {n: k}, mocks: {save: ok(twice(1))}}
         invariant = run-reducer(r).slots.n == k + 1
 `;
-        expect(refsOf(inPropertyGiven, "test.t")).toEqual(["slot.n@-", "reducer.r@10:33"]);
+        expect(refsOf(inPropertyGiven, "test.t")).toEqual(["slot.n@9:30", "reducer.r@10:33"]);
         for (const src of [inExpect, inPropertyGiven]) expect(codesOf(src)).toContain("E0714");
       });
 
-      it("reads an episode-test's `slots-equal` keys as slots", () => {
+      it("reads an episode-test's `slots-equal` keys as slots, each at its key", () => {
         const src = `slot seen : Text = ""
 fn root() -> Text = "/"
 test replay =
@@ -379,7 +390,7 @@ test replay =
         mocks  = {}
         expect = {slots-equal: {seen: root()}, no-panics: true}
 `;
-        expect(refsOf(src, "test.replay")).toEqual(["slot.seen@-", "fn.root@7:39"]);
+        expect(refsOf(src, "test.replay")).toEqual(["slot.seen@7:33", "fn.root@7:39"]);
       });
 
       it("binds the `for-all` names in the given, as it does in the invariant", () => {
@@ -395,7 +406,7 @@ test p =
         given     = {slots: {total: size + total}, event: {type: ui.click, target: B}}
         invariant = run-reducer(r).slots.total == size + total + 1
 `;
-        expect(refsOf(src, "test.p")).toEqual(["slot.total@-", "tile.B@8:84", "reducer.r@9:33"]);
+        expect(refsOf(src, "test.p")).toEqual(["slot.total@8:30", "tile.B@8:84", "reducer.r@9:33"]);
       });
 
       it("reads an event's `type` as no name, and its `target` as a tile only for a ui event", () => {
@@ -414,8 +425,8 @@ test timed =
         given  = {event: {type: timer, target: B}}
         expect = {slots: {ui: 1}}
 `;
-        expect(refsOf(src, "test.t")).toEqual(["reducer.r@6:18", "tile.B@7:51", "slot.ui@-"]);
-        expect(refsOf(src, "test.timed")).toEqual(["reducer.tick@10:18", "slot.ui@-"]);
+        expect(refsOf(src, "test.t")).toEqual(["reducer.r@6:18", "tile.B@7:51", "slot.ui@8:27"]);
+        expect(refsOf(src, "test.timed")).toEqual(["reducer.tick@10:18", "slot.ui@12:27"]);
       });
 
       it("reads a `target` field inside a slot's value as the value it is", () => {
@@ -430,7 +441,73 @@ test t =
         given  = {event: {type: ui.click, target: B}}
         expect = {slots: {nav: {target: Home}}}
 `;
-        expect(refsOf(src, "test.t")).toEqual(["reducer.go@7:18", "tile.B@8:51", "slot.nav@-"]);
+        expect(refsOf(src, "test.t")).toEqual(["reducer.go@7:18", "tile.B@8:51", "slot.nav@9:27"]);
+      });
+    });
+
+    // `{count}` is `{count: count}` written as one token: the key and its value
+    // at once. Rewriting the token rewrites both.
+    describe("a key written as its own value", () => {
+      const decls = `slot count : Int = 0
+effect ignore cap=storage.write in=Int out=Result(Int, Text)
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b", onClick=inc)
+`;
+
+      it("is one reference, at the token, when the value is the same slot", () => {
+        const src = `${decls}test t =
+    reducer-test inc
+        given  = {slots: {count}, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 1}}
+`;
+        expect(refsOf(src, "test.t")).toEqual([
+          "reducer.inc@6:18",
+          "slot.count@7:27",
+          "tile.B@7:67",
+          "slot.count@8:27",
+        ]);
+        expect(codesOf(src)).toEqual(["E0003"]);
+      });
+
+      it("has no position when the value is a `for-all` name", () => {
+        // The token is the slot as the key and the generated value as the
+        // value: rewritten for the slot, it would stop reading the generator.
+        const src = `${decls}test p =
+    property-test
+        for-all   = {count: Int}
+        given     = {slots: {count}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == count + 1
+`;
+        expect(refsOf(src, "test.p")).toEqual(["slot.count@-", "tile.B@8:70", "reducer.inc@9:33"]);
+        expect(codesOf(src)).toEqual(["E0003"]);
+      });
+
+      it("is at the key when the value is written out, though it spells the same name", () => {
+        // `{count: count}` is two tokens: the key is the slot, the value the
+        // generated one, and a rewrite of the key leaves the value as it is.
+        const src = `${decls}test p =
+    property-test
+        for-all   = {count: Int}
+        given     = {slots: {count: count}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == count + 1
+`;
+        expect(refsOf(src, "test.p")).toEqual([
+          "slot.count@8:30",
+          "tile.B@8:77",
+          "reducer.inc@9:33",
+        ]);
+      });
+
+      it("has no position as a mock key, whose value is the mock's script", () => {
+        // `{ignore}` mocks the effect `ignore` with the script `ignore`.
+        const src = `${decls}test replay =
+    episode-test
+        load   = "log.jsonl"
+        mocks  = {ignore}
+        expect = {no-errors: true}
+`;
+        expect(refsOf(src, "test.replay")).toEqual(["effect.ignore@-"]);
+        expect(codesOf(src)).toEqual(["E0003"]);
       });
     });
   });
