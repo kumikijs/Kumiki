@@ -1,5 +1,5 @@
-# Feature (ai-edit.md §9.2.1): a type-member call names its type by its
-# qualifier, so the call is a reference to that type.
+# Feature: a type-member call names its type by its qualifier, so the call is
+# a reference to that type.
 #
 #   let id = ItemId.fresh()                    `ItemId` is the type
 #   picked := ItemId.parse(ItemId.show(id))
@@ -10,9 +10,9 @@
 #   kumiki rename <file> type.ItemId ThingId   ->  let id = ThingId.fresh()
 #
 # rewrites every qualifier along with the declarations, leaving a file that
-# checks. The qualifier is a type on `fresh`, `parse` and `show` (stdlib.md
-# §2.4.1, §2.4.3). `Duration.ms(5)` and the other built-in calls of a
-# namespace name no type, even when a type of the program shares the name.
+# checks. The qualifier is a type on `fresh`, `parse` and `show` (stdlib.md).
+# `Duration.ms(5)` and the other built-in calls of a namespace name no type,
+# even when a type of the program shares the name.
 
 type ItemId = nominal Text where uuid
 type Item   = {id: ItemId, label: Text}

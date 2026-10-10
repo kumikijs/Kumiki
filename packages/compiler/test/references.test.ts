@@ -1,9 +1,3 @@
-// Direct tests for the reference walker. The CLI verbs exercise it indirectly,
-// but only through their own output — a walker that dropped shadowing, or a
-// whole layer, would still let every verb "work" while producing a program that
-// compiles and means something different. These assert the resolved edges
-// themselves, by layer and position.
-
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -48,9 +42,6 @@ slot label : Text = ""
     expect(refsOf(src, "type.Item")).toEqual(["type.ItemId@2:18"]);
   });
 
-  // A type-member call names its type by its qualifier (errors.md E0117: "a
-  // call's qualifier is a type name too"), and the call's position is the
-  // qualifier's, so `rename` rewrites `ItemId` in `ItemId.fresh()`.
   describe("a qualified call", () => {
     it("names the type a type-member call is qualified by, at the qualifier", () => {
       const src = `type ItemId = nominal Text where uuid
@@ -62,7 +53,6 @@ reducer add on=ui.click(B) do=
     last := ItemId.parse(shown)
 tile B = button(text="b")
 `;
-      // `Int` is a type too, but not a definition, so it names nothing.
       expect(refsOf(src, "reducer.add").filter((r) => r.startsWith("type."))).toEqual([
         "type.ItemId@5:14",
         "type.ItemId@6:14",
@@ -71,10 +61,6 @@ tile B = button(text="b")
     });
 
     it("names no type for a namespace's own member, even one a type shares the name of", () => {
-      // `Duration.ms` is a built-in call and `Duration.fresh()` no member at all
-      // (E0116): within `Duration` the members are exactly the built-in ones.
-      // Given its argument, `show` is the type member on any qualifier, so that
-      // call alone names the program's `Duration`.
       const src = `type Duration = nominal Text
 slot wait : Int = 0
 slot raw : Text = ""
@@ -100,8 +86,6 @@ fn shout(label: Text) -> Text = label
       const src = `${decl}reducer r on=ui.click(B) do= for label in items { items := [label] }
 tile B = button(text="b")
 `;
-      // Both `label`s are the loop variable. Only `items` names a definition —
-      // once as the thing being iterated, once as the assignment target.
       expect(refsOf(src, "reducer.r")).toEqual([
         "tile.B@4:23",
         "slot.items@4:43",
@@ -165,8 +149,6 @@ tile S = box() {motion: "Spin"}
 tile Panel = card(text("p"))
 reducer on-panel on=tile.mount(Panel) do= n := 1
 `;
-      // Column 32 is `Panel`, not the `tile.` the pattern starts at — `rename`
-      // rewrites this position verbatim.
       expect(refsOf(src, "reducer.on-panel")).toEqual(["tile.Panel@3:32", "slot.n@3:43"]);
     });
 
@@ -181,8 +163,6 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = [load()]
 `;
-      // One reference at the init callee, and it is the effect. Resolving it as
-      // a fn too would let `rename fn.load` repoint init at a missing effect.
       expect(refsOf(src, "app.A")).toEqual(["tile.App@8:22", "tile.App@8:37", "effect.load@9:15"]);
     });
 
@@ -222,10 +202,6 @@ app A
     });
 
     it("names the slot the theme clause reads the name from", () => {
-      // `theme = <slot>` is the dynamic form (spec §4.6). Recording it as a
-      // theme unconditionally dropped the edge — `add` keeps only names its
-      // own layer holds — so `rename` left the clause pointing at the old
-      // name and the write was rolled back with no mention of `app.theme`.
       const src = app(
         "themeName",
         `slot themeName : Text = "Light"
@@ -265,10 +241,6 @@ test inc-increments =
     });
 
     it("names the slots its given/expect blocks key on, without a position", () => {
-      // A slot name in `{slots: {count: …}}` is a record KEY. The edge is real —
-      // `refs` and `remove --cascade` need it — but there is no identifier token
-      // for `rename` to rewrite, so it carries no position and `rename` refuses
-      // rather than leaving a test that asserts about a slot that moved.
       expect(refsOf(src, "test.inc-increments")).toContain("slot.count@-");
     });
   });

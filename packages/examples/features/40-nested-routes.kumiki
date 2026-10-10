@@ -1,5 +1,5 @@
 # Feature: nested routes — `sub-routes` declared on a parent tile, with
-# `route-outlet()` selecting the child render. (spec/routing.md §3.6)
+# `route-outlet()` selecting the child render.
 
 tile NotFound        = page(heading("404 — not found"))
 tile AccountSettings = page(heading("Account settings"))
