@@ -1,23 +1,4 @@
-// Kumiki runtime episode logger (docs/spec/runtime.md §10.5). One episode = the
-// causal chain derived from one trigger (a DOM event, a lifecycle fire, a timer
-// tick, a route change, an async effect result, ...). The synchronous variant
-// implemented here groups every reducer / effect-start / effect-end /
-// signal-update / panic that happens between `beginTrigger` and `endTrigger`
-// into a single Episode. An async effect that resolves AFTER `endTrigger` lands
-// its `effect-end` on the same episode if the originating handle (`token` from
-// `recordEffectStart`) is still in flight; otherwise a fresh episode is the
-// caller's job to open. We keep this minimal: an in-memory ring buffer (§10.5.2,
-// default 100), and — when the caller opts in — a localStorage mirror (default
-// max 20, 5 MB byte cap).
-
 export type EpisodeTrigger = {
-  /**
-   * "ui.click" / "ui.submit" / "lifecycle" / "route.enter" / "timer" /
-   * "effect.end" / "init" / "ssr.hydrate" (server-generated bootstrap, see
-   * docs/spec/runtime.md §10.5.1 + §10.6.2 — the client side never opens
-   * episodes with this kind via `beginTrigger`; only `ingestBootstrap`
-   * injects them).
-   */
   kind: string;
   /** Tile name, lifecycle name, route pattern — interpretation depends on `kind`. */
   target?: string;
@@ -27,32 +8,11 @@ export type EpisodeTrigger = {
 
 export type SlotDiff = { name: string; before: unknown; after: unknown };
 
-/**
- * The builtins whose answer comes from outside the program: the clock
- * (`now`, stdlib.md §2.4.2), the random source (`random()`, §2.4.4), the id
- * generator (`<T>.fresh()`, §2.4.1) and the OS colour-scheme preference
- * (`prefers-dark()`, style.md §4.6.1). Nothing a slot holds can derive one,
- * which is why they are the reads an episode has to carry for a replay to be
- * the same run.
- */
 export type EnvReadKind = "now" | "random" | "fresh-id" | "prefers-dark";
 
-/** One environment read and what it answered (runtime.md §10.5.1). */
+/** One environment read and what it answered. */
 export type EnvRead = { kind: EnvReadKind; value: unknown };
 
-/**
- * What the runtime was doing when a panic was reported (docs/spec/runtime.md
- * §10.5.1). Emitted callsites today are `reducer`, `tile-render`, `hydrate`,
- * `capability` and `effect`; `unknown` stays a reserved value so consumers
- * can exhaustive-switch without a fallthrough case as future callsites are
- * wired in.
- *
- * `effect` and `capability` are the two categories for something nothing
- * threw: the dispatcher could not run an emit — it names no effect in
- * `app.effects` (§10.4.1), or its effect's capability is not in `app.caps`
- * (§10.4.2). Each is a program that cannot work rather than a caught error,
- * so its record carries no `stack` and no `cause`.
- */
 export type PanicCategory =
   | "reducer"
   | "effect"
@@ -61,11 +21,6 @@ export type PanicCategory =
   | "hydrate"
   | "unknown";
 
-/**
- * One link in a flattened `Error.cause` chain. Only shape sufficient to trace
- * root cause across a devtools / `kumiki replay` session — no runtime object
- * references, so it round-trips through JSON without loss.
- */
 export type PanicCauseLink = { message: string; stack?: string };
 
 export type EpisodeStep =
@@ -74,12 +29,6 @@ export type EpisodeStep =
       name: string;
       "slot-diffs": SlotDiff[];
       emits: string[];
-      /**
-       * What the reducer body read from the environment while it ran, in the
-       * order it asked. Omitted when the body read nothing — which is most
-       * reducers, and keeps a log written before this field existed identical
-       * to one written now.
-       */
       "env-reads"?: EnvRead[];
       ts: number;
     }
@@ -103,29 +52,12 @@ export type EpisodeStep =
       message: string;
       /** Human-readable source label (`reducer "addTodo"`, `"render"`, ...). */
       location?: string;
-      /**
-       * The reducer whose body threw, when the throw came from one. Present so
-       * a replay can key the step's `env-reads` the same way it keys a
-       * completed `reducer` step's — a panic step's `location` is prose.
-       */
       name?: string;
-      /**
-       * What that body read from the environment before it threw. Without it,
-       * the episode a user attaches to a bug report — the one that crashed —
-       * is the one a replay re-rolls its way past (§10.5.1).
-       */
       "env-reads"?: EnvRead[];
       /** `Error.stack` of the caught throw, when available. */
       stack?: string;
       /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
       cause?: PanicCauseLink[];
-      /**
-       * What the runtime was doing when the panic was reported. For `effect`
-       * and `capability` that is a refused emit rather than a caught throw, so
-       * the step carries no `stack` and no `cause`. Omitted in episode logs
-       * written before this field existed; readers should treat absence as
-       * {@link PanicCategory} `"unknown"`.
-       */
       category?: PanicCategory;
       ts: number;
     };
@@ -139,11 +71,6 @@ export type Episode = {
   status: EpisodeStatus;
 };
 
-/**
- * Minimal localStorage shape — `globalThis.localStorage` satisfies it. Spelt out
- * as an interface so tests can inject a Map-backed double without touching the
- * real browser storage.
- */
 export type EpisodeLocalStorage = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -151,13 +78,8 @@ export type EpisodeLocalStorage = {
 };
 
 export type EpisodeLoggerOptions = {
-  /** In-memory ring buffer cap (§10.5.2, default 100). */
+  /** In-memory ring buffer cap, default 100. */
   memoryMax?: number;
-  /**
-   * Off by default. happy-dom / SSR / Web-Component shadow contexts often have
-   * no usable `localStorage`, so the runtime stays passive unless the host
-   * mount opts in explicitly.
-   */
   localStorage?: boolean;
   localStorageMax?: number;
   localStorageKey?: string;
@@ -173,91 +95,20 @@ export type EpisodeLoggerOptions = {
 };
 
 export type EpisodeLogger = {
-  /**
-   * Open a new episode for `trigger` and make it the current target of every
-   * `record*` call. Returns the episode id (`ep_<ULID>`) so callers can stash
-   * it across async boundaries if needed.
-   */
   beginTrigger(t: Omit<EpisodeTrigger, "ts"> & { ts?: number }): string;
-  /**
-   * Close the currently open episode. If at least one effect dispatched during
-   * the episode is still in flight, the episode stays `ongoing` and commits
-   * when its last `recordEffectEnd` fires.
-   */
   endTrigger(): void;
-  /**
-   * Append a `{kind: "reducer", ...}` step to the open episode. `envReads` is
-   * what the body read from the environment (§10.5.1); an empty or absent list
-   * writes no `env-reads` field.
-   */
   recordReducer(
     name: string,
     slotDiffs: SlotDiff[],
     emits: string[],
     envReads?: readonly EnvRead[],
   ): void;
-  /**
-   * Append a `{kind: "effect-start", ...}` step. The returned token lets the
-   * caller hand the matching `effect-end` back to the SAME episode, even after
-   * the synchronous handler has already returned.
-   */
   recordEffectStart(name: string, args: unknown): string;
-  /**
-   * Append a `{kind: "effect-end", ...}` step to the episode identified by
-   * `token` (or, as a fallback, the currently open episode), and push that
-   * episode back into focus so the `.ok` / `.err` reducer chain that runs
-   * next records its steps on the SAME episode (spec §10.5.1 keeps the whole
-   * causal chain from one trigger together). The returned function must be
-   * called once the chain is done — it pops the episode and commits if it
-   * was the last outstanding effect.
-   */
   recordEffectEnd(token: string, name: string, result: "ok" | "err", value: unknown): () => void;
-  /**
-   * Append a `{kind: "effect-cancel", ...}` step to the open episode. Used by
-   * the dispatcher's `http.cancel` branch (spec http.md §6.4) so the trace
-   * carries both the cancel intent AND the cancelled effect's `.err`
-   * (`message: "aborted"`) — without the cancel step the `.err` looks like a
-   * generic network failure. For a deferred-policy launch (debounce) that
-   * was claimed at dispatch time but never actually fired, see the sibling
-   * `cancelPendingEffect` — that one resolves the originating episode by
-   * `token` and settles its `pending` counter, which `recordEffectCancel`
-   * deliberately does not do.
-   */
   recordEffectCancel(targetId: string): void;
-  /**
-   * Cancel a pending effect-start that was claimed (token + step) at dispatch
-   * time but whose `launch` never actually fired. Used by the dispatcher
-   * (spec §10.5.1) for debounce timers that were replaced before firing, by
-   * `dispose()` draining still-pending debounces at unmount, by the
-   * `http.cancel` branch when it clears a pending debounce timer, and by
-   * `launch`'s capability early-return so a missing `cap` doesn't strand the
-   * originating episode. We resolve the token to its originating episode,
-   * append an `effect-cancel` step there, decrement that episode's `pending`
-   * counter, and `settle` it so a `closedAwaiting` episode commits. Unknown
-   * tokens are a silent no-op. Distinct from `recordEffectCancel` (which
-   * annotates the CURRENT top episode, leaves `inflight` intact, and relies
-   * on the subsequent AbortError to commit the cancelled episode).
-   */
   cancelPendingEffect(token: string, name: string): void;
   /** Append a `{kind: "signal-update", ...}` step to the open episode. */
   recordSignalUpdate(dirtySlots: string[], bindsUpdated?: string[]): void;
-  /**
-   * Record a panic; the episode commits with `status = "panic"`. The `info`
-   * object is written as-is to the `panic` step (except for the `ts`, which the
-   * logger stamps). `stack` / `cause` / `category` are optional so callers on
-   * older paths (or ad-hoc tests) can keep passing only `{message, location?}`.
-   *
-   * `token` names the episode that claimed an `effect-start`, resolved the
-   * same way `recordEffectEnd` resolves it and falling back to the episode in
-   * focus. A deferred-policy launch (debounce, queue) fires from a timer or a
-   * promise tail, long after `endTrigger` balanced out, so the stack is empty
-   * and only the token can say which episode the panic belongs to (§10.5.1).
-   *
-   * Returns the id of the episode the step landed on, or `undefined` when
-   * there was none — which is the id `PanicInfo.episode-id` must carry, by
-   * construction rather than by a second lookup that could name a different
-   * episode.
-   */
   recordPanic(
     info: {
       message: string;
@@ -267,45 +118,18 @@ export type EpisodeLogger = {
       category?: PanicCategory | undefined;
       /** The reducer that threw, when the throw came from a reducer body. */
       name?: string | undefined;
-      /** What that body read from the environment before it threw (§10.5.1). */
+      /** What that body read from the environment before it threw. */
       envReads?: readonly EnvRead[] | undefined;
     },
     token?: string,
   ): string | undefined;
-  /**
-   * Inject an already-completed episode at the tail of the memory ring (and
-   * the localStorage mirror, when enabled). Used by SSR hydration to seat
-   * the server-side bootstrap episode (`trigger.kind = "ssr.hydrate"`) on
-   * the client logger BEFORE any client-opened episode runs, so
-   * `list()[0]` reflects the SSR causal chain (§10.5.1 + §10.6.2). Does not
-   * touch the trigger stack — bootstrap episodes are externally finalised.
-   */
   ingestBootstrap(ep: Episode): void;
   /** Snapshot of currently retained episodes (oldest first). */
   list(): Episode[];
-  /**
-   * True when at least one episode is in focus (`beginTrigger` not yet matched
-   * by `endTrigger`, or `recordEffectEnd`'s scope is open). The runtime uses
-   * this to decide whether the next `applyReducer` should auto-open a new
-   * episode or join the existing one.
-   */
   hasOpenEpisode(): boolean;
-  /**
-   * The id of the episode currently in focus, or `undefined` when none is —
-   * the same question `hasOpenEpisode` answers, with the answer a caller can
-   * name. `PanicInfo.episode-id` (lifecycle.md §7.2.3) is what needs it: a
-   * panic is the one event a program is handed while the episode that produced
-   * it is still open, and the id is its join to what `kumiki replay` reads.
-   */
   currentId(): string | undefined;
 };
 
-/**
- * Cryptographically-uninteresting ULID-ish ids (`ep_<26-char-Crockford>`). We
- * only need lexicographically-sortable, collision-resistant-enough strings; the
- * MCP `kumiki_episode` reader matches by exact string so format stability is
- * what matters, not entropy.
- */
 function defaultIdGen(): () => string {
   const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
   let lastTs = 0;
@@ -427,14 +251,6 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
     },
     recordEffectStart(name, args) {
       const ep = topEpisode();
-      // No open episode = no causal home for this start. Returning a fresh
-      // `idGen()` here would hand the caller a phantom token that is never
-      // resolvable via `inflight`, so the matching `recordEffectEnd` /
-      // `cancelPendingEffect` would silently no-op and the invariant
-      // violation (dispatcher fired a `recordEffectStart` from outside any
-      // open episode) would be unobservable. Empty string makes that case
-      // explicit at the dispatcher seam, which treats `""` as "no episode
-      // attribution".
       if (!ep) return "";
       const token = idGen();
       ep.steps.push({ kind: "effect-start", name, args, ts: now() });

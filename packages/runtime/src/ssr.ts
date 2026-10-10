@@ -1,27 +1,3 @@
-// Kumiki SSR — `renderToString` (docs/spec/runtime.md §10.6.1). Produces the
-// initial-paint HTML, the non-`volatile` slot snapshot, and the bootstrap
-// episode (`trigger.kind = "ssr.hydrate"`) that client `mount` ingests on
-// hydration. The walker, the volatile/refine filter, the route picker, and
-// the status-routing helpers are all shared with the live mount via
-// `ssr-render.ts` and `core.ts` — no duplicate semantics live here.
-//
-// Per-request safety: this module guarantees no cross-request slot leak.
-// The compiled `AppShape` is a module-singleton on Edge / Node runtimes
-// where the same `App` is reused across requests, and the compiler emits
-// tile closures that read from a module-level `_live` aliased to
-// `app.live` — so the SSR pass must operate on `app.live` directly. We
-// solve the leak by resetting `app.live` to slot defaults at both the
-// START and END of every `renderToString` call: any value set during a
-// previous request is overwritten before this one runs, and any value
-// this request set is wiped before the next one. The host therefore MUST
-// NOT assume `app.live` mirrors the latest pass after `renderToString`
-// returns. Concurrent SSR calls against the same `app` instance in the
-// same JS event loop are NOT supported — Edge / Node patterns serialise
-// per request anyway (one fetch handler per request invocation).
-//
-// This module is browser-safe: it imports nothing Node-specific, so the
-// same code runs on Cloudflare Workers / Vercel Edge (§10.6.3).
-
 import {
   type AppShape,
   type CapabilityProvider,
@@ -48,26 +24,7 @@ import { splitPath } from "./router.ts";
 import { renderTileToString } from "./ssr-render.ts";
 
 export type RenderToStringOptions = {
-  /**
-   * Initial route path the SSR pass renders for: a concrete URL path, which may
-   * carry a query and a hash (e.g. `"/posts/abc?tab=2#top"`, or a request's
-   * `url` passed through as is). It is split the way the client's router reads
-   * a location, with the pathname kept as written (`//foo` and `/a/../b` are
-   * not normalized, as a browser's `location.pathname` does not). A static
-   * redirect (`->>`) that applies to it is resolved first, and the target is
-   * what is rendered and what `snapshot.route` names. When `routing` is provided,
-   * dynamic patterns (`/posts/:id`) match this path via
-   * `RoutingImpl.parseLocation`; otherwise the path is compared to declared
-   * route patterns verbatim (so only static routes match without routing).
-   * Defaults to `"/"`.
-   */
   route?: string;
-  /**
-   * Routing implementation. Pass `routing` from `@kumikijs/runtime` when the
-   * app has dynamic / sub-route patterns — without it, `pickRootTile` only
-   * matches exact-string routes and dynamic pages SSR-render the `/404`
-   * fallback.
-   */
   routing?: RoutingImpl;
   /** Host capability providers — same shape as `MountOptions.providers`. */
   providers?: Record<string, CapabilityProvider>;
@@ -77,11 +34,6 @@ export type RenderToStringOptions = {
   idGen?: () => string;
 };
 
-/**
- * Versioned SSR snapshot envelope (docs/spec/runtime.md §10.6.1). The
- * `kumiki` field is a hard contract: client hydration that sees a mismatched
- * version drops the snapshot and falls back to a full CSR boot.
- */
 export type RenderedSnapshot = {
   kumiki: 1;
   route: string;
@@ -97,19 +49,8 @@ export type RenderToStringResult = {
 };
 
 /**
- * Render `app` to an HTML string and produce the SSR snapshot + bootstrap
- * episode that `mount`/`hydrate` will use on the client (§10.6.1, §10.6.2).
- * The pass runs `app.init` effects through host providers exactly once,
- * collapsing every reducer/effect step into a single `ssr.hydrate` episode
- * — the client takes that as `app.episodes()[0]` and does NOT re-run init,
- * keeping HTTP / IndexedDB / storage effects from firing twice.
- *
- * Per-request hygiene: `app.live` IS reset to slot defaults at both the
- * start and end of every call. This is the cross-request leak guard for
- * the module-singleton `AppShape`. The trade-off is that this module is
- * NOT safe for concurrent SSR calls against the same `app` in the same JS
- * event loop; Edge / Node SSR patterns serialise per request, so this is
- * the right trade-off in practice.
+ * Renders into the app's shared `app.live`, so concurrent renders of one app mix slot values:
+ * await each before the next, and read state from the result, not from `app.live`.
  */
 export async function renderToString(
   app: AppShape,
@@ -117,19 +58,10 @@ export async function renderToString(
 ): Promise<RenderToStringResult> {
   const routePath = options.route ?? "/";
 
-  // Install slot defaults onto `app.live` BEFORE running any effect or
-  // tile closure — this is what wipes a previous request's residue. The
-  // tile factories the compiler emits read from this `_live`/`app.live`
-  // alias, so we can't avoid touching the singleton.
   if (!app.live) app.live = {};
   const live = app.live;
   for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
 
-  // §3.10: a static redirect is resolved before anything is rendered, the way
-  // `mount` resolves it before its first route sync (same `findRedirect`, so
-  // server and client agree on where a path lands). Without a routing module
-  // only a redirect written for exactly this path applies, matching the
-  // literal-string fallback below.
   const requested = splitPath(routePath);
   const redirectTo = options.routing
     ? options.routing.findRedirect(app.routes, requested)
@@ -138,9 +70,6 @@ export async function renderToString(
       )?.redirectTo ?? null);
   const servedPath = redirectTo ?? routePath;
 
-  // Dynamic-route matching when the host hands us a routing implementation.
-  // Without it we fall back to literal string matching (the path becomes
-  // its own pattern) — static routes still work; dynamic ones won't.
   const parsedRoute: ParsedRoute =
     options.routing && app.routes && app.routes.length > 0
       ? options.routing.parseLocation(app.routes, splitPath(servedPath))
@@ -158,12 +87,7 @@ export async function renderToString(
   };
 
   try {
-    // §10.5: the trigger names the initial route, which §10.6.1 defines as
-    // where the path lands, so a redirected request names its target.
     logger.beginTrigger({ kind: "ssr.hydrate", target: servedPath });
-    // Run `app.init` emits concurrently to mirror the live `dispatcher.dispatch`
-    // model — sequential await would let cache-first / network-first races land
-    // a different "last write wins" than the client would observe.
     await Promise.all(app.init.map((emit) => dispatchEmit(app, live, emit, caps, logger)));
     logger.endTrigger();
 
@@ -173,8 +97,6 @@ export async function renderToString(
       throw new Error("renderToString: bootstrap episode was not committed (in-flight effects?)");
     }
 
-    // Inside the render bracket, so `@token` references resolve against this
-    // app's theme rather than the built-in fallbacks.
     const html = withRenderingApp(app, () => renderTileToString(pickRootTile(app, live)));
 
     const slots: SsrSnapshot = {};
@@ -192,25 +114,12 @@ export async function renderToString(
     };
     return { html, snapshot, bootstrapEpisode: bootstrap };
   } finally {
-    // Always wipe `app.live` back to slot defaults so the next request
-    // starts clean. This is the per-request leak guard: even if the
-    // host code never explicitly resets `app.live`, the singleton is
-    // restored before this call returns.
     for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
   }
 }
 
-/**
- * The standard effects (stdlib.md §2.6), by name. A mount installs them onto
- * `app.effects` — `log` in core, the navigation effects and `scroll-to` with
- * the routing module, `toast` and `confirm` from their own — and this pass
- * installs none and runs none, so on the server an emit of one finds no entry
- * there. It still names an effect, one this pass does not run, so it is
- * skipped rather than reported as naming none (runtime.md §10.4.1).
- *
- * `test/capability-refusal.test.ts` holds this list to what a full `mount`
- * installs.
- */
+// A mount installs the standard effects onto `app.effects`; this pass installs and runs none, so
+// an emit of one finds no entry here and is skipped rather than reported as naming no effect.
 export const STANDARD_EFFECTS: ReadonlySet<string> = new Set([
   "log",
   "navigate",
@@ -221,21 +130,6 @@ export const STANDARD_EFFECTS: ReadonlySet<string> = new Set([
   "confirm",
 ]);
 
-/**
- * Run one effect emit on the SSR pass: invoke the capability, record
- * `effect-start` / `effect-end`, then propagate the result through any
- * matching `{kind: "effect", outcome}` reducer (which may emit further
- * effects — those get awaited inline so the bootstrap episode captures the
- * full causal chain, not just the first level).
- *
- * Mirrors the live `handleEffectResult` semantics:
- *  - `$1` / `$2` payload shape (`$2` is the dispatcher key — absent on SSR);
- *  - reducer panics surface via `logger.recordPanic` instead of being
- *    silently caught (#37 no-silent-failure);
- *  - `app.http.on401/on403/on5xx` status routing fires for err results;
- *  - an `err` outcome with no matching `.err` reducer is reported via
- *    `reportUnhandledEffectError`.
- */
 async function dispatchEmit(
   app: AppShape,
   live: Record<string, unknown>,
@@ -245,36 +139,14 @@ async function dispatchEmit(
 ): Promise<void> {
   const effect = app.effects[emit.effect];
   if (!effect) {
-    // A standard effect names an effect, one this pass does not run.
     if (STANDARD_EFFECTS.has(emit.effect)) return;
-    // §10.4.1, on the live dispatcher's terms: the `panic` step on the episode
-    // in focus, and no `effect-start` / `effect-cancel` pair around it — there
-    // is no effect to have started, so nothing is claimed and nothing left
-    // pending to keep the bootstrap episode from committing.
+    // No effect-start / effect-cancel pair: nothing was claimed, so nothing is left pending to
+    // keep the bootstrap episode from committing.
     logger.recordPanic(reportRefusedEmit(emit.effect, { category: "effect" }));
     return;
   }
-  // EmitSpec args are positional; the live dispatcher passes `args[0]` as the
-  // effect input (the compiler emits a single-value tuple even for unary
-  // effects). Mirror that here so SSR and CSR share the same effect signature.
   const input = emit.args[0];
-  // §10.4.2's gate, on the same terms as the live dispatcher's `launch` — see
-  // there for the empty-cap rule. The cancel is not decoration: a claimed
-  // start that never ends leaves the bootstrap episode uncommitted, and
-  // `renderToString` refuses to return one.
   if (effect.cap !== "" && !caps.has(effect.cap)) {
-    // Both records, because they say different things: the start / cancel pair
-    // is that this emit did not run, and the `panic` step is that it was
-    // refused and why. What the live path does beyond this is fire
-    // `app.error`, and this pass has none to fire: a server-side reducer panic
-    // is a `panic` step and nothing more (see `applyReducerOnSsr`), and a
-    // refusal is held to that same rule rather than inventing a second one.
-    //
-    // Panic before cancel, the order the live path is bound to: there the
-    // cancel settles the originating episode and commits it, so a step
-    // appended after it is one `onEpisode` and the localStorage mirror have
-    // already been handed without. Reading it back, the reason precedes the
-    // consequence it explains.
     const token = logger.recordEffectStart(emit.effect, input);
     logger.recordPanic(
       reportRefusedEmit(emit.effect, { category: "capability", cap: effect.cap }),
@@ -312,10 +184,6 @@ async function dispatchEmit(
         followUps.push(...applied.emits);
       }
     }
-    // Status-coded routing for HTTP-shaped err payloads (core.ts:
-    // handleEffectResult, spec §6.3.2): err with 401/403/5xx forwards to the
-    // global `app.http.on-*` reducer regardless of whether the per-effect
-    // `.err` matched.
     if (result.kind === "err" && app.http) {
       const status = readStatus(result.value);
       if (status !== null) {
@@ -339,9 +207,6 @@ async function dispatchEmit(
         }
       }
     }
-    // No-silent-failure (#37): an err with no `.err` consumer is reported so
-    // the host's console / verification tier sees it. Without this, an SSR
-    // failure would surface as a successful-looking HTML response.
     if (result.kind === "err" && matched === 0) {
       reportUnhandledEffectError(emit.effect, result.value);
     }
@@ -354,12 +219,6 @@ async function dispatchEmit(
   }
 }
 
-/**
- * Apply one reducer on the SSR pass: capture its slot map, fold it through
- * the shared `computeSlotDiffs` filter, and record either a `reducer` step
- * (success) or a `panic` step (throw). Returns the produced emits so the
- * dispatcher can chain follow-up effects, or `null` if the reducer panicked.
- */
 function applyReducerOnSsr(
   r: AppShape["reducers"][number],
   live: Record<string, unknown>,
@@ -368,18 +227,10 @@ function applyReducerOnSsr(
   logger: EpisodeLogger,
   dirtyAcc: string[],
 ): { emits: EmitSpec[] } | null {
-  // The bootstrap episode is an episode (§10.5.1.1), so its reducers journal
-  // their environment reads the same way the live path's do — a replay of the
-  // SSR chain reproduces the instants the server stamped.
-  //
-  // `$2` is the dispatcher key on the live path; SSR has no per-emit key
-  // (no `latest-per-key` policy resolution), so we pass `undefined` for
-  // shape parity rather than omitting it.
   const outcome = withEnvRecord(() => r.apply(live, { $1: value, $2: undefined }));
   const envReads = outcome.env.reads;
   if (!outcome.ok) {
-    // Route SSR panics through the same panicInfo pipeline as the live
-    // path so stack + Error.cause survive into the bootstrap episode.
+    // Route SSR panics through the same panicInfo pipeline as the live path so stack + Error.cause survive into the bootstrap episode.
     logger.recordPanic({
       ...panicInfo(outcome.error, "hydrate"),
       location: `reducer "${r.name}"`,
@@ -391,9 +242,6 @@ function applyReducerOnSsr(
   const applied = outcome.value;
   const { diffs, dirty, rejected } = computeSlotDiffs(live, applied, slotMetas);
   if (rejected.length > 0) {
-    // §10.3.3 all-or-nothing, on the server too: nothing was written, so the
-    // emits must not chain either. Reported here as well as on the client so a
-    // rejection baked into the SSR pass is not discovered only after hydration.
     reportRejectedBatch(r.name, rejected);
     logger.recordReducer(r.name, [], [], envReads);
     return { emits: [] };

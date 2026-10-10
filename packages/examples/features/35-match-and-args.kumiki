@@ -1,7 +1,7 @@
-# Feature: the idioms behind the three spec clarifications in issue #62 —
-# (1) branch on a value with if/else or a *union* match, never literal patterns;
-# (2) a tile reads its positional argument as `$1` only when it declares `in=`;
-# (3) a label is the `text=` argument (canonical, same as `button`).
+# Feature: the idioms behind three spec clarifications — (1) branch on a value
+# with if/else or a *union* match, never literal patterns; (2) a tile reads its
+# positional argument as `$1` only when it declares `in=`; (3) a label is the
+# `text=` argument (canonical, same as `button`).
 
 type Urgency = Overdue | Today | Later
 
