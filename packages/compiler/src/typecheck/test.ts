@@ -382,7 +382,7 @@ function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ct
         pos: f.pos,
       });
     } else if (!sym.slots.has(f.name)) {
-      checkRouteSeed(f.value, errors);
+      checkRouteSeed(f.value, sym, errors, ctx);
     }
     checkExpr(f.value, sym, errors, ctx);
     const slot = sym.slots.get(f.name);

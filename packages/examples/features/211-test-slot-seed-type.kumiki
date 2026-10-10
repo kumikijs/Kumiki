@@ -1,0 +1,106 @@
+# Feature (testing.md): a slot value a test writes is a value of the
+# slot's type. A `given.slots` seed, an `expect.slots` value and an
+# `episode-test`'s `slots-equal` value are each checked against the slot's
+# declared type, as the slot's own initializer is, in every test kind and in
+# the multi-step reducer-test. Written in the wrong type, the first test is
+#
+#   given  = {slots: {count: "5"}, …}     E0201 Expected Int but got Text
+#   expect = {slots: {count: "51"}, …}    E0201 Expected Int but got Text
+#
+# rather than a test that runs `"5" + 1` and agrees with the "51" it makes.
+#
+# `route` is the runtime's slot, of the standard `Route` (routing.md). A
+# seed names only the fields it needs, and each is a value of that field's
+# type: `hash: Some("top")`, where `hash: "top"` is
+# `Expected Option(Text) but got Text`.
+#
+# An `expect` wildcard stands for any value, so it has no type to
+# disagree with.
+
+slot count  : Int         = 0
+slot last   : Option(Int) = None
+slot status : Text        = ""
+slot at     : Text        = ""
+
+effect save cap=storage.write
+            in=Text
+            out=Result(Unit, Text)
+            map-request={key: "count", value: $1}
+
+reducer inc on=ui.click(IncBtn) do=
+    last := Some(count)
+    count := count + 1
+
+reducer persist on=ui.click(SaveBtn) do= emit save(count.show)
+reducer saved   on=save.ok(_, _)     do= status := "saved " + count.show
+reducer failed  on=save.err($e, _)   do= status := $e
+
+reducer locate on=ui.click(WhereBtn) do=
+    at := route.params.get-or("id", "-") + "#" + route.hash.get-or("-")
+
+tile IncBtn   = button(text="+1")    {id: "inc"}
+tile SaveBtn  = button(text="save")  {id: "save"}
+tile WhereBtn = button(text="where") {id: "where"}
+tile Count    = text("count: " + count.show)
+
+tile App
+    = column(
+        Count,
+        row(IncBtn, SaveBtn, WhereBtn),
+        text("status: " + status),
+        text("at: " + at))
+      {pad: "lg", gap: "md"}
+
+app TestSlotSeedType
+    caps   = [storage.write]
+    routes = {"/" -> App, "/posts/:id" -> App, "/404" -> App}
+    init   = []
+
+# `count: 5` is an `Int`, as the slot is; `None` and `Some(5)` are values of
+# `last`'s `Option(Int)`.
+test inc-from-five =
+    reducer-test inc
+        given  = {slots: {count: 5, last: None}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 6, last: Some(5)}, effects: []}
+
+# A wildcard stands for whatever the slot holds.
+test inc-sets-last =
+    reducer-test inc
+        given  = {slots: {count: 5}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 6, last: <any-id>}, effects: []}
+
+# The multi-step form seeds and compares the same slots: `save` is mocked to
+# fail, and its `.err` reducer runs from the seeded state.
+test save-failure-sets-status =
+    reducer-test persist
+        given  = {slots: {count: 3, status: ""},
+                  event: {type: ui.click, target: SaveBtn},
+                  mocks: {save: err("disk full")}}
+        expect = {slots: {status: "disk full"}, effects: []}
+
+# A route seed names two of the five fields, each of its own type.
+test locate-reads-the-seeded-route =
+    reducer-test locate
+        given  = {slots: {at: "", route: {params: {"id": "7"}, hash: Some("top")}},
+                  event: {type: ui.click, target: WhereBtn}}
+        expect = {slots: {at: "7#top"}}
+
+test count-renders-the-seed =
+    tile-test Count
+        given  = {slots: {count: 5}}
+        expect = text("count: 5")
+
+# A `for-all` name has its generator's type, so `n` seeds an `Int`.
+test inc-adds-one =
+    property-test
+        for-all   = {n: Int where between(0, 50)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.count == n + 1
+
+# The fixture records two `inc` clicks; `slots-equal` names the slots it
+# compares, each a value of its slot's type.
+test replay-two-clicks =
+    episode-test
+        load   = "211-test-slot-seed-type.fixture.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {count: 2, last: Some(1)}, no-panics: true}

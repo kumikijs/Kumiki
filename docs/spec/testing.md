@@ -31,7 +31,7 @@ what it is:
 | an `expect.effects` entry | an effect, declared or standard | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
-| a `given.slots` / `expect.slots` value, an `expect.effects` argument, a `given.mocks` payload | a value of the slot's type, the effect's `in=` type, the effect's `out=` half | [E0201](./errors.md#e0201-type-mismatch), [E0214](./errors.md#e0214-missing-record-field), [E0215](./errors.md#e0215-unknown-record-field) |
+| a slot value (in `given.slots`, `expect.slots` or `slots-equal`), an `expect.effects` argument, a `given.mocks` payload | a value of the slot's declared type, the effect's `in=` type, the effect's `out=` half | [E0201](./errors.md#e0201-type-mismatch), [E0214](./errors.md#e0214-missing-record-field), [E0215](./errors.md#e0215-unknown-record-field) |
 | a `given` / `expect` **section** key | one of the closed set that kind accepts | [E0714](./errors.md#e0714-test-section-unknown) |
 
 The sections themselves are a vocabulary rather than names to resolve, one
@@ -62,6 +62,22 @@ driven by an effect outcome has no name to give. Neither field reaches the
 generated test — the payload is built from the event's *other* fields, and the
 reducer the runner applies is the test's own target — so this rule is about
 what the test says rather than what it does.
+
+A slot value a test writes is a value of the slot's declared type, in every
+test kind (the multi-step `reducer-test` of [§8.5](#_8-5-effect-mock)
+included) and in each section that writes one: a `given.slots` seed, an
+`expect.slots` value, and an `episode-test`'s `slots-equal` record. It is
+checked as the slot's own initializer is, under the same rules — an `Int`
+flows into a `Float`, an empty `[]` or `{}` is the declared collection and
+`None` the declared `Option`, and a `where` refinement is not evaluated — and a
+value the type does not take is **E0201** at the value. A seed of the wrong
+type runs the reducer from a state the app can never be in, and an expectation
+of one asserts a state it can never reach: on `slot count : Int`,
+`given.slots: {count: "5"}` makes `count + 1` the text `"51"`, which
+`expect.slots: {count: "51"}` agrees with. A wildcard in a `reducer-test`
+`expect` ([§8.2.2](#_8-2-2-wildcards)) has no type, and stands for any value.
+The `route` slot is the runtime's, of type `Route`, and a seed of it names only
+the fields it needs ([§8.2.5](#_8-2-5-the-route-slot)).
 
 A slot is *readable* in a test body — the value is the one the slot holds — and
 a `for-all` name is in scope in both `given` and `invariant`, with the type its
@@ -160,7 +176,7 @@ test route-seeded-in-part =
         expect = {slots: {at: "/posts/:id#7"}}
 ```
 
-A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid.
+A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid. Each field a seed does name is a value of that field's type in the standard `Route` ([§3.2](./routing.md#_3-2-current-route-state)), or **E0201** at the value — whatever a program's own `type Route` says, because the slot holds the runtime's route. The completion fills only the fields left out, so `hash: "top"` (for `Some("top")`) or `params: {"id": 7}` would reach the reducer as written: a route the app can never be on.
 
 `expect.slots` names the slots it compares; a slot it leaves out is not compared, so the seeded route never has to be repeated — and may be asserted like any other slot when it is what the test is about. A named slot's value is still matched exactly ([§8.2.2](#_8-2-2-wildcards)), so an `expect` naming `route` spells the whole record.
 
