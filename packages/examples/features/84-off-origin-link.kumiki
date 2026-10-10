@@ -1,9 +1,9 @@
 # Feature: a link whose target is not this origin.
 #
-# `{external: true}` (stdlib.md §2.3.2) is how a link says it leaves the app:
-# it opens in a new browsing context and the router never sees the click.
+# `{external: true}` is how a link says it leaves the app: it opens in a new
+# browsing context and the router never sees the click.
 #
-# Forgetting it used to be fatal rather than merely unadorned (#298). The click
+# Forgetting it used to be fatal rather than merely unadorned. The click
 # handler cancelled the browser's own navigation and handed the target to
 # `history.pushState`, which refuses an off-origin URL:
 #

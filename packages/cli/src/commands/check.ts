@@ -7,21 +7,13 @@ import { load } from "../store.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { applyStrictFlags } from "./_shared/strict-flags.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE =
   "Usage: kumiki check <input.kumiki> [--strict-a11y] [--strict-icons] [--strict-selector-id] [--types] [--refs] [--effects]";
 
 export type CheckScope = "types" | "refs" | "effects";
 
-/**
- * Which diagnostic bands each narrowing flag selects (see the code system in
- * `docs/spec/errors.md`). The three named scopes divide one axis — what kind of
- * mistake this is — and `E00` (structure), `E07` (a11y / strict-icons /
- * testing-DSL invariants) and `E08` (runtime hazards) are not on it. No scope
- * can ask for those, so no scope may hide them: `check --types` would otherwise
- * report `ok` for a file with no `app` definition, a failure `--types` was
- * never meant to have an opinion about.
- */
 const SCOPE_BANDS: Record<CheckScope, readonly string[]> = {
   types: ["E02", "E04", "E06"],
   refs: ["E01"],
@@ -30,24 +22,8 @@ const SCOPE_BANDS: Record<CheckScope, readonly string[]> = {
 
 const SCOPED_BANDS = new Set(Object.values(SCOPE_BANDS).flat());
 
-/**
- * `E0212` (strict-selector-id) is the one `--strict-*` diagnostic that lands in
- * a band a scope claims (`E02`), so `--strict-selector-id --refs` would drop the
- * finding the user explicitly asked for. The a11y and strict-icons codes are
- * `E07`, which no scope claims, so the rule above already keeps them.
- */
 const STRICT_GATE_CODES = new Set(["E0212"]);
 
-/**
- * Narrow `errors` to the bands the given scopes select. Scopes compose: they
- * name what to keep, so `--types --refs` keeps the union of both. Taking only
- * the first would drop findings the same command line explicitly asked for, and
- * `check` would report `ok` for a file the user was told to look at.
- *
- * The empty list is the identity — nothing was narrowed, so nothing is hidden.
- *
- * Exported for the band × scope table test; the CLI is the only other caller.
- */
 export function filterByScope(errors: KumikiError[], scopes: readonly CheckScope[]): KumikiError[] {
   if (scopes.length === 0) return errors;
   const selected = new Set(scopes.flatMap((s) => SCOPE_BANDS[s]));
@@ -116,7 +92,7 @@ function scopesFrom(options: CheckOptions): CheckScope[] {
   return scopes;
 }
 
-export function registerCheck(program: Command): void {
+export function registerCheck(program: Command): string {
   const cmd = program
     .command("check")
     .description(
@@ -128,10 +104,7 @@ export function registerCheck(program: Command): void {
     .option("--effects", "narrow to effect errors (E03*)")
     .allowExcessArguments(false)
     .action(async (input: string | undefined, options: CheckOptions) => {
-      if (!input) {
-        console.error(USAGE);
-        process.exit(2);
-      }
+      if (!input) exitWithUsage(USAGE);
       await checkCmd(
         input,
         Boolean(options.strictA11y),
@@ -141,4 +114,5 @@ export function registerCheck(program: Command): void {
       );
     });
   applyStrictFlags(cmd);
+  return USAGE;
 }

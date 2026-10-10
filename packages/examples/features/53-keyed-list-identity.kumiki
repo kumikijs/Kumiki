@@ -1,11 +1,11 @@
-# Feature: stable tile identity via `TileNode.key` (spec/runtime.md §10.3.10).
+# Feature: stable tile identity via `TileNode.key`.
 # `for id in ids Row(id) {key: id.show}` gives each Row a stable identity, so
 # the reconciler pairs children across renders by key and survives removal and
 # reorder without rebuilding the subtree — each Row's `<input>` keeps the text
 # the user typed into it, and keeps the same DOM element.
 #
 # The loop has a container to itself, and that is load-bearing. Keyed matching
-# is all-or-nothing per parent (§10.3.10): a `for` sharing a parent with the
+# is all-or-nothing per parent: a `for` sharing a parent with the
 # heading and the button row would put unkeyed siblings in that child list, the
 # keys would never be consulted, and every length change would rebuild the
 # whole column — heading, buttons, inputs and all. `RowList` is the parent
@@ -22,7 +22,7 @@ reducer dropHead on=ui.click(DropBtn)
 # Rotate: move the head to the end. The same rows remain, only their sibling
 # order changes — which is the other half of what keys buy. Under keyed
 # matching the inputs follow their rows instead of being reset by position, and
-# only the moved row is touched (§10.3.10, "a keyed reorder moves the minimum").
+# only the moved row is touched — a keyed reorder moves the minimum.
 reducer rotate on=ui.click(RotateBtn)
     do= match ids.head with
             | Some(h) -> ids := ids.tail.concat([h])
