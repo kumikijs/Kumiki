@@ -1,7 +1,7 @@
-# Feature (style.md §4.9.1): a negative keyframe value. `translate-x`,
-# `translate-y` and `rotate` are plain numbers, and §1.2 makes the sign part of
-# a number literal, so a motion can start left of or above where the tile
-# rests, or turn counter-clockwise:
+# Feature: a negative keyframe value. `translate-x`, `translate-y` and
+# `rotate` are plain numbers, and the sign is part of a number literal, so a
+# motion can start left of or above where the tile rests, or turn
+# counter-clockwise:
 #
 #   from: {translate-x: -24}   ->  transform: translateX(-24px)
 #   from: {rotate: -90}        ->  transform: rotate(-90deg)

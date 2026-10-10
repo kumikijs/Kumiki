@@ -23,8 +23,8 @@ and `motion` bodies took only a bare number token, so `translate-x: -24` and
 by the motion checker as not a number (E0401). A slide in from the left or the
 top, or a counter-clockwise turn, had no spelling at all.
 
-`§1.2` makes the sign part of a number literal, and the record reader now puts it
-back through the same rule the retry and duration positions use. Now:
+The language spec makes the sign part of a number literal, and the record reader now
+puts it back through the same rule the retry and duration positions use. Now:
 
 ```
 $ kumiki check app.kumiki
