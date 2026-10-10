@@ -1,4 +1,4 @@
-# Feature (language.md §1.8.6): a `fn` name is a call, not a value.
+# Feature: a `fn` name is a call, not a value.
 #
 # There are no lambdas, so a `fn` is never a value. Written without its
 # parentheses in a value position, its name is E0127 — the parentheses are

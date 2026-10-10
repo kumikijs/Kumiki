@@ -1,4 +1,4 @@
-# app.http — global base-url, headers, on-401/403/5xx routing (spec §6.3, #78)
+# app.http — global base-url, headers, on-401/403/5xx routing
 # Demonstrates: configuring HTTP at the app level so individual effects don't
 # repeat the base URL, auth header, or status-coded error handlers.
 
