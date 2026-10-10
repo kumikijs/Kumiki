@@ -1,4 +1,4 @@
-# Feature (testing.md §8.3.1): a property-test's `count` is how many cases it
+# Feature (testing.md): a property-test's `count` is how many cases it
 # generates — a whole number, 1 or more — and leaving it out asks for 100.
 #
 # `once` asks for the fewest cases a property can run, `hundred` for the

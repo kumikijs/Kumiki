@@ -1,24 +1,24 @@
 import { resolve } from "node:path";
-import type { Command } from "commander";
+import { Argument, type Command } from "commander";
 import { addDef, describeEdit } from "../mutate.ts";
-import { resolveBody } from "./_shared/body-input.ts";
-import { requireValue } from "./_shared/value.ts";
+import { LAYERS } from "../store.ts";
+import { bodyFileOption, resolveBody } from "./_shared/body-input.ts";
+import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki add <file> <layer> <name> <body>";
 
-export function registerAdd(program: Command): void {
+export function registerAdd(program: Command): string {
   program
     .command("add")
     .description("Add a new definition to a .kumiki file")
     .argument("[file]", "target .kumiki file")
-    .argument("[layer]", "layer name (type/slot/effect/reducer/tile/fn/app)")
+    .addArgument(new Argument("[layer]", "kind of definition to add").choices([...LAYERS]))
     .argument("[name]", "definition name")
-    .argument("[body...]", "body tokens (joined by spaces; prefer --body-file for multi-line)")
-    .option(
-      "--body-file <path>",
-      "read body from a file (use '-' for stdin); preserves whitespace",
-      requireValue(USAGE),
+    .argument(
+      "[body...]",
+      "body tokens: a tile's clauses or a type's parameters, if any, go first (joined by spaces; prefer --body-file for multi-line)",
     )
+    .addOption(bodyFileOption(USAGE))
     .allowExcessArguments(false)
     .action(
       async (
@@ -28,18 +28,13 @@ export function registerAdd(program: Command): void {
         rest: string[],
         options: { bodyFile?: string },
       ) => {
-        if (!file || !layer || !name) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!file || !layer || !name) exitWithUsage(USAGE);
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
-        try {
+        printOrExit(() => {
           const opId = addDef(resolve(process.cwd(), file), layer, name, body);
-          console.log(describeEdit({ op: "add", qname: `${layer}.${name}`, opId }));
-        } catch (e) {
-          console.error(String(e));
-          process.exit(1);
-        }
+          return describeEdit({ op: "add", qname: `${layer}.${name}`, opId });
+        });
       },
     );
+  return USAGE;
 }

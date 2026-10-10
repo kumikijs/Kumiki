@@ -7,7 +7,7 @@
 type Status  = Idle | Loading | Done(Int)
 
 # Two `nominal` declarations over one base are two types, identified by the name
-# they are declared under (§1.3.5). Putting a `Fahrenheit` where a `Celsius` is
+# they are declared under. Putting a `Fahrenheit` where a `Celsius` is
 # required is E0201 — it used to compile, and 70 degrees of weather arrived as
 # 70 degrees of room.
 type Celsius    = nominal Int where between(-90, 60)
@@ -15,11 +15,11 @@ type Fahrenheit = nominal Int where between(-130, 140)
 
 # Two id types over one base, which is the shape `nominal` is most often written
 # in. `TypeName.fresh()` is a `TypeName` and `TypeName.parse(t)` an
-# `Option(TypeName)` (stdlib §2.4.1 / §2.4.3), so the call that *mints* an id is
-# judged like every other expression rather than being the one position the
-# identity could not reach. Both spellings used to compile — the qualifier was
-# read by the lowering and by nothing else. The rejected forms are named at the
-# `latestId` slot and the `remint` reducer below, where the names exist.
+# `Option(TypeName)`, so the call that *mints* an id is judged like every other
+# expression rather than being the one position the identity could not reach.
+# Both spellings used to compile — the qualifier was read by the lowering and by
+# nothing else. The rejected forms are named at the `latestId` slot and the
+# `remint` reducer below, where the names exist.
 type ReadingId = nominal Text where uuid
 type SampleId  = nominal Text where uuid
 
@@ -30,15 +30,15 @@ type Reading = {label: Text, celsius: Celsius, id: ReadingId}
 # no wrapping and why `celsius + 1` below stands.
 #
 # What brings this body back to that base is `.round`, not the arithmetic —
-# `/` is Float (§1.9.4), and `-> Celsius = (f - 32) * 5 / 9` is E0201 for the
+# `/` is Float, and `-> Celsius = (f - 32) * 5 / 9` is E0201 for the
 # same reason `toFahrenheit` has to be declared `-> Float`.
 fn toCelsius(f: Fahrenheit) -> Celsius = ((f - 32) * 5 / 9).round
 
-# `-> Float`, because `/` is Float even between two Ints (§1.9.4). Declaring
+# `-> Float`, because `/` is Float even between two Ints. Declaring
 # `-> Int` here is E0201 — and used to render `69.8` from a whole-number promise.
 fn toFahrenheit(c: Celsius) -> Float = c * 9 / 5 + 32
 
-# The identity reaches the comparison operators, not only assignment (§1.9.4):
+# The identity reaches the comparison operators, not only assignment:
 # `r.celsius == f` and `r.celsius < f` are both E0201, the same mistake as
 # `r.celsius := f` in the spelling a lookup or a router is written in. So the
 # forecast goes through the same conversion the `adopt` reducer uses, and what
@@ -124,7 +124,7 @@ tile App = column(
              # Rendered as relations rather than as the ids themselves: a uuid
              # is different every run, so "same" / "len" are what a scenario can
              # assert. `latestId == reading.id` is also the comparison half of
-             # the identity (§1.9.4) reading two minted `ReadingId`s.
+             # the identity reading two minted `ReadingId`s.
              text("same " + (latestId == reading.id).show) {color: "muted"},
              text("len " + shortId(reading.id).length.show) {color: "muted"},
              text("parsed " + (match found with
