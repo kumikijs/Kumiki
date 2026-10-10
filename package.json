@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Kumiki — an AI-first web framework language. Optimized for LLMs to write, edit, and reason about, not for humans to read.",
   "license": "Apache-2.0",
-  "packageManager": "pnpm@10.14.0",
+  "packageManager": "pnpm@12.9.1",
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",

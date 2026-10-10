@@ -38,4 +38,4 @@ click 2 (+200ms): loaded hi
 indexedDB.open calls: 1
 ```
 
-http.md §6.7.4 states this lifecycle; example 185 shows it.
+`docs/spec/http.md` states this lifecycle; example 185 shows it.

@@ -1,5 +1,5 @@
-# Feature (language.md §1.6.4 / runtime.md §10.3.3): a slot read inside a
-# reducer body sees what that body has already written — in every position.
+# Feature: a slot read inside a reducer body sees what that body has already
+# written — in every position.
 #
 # `go` writes `noteKey := "b"` first and then reads `noteKey` in each nested
 # form: a `match` arm (wildcard, binding, variant, tuple), the body of a

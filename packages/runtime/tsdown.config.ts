@@ -2,55 +2,23 @@ import { defineConfig } from "tsdown";
 
 import { publishedOutputOptions } from "../../tsdown.shared.ts";
 
-// @kumikijs/runtime has no runtime dependencies. Three artifact sets are built
-// from the same source:
-//
-// - `index` — readable ESM, the whole runtime in one file. The package entry,
-//   and the `./bundle` export that codegen inlines into generated apps for
-//   smoke/run/test. It MUST stay unminified: `inlineRuntime` strips the
-//   `export { … }` line and relies on the top-level binding names matching the
-//   export names, and the AI debug loop reads its stack traces. Its JSDoc is
-//   stripped all the same (`publishedOutputOptions`) — that costs neither
-//   guarantee, and it is 39% of this artifact gzipped.
-// - `bundle.min` — the same single file, minified ESM (`./bundle.min`). Kept
-//   for hosts that want the full runtime as one request.
-// - `dist/modules/*` — the granular feature modules (#71), minified. `kumiki
-//   build` copies only the ones a compiled app imports (core + stdlib + the
-//   used tile modules / router / effect handlers). A family on the compiler's
-//   `PER_TILE_FAMILIES` has one entry PER TILE (`tiles-text-link`) instead of
-//   one for the family, so an app with a heading does not download the link
-//   tile's URL-disposition check. `core`, `stdlib` and
-//   `testkit` are entries of the same build — as are `tiles/input/_shared.ts`,
-//   which ten tile entries import, and `effects-decode.ts`, which the three
-//   decoding effect handlers import — so cross-module imports resolve to those
-//   entry chunks and no anonymous shared chunk may appear. One would be fatal
-//   rather than merely untidy: `kumiki build` copies modules by NAME from the
-//   compiler's list, so a generated chunk name it cannot know ships as a
-//   dangling import. `packages/tests/modular-build.test.ts` compares this
-//   directory against the compiler's tables exactly, which is what catches it.
-// - `dist/text-distance.js` — the `./text-distance` subpath, built on its own so
-//   a consumer that wants the did-you-mean metric (the compiler does, on every
-//   `kumiki check`) does not evaluate the whole runtime to reach it. A SEPARATE
-//   config rather than a second entry beside `index`: two entries in one build
-//   would make `index.js` import this file instead of inlining it, and
-//   `inlineRuntime` needs `dist/index.js` to be one self-contained file. The
-//   duplicated copy that costs is a few hundred bytes, and the same trade the
-//   granular modules already make.
 export default defineConfig([
+  // One unminified file: inlineRuntime strips its trailing export line and relies on the
+  // top-level names matching the export names.
   {
     entry: { index: "src/index.ts" },
     format: "esm",
     dts: true,
-    // Emit .js/.d.ts (honors "type": "module") instead of tsdown's node-default .mjs.
     fixedExtension: false,
     outputOptions: publishedOutputOptions,
   },
+  // Its own build, so index.js inlines the code it shares with text-distance instead of
+  // importing it from a shared chunk.
   {
     entry: { "text-distance": "src/text-distance.ts" },
     format: "esm",
     dts: true,
     fixedExtension: false,
-    // The first config already cleaned dist/; cleaning here would race it.
     clean: false,
     outputOptions: publishedOutputOptions,
   },
@@ -60,7 +28,6 @@ export default defineConfig([
     dts: false,
     fixedExtension: false,
     minify: true,
-    // The first config already cleaned dist/; cleaning here would race it.
     clean: false,
     outputOptions: publishedOutputOptions,
   },
@@ -106,6 +73,9 @@ export default defineConfig([
     fixedExtension: false,
     minify: true,
     clean: false,
+    // Lets an entry chunk export more than its own signature, so code another entry imports
+    // from it stays in that entry instead of moving to a chunk of its own.
+    inputOptions: { preserveEntrySignatures: "allow-extension" },
     outputOptions: publishedOutputOptions,
   },
 ]);

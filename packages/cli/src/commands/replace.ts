@@ -1,23 +1,22 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { describeEdit, replaceDef } from "../mutate.ts";
-import { resolveBody } from "./_shared/body-input.ts";
-import { requireValue } from "./_shared/value.ts";
+import { bodyFileOption, resolveBody } from "./_shared/body-input.ts";
+import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki replace <file> <qname> <body>";
 
-export function registerReplace(program: Command): void {
+export function registerReplace(program: Command): string {
   program
     .command("replace")
     .description("Replace an existing definition's body")
     .argument("[file]", "target .kumiki file")
     .argument("[qname]", "qualified name (layer.name)")
-    .argument("[body...]", "body tokens (joined by spaces; prefer --body-file for multi-line)")
-    .option(
-      "--body-file <path>",
-      "read body from a file (use '-' for stdin); preserves whitespace",
-      requireValue(USAGE),
+    .argument(
+      "[body...]",
+      "body tokens: a body without a tile's clauses or a type's parameters keeps the definition's, and one starting with `=` drops them (joined by spaces; prefer --body-file for multi-line)",
     )
+    .addOption(bodyFileOption(USAGE))
     .allowExcessArguments(false)
     .action(
       async (
@@ -26,18 +25,13 @@ export function registerReplace(program: Command): void {
         rest: string[],
         options: { bodyFile?: string },
       ) => {
-        if (!file || !qname) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!file || !qname) exitWithUsage(USAGE);
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
-        try {
-          const opId = replaceDef(resolve(process.cwd(), file), qname, body);
-          console.log(describeEdit({ op: "replace", qname, opId }));
-        } catch (e) {
-          console.error(String(e));
-          process.exit(1);
-        }
+        printOrExit(() => {
+          const result = replaceDef(resolve(process.cwd(), file), qname, body);
+          return describeEdit({ op: "replace", qname, ...result });
+        });
       },
     );
+  return USAGE;
 }

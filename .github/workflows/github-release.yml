@@ -1,10 +1,5 @@
 name: GitHub Release
 
-# Create the GitHub Release for tags that were published but have none, e.g.
-# after a Release run that failed at that step. A tag that already has a
-# release is left as it is. The body is the tag's CHANGELOG section, cut to
-# GitHub's limit when needed (.github/scripts/github-release.mjs).
-
 on:
   workflow_dispatch:
     inputs:
@@ -28,8 +23,6 @@ jobs:
         with:
           node-version: 24
 
-      # The tags arrive through the environment, never spliced into the
-      # command line, and are split into arguments by the shell.
       - name: Create GitHub Releases
         run: node .github/scripts/github-release.mjs $TAGS
         env:

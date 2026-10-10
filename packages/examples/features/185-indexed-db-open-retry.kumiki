@@ -1,5 +1,5 @@
-# Feature (http.md §6.7.4): opening the database is part of one indexed-*
-# effect's call, not a state the page stays in.
+# Feature: opening the database is part of one indexed-* effect's call, not a
+# state the page stays in.
 #
 # The first effect that runs opens `app.indexed-db`, and the effects after it
 # share that connection. An open that another connection blocks (another tab
@@ -11,8 +11,8 @@
 # dropped the same way.
 #
 # The scenario scripts `loadNote`: a failed load, then one that reads the
-# note. packages/tests/indexed-db-open.test.ts mounts this file against an
-# IndexedDB double that reports `blocked`, fails, and sends `versionchange`.
+# note. The integration test mounts this file against an IndexedDB double
+# that reports `blocked`, fails, and sends `versionchange`.
 
 type Note = {id: Text, body: Text}
 
