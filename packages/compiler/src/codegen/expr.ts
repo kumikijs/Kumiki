@@ -22,12 +22,6 @@ export function reducerNameArg(e: Expr | undefined): string {
   return "";
 }
 
-/**
- * The type a `Decoder.Json(T)` names. `T` is parsed in expression position, so
- * `Map(TodoId, Todo)` arrives as variants and `{id: TodoId}` as a record
- * literal; this reads them back as the type they spell. Anything else names no
- * type the decoder can check, and `undefined` leaves the decode unchecked.
- */
 function decodedType(e: Expr | undefined): TypeExpr | undefined {
   if (e?.kind === "Variant") {
     if (e.payload.length === 0) {
@@ -49,20 +43,6 @@ function decodedType(e: Expr | undefined): TypeExpr | undefined {
   return undefined;
 }
 
-/**
- * The argument a builtin's lowering reads, which every one of them requires.
- *
- * These used to substitute a default for a missing one — `0` for a duration,
- * `""` for a byte string, `undefined` for a file — so an omission became a
- * plausible value instead of a diagnostic: `Duration.s()` was zero
- * milliseconds, which is a timer that fires immediately and forever.
- *
- * `checkCallee` reports E0213 wherever `checkExpr` walks, and this throw is
- * the guard for a call that arrives without having been walked at all —
- * `codegen()` can be called without `check()`. The position is interpolated
- * because a plain `Error` carries none, and an error that cannot say where it
- * came from is the failure this file is otherwise closing.
- */
 function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   const arg = args[0];
   if (!arg) {
@@ -76,21 +56,13 @@ function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): stri
 /** The lowering of one reading: text in, `Some(value)` or `None` out. */
 export function readingJs(reading: ParseReading, a: string): string {
   switch (reading) {
-    // Decimal only, and exact like `Bool`: `Number()` on its own also reads
-    // hex, binary, exponents and surrounding blanks, so `"0x10"` was `Some(16)`.
     case "Int":
       return `((_v) => (typeof _v === "string" && /^[+-]?[0-9]+$/.test(_v)) ? _s.Some(Number(_v)) : _s.None)(${a})`;
     case "Float":
       return `((_v) => { if (typeof _v !== "string" || !/^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/.test(_v)) return _s.None; const _n = Number(_v); return Number.isFinite(_n) ? _s.Some(_n) : _s.None; })(${a})`;
     case "Time":
-      // A `Time` is a millisecond number (stdlib.md §2.2.9), so parsing one has
-      // to produce that number, or every later `diff` / `plus` / `format` reads
-      // a string and produces `NaN`. The zone rule for a date-only string lives
-      // with the formatter that has to agree with it.
       return `_s.parseTime(${a})`;
     case "Bool":
-      // Converted, not wrapped: `Some("false")` unwraps to a non-empty string,
-      // which every `if` reads as true.
       return `((_v) => _v === "true" ? _s.Some(true) : _v === "false" ? _s.Some(false) : _s.None)(${a})`;
     case "Text":
       return `((_v) => (typeof _v === "string" && _v.length > 0) ? _s.Some(_v) : _s.None)(${a})`;
@@ -99,21 +71,6 @@ export function readingJs(reading: ParseReading, a: string): string {
   }
 }
 
-/**
- * `T.parse(text)` → `Option(T)`, converted by the base `T` unaliases to rather
- * than by its name — so `type Cents = nominal Int` and the standard library's
- * `Duration` read a number, as `Int` does.
- *
- * The reading is then held to every refinement `T` carries, and one it fails is
- * `None`. An `Option(Cents)` never meets a slot-write guard, so without this
- * `Cents.parse("-5")` handed the program a `Cents` its own type refuses.
- *
- * `parseQualifier` is the answer the checker reports E0802 from (E0124 first,
- * for a constructor written without its arguments), so a qualifier
- * with no reading never reaches here from a checked program; the throw is for
- * `codegen()` called without `check()`, which would otherwise lower to a value
- * of the wrong kind.
- */
 function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   const a = requiredArg(callee, args, pos, ctx);
   const qualifier = callee.slice(0, callee.indexOf("."));
@@ -162,14 +119,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `(${e.op === "!" ? "!" : "-"}${jsOfExpr(e.rhs, ctx)})`;
     case "FieldAccess": {
       const baseJs = jsOfExpr(e.base, ctx);
-      // ADR-002 (#23): when the checker has inferred that the receiver is a
-      // record with this field, read the field — do NOT let a same-named method
-      // shortcut shadow it. `accessKind` is only set when `check()` ran; absent,
-      // we keep the historical name-based dispatch below (back-compat).
       if (e.accessKind === "field") return `(${baseJs})[${fieldKey(e.field)}]`;
-      // For Option/Result values stored as {_tag,_0}, accessing common fields like
-      // ".get" needs unwrapping. We special-case ".get" / ".is-some" / ".is-none" /
-      // ".is-ok" / ".is-err".
       if (e.field === "get") return `_s.unwrap(${baseJs})`;
       if (e.field === "is-some") return `(_s.variantIs(${baseJs}, "Some"))`;
       if (e.field === "is-none") return `(_s.variantIs(${baseJs}, "None"))`;
@@ -180,22 +130,15 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "entries") return `_s.mapEntries(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "size") return `_s.mapSize(${baseJs})`;
       if (e.field === "to-ms" || e.field === "ms") return `(${baseJs})`;
-      // .show on values (variants → _tag, Bytes → base64, anything else → String)
       if (e.field === "show") return `_s.show(${baseJs})`;
-      // .length on text/list/string
       if (e.field === "length") return `((${baseJs}) ?? "").length`;
       if (e.field === "is-empty") return `_s.isEmpty(${baseJs})`;
-      // .lower / .upper on Text
       if (e.field === "lower") return `(String((${baseJs}) ?? "")).toLowerCase()`;
       if (e.field === "upper") return `(String((${baseJs}) ?? "")).toUpperCase()`;
       if (e.field === "trim") return `(String((${baseJs}) ?? "")).trim()`;
-      // Zero-arg list / string method shorthands (callable without parens)
       if (e.field === "unique") return `_s.listUnique(${baseJs})`;
       if (e.field === "reverse") return `[...((${baseJs}) ?? [])].reverse()`;
       if (e.field === "sort") return `_s.listSort(${baseJs})`;
-      // Issue #7: argument-less spec stdlib methods in the parenthesis-free form
-      // (docs/spec/stdlib.md §2.2.3 — the recommended shortcut). Kept in exact sync
-      // with the MethodCall (paren) cases in methodCallJs + KNOWN_METHODS.
       if (e.field === "head") return `_s.listHead(${baseJs})`;
       if (e.field === "tail") return `_s.listTail(${baseJs})`;
       if (e.field === "last") return `_s.listLast(${baseJs})`;
@@ -217,19 +160,13 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `(${baseJs})[${fieldKey(e.field)}]`;
     }
     case "Index": {
-      // Through the runtime, so a List index that names no element panics
-      // here as it does on the left of `:=` (language.md §1.6.3).
       return `_s.index(${jsOfExpr(e.base, ctx)}, ${jsOfExpr(e.index, ctx)})`;
     }
     case "Call": {
       const cn = e.callee;
-      // `run-reducer(name)` inside a property-test invariant (§8.3): apply the
-      // named reducer to the trial's initial state (`_init` / `_event` are bound
-      // in the generated trial fn). Chained `.run-reducer(...)` is in methodCallJs.
       if (cn === "run-reducer") {
         return `_s.runReducerStep(App, _init, ${JSON.stringify(reducerNameArg(e.args[0]))}, _event)`;
       }
-      // Module calls like TodoId.fresh, now, etc.
       if (cn === "now") return `_s.now()`;
       if (/^[A-Z][A-Za-z0-9_]*\.fresh$/.test(cn)) return `_s.freshId()`;
       if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) return parseJs(cn, e.args, e.pos, ctx);
@@ -244,35 +181,13 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "Duration.h") return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 3600000)`;
       if (cn === "Duration.d" || cn === "Duration.days")
         return `((${requiredArg(cn, e.args, e.pos, ctx)}) * 86400000)`;
-      // Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
-      // Bytes is represented as Uint8Array at runtime.
       if (cn === "Bytes.from-text")
         return `_s.bytesFromText(${requiredArg(cn, e.args, e.pos, ctx)})`;
       if (cn === "Bytes.from-base64")
         return `_s.bytesFromBase64(${requiredArg(cn, e.args, e.pos, ctx)})`;
       if (cn === "Bytes.from-bytes")
         return `_s.bytesFromBytes(${requiredArg(cn, e.args, e.pos, ctx)})`;
-      // `EffectId.none` — empty-handle sentinel (spec stdlib §2.1.1.1). The
-      // runtime treats falsy / unknown ids as silent no-ops, so the empty
-      // string doubles as a valid slot-initial value AND a guaranteed-no-op
-      // cancel target.
       if (cn === "EffectId.none") return `""`;
-      // Decoder.* — codegen treats a decoder as a sentinel string, which the
-      // HTTP handler reads as `decode ?? "json"` and branches on: `json` /
-      // `text` / `none`, everything else falling through to text. Emitting no
-      // sentinel therefore means json, not "no decoding" — which is what made
-      // the paren-less form parse a body that was meant to be discarded.
-      // The storage handlers always `JSON.parse`, and read `decode` only for
-      // the check below.
-      //
-      // `Decoder.Json(T)` for a `T` that carries a predicate anywhere in it is
-      // that check in place of the sentinel: the walk a slot of type `T` is
-      // gated by, answering the first predicate the decoded value fails. A
-      // handler that gets a function parses JSON and makes a refused value the
-      // effect's `.err` (http.md §6.1.4), so a restore of data the type refuses
-      // reaches the program as a failure it can handle, rather than as an `.ok`
-      // whose writes the reducer's batch then refuses whole (runtime.md
-      // §10.3.3). A `T` with no predicate keeps the sentinel, byte for byte.
       if (cn === "Decoder.Json") {
         const t = decodedType(e.args[0]);
         return (t && ctx.gen.refinements.explainerOf(t)) ?? `"json"`;
@@ -281,34 +196,15 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "Decoder.Bytes") return `"bytes"`;
       if (cn === "Decoder.None") return `"none"`;
       if (cn === "fmt") {
-        // `fmt(template, ...args)` — stdlib.md §2.4.5. No guard: a fallback
-        // answers a missing helper with a `Text` that reads like a formatted
-        // one, which is the shape that let the substitution go missing (#340).
         const template = requiredArg(cn, e.args, e.pos, ctx);
         const rest = e.args.slice(1).map((a) => jsOfExpr(a, ctx));
         return `_s.fmt(${[template, ...rest].join(", ")})`;
       }
-      // `panic(message)` — Kumiki's controlled stop-the-program signal
-      // (docs/spec/stdlib.md §2.4.6). Lowers to the runtime helper that throws a
-      // KumikiPanic, which the live dispatch / render boundary catches.
       if (cn === "panic") return `_s.panic(${requiredArg(cn, e.args, e.pos, ctx)})`;
-      // `prefers-dark()` — reads `prefers-color-scheme: dark` (style.md §4.6.1).
-      // Environment-reading like `now`, and used the same way: an `app.start`
-      // reducer picks the initial theme from it.
       if (cn === "prefers-dark") return `_s.prefersDark()`;
-      // `random()` — a Float in [0, 1). Non-deterministic like `now`, and
-      // unrestricted for the same reason: a rule confining it to reducers would
-      // be the only purity rule in the language that no other builtin has.
-      // Through the runtime helper rather than inline `Math.random()`: the
-      // helper is the seam the episode journal records at, and an inline draw
-      // is invisible to it (#337, runtime.md §10.5.1).
       if (cn === "random") return "_s.random()";
-      // `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10).
-      // The runtime helper is None-safe so `file-url(avatar.get)` does not
-      // throw before `is-some` guards inside `when(...)` short-circuit.
       if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, e.pos, ctx)})`;
       const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
-      // Otherwise treat as user-defined fn
       return `${jsBinding(cn)}(${args})`;
     }
     case "MethodCall": {
@@ -320,12 +216,6 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "ListLit": {
       if (!e.asSet) return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
-      // A Set's members are its keys, so a wildcard member (test expect,
-      // §8.2.2) cannot go through `setOf`, which would key the sentinel by its
-      // string form. The literal members are built as usual; each `<any-id>`
-      // is counted for the matcher, which pairs it with one otherwise-unmatched
-      // member, and each `<slots.X>` is handed to the matcher as a key it
-      // resolves once the slot's post-execution value is known.
       const members = e.items.filter((it) => it.kind !== "Wildcard");
       const set = `_s.setOf([${members.map((it) => jsOfExpr(it, ctx)).join(", ")}])`;
       const anyIds = e.items.filter((it) => it.kind === "Wildcard" && it.wild === "any-id").length;
@@ -338,15 +228,9 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       ];
       return extra.length === 0 ? set : `{ ...${set}, ${extra.join(", ")} }`;
     }
-    // The same array a tuple pattern destructures — `tupleArm` guards with
-    // `Array.isArray` and reads by index, so the two halves already agreed on
-    // the shape before there was a way to write one.
     case "TupleLit":
       return `[${e.items.map((it) => jsOfExpr(it, ctx)).join(", ")}]`;
     case "MapLit": {
-      // A `<slots.X>` map key (test expect, §8.2.2) names a key only the
-      // post-execution slots know, so it cannot be keyed here: its entries are
-      // handed to the matcher, which keys each once it has resolved the slot.
       const slotKeys: string[] = [];
       const parts = e.entries.flatMap((en) => {
         const value = jsOfExpr(en.value, ctx);
@@ -354,9 +238,6 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
           slotKeys.push(`[${jsOfExpr(en.key, ctx)}, ${value}]`);
           return [];
         }
-        // A `<any-id>` map key lowers to the runtime's wild-key sentinel so the
-        // matcher pairs it with the one generated entry. Any other key is
-        // stored as every Map member stores one (`entryKey`).
         const keyJs =
           en.key.kind === "Wildcard" ? "[_s.WILD_KEY]" : `[_s.entryKey(${jsOfExpr(en.key, ctx)})]`;
         return [`${keyJs}: ${value}`];
@@ -365,8 +246,6 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return `{ ${parts.join(", ")} }`;
     }
     case "Wildcard":
-      // Value-position wildcard (`<any-id>` / `<slots.X>`) → a runtime sentinel
-      // that `wcEqual` recognises during reducer-test comparison.
       return e.wild === "any-id"
         ? `_s.wild("any-id")`
         : `_s.wild("slot", ${JSON.stringify(e.slot)})`;
@@ -377,41 +256,18 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     case "IfExpr":
       return `((${jsOfExpr(e.cond, ctx)}) ? (${jsOfExpr(e.consequent, ctx)}) : (${jsOfExpr(e.alternate, ctx)}))`;
     case "LetIn": {
-      // The value is generated against the enclosing scope and the body
-      // against the new one, so `let x = x + 1 in x` reads the binding it
-      // shadows rather than the one being declared.
       const inner = addBind(ctx, e.name);
       return `(() => { const ${bindRef(inner, e.name)} = ${jsOfExpr(e.value, ctx)}; return ${jsOfExpr(e.body, inner)}; })()`;
     }
     case "Variant":
       return variantJs(e.name, e.payload, ctx);
     case "TokenRef": {
-      // Theme-token reference (spec/style.md §4.3): lowers to the unified
-      // runtime resolver which walks the active theme and falls back to the
-      // built-in defaults baked into mapColor/mapToken/mapSize.
       const pathJs = `[${e.path.map((p) => JSON.stringify(p)).join(", ")}]`;
       return `_s.token(${JSON.stringify(e.group)}, ${pathJs})`;
     }
   }
 }
 
-/**
- * Methods the code generator actually implements (the `methodCallJs` switch
- * cases below). This is the single source of truth for what `obj.method(...)`
- * calls are runnable; the typechecker uses it to flag unimplemented methods
- * (E0801) at `check` time instead of letting them throw or misbehave at runtime.
- * Keep this in exact sync with the `switch (method)` cases.
- */
-/**
- * How many arguments a method's lowering reads. Every entry here dereferences
- * that many with `!`, so a call written with fewer crashes codegen — no file,
- * no line, no diagnostic. The typechecker reports the shortfall instead
- * (E0213); `check` and `build` then agree about the same program.
- *
- * Only the minimum is listed. `slice` takes one or two and spreads whatever it
- * is given, so it is absent — a count is only a contract where the lowering
- * treats it as one.
- */
 export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["add", 1],
   ["chunk", 1],
@@ -425,13 +281,7 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["flat-map", 1],
   ["fold", 2],
   ["format", 1],
-  // The keyed reading's floor. The unwrapping one takes none and its lowering
-  // reads none, so the method-call check judges `.get` by its receiver
-  // (`checkGetArity`), not by this. The paren-free member check does read this
-  // entry, and passes `o.get` only because `get` is in FIELD_ACCESS_SHORTCUTS.
   ["get", 1],
-  // One shape takes a default, the other a key AND a default; the lowering
-  // branches on the count, so one is the floor.
   ["get-or", 1],
   ["has", 1],
   ["insert", 2],
@@ -459,23 +309,6 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["zip", 1],
 ]);
 
-/**
- * The argument of each higher-order method that is an expression fragment
- * rather than a value, how many positionals (`$1`, `$2`) the lambda it is
- * lowered into binds, and what the second one is. A bare `fn` name there is
- * the one place a `fn` name is not a value (language.md §1.8.6):
- * `xs.map(double)` means `xs.map(double($1))`, so `methodCallJs` lowers it as
- * that call and the checker lets it through instead of reporting E0127. One
- * table so the two cannot disagree about which position is which.
- *
- * `second` is why the checker cannot read `binds` alone. `fold` binds the
- * element as `$2` on every receiver, so a `fn` that stops at the accumulator
- * drops every element. The list methods bind `$2` only where the value handed
- * over is taken apart — a `Map`'s filter entry, or a pair (stdlib.md §2.2.3).
- * Where the checker decides the value is one value, `argFnList` declares no
- * `$2` at all; only where the lowering falls back does it fill one with the
- * JS index or the element again, which no `fn` written for it means.
- */
 export const FRAGMENT_ARGUMENTS: ReadonlyMap<
   string,
   { index: number; binds: 1 | 2; second?: "element" | "pair-value" }
@@ -526,9 +359,6 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "plus",
   "minus",
   "diff",
-  // Issue #5: docs/spec/stdlib.md §2.2 methods that were missing here and therefore
-  // wrongly rejected with E0801. All take ≥1 argument, so they always parse as
-  // MethodCall (never the parenthesis-free FieldAccess form).
   "concat", // List(T).concat(other)
   "prepend", // List(T).prepend(x)
   "chunk", // List(T).chunk(n)
@@ -544,9 +374,6 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "min", // Int/Float.min(b)
   "max", // Int/Float.max(b)
   "clamp", // Int/Float.clamp(lo, hi)
-  // Issue #7: docs/spec/stdlib.md §2.2 argument-less methods. These also parse as the
-  // parenthesis-free FieldAccess form (handled in jsOfExpr); listing them here
-  // makes the `recv.method()` shape compile instead of tripping E0801.
   "head", // List(T).head → Option(T)
   "tail", // List(T).tail → List(T)
   "last", // List(T).last → Option(T)
@@ -557,8 +384,6 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "parse-float", // Text.parse-float → Option(Float)
   "abs", // Int/Float.abs
   "neg", // Int/Float.neg
-  // stdlib.md §2.2.7. Documented as a `math.*` namespace the parser could never
-  // read — a lowercase qualifier is not one — so every call reported E0103.
   "floor", // Float.floor → Int
   "ceil", // Float.ceil → Int
   "round", // Float.round → Int (ties go up, toward +∞: (-2.5).round is -2)
@@ -568,10 +393,6 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "pow", // Int/Float.pow(n)
   "to-float", // Int.to-float → Float
   "to-int", // Float.to-int → Int (truncated)
-  // Issue #92: stdlib methods that also have FieldAccess shortcuts (see
-  // FIELD_ACCESS_SHORTCUTS / jsOfExpr). Both shapes lower to the same `_s.*`
-  // helper via the matching cases in methodCallJs — keeps FIELD_ACCESS_SHORTCUTS
-  // ⊆ KNOWN_METHODS and stops the paren form from falling through to native JS.
   "is-ok", // Result(T,E).is-ok → Bool
   "is-err", // Result(T,E).is-err → Bool
   "values", // Map(K,V).values → List(V)
@@ -582,12 +403,6 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "ms", // Time/Duration.ms → Int
 ]);
 
-/**
- * The method names codegen lowers in the parenthesis-free `recv.m` (FieldAccess)
- * form — kept in sync with the `if (e.field === …)` chain in jsOfExpr's
- * FieldAccess case. A subset of KNOWN_METHODS (enforced by a test): every
- * no-paren shortcut must also accept the `recv.m()` shape.
- */
 export const FIELD_ACCESS_SHORTCUTS: ReadonlySet<string> = new Set([
   "get",
   "is-some",
@@ -629,38 +444,15 @@ export const FIELD_ACCESS_SHORTCUTS: ReadonlySet<string> = new Set([
   "exp",
 ]);
 
-/**
- * Every member name codegen lowers to a stdlib helper on some receiver — the
- * union of the method-call methods and the no-paren shortcuts. Flat, not
- * per-type, and a public name list only: neither the checker nor codegen
- * consults it. Which names a *known* receiver has is `RECEIVER_MEMBERS`
- * (`stdlib-members.ts`); a receiver whose type the checker cannot decide is
- * lowered by name in `jsOfExpr`'s `FieldAccess` case and `methodCallJs`, which
- * is the name-based dispatch §2.2.3 keeps for it.
- */
 export const KNOWN_MEMBERS: ReadonlySet<string> = new Set([
   ...KNOWN_METHODS,
   ...FIELD_ACCESS_SHORTCUTS,
 ]);
 
-/**
- * The trailing argument a key reader (`keys` / `entries` / `to-list`, and a
- * Map's `filter`) is given
- * so the runtime restores the keys it reads to their declared kind — nothing
- * when the checker recorded none, which leaves the string a key is stored as.
- */
 function keyKindArg(kind: KeyKind | undefined): string {
   return kind ? `, ${JSON.stringify(kind)}` : "";
 }
 
-/**
- * A bare `fn` name in a fragment position, rewritten as the call the fragment
- * stands for — `double` becomes `double($1)`, `add` in a `fold` becomes
- * `add($1, $2)`. The rewrite is needed because a `Ref` to a `fn` lowers to the
- * generated function itself, and a list of functions is not what
- * `xs.map(double)` means. A name a local or a slot shadows is that value, not
- * the `fn`, exactly as a `Ref` resolves.
- */
 function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): Expr | null {
   if (FRAGMENT_ARGUMENTS.get(method)?.index !== index || a.kind !== "Ref") return null;
   if (ctx.localBinds.has(a.name) || ctx.gen.slots.some((s) => s.name === a.name)) return null;
@@ -683,33 +475,16 @@ export function methodCallJs(
   keyKind?: KeyKind,
   shape?: FragmentShape,
 ): string {
-  // Chained `recv.run-reducer(name)` in a property-test invariant (§8.3): apply
-  // the reducer to the receiver state. `_event` is bound in the generated trial.
   if (method === "run-reducer") {
     return `_s.runReducerStep(App, ${jsOfExpr(recv, ctx)}, ${JSON.stringify(reducerNameArg(written[0]))}, _event)`;
   }
   const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);
-  // The scopes a fragment is lowered in: `one` declares the lambda's `$1`
-  // alone (`flat-map` / `update` / `map-err`, and a fragment handed one
-  // value), `two` its `$1` and `$2`. A `$2` read where only `$1` is declared
-  // is the enclosing scope's, as the checker resolves it — and where nothing
-  // encloses one, the checker has already reported it (E0103).
   const one = childCtx(ctx);
   const p1 = declareBind(one, "$1");
   const two = childCtx(one);
   const p2 = declareBind(two, "$2");
 
   const recvJs = jsOfExpr(recv, ctx);
-  // The lambda a `filter` / `map` / `find` / `sort-by` fragment is lowered
-  // into, binding `$1` / `$2` the way the checker decided from the receiver's
-  // type (`FragmentShape`, stdlib.md §2.2.3). A pair is taken apart; a Map's
-  // filter or map is handed each entry as one `[key, value]` pair
-  // (`_s.filter` / `_s.mapOver` pass it that way, the key restored to its
-  // type when the checker recorded a `keyKind`) and takes it apart the same
-  // way; any other value —
-  // a 2-element List included — is `$1` whole, with no `$2` declared at all.
-  // An undecided receiver falls back to reading the value: any 2-element
-  // array is taken apart there.
   const takenApart = `const ${p1} = __x[0]; const ${p2} = __x[1];`;
   const binds: Record<FragmentShape, string> = {
     pair: takenApart,
@@ -724,15 +499,8 @@ export function methodCallJs(
 
   switch (method) {
     case "filter":
-      // The receiver may be a List (incl. .entries → [k,v] tuples) or a Map.
-      // Dispatch at runtime; a Map hands the lambda each `[k, v]` pair, as
-      // `.entries` does, with the key restored like any key reader's.
       return `_s.filter(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "map":
-      // Polymorphic: List(T).map (over elements, incl. .entries [k,v] tuples),
-      // Option(T).map (over Some), or Map(K, V).map (over entries, each
-      // handed as one `[k, v]` pair, as `filter` hands them, with the key
-      // restored like any key reader's). Runtime distinguishes by shape.
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
@@ -746,25 +514,9 @@ export function methodCallJs(
     case "toggle":
       return `_s.setToggle(${recvJs}, ${argRaw(args[0]!)})`;
     case "get":
-      // One name, two readings, and the argument count picks between them:
-      // `Option(T).get()` / `Result(T, E).get()` take nothing and unwrap — the
-      // same lowering as the paren-free `o.get` — while `Map(K, V).get(k)` and
-      // `List(T).get(i)` take one and answer an Option (`Option(V)` /
-      // `Option(T)`), so the raw lookup is wrapped. On a receiver the checker
-      // decides, `checkGetArity` has already made the count fit it; on one it
-      // cannot decide, both counts pass and the count alone picks the reading.
       if (args.length === 0) return `_s.unwrap(${recvJs})`;
       return `((_v) => _v === undefined ? _s.None : _s.Some(_v))(_s.mapGet(${recvJs}, ${argRaw(args[0]!)}))`;
     case "get-or":
-      // Two shapes:
-      //   Option(T).get-or(default)    → returns T (unwrap or default)
-      //   Map(K,V).get-or(key, default) → returns V (lookup or default)
-      // The count selects the shape, and the helpers dispatch on the value at
-      // runtime, so no static type is needed here. `checkGetOrArity` is what
-      // makes that safe: a count that does not fit a receiver the checker can
-      // decide is reported, and a count past both readings is reported on any
-      // receiver — which matters because the second branch below reads exactly
-      // two arguments and would otherwise drop the rest without a word.
       if (args.length === 1) {
         return `_s.getOr(${recvJs}, ${argRaw(args[0]!)})`;
       }
@@ -776,8 +528,6 @@ export function methodCallJs(
     case "sort-by":
       return `_s.listSortBy(${recvJs}, ${argFnList(args[0]!)})`;
     case "fold":
-      // List(T).fold(init, expr) — expr binds $1=acc, $2=elem (distinct from the
-      // $1=elem/$2=value convention of filter/map), so emit its own lambda.
       return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
     case "show":
       return `_s.show(${recvJs})`;
@@ -790,16 +540,11 @@ export function methodCallJs(
     case "to-ms":
       return `(${recvJs})`;
     case "copy":
-      // record.copy(field=value, ...) → record with patches
-      // args expected to be a single RecordLit with the patch.
       if (args[0] && args[0].kind === "RecordLit") {
         return `_s.recordCopy(${recvJs}, ${jsOfExpr(args[0], ctx)})`;
       }
       return `_s.recordCopy(${recvJs}, {})`;
     case "find":
-      // Spec: List(T).find returns Option(T), like `head` and `last`. The raw
-      // array `find` answers `undefined` on no match, which reads as neither
-      // `Some` nor `None`.
       return `_s.listFind(${recvJs}, ${argFnList(args[0]!)})`;
     case "push":
       return `[...(${recvJs} ?? []), ${argRaw(args[0]!)}]`;
@@ -824,9 +569,6 @@ export function methodCallJs(
     case "trim":
       return `((${recvJs}) || "").trim()`;
     case "format":
-      // Time.format(pattern) — the pattern is the caller's, not ours. This
-      // used to render the ISO date whatever was asked for, so every
-      // `"yyyy-MM-dd HH:mm"` in an app lost its time and shifted its day.
       return `_s.formatTime(${recvJs}, ${argRaw(args[0]!)})`;
     case "plus":
       // Time.plus(durationMs) / Duration.plus — both stored as raw ms numbers.
@@ -836,55 +578,39 @@ export function methodCallJs(
     case "diff":
       // Polymorphic: Time/Duration → numeric magnitude; Set(T) → set difference.
       return `_s.diff(${recvJs}, ${argRaw(args[0]!)})`;
-    // ----- Issue #5: previously-missing stdlib methods -----
     case "concat":
-      // List(T).concat(other)
       return `[...((${recvJs}) ?? []), ...((${argRaw(args[0]!)}) ?? [])]`;
     case "prepend":
-      // List(T).prepend(x)
       return `[${argRaw(args[0]!)}, ...((${recvJs}) ?? [])]`;
     case "chunk":
-      // List(T).chunk(n) → List(List(T))
       return `_s.listChunk(${recvJs}, ${argRaw(args[0]!)})`;
     case "zip":
-      // List(T).zip(other) → List(Tuple(T, U))
       return `_s.listZip(${recvJs}, ${argRaw(args[0]!)})`;
     case "merge":
-      // Map(K,V).merge(other) — right side wins on key conflicts. Wrapped in
-      // parens so the object literal is safe in arrow-body position.
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
-      // Map(K,V).update(k, expr) — within expr, $1 is the current value.
+      // Within expr, $1 is the current value.
       return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, one)})))`;
     case "add":
-      // Set(T).add(x)
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
     case "union":
-      // Set(T).union(other)
       return `_s.setUnion(${recvJs}, ${argRaw(args[0]!)})`;
     case "intersect":
-      // Set(T).intersect(other)
       return `_s.setIntersect(${recvJs}, ${argRaw(args[0]!)})`;
     case "or":
-      // Option(T).or(other) / Result(T,E).or(other)
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
-      // Result(T,E).map-err(expr) — within expr, $1 is the current Err payload.
+      // Within expr, $1 is the current Err payload.
       return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
     case "replace":
-      // Text.replace(from, to) — replaces every occurrence.
+      // Every occurrence, not only the first.
       return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;
     case "min":
       return `Math.min((${recvJs}), (${argRaw(args[0]!)}))`;
     case "max":
       return `Math.max((${recvJs}), (${argRaw(args[0]!)}))`;
     case "clamp":
-      // Int/Float.clamp(lo, hi)
       return `Math.min(Math.max((${recvJs}), (${argRaw(args[0]!)})), (${argRaw(args[1]!)}))`;
-    // ----- Issue #92: paren-form stdlib methods kept in sync with the
-    // FieldAccess (no-paren) cases in jsOfExpr. Without these the calls fall
-    // through to the generic `(recv).method(...)` fallback and delegate to
-    // native JS — silent failure for `.is-ok()` / `.values()` / `.lower()` etc. -----
     case "is-ok":
       return `(_s.variantIs(${recvJs}, "Ok"))`;
     case "is-err":
@@ -901,8 +627,6 @@ export function methodCallJs(
       return `_s.listSort(${recvJs})`;
     case "ms":
       return `(${recvJs})`;
-    // ----- Issue #7: argument-less stdlib methods (parenthesized form). Kept in
-    // sync with the FieldAccess (no-paren) cases in jsOfExpr + KNOWN_METHODS. -----
     case "head":
       return `_s.listHead(${recvJs})`;
     case "tail":
@@ -942,8 +666,6 @@ export function methodCallJs(
     case "to-int":
       return `Math.trunc(${recvJs})`;
     default:
-      // generic fallback: receiver.method(...args). A property position, so the
-      // name must stay exactly what the runtime defines — jsProperty, not jsBinding.
       return `(${recvJs}).${jsProperty(method)}(${args.map(argRaw).join(", ")})`;
   }
 }
@@ -960,24 +682,11 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
   return `_s.variant(${JSON.stringify(name)}, ${payload.map((p) => jsOfExpr(p, ctx)).join(", ")})`;
 }
 
-/**
- * `emit X(args)` used as an expression (spec http.md §6.4, stdlib §2.1.1.1):
- * queue the emit exactly as the statement form does, then yield the dispatched
- * effect's `EffectId`, `"<effect>:" + key`.
- */
 export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
   const { stmts, idJs } = reducerEmitJs(e.effect, e.args, ctx);
   return `((() => { ${stmts} return ${idJs}; })())`;
 }
 
-/**
- * A read of slot `name`. Inside a reducer body (`reducerScope`) it answers the
- * value the body last wrote to the slot, if it has written one, and the value
- * the slot held when the reducer started otherwise (language.md §1.6.4
- * invariant 7). "Has written" is whether `_next` holds the key, not whether the
- * value is `undefined`: a `match` with no arm for its scrutinee writes
- * `undefined`, the batch commits that, and a later read has to agree with it.
- */
 export function slotReadJs(name: string, reducerScope: boolean | undefined): string {
   const key = JSON.stringify(name);
   return reducerScope
@@ -985,24 +694,6 @@ export function slotReadJs(name: string, reducerScope: boolean | undefined): str
     : `_live[${key}]`;
 }
 
-/**
- * One `emit` in a reducer body, statement or expression: the statements that
- * push its record onto `_emits`, and the `EffectId` that names it.
- *
- * The key is `"_"` unless the effect has `policy=latest-per-key(<key>)`. Then
- * it is evaluated here, once, where the emit runs (http.md §6.4): the record
- * carries it to the dispatcher, which runs the request under it, and the id is
- * built from the same value — so `emit cancel(id)` names the request in flight
- * even when the body writes the key slot after emitting. Each argument is
- * bound once (`__a0`, `__a1`, …) for the same reason: `now()` or `T.fresh()`
- * evaluated twice would give the record and the key two different inputs.
- *
- * The key reads slots in reducer scope unconditionally rather than from
- * `ctx.reducerScope`. `_emits`, which this pushes to, is declared beside
- * `_next` in the reducer body (`emit-reducer.ts`), so wherever this code runs
- * `_next` is in scope and the key sees the body's own writes; the key never
- * depends on how the `EvalCtx` that reached here was built.
- */
 export function reducerEmitJs(
   effect: string,
   args: Expr[],
@@ -1027,13 +718,6 @@ export function reducerEmitJs(
   };
 }
 
-/**
- * A `policy=latest-per-key(<key>)` key as a function of the effect's input,
- * answering the key as text. `reducerScope` says whether its slot reads may
- * name `_next`: true only for code placed inside a reducer body, where that
- * binding exists. The effect table's `keyOf` (`policyJs`) is built inside
- * `createApp()`, outside every reducer body, so it passes false.
- */
 export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): string {
   const keyCtx = makeEvalCtx(gen, ["$1"], reducerScope);
   return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
@@ -1041,7 +725,6 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
 
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
   const sc = jsOfExpr(e.scrutinee, ctx);
-  // Generate an IIFE that destructures the scrutinee and matches each arm.
   const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
   return `((_v) => { ${armsJs} else { return undefined; } })(${sc})`;
 }
@@ -1058,7 +741,6 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
     const { guard, binds, inner } = tupleArm(p, ctx, scVar);
     return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
   }
-  // PVariant
   const tag = p.name;
   const inner = childCtx(ctx);
   const bindAssigns: string[] = [];
@@ -1070,12 +752,6 @@ function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string
   return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
 }
 
-// Lower a tuple pattern into: a runtime guard (Array.isArray + length check + any
-// nested element guards) and a series of `const … = scVar[i]…;` bindings.
-// Nested PTuple / PVariant inside the tuple are recursively unrolled by walking
-// the indexed access path. The arm is a `childCtx` of the caller's, so it reads
-// the slots the way the caller does: `_next` first inside a reducer body,
-// `_live` everywhere else.
 export function tupleArm(
   p: Pattern & { kind: "PTuple" },
   ctx: EvalCtx,

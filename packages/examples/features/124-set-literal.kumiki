@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.2): a Set literal is a Set.
+# Feature: a Set literal is a Set.
 #
 #   slot s : Set(Int) = [5]
 #

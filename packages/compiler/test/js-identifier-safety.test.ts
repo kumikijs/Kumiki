@@ -1,32 +1,8 @@
-// Emitted JS must never depend on what a Kumiki author happened to name
-// something. Two hazards live here:
-//
-//   1. a Kumiki identifier that is a JS reserved word (`new`, `class`, …)
-//      lands in a binding position and produces source that cannot be parsed;
-//   2. a Kumiki identifier that looks like a runtime internal (`_live`, `_s`,
-//      …) shadows it, which does NOT throw — it silently computes wrong values.
-//
-// Both used to pass check + build, so these tests assert on the emitted module
-// actually loading and its reducers computing the right next state, not just
-// on the source text.
-
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { EMITTED_MODULE_BINDINGS, jsBinding } from "../src/codegen/context.ts";
+import { compileOrFail, importModule, LOADABLE, type ReducerShape } from "./helpers/module.ts";
 
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
-
-type ReducerShape = {
-  name: string;
-  apply: (
-    live: Record<string, unknown>,
-    payload: Record<string, unknown>,
-  ) => { slots: Record<string, unknown> };
-};
 type Provider = (req: { url: string }) => { kind: string; value: unknown };
 type EffectShape = {
   name: string;
@@ -44,18 +20,10 @@ type GeneratedApp = {
 
 /** Compile, load the emitted module, and hand back a fresh app instance. */
 async function build(src: string): Promise<{ js: string; app: GeneratedApp }> {
-  const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok") {
-    expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-  }
-  const dir = mkdtempSync(join(TMP_ROOT, "ident-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
+  const js = compileOrFail(src, LOADABLE);
   // A reserved word in a binding position makes this import throw at parse time.
-  const mod: { createApp: () => GeneratedApp } = await import(
-    `${pathToFileURL(file).href}?t=${Date.now()}`
-  );
-  return { js: result.js, app: mod.createApp() };
+  const mod = await importModule<{ createApp: () => GeneratedApp }>(js, "ident");
+  return { js, app: mod.createApp() };
 }
 
 /** Run one reducer and return the slot patch it produced. */
@@ -101,9 +69,6 @@ describe("jsBinding", () => {
 });
 
 describe("JS reserved words in binding positions", () => {
-  // Writes the generated module to disk and `import()`s it, so it pays for a
-  // real module load and overruns the 5s default on a cold cache. Per-test,
-  // because the default is an assertion elsewhere in this package.
   it("compiles a `let` named after a JS reserved word", { timeout: 30_000 }, async () => {
     const { app } = await build(`
       slot count : Int = 0
@@ -138,9 +103,6 @@ describe("JS reserved words in binding positions", () => {
 });
 
 describe("kebab-case names in binding positions", () => {
-  // genFn used to emit parameter names verbatim while the body referenced them
-  // through jsName, so a hyphenated parameter produced both invalid JS and a
-  // declaration/use mismatch.
   it("keeps a hyphenated fn parameter consistent between declaration and use", async () => {
     const { js, app } = await build(`
       slot count : Int = 0
@@ -179,10 +141,6 @@ describe("runtime-internal names used as Kumiki identifiers", () => {
 });
 
 describe("names the emitted module depends on", () => {
-  // Escaping only the `_` namespace is not enough: the emitted code also calls
-  // JS globals and binds the runtime helpers it imports, none of which are
-  // `_`-prefixed. Binding one of those does not throw at load time — it shadows
-  // the real one and fails later, somewhere else.
   it("does not let a fn parameter shadow a JS global", async () => {
     const { app } = await build(`
       slot res : Text = ""
@@ -210,10 +168,6 @@ describe("names the emitted module depends on", () => {
     expect(fire(app, "go").res).toBe("a!");
   });
 
-  // The effect invoke lambda used to bind `input` / `caps` / `signal` / `req`
-  // and `const p = caps.provider(...)`. A user fn named `p` referenced from
-  // `map-request` then landed in that `const`'s temporal dead zone, so every
-  // dispatch threw — with check and build both green.
   it("does not let the effect invoke lambda shadow a user fn", async () => {
     const { app } = await build(`
       slot res : Text = ""
@@ -231,9 +185,6 @@ describe("names the emitted module depends on", () => {
     expect(result).toEqual({ kind: "ok", value: "a!" });
   });
 
-  // Structural guard: the reserved-name list has to keep pace with whatever
-  // codegen actually binds at module scope, or the two tests above only prove
-  // that today's names are covered.
   it("EMITTED_MODULE_BINDINGS covers every non-underscore top-level binding", () => {
     const src = `
       slot n : Int = 0
@@ -270,8 +221,6 @@ describe("names the emitted module depends on", () => {
       );
       if (declared) bound.push(declared[1]!);
     }
-    // The import header is what makes this test worth running, and an empty
-    // `uncovered` proves nothing if the scan silently collected nothing.
     expect(bound).toContain("mountCore");
     expect(bound).toContain("httpFetch");
     expect(bound).toContain("layoutTiles");
@@ -283,9 +232,6 @@ describe("names the emitted module depends on", () => {
 });
 
 describe("runtime-managed slot names", () => {
-  // `route` is maintained by the runtime (docs/spec/routing.md §3.2). Codegen
-  // reads it straight from the live map, so a user slot of the same name is
-  // silently discarded and renders "[object Object]".
   it("reports a diagnostic instead of silently overwriting `route`", () => {
     const errors = check(
       parse(
@@ -300,23 +246,12 @@ describe("runtime-managed slot names", () => {
     expect(found?.kind).toBe("reserved-slot-name");
   });
 
-  // `route` is the only such name that reaches the checker. Every other name
-  // codegen resolves ahead of the slot table (`now`, `self`, …) is a keyword,
-  // so the lexer rejects it first — which is why E0115 lists just the one.
   it("leaves the keyword-shaped reserved names to the lexer", () => {
     expect(() => parse(lex(`slot now : Text = "x"`))).toThrow(/Expected ident, got kw\(now\)/);
   });
 });
 
 describe("the identifier a shadowed declaration takes", () => {
-  // `freshBinding` (codegen/context.ts) declares a name that is already in
-  // scope as `jsBinding(name) + "$" + n`. That is only safe if no OTHER Kumiki
-  // name maps onto the result — a collision would silently point two distinct
-  // bindings at one identifier, which is the failure this whole file exists to
-  // catch. The argument for it rests on `jsBinding`'s mapping and on the
-  // lexer's rule that an identifier never ends in `-`, so it is brute-forced
-  // here rather than trusted: neither rule is local to the function.
-
   /** Every string over `alphabet` up to `maxLen`, as one flat list. */
   function stringsUpTo(alphabet: string[], maxLen: number): string[] {
     let level = [""];
@@ -342,14 +277,10 @@ describe("the identifier a shadowed declaration takes", () => {
   }
 
   it("cannot be produced by jsBinding from any other name", () => {
-    // `-` and `_` are the two characters that move under the mapping, and a
-    // digit is what a `$n` suffix looks like; the rest are carried for shape.
     const names = lexableIdentifiers(stringsUpTo(["a", "n", "_", "-", "0", "1"], 5));
     expect(names.length).toBeGreaterThan(500);
 
     const mapped = new Set(names.map((n) => jsBinding(n)));
-    // Injective to begin with: `a-b` and `a_b` used to converge, and the suffix
-    // rule below says nothing useful if the base mapping already collides.
     expect(mapped.size).toBe(names.length);
 
     const collisions = names.flatMap((n) =>
@@ -359,9 +290,6 @@ describe("the identifier a shadowed declaration takes", () => {
   });
 
   it("stays clear of the module's own bindings and of JS reserved words", () => {
-    // The suffix is appended to a `jsBinding` output, which has already been
-    // pushed clear of both — so this asserts the suffix does not walk it back
-    // into one (`new` → `new$` → `new$1`, not `new1`).
     for (const name of ["new", "class", "String", "App", "createApp", "route"]) {
       const shadow = `${jsBinding(name)}$1`;
       expect(EMITTED_MODULE_BINDINGS).not.toContain(shadow);

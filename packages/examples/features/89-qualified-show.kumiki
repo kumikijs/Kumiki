@@ -1,7 +1,7 @@
-# Feature (spec/stdlib.md §2.2): `T.show(v)` is the qualified spelling of the
-# `v.show` method, and it is a `Text` for every capitalised `T`. Codegen says
-# so with one regex and one helper — `_s.show(v)`, the qualifier discarded —
-# and the checker has to say the same thing.
+# Feature: `T.show(v)` is the qualified spelling of the `v.show` method, and it
+# is a `Text` for every capitalised `T`. Codegen says so with one regex and one
+# helper — `_s.show(v)`, the qualifier discarded — and the checker has to say
+# the same thing.
 #
 # It did not, for the two qualifiers that also name constructors. `Duration.*`
 # was answered with `Duration` and `Bytes.*` with `Bytes` before the member was
@@ -28,7 +28,7 @@ reducer render on=ui.click(RenderBtn)
     # A `Duration` is milliseconds at runtime, so showing one shows that number.
     do= from-duration := Duration.show(Duration.s(seconds))
         # The other qualifier that names a constructor. `Bytes.show(b)` is
-        # `b.show`, the bytes' base64 (stdlib.md §2.2.10).
+        # `b.show`, the bytes' base64 (stdlib.md).
         from-bytes    := Bytes.show(Bytes.from-text("hi"))
         # The qualifiers that were already right, kept alongside so the file
         # shows the four answers are the same answer.

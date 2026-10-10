@@ -1,4 +1,4 @@
-# Feature (testing.md §8): a reducer that reads the router-maintained `route`
+# Feature: a reducer that reads the router-maintained `route`
 # slot is testable. `route` is the runtime's slot — no program declares one —
 # so the harness seeds it exactly as `mount` does, and a test may replace it
 # through `given.slots`, naming only the fields it cares about.
@@ -17,7 +17,7 @@ reducer report   on=ui.click(Send) do= emit record(route.path)
 reducer reported on=record.ok(_, _)  do= saved := "sent " + seen
 # No provider is registered for `log.write` outside a test, so the click that
 # emits it fails at every other tier — an unconsumed effect error is reported
-# rather than swallowed (runtime.md §10.4.5), which is what this consumes.
+# rather than swallowed, which is what this consumes.
 reducer failed   on=record.err(_, _) do= saved := "not sent"
 
 tile Go    = button(text="go")

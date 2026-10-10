@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.10): `b.show` on a `Bytes` is its padded standard
+# Feature (stdlib.md): `b.show` on a `Bytes` is its padded standard
 # base64, the text `Bytes.from-base64` reads back. That holds for every byte
 # sequence, including bytes that are not UTF-8 and no bytes at all, so
 # `Bytes.from-base64(b.show) == b` is always true.
@@ -10,7 +10,7 @@
 # `+` with a `Text` side, `fmt` and a `text` tile render a `Bytes` the same
 # way, since all of them go through `show`.
 #
-# `Bytes.parse(t)` reads `t` as UTF-8 (§2.4.3), so it is not `show`'s inverse:
+# `Bytes.parse(t)` reads `t` as UTF-8, so it is not `show`'s inverse:
 # `Bytes.parse(hi.show)` is the four bytes of "aGk=", not the two of "hi".
 # Read a shown `Bytes` back with `Bytes.from-base64`.
 
