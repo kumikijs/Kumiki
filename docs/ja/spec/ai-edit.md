@@ -249,6 +249,7 @@ hash にはどの定義の名前も含まれない。定義自身の名前は除
 - 名前 → hash 解決はコンパイル時 / op 適用時に行う
 - 同名でも依存先が変われば別 hash
 - リネームは `(rename, name-old, name-new)` op のみ。hash は不変
+- tile の位置、つまり値 builtin でない builtin の位置引数（`column(leaf)`、[言語 §1.7.1](./language.md#_1-7-1-構文)）に書いた名前は、slot や `fn` が同じ名前を持っていても（[E0007](./errors.md#e0007-duplicate-definition)）その名前の tile を指し、値の位置（`text(leaf)`・`Card(leaf)`・名前付き引数）では値を指すので、`refs`・`rename`・`remove --cascade` はプログラムがそこで描画する、あるいは読む定義に従う
 
 ### 9.5.3 表示時の名前 {#_9-5-3-names-at-display-time}
 

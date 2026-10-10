@@ -7,7 +7,7 @@ import {
   type TileExpr,
   type TypeExpr,
 } from "../ast.ts";
-import { BUILTIN_TILES, contentReading, positionalIsTile } from "../builtins.ts";
+import { BUILTIN_TILES, contentReading, positionalIsTile, tileNamedAt } from "../builtins.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -392,11 +392,20 @@ function checkTileCall(
       checkTileExpr(v, sym, errors, ctx);
       continue;
     }
-    if (
-      arg.name === undefined &&
-      positionalIsTile(t.name) &&
-      !(v.kind === "Ref" && sym.tiles.has(v.name))
-    ) {
+    const named = tileNamedAt(t.name, arg, (name) => sym.tiles.has(name));
+    if (named) {
+      const def = sym.tiles.get(named.name);
+      const call: TileExpr & { kind: "TileCall" } = {
+        kind: "TileCall",
+        name: named.name,
+        args: [],
+        props: [],
+        pos: named.pos,
+      };
+      if (def) checkTileInput(call, def, sym, errors, ctx);
+      continue;
+    }
+    if (arg.name === undefined && positionalIsTile(t.name)) {
       errors.push({
         code: "E0128",
         kind: "value-as-child",

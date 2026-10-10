@@ -85,6 +85,43 @@ tile B = button(text="b")
     });
   });
 
+  describe("a name where a tile belongs is the tile", () => {
+    const decl = `slot leaf : Text = "hello"
+tile leaf = column(text("tile"))
+tile Card in=Text = text($1)
+`;
+
+    it("is the tile beside a slot of the same name", () => {
+      expect(refsOf(`${decl}tile App = column(leaf)\n`, "tile.App")).toEqual(["tile.leaf@4:19"]);
+    });
+
+    it("leaves a value builtin's content and a user tile's input to the slot", () => {
+      const src = `${decl}tile App = column(leaf, text(leaf), Card(leaf), column(gap=leaf))\n`;
+      expect(refsOf(src, "tile.App")).toEqual([
+        "tile.leaf@4:19",
+        "slot.leaf@4:30",
+        "tile.Card@4:37",
+        "slot.leaf@4:42",
+        "slot.leaf@4:60",
+      ]);
+    });
+
+    it("is the tile beside a fn of the same name, which a call still names", () => {
+      const src = `fn leaf() -> Text = "f"
+tile leaf = column(text("tile"))
+tile App = column(leaf, text(leaf()))
+`;
+      expect(refsOf(src, "tile.App")).toEqual(["tile.leaf@3:19", "fn.leaf@3:30"]);
+    });
+
+    it("is the tile under a loop variable of the same name", () => {
+      const src = `${decl}slot items : List(Text) = []
+tile App = column(for leaf in items column(leaf, text(leaf)))
+`;
+      expect(refsOf(src, "tile.App")).toEqual(["slot.items@5:31", "tile.leaf@5:44"]);
+    });
+  });
+
   describe("names that live outside an ordinary expression position", () => {
     it("resolves a link's prefetch prop to a reducer", () => {
       const src = `slot n : Int = 0
