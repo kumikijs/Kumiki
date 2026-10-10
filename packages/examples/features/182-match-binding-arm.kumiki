@@ -1,0 +1,49 @@
+# Feature: a binding name is a pattern, so `| other -> …`
+# is an arm after another arm just as it is first, and names whatever the arms
+# above it did not take. Each place a `match` is written takes one: a `fn`
+# body, a value a reducer assigns, a reducer statement, a value builtin's
+# content, and a tile.
+#
+# After an arm body, a `|` is a bool OR unless a pattern and `->` follow it.
+# `->` is not an operator, so `| other ->` can only be the next arm, while
+# `night | rain` in `judge` below, with no `->` after it, is still an or.
+
+type Color = Red | Green | Blue
+
+slot color  : Color = Blue
+slot night  : Bool  = true
+slot rain   : Bool  = false
+slot points : Int   = 0
+slot alarm  : Bool  = false
+
+fn score(c: Color) -> Int = match c with | Red -> 1 | other -> 2
+
+reducer paint on=ui.click(Paint) do= color := Red
+
+reducer judge on=ui.click(Judge)
+    do= points := match color with | Red -> 10 | other -> score(other)
+        match color with
+        | Red   -> alarm := night | rain
+        | other -> alarm := false
+
+tile Paint = button(text="paint red") {id: "paint"}
+tile Judge = button(text="judge")     {id: "judge"}
+
+tile Swatch = match color with
+    | Red   -> text("swatch: red")
+    | other -> text("swatch: " + other.show)
+
+tile App
+    = column(
+        heading("a binding arm after another arm"),
+        row(Paint, Judge) {gap: "sm"},
+        Swatch,
+        text(match color with | Red -> "label: stop" | other -> "label: " + other.show),
+        text("points: " + points.show),
+        text("alarm: " + alarm.show))
+      {pad: "lg", gap: "md"}
+
+app MatchBindingArm
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

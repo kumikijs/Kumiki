@@ -45,12 +45,12 @@ export class ExpressionParser extends TypeParser {
     return lhs;
   }
 
-  /** Heuristic: after `|`, does it look like the start of a match arm? */
+  // `->` is not an operator, so a pattern followed by one can only be the next arm, a binding
+  // name as much as a variant.
   protected looksLikeMatchArm(): boolean {
     const next = this.peek(1);
-    // `| _ ->` is a wildcard match arm
     if (next.kind === "ident" && next.value === "_") return true;
-    if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
+    if (next.kind === "ident") {
       const after = this.peek(2);
       if (after.kind === "op" && after.value === "->") return true;
       if (after.kind === "op" && after.value === "(") return this.arrowClosesParens(3);
