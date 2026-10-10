@@ -1,12 +1,12 @@
 # Feature: a bound field its refinement refuses keeps what was typed, and
-# `error(field=…)` speaks for it (spec/forms.md §5.1.2, §5.7.1).
+# `error(field=…)` speaks for it.
 #
 # A `bind` whose value the slot's refinement refuses leaves the slot on the
 # last value it accepted — quietly, because a half-typed address is expected
 # rather than a defect. The field still shows what was typed, so the message
 # has to be about that. It used to be computed from the slot, which still held
 # the old, valid address: the field showed "ada@examplecom", the slot held
-# "ada@example.com", and the page said nothing at all (#443).
+# "ada@example.com", and the page said nothing at all.
 #
 # The scenario beside this file types into the field and reads the message;
 # `smoke` fills it with a value its refinement refuses, which is the state

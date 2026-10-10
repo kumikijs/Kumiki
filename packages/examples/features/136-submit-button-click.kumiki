@@ -1,9 +1,9 @@
-# Feature (forms.md §5.2.2): a click reducer on a submit button and the
-# form's `ui.submit` are independent — clicking "Log in" runs both. So does a
-# click reducer lifted onto the button from a tile that wraps it (`Outer`), an
-# `onClick=` argument, and a button with no `type`, which is `submit` by the
-# HTML default. A `type="button"` button with a click reducer does not submit:
-# `type` is what keeps a button in a form from submitting it.
+# Feature: a click reducer on a submit button and the form's `ui.submit` are
+# independent — clicking "Log in" runs both. So does a click reducer lifted onto
+# the button from a tile that wraps it (`Outer`), an `onClick=` argument, and a
+# button with no `type`, which is `submit` by the HTML default. A
+# `type="button"` button with a click reducer does not submit: `type` is what
+# keeps a button in a form from submitting it.
 
 slot email   : Text = ""
 slot clicks  : Int  = 0

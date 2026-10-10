@@ -1,4 +1,4 @@
-# Feature: receiver type inference (#23, ADR-002). The parenthesis-free method
+# Feature: receiver type inference. The parenthesis-free method
 # shortcut `recv.m` now dispatches by the receiver's INFERRED type:
 #  - `seg.head` / `seg.size` on a RECORD read the fields (no shadow), even
 #    though `head` / `size` are also stdlib method names;
