@@ -887,6 +887,38 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 **修正**：型と組み合わせられるフィールド種別を与える — `input(bind=age, type="number")`、`input(bind=due, type="date")` — か、フィールドが保持する型の slot を bind する。時刻だけなら `type="time"` のフィールドで `Text` として保持するか、`type="datetime-local"` のフィールドで `Time` を使う。`Option` はペイロードを `.get` で bind する。
 
+### E0229 `bind-target-not-slot`
+
+`bind=` のターゲットの根が、ターゲットを書いた位置で slot ではない（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛））。
+
+> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a field path into one. <fix> (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to the literal <v>: a literal is a value, not a slot — … (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to this expression: it computes a value, not a slot — … (see docs/spec/forms.md)`
+
+コントロールは、ターゲットの根が指す slot へ、根より下のフィールドパスを通して書き戻す。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` はローカルであり、その背後に slot はない。この検査がないと、lowering はコントロールの編集をライブの slot テーブルにローカルの名前で書き込み、誰も読まない独立した slot にしてしまう：フィールドはすべての編集を受け付けるが、行の元のリストも、呼び出し側が渡した slot も変わらない。リテラルやその他の式は場所を指さず、bind は捨てられる。どちらもほかの何も報告しない — プログラムは check、build、マウントを通り、どの編集にも耐える。
+
+`<what>` は checker が知っている根の正体である：`the variable of a for`、`this tile's input`（`in=` を宣言した tile の `$1`）、それ以外のローカル（`match` の束縛）には `a local name`、`a name the runtime provides`（`route`）。テキストリテラルは `the text literal "<v>"` と呼ばれる。slot と同名のローカルは、どの読み出しでもそうであるように slot を隠すので、`for title in titles input(bind=title)` は slot `title` があっても報告される。検査されるコントロールは bind から書き戻すもの、つまり `input`、`textarea`、`select`、`slider`、`check`、`switch`、`radio`、`editable` である。
+
+ほかのコードが報告する根は重ねて報告しない：何にも解決されない名前は [E0103](#e0103-undef-ref-undef-slot)、`fn` は [E0127](#e0127-fn-as-value) である。呼び出しとして書いたステップはその呼び出しで [E0602](#e0602-unassignable-member) になり、根はここで引き続き検査される。
+
+```kumiki invalid
+type Todo = {text: Text}
+slot todos : List(Todo) = [{text: "milk"}]
+tile Rows = column(for t in todos input(bind=t.text))
+```
+
+**修正**：slot そのもの、またはその中へのフィールドパスを bind する。slot の名前を綴ったテキストリテラルは、その slot を引用符付きで書いたものである：`bind=title` と書く。リストの 1 行を編集するには、行を `value=` で表示し、props にキーを持たせ、行のイベントに対する reducer でリストを更新する（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛））：
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+tile TodoText in=Text = input(value=todos[$1].text) {todoId: $1}
+tile Rows = column(for k in todos.keys TodoText(k) {key: k})
+reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.value
+```
+
+呼び出し側が選ぶ slot を編集する tile も同じである：キーを入力として受け取り、reducer がそのキーで slot に書き込むか、tile が slot をその名前で bind する。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。

@@ -21,6 +21,22 @@ tile Compose = column(
 - User input updates the slot → the tile re-renders
 - Type and refinement are **checked on each input**
 
+A `bind=` target names the place the control writes back to: a slot, or a field path into one — `bind=form.email`, or `bind=draft.get.title` through the payload of an `Option` or a `Result` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). Its root has to be a slot where the target is written. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are values, not places — a local named like a slot hides the slot, as it does for any read — and a literal or any other expression names no place at all. Each is reported by `kumiki check` ([E0229](./errors.md#e0229-bind-target-not-slot)).
+
+So a row of a list is not bound through its loop variable. The row shows its value with `value=` and carries its key in its props, and a reducer on the row's event writes the list at that key:
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+
+tile TodoText in=Text = input(value=todos[$1].text) {todoId: $1}
+tile Todos = column(for k in todos.keys TodoText(k) {key: k})
+
+reducer editTodo
+    on=ui.input(TodoText)
+    do= todos[$el.todoId].text := $event.value
+```
+
 ### 5.1.1 Elements That Support `bind`
 
 | Element | Acceptable types |
@@ -114,7 +130,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 | prop | Type | Meaning |
 |---|---|---|
-| `bind` | slot name | Two-way binding |
+| `bind` | slot, or a field path into one ([§5.1](#_5-1-two-way-binding-of-individual-inputs)) | Two-way binding |
 | `value` | expr | One-way value (instead of `bind`; updated in a reducer) |
 | `onChange` | reducer name | Reducer called when the value changes |
 | `onInput` | reducer name | Called on the input event (more frequent than onChange) |

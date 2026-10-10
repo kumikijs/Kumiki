@@ -39,11 +39,18 @@ export type SymbolTable = {
   app?: AppDef;
 };
 
+/** Names a program reads without declaring them, because the runtime provides each. */
+export const RUNTIME_NAMES: ReadonlySet<string> = new Set(["route", "now", "self"]);
+
+export type LocalBinder = "input" | "for";
+
 export type Ctx = {
   kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init" | "test";
   localBinds: Set<string>;
   capsAvailable?: Set<string>; // for reducer context
   localTypes: Map<string, TypeExpr>;
+  /** Kept only in a tile's scope, where E0229 reads it to say what a bind target's root is. */
+  localBinders?: Map<string, LocalBinder>;
   runReducerScope?: boolean;
   wildcardsReportedElsewhere?: boolean;
   routeBind: "bound" | "unbound" | "no-payload";
@@ -53,15 +60,27 @@ export type Ctx = {
   oneValueFragment?: { method: string; hides: boolean };
 };
 
-export function bindLocal(ctx: Ctx, name: string, type: TypeExpr | null): void {
+export function bindLocal(
+  ctx: Ctx,
+  name: string,
+  type: TypeExpr | null,
+  binder?: LocalBinder,
+): void {
   ctx.localBinds.add(name);
   if (type) ctx.localTypes.set(name, type);
   else ctx.localTypes.delete(name);
+  if (binder) ctx.localBinders?.set(name, binder);
+  else ctx.localBinders?.delete(name);
 }
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
 export function innerScope(ctx: Ctx): Ctx {
-  return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+  return {
+    ...ctx,
+    localBinds: new Set(ctx.localBinds),
+    localTypes: new Map(ctx.localTypes),
+    ...(ctx.localBinders ? { localBinders: new Map(ctx.localBinders) } : {}),
+  };
 }
 
 export function pureScope(binds: string[]): Ctx {

@@ -1,8 +1,9 @@
 import { assignable, typeToString, unaliasType } from "../assignable.ts";
 import { type Expr, isTileExpr, type TileExpr } from "../ast.ts";
+import { bindTarget } from "../bind-target.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst } from "./against.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import { type Ctx, type KumikiError, RUNTIME_NAMES, type SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 
@@ -22,21 +23,93 @@ export function checkBindTargetSteps(
   errors: KumikiError[],
 ): void {
   const bind = t.args.find((a) => a.name === "bind");
-  let cur = bind?.value as Expr | undefined;
-  while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
-    if (cur.kind === "MethodCall") {
-      const hint =
-        cur.method === "get" && cur.args.length === 0
-          ? ' — the unwrap step is written ".get"'
-          : " — a member derives a value, so there is no place in the receiver for the control to write";
-      errors.push({
-        code: "E0602",
-        kind: "unassignable-member",
-        message: `Cannot bind through ".${cur.method}(${cur.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
-        pos: cur.pos,
-      });
+  if (!bind || isTileExpr(bind.value)) return;
+  for (const step of bindTarget(bind.value).steps) {
+    if (step.kind !== "MethodCall") continue;
+    const hint =
+      step.method === "get" && step.args.length === 0
+        ? ' — the unwrap step is written ".get"'
+        : " — a member derives a value, so there is no place in the receiver for the control to write";
+    errors.push({
+      code: "E0602",
+      kind: "unassignable-member",
+      message: `Cannot bind through ".${step.method}(${step.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
+      pos: step.pos,
+    });
+  }
+}
+
+/**
+ * The lowering writes a root that is not a slot into the live slot table under
+ * its own name, where nothing reads it, so the control would take edits that
+ * reach nothing.
+ */
+export function checkBindTargetRoot(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!BIND_CONTROLS.has(t.name)) return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  const root = bindRootNotASlot(bindTarget(bindArg.value).root, sym, ctx);
+  if (!root) return;
+  errors.push({
+    code: "E0229",
+    kind: "bind-target-not-slot",
+    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}, not a slot — a bind writes back to a slot or a field path into one. ${root.fix} (see docs/spec/forms.md)`,
+    pos: bindArg.value.pos,
+  });
+}
+
+function bindRootNotASlot(
+  root: Expr,
+  sym: SymbolTable,
+  ctx: Ctx,
+): { named: string; is: string; fix: string } | null {
+  const fix = "Bind a slot, or show the value with value= and write the slot from a reducer";
+  switch (root.kind) {
+    case "Ref": {
+      const named = `"${root.name}"`;
+      if (ctx.localBinds.has(root.name)) {
+        switch (ctx.localBinders?.get(root.name)) {
+          case "for":
+            return {
+              named,
+              is: "it is the variable of a for",
+              fix: "To edit a row, show it with value= and update the list from a reducer",
+            };
+          case "input":
+            return {
+              named,
+              is: "it is this tile's input",
+              fix: `Bind the slot by its name, or show ${root.name} with value= and write the slot from a reducer`,
+            };
+          default:
+            return { named, is: "it is a local name", fix };
+        }
+      }
+      if (sym.slots.has(root.name) || !RUNTIME_NAMES.has(root.name)) return null;
+      return { named, is: "it is a name the runtime provides", fix };
     }
-    cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
+    case "Str":
+      return {
+        named: `the text literal ${JSON.stringify(root.value)}`,
+        is: "a literal is a value",
+        fix: sym.slots.has(root.value)
+          ? `Write the slot's name without quotes: bind=${root.value}`
+          : fix,
+      };
+    case "Num":
+    case "Bool":
+      return {
+        named: `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
+        is: "a literal is a value",
+        fix,
+      };
+    default:
+      return { named: "this expression", is: "it computes a value", fix };
   }
 }
 
