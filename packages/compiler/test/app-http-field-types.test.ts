@@ -1,29 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-// `app.http`'s value fields are expressions evaluated per request, and each of
-// the four has a type it is held to (http.md §6.3.1), reported as E0201:
-//
-// - `base-url` takes anything assignable to `Text` — `Url`, `Email`, `Uuid` and
-//   every other type built on `Text` included.
-// - `headers` takes anything assignable to `Map(Text, Text)`, the type of a
-//   request's own `headers`. A key or value of a map literal that is not a
-//   `Text` is reported where it is written; anything that is not a map, at the
-//   field.
-// - `timeout` takes anything assignable to `Int`, read as milliseconds — a
-//   `Duration` is one, and so is a user `nominal Int`. A `Float` is not: the
-//   field is an `Int`, the same boundary every other `Int` position draws. Each
-//   literal that can reach the field must be positive.
-// - `credentials` takes anything assignable to `Text`, and each literal that
-//   can reach the field must be one of the three Fetch modes.
-//
-// A literal reaches the field as its value, or as what a branch of an `if`, an
-// arm of a `match` or the body of a `let … in` yields. A value computed any
-// other way is held to the field's type alone.
-//
-// Every case asserts the whole diagnostic list, so an extra report, a missing
-// one or one at the wrong position fails it. What must report and what must
-// not are paired either in one program or in one test.
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const app = (slots: string, http: string): string =>
   `${slots}
@@ -37,7 +13,7 @@ app Types
     init   = []`;
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
 const notPositive = (literal: string): string =>
   `timeout ${literal} is not a positive number of milliseconds; every request is aborted before it can answer`;
@@ -102,24 +78,16 @@ slot c : Cents = 5`,
   });
 
   it("timeout refuses a Text under a program's own type Duration = Text", () => {
-    // A program's `type Duration` shadows the stdlib one, so the field cannot be
-    // held to whatever `Duration` names in scope: here that is `Text`, and a
-    // `Text` still reaches `setTimeout` as `NaN`.
     expect(diagnostics(app(`type Duration = Text`, `timeout: "soon"`))).toEqual([
       "E0201 7:24 Expected Int but got Text",
     ]);
   });
 
   it("timeout refuses a Float: 5.5 is not an Int, by choice", () => {
-    // `setTimeout(fn, 5.5)` would run, but the field is an `Int` of
-    // milliseconds, and an `Int` position refuses a `Float` everywhere else too.
     expect(diagnostics(app("", `timeout: 5.5`))).toEqual(["E0201 7:24 Expected Int but got Float"]);
   });
 
   it("timeout refuses a literal that is not positive: 0 and a negative Int", () => {
-    // The runtime arms the abort with this value, and a delay of 0 or less
-    // fires it at once: every request is aborted before it can answer, the
-    // failure `timeout: "soon"` is refused for.
     expect(diagnostics(app("", `timeout: 0`))).toEqual([`E0201 7:24 ${notPositive("0")}`]);
     expect(diagnostics(app("", `timeout: -1`))).toEqual([`E0201 7:24 ${notPositive("-1")}`]);
     expect(diagnostics(app("", `timeout: 1`))).toEqual([]);
@@ -129,37 +97,6 @@ slot c : Cents = 5`,
     expect(diagnostics(app("", `timeout: -5.5`))).toEqual([
       "E0201 7:24 Expected Int but got Float",
     ]);
-  });
-
-  it("timeout and credentials find the literals that reach them in one walk", () => {
-    // The literal is reported where it is written, at any depth, and the good
-    // literal beside it in the same shape is not.
-    const pre = `slot fast : Bool = true
-type Speed = Quick | Slow
-slot speed : Speed = Quick`;
-    const shapes = [
-      `X`,
-      `if fast then Y else X`,
-      `if fast then X else Y`,
-      `if fast then (if fast then Y else X) else Y`,
-      `match speed with | Quick -> Y | Slow -> X`,
-      `let n = 1 in X`,
-    ];
-    const fields = [
-      { field: "timeout", bad: "0", good: "5000", message: notPositive("0") },
-      { field: "credentials", bad: `"bogus"`, good: `"omit"`, message: BOGUS_MODE },
-    ];
-    for (const shape of shapes) {
-      for (const { field, bad, good, message } of fields) {
-        const before = shape.slice(0, shape.indexOf("X")).replaceAll("Y", good);
-        const value = shape.replaceAll("Y", good).replace("X", bad);
-        const col = `    http   = {${field}: ${before}`.length + 1;
-        expect([value, diagnostics(app(pre, `${field}: ${value}`))]).toEqual([
-          value,
-          [`E0201 9:${col} ${message}`],
-        ]);
-      }
-    }
   });
 
   it("timeout reports a wrong branch of an if, and a bare union tag, at the value", () => {
@@ -178,11 +115,6 @@ type Speed = Quick | Slow`,
   });
 
   it("timeout is held to Int exactly as base-url is held to Text, shape for shape", () => {
-    // The two fields go through one check, so what one reports the other does
-    // too. Shapes whose type is not inferred at all (a call to a `fn` with no
-    // `->`, an empty `{}`, an index into a record) are silent in both, which is
-    // an inference gap shared with every other typed position, not a hole in
-    // either field.
     const pre = `slot fast : Bool = true
 type Speed = Quick | Slow
 slot cfg : {ms: Int, label: Text} = {ms: 5, label: "x"}
@@ -239,11 +171,6 @@ fn soon() = "soon"`;
   });
 });
 
-// `headers` is the `Map(Text, Text)` every request's own `headers` is
-// (http.md §6.1.2), so the global ones are held to the same type. A value that
-// is not one used to run: the runtime spreads it into the request's headers, a
-// number spreads to nothing and a string to headers named `0`, `1`, … — either
-// way not one intended header reached the request.
 describe("app.http headers is a Map(Text, Text)", () => {
   it.each([
     ["an Int", ``, `headers: 42`, "E0201 7:24 Expected Map(Text, Text) but got Int"],
@@ -283,10 +210,6 @@ describe("app.http headers is a Map(Text, Text)", () => {
   });
 
   it("refuses bare header names: an unquoted key makes a record, not a map", () => {
-    // `-` is an identifier character, so `Content-Type` is one name, and
-    // `{Name: value}` with a bare name is a record literal. This compiled and ran
-    // before `headers` had a type; it is now E0201 by decision (http.md §6.3.1),
-    // and the quoted form beside it is the fix the diagnostic points to.
     const pre = `slot token : Text = "t"`;
     expect(
       diagnostics(app(pre, `headers: {Content-Type: "application/json", Authorization: token}`)),
@@ -319,10 +242,6 @@ slot hs : Map(Text, Text) = {}`,
   });
 
   it("accepts a type built on Text, as a value and as a map's value type", () => {
-    // "Assignable to Map(Text, Text)" compares the arguments by assignability,
-    // as `base-url` accepts a `Url` and `timeout` a user `nominal Int`. Were the
-    // arguments ever compared by name instead, the two slots would start
-    // reporting.
     const pre = `type Token = nominal Text
 slot trace : Url = "https://trace.example.com"
 slot token : Token = "t"
@@ -333,5 +252,37 @@ slot tokens : Map(Text, Token) = {}`;
     );
     expect(diagnostics(app(pre, `headers: urls`))).toEqual([]);
     expect(diagnostics(app(pre, `headers: tokens`))).toEqual([]);
+  });
+});
+
+describe("the literals that reach timeout and credentials", () => {
+  const pre = `slot fast : Bool = true
+type Speed = Quick | Slow
+slot speed : Speed = Quick`;
+  const shapes = [
+    `X`,
+    `if fast then Y else X`,
+    `if fast then X else Y`,
+    `if fast then (if fast then Y else X) else Y`,
+    `match speed with | Quick -> Y | Slow -> X`,
+    `let n = 1 in X`,
+  ];
+  const fields = [
+    { field: "timeout", bad: "0", good: "5000", message: notPositive("0") },
+    { field: "credentials", bad: `"bogus"`, good: `"omit"`, message: BOGUS_MODE },
+  ];
+  const cases = shapes.flatMap((shape) => fields.map((f) => ({ shape, ...f })));
+
+  it.each(cases)("$field reports the bad literal in `$shape` where it is written", ({
+    shape,
+    field,
+    bad,
+    good,
+    message,
+  }) => {
+    const before = shape.slice(0, shape.indexOf("X")).replaceAll("Y", good);
+    const value = shape.replaceAll("Y", good).replace("X", bad);
+    const col = `    http   = {${field}: ${before}`.length + 1;
+    expect(diagnostics(app(pre, `${field}: ${value}`))).toEqual([`E0201 9:${col} ${message}`]);
   });
 });

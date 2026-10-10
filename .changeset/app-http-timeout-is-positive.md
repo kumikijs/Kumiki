@@ -2,8 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-`app.http`'s `timeout` refuses a literal that is not a positive number of
-milliseconds (#512).
+`app.http`'s `timeout` refuses a literal that is not a positive number of milliseconds.
 
 ```
 http = { timeout: 0 }                        # was ok; now E0201 timeout 0 is not a positive number of milliseconds; …
@@ -26,4 +25,4 @@ an `if` before:
 http = { credentials: match s with | A -> "include" | B -> "bogus" }  # was ok; now E0201, at "bogus"
 ```
 
-http.md §6.3.1 and errors.md E0201 (en + ja) say so.
+http.md and errors.md E0201 (en + ja) say so.

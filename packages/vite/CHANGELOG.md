@@ -1,5 +1,53 @@
 # @kumikijs/vite
 
+## 0.6.1
+
+### Patch Changes
+
+- fe8e6a4: Publish the `.js` artifacts without their JSDoc
+
+  The largest file any of these packages ships was mostly prose. `dist/index.js`
+  of `@kumikijs/runtime` — the package entry, and the `./bundle` export codegen
+  inlines for `bundle: true` / smoke / run / test — was 296 kB, of which 83 kB
+  was JSDoc. `@kumikijs/compiler`'s was 372 kB with 95 kB of it.
+
+  That prose has two better readers than a published bundle. Editors read it
+  from the `.d.ts`, which keeps every block. People read it from the source on
+  GitHub. What was left was a per-install download nobody opens.
+
+  `tsdown.shared.ts` now carries one output setting for every package:
+
+  ```ts
+  comments: { legal: true, annotation: true, jsdoc: false }
+  ```
+
+  | artifact                  | before | after  | gzip before → after |
+  | ------------------------- | ------ | ------ | ------------------- |
+  | `@kumikijs/runtime` dist  | 621 kB | 538 kB | 163 kB → 128 kB     |
+  | `@kumikijs/compiler` dist | 423 kB | 328 kB | 105 kB → 65 kB      |
+  | `@kumikijs/cli` dist      | 196 kB | 162 kB | 45 kB → 30 kB       |
+  | `@kumikijs/mcp` dist      | 33 kB  | 29 kB  | 10 kB → 9 kB        |
+
+  This is not minification, and the two comment kinds a build cannot regenerate
+  are kept:
+
+  - `annotation` (`@__PURE__`, `@__NO_SIDE_EFFECTS__`, `@vite-ignore`). Dropping
+    these would silently cost downstream bundlers the tree-shaking
+    `sideEffects: false` promises — a fatter app bundle with no error anywhere.
+  - `legal` (`@license`, `@preserve`, `//!`, `/*!`), which has to survive
+    redistribution.
+
+  Identifiers, formatting and the trailing `export { … }` line are untouched, so
+  `@kumikijs/runtime`'s `dist/index.js` stays unminified, readable in a stack
+  trace, and inline-able by `inlineRuntime` exactly as before.
+  `packages/tests/dist-comments.test.ts` pins all of that: no JSDoc in any
+  published `.js`, JSDoc still in the `.d.ts`, annotations still present, and an
+  `inlineRuntime` round-trip over the real built bundle.
+
+  What a compiled app downloads is unchanged — `kumiki build` ships
+  `dist/modules/*`, which were already minified. An app built with
+  `bundle: true` inlines 83 kB less.
+
 ## 0.6.0
 
 ### Minor Changes
@@ -61,50 +109,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   The Vite plugin's `engines.node` moves to `>=20.6`, the release that made
   `import.meta.resolve` synchronous — the runtime fallback above is built on it.
 
-### Patch Changes
-
-- Updated dependencies [82cfa6c]
-- Updated dependencies [85a792b]
-- Updated dependencies [3b1f5e8]
-- Updated dependencies [7cce9ce]
-- Updated dependencies [301b09a]
-- Updated dependencies [3e33233]
-- Updated dependencies [f04b1c5]
-- Updated dependencies [7a754ad]
-- Updated dependencies [c11152b]
-- Updated dependencies [080f358]
-- Updated dependencies [d398cbc]
-- Updated dependencies [79b221e]
-- Updated dependencies [732cb16]
-- Updated dependencies [b8bd5d9]
-- Updated dependencies [4de2473]
-- Updated dependencies [db8e843]
-  - @kumikijs/compiler@0.13.0
-  - @kumikijs/runtime@0.13.0
-
-## 0.5.1
-
-### Patch Changes
-
-- Updated dependencies [46bee64]
-- Updated dependencies [5fb6fb6]
-- Updated dependencies [353cd5c]
-- Updated dependencies [46bee64]
-- Updated dependencies [027a8af]
-- Updated dependencies [3d89383]
-- Updated dependencies [cad3f0c]
-- Updated dependencies [46bee64]
-- Updated dependencies [4a58f8f]
-- Updated dependencies [32dd683]
-- Updated dependencies [687ae40]
-- Updated dependencies [92ca76d]
-- Updated dependencies [6f3f3e3]
-- Updated dependencies [9ae4327]
-- Updated dependencies [46bee64]
-- Updated dependencies [49cafdb]
-  - @kumikijs/compiler@0.12.0
-  - @kumikijs/runtime@0.12.0
-
 ## 0.5.0
 
 ### Minor Changes
@@ -137,83 +141,6 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
   - runtime / cli / vite: no behavioural change; the diagnostic surfaces through the standard `check` gate and Vite overlay.
   - spec: `docs/spec/errors.md` and `docs/spec/stdlib.md` document `W0212`; `docs/spec/language.md` cross-links to the ui-event lift table.
 
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-  - @kumikijs/runtime@0.11.0
-  - @kumikijs/compiler@0.11.0
-
-## 0.4.6
-
-### Patch Changes
-
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-- Updated dependencies [47bc7aa]
-  - @kumikijs/compiler@0.10.0
-  - @kumikijs/runtime@0.10.0
-
-## 0.4.5
-
-### Patch Changes
-
-- Updated dependencies [c40b121]
-- Updated dependencies [7e589bc]
-- Updated dependencies [c4833bd]
-  - @kumikijs/runtime@0.9.0
-  - @kumikijs/compiler@0.9.0
-
-## 0.4.4
-
-### Patch Changes
-
-- Updated dependencies [3ee1a9a]
-  - @kumikijs/compiler@0.8.0
-  - @kumikijs/runtime@0.8.0
-
-## 0.4.3
-
-### Patch Changes
-
-- Updated dependencies [afe1b15]
-- Updated dependencies [e92f5df]
-- Updated dependencies [33fc749]
-  - @kumikijs/compiler@0.7.0
-  - @kumikijs/runtime@0.7.0
-
-## 0.4.2
-
-### Patch Changes
-
-- Updated dependencies [cd1e88a]
-  - @kumikijs/compiler@0.6.0
-  - @kumikijs/runtime@0.6.0
-
-## 0.4.1
-
-### Patch Changes
-
-- Updated dependencies [20c8601]
-- Updated dependencies [20c8601]
-  - @kumikijs/runtime@0.5.0
-  - @kumikijs/compiler@0.5.0
-
 ## 0.4.0
 
 ### Minor Changes
@@ -236,16 +163,3 @@ build` alike. `@kumikijs/mcp` resolves capabilities through the same helper, so
     TypeScript declaration (typed `Slots` and per-custom-capability `Providers`),
     so host provider adapters get real input/output types. Conservative mapping
     (`unknown` fallback for shapes whose runtime representation isn't promised).
-
-### Patch Changes
-
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-- Updated dependencies [c51b7b8]
-  - @kumikijs/runtime@0.4.0
-  - @kumikijs/compiler@0.4.0
