@@ -1,5 +1,5 @@
-# Feature (language.md §1.9): a `match` used as a value evaluates to one of
-# its arms, so every arm has to fit where the `match` lands.
+# Feature: a `match` used as a value evaluates to one of its arms, so every arm
+# has to fit where the `match` lands.
 #
 # `owner` is a `UserId`, and so is each arm below: the `Some` arm's `id` is the
 # `UserId` the `Option(UserId)` pattern binds, and the `None` arm keeps the

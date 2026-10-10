@@ -1,8 +1,7 @@
 # Feature: constructs docs/spec/language.md defines that were unwritable.
-# Spec: language.md §1.2 (lexical), §1.8.4 (match on a tuple), stdlib.md §2.4.
 #
 # Each line below is a documented form the parser used to reject:
-#   - a tuple, which §1.8.4's own `match (lr, tag) with` example needs
+#   - a tuple, which the spec's own `match (lr, tag) with` example needs
 #   - `()` in expression position, not only as a bare statement
 #   - a negative literal where a refinement takes literals
 #   - `panic("...")` as a reducer statement, which is where stdlib.md puts it

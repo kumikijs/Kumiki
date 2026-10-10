@@ -1,9 +1,9 @@
-# Feature (language.md §1.8.5): a `fn` declared under a built-in function's
+# Feature (language.md): a `fn` declared under a built-in function's
 # name is what a call of that name reaches.
 #
 # `random`, `fmt`, `panic`, `file-url` and `prefers-dark` are built-in
-# functions (stdlib.md §2.4), and so is `run-reducer` in a property-test
-# invariant (testing.md §8.3). A program may declare a `fn` under any of those
+# functions (stdlib.md), and so is `run-reducer` in a property-test
+# invariant (testing.md). A program may declare a `fn` under any of those
 # names. Every call written with the name is then a call to that fn: it is
 # checked against the fn's signature and runs the fn's body, in a tile, a
 # reducer, another fn and a fragment position alike. In that program the

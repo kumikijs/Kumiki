@@ -1,23 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-// An `effect-event` trigger binds the effect's result — `load.ok($v, $key)` /
-// `load.err($e, $key)` (language.md §1.6.5) — and the effect's `out=` says what
-// a success is. Nothing carried the type to the bind, so every read of one was
-// undecidable and every assignment out of one was accepted: the shape the
-// `.get-or` defect actually shipped in, `session := $s.get-or(None)`, passed
-// `check` although the same call on a slot receiver is a pair of E0201s.
-//
-// `$1` on `.ok` now has the type `out=` declares: the Ok payload of a
-// `Result(T, E)`, or the whole value of any other `out=`. `$1` on `.err` is
-// `Text` for a storage / session / indexed effect, whose handlers deliver the
-// failure's message, and declaring any other `E` there is E0306. `.err` on any
-// other capability, the request key (`$2`) and a result no declaration types
-// stay undecided.
-//
-// Each case that pins something staying *quiet* shares its program with one
-// that must report, and the expectation is the whole list — so the quiet half
-// cannot pass merely because payload binds are untyped altogether.
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const app = (defs: string): string =>
   `type Session = {email: Text}
@@ -37,7 +19,7 @@ reducer boot-${name} on=app.start do= emit ${name}()`;
 const LOAD = effect("loadSession", "Result(Option(Session), Text)");
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line} ${e.message}`);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line} ${e.message}`);
 
 describe("the Ok payload of a Result out=", () => {
   it("is the Ok type: a slot of another type is a mismatch, a slot of that type is not", () => {
@@ -90,8 +72,6 @@ reducer keep on=loadSession.ok($s, _) do= session := $s`),
 });
 
 describe("the Err payload of a storage-family effect", () => {
-  // The storage / session / indexed handlers deliver the `Text` their effects
-  // declare as `E` (http.md §6.7), so `$e` on `.err` is that `Text`.
   it("is Text: reading it as Text passes, reading a member Text lacks does not", () => {
     expect(
       diagnostics(
@@ -138,11 +118,6 @@ app A
 });
 
 describe("a storage-family effect that declares an E other than Text", () => {
-  // The runtime delivers the failure's message whatever `E` says, so an `E`
-  // that is not `Text` promises a value that never arrives: `$e.message` reads
-  // `undefined`, `n := $e` puts a string into an Int slot. The declaration is
-  // reported, and `$e` is still the `Text` that arrives — so a read written to
-  // the wrong `E` is reported too, and one written to `Text` is not.
   it("is E0306, and $e is the Text that arrives rather than the declared record", () => {
     expect(
       diagnostics(
@@ -172,8 +147,6 @@ reducer failed on=loadSession.err($e, _) do= n := $e`),
   });
 
   it("an E or a whole out= that names Text through an alias is Text, and an E that does not is reported", () => {
-    // Both halves in one program: the quiet aliases cannot pass merely because
-    // E0306 never fires.
     expect(
       diagnostics(
         app(`type Message = Text
@@ -214,10 +187,6 @@ app A
   });
 
   it("an HTTP effect's E and a storage effect whose out= is not a Result are not this check's", () => {
-    // HTTP delivers the `HttpError` record its `out=` declares; an `out=` that
-    // is not a `Result` makes no claim about the failure. One storage effect
-    // with a non-Text E reports, so the two quiet ones are not quiet because
-    // the check is off.
     const src = `effect load cap=http.get in=Unit out=Result(Text, HttpError)
     map-request={url: "/x", decode: Decoder.Text}
 effect peek cap=storage.read in=Unit out=Option(Text)
@@ -236,8 +205,6 @@ app A
 
 describe("the Err payload of an effect whose failure value the runtime does not fix", () => {
   it("an HTTP effect's $e reads as the HttpError record it is", () => {
-    // `effects-http.ts` delivers `{status, message, body}`; the read of
-    // `.message` is the one that matches it.
     const src = `slot problem : Text = ""
 effect load cap=http.get in=Unit out=Result(Text, HttpError)
     map-request={url: "/x", decode: Decoder.Text}
@@ -267,8 +234,6 @@ reducer keyed on=loadSession.ok($s, $k)
   });
 
   it("an out= whose type is undecidable leaves its bind undecided", () => {
-    // `Missing` is reported where it is written; the bind adds no second
-    // report by guessing a type for it.
     const errs = diagnostics(
       app(`slot label : Text = ""
 ${effect("loadMissing", "Missing")}
@@ -280,8 +245,6 @@ reducer b on=loadSession.ok($s, _) do= label := $s`),
   });
 
   it("a Result out= of the wrong arity is reported once, and its bind stays undecided", () => {
-    // E0210 already says the `Result` is malformed; the bind must not then be
-    // typed as that malformed `Result` and add an E0201 of its own.
     expect(
       diagnostics(
         app(`slot session : Option(Session) = None

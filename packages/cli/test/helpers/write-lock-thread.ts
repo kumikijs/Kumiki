@@ -1,8 +1,3 @@
-// One writer on a worker thread, for write-lock-threads.test.ts: it takes the
-// write lock on `file` and records what it saw. A writer with `hold` set keeps
-// the lock until the test lets go of it, so another thread's writer meets a
-// lock that is live.
-
 import fs, { appendFileSync, readFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { workerData } from "node:worker_threads";
@@ -22,9 +17,6 @@ const record = (event: string) => appendFileSync(events, `${role} ${event}\n`);
 process.emitWarning = ((warning: string | Error) =>
   record(`warning: ${String(warning)}`)) as typeof process.emitWarning;
 
-// Record the first time this writer finds the lock already there: each `wx`
-// create of it that fails with EEXIST. The write lock calls `fs` through the
-// `node:fs` namespace, which `syncBuiltinESMExports` points at this wrapper.
 const lock = writeLockPath(file);
 const open = fs.openSync;
 let met = false;
