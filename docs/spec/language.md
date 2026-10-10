@@ -361,6 +361,11 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - `policy=latest-per-key(<expr>)` and `map-request` are the effect's own
   expressions: both are applied to the effect's input, so `$1` is the only bind,
   a slot and a `fn` are readable, and `$route` is not a name here
+- `$1` there has the type the effect's `in=` declares, as a tile's `$1` has the
+  type of the tile's `in=`: on `in=UserQuery` with `type UserQuery = {id: Text}`,
+  `$1.id` reads the field and `$1.idd` is
+  [E0108](./errors.md#e0108-undef-member). An effect on `in=Unit` is emitted with
+  no argument, so its `$1` has no type
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
@@ -549,7 +554,7 @@ issue.copy(status=Done, priority=High)
 
 | Syntax | Meaning |
 |---|---|
-| `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument) |
+| `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument); within an effect's `map-request` and `latest-per-key` key, the effect's `in=` input (`$1` only, [§1.5.2](#_1-5-2-semantics)) |
 | `$el` | the `{...}` props of the tile that fired the event |
 | `$event` | the event payload |
 | `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
