@@ -3,7 +3,7 @@
 "@kumikijs/cli": patch
 ---
 
-An episode whose entry reducer is not in the program fails its replay (`runtime.md` §10.5.3, `testing.md` §8.6).
+An episode whose entry reducer is not in the program fails its replay.
 
 A log keeps the name each reducer had when it ran. After a rename, the episode's entry reducer — its first `reducer` step, or a `panic` step naming the reducer that threw — matched nothing in the program, and the replay executor behind `kumiki replay` and `episode-test` ended the episode there with a clean result. So a log recorded from `reducer inc …`, replayed against the same program with the reducer renamed to `bump` (and `bump` now panicking), printed the episode header with nothing under it, counted it, and exited 0:
 

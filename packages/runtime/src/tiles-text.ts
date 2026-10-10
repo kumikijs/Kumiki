@@ -1,13 +1,3 @@
-// Text tile renderers (#71): static content tiles (heading, text, label,
-// link, markdown, code, icon).
-//
-// Each tile is its own module under `tiles/text/`, and that is the unit
-// `kumiki build` ships: `link` carries a URL-disposition check and a
-// once-per-target diagnostic, `icon` a theme-override lookup and a size scale,
-// and an app that renders neither used to download both anyway. This file is
-// the family aggregate the monolith `mount()` (and anything that wants the
-// whole registry) assembles them back into.
-
 import type { TilePatchers, TileRenderers } from "./core.ts";
 import { codePatcher, codeTile } from "./tiles/text/code.ts";
 import { headingPatcher, headingTile } from "./tiles/text/heading.ts";

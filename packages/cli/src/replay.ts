@@ -1,8 +1,3 @@
-// `kumiki replay` — replay a recorded episode log against a compiled .kumiki
-// app and print the per-step trace (spec/runtime.md §10.5.3). The runtime's
-// `replayEpisodes` (testkit.ts) does the actual reducer/effect mechanics; this
-// module is the CLI surface: argv parsing, log loading, formatter, exit codes.
-
 import { readFileSync } from "node:fs";
 import { parseEpisodeLogText } from "@kumikijs/compiler/node";
 import {
@@ -13,6 +8,7 @@ import {
   replayEpisodes,
 } from "@kumikijs/runtime";
 import { ensureDom, loadApp } from "./smoke.ts";
+import { messageOf } from "./text.ts";
 
 export type ReplayCmdOptions = {
   fromLog: string;
@@ -23,16 +19,6 @@ export type ReplayCmdOptions = {
   untilStep?: number;
 };
 
-/**
- * Parse one `--mock 'name: spec'` argument into a policy entry.
- *
- * Grammar:
- *   <effect-name> ':' ('from-log' | 'ignore' | 'ok(' <json>? ')' | 'err(' <json>? ')')
- *
- * `ok(...)` / `err(...)` values are parsed as JSON — spec §8.5's literal
- * mock values (`ok({id: "u1"})` etc.) are JSON-compatible when written with
- * double-quoted keys, which is the format CLI users naturally type.
- */
 export function parseMockArg(arg: string): { effect: string; policy: EpisodeMockPolicy } {
   const sep = arg.indexOf(":");
   if (sep === -1) {
@@ -58,17 +44,12 @@ export function parseMockArg(arg: string): { effect: string; policy: EpisodeMock
     try {
       value = JSON.parse(payload);
     } catch (e) {
-      throw new Error(`invalid --mock '${arg}': value is not valid JSON — ${(e as Error).message}`);
+      throw new Error(`invalid --mock '${arg}': value is not valid JSON — ${messageOf(e)}`);
     }
   }
   return { effect: name, policy: { policy: "fixed", outcome, value } };
 }
 
-/**
- * The non-zero halves of one step's environment-read drift, as a trailing
- * `(env: ...)` note. Every count is a way the replayed body and the recorded
- * one disagreed about what the environment said.
- */
 function formatEnvDrift(env: EnvDrift): string {
   const parts: string[] = [];
   if (env.live > 0) parts.push(`${env.live} read live`);
@@ -85,11 +66,6 @@ function jsonOrNull(v: unknown): string {
   }
 }
 
-/**
- * Split an `Error.stack` string into indented continuation lines for the
- * `[panic]` block. V8-style stacks include the message on the first line
- * ("Error: boom\n    at ..."); strip it so the header is not duplicated.
- */
 function formatStackForReplay(stack: string, message: string, indent: string): string[] {
   const raw = stack.split("\n");
   const trimmed =
@@ -107,13 +83,10 @@ export function formatEvent(ev: ReplayEvent): string | null {
   switch (ev.kind) {
     case "episode-start": {
       const target = ev.trigger.target ? ` on ${ev.trigger.target}` : "";
-      // The log lost the entry reducer's value (§10.5.3); said here so the
-      // panic that follows does not read as a bug in the reducer.
       const missing = ev.entryResultMissing
         ? `  (no recorded result for ${ev.entryResultMissing})`
         : "";
-      // No reducer to run it with (§10.5.3): nothing follows this line, and
-      // the line says why rather than reading as an episode that did nothing.
+      // Nothing follows this line, so it says why rather than reading as an episode that did nothing.
       const skipped = ev.entryReducerMissing
         ? `  (not replayed: ${ev.entryReducerMissing.message})`
         : "";
@@ -123,10 +96,6 @@ export function formatEvent(ev: ReplayEvent): string | null {
       const diffs = ev.slotDiffs
         .map((d) => `${d.name}: ${jsonOrNull(d.before)} -> ${jsonOrNull(d.after)}`)
         .join(", ");
-      // Provenance for the environment reads, on the steps that had any drift
-      // (§10.5.3). Without it the trace shows a value and says nothing about
-      // whether it came from the log or from this machine's clock — and a
-      // reducer that read live is exactly the one the replay did not reproduce.
       const env = ev.env ? `  (env: ${formatEnvDrift(ev.env)})` : "";
       return `  [reducer] ${ev.name}${diffs ? `  ${diffs}` : ""}${env}`;
     }
@@ -142,9 +111,6 @@ export function formatEvent(ev: ReplayEvent): string | null {
     case "signal-update":
       return `  [signal-update] dirty=[${ev.dirty.join(",")}]`;
     case "panic": {
-      // Expose stack + Error.cause chain so the operator can trace the root
-      // cause without opening devtools. Fields are optional — an older log
-      // with only `message` prints unchanged.
       const cat = ev.category ? `:${ev.category}` : "";
       const loc = ev.location ? `  ${ev.location}` : "";
       const lines: string[] = [`  [panic${cat}] ${ev.message}${loc}`];
@@ -168,12 +134,6 @@ export function formatEvent(ev: ReplayEvent): string | null {
   }
 }
 
-/**
- * CLI entry: load the .kumiki app, load the episode log, optionally filter to
- * one `<episode-id>`, replay through `replayEpisodes`, and stream the per-step
- * trace. Exits 1 if any panic / unhandled effect error surfaced during replay,
- * or an episode was not replayed because the program has no entry reducer for it.
- */
 export async function replayCmd(
   kumikiPath: string,
   capabilities: string[],
@@ -188,7 +148,7 @@ export async function replayCmd(
   try {
     parsed = parseEpisodeLogText(raw) as EpisodeLogEntry[];
   } catch (e) {
-    console.error(`invalid episode log '${opts.fromLog}': ${(e as Error).message}`);
+    console.error(`invalid episode log '${opts.fromLog}': ${messageOf(e)}`);
     process.exit(1);
   }
 
@@ -201,8 +161,6 @@ export async function replayCmd(
     }
   }
 
-  // Stream each step as the executor emits it — keeps `--until-step` output
-  // useful as a live trace and matches spec §10.5.3's "streams" wording.
   const report = replayEpisodes({
     app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
     episodes,
@@ -218,8 +176,6 @@ export async function replayCmd(
   console.log(`final slots: ${jsonOrNull(report.finalSlots)}`);
   const drift = report.envDrift;
   if (drift.live > 0 || drift.unused > 0 || drift.malformed > 0) {
-    // Named at the end as well as per-step, because the summary is what says
-    // whether this run reproduced the recorded one at all.
     console.log(`environment reads: ${formatEnvDrift(drift)}`);
   }
   if (report.entryResultsMissing.length > 0) {

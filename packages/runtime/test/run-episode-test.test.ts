@@ -1,5 +1,4 @@
 import type {
-  AppShape,
   EpisodeLogEntry,
   EpisodeMockPolicy,
   ReplayEvent,
@@ -7,20 +6,11 @@ import type {
 } from "@kumikijs/runtime";
 import { _stdlibTest, dispatchFault, replayEpisodes } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-
-/** An app whose `live` map is already populated, which is what replay needs. */
-type ReplayableApp = AppShape & { live: Record<string, unknown> };
+import { type ReplayableApp, replayableApp } from "./helpers/episode-apps.ts";
 
 function makeCounterApp(): ReplayableApp {
-  const slots = {
-    count: { value: 0 },
-  };
-  const app: ReplayableApp = {
-    live: {},
-    slots,
-    caps: [],
-    effects: {},
-    init: [],
+  return replayableApp({
+    slots: { count: { value: 0 } },
     reducers: [
       {
         name: "inc",
@@ -33,21 +23,12 @@ function makeCounterApp(): ReplayableApp {
         apply: (live) => ({ slots: { count: (live.count as number) - 1 }, emits: [] }),
       },
     ],
-    root: () => ({ kind: "text", text: "" }),
-  };
-  for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
-  return app;
+  });
 }
 
 function makeLoadUserApp(): ReplayableApp {
-  const slots = {
-    user: { value: null as unknown },
-    error: { value: null as unknown },
-  };
-  const app: ReplayableApp = {
-    live: {},
-    slots,
-    caps: [],
+  return replayableApp({
+    slots: { user: { value: null as unknown }, error: { value: null as unknown } },
     effects: {
       loadUser: {
         name: "loadUser",
@@ -55,7 +36,6 @@ function makeLoadUserApp(): ReplayableApp {
         invoke: async () => ({ kind: "ok", value: null }),
       },
     },
-    init: [],
     reducers: [
       {
         name: "start",
@@ -73,10 +53,7 @@ function makeLoadUserApp(): ReplayableApp {
         apply: (_live, payload) => ({ slots: { error: payload.$1 }, emits: [] }),
       },
     ],
-    root: () => ({ kind: "text", text: "" }),
-  };
-  for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
-  return app;
+  });
 }
 
 const incEpisode = (after: number): EpisodeLogEntry => ({
@@ -94,7 +71,7 @@ const incEpisode = (after: number): EpisodeLogEntry => ({
   ],
 });
 
-describe("_stdlibTest.runEpisodeTest (§8.6)", () => {
+describe("_stdlibTest.runEpisodeTest", () => {
   it("PASSES when replay reaches the same final slots as the log (slots-equal: from-log)", () => {
     const app = makeCounterApp();
     const episodes = [incEpisode(1), incEpisode(2), incEpisode(3)];
@@ -111,7 +88,6 @@ describe("_stdlibTest.runEpisodeTest (§8.6)", () => {
 
   it("FAILS when reducer logic now produces a different final slot value", () => {
     const app = makeCounterApp();
-    // Tamper: replace `inc` with a no-op so replay can't reach count=2.
     app.reducers[0]!.apply = (live) => ({ slots: { count: live.count as number }, emits: [] });
     const episodes = [incEpisode(1), incEpisode(2)];
     const result = _stdlibTest.runEpisodeTest({
@@ -202,19 +178,13 @@ describe("_stdlibTest.runEpisodeTest (§8.6)", () => {
   });
 });
 
-// The entry reducer is the one replay runs an episode with (runtime.md
-// §10.5.3): its first `reducer` step, or a `panic` step that names the reducer
-// that threw. The log keeps the name the reducer had when it was recorded, so
-// a rename leaves the program with no reducer to run the episode with.
 describe("an episode whose entry reducer is not in the program", () => {
-  /** The counter with `inc` renamed: the body is unchanged, the log's name is gone. */
   function renamedApp(to: string): ReplayableApp {
     const app = makeCounterApp();
     app.reducers = app.reducers.filter((r) => r.name === "inc").map((r) => ({ ...r, name: to }));
     return app;
   }
 
-  /** An episode that crashed in `inc`: no `reducer` step, a `panic` step naming it. */
   const crashedEpisode: EpisodeLogEntry = {
     id: "ep_crash",
     trigger: { kind: "ui.click", target: "IncBtn" },
@@ -238,10 +208,6 @@ describe("an episode whose entry reducer is not in the program", () => {
     diffAt: "episodes",
   });
 
-  // Over an episode that ran nothing, the first three hold — `no-panics`,
-  // `no-errors` and `{}` vacuously, a record of the slots it left alone by
-  // matching them — and `from-log` fails at the slot that did not move rather
-  // than at the reason it did not.
   it.each([
     ["no-panics + no-errors", { noPanics: true, noErrors: true }],
     ["nothing", {}],
@@ -297,7 +263,6 @@ describe("an episode whose entry reducer is not in the program", () => {
   });
 
   it("says it in the words a `{dispatch}` step naming no reducer does", () => {
-    // A near name is offered under the same rule, because it is the same rule.
     const report = replayEpisodes({
       app: renamedApp("incr"),
       episodes: [incEpisode(1)],
@@ -310,8 +275,7 @@ describe("an episode whose entry reducer is not in the program", () => {
   });
 
   it("replays an episode with no entry reducer at all as clean", () => {
-    // The shape of an `ssr.hydrate` bootstrap whose `app.init` result no
-    // reducer handles: no reducer ran, so none is re-run and no slot moves.
+    // An `ssr.hydrate` bootstrap whose `app.init` result no reducer handles.
     const bootstrap: EpisodeLogEntry = {
       id: "ep_boot",
       trigger: { kind: "ssr.hydrate", target: "/" },

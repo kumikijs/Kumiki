@@ -1,4 +1,4 @@
-# Feature (runtime.md §10.5.3, testing.md §8.6): an episode whose entry
+# Feature (runtime.md, testing.md): an episode whose entry
 # reducer is not in the program is not replayed, and that fails the replay.
 #
 # The fixture next to this file was recorded from this program with
@@ -22,8 +22,8 @@
 # `episode(s) replayed` count, and exits 1. Recording the log again, or naming
 # the reducer `inc` again, makes the test pass.
 #
-# `packages/tests/replay-missing-reducer.test.ts` runs this test as written,
-# and with the reducer named `inc`, where it passes.
+# `packages/tests/src/replay-missing-reducer.test.ts` runs this test as
+# written, and with the reducer named `inc`, where it passes.
 
 slot count : Int = 0
 
