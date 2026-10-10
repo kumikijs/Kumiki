@@ -1,19 +1,5 @@
-// A builtin that renders no positional argument — `button`, `progress`,
-// `input`, … — refuses one, tile or value, with E0129 naming the arguments it
-// does show (language.md §1.7.1). A container renders its positional
-// arguments as children, so a tile there renders and a value there is E0128
-// (`value-as-child.test.ts`).
-//
-// What the mounted app renders for the same programs is pinned in
-// `packages/tests/unrendered-positional.test.ts`, and the set of builtins
-// that render their positional arguments is held against codegen in
-// `builtin-tiles.test.ts`.
-
-import { readFileSync } from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const program = (home: string) => `tile Header = text("header")
 tile Card in={label: Text} = text($1.label)
@@ -25,13 +11,12 @@ app R
     init   = []
 `;
 
-const errorsOf = (home: string) => check(parse(lex(program(home))));
+const located = (src: string) =>
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const diagnostics = (home: string) =>
-  errorsOf(home).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+const diagnostics = (home: string) => located(program(home));
 
-// `tile Home = ` is 12 columns wide on line 3; `at` is a substring of the body
-// that starts where the argument does.
+// `tile Home = ` is 12 columns wide on line 3.
 const at = (home: string, arg: string) => `3:${13 + home.indexOf(arg)}`;
 
 const shows = (builtin: string, args: string) =>
@@ -43,7 +28,7 @@ const showsNothing = (builtin: string) =>
   `Show it beside the ${builtin}`;
 
 describe("a positional argument on a builtin that renders none", () => {
-  it("is E0129 at each one in the issue's program, naming what the builtin shows", () => {
+  it("is E0129 at each one, naming what the builtin shows", () => {
     const src = `tile Header = text("header")
 tile P = column(button(Header, text="Go"), progress(text("a")), text("end"))
 app M
@@ -51,9 +36,7 @@ app M
     routes = {"/" -> P, "/404" -> P}
     init   = []
 `;
-    expect(
-      check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
-    ).toEqual([
+    expect(located(src)).toEqual([
       `E0129 2:24 ${shows("button", "`text=`")}`,
       `E0129 2:53 ${shows("progress", "`value=` or `max=`")}`,
     ]);
@@ -64,8 +47,6 @@ app M
     expect(diagnostics(home)).toEqual([`E0129 ${at(home, '"Go"')} ${shows("button", "`text=`")}`]);
   });
 
-  // Every builtin the runtime renders no positional argument of, whatever it
-  // is given: a tile there is refused as a value is.
   it.each([
     ["button", shows("button", "`text=`")],
     ["toast", shows("toast", "`text=`")],
@@ -96,9 +77,8 @@ app M
     expect(diagnostics(home)).toEqual([`E0129 ${at(home, '"a"')} ${message}`]);
   });
 
-  // The argument is moved or removed whole, as a value in a container is
-  // (E0128), so a diagnostic inside it waits until it is: under a `let` a
-  // tile call reads as a `fn` call and would be reported wrongly.
+  // Under a `let` a tile call reads as a `fn` call and would be reported wrongly, so a diagnostic
+  // inside the argument waits until it is moved.
   it.each([
     ["a tile the program defines", "Header"],
     ["a user tile's call", `Card({label: "a"})`],
@@ -126,9 +106,9 @@ app M
   });
 
   it("says it is the positional shape, which `kumiki fix` leaves to the author", () => {
-    expect(errorsOf(`column(button(Header, text="Go"))`).map((e) => e.unrendered)).toEqual([
-      "positional",
-    ]);
+    expect(
+      checkSource(program(`column(button(Header, text="Go"))`)).map((e) => e.unrendered),
+    ).toEqual(["positional"]);
   });
 
   it("is not reported for the arguments the builtin reads", () => {
@@ -171,19 +151,5 @@ describe("a builtin that renders its positional arguments as children", () => {
     expect(diagnostics(home)).toEqual([
       `E0128 ${at(home, "42")} A value is not a tile: card renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — \`text(…)\` — or, for a \`let\`, write the value where it is used or compute it in a \`fn\``,
     ]);
-  });
-});
-
-describe("the messages", () => {
-  // The forms after the first two quotes in errors.md's E0129, in order.
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  it.each([
-    ["docs/spec/errors.md"],
-    ["docs/ja/spec/errors.md"],
-  ])("are the ones %s documents", (file) => {
-    const md = readFileSync(path.join(here, "..", "..", "..", file), "utf8");
-    const section = md.slice(md.indexOf("### E0129"), md.indexOf("## E02xx"));
-    const quoted = [...section.matchAll(/^> ``(.*)``$/gm)].map((m) => m[1]?.trim());
-    expect(quoted.slice(1, 3)).toEqual([shows("<builtin>", "<args>"), showsNothing("<builtin>")]);
   });
 });

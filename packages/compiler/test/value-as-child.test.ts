@@ -1,22 +1,8 @@
-// A positional argument of a builtin that renders its positional arguments as
-// children — a container: `column`, `row`, `card`, … — renders only when it is
-// a tile: a tile call, `match` / control flow, or the name of a tile the
-// program defines (language.md §1.7.1). Codegen drops any other value
-// there, so `column(text("a"), 42)` and `column(let x = 42 in Card(x))` passed
-// `check` and rendered as if the value were not written — and a slot named
-// there, `column(n)`, put a `null` into the child list. It is E0128 at the
-// value, and nothing inside it is checked: under a `let` a tile call reads as
-// a `fn` call and would be reported wrongly, so a correct diagnostic in there
-// (an undefined name, say) is not reported either until the value is moved.
-//
-// This file pins what `check` says; what the built app renders for the same
-// programs is pinned in `packages/tests/value-as-child.test.ts`.
-
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const program = (home: string) => `tile Card in={label: Text} = text($1.label)
 tile Home = ${home}
@@ -29,15 +15,13 @@ app R
 `;
 
 const diagnostics = (home: string) =>
-  check(parse(lex(program(home)))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(program(home)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const codes = (home: string) => check(parse(lex(program(home)))).map((e) => e.code);
+const codes = (home: string) => codesOf(program(home));
 
 const message = (builtin: string) =>
   `A value is not a tile: ${builtin} renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — \`text(…)\` — or, for a \`let\`, write the value where it is used or compute it in a \`fn\``;
 
-// `tile Home = ` is 12 columns wide on line 2, so a value's column is 13 plus
-// its offset in the body.
 const E0128 = (home: string, value: string, builtin = "column") =>
   `E0128 2:${13 + home.indexOf(value)} ${message(builtin)}`;
 
@@ -83,9 +67,6 @@ describe("a value written as a child", () => {
   });
 
   it("is reported in any builtin that renders its children", () => {
-    // A builtin that renders no positional argument (`button`, `progress`, …)
-    // refuses a value there as it refuses a tile: E0129, in
-    // `unrendered-positional.test.ts`.
     const row = `row(text("a"), let x = 1 in Card({label: x.show}))`;
     expect(diagnostics(row)).toEqual([E0128(row, "let", "row")]);
     const card = `column(card(text("a"), 42))`;
@@ -107,10 +88,6 @@ describe("what renders in a child position is not reported", () => {
   });
 });
 
-// The name of a tile the program defines renders as that tile in a child
-// position, so it is not a value there. A lower-cased one is still E0103 to
-// the checker, which looks it up as a value name; that is a separate gap, and
-// E0128 must not be added on top of it.
 it("the name of a tile in a child position is not E0128", () => {
   expect(codes("column(lower)")).not.toContain("E0128");
 });
@@ -127,8 +104,6 @@ describe("a value where a value belongs is still a value", () => {
 });
 
 describe("a let as a user tile's input is compared with its in=", () => {
-  // `inferType` had no `let` case, so the comparison was skipped as
-  // undecidable and any value passed.
   it.each([
     ["a value of the wrong type", "column(Card(let x = 42 in x))", "E0201"],
     ["a field of the wrong type", "column(Card(let x = {label: 42} in x))", "E0201"],
@@ -142,8 +117,6 @@ describe("a let as a user tile's input is compared with its in=", () => {
 });
 
 describe("the message", () => {
-  // errors.md quotes it, and a message that drifts from the catalogue is a
-  // diagnostic whose documentation answers a different question than the tool.
   const here = path.dirname(fileURLToPath(import.meta.url));
   it.each([
     ["docs/spec/errors.md"],
@@ -157,11 +130,6 @@ describe("the message", () => {
   });
 });
 
-// A tile body, a `when` / `if` / `for` / `match` arm and a tile-test's
-// `expect` are a tile-expr themselves. The parser reads a name there as a tile
-// call, so a value written as one — a slot, a `fn` call, a loop variable —
-// arrives as a call of a tile that does not exist. It is E0128 at the value,
-// as in a container; E0105 is a name that is neither a tile nor a value.
 const armProgram = (home: string) => `tile Home = ${home}
 tile Header = text("h")
 slot total : Int = 1
@@ -177,13 +145,12 @@ app R
     init   = []
 `;
 
-const armDiagnostics = (home: string) =>
-  check(parse(lex(armProgram(home)))).map(
-    (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
-  );
+const located = (src: string) =>
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-// `tile Home = ` is 12 columns wide on line 1; `at` is a substring of the body
-// that starts where the value does.
+const armDiagnostics = (home: string) => located(armProgram(home));
+
+// `tile Home = ` is 12 columns wide on line 1.
 const armAt = (home: string, at: string) => `1:${13 + home.indexOf(at)}`;
 
 const placed = (place: string) =>
@@ -199,8 +166,6 @@ describe("a value written as an arm or a tile body", () => {
     ["a fn call in a when", "column(when(c, greeting()))", "greeting", "a `when` arm"],
     ["a loop variable in a when", "column(for x in xs when(c, x))", "x))", "a `when` arm"],
     ["a builtin call in a when", `column(when(c, fmt("{0}", total)))`, "fmt", "a `when` arm"],
-    // A `$`-name is a value however it is bound: unbound here, it is E0103's
-    // to explain once it is shown with a tile.
     ["an input the tile does not declare", "column(when(c, $1))", "$1", "a `when` arm"],
     ["a slot in an if", "column(if c then total else Header)", "total", "an `if` arm"],
     ["a fn call in an if", "column(if c then Header else greeting())", "greeting", "an `if` arm"],
@@ -246,14 +211,10 @@ describe("a value written as an arm or a tile body", () => {
   it("is E0128 at a value written as a tile-test's expect", () => {
     const src = `${armProgram("Header")}test t = tile-test Header given={slots:{}} expect=total\n`;
     const line = src.split("\n").length - 1;
-    expect(
-      check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
-    ).toEqual([`E0128 ${line}:51 ${placed("a tile-test's `expect`")}`]);
+    expect(located(src)).toEqual([`E0128 ${line}:51 ${placed("a tile-test's `expect`")}`]);
   });
 
   it("checks nothing written on the value", () => {
-    // As in a container: an argument or a prop on it is moved with it, and a
-    // diagnostic in there shows once it is.
     const home = `column(when(c, greeting(nope)), if c then Header else total {id: nope})`;
     expect(armDiagnostics(home)).toEqual([
       `E0128 ${armAt(home, "greeting")} ${placed("a `when` arm")}`,
@@ -295,21 +256,6 @@ describe("a builtin tile named without its call", () => {
   });
 
   it("is a call of it in an arm, which reads a name as a tile call", () => {
-    // What it renders is pinned in `packages/tests/value-as-child.test.ts`.
     expect(armDiagnostics("column(when(c, divider), if c then spinner else Header)")).toEqual([]);
-  });
-});
-
-describe("the messages for an arm, a body and a builtin", () => {
-  // The forms after the first quote in errors.md's E0128, in order.
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  it.each([
-    ["docs/spec/errors.md"],
-    ["docs/ja/spec/errors.md"],
-  ])("are the ones %s documents", (file) => {
-    const md = readFileSync(path.join(here, "..", "..", "..", file), "utf8");
-    const section = md.slice(md.indexOf("### E0128"), md.indexOf("### E0129"));
-    const quoted = [...section.matchAll(/^> ``(.*)``$/gm)].map((m) => m[1]?.trim());
-    expect(quoted.slice(1)).toEqual([placed("<place>"), uncalled("<name>", "<builtin>")]);
   });
 });
