@@ -522,10 +522,10 @@ export const _stdlibCore = {
     }
     return r;
   },
-  /** Polymorphic `.diff`: numeric magnitude (Time/Duration) or Set difference. */
+  /** Polymorphic `.diff`: the receiver minus the argument (Time) or Set difference. */
   diff(a: unknown, b: unknown): unknown {
     if (typeof a === "number" || typeof b === "number") {
-      return Math.abs((a as number) - (b as number));
+      return (a as number) - (b as number);
     }
     return _stdlibCore.setDiff(a as Record<string, true>, b as Record<string, true>);
   },

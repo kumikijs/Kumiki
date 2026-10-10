@@ -257,10 +257,12 @@ Time.now                    : Time
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
-diff(other)                 : Duration
+diff(other)                 : Duration        ; the receiver minus other
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 to-ms                       : Int             ; milliseconds since the Unix epoch
 ```
+
+`a.diff(b)` is `a` minus `b`, the time from `b` to `a`: positive when `a` is the later instant, negative when it is the earlier one, and zero when both are the same instant, so `b.plus(a.diff(b))` is `a` whichever of the two comes first. `due.diff(now)` is negative once `due` has passed, and `now.diff(start)` is the time elapsed since `start` ([§2.2.9](#_2-2-9-duration)). The distance between two instants, whichever is the later, is `a.diff(b).to-ms.abs`.
 
 `format` replaces each of these tokens with that field of the instant and copies the rest of the pattern through verbatim, so `"dd/MM/yyyy"` and `"[on] dd"` are both patterns:
 

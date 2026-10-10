@@ -576,7 +576,7 @@ export function methodCallJs(
     case "minus":
       return `((${recvJs}) - (${argRaw(args[0]!)}))`;
     case "diff":
-      // Polymorphic: Time/Duration → numeric magnitude; Set(T) → set difference.
+      // Polymorphic: Time → the receiver minus the argument; Set(T) → set difference.
       return `_s.diff(${recvJs}, ${argRaw(args[0]!)})`;
     case "concat":
       return `[...((${recvJs}) ?? []), ...((${argRaw(args[0]!)}) ?? [])]`;

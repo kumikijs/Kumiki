@@ -42,10 +42,12 @@ describe("stdlib collection methods", () => {
     expect(_stdlib.mapErr(Ok(1), (e) => `${e}!`)).toEqual(Ok(1));
   });
 
-  it("diff is numeric for Time/Duration and set-difference for Sets", () => {
+  it("diff is the receiver minus the argument for Time and set-difference for Sets", () => {
     expect(_stdlib.diff(10, 3)).toBe(7);
-    expect(_stdlib.diff(3, 10)).toBe(7);
+    expect(_stdlib.diff(3, 10)).toBe(-7);
+    expect(_stdlib.diff(3, 3)).toBe(0);
     expect(_stdlib.diff({ a: true, b: true }, { b: true })).toEqual({ a: true });
+    expect(_stdlib.diff({ b: true }, { a: true, b: true })).toEqual({});
   });
 });
 
