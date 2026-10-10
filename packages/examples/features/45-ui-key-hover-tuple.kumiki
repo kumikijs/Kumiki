@@ -1,8 +1,8 @@
-# Feature: §1.6.1 ui.key / ui.hover events + §1.9 tuple patterns.
-# A search input echoes the last key pressed; a hover counter ticks each time
-# the card is entered. A small helper destructures a `Tuple(Text, Int)` —
-# tuples appear in the language via `List(T).zip(U)` (which returns
-# `List(Tuple(T, U))`), so the example pairs two lists and labels each entry.
+# Feature: ui.key / ui.hover events + tuple patterns. A search input echoes the
+# last key pressed; a hover counter ticks each time the card is entered. A small
+# helper destructures a `Tuple(Text, Int)` — tuples appear in the language via
+# `List(T).zip(U)` (which returns `List(Tuple(T, U))`), so the example pairs two
+# lists and labels each entry.
 
 slot lastKey   : Text       = ""
 slot hoverHits : Int        = 0

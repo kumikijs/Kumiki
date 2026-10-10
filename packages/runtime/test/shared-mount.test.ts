@@ -1,29 +1,15 @@
-// One `AppShape` mounted into more than one host. `docs/spec/runtime.md` §10.9.1
-// says passing the default export rather than the `createApp` factory "shares
-// one instance across all elements of that tag" — which is only a sentence
-// worth writing if every element stays live.
-//
-// It did not. Each mount overwrote the shape's imperative seams, so the second
-// mount captured every event that resolved through the shape and the first
-// froze: its buttons re-rendered the other host, and `el.setSlot` on the first
-// element landed on the second.
-
-import type { AppShape, CapabilityProvider, EffectSpec } from "@kumikijs/runtime";
+import type { AppShape, CapabilityProvider, EffectSpec, MountedApp } from "@kumikijs/runtime";
 import { defineKumikiElement, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot, freshTag } from "./helpers/dom.ts";
 
-type Counter = AppShape & {
-  _dispatch?: (name: string, el: Record<string, unknown>) => void;
-  _setSlot?: (name: string, value: unknown) => void;
-};
+type Counter = AppShape & Partial<Pick<MountedApp, "_dispatch" | "_setSlot">>;
 
 /** A counter whose button is addressable, plus a `label` slot for attributes. */
 function makeCounter(): Counter {
-  const app: Counter = {
+  const app: Counter = bareApp({
     slots: { count: { value: 0 }, label: { value: "-" } },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "inc",
@@ -36,13 +22,10 @@ function makeCounter(): Counter {
       kind: "column",
       children: [
         { kind: "text", text: `${app.live?.label ?? "-"}:${app.live?.count ?? 0}` },
-        // How a compiled app wires a click: the handler calls the shape's
-        // dispatch seam by name, which is exactly the seam a second mount used
-        // to overwrite.
         { kind: "button", text: "+", props: { onClick: () => app._dispatch?.("inc", {}) } },
       ],
     }),
-  };
+  });
   return app;
 }
 
@@ -55,36 +38,24 @@ const clickIn = (host: HTMLElement): void => {
   btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 };
 
-let tagCounter = 0;
-const freshTag = (): string => `kumiki-shared-${++tagCounter}`;
-
 describe("one AppShape mounted into two hosts", () => {
   let host: HTMLElement;
   beforeEach(() => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
+    host = freshRoot();
   });
   afterEach(() => {
     host.remove();
   });
 
-  const freshRoot = (): HTMLElement => {
-    const el = document.createElement("div");
-    host.appendChild(el);
-    return el;
-  };
-
   it("keeps both views live and showing the shared state", () => {
     const app = makeCounter();
-    const a = freshRoot();
-    const b = freshRoot();
+    const a = freshRoot(host);
+    const b = freshRoot(host);
     mount(app, a);
     mount(app, b);
 
     expect(readAll([a, b])).toEqual(["-:0", "-:0"]);
 
-    // The first mount is the one that used to freeze: its click re-rendered
-    // the *other* host, so `a` stayed at 0 while `b` counted.
     clickIn(a);
     expect(app.live?.count).toBe(1);
     expect(readAll([a, b])).toEqual(["-:1", "-:1"]);
@@ -121,11 +92,9 @@ describe("one AppShape mounted into two hosts", () => {
       ],
       root: () => ({ kind: "text", text: "x" }),
     };
-    mount(app, freshRoot(), { providers: { "log.write": provider } });
-    mount(app, freshRoot(), { providers: { "log.write": provider } });
+    mount(app, freshRoot(host), { providers: { "log.write": provider } });
+    mount(app, freshRoot(host), { providers: { "log.write": provider } });
 
-    // Shared state means shared initialization: running `app.init` twice would
-    // double every request the app makes on load.
     expect(provider).toHaveBeenCalledTimes(1);
     expect(started).toHaveBeenCalledTimes(1);
   });
@@ -133,11 +102,8 @@ describe("one AppShape mounted into two hosts", () => {
   it("ticks a timer once per interval, not once per view", () => {
     vi.useFakeTimers();
     try {
-      const app: AppShape = {
+      const app: AppShape = bareApp({
         slots: { n: { value: 0 } },
-        caps: [],
-        effects: {},
-        init: [],
         reducers: [
           {
             name: "tick",
@@ -146,9 +112,9 @@ describe("one AppShape mounted into two hosts", () => {
           },
         ],
         root: () => ({ kind: "text", text: `n=${app.live?.n ?? 0}` }),
-      };
-      mount(app, freshRoot());
-      mount(app, freshRoot());
+      });
+      mount(app, freshRoot(host));
+      mount(app, freshRoot(host));
       vi.advanceTimersByTime(100);
       expect(app.live?.n).toBe(1);
     } finally {
@@ -158,8 +124,8 @@ describe("one AppShape mounted into two hosts", () => {
 
   it("keeps the surviving view interactive when the other is disposed", () => {
     const app = makeCounter();
-    const a = freshRoot();
-    const b = freshRoot();
+    const a = freshRoot(host);
+    const b = freshRoot(host);
     const first = mount(app, a);
     mount(app, b);
 
@@ -175,11 +141,8 @@ describe("one AppShape mounted into two hosts", () => {
   it("tears the shared machinery down when the last view goes", () => {
     vi.useFakeTimers();
     try {
-      const app: AppShape = {
+      const app: AppShape = bareApp({
         slots: { n: { value: 0 } },
-        caps: [],
-        effects: {},
-        init: [],
         reducers: [
           {
             name: "tick",
@@ -188,9 +151,9 @@ describe("one AppShape mounted into two hosts", () => {
           },
         ],
         root: () => ({ kind: "text", text: `n=${app.live?.n ?? 0}` }),
-      };
-      const first = mount(app, freshRoot());
-      const second = mount(app, freshRoot());
+      });
+      const first = mount(app, freshRoot(host));
+      const second = mount(app, freshRoot(host));
       vi.advanceTimersByTime(100);
       expect(app.live?.n).toBe(1);
 
@@ -208,13 +171,13 @@ describe("one AppShape mounted into two hosts", () => {
 
   it("re-mounts cleanly after the last view is disposed", () => {
     const app = makeCounter();
-    const a = freshRoot();
+    const a = freshRoot(host);
     const handle = mount(app, a);
     clickIn(a);
     expect(app.live?.count).toBe(1);
     handle.dispose();
 
-    const b = freshRoot();
+    const b = freshRoot(host);
     mount(app, b);
     clickIn(b);
     expect(app.live?.count).toBe(2);
@@ -222,12 +185,10 @@ describe("one AppShape mounted into two hosts", () => {
   });
 
   it("refuses to add a view that wants to hydrate", () => {
-    // A snapshot overlays a *fresh* state. This app's is already live, and the
-    // views painting it would silently jump to whatever the server had.
     const app = makeCounter();
-    mount(app, freshRoot());
+    mount(app, freshRoot(host));
     expect(() =>
-      mount(app, freshRoot(), {
+      mount(app, freshRoot(host), {
         hydrate: true,
         bootstrapEpisode: { id: "e", trigger: { kind: "ssr.hydrate" }, steps: [] },
       } as never),
@@ -235,22 +196,19 @@ describe("one AppShape mounted into two hosts", () => {
   });
 
   it("refuses a view that wants its own style root", () => {
-    // A view in its own shadow root would paint there while every injected
-    // <style> stayed in the first view's root, and the shadow boundary would
-    // leave it completely unstyled. Loud beats invisible.
     const app = makeCounter();
-    mount(app, freshRoot());
-    const shadowHost = freshRoot();
+    mount(app, freshRoot(host));
+    const shadowHost = freshRoot(host);
     const root = shadowHost.attachShadow({ mode: "open" });
     expect(() => mount(app, shadowHost, { styleRoot: root })).toThrow(/styleRoot/);
   });
 
   it("says which options it ignored rather than dropping them silently", () => {
     const app = makeCounter();
-    mount(app, freshRoot());
+    mount(app, freshRoot(host));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
-      mount(app, freshRoot(), {
+      mount(app, freshRoot(host), {
         providers: { "log.write": async () => ({ kind: "ok", value: null }) },
       });
       expect(warn).toHaveBeenCalledTimes(1);
@@ -261,15 +219,11 @@ describe("one AppShape mounted into two hosts", () => {
   });
 
   it("does not register a shape whose mount threw", () => {
-    // `mount(app, el, { hydrate: true })` without a bootstrap episode is a
-    // public call that throws by contract. If the shape were registered before
-    // that point, every later mount would attach into an app with no `init`, no
-    // timers and no handle to dispose it with.
     const app = makeCounter();
-    const failed = freshRoot();
+    const failed = freshRoot(host);
     expect(() => mount(app, failed, { hydrate: true })).toThrow(/bootstrapEpisode/);
 
-    const good = freshRoot();
+    const good = freshRoot(host);
     mount(app, good);
     clickIn(good);
     expect(app.live?.count).toBe(1);
@@ -280,11 +234,8 @@ describe("one AppShape mounted into two hosts", () => {
 
   it("fires tile.mount once per render, however many hosts show it", () => {
     const mounted = vi.fn();
-    const app: AppShape = {
+    const app: AppShape = bareApp({
       slots: { n: { value: 0 } },
-      caps: [],
-      effects: {},
-      init: [],
       reducers: [
         {
           name: "onRowMount",
@@ -299,22 +250,17 @@ describe("one AppShape mounted into two hosts", () => {
         kind: "column",
         children: [{ kind: "text", text: "row", props: { _tile: "Row" } }],
       }),
-    };
-    mount(app, freshRoot());
-    mount(app, freshRoot());
-    // One mount of one tile, not one per host: these reducers carry
-    // subscriptions and fetches, and a second host is not a second mount.
+    });
+    mount(app, freshRoot(host));
+    mount(app, freshRoot(host));
     expect(mounted).toHaveBeenCalledTimes(1);
   });
 
   it("does not unmount every tile because a render panicked", () => {
     const unmounted = vi.fn();
     let broken = false;
-    const app: AppShape = {
+    const app: AppShape = bareApp({
       slots: { n: { value: 0 } },
-      caps: [],
-      effects: {},
-      init: [],
       reducers: [
         {
           name: "onRowUnmount",
@@ -329,9 +275,6 @@ describe("one AppShape mounted into two hosts", () => {
         kind: "column",
         children: [
           { kind: "text", text: "row", props: { _tile: "Row" } },
-          // A tile kind with no renderer registered would only warn, so throw
-          // from the tree itself: `text` reads `.text`, and a getter that
-          // throws is a render panic with the tree already picked.
           {
             kind: "text",
             get text(): string {
@@ -341,9 +284,9 @@ describe("one AppShape mounted into two hosts", () => {
           } as never,
         ],
       }),
-    };
+    });
     const app2 = app as Counter;
-    mount(app, freshRoot());
+    mount(app, freshRoot(host));
     expect(unmounted).not.toHaveBeenCalled();
 
     broken = true;
@@ -353,16 +296,11 @@ describe("one AppShape mounted into two hosts", () => {
     } finally {
       err.mockRestore();
     }
-    // The tree still says Row is mounted; only the painting failed. Firing
-    // `tile.unmount` here would run its unsubscribes and leave notifications
-    // for a tile that never left.
     expect(unmounted).not.toHaveBeenCalled();
   });
 
   it("delivers an imperative slot write to the element it was called on", () => {
-    // The custom-element form of the same defect: `el.setSlot` goes through the
-    // shape's `_setSlot`, which the second mount had overwritten.
-    const tag = freshTag();
+    const tag = freshTag("kumiki-shared");
     const app = makeCounter();
     defineKumikiElement(tag, app, { attributeSlots: { label: { slot: "label" } } });
     type SlotEl = HTMLElement & { setSlot(n: string, v: unknown): void };
@@ -370,8 +308,6 @@ describe("one AppShape mounted into two hosts", () => {
     const [el1, el2] = Array.from(host.querySelectorAll(tag)) as SlotEl[];
     if (!el1 || !el2) throw new Error("elements did not upgrade");
 
-    // Both elements show the shared state; the attribute applied last wins the
-    // slot, which is what "shares one instance" means.
     expect(app.live?.label).toBe("B");
     expect(readAll([el1, el2])).toEqual(["B:0", "B:0"]);
 

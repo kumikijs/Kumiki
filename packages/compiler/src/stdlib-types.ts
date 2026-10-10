@@ -1,20 +1,5 @@
-// The type names the standard library provides, in one table.
-//
-// Two consumers used to carry their own list and had already drifted: the
-// typechecker had none at all (so `HttpError` was an unresolvable name that
-// silently accepted every value), and `dts.ts` had a private `KNOWN_SCALAR`
-// holding only the scalar nominals — no records, no unions, so `HttpError` and
-// `Route` generated `unknown`. Both read this now, and `stdlib-types.test.ts`
-// drives every entry through both.
-
 import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
 
-/**
- * Synthesised definitions have no source position. Nothing reports at one —
- * `resolveType` only walks types written in the program, and a mismatch is
- * always reported at the offending *expression* — but `TypeExpr` requires the
- * field, so this is the value it gets.
- */
 const NO_POS: Pos = { line: 0, col: 0 };
 
 export type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
@@ -33,10 +18,6 @@ const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
   pos: NO_POS,
 });
 
-/**
- * The constructors for a type the standard library writes rather than parses,
- * for the other tables that hold one (the built-in effects' `in=` types).
- */
 export { app as appType, prim as primType, record as recordType, ref as refType };
 
 const nominal = (inner: TypeExpr, pred?: string, args: (number | string)[] = []): TypeExpr => ({
@@ -53,16 +34,6 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
   pos: NO_POS,
 });
 
-/**
- * Domain types provided by the standard library (docs/spec/stdlib.md §2.1.3).
- *
- * `File` is absent on purpose: the grammar makes it a primitive type name, so a
- * program can never reach a definition under that name. Its fields live in the
- * checker's `PRIM_FIELDS` instead.
- *
- * A program that declares its own `type Route = …` shadows the entry here —
- * these are seeded before the program's definitions, not after.
- */
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
@@ -77,11 +48,6 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
-  // The five fields routing.md §3.2 documents, which is what a program reads.
-  // (`parseLocation` also carries `childPattern` for `route-outlet`; that one
-  // is runtime bookkeeping and is deliberately not part of the type.)
-  // `pattern` and `hash` were missing here, so a provider signature generated
-  // for a `Route` typed them as `unknown`.
   def(
     "Route",
     record({
@@ -93,15 +59,6 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
     }),
   ),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
-  // The payload of `app.error` and of an `error-boundary` tile's `in=`
-  // (docs/spec/lifecycle.md §7.2.3). Filed with the domain types rather than
-  // with lifecycle because a program names it exactly the way it names `Route`.
-  //
-  // `episode-id` is `Option(Text)` because an episode is not always open: a
-  // host that attached no episode logger has none to name. It was declared
-  // `Text` and supplied by nothing, which made §7.2.3's own instruction —
-  // treat it as `None`-equivalent — inexpressible, since a `Text` has no
-  // `None` and what arrived was `undefined` (#364).
   def(
     "PanicInfo",
     record({
@@ -124,11 +81,6 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   }),
 ];
 
-/**
- * Generic type constructors with no definition to look up (stdlib §2.1.2), and
- * the number of arguments each takes. `Tuple` is variadic — `null` means the
- * arity check does not apply.
- */
 export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new Map([
   ["List", 1],
   ["Set", 1],
@@ -138,25 +90,14 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Tuple", null],
 ]);
 
-/**
- * The tags of the standard library's unions that no definition in
- * `STDLIB_TYPES` declares. `Option` and `Result` are generic constructors with
- * no body to read their tags from, and `HttpBody` (http.md §6.1.3) is read by
- * the HTTP runtime by tag alone — its `Json` payload is a `JsonValue` no type
- * names. `FormValue` has a definition, so its tags are read from that.
- */
+// `Option` and `Result` have no body to read tags from, and `HttpBody` is read
+// by the HTTP runtime by tag alone. `FormValue`'s tags come from its definition.
 export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Option", ["Some", "None"]],
   ["Result", ["Ok", "Err"]],
   ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
 ]);
 
-/**
- * The primitive type names (stdlib §2.1.1). The grammar turns these into
- * `TypePrim` rather than a name lookup, so they never reach the symbol table —
- * but a *misspelling* of one does, as an unresolvable `TypeRef`, which is
- * exactly when a repair needs them as candidates.
- */
 const PRIM_TYPE_NAMES: readonly PrimName[] = [
   "Text",
   "Int",
@@ -171,24 +112,10 @@ const PRIM_TYPE_NAMES: readonly PrimName[] = [
 
 const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
 
-/**
- * Whether `name` is a primitive type name. Separate from the symbol table
- * because the grammar resolves these itself: a primitive is a `TypePrim`, so
- * asking `sym.types` about `Int` answers no.
- *
- * Narrows, because a caller that resolves a name to a type has to build the
- * `TypePrim` afterwards and the `Set` is the only thing that knows the answer.
- */
 export function isPrimTypeName(name: string): name is PrimName {
   return PRIM_TYPE_NAME_SET.has(name);
 }
 
-/**
- * Every type name a program may write, given its own `type` definitions. The
- * candidate set `kumiki fix` suggests from for E0117 — a name from another
- * namespace would be E0117 again at the same position, so only type names
- * belong here.
- */
 export function typeCandidates(userTypeNames: Iterable<string>): string[] {
   // The program's own names come first so an equidistant tie resolves to one
   // of them: `Filtre` is two edits from both the declared `Filter` and the
