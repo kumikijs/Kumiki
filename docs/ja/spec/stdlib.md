@@ -477,6 +477,8 @@ TypeName.fresh()           : T            ; nominal 型の新 ID（UUIDv7）
 
 id は uuid の `Text` なので、`TypeName` は `Text` が入る型である：`Text` 自身、またはその上の `nominal` / `where` — `PostId`、標準ライブラリの `Url` / `Email` / `Uuid`。それ以外の `TypeName` — `Int`、`nominal Int`、レコード、ユニオン — は [E0802](./errors.md#e0802-unimplemented-function) になる：数値である uuid は存在せず、こうして生成された `nominal Int` の id はどこへ行っても文字列であり、それを要素とする `Set` はそれを `NaN` として読み戻していた。
 
+この uuid は小文字 16 進で書かれたバージョン 7（[RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562#section-5.7)）である：先頭 48 ビットはミリ秒単位の Unix 時刻、3 番目のグループはバージョン `7` で、4 番目のグループはバリアント（`8`、`9`、`a`、`b` のいずれか）で始まり、残りはカウンタとランダムビットである。どの uuid とも同じく `uuid` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）を通る。実行中の 1 つのアプリが生成した id は、`Text` として（[§2.2.3](#_2-2-3-list-t)）生成した順に並ぶ：同じミリ秒に生成した複数の id も、時計が巻き戻った後に生成した id もそうである。この順序を保つため、id が時計のミリ秒を持つのは時計が直前の id のミリ秒を過ぎているときだけであり、そうでなければ直前の id のミリ秒を、数千個の id がそれを共有した後はその次のミリ秒を持つ。2 回の実行や 2 つのアプリ — リロードの前後、2 つのタブ、2 台の端末 — の id の間には、それぞれが読んだ時計のほかに順序を決めるものはない。replay される episode は、新たに生成する代わりに記録した id を返す（[§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。
+
 ### 2.4.2 時刻
 
 ```

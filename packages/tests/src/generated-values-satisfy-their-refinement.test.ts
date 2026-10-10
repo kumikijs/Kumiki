@@ -1,5 +1,5 @@
 import { applyRefine, type GenDescData, refinementToJs } from "@kumikijs/compiler";
-import { _stdlibTest, type GenDesc } from "@kumikijs/runtime";
+import { _stdlibCore, _stdlibTest, type GenDesc } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const NO_POS = { line: 0, col: 0 };
@@ -54,5 +54,17 @@ describe("a generated value passes the check the runtime applies to a write", ()
     expect(
       generatedValuesPass(descriptor(base, pred, args), predicate(pred, args)),
     ).toBeUndefined();
+  });
+});
+
+// The other value the runtime makes up for a `uuid` slot: the runtime mints it and the compiler's
+// table checks it.
+describe("a fresh id passes the check a uuid-refined slot applies", () => {
+  it("mints ids the uuid predicate accepts", () => {
+    const accepts = predicate("uuid");
+    for (let i = 0; i < 200; i++) {
+      const id = _stdlibCore.freshId();
+      expect(accepts(id), id).toBe(true);
+    }
   });
 });
