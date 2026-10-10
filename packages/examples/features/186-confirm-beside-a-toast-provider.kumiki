@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.5, §2.6.5; routing.md §3.5.2): `toast` and `confirm`
+# Feature (stdlib.md, routing.md): `toast` and `confirm`
 # both run on `notification.show`, and a host provider registered for that
 # capability replaces the toast alone. `confirm` always renders the runtime's
 # own dialog, because its answer is a reducer the dialog dispatches and a
