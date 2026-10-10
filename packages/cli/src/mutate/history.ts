@@ -1,9 +1,9 @@
-import { load, loadSource } from "../store.ts";
+import { loadSource } from "../store.ts";
 import { escapeRegExp } from "../text.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { assemble, bodyOf, nameSites, respell, splitQname } from "./definition-text.ts";
 import { type DefSpec, type OpLogEntry, readOpLog } from "./op-log.ts";
-import { addDefs, removeDef, removeSet, renameDef, replaceDefLocked } from "./verbs.ts";
+import { addDefs, removeDef, removeSet, renameDef, replaceDef } from "./verbs.ts";
 
 export function patchRevert(path: string, opId: string): string {
   return withWriteLock(path, () => patchRevertLocked(path, opId));
@@ -36,7 +36,7 @@ function patchRevertLocked(path: string, opId: string): string {
       const added = [own, ...(target.with ?? []).map((d) => `${d.layer}.${d.name}`)];
       const [main, ...rest] = namesNow("added", added);
       if (target.with === undefined) return removeDef(path, main!, false).opId;
-      return removeSet(path, load(path), [main!, ...rest], true).opId;
+      return removeSet(path, [main!, ...rest], true).opId;
     }
     case "remove": {
       return addDefs(path, removedDefs(log, idx, opId));
@@ -45,7 +45,7 @@ function patchRevertLocked(path: string, opId: string): string {
       const prev = recordedPrev(target) ?? priorBody(log, idx, target.layer, target.name);
       if (prev === undefined) throw new Error(`patch revert: no prior body found for ${own}`);
       const now = nameOf("replaced", own);
-      return replaceDefLocked(path, now, bodyFor(prev, now)).opId;
+      return replaceDef(path, now, bodyFor(prev, now)).opId;
     }
     case "edit": {
       const prev = recordedPrev(target) ?? priorBody(log, idx, target.layer, target.name);
@@ -53,7 +53,7 @@ function patchRevertLocked(path: string, opId: string): string {
         throw new Error(`patch revert: cannot reconstruct prior body for edit of ${own}`);
       }
       const now = nameOf("edited", own);
-      return replaceDefLocked(path, now, bodyFor(prev, now)).opId;
+      return replaceDef(path, now, bodyFor(prev, now)).opId;
     }
     case "rename": {
       if (!target.newName) throw new Error("patch revert: rename op missing newName");

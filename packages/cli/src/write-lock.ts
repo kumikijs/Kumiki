@@ -263,6 +263,12 @@ export type ClaimResult =
   | { kind: "claimed"; claim: string; by: LockSighting }
   | { kind: "failed"; file: string; code: string };
 
+/**
+ * Removes `lock` only while holding a claim on the sighting `seen`, and only if it is still that lock:
+ * deleting by path lets a second waiter delete the lock the first just created, and moving it aside lets a
+ * third writer create one meanwhile. An abandoned claim is passed over to the next generation rather than
+ * deleted by whoever finds it, so two callers cannot both remove it and both proceed.
+ */
 export function claimLock(lock: string, seen: LockSighting): ClaimResult {
   const base = `${lock}.takeover-${sightingKey(seen)}`;
   let file = base;

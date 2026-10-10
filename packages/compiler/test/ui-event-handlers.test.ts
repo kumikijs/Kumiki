@@ -96,6 +96,8 @@ reducer inc on=ui.click(T) do= n := n + 1
 tile T = button(text="+", onClick=inc)
 tile App = column(T)`),
     );
+    // One handler per route, `/` and `/404`, each naming `inc` once.
+    expect(js.match(/_h\("inc"\)/g)).toHaveLength(2);
     expect(js).toContain(`onClick: _h("inc")`);
     expect(js).not.toContain(`_h("inc", "inc")`);
   });

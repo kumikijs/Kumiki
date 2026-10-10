@@ -25,6 +25,7 @@ export type ExtendedCodegenOptions = CodegenOptions & {
   readRuntimeBundle?: () => string;
   /** Project-registered capabilities (from `kumiki.caps.json`) accepted in `app.caps`. */
   capabilities?: string[];
+  /** Reads an `episode-test`'s `load` file; without it, such a test fails instead of replaying nothing. */
   readEpisodeLog?: (relativePath: string) => string;
   strictA11y?: boolean;
   strictIcons?: boolean;

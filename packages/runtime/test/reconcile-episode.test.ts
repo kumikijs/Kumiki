@@ -90,6 +90,25 @@ describe("an episode's binds-updated names the tiles a render rebuilt or patched
     dispose();
   });
 
+  it("names a live input by the bind path it has now, after the path changes", () => {
+    let bindPath: BindSegment[] = ["title"];
+    let value = "initial";
+    const app = advancingApp(() => [{ kind: "input", bind: "todo", bindPath, value }]);
+    const { committed, dispose } = mountRecorded(app);
+    const input = root.querySelector("input");
+
+    value = "changed";
+    app._dispatch("advance", {});
+    expect(lastBindsUpdated(committed)).toEqual(["todo.title"]);
+
+    bindPath = [];
+    value = "again";
+    app._dispatch("advance", {});
+    expect(lastBindsUpdated(committed)).toEqual(["todo"]);
+    expect(root.querySelector("input")).toBe(input);
+    dispose();
+  });
+
   it("names the key of a keyed insert and not the survivors", () => {
     let ids = ["a", "b"];
     const app = advancingApp(() =>

@@ -16,7 +16,7 @@ export const CONTROL_DEMANDS = {
   setProperty: "none",
 } as const satisfies Record<string, ControlDemand>;
 
-/** A verb the table answers for — every action kind, at either tier. */
+/** A verb the table answers for: every action kind at either tier, which `scenario/vocabulary.ts` enforces. */
 export type ControlVerb = keyof typeof CONTROL_DEMANDS;
 
 export type ControlRefusalReason = "disabled" | "readonly" | "not editable";
@@ -65,6 +65,7 @@ export function readControl(el: Element): ControlState | null {
 }
 
 export abstract class StepRefusal extends Error {
+  /** The part `actionErrorIncludes` matches; prose stays out so `["disabled"]` cannot match a message that only explains it. */
   readonly headline: string;
   /** What the fixture should write to assert this refusal, quoted in `message`. */
   readonly suggestion: string;
@@ -138,7 +139,7 @@ const CONSEQUENCE: Record<ControlDemand, string> = {
   none: "so nothing is asked of it",
 };
 
-/** Prose kept out of `headline`, for the reason `StepRefusal.headline` gives. */
+/** Explanations appended after `headline`, outside the text a fixture matches on. */
 const EXPLANATION: Record<ControlRefusalReason, string> = {
   disabled: "",
   readonly: "",

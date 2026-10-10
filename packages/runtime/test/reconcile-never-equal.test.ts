@@ -175,7 +175,9 @@ describe("a value that can never compare equal", () => {
   ])("names %s", (_label, fields, field, cause) => {
     const seen = hostCardRun(() => card(fields()), inPlaceCardPatch);
 
-    expect(neverEqual(seen)).toEqual([expect.objectContaining({ field, cause })]);
+    // The patcher keeps the element, so the field is the only thing reported.
+    expect(seen.map((d) => d.kind)).toEqual(["never-equal-prop"]);
+    expect(seen[0]).toMatchObject({ field, cause });
   });
 
   it.each<[string, () => Record<string, unknown>]>([

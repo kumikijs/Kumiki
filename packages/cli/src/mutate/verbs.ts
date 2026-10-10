@@ -23,11 +23,15 @@ export type ReplaceResult = { opId: string; dropped: string[] };
 export type RemoveResult = { opId: string; removed: RemovedNames };
 
 export function addDef(path: string, layer: string, name: string, body: string): string {
-  enforceLock(path, `${layer}.${name}`);
-  return withWriteLock(path, () => addDefs(path, [{ layer, name, body }]));
+  return addDefs(path, [{ layer, name, body }]);
 }
 
 export function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
+  enforceLock(path, `${defs[0].layer}.${defs[0].name}`);
+  return withWriteLock(path, () => addDefsLocked(path, defs));
+}
+
+function addDefsLocked(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
   for (const d of defs) {
     if (!isDefinitionName(d.name)) {
       throw new Error(
@@ -53,7 +57,7 @@ export function replaceDef(path: string, qname: string, body: string): ReplaceRe
   return withWriteLock(path, () => replaceDefLocked(path, qname, body));
 }
 
-export function replaceDefLocked(path: string, qname: string, body: string): ReplaceResult {
+function replaceDefLocked(path: string, qname: string, body: string): ReplaceResult {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -113,10 +117,16 @@ function removeDefLocked(path: string, qname: string, cascade: boolean): RemoveR
   }
   toRemove.delete(qname);
   const set: RemovedNames = [qname, ...[...toRemove].sort(compareQNames)];
-  return removeSet(path, store, set, cascade);
+  return removeSetLocked(path, store, set, cascade);
 }
 
-export function removeSet(
+/** Removes exactly `set`, rejecting it when anything outside it references a member. */
+export function removeSet(path: string, set: RemovedNames, cascade: boolean): RemoveResult {
+  enforceLock(path, set[0]);
+  return withWriteLock(path, () => removeSetLocked(path, load(path), set, cascade));
+}
+
+function removeSetLocked(
   path: string,
   store: Store,
   set: RemovedNames,
@@ -331,7 +341,7 @@ function applyOne(path: string, op: RawOp): string {
       if (op.removed === undefined) return removeDef(path, main, op.cascade ?? false).opId;
       // `opShapeProblem` checked that the recorded set starts with `main`.
       const [, ...rest] = op.removed;
-      return removeSet(path, load(path), [main, ...rest], true).opId;
+      return removeSet(path, [main, ...rest], true).opId;
     }
     default:
       throw new Error(`unknown op kind "${op.op}"`);

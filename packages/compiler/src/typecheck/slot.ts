@@ -19,6 +19,7 @@ export function isTestSlot(name: string, sym: SymbolTable): boolean {
   return sym.slots.has(name) || RESERVED_SLOT_NAMES.has(name);
 }
 
+/** Must equal the keys of the runtime's `emptyRoute()`, or a test's `route` seed is refused or left partly undefined. */
 export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set([
   "path",
   "pattern",

@@ -48,6 +48,10 @@ export type RenderToStringResult = {
   bootstrapEpisode: Episode;
 };
 
+/**
+ * Renders into the app's shared `app.live`, so concurrent renders of one app mix slot values:
+ * await each before the next, and read state from the result, not from `app.live`.
+ */
 export async function renderToString(
   app: AppShape,
   options: RenderToStringOptions = {},

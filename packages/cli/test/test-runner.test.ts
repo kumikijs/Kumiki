@@ -1,5 +1,6 @@
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
+import { runTestsSource } from "../src/smoke.ts";
 import { runCli, SPAWN } from "./helpers/cli.ts";
 import { seed } from "./helpers/files.ts";
 
@@ -134,5 +135,31 @@ ${NOT_A_RECORD}`);
     expect(tested.code).toBe(1);
     expect(tested.stderr).toMatch(/E0103 \S+ at 4:27: /);
     expect(tested.stderr).not.toContain("in test");
+  });
+});
+
+describe("an episode-test whose log was never read", () => {
+  const REPLAY = `slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="+", onClick=inc)
+tile App = column(B)
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test replay =
+    episode-test
+        load   = "log.jsonl"
+        mocks  = {}
+        expect = {slots-equal: from-log}
+`;
+
+  it("fails, naming the test and the log, when the source is run without its path", async () => {
+    const [result] = await runTestsSource(REPLAY);
+    expect(result).toMatchObject({
+      name: "replay",
+      pass: false,
+      diffAt: "load",
+      expected: 'the episodes in "log.jsonl"',
+      actual:
+        "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
+    });
   });
 });

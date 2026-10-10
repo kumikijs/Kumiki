@@ -1,3 +1,5 @@
+import type { ControlVerb } from "../control-check.ts";
+
 /** The actions both tiers perform. Exactly one field names the action. */
 type CommonAction =
   | { dispatch: string; payload?: Record<string, unknown> }
@@ -115,6 +117,16 @@ export const BROWSER_EXPECT_KEYS = [
   "elementState",
 ] as const satisfies readonly (keyof BrowserExpect)[];
 
+// A key the type has and its list forgot is validated as unknown and never run; these make that a type error.
+type Covers<Whole extends Part, Part> = Whole;
+type Verb<A> = Exclude<ActionKind<A>, Modifier>;
+type _HeadlessActionsCovered = Covers<Verb<Action>, (typeof HEADLESS_ACTION_KEYS)[number]>;
+type _BrowserActionsCovered = Covers<Verb<BrowserAction>, (typeof BROWSER_ACTION_KEYS)[number]>;
+type _HeadlessExpectsCovered = Covers<keyof Expect, (typeof HEADLESS_EXPECT_KEYS)[number]>;
+type _BrowserExpectsCovered = Covers<keyof BrowserExpect, (typeof BROWSER_EXPECT_KEYS)[number]>;
+// A verb missing from `CONTROL_DEMANDS` would ask nothing of a disabled or read-only control.
+type _ControlVerbsTotal = Covers<Verb<Action> | Verb<BrowserAction>, ControlVerb>;
+
 export type ScenarioTier = "headless" | "browser";
 
 type TierRules = {
@@ -181,13 +193,27 @@ export function validateScenario(scenario: object, tier: ScenarioTier = "headles
   for (const [i, step] of (steps as (ScenarioStep<object, object> | undefined)[]).entries()) {
     if (!step) continue;
     const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
-    if (step.do !== undefined) problems.push(...validateAction(step.do, where, rules, other));
-    if (step.expect !== undefined) {
-      problems.push(...validateExpect(step.expect, where, rules, other));
+    const { do: action, expect } = step as { do?: unknown; expect?: unknown };
+    if (action !== undefined) {
+      if (isRecord(action)) problems.push(...validateAction(action, where, rules, other));
+      else
+        problems.push(
+          `${where}: "do" must be an object naming one action, not ${JSON.stringify(action)}`,
+        );
+    }
+    if (expect !== undefined) {
+      if (isRecord(expect)) problems.push(...validateExpect(expect, where, rules, other));
+      else
+        problems.push(
+          `${where}: "expect" must be an object of assertions, not ${JSON.stringify(expect)}`,
+        );
     }
   }
   return problems;
 }
+
+const isRecord = (v: unknown): v is object =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
 
 function foreignTo(rules: TierRules, other: TierRules, key: "actions" | "expects") {
   return (k: string): boolean => other[key].includes(k) && !rules[key].includes(k);

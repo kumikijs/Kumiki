@@ -182,7 +182,7 @@ export async function runScenario(
     try {
       dispose?.();
     } catch {
-      // The report is already built. A fault on the way out is worth less than the run it would replace, and the same choice `runSmoke` makes.
+      // The report is already built. A fault on the way out is worth less than the run it would replace, and the same choice `smoke` makes.
     }
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);

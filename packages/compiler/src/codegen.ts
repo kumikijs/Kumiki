@@ -35,6 +35,7 @@ export type CodegenOptions = {
   includeTests?: boolean;
   exportApp?: boolean;
   runtimeModulesDir?: string;
+  /** Reads an `episode-test`'s `load` file; without it, such a test fails instead of replaying nothing. */
   readEpisodeLog?: (relativePath: string) => string;
   icons?: Record<string, string>;
 };

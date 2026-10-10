@@ -75,8 +75,8 @@ export const linkTile: TileRenderer<"link"> = (node) => {
       warnLink(a, to, disposition);
       return;
     }
+    // The router has no route for an external link or another origin, so the browser keeps the click.
     if (state?.external) return;
-    // Nor does the router serve another origin — the browser keeps the click.
     if (disposition === "browser") {
       warnLink(a, to, disposition);
       return;

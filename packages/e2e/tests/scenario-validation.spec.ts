@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { type Scenario, validateScenario } from "../src/browser.ts";
+import { expect, type Page, test } from "@playwright/test";
+import { runOnPage, type Scenario, validateScenario } from "../src/browser.ts";
 
 test("accepts a fixture built from the keys this tier evaluates", () => {
   const scenario: Scenario = {
@@ -86,4 +86,26 @@ test("refuses the scenario tier's effect mocks", () => {
   } as Scenario & { effects: unknown });
   expect(problems).toHaveLength(1);
   expect(problems[0]).toContain("effects");
+});
+
+test("reports a null expect, and installs nothing on the page for a fixture it refuses", async () => {
+  const touched: string[] = [];
+  const page = new Proxy({} as Page, {
+    get: (_, key) => {
+      touched.push(String(key));
+      return () => Promise.resolve();
+    },
+  });
+  const source = `tile App = text("hi")
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+  const report = await runOnPage(page, source, { steps: [{ expect: null as never }] });
+  expect(report.ok).toBe(false);
+  expect(report.steps[0]?.failures).toEqual([
+    'steps[0]: "expect" must be an object of assertions, not null',
+  ]);
+  expect(touched).toEqual([]);
 });

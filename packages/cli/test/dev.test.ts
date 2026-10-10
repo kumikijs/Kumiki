@@ -7,9 +7,10 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { app } from "@kumikijs/examples";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startDevServer } from "../src/dev.ts";
 import { CLI_ARGV, runCli } from "./helpers/cli.ts";
 import { tempDir } from "./helpers/files.ts";
@@ -150,6 +151,30 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     if (existsSync(logFile)) {
       expect(readFileSync(logFile, "utf8")).toBe("");
     }
+  });
+
+  it("logs a client abort mid-body on /__kumiki/episode, writes nothing for it, and keeps serving", async () => {
+    const logFile = join(tmpRoot, "episodes.jsonl");
+    const server = await start({ episodeLog: logFile });
+    const logged = vi.spyOn(server.config.logger, "error");
+    const { hostname, port } = new URL(baseUrl);
+    const socket = connect(Number(port), hostname);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      `POST /__kumiki/episode HTTP/1.1\r\nHost: ${hostname}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{"id":"ep_cut`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    socket.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(logged).toHaveBeenCalledWith("[kumiki dev] request stream error: aborted");
+
+    const res = await fetch(new URL("/__kumiki/episode", baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "ep_after" }),
+    });
+    expect(res.status).toBe(204);
+    expect(readFileSync(logFile, "utf8").trim().split("\n")).toEqual(['{"id":"ep_after"}']);
   });
 
   it("returns 500 when --episode-log points at a path that cannot be written", async () => {

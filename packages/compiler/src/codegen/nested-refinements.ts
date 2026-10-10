@@ -12,7 +12,7 @@ import {
 import { refinementBodyJs } from "../refinements.ts";
 import { fieldKey } from "./context.ts";
 
-/** A failure as the runtime reads it back: see `RefinementFailure` in core.ts. */
+/** A failure as the runtime reads it back: see `RefinementFailure` in runtime `core/refinement.ts`. */
 const FAIL = (r: Refinement): string =>
   `{ kind: ${JSON.stringify(r.pred)}, args: ${JSON.stringify(r.args)}, path: [] }`;
 

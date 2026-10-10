@@ -53,16 +53,21 @@ ${APP_A}`,
     expect(out).toContain("ok");
   });
 
+  // E0212 sits in the band `--types` selects anyway, so only `--refs` and `--effects` show it is kept as a strict code.
+  const SCOPES = ["--types", "--refs", "--effects"];
   it.each([
-    ["--strict-icons", UNKNOWN_ICON, /E0704/],
-    ["--strict-selector-id", SELECTOR_ID_MISMATCH, /E0212/],
+    ...SCOPES.map((scope) => ["--strict-icons", scope, UNKNOWN_ICON, /E0704/] as const),
+    ...SCOPES.map(
+      (scope) => ["--strict-selector-id", scope, SELECTOR_ID_MISMATCH, /E0212/] as const,
+    ),
     [
       "--strict-a11y",
+      "--types",
       `slot _ : Text = ""\ntile Pic = image(src="/x.png")\ntile App = column(Pic)\n${APP_A}`,
       /E070[123]/,
-    ],
-  ])("%s still reports its band under a scope flag", SPAWN, (flag, source, code) => {
-    const result = runCli(["check", seed(source), flag, "--types"]);
+    ] as const,
+  ])("%s still reports its band under %s", SPAWN, (flag, scope, source, code) => {
+    const result = runCli(["check", seed(source), flag, scope]);
     expect(result.code).toBe(1);
     expect(result.out).toMatch(code);
   });

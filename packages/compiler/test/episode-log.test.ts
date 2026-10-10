@@ -75,6 +75,14 @@ test replay =
     expect(r.kind === "ok" && r.js).toContain('"id":"ep_0001"');
   });
 
+  it("emits a failing test, not an empty replay, when no reader is given", () => {
+    const r = compile(src, { runtimeSpecifier: "./runtime.js", includeTests: true });
+    if (r.kind !== "ok") throw new Error("expected the source to compile");
+    expect(r.js).not.toContain("runEpisodeTest");
+    expect(r.js).toContain('"pass":false');
+    expect(r.js).toContain('"expected":"the episodes in \\"log.jsonl\\""');
+  });
+
   it("reads the log the way the CLI does, naming the line that is not JSON", () => {
     expect(() => build('{"id":"ep_0001"}\n{nope')).toThrow(/episode log: invalid JSON at line 2/);
   });

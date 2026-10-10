@@ -99,7 +99,7 @@ describe("write-failure handling", () => {
       status: "write-failed",
       phase: "compile",
       writeError: expect.stringContaining("ENOSPC"),
-      compileFixes: expect.any(Number),
+      compileFixes: 1,
     });
     expect(readFileSync(file, "utf8")).toBe(before);
   });
@@ -135,7 +135,7 @@ describe("write-failure handling", () => {
       phase: "test",
       writeError: expect.stringContaining("EBUSY"),
       patch: expect.anything(),
-      compileFixes: expect.any(Number),
+      compileFixes: 1,
     });
     expect(readFileSync(file, "utf8")).toContain("log.write");
   });

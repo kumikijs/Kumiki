@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { threadId } from "node:worker_threads";
 import {
   addDef,
   describeEdit,
@@ -15,7 +17,9 @@ import {
 } from "@kumikijs/cli";
 import { check } from "@kumikijs/compiler";
 import { app } from "@kumikijs/examples";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { addDefs, removeSet } from "../src/mutate/verbs.ts";
+import { writeLockPath } from "../src/write-lock.ts";
 import { seedCopy } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
@@ -187,5 +191,24 @@ describe("parallel op merge", () => {
     expect(names(aFirst)).toContain("slot.lastSync");
     expect(check(load(aFirst).program)).toEqual([]);
     expect(check(load(bFirst).program)).toEqual([]);
+  });
+});
+
+describe("the write verbs history replays, called outside any write lock", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["addDefs", (path: string) => addDefs(path, [{ layer: "slot", name: "extra", body: "N = 0" }])],
+    ["removeSet", (path: string) => removeSet(path, ["tile.ResetBtn"], false)],
+  ] as const)("%s takes the write lock itself, so it waits on a writer holding it", (_, verb) => {
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "200");
+    const path = seedCopy(COUNTER);
+    const before = readFileSync(path, "utf8");
+    const holder = JSON.stringify({ pid: process.pid, host: hostname(), threadId: threadId + 1 });
+    writeFileSync(writeLockPath(path), holder);
+    expect(() => verb(path)).toThrow(`is being written by kumiki process ${process.pid}`);
+    expect(readFileSync(path, "utf8")).toBe(before);
   });
 });

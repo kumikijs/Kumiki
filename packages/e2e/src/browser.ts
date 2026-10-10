@@ -193,15 +193,8 @@ async function serveScenario(
     return route.abort();
   };
 
-  page.on("console", onConsole);
-  page.on("pageerror", onPageError);
-  await page.route(KUMIKI_ROUTE_GLOB, onRoute);
-
   const problems = validateScenario(scenario);
   if (problems.length > 0) {
-    page.off("console", onConsole);
-    page.off("pageerror", onPageError);
-    await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
     return {
       ok: false,
       steps: [
@@ -217,6 +210,9 @@ async function serveScenario(
     };
   }
 
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  await page.route(KUMIKI_ROUTE_GLOB, onRoute);
   try {
     await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
     await page.waitForFunction(readyExpr, null, { timeout: 5000 });

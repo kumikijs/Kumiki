@@ -108,14 +108,28 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   const ctx = makeEvalCtx(gen, new Set());
   const nameJs = JSON.stringify(t.name);
   if (t.testKind === "episode-test") {
-    let episodesJs = "[]";
-    if (opts.readEpisodeLog && t.load) {
-      const raw = opts.readEpisodeLog(t.load);
-      const parsed = parseEpisodeLogText(raw);
-      episodesJs = JSON.stringify(parsed);
-    }
     const mocksJsStr = t.mocks ? episodeMockJs(t.mocks, ctx) : "{}";
     const expectJs = t.expect ? episodeExpectJs(t.expect as Expr, ctx) : "{}";
+    // Replaying nothing would pass every `from-log` expectation, so an unread log fails the test.
+    if (t.load && !opts.readEpisodeLog) {
+      const failure = {
+        name: t.name,
+        pass: false,
+        expected: `the episodes in ${JSON.stringify(t.load)}`,
+        actual:
+          "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
+        diffAt: "load",
+      };
+      return `  {
+    name: ${nameJs},
+    kind: "episode-test",
+    run: () => (${JSON.stringify(failure)}),
+  },`;
+    }
+    const episodesJs =
+      opts.readEpisodeLog && t.load
+        ? JSON.stringify(parseEpisodeLogText(opts.readEpisodeLog(t.load)))
+        : "[]";
     return `  {
     name: ${nameJs},
     kind: "episode-test",

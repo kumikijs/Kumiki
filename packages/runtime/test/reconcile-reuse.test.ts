@@ -214,7 +214,16 @@ describe("a patched tile keeps its element and the state the browser holds on it
 
   const options = (values: string[]) => values.map((v) => ({ label: v.toUpperCase(), value: v }));
 
-  it.each<[string, (n: number) => TileNode, string, (el: HTMLElement) => void]>([
+  type Row = [
+    label: string,
+    tree: (n: number) => TileNode,
+    selector: string,
+    before: (el: HTMLElement) => void,
+    after: (el: HTMLElement) => void,
+  ];
+  const nothing = () => {};
+
+  it.each<Row>([
     [
       "a select whose options list grows, keeping its value",
       (n) => ({
@@ -223,6 +232,7 @@ describe("a patched tile keeps its element and the state the browser holds on it
         options: options(n === 0 ? ["a", "b", "c"] : ["a", "b", "c", "d"]),
       }),
       "select",
+      (el) => expect((el as HTMLSelectElement).options.length).toBe(3),
       (el) => {
         const sel = el as HTMLSelectElement;
         expect(sel.options.length).toBe(4);
@@ -233,12 +243,14 @@ describe("a patched tile keeps its element and the state the browser holds on it
       "an input whose value changes",
       (n) => ({ kind: "input", value: `v${n}` }),
       "input",
+      (el) => expect((el as HTMLInputElement).value).toBe("v0"),
       (el) => expect((el as HTMLInputElement).value).toBe("v1"),
     ],
     [
       "a video whose controls flip",
       (n) => ({ kind: "video", src: "/demo.mp4", controls: n % 2 === 1 }),
       "video",
+      (el) => expect((el as HTMLVideoElement).controls).toBe(false),
       (el) => expect((el as HTMLVideoElement).controls).toBe(true),
     ],
     [
@@ -249,6 +261,7 @@ describe("a patched tile keeps its element and the state the browser holds on it
         children: [{ kind: "text", text: "panel" }],
       }),
       "details",
+      nothing,
       (el) => {
         expect((el as HTMLDetailsElement).open).toBe(true);
         expect(el.querySelector("summary")?.textContent).toBe("count 1");
@@ -264,14 +277,16 @@ describe("a patched tile keeps its element and the state the browser holds on it
         ],
       }),
       "#e",
+      (el) => expect(el.contentEditable).toBe("true"),
       (el) => {
         expect(el.contentEditable).toBe("true");
         expect(el.textContent).toBe("hello");
       },
     ],
-  ])("%s", (_label, tree, selector, after) => {
+  ])("%s", (_label, tree, selector, before, after) => {
     const { bump, dispose } = drive(tree);
     const el = defined(root.querySelector<HTMLElement>(selector), selector);
+    before(el);
     el.dataset.probe = "seeded";
     if (el instanceof HTMLDetailsElement) el.open = true;
 
