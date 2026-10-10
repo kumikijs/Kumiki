@@ -141,6 +141,8 @@ refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
 
+A `variant` is an identifier, and a primitive's name is one: in `type SortBy = Name | Time | Size`, `Time` is a variant of `SortBy` with no payload, written as a value, a pattern and an operand of `==` the way `Name` is. Read as a type on its own, a primitive's name means the primitive, in that program too — `type Stamp = Time` is an alias of it, and so is `Time` as a slot's type, a payload (`At(Time)`), a record field or a type argument (`Option(Time)`) — and `Time.parse(t)` is the conversion of [stdlib §2.4.3](./stdlib.md#_2-4-3-type-conversion) beside a variant named `Time`.
+
 `refinement-type` is recursive, so a type may carry **more than one** `where`, and the predicates **conjoin**: a value is accepted only when every one of them holds.
 
 ```kumiki fragment

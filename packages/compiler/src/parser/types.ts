@@ -41,10 +41,30 @@ export class TypeParser extends TokenStream {
     return refined;
   }
 
+  /** In a union a primitive's name is a nullary variant, as any other bare name is. */
   protected typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
-    if (t.kind === "TypeRef") return { name: t.name, payloads: [], pos: t.pos };
-    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args, pos: t.pos };
-    throw new ParseError(`Unsupported variant form`, t.pos);
+    switch (t.kind) {
+      case "TypeRef":
+      case "TypePrim":
+        return { name: t.name, payloads: [], pos: t.pos };
+      case "TypeApp":
+        return { name: t.name, payloads: t.args, pos: t.pos };
+      case "TypeRecord":
+        throw this.notAVariant("a record", t.pos);
+      case "TypeNominal":
+        throw this.notAVariant("a `nominal` type", t.pos);
+      case "TypeRefinement":
+        throw this.notAVariant("a refinement (`… where …`)", t.pos);
+      case "TypeUnion":
+        throw this.notAVariant("a union", t.pos);
+    }
+  }
+
+  private notAVariant(form: string, pos: Pos): ParseError {
+    return new ParseError(
+      `Unsupported variant form: a union alternative is a name, optionally with a payload (\`Name\` or \`Name(T, …)\`), not ${form}`,
+      pos,
+    );
   }
 
   protected parseTypeUnionAtom(): TypeExpr {

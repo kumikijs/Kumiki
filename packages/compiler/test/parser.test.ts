@@ -383,3 +383,70 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     expect(slot.init).toMatchObject({ kind: "Call", callee: "EffectId.none" });
   });
 });
+
+describe("a union alternative", () => {
+  const typeBody = (src: string) => (parse(lex(src)).defs[0] as TypeDef).body;
+  const PRIMITIVES = ["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes", "File", "EffectId"];
+
+  it.each(PRIMITIVES)("named %s is a nullary variant, first or after another", (p) => {
+    expect(typeBody(`type V = ${p} | Name | Size`)).toEqual({
+      kind: "TypeUnion",
+      variants: [
+        { name: p, payloads: [], pos: { line: 1, col: 10 } },
+        { name: "Name", payloads: [], pos: { line: 1, col: 13 + p.length } },
+        { name: "Size", payloads: [], pos: { line: 1, col: 20 + p.length } },
+      ],
+      pos: { line: 1, col: 10 },
+    });
+    expect(typeBody(`type V = Name | ${p} | Size`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [
+        { name: "Name", payloads: [] },
+        { name: p, payloads: [] },
+        { name: "Size", payloads: [] },
+      ],
+    });
+    expect(typeBody(`type V = Name | Size | ${p}`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [{ name: "Name" }, { name: "Size" }, { name: p, payloads: [] }],
+    });
+  });
+
+  it("is a variant in a union whose every alternative is a primitive's name", () => {
+    expect(typeBody(`type P = Int | Text`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [
+        { name: "Int", payloads: [] },
+        { name: "Text", payloads: [] },
+      ],
+    });
+  });
+
+  it("leaves a primitive's name outside a union the primitive", () => {
+    expect(typeBody(`type T = Time`)).toMatchObject({ kind: "TypePrim", name: "Time" });
+    expect(typeBody(`type V = Blank | Text(Text)`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [
+        { name: "Blank", payloads: [] },
+        { name: "Text", payloads: [{ kind: "TypePrim", name: "Text" }] },
+      ],
+    });
+    expect(typeBody(`type R = {t: Time, xs: List(Text)}`)).toMatchObject({
+      kind: "TypeRecord",
+      fields: [
+        { name: "t", type: { kind: "TypePrim", name: "Time" } },
+        { name: "xs", type: { kind: "TypeApp", name: "List", args: [{ kind: "TypePrim" }] } },
+      ],
+    });
+  });
+
+  it.each([
+    ["a record", `type V = A | {x: Int}`, 14, /not a record/],
+    ["a record, first", `type V = {x: Int} | A`, 10, /not a record/],
+    ["a nominal type", `type V = A | nominal Int`, 14, /not a `nominal` type/],
+    ["a refinement", `type V = A | B where nonempty`, 14, /not a refinement/],
+  ])("is refused as %s, saying what the alternative is", (_label, src, col, why) => {
+    expect(() => parse(lex(src))).toThrow(why);
+    expect(() => parse(lex(src))).toThrow(new RegExp(`at 1:${col}:`));
+  });
+});
