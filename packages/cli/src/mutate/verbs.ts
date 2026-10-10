@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { findReferences, load, type Store } from "../store.ts";
+import { findReferences, joinLines, load, type Store, spliceLines } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import { commit, compareQNames } from "./commit.ts";
@@ -67,7 +67,7 @@ function addDefsLocked(
   const main = stated(first);
   const rest = others.map(stated);
   const inserted = [main, ...rest].map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
-  const next = src.endsWith("\n") ? `${src}\n${inserted}\n` : `${src}\n\n${inserted}\n`;
+  const next = src + joinLines(src, [src.endsWith("\n") ? `\n${inserted}\n` : `\n\n${inserted}\n`]);
   return commit(path, next, "add", () =>
     logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) }, options),
   );
@@ -95,10 +95,8 @@ function replaceDefLocked(
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const prev = bodyOf(store, entry, "replace");
   const whole = withHeader(entry.layer, body, () => headerOf(store, entry, "replace"));
-  const before = store.lines.slice(0, entry.range.startLine - 1);
-  const after = store.lines.slice(entry.range.endLine);
   const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
-  const next = [...before, ...inserted, ...after].join("\n");
+  const next = spliceLines(store.source, entry.range.startLine, entry.range.endLine, inserted);
   const opId = commit(path, next, "replace", () =>
     logOp(
       path,
@@ -210,11 +208,11 @@ function removeSetLocked(
   }));
   if (main === undefined) throw new Error("remove rejected: nothing to remove");
   // Bottom up, so the line numbers of the entries still to cut stay valid.
-  let lines = store.lines.slice();
+  let next = store.source;
   for (const e of [...entries].sort((a, b) => b.range.startLine - a.range.startLine)) {
-    lines = [...lines.slice(0, e.range.startLine - 1), ...lines.slice(e.range.endLine)];
+    next = spliceLines(next, e.range.startLine, e.range.endLine, []);
   }
-  const opId = commit(path, lines.join("\n"), "remove", () =>
+  const opId = commit(path, next, "remove", () =>
     logOp(
       path,
       {
@@ -269,7 +267,11 @@ function renameDefLocked(
     throw new Error(`rename aborted: cannot locate "${old}" on its own definition line`);
   }
 
-  const next = respell(store.lines, [own, ...refs], old, newName, "rename").join("\n");
+  const lines = respell(store.lines, [own, ...refs], old, newName, "rename");
+  let next = store.source;
+  for (const line of new Set([own, ...refs].map((p) => p.line))) {
+    next = spliceLines(next, line, line, lines.slice(line - 1, line));
+  }
   return commit(path, next, "rename", () =>
     logOp(path, { op: "rename", layer: entry.layer, name: old, newName }, options),
   );
@@ -291,12 +293,13 @@ function editDefLocked(path: string, qname: string, patch: unknown, options: OpL
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const prev = bodyOf(store, entry, "edit");
-  const bodyStart = entry.range.startLine - 1;
-  const bodyEnd = entry.range.endLine;
-  const before = store.lines.slice(0, bodyStart);
-  const target = store.lines.slice(bodyStart, bodyEnd);
-  const after = store.lines.slice(bodyEnd);
-  const next = [...before, ...patchedLines(target, qname, patch), ...after].join("\n");
+  const target = store.lines.slice(entry.range.startLine - 1, entry.range.endLine);
+  const next = spliceLines(
+    store.source,
+    entry.range.startLine,
+    entry.range.endLine,
+    patchedLines(target, qname, patch),
+  );
   return commit(path, next, "edit", () => {
     const updatedStore = load(path);
     const updatedEntry = updatedStore.byQName.get(qname);
