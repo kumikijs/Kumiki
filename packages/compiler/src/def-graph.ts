@@ -118,9 +118,9 @@ export function forwardedParams(
 export function aliasTarget(
   def: TypeDef,
   lookup: (name: string) => TypeDef | undefined,
+  forwarded: (def: TypeDef) => number | null = forwardedParams(lookup, "through"),
 ): GraphEdge | null {
   const params = new Set(def.params);
-  const forwarded = forwardedParams(lookup, "through");
   let head = headOf(def.body, params);
   while (head?.kind === "name") {
     const edge = { to: head.name, pos: head.pos };

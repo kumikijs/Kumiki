@@ -45,6 +45,7 @@ export type PositionScan = {
   readonly cut: string | undefined;
 };
 
+// A type's own chain is followed in a loop: nothing bounds how many definitions it passes through.
 export function scanPositions(t: TypeExpr, env: TypeEnv): PositionScan {
   let cut: string | undefined;
   const done = new Map<string, boolean>();
@@ -55,63 +56,86 @@ export function scanPositions(t: TypeExpr, env: TypeEnv): PositionScan {
     carries: xs.some((w) => w.carries),
     back: Math.min(Number.POSITIVE_INFINITY, ...xs.map((w) => w.back)),
   });
+  const followChain = (
+    x: TypeExpr,
+    visiting: ReadonlyMap<string, number>,
+    generics: readonly string[],
+  ): { end: Walked; entered: { key: string; depth: number }[]; refinedAfter: number } => {
+    const entered: { key: string; depth: number }[] = [];
+    let refinedAfter = -1;
+    let inChain: Map<string, number> | null = null;
+    let gens = generics;
+    let cur = x;
+    const ending = (end: Walked) => ({ end, entered, refinedAfter });
+    for (;;) {
+      const vis = inChain ?? visiting;
+      switch (cur.kind) {
+        case "TypeNominal":
+        case "TypeRefinement":
+          if (cur.refinement !== undefined) refinedAfter = entered.length;
+          cur = cur.inner;
+          continue;
+        case "TypePrim":
+          return ending(none);
+        case "TypeRecord":
+          return ending(join(cur.fields.map((f) => walk(f.type, vis, gens))));
+        case "TypeUnion":
+          return ending(
+            join(cur.variants.flatMap((v) => v.payloads.map((p) => walk(p, vis, gens)))),
+          );
+        case "TypeRef":
+        case "TypeApp": {
+          const body = expandNamed(cur, env);
+          if (!body) {
+            return ending(
+              cur.kind === "TypeApp"
+                ? join(containerPositions(cur, env).map((a) => walk(a, vis, gens)))
+                : none,
+            );
+          }
+          const key = typeKey(cur);
+          const onStack = vis.get(key);
+          if (onStack !== undefined) return ending({ carries: false, back: onStack });
+          const known = done.get(key);
+          if (known !== undefined) {
+            return ending({ carries: known, back: Number.POSITIVE_INFINITY });
+          }
+          let spelled = mentions.get(key);
+          if (spelled === undefined) {
+            spelled = mentionsRefinement(cur, env);
+            mentions.set(key, spelled);
+          }
+          if (!spelled) return ending(none);
+          const g = genericName(cur, env);
+          if (g !== undefined && gens.filter((n) => n === g).length >= GENERIC_SELF_NESTING_LIMIT) {
+            cut ??= g;
+            return ending(none);
+          }
+          inChain ??= new Map(visiting);
+          const depth = inChain.size;
+          inChain.set(key, depth);
+          entered.push({ key, depth });
+          if (g !== undefined) gens = [...gens, g];
+          cur = body;
+          continue;
+        }
+        default:
+          assertNever(cur);
+          return ending(none);
+      }
+    }
+  };
   const walk = (
     x: TypeExpr,
     visiting: ReadonlyMap<string, number>,
     generics: readonly string[],
   ): Walked => {
-    switch (x.kind) {
-      case "TypePrim":
-        return none;
-      case "TypeRef":
-      case "TypeApp": {
-        const body = expandNamed(x, env);
-        if (!body) {
-          return x.kind === "TypeApp"
-            ? join(containerPositions(x, env).map((a) => walk(a, visiting, generics)))
-            : none;
-        }
-        const key = typeKey(x);
-        const onStack = visiting.get(key);
-        if (onStack !== undefined) return { carries: false, back: onStack };
-        const known = done.get(key);
-        if (known !== undefined) return { carries: known, back: Number.POSITIVE_INFINITY };
-        let spelled = mentions.get(key);
-        if (spelled === undefined) {
-          spelled = mentionsRefinement(x, env);
-          mentions.set(key, spelled);
-        }
-        if (!spelled) return none;
-        const g = genericName(x, env);
-        if (
-          g !== undefined &&
-          generics.filter((n) => n === g).length >= GENERIC_SELF_NESTING_LIMIT
-        ) {
-          cut ??= g;
-          return none;
-        }
-        const depth = visiting.size;
-        const inner = walk(
-          body,
-          new Map([...visiting, [key, depth]]),
-          g === undefined ? generics : [...generics, g],
-        );
-        if (inner.carries || inner.back >= depth) done.set(key, inner.carries);
-        return inner;
-      }
-      case "TypeNominal":
-      case "TypeRefinement": {
-        const inner = walk(x.inner, visiting, generics);
-        return x.refinement !== undefined ? { ...inner, carries: true } : inner;
-      }
-      case "TypeRecord":
-        return join(x.fields.map((f) => walk(f.type, visiting, generics)));
-      case "TypeUnion":
-        return join(x.variants.flatMap((v) => v.payloads.map((p) => walk(p, visiting, generics))));
-      default:
-        assertNever(x);
-        return none;
+    const { end, entered, refinedAfter } = followChain(x, visiting, generics);
+    for (const [i, { key, depth }] of entered.entries()) {
+      const carries = end.carries || refinedAfter > i;
+      if (carries || end.back >= depth) done.set(key, carries);
     }
+    return { carries: end.carries || refinedAfter >= 0, back: end.back };
   };
   return { carries: walk(t, new Map(), []).carries, cut };
 }
@@ -121,28 +145,39 @@ export function carriesNestedRefinement(t: TypeExpr, env: TypeEnv): boolean {
   return body !== null && scanPositions(body, env).carries;
 }
 
+type Unwrapped = Exclude<TypeExpr, { kind: "TypeNominal" | "TypeRefinement" }>;
+
 export function firstRefinement(t: TypeExpr, env: TypeEnv): Refinement | undefined {
   const walk = (x: TypeExpr, visiting: ReadonlySet<string>): Refinement | undefined => {
+    let innermost: Refinement | undefined;
+    let inChain: Set<string> | null = null;
+    let cur = x;
+    for (;;) {
+      if (cur.kind === "TypeNominal" || cur.kind === "TypeRefinement") {
+        innermost = cur.refinement ?? innermost;
+        cur = cur.inner;
+        continue;
+      }
+      const body = expandNamed(cur, env);
+      if (!body) return positions(cur, inChain ?? visiting) ?? innermost;
+      const key = typeKey(cur);
+      if ((inChain ?? visiting).has(key)) return innermost;
+      inChain ??= new Set(visiting);
+      inChain.add(key);
+      cur = body;
+    }
+  };
+  const positions = (x: Unwrapped, visiting: ReadonlySet<string>): Refinement | undefined => {
     switch (x.kind) {
       case "TypePrim":
-        return undefined;
       case "TypeRef":
-      case "TypeApp": {
-        const body = expandNamed(x, env);
-        if (!body) {
-          if (x.kind !== "TypeApp") return undefined;
-          for (const a of containerPositions(x, env)) {
-            const r = walk(a, visiting);
-            if (r) return r;
-          }
-          return undefined;
+        return undefined;
+      case "TypeApp":
+        for (const a of containerPositions(x, env)) {
+          const r = walk(a, visiting);
+          if (r) return r;
         }
-        const key = typeKey(x);
-        return visiting.has(key) ? undefined : walk(body, new Set([...visiting, key]));
-      }
-      case "TypeNominal":
-      case "TypeRefinement":
-        return walk(x.inner, visiting) ?? x.refinement;
+        return undefined;
       case "TypeRecord":
         for (const f of x.fields) {
           const r = walk(f.type, visiting);
@@ -165,31 +200,37 @@ export function firstRefinement(t: TypeExpr, env: TypeEnv): Refinement | undefin
   return walk(t, new Set());
 }
 
+// A worklist rather than a recursion: what it reaches by name is as large as the program.
 function mentionsRefinement(t: TypeExpr, env: TypeEnv): boolean {
   const seen = new Set<string>();
-  const walk = (x: TypeExpr): boolean => {
+  const todo: TypeExpr[] = [t];
+  for (let x = todo.pop(); x !== undefined; x = todo.pop()) {
     switch (x.kind) {
       case "TypePrim":
-        return false;
+        break;
       case "TypeRef":
       case "TypeApp": {
-        if (x.kind === "TypeApp" && x.args.some(walk)) return true;
-        if (seen.has(x.name)) return false;
+        if (x.kind === "TypeApp") todo.push(...x.args);
+        if (seen.has(x.name)) break;
         seen.add(x.name);
         const def = env.types.get(x.name);
-        return def ? walk(def.body) : false;
+        if (def) todo.push(def.body);
+        break;
       }
       case "TypeNominal":
       case "TypeRefinement":
-        return x.refinement !== undefined || walk(x.inner);
+        if (x.refinement !== undefined) return true;
+        todo.push(x.inner);
+        break;
       case "TypeRecord":
-        return x.fields.some((f) => walk(f.type));
+        for (const f of x.fields) todo.push(f.type);
+        break;
       case "TypeUnion":
-        return x.variants.some((v) => v.payloads.some(walk));
+        for (const v of x.variants) todo.push(...v.payloads);
+        break;
       default:
         assertNever(x);
-        return false;
     }
-  };
-  return walk(t);
+  }
+  return false;
 }

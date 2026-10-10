@@ -55,15 +55,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       case "TypeApp":
         return expandNamed(t, env) ? named(t, generics) : containerJs(t, generics);
       case "TypeNominal":
-      case "TypeRefinement": {
-        const steps: string[] = [];
-        const inner = explain(t.inner, generics);
-        if (inner) steps.push(`if ((f = ${named$(inner)}(v, o))) return f;`);
-        const r = t.refinement;
-        const body = r ? refinementBodyJs(r) : undefined;
-        if (r && body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
-        return fnOf(steps);
-      }
+      case "TypeRefinement":
+        return chainJs(t, generics);
       case "TypeRecord":
         return walk(
           t,
@@ -109,20 +102,61 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     const key = typeKey(t);
     const known = helpers.get(key);
     if (known) return known;
+    const inner = entering(t, generics);
+    const name = `_rq${next++}`;
+    helpers.set(key, name);
+    const fn = chainJs(body, inner);
+    if (fn === undefined) {
+      throw new Error(`nested refinement lowering: "${t.name}" carries a refinement with no walk`);
+    }
+    decls.push(`const ${name} = ${isHelper(fn) ? `(v, o) => ${fn}(v, o)` : fn};`);
+    return name;
+  };
+
+  const entering = (
+    t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
+    generics: readonly string[],
+  ): readonly string[] => {
     const inner = t.kind === "TypeApp" ? [...generics, t.name] : generics;
     if (inner.filter((n) => n === t.name).length > GENERIC_SELF_NESTING_LIMIT) {
       throw new Error(
         `nested refinement lowering: "${t.name}" nests inside itself past the limit, which the checker reports as E0803 before codegen runs`,
       );
     }
-    const name = `_rq${next++}`;
-    helpers.set(key, name);
-    const fn = explain(body, inner);
-    if (fn === undefined) {
-      throw new Error(`nested refinement lowering: "${t.name}" carries a refinement with no walk`);
+    return inner;
+  };
+
+  // One check for the whole chain: a helper per step would be a frame per step at runtime as
+  // well as here, and nothing bounds how long a chain is.
+  const chainJs = (t: TypeExpr, generics: readonly string[]): string | undefined => {
+    const outermostFirst: Refinement[] = [];
+    const entered = new Set<string>();
+    let inner = generics;
+    let cur = t;
+    for (;;) {
+      if (cur.kind === "TypeNominal" || cur.kind === "TypeRefinement") {
+        if (cur.refinement) outermostFirst.push(cur.refinement);
+        cur = cur.inner;
+        continue;
+      }
+      if (cur.kind !== "TypeRef" && cur.kind !== "TypeApp") break;
+      const body = expandNamed(cur, env);
+      if (!body) break;
+      const key = typeKey(cur);
+      if (helpers.has(key) || entered.has(key)) break;
+      entered.add(key);
+      inner = entering(cur, inner);
+      cur = body;
     }
-    decls.push(`const ${name} = ${isHelper(fn) ? `(v, o) => ${fn}(v, o)` : fn};`);
-    return name;
+    const end = explain(cur, inner);
+    if (outermostFirst.length === 0) return end;
+    const steps: string[] = [];
+    if (end) steps.push(`if ((f = ${named$(end)}(v, o))) return f;`);
+    for (const r of outermostFirst.reverse()) {
+      const body = refinementBodyJs(r);
+      if (body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
+    }
+    return fnOf(steps);
   };
 
   const keyJs = (k: TypeExpr | undefined, js: string): string => {
