@@ -4,7 +4,7 @@
 
 An index read into a `Set` is E0232 `index-into-set`
 
-A Set has membership and no places (language.md §1.6.3), and the write
+A Set has membership and no places (language.md), and the write
 `s[x] := v` was already E0602. The read took the same step and passed: the
 checker typed `s[x]` as the element, so
 

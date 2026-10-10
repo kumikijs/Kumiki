@@ -1,4 +1,4 @@
-# Feature (language.md §1.6.3): a Set is read by membership.
+# Feature (language.md): a Set is read by membership.
 #
 #   picked.has(5)
 #
@@ -8,7 +8,7 @@
 # value is whether it holds it, and `.has` is the read that asks, however
 # the Set is reached: a slot, a record field, an element of a List, a value
 # of a Map, the payload of an Option. Membership changes through `.add` /
-# `.remove` / `.toggle` (stdlib.md §2.2.2); the check below shows the
+# `.remove` / `.toggle` (stdlib.md); the check below shows the
 # membership read as its `value=` and toggles it in a reducer.
 
 type Doc = { tags: Set(Text) }

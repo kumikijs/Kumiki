@@ -1,5 +1,4 @@
-# Feature (runtime.md §10.3.10): a `for` over a list that holds a value
-# more than once.
+# Feature: a `for` over a list that holds a value more than once.
 #
 # Every tile a `for` body renders is keyed so the reconciler can match it
 # across renders (reorder, insert, remove keep their elements). A list may

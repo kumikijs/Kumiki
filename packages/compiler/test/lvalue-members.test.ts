@@ -1,45 +1,20 @@
-// A stdlib member is not an assignable lvalue (language.md §1.6.3).
-//
-// The read side and the write side answer the same question about `recv.member`
-// — a record's own field wins, otherwise the name is a member — but the write
-// side only knew how to answer it for a record. For every other receiver whose
-// type is known it recorded "shortcut" and said nothing, so the member name
-// became a literal key and the write replaced the slot with a record: `name`
-// declared `Text` ended up holding `{"length": 9}`, which is not a `Text`, not
-// a value any reader can use, and reported by nothing until a render tripped
-// over it.
-//
-// The lvalue step set is closed — a field, an index, and `.get` where §1.6.3
-// defines it — so a member is E0602. The receiver has to be understood first:
-// a type the checker cannot decide raises nothing here, exactly as it raises
-// nothing on the read side, because a false error on a dynamic receiver is
-// worse than the silence.
-//
-// Both sides ask one classifier, `classifyMember`, so "what is this name on
-// this receiver" has a single answer. The tests below pin the answer from each
-// side, and the last block pins that the two sides give the same one.
-
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const errsOf = (src: string) => check(parse(lex(src)));
-const app = (defs: string): string =>
-  `${defs}\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { compileOrFail, loweredOf } from "./helpers/module.ts";
+import { withApp } from "./helpers/programs.ts";
 
 /** The reducer body under test, wrapped in the smallest program that parses. */
 const withBody = (decls: string, body: string): string =>
-  app(`${decls}
+  withApp(`${decls}
 reducer act on=ui.click(Btn)
     do= ${body}
 tile Btn = button(text="go")
 tile App = column(Btn)`);
 
-const codesOf = (src: string): string[] => errsOf(src).map((e) => e.code);
-
 describe("a member is not an assignable lvalue", () => {
-  // The reported program, both halves.
   it("rejects a shortcut on a scalar, naming the member and the receiver", () => {
-    const errs = errsOf(withBody(`slot name : Text = "abc"`, `name.length := 9`));
+    const errs = checkSource(withBody(`slot name : Text = "abc"`, `name.length := 9`));
     const e = errs.find((x) => x.code === "E0602");
     expect(e).toBeDefined();
     expect(e?.kind).toBe("unassignable-member");
@@ -48,12 +23,11 @@ describe("a member is not an assignable lvalue", () => {
   });
 
   it("rejects a shortcut on a container", () => {
-    const errs = errsOf(withBody(`slot maybe : Option(Text) = None`, `maybe.is-some := 0`));
+    const errs = checkSource(withBody(`slot maybe : Option(Text) = None`, `maybe.is-some := 0`));
     expect(errs.map((x) => x.code)).toContain("E0602");
     expect(errs.find((x) => x.code === "E0602")?.message).toContain(".is-some");
   });
 
-  // Each of these used to pass `check` and replace the slot with a record.
   it.each([
     [`slot xs : List(Int) = []`, `xs.length := 0`, ".length"],
     [`slot xs : List(Int) = []`, `xs.head := 1`, ".head"],
@@ -62,27 +36,19 @@ describe("a member is not an assignable lvalue", () => {
     [`slot m : Map(Text, Int) = {}`, `m.keys := []`, ".keys"],
     [`slot st : Set(Int) = []`, `st.size := 0`, ".size"],
   ])("%s / %s", (decls, body, member) => {
-    const errs = errsOf(withBody(decls, body));
+    const errs = checkSource(withBody(decls, body));
     expect(errs.map((x) => x.code)).toContain("E0602");
     expect(errs.find((x) => x.code === "E0602")?.message).toContain(member);
   });
 
-  // A record's own field wins, and a name it does not declare is dispatched to
-  // the stdlib — so `.show`, which every value has, is a *member* of a record
-  // and not an undefined one. The read side has always accepted it. Under the
-  // closed step set the write is E0602, the same answer any other member gets,
-  // rather than the "no such field" the write side used to give.
   it("rejects .show on a record, the one member every value has", () => {
-    const errs = errsOf(
+    const errs = checkSource(
       withBody(`type Rec = { title: Text }\nslot rec : Rec = { title: "" }`, `rec.show := "x"`),
     );
     expect(errs.map((x) => x.code)).toContain("E0602");
     expect(errs.find((x) => x.code === "E0602")?.message).toContain(".show");
   });
 
-  // `.get` on a receiver that does not unwrap is the same corruption, not an
-  // exemption: the runtime's setter falls through an unwrap segment on a value
-  // carrying no `_tag`, so the write lands on the whole slot.
   it.each([
     [`slot m : Map(Text, Int) = {}`, `m.get := 1`],
     [`slot xs : List(Int) = []`, `xs.get := 1`],
@@ -92,27 +58,22 @@ describe("a member is not an assignable lvalue", () => {
 });
 
 describe("what stays legal", () => {
-  // §1.6.3 defines this one, and it is the reason the set is "closed except
-  // `.get`" rather than simply closed.
-  it("accepts .get on an Option, which §1.6.3 defines", () => {
-    const errs = errsOf(
+  it("accepts .get on an Option", () => {
+    const errs = checkSource(
       withBody(`slot draft : Option({title: Text}) = None`, `draft.get.title := "x"`),
     );
     expect(errs).toEqual([]);
   });
 
   it("accepts .get on a Result", () => {
-    const errs = errsOf(
+    const errs = checkSource(
       withBody(`slot r : Result({title: Text}, Text) = Err("no")`, `r.get.title := "x"`),
     );
     expect(errs).toEqual([]);
   });
 
-  // The name is dispatched, not reserved (§1.6.3). A record that declares a
-  // field named like a shortcut is still written through it — otherwise this
-  // fix would have made a working program report.
   it.each(["length", "size", "get", "head", "keys"])("accepts a record field named %s", (field) => {
-    const errs = errsOf(
+    const errs = checkSource(
       withBody(
         `type Rec = { ${field}: Int }\nslot rec : Rec = { ${field}: 0 }`,
         `rec.${field} := 1`,
@@ -121,18 +82,13 @@ describe("what stays legal", () => {
     expect(errs).toEqual([]);
   });
 
-  // `File` is a scalar to the type system and a record to the runtime, so its
-  // metadata fields are structural fields rather than members (stdlib.md §2.1)
-  // — a field, and therefore an lvalue. This is the one receiver where the
-  // "field" answer comes from somewhere other than a record declaration, and
-  // it is reached through `.get`, so both exceptions are in one expression.
   it("accepts a File's structural field, through the unwrap", () => {
-    const errs = errsOf(withBody(`slot f : Option(File) = None`, `f.get.name := "x"`));
+    const errs = checkSource(withBody(`slot f : Option(File) = None`, `f.get.name := "x"`));
     expect(errs).toEqual([]);
   });
 
-  it("accepts a plain field and an index, the other two steps §1.6.3 gives", () => {
-    const errs = errsOf(
+  it("accepts a plain field and an index", () => {
+    const errs = checkSource(
       withBody(
         `type Rec = { title: Text }\nslot rows : List(Rec) = []\nslot rec : Rec = { title: "" }`,
         `rec.title := "x"\n        rows[0].title := "y"`,
@@ -143,16 +99,8 @@ describe("what stays legal", () => {
 });
 
 describe("a receiver the checker cannot decide stays silent", () => {
-  // The read side's policy, which the write side now shares: we only flag
-  // members of types we fully understand. A union resolves to a type — so the
-  // lvalue is checked, the base type is not null, and the classifier is asked
-  // — but not to a shape with members, so there is nothing to judge.
-  //
-  // The whole result is asserted, not the absence of one code: this passes
-  // only if the checker reaches the member and declines to speak, and fails if
-  // it reports anything at all about the program.
   it("says nothing about a member on a union-typed receiver", () => {
-    const errs = errsOf(
+    const errs = checkSource(
       withBody(
         `type Filter = All | Active | Done\nslot filter : Filter = All`,
         `filter.length := 1`,
@@ -162,7 +110,7 @@ describe("a receiver the checker cannot decide stays silent", () => {
   });
 
   it("says nothing on the read side either, for the same receiver", () => {
-    const errs = errsOf(
+    const errs = checkSource(
       withBody(
         `type Filter = All | Active | Done\nslot filter : Filter = All\nslot n : Int = 0`,
         `n := filter.length`,
@@ -173,35 +121,24 @@ describe("a receiver the checker cannot decide stays silent", () => {
 });
 
 describe("the write side answers the read side's question too", () => {
-  // Not a member at all, on a receiver that is understood. The read side calls
-  // this E0108; the write side used to call it nothing.
   it("reports an unknown member on a known receiver as E0108", () => {
-    const errs = errsOf(withBody(`slot name : Text = "abc"`, `name.frist := 9`));
+    const errs = checkSource(withBody(`slot name : Text = "abc"`, `name.frist := 9`));
     expect(errs.map((x) => x.code)).toContain("E0108");
   });
 
   it("still reports an unknown member on a record as E0108", () => {
-    const errs = errsOf(
+    const errs = checkSource(
       withBody(`type Rec = { title: Text }\nslot rec : Rec = { title: "" }`, `rec.nope := 1`),
     );
     expect(errs.map((x) => x.code)).toContain("E0108");
   });
 
-  // A member that exists, but not on this receiver. `.abs` is a method of the
-  // numeric prims, so on a `Text` it is not a member being written through —
-  // it is not a member at all, and E0602's sentence ("it is a member of
-  // \"Text\"") would be false. The read side has always said so; saying
-  // something else here would make the same expression two different errors
-  // depending on which side of `:=` it landed on.
   it("reports a member of a number on a non-numeric receiver as E0108, not E0602", () => {
-    const errs = errsOf(withBody(`slot s : Text = ""`, `s.abs := 1`));
+    const errs = checkSource(withBody(`slot s : Text = ""`, `s.abs := 1`));
     expect(errs.map((x) => x.code)).toEqual(["E0108"]);
     expect(errs[0]?.message).toContain("Int / Float");
   });
 
-  // The guard on the whole arrangement: one classifier, so one answer. Each
-  // expression is checked as an lvalue and as an rvalue, and the codes have to
-  // match. A branch added to one side and not the other fails here.
   it.each([
     [`slot s : Text = ""`, `s.abs`, "E0108"],
     [`slot s : Text = ""`, `s.frist`, "E0108"],
@@ -216,10 +153,7 @@ describe("the write side answers the read side's question too", () => {
   });
 });
 
-// The ways a Set is reached: [how, declarations, the index step into it, a
-// value of its element type]. However the Set is reached, the step into it is
-// the same step, so the write and the read are both run over this one table.
-const SET_REACHED: [string, string, string, string][] = [
+const SET_REACHED: [how: string, decls: string, step: string, value: string][] = [
   [
     "a record field",
     `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
@@ -235,15 +169,11 @@ const SET_REACHED: [string, string, string, string][] = [
 
 /** A tile that shows `expr`, the smallest program that reads it. */
 const shown = (decls: string, expr: string): string =>
-  app(`${decls}\ntile App = column(text("v: " + ${expr}.show))`);
+  withApp(`${decls}\ntile App = column(text("v: " + ${expr}.show))`);
 
-// An index step is one of §1.6.3's three, but only on a receiver that has a
-// place for it to name. A `List` index names a position and a `Map` index names
-// an entry; a `Set` has membership and nothing else, so `s[x] := v` is refused
-// with the code a member gets.
 describe("an index step into a Set", () => {
   it("is E0602, naming the Set and the members that change it", () => {
-    const errs = errsOf(withBody(`slot tags : Set(Int) = []`, `tags[7] := 8`));
+    const errs = checkSource(withBody(`slot tags : Set(Int) = []`, `tags[7] := 8`));
     const e = errs.find((x) => x.code === "E0602");
     expect(e?.kind).toBe("unassignable-member");
     expect(e?.message).toContain('into "Set"');
@@ -251,7 +181,7 @@ describe("an index step into a Set", () => {
   });
 
   it("is reported once, with no type mismatch on the right-hand side behind it", () => {
-    const errs = errsOf(withBody(`slot tags : Set(Int) = []`, `tags[7] := "not an Int"`));
+    const errs = checkSource(withBody(`slot tags : Set(Int) = []`, `tags[7] := "not an Int"`));
     expect(errs.map((x) => x.code)).toEqual(["E0602"]);
   });
 
@@ -260,13 +190,9 @@ describe("an index step into a Set", () => {
   });
 });
 
-// The read takes the same step, and finds nothing to answer either: what a Set
-// says about a value is whether it holds it, and `.has` is how that is asked.
-// The read has no type, so a position that expects one does not report it a
-// second time.
 describe("an index read into a Set", () => {
   it("is E0232, naming the Set and pointing at .has", () => {
-    const errs = errsOf(shown(`slot s : Set(Int) = [5]`, `s[5]`));
+    const errs = checkSource(shown(`slot s : Set(Int) = [5]`, `s[5]`));
     expect(errs.map((x) => x.code)).toEqual(["E0232"]);
     expect(errs[0]?.kind).toBe("index-into-set");
     expect(errs[0]?.message).toContain('into "Set"');
@@ -286,24 +212,20 @@ describe("an index read into a Set", () => {
   });
 
   it("is reported once as a fn body checked against its declared result", () => {
-    const src = app(`fn f(s: Set(Int)) -> Bool = s[5]\ntile App = column(text(f([5]).show))`);
+    const src = withApp(`fn f(s: Set(Int)) -> Bool = s[5]\ntile App = column(text(f([5]).show))`);
     expect(codesOf(src)).toEqual(["E0232"]);
   });
 
-  // A step after it is not checked against the element type either: `.foo`
-  // is not a mistake about an `Int`, since no `Int` was read.
   it("leaves the step after it unjudged", () => {
     expect(codesOf(shown(`slot s : Set(Int) = [5]`, `s[5].foo`))).toEqual(["E0232"]);
   });
 
-  // A bound control shows the value at its target before it writes one, so a
-  // target that takes the step is this read too — and the control's own check
-  // of the bound type has no type to judge.
+  // A bound control reads its target before it writes one.
   it.each([
     ["an input", `input(bind=tags["a"])`],
     ["a check", `check(bind=tags["a"])`],
   ])("is E0232 at the target of %s", (_how, control) => {
-    const src = app(`slot tags : Set(Text) = []\ntile App = column(${control})`);
+    const src = withApp(`slot tags : Set(Text) = []\ntile App = column(${control})`);
     expect(codesOf(src)).toEqual(["E0232"]);
   });
 });
@@ -316,23 +238,21 @@ describe("a membership read and the other index reads stay legal", () => {
     ["a Map index", `slot m : Map(Text, Int) = {"a": 1}`, `m["a"]`],
     ["a Map keyed by a Set", `slot s : Set(Int) = []\nslot m : Map(Set(Int), Int) = {}`, `m[s]`],
   ])("accepts %s", (_how, decls, expr) => {
-    expect(errsOf(shown(decls, expr))).toEqual([]);
+    expect(checkSource(shown(decls, expr))).toEqual([]);
   });
 
-  // A receiver whose type the checker cannot decide stays silent, as it does
-  // for a member: a false error on a dynamic receiver is worse than the silence.
-  // `{}` is the empty Map and the empty Set alike, so it gives the accumulator
-  // of a fold it starts no type.
+  // `{}` is the empty Map and the empty Set alike, so a fold it starts has an
+  // accumulator of no known type, and a false error there is worse than silence.
   it.each([
     ["the accumulator of a fold from {}", `slot xs : List(Int) = [1]`, `xs.fold({}, $1[$2])`],
   ])("says nothing about an index into %s", (_how, decls, expr) => {
-    expect(errsOf(shown(decls, expr))).toEqual([]);
+    expect(checkSource(shown(decls, expr))).toEqual([]);
   });
 });
 
 describe("an index step into a List or a Map stays legal", () => {
   it("accepts a List index write of the element type", () => {
-    expect(errsOf(withBody(`slot xs : List(Int) = [1, 2, 3]`, `xs[0] := 7`))).toEqual([]);
+    expect(checkSource(withBody(`slot xs : List(Int) = [1, 2, 3]`, `xs[0] := 7`))).toEqual([]);
   });
 
   it("checks the right-hand side of a List index write against the element type", () => {
@@ -340,14 +260,10 @@ describe("an index step into a List or a Map stays legal", () => {
   });
 
   it("accepts a Map index write of the value type", () => {
-    expect(errsOf(withBody(`slot m : Map(Text, Int) = {}`, `m["a"] := 1`))).toEqual([]);
+    expect(checkSource(withBody(`slot m : Map(Text, Int) = {}`, `m["a"] := 1`))).toEqual([]);
   });
 });
 
-// A List index names a position, and a position is an `Int` (§1.6.3). Any other
-// index is a mistake the checker can see, so it is reported rather than left to
-// name no element at run time — on both sides of `:=`, since the read and the
-// write name the same element.
 describe("a List index is an Int", () => {
   const list = `slot xs : List(Int) = [1, 2, 3]\nslot picked : Int = 0`;
 
@@ -355,7 +271,7 @@ describe("a List index is an Int", () => {
     ["Text", `slot k : Text = "0"`],
     ["Float", `slot k : Float = 0.5`],
   ])("reports a %s index on the left of := as E0201", (name, decl) => {
-    const errs = errsOf(withBody(`${list}\n${decl}`, `xs[k] := 7`));
+    const errs = checkSource(withBody(`${list}\n${decl}`, `xs[k] := 7`));
     expect(errs.map((x) => x.code)).toEqual(["E0201"]);
     expect(errs[0]?.message).toBe(`Expected Int but got ${name}`);
   });
@@ -364,7 +280,7 @@ describe("a List index is an Int", () => {
     ["Text", `slot k : Text = "0"`],
     ["Float", `slot k : Float = 0.5`],
   ])("reports a %s index on the right of := as E0201", (name, decl) => {
-    const errs = errsOf(withBody(`${list}\n${decl}`, `picked := xs[k]`));
+    const errs = checkSource(withBody(`${list}\n${decl}`, `picked := xs[k]`));
     expect(errs.map((x) => x.code)).toEqual(["E0201"]);
     expect(errs[0]?.message).toBe(`Expected Int but got ${name}`);
   });
@@ -389,5 +305,103 @@ describe("a List index is an Int", () => {
 
   it("leaves a Map's key to the Map", () => {
     expect(codesOf(withBody(`slot m : Map(Text, Int) = {}`, `m["a"] := 1`))).toEqual([]);
+  });
+});
+
+describe("the build agrees with check about a member write", () => {
+  it("refuses to emit one", () => {
+    const r = compile(withBody(`slot name : Text = "abc"`, `name.length := 9`), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    expect(r.kind === "fail" && r.errors.map((e) => e.code)).toEqual(["E0602"]);
+  });
+
+  it("emits a write to a record field named like a member as a plain key", () => {
+    const js = compileOrFail(
+      withBody(
+        `type Ruler = { length: Int, get: Text }\nslot ruler : Ruler = {length: 0, get: "held"}`,
+        `ruler.length := 1\n        ruler.get := "taken"`,
+      ),
+    );
+    expect(js).toContain('"length"');
+    expect(js).toContain('"get"');
+    expect(js).not.toContain('{"get":true}');
+  });
+
+  it("emits the unwrap, then a File's structural field as a key", () => {
+    const js = compileOrFail(withBody(`slot f : Option(File) = None`, `f.get.name := "x"`));
+    expect(js).toContain('[{"get":true}, "name"]');
+  });
+
+  it("emits the unwrap for .get on an Option", () => {
+    const js = compileOrFail(
+      withBody(`slot draft : Option({title: Text}) = None`, `draft.get.title := "x"`),
+    );
+    expect(js).toContain('{"get":true}');
+  });
+});
+
+describe("assignment through .get is an unwrap, not a field named get", () => {
+  const source = (decl: string) => `slot draft : ${decl}
+reducer edit on=app.start do= draft.get.title := "b"
+tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  function buildChecked(src: string): string {
+    const program = parse(lex(src));
+    check(program);
+    return codegen(program, { runtimeSpecifier: "./runtime.js" }).js;
+  }
+
+  it("lowers the segment as an unwrap when the receiver is an Option", () => {
+    expect(buildChecked(source("Option({title: Text}) = None"))).toContain(
+      '[{"get":true}, "title"]',
+    );
+  });
+
+  it("lowers it as a field when the receiver is a record that has one", () => {
+    expect(buildChecked(source('{get: {title: Text}} = {get: {title: "a"}}'))).toContain(
+      '["get", "title"]',
+    );
+  });
+
+  it("checks the value being written against the payload's field type", () => {
+    const src = `slot draft : Option({title: Text}) = None
+reducer bad on=app.start do= draft.get.title := 3
+tile App = column(text("x"))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = checkSource(src);
+    expect(errors.map((e) => e.code)).toEqual(["E0201"]);
+    expect(errors[0]?.message).toBe("Expected Text but got Int");
+  });
+
+  it("reports a member the record does not have, as the read side does", () => {
+    const src = `slot rec : {title: Text} = {title: "a"}
+reducer bad on=app.start do= rec.get.title := "x"
+tile App = column(text(rec.title))
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const errors = checkSource(src);
+    expect(errors.map((e) => e.code)).toEqual(["E0108"]);
+    expect(errors[0]?.message).toBe(
+      'Record type has no field or method ".get" — it is a member of Map / List / Option / Result',
+    );
+  });
+
+  it("keeps the name-based reading when codegen runs without check", () => {
+    expect(loweredOf(source('{get: {title: Text}} = {get: {title: "a"}}'))).toContain(
+      '[{"get":true}, "title"]',
+    );
   });
 });
