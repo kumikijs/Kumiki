@@ -1,4 +1,4 @@
-# Feature (http.md §6.3.1): how `app.http`'s `base-url` meets a request's `url`.
+# Feature (http.md): how `app.http`'s `base-url` meets a request's `url`.
 #
 # An absolute url — one that starts with a scheme (`https:`) or with `//` — is
 # fetched as written. Any other url is joined to the base with exactly one `/`
@@ -10,7 +10,7 @@
 #   stats  "stats"                              GET https://api.example.com/v1/stats
 #   logo   "https://cdn.example.org/logo.json"  GET https://cdn.example.org/logo.json
 #
-# `packages/tests/http-base-url.test.ts` reads the URLs that reached `fetch`
+# `packages/tests/src/http-base-url.test.ts` reads the URLs that reached `fetch`
 # through the real handler; `smoke` makes each request against
 # `190-http-base-url-join.http.json`, which answers only the joined paths.
 

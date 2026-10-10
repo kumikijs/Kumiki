@@ -1,22 +1,9 @@
-// A theme switch rebuilds the page (runtime.md §10.3.6), and a CSS animation
-// starts whenever its element is inserted. Without care every `transition=`
-// and `motion=` tile would fade or rise in again on Light → Dark. happy-dom
-// plays no animations, so this tier reads them from Chromium itself: an enter
-// animation that is running after a fresh mount is finished right after a
-// switch, a repeating one is still running, and a tile the next ordinary
-// render inserts animates as usual.
-
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const example = readFileSync(
-  join(here, "..", "..", "examples", "features", "157-theme-switch.kumiki"),
-  "utf8",
-);
+const example = readFileSync(feature("157-theme-switch"), "utf8");
 
 const source = example
   .replace(

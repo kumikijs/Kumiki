@@ -1,16 +1,8 @@
-// forms.md §5.1.2 used to specify `strict=false` on a bound control: take a
-// value the refinement refuses and turn a form-level `valid` flag false. No
-// part of the toolchain ever implemented it, and the flag has no reader
-// anywhere in the language, so `input(bind=contact, strict=false)` passed
-// `check` and did nothing (#443). The spec now has one mode — a bind its
-// refinement refuses is refused, and `error(field=…)` shows why — so the prop
-// an author reaches for from the old text is reported where it is written.
-
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const TAIL = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-const errorsOf = (tiles: string) => check(parse(lex(`${tiles}\n${TAIL}`)));
+const errorsOf = (tiles: string) => checkSource(`${tiles}\n${TAIL}`);
 
 describe("strict on a bind control kind is E0219, bound or not", () => {
   const bad: [string, string][] = [
@@ -34,8 +26,6 @@ describe("strict on a bind control kind is E0219, bound or not", () => {
       "on a select",
       `slot s : Text = "a"\ntile App = select(bind=s, options=["a", "b"], strict=false)`,
     ],
-    // `strict` is not a prop of these kinds at all, so it is reported whether
-    // or not the control carries a `bind`.
     ["on an input with no bind", `slot s : Text = "a"\ntile App = input(value=s, strict=false)`],
   ];
   for (const [label, src] of bad) {
@@ -50,7 +40,7 @@ describe("strict on a bind control kind is E0219, bound or not", () => {
       `slot s : Text where nonempty = "a"\ntile App = input(bind=s, strict=false)`,
     ).filter((x) => x.code === "E0219");
     expect(e?.message).toBe(
-      `"strict" is not a prop of input: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`,
+      `"strict" is not a prop of input: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md)`,
     );
   });
 });
