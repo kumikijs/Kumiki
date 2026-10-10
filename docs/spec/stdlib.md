@@ -129,6 +129,8 @@ Where the checker cannot decide the receiver's type, neither rule applies: the a
 
 What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
 
+**Any `Text` is an ordinary key.** A key spelled like a member of a JavaScript object — `constructor`, `toString`, `valueOf`, `hasOwnProperty`, `__proto__` — is held only once it is written, as any other key is: on an empty `Map(Text, Int)`, `has("constructor")` is `false`, `get("constructor")` is `None` and `get-or("constructor", 0)` is `0`, and `toggle("toString")` on an empty `Set(Text)` adds it. Once written, such an entry reads back through every member, and `remove` of another key, `intersect`, `diff`, `filter` and `map` keep it as they keep any other.
+
 ### 2.2.3 List(T)
 
 ```

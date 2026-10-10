@@ -1,0 +1,60 @@
+# Feature (stdlib.md): any Text is an ordinary key.
+#
+#   Map(K, V).has / get / get-or / update / remove / filter / map, m[k]
+#   Set(T).has / toggle / remove / intersect / diff
+#
+# A Map holds the entries written into it and nothing else, so a key that
+# happens to name a member of a JavaScript object — `constructor`,
+# `toString`, `valueOf`, `hasOwnProperty`, `__proto__` — is absent until it is
+# written. On an empty Map `has` is false, `get` is `None`, `get-or` answers
+# the default and `update` writes nothing, so a word counter keyed by user
+# text counts every word from 0. `toggle` on an empty Set adds the element,
+# and `intersect` / `diff` keep an element exactly when the other Set holds
+# it or does not.
+#
+# A `"__proto__"` entry, once written, is an entry like any other: it reads
+# back through `get-or` and `m[k]`, `remove`, `intersect` and `diff` keep it
+# when they take out a different key, and `filter` and `map` keep it.
+
+slot counts : Map(Text, Int) = {}
+slot words  : List(Text)     = ["a", "constructor", "toString", "__proto__"]
+slot tags   : Set(Text)      = {}
+slot ctor   : Set(Text)      = ["constructor"]
+slot pinned : Set(Text)      = ["__proto__", "x"]
+slot notes  : Map(Text, Int) = {"__proto__": 7, "a": 1}
+slot read   : Int            = 0
+
+reducer tally on=ui.click(Tally) do=
+    for w in words { counts[w] := counts.get-or(w, 0) + 1 }
+    counts := counts.update("hasOwnProperty", $1 + 1)
+
+reducer tag on=ui.click(Tag) do= tags := tags.toggle("toString").toggle("__proto__")
+
+reducer readBack on=ui.click(ReadBack) do= read := notes["__proto__"]
+
+tile Tally    = button(text="tally") {id: "tally"}
+tile Tag      = button(text="tag")   {id: "tag"}
+tile ReadBack = button(text="read")  {id: "read"}
+
+tile App = column(
+  Tally, Tag, ReadBack,
+  text("has-ctor: " + counts.has("constructor").show),
+  text("get-ctor: " + counts.get("constructor").is-some.show),
+  text("get-or-valueOf: " + counts.get-or("valueOf", 0).show),
+  text("counts: " + counts.values.map($1.show).join(",")),
+  text("count-keys: " + counts.size.show),
+  text("tags: " + tags.size.show + " valueOf=" + tags.has("valueOf").show),
+  text("ctor-intersect: " + ctor.intersect({}).size.show),
+  text("ctor-diff: " + ctor.diff({}).size.show),
+  text("pinned-remove: " + pinned.remove("x").has("__proto__").show),
+  text("pinned-intersect: " + pinned.intersect(pinned).size.show),
+  text("pinned-diff: " + pinned.diff(["x"]).has("__proto__").show),
+  text("notes-remove: " + notes.remove("a").get-or("__proto__", 0).show),
+  text("notes-filter: " + notes.filter($2 > 0).get-or("__proto__", 0).show),
+  text("notes-map: " + notes.map($2 + 1).get-or("__proto__", 0).show),
+  text("read: " + read.show))
+
+app MapSetPrototypeKeys
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

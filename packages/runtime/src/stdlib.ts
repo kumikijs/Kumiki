@@ -52,6 +52,20 @@ function assertNeverKind(kind: never): never {
   throw new Error(`unknown key kind ${String(kind)}`);
 }
 
+// Object.fromEntries defines each key as an own entry; assigning "__proto__" into a fresh object
+// would set its prototype and drop the member.
+function setKeep(
+  a: Record<string, true> | undefined | null,
+  b: Record<string, true> | undefined | null,
+  inB: boolean,
+): Record<string, true> {
+  return Object.fromEntries(
+    Object.keys(a ?? {})
+      .filter((k) => isEntryOf(b, k) === inB)
+      .map((k) => [k, true]),
+  );
+}
+
 export function valueEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
@@ -187,7 +201,7 @@ export const _stdlibCore = {
     return m ? Object.entries(m).map(([k, v]) => [restoreKey(k, kind), v]) : [];
   },
   mapGet(m: Record<string, unknown> | undefined | null, k: unknown): unknown {
-    return m ? m[entryKey(k)] : undefined;
+    return isEntryOf(m, k) ? (m as Record<string, unknown>)[entryKey(k)] : undefined;
   },
   /** Polymorphic `.get-or(default)` for Option-like values. */
   getOr(v: unknown, fallback: unknown): unknown {
@@ -203,18 +217,16 @@ export const _stdlibCore = {
     return v ?? fallback;
   },
   mapGetOr(m: Record<string, unknown> | undefined | null, k: unknown, def: unknown): unknown {
-    const key = entryKey(k);
-    if (m && key in m) return m[key];
-    return def;
+    return isEntryOf(m, k) ? (m as Record<string, unknown>)[entryKey(k)] : def;
   },
   mapInsert(m: Record<string, unknown>, k: unknown, v: unknown): Record<string, unknown> {
     return { ...m, [entryKey(k)]: v };
   },
-  /** `Map.remove(k)` and `Set.remove(x)`: every entry but the one `k` is stored under. */
-  mapRemove(m: Record<string, unknown>, k: unknown): Record<string, unknown> {
-    const key = entryKey(k);
-    const out: Record<string, unknown> = {};
-    for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== key) out[kk] = vv;
+  // Copy-and-delete keeps a "__proto__" entry; assigning that key into a fresh object would set
+  // its prototype instead.
+  mapRemove<V>(m: Record<string, V> | undefined | null, k: unknown): Record<string, V> {
+    const out = { ...m };
+    delete out[entryKey(k)];
     return out;
   },
   filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
@@ -225,11 +237,9 @@ export const _stdlibCore = {
     }
     if (_stdlibCore.variantIs(coll, "None")) return coll;
     if (coll && typeof coll === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        if (pred([restoreKey(k, kind), v])) out[k] = v;
-      }
-      return out;
+      return Object.fromEntries(
+        Object.entries(coll).filter(([k, v]) => pred([restoreKey(k, kind), v])),
+      );
     }
     return [];
   },
@@ -276,11 +286,9 @@ export const _stdlibCore = {
     }
     if (_stdlibCore.variantIs(coll, "None") || _stdlibCore.variantIs(coll, "Err")) return coll;
     if (coll && typeof coll === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        out[k] = fn([restoreKey(k, kind), v]);
-      }
-      return out;
+      return Object.fromEntries(
+        Object.entries(coll).map(([k, v]) => [k, fn([restoreKey(k, kind), v])]),
+      );
     }
     return coll == null ? [] : fn(coll);
   },
@@ -321,18 +329,9 @@ export const _stdlibCore = {
     for (const x of xs ?? []) acc = fn(acc, x);
     return acc;
   },
-  setHas(s: Record<string, true> | undefined, x: unknown): boolean {
-    return !!s && entryKey(x) in s;
-  },
+  setHas: isEntryOf,
   setToggle(s: Record<string, true> | undefined, x: unknown): Record<string, true> {
-    const k = entryKey(x);
-    const cur = { ...(s ?? {}) };
-    if (k in cur) {
-      delete cur[k];
-      return cur;
-    }
-    cur[k] = true;
-    return cur;
+    return isEntryOf(s, x) ? _stdlibCore.mapRemove(s, x) : _stdlibCore.setAdd(s, x);
   },
   add(a: unknown, b: unknown): unknown {
     if (typeof a === "string" || typeof b === "string") {
@@ -466,7 +465,7 @@ export const _stdlibCore = {
   ): Record<string, unknown> {
     const obj = m ?? {};
     const key = entryKey(k);
-    if (!(key in obj)) return obj;
+    if (!isEntryOf(obj, k)) return obj;
     return { ...obj, [key]: fn(obj[key]) };
   },
   setOf(xs: readonly unknown[]): Record<string, true> {
@@ -490,20 +489,14 @@ export const _stdlibCore = {
     a: Record<string, true> | undefined | null,
     b: Record<string, true> | undefined | null,
   ): Record<string, true> {
-    const bb = b ?? {};
-    const out: Record<string, true> = {};
-    for (const k of Object.keys(a ?? {})) if (k in bb) out[k] = true;
-    return out;
+    return setKeep(a, b, true);
   },
   /** Set(T).diff(other) — keys in a not in b. */
   setDiff(
     a: Record<string, true> | undefined | null,
     b: Record<string, true> | undefined | null,
   ): Record<string, true> {
-    const bb = b ?? {};
-    const out: Record<string, true> = {};
-    for (const k of Object.keys(a ?? {})) if (!(k in bb)) out[k] = true;
-    return out;
+    return setKeep(a, b, false);
   },
   /** Option(T).or / Result(T,E).or — receiver when Some/Ok, else `other`. */
   or(v: unknown, other: unknown): unknown {
