@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "nothing is opened until a load runs",
+      "expect": { "noErrors": true, "domIncludes": ["status: idle"] }
+    },
+    {
+      "label": "mocked err, as a failed open delivers it: this load's .err shows the Text",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "err: UnknownError: the open failed" },
+        "domIncludes": ["status: err: UnknownError: the open failed"]
+      }
+    },
+    {
+      "label": "the next load runs again and reads the note",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "loaded hi" },
+        "domIncludes": ["status: loaded hi"]
+      }
+    }
+  ],
+  "effects": {
+    "loadNote": [
+      { "outcome": "err", "value": "UnknownError: the open failed" },
+      { "outcome": "ok", "value": { "_tag": "Some", "_0": { "id": "a", "body": "hi" } } }
+    ]
+  }
+}

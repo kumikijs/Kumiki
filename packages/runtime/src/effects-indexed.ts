@@ -18,6 +18,8 @@ export type IndexRange = {
 
 const handles = new WeakMap<IndexedDbCfg, Promise<IDBDatabase>>();
 
+// `blocked` is only a notice: the same request still ends in `success` or `error` once the
+// other connection closes, so the open waits on it instead of failing.
 function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
   const cached = handles.get(cfg);
   if (cached) return cached;
@@ -40,11 +42,19 @@ function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
         }
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => {
+        db.close();
+        handles.delete(cfg);
+      };
+      db.onclose = () => handles.delete(cfg);
+      resolve(db);
+    };
     req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
-    req.onblocked = () => reject(new Error("IndexedDB open blocked"));
   });
   handles.set(cfg, p);
+  p.catch(() => handles.delete(cfg));
   return p;
 }
 
