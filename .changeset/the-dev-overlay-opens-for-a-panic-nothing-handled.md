@@ -50,5 +50,4 @@ overlay: Kumiki panic — render — get called on None
 A reducer panic an `app.error` reducer was told about now opens the overlay
 too: `app.error` does not handle a panic, which is still reported to the
 console `smoke` fails on. The timeline lists a handled panic's step, marked
-`(handled)`. `runtime.md` §10.5.1 defines the field and §10.7 the overlay, in
-both language tracks.
+`(handled)`.

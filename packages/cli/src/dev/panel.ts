@@ -1,27 +1,3 @@
-// Dev panel — timeline + inspector + error overlay (spec §10.7). Vanilla TS,
-// no external deps. Mounted into #kumiki-dev-panel by the dev client.
-//
-// Layout:
-//   - fixed bottom-right card with two tabs ("timeline" / "inspector")
-//   - full-screen modal overlay when the most recent episode holds a panic
-//     nothing handled (`isUnhandledPanic`, runtime.md §10.5.1) — one an
-//     `error-boundary` caught is listed on the timeline and raises nothing
-//
-// Public API: `installDevPanel({ logger, getApp })` returns:
-//   - `push()`: called by the client's `onEpisode` to refresh the timeline and
-//     possibly raise the panic overlay. The episode itself is read from the
-//     logger, not the call site.
-//   - `onRemount()`: called after an HMR re-mount to refresh the inspector
-//     (it pulls the new AppShape via `getApp`).
-//   - `showError(message, location?)`: surface a non-Episode error (e.g. an
-//     HMR-time mount() throw) through the same overlay.
-//
-// XSS posture: every piece of data that originates outside this file
-// (episode fields, slot values, tile names, panic messages, hand-off error
-// strings) is inserted via `.textContent` or `document.createElement`. No
-// `innerHTML` writes happen anywhere in this module — see the helper
-// functions below.
-
 import {
   type AppShape,
   type EpisodeLogger,
@@ -179,8 +155,6 @@ export function installDevPanel(opts: Options): {
       overlay = null;
     }
     if (overlayKeyHandler) {
-      // Without this the listener leaks every time the overlay opens — Esc
-      // works once and then dangles for the life of the page.
       window.removeEventListener("keydown", overlayKeyHandler);
       overlayKeyHandler = null;
     }
@@ -211,9 +185,7 @@ export function installDevPanel(opts: Options): {
   function maybeShowOverlay(): void {
     const all = opts.logger.list();
     const latest = all.length > 0 ? all[all.length - 1] : undefined;
-    // The first panic nothing handled, wherever it sits: the steps a dispatch
-    // records after one (an `app.error` reducer, a `signal-update`) do not
-    // handle it, and a panic a boundary caught is not one however late it lands.
+    // Not the last step: a dispatch records steps after an unhandled panic, and a caught one can land last.
     const panic = latest?.steps.find(isUnhandledPanic);
     if (panic) {
       if (overlay) return;
@@ -242,8 +214,6 @@ export function installDevPanel(opts: Options): {
   };
 }
 
-// --- helpers ----------------------------------------------------------------
-
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,
@@ -270,8 +240,6 @@ function section(title: string): HTMLElement {
 }
 
 function cssToken(s: string): string {
-  // Restrict status class names to the known-safe set for CSS targeting; an
-  // unexpected value still falls back to the base `.kdp-status` style.
   return /^[a-z][a-z0-9-]*$/i.test(s) ? s : "";
 }
 

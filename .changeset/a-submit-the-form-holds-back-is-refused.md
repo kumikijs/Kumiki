@@ -1,13 +1,12 @@
 ---
 "@kumikijs/runtime": minor
-"@kumikijs/e2e": patch
 "@kumikijs/mcp": patch
 ---
 
 Fail a `{submit}` step whose form held the submit back
 
 A `form` calls its `ui.submit` reducer only while every field it binds passes
-validation (forms.md §5.2.2). The held-back submit leaves nothing behind, and
+validation (forms.md). The held-back submit leaves nothing behind, and
 the `{submit}` step only dispatched the event, so it passed whether the reducer
 ran or not:
 
@@ -25,7 +24,7 @@ it back (the line is wrapped here; it prints as one):
 [FAIL] step 0: submit #email
     action failed: submit #email: the form held the submit back — the field
     bound to email fails its validation, so no `ui.submit` reducer ran
-    (forms.md §5.2.2) — a step that means to assert the refusal says
+    — a step that means to assert the refusal says
     {"expect": {"actionErrorIncludes": ["the field bound to email fails its validation"]}}
 
 scenario FAILED
@@ -55,7 +54,7 @@ fired and no `ui.submit` reducer ran — …
 
 The scenario tier dispatches the event itself, which skips constraint
 validation, so the same form can submit there and be refused in the browser;
-testing.md §8.10 says so.
+testing.md says so.
 
 `@kumikijs/runtime` exports the new `SubmitRefusal`, `ConstraintRefusal`,
 `submitFault`, `constraintFault` and `readInvalidControls`, and `StepRefusal`,

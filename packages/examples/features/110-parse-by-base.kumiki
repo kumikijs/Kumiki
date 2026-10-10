@@ -1,5 +1,5 @@
-# Feature (stdlib.md §2.4.3): `T.parse(text)` is an `Option(T)`, and the text
-# is read by the base `T` is declared over — not by the name `T` is written with.
+# Feature: `T.parse(text)` is an `Option(T)`, and the text is read by the base
+# `T` is declared over — not by the name `T` is written with.
 #
 #   Cents.parse("12")      : Option(Cents)     Some(12)    a nominal Int
 #   Duration.parse("500")  : Option(Duration)  Some(500)   milliseconds

@@ -1,5 +1,5 @@
 # Feature: a refinement predicate is a check the value must pass on its way
-# into the slot (language.md §1.3.3, forms.md §5.6, runtime.md §10.3.3).
+# into the slot.
 #
 # Seven of the twelve predicates used to reach the runtime as `(_v) => true`,
 # and the standard library's refined nominals (`Email`, `Url`, `Uuid`) carried
@@ -16,9 +16,9 @@
 # twice and asserts the refusal (`errorIncludes`) — a rejection is reported,
 # not silent, and the batch is discarded whole.
 
-# The standard library's refined nominals (stdlib.md §2.1.3). `contact` starts
-# on a value its own refinement rejects, which is legal and deliberate: it is
-# what makes `error(field=contact)` show a message on a pristine form.
+# The standard library's refined nominals. `contact` starts on a value its own
+# refinement rejects, which is legal and deliberate: it is what makes
+# `error(field=contact)` show a message on a pristine form.
 slot contact : Email = ""
 slot site    : Url   = "https://kumiki.dev"
 slot token   : Uuid  = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
@@ -62,8 +62,8 @@ tile SizeBtn    = button(text="size",    onClick=setSize)
 
 # The form path, which is the other half of the guarantee: `bind` checks the
 # same predicate and is deliberately quiet about a value it refuses (a
-# half-typed address is expected, not a defect — forms.md §5.1.2), while
-# `error` reads the predicate off the slot and renders the message for it.
+# half-typed address is expected, not a defect), while `error` reads the
+# predicate off the slot and renders the message for it.
 tile ContactField = column(
                       label(text="Contact") {for: "contact"},
                       input(bind=contact, id="contact", placeholder="you@example.com"),
@@ -90,7 +90,7 @@ app RefinementValidation
     init   = []
 
 # The reducer-test tier applies the same rule with no DOM in sight: a refused
-# write leaves every slot at its `given` value (testing.md §8.1).
+# write leaves every slot at its `given` value.
 
 test contact-accepts-an-address =
     reducer-test setContact
