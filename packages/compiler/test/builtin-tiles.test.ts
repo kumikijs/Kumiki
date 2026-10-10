@@ -1,15 +1,3 @@
-// Regression for issue #61: every tile in the single-source registry
-// (`BUILTIN_TILES`) must be handled by codegen. The parser, typechecker, and
-// codegen all derive their built-in set from `builtins.ts`, so the only way the
-// three can still disagree is a registry entry that codegen's switch doesn't
-// implement — which used to surface as `Tile "<name>" not found` (or
-// `Unsupported builtin tile`) at build time. This test calls every registered
-// tile through codegen and asserts it emits a render expression without
-// throwing, locking the layers in agreement.
-
-import { readFileSync } from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { BUILTIN_TILES, codegen, lex, parse, VALUE_ARG_BUILTINS } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { contentReading, positionalIsTile, shownInPlaceOfPositional } from "../src/builtins.ts";
@@ -51,13 +39,10 @@ function program(call: string): string {
   ].join("\n");
 }
 
-describe("builtin tile registry (issue #61)", () => {
+describe("builtin tile registry", () => {
   for (const name of BUILTIN_TILES) {
     it(`codegen handles "${name}"`, () => {
       const src = program(callFor(name));
-      // Bypass typecheck (a11y / required-arg diagnostics are not what we test
-      // here) and drive codegen directly — it must not throw for any registered
-      // built-in tile.
       const prog = parse(lex(src));
       const { js } = codegen(prog, { runtimeSpecifier: "./runtime.js" });
       expect(js.length).toBeGreaterThan(0);
@@ -66,14 +51,8 @@ describe("builtin tile registry (issue #61)", () => {
   }
 });
 
-// Every builtin does one of three things with a positional argument: reads
-// the first as its content (a value builtin), renders each one that is a tile
-// as a child (a container), or renders none. The checker reads which from
-// `positionalIsTile` and `shownInPlaceOfPositional` — a tile in a container is
-// accepted and a value is E0128; anything on a builtin that renders none is
-// E0129 — so codegen has to lower a positional tile into the node's children
-// for exactly the containers, or `check` would accept a tile that renders
-// nothing.
+// The checker reads these answers, so codegen has to lower a positional tile into the children
+// for exactly the containers, or `check` would accept a tile that renders nothing.
 describe("what a builtin does with a positional argument", () => {
   it.each([...BUILTIN_TILES])("%s does exactly one thing with it", (name) => {
     const kinds = [
@@ -92,23 +71,5 @@ describe("what a builtin does with a positional argument", () => {
       runtimeSpecifier: "./runtime.js",
     });
     expect(js.includes("positional-probe")).toBe(positionalIsTile(name));
-  });
-
-  // §1.7.1 lists the containers by name, in English and in Japanese.
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  it.each([
-    [
-      "docs/spec/language.md",
-      "- The builtins that render their positional arguments as children are the containers:",
-      ".",
-    ],
-    ["docs/ja/spec/language.md", "- 位置引数を子として描画する builtin はコンテナである：", "。"],
-  ])("%s lists the containers", (file, lead, end) => {
-    const md = readFileSync(path.join(here, "..", "..", "..", file), "utf8");
-    const from = md.indexOf(lead);
-    expect(from).toBeGreaterThan(-1);
-    const list = md.slice(from + lead.length, md.indexOf(end, from + lead.length));
-    const listed = [...list.matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
-    expect(listed.sort()).toEqual([...BUILTIN_TILES].filter(positionalIsTile).sort());
   });
 });

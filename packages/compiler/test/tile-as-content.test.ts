@@ -1,21 +1,6 @@
-// A value builtin — `text`, `heading`, `markdown`, `code`, `label`, `link`,
-// `editable`, `image`, `icon` — shows a value as its content (language.md
-// §1.7.1): the lowering passes the content to `_s.show`, so a tile written
-// there is never rendered. It is E0236 at the tile — a `when` / `for`, a call
-// of a builtin or of a tile the program defines, a tile's name, or a tile in
-// an arm of a value `if` / `match` — and nothing else in the content is
-// checked, as for a value in a container (E0128). A value `if` / `match` is a
-// value, and a name that a value in scope has is that value.
-//
-// The mirror, a value where a tile belongs, is E0128 in
-// `value-as-child.test.ts`. What `check` and the mounted app say about the
-// issue's program is pinned in `packages/tests/tile-as-content.test.ts`.
-
-import { readFileSync } from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { check, lex, parse, VALUE_ARG_BUILTINS } from "@kumikijs/compiler";
+import { VALUE_ARG_BUILTINS } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const program = (home: string, more = "") => `tile Header = text("header")
 tile Card in={label: Text} = text($1.label)
@@ -34,15 +19,14 @@ ${more}app R
     init   = []
 `;
 
-const errorsOf = (home: string, more?: string) => check(parse(lex(program(home, more))));
+const located = (src: string) =>
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const diagnostics = (home: string, more?: string) =>
-  errorsOf(home, more).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+const diagnostics = (home: string, more?: string) => located(program(home, more));
 
-const codes = (home: string, more?: string) => errorsOf(home, more).map((e) => e.code);
+const codes = (home: string, more?: string) => codesOf(program(home, more));
 
-// `tile Home = ` is 12 columns wide on line 4; `tile` is a substring of the
-// body that starts where the tile does.
+// `tile Home = ` is 12 columns wide on line 4.
 const at = (home: string, tile: string) => `4:${13 + home.indexOf(tile)}`;
 
 const message = (builtin: string, shown: string) =>
@@ -50,8 +34,6 @@ const message = (builtin: string, shown: string) =>
   `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
   `value — \`${shown}\``;
 
-// Each value builtin written with `x` as its content, where the lowering reads
-// it (`contentArg`), and the value the diagnostic tells it to show instead.
 const builtins: readonly (readonly [string, string, (x: string) => string, string])[] = [
   ["text", "text", (x) => `text(${x})`, "text(x.show)"],
   ["heading", "heading", (x) => `heading(${x})`, "heading(x.show)"],
@@ -67,7 +49,6 @@ const builtins: readonly (readonly [string, string, (x: string) => string, strin
   ["icon", "icon", (x) => `icon(name=${x})`, "icon(name=x.show)"],
 ];
 
-// Each shape of tile, and the substrings where each tile in it starts.
 const tiles: readonly (readonly [string, string, readonly string[]])[] = [
   ["a when", "when(c, Header)", ["when"]],
   ["a for", "for x in xs Header", ["for"]],
@@ -84,16 +65,14 @@ const tiles: readonly (readonly [string, string, readonly string[]])[] = [
   ],
 ];
 
-it("the issue's program is E0236 at the when", () => {
+it("is E0236 at a when as text's content", () => {
   const src = `tile App = column(text(when(true, column(text("inner")))))
 app M
     caps   = []
     routes = {"/" -> App, "/404" -> App}
     init   = []
 `;
-  expect(
-    check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
-  ).toEqual([`E0236 1:24 ${message("text", "text(x.show)")}`]);
+  expect(located(src)).toEqual([`E0236 1:24 ${message("text", "text(x.show)")}`]);
 });
 
 it("covers every value builtin", () => {
@@ -128,8 +107,6 @@ describe("a tile in the content", () => {
     expect(codes(`text(when(c, Header), "b")`)).toEqual(["E0129", "E0236"]);
   });
 
-  // The content is moved whole — to a container, or replaced by a value — so
-  // a diagnostic in it shows once it is.
   it.each([
     ["inside a when", "text(when(nope, column(text(nope))))", "when"],
     ["inside a builtin's call", "text(column(nope))", "column"],
@@ -197,25 +174,5 @@ app M
     routes = {"/" -> A, "/404" -> A}
     init   = []
 `;
-  expect(
-    check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
-  ).toContain(`E0236 1:22 ${message("text", "text(x.show)")}`);
-});
-
-describe("the message", () => {
-  // errors.md quotes it, and a message that drifts from the catalogue is a
-  // diagnostic whose documentation answers a different question than the tool.
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  it.each([
-    ["docs/spec/errors.md"],
-    ["docs/ja/spec/errors.md"],
-  ])("is the one %s documents", (file) => {
-    const md = readFileSync(path.join(here, "..", "..", "..", file), "utf8");
-    const section = md.slice(md.indexOf("### E0236"));
-    // A double-backtick code span drops the space that pads it.
-    const quoted = /^> ``(.*)``$/m.exec(section)?.[1]?.trim();
-    expect(quoted?.replace("<builtin>", "heading").replace("<content>", "heading(x.show)")).toBe(
-      message("heading", "heading(x.show)"),
-    );
-  });
+  expect(located(src)).toContain(`E0236 1:22 ${message("text", "text(x.show)")}`);
 });

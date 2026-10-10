@@ -1,9 +1,9 @@
-import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { lex } from "../src/lexer.ts";
 import { ParseError, parse } from "../src/parser.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
-describe("parser: app.meta (#80)", () => {
+describe("parser: app.meta", () => {
   it("captures the closed set of head fields", () => {
     const src = `
       tile B = button(text="b")
@@ -68,7 +68,7 @@ describe("parser: app.meta (#80)", () => {
   });
 });
 
-describe("parser: app.analytics (#80)", () => {
+describe("parser: app.analytics", () => {
   it("captures provider and optional app-id", () => {
     const src = `
       tile B = button(text="b")
@@ -129,7 +129,7 @@ describe("parser: app.analytics (#80)", () => {
   });
 });
 
-describe("codegen: app.meta / app.analytics (#80)", () => {
+describe("codegen: app.meta / app.analytics", () => {
   it("emits meta and analytics literals on the App object", () => {
     const src = `
       tile B = button(text="b")
@@ -141,13 +141,11 @@ describe("codegen: app.meta / app.analytics (#80)", () => {
         meta      = { title: "Hello", description: "D", og-image: "/og.png", favicon: "/favicon.ico" }
         analytics = { provider: "console", app-id: "demo" }
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain(
+    const js = compileOrFail(src);
+    expect(js).toContain(
       `meta: {"title":"Hello","description":"D","ogImage":"/og.png","favicon":"/favicon.ico"},`,
     );
-    expect(result.js).toContain(`analytics: {"provider":"console","appId":"demo"},`);
+    expect(js).toContain(`analytics: {"provider":"console","appId":"demo"},`);
   });
 
   it("omits meta/analytics keys when not declared", () => {
@@ -156,10 +154,8 @@ describe("codegen: app.meta / app.analytics (#80)", () => {
       tile Home = column(B)
       app App caps=[] routes={"/" -> Home, "/404" -> Home} init=[]
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).not.toContain("meta:");
-    expect(result.js).not.toContain("analytics:");
+    const js = compileOrFail(src);
+    expect(js).not.toContain("meta:");
+    expect(js).not.toContain("analytics:");
   });
 });
