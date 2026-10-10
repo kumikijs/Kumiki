@@ -354,12 +354,17 @@ export function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     if (lv.field === "get") return unwrappedType(base);
     return null;
   }
-  if (base.kind === "TypeApp") {
-    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
-    // a right-hand side to be checked against.
-    if (base.name === "List") return base.args[0] ?? null;
-    if (base.name === "Map") return base.args[1] ?? null;
-  }
+  return indexedType(base);
+}
+
+/**
+ * A `Set` index names nothing, so it has no type on either side of `:=`: a
+ * position that takes the read would otherwise report the one mistake twice.
+ */
+export function indexedType(base: TypeExpr | null): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return base.args[0] ?? null;
+  if (base.name === "Map") return base.args[1] ?? null;
   return null;
 }
 
