@@ -1,0 +1,47 @@
+{
+  "steps": [
+    {
+      "label": "each select starts on its slot's value",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["size: M", "status: InProgress", "dims: 2 x 3"]
+      }
+    },
+    {
+      "label": "choosing a variant writes that variant",
+      "do": { "choose": "#size", "value": "Large" },
+      "expect": {
+        "noErrors": true,
+        "state": { "size": { "_tag": "L" } },
+        "domIncludes": ["size: L"]
+      }
+    },
+    {
+      "label": "choosing a variant with a payload writes that payload",
+      "do": { "choose": "#status", "value": "Done" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": { "_tag": "Some", "_0": { "_tag": "Done" } } },
+        "domIncludes": ["status: Done"]
+      }
+    },
+    {
+      "label": "choosing the option without a payload writes None",
+      "do": { "choose": "#status", "value": "Any" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": { "_tag": "None" } },
+        "domIncludes": ["status: any"]
+      }
+    },
+    {
+      "label": "choosing a record writes that record",
+      "do": { "choose": "#dims", "value": "4 x 4" },
+      "expect": {
+        "noErrors": true,
+        "state": { "dims": { "w": 4, "h": 4 } },
+        "domIncludes": ["dims: 4 x 4"]
+      }
+    }
+  ]
+}

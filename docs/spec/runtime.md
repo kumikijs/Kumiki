@@ -224,6 +224,8 @@ app App ... theme = themeName    # ← pass the slot name
 `select(value=v, options=[...])` decides the selected state of an option by a **structural key**:
 - A variant is keyed by recursively serializing `_tag` + payload. `Some(Backlog)` and `Some(InProgress)` become different keys (with a flat `_tag` comparison both would collide as `"Some"`, so including the payload is essential)
 - You can use a "variant wrapped in a variant" such as `Option(Status)` as an option value
+- Any other value (a `Text`, a number, a record) is keyed by its JSON text, so the `Text` `m` is keyed as `"m"`, quotes included
+- The key is what an `<option>` carries as its `value` on both render paths, and the option whose key is `v`'s is the selected one. The served page ([§10.6.1](#_10-6-1-ssr)) marks that option with the `selected` attribute, so its first paint shows `v` for a variant or a record as it does for a `Text`, and a form submitted before hydration sends the same key as one submitted after it. A `placeholder` option is served `selected` only when the select has no value
 
 ### 10.3.9 Focus Restoration
 
@@ -931,7 +933,7 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
   - `overlay` wraps every child after the first in the same absolutely-positioned layer the renderer builds, placed by `align`.
   - A **closed** `modal` / `drawer` / `popover` is served as the present-but-hidden host the renderer mounts — `display: none` around the content box — rather than as an empty string. Opening a surface is a style flip on both paths, and the content of a closed one stays readable to a crawler. (Hydration is not the reason: it replaces the served DOM wholesale either way — [§10.6.2](#_10-6-2-hydration).)
   - `check` / `switch` / `radio` are served as the `<label>` that wraps their control, and `error` as the `<span>` its message will arrive in.
-- Form state is the one thing a served attribute carries that the mounted element does not — but only where the property does not reflect: `value`, `checked` and `selected` are set as DOM properties on the client and leave the markup untouched, while an attribute is the only way a served page can carry them. `disabled`, `readonly` and `<details open>` DO reflect, so they are attributes on both paths and must agree.
+- Form state is the one thing a served attribute carries that the mounted element does not — but only where the property does not reflect: `value`, `checked` and `selected` are set as DOM properties on the client and leave the markup untouched, while an attribute is the only way a served page can carry them. `disabled`, `readonly` and `<details open>` DO reflect, so they are attributes on both paths and must agree, and so does an `<option>`'s `value`, which is the option's key on both ([§10.3.8](#_10-3-8-value-matching-of-select)).
 - Response bundle composition:
   - HTML (the result of initial tile rendering)
   - JSON (the snapshot envelope, structured as below)
