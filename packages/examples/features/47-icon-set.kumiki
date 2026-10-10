@@ -1,6 +1,6 @@
-# Feature: the icon registry (#101). `icon(name="…")` resolves through
+# Feature: the icon registry. `icon(name="…")` resolves through
 # `theme.icons[name]` → compile-baked built-ins from @kumikijs/icons →
-# `[name]` placeholder. Built-in names come from spec/style.md §4.8.1; the
+# `[name]` placeholder. Built-in names come from the spec's icon set; the
 # toolchain bakes only the referenced paths into App.icons.
 
 slot themeName : Text = "Light"

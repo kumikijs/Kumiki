@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Cross-cutting tests: every example in examples/ must parse, typecheck, and build.",
+  "description": "Integration tests that run the compiler, runtime and CLI together against the example corpus.",
   "license": "Apache-2.0",
   "scripts": {
     "test": "vitest run",
@@ -13,15 +13,12 @@
   "devDependencies": {
     "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
+    "@kumikijs/examples": "workspace:*",
     "@kumikijs/icons": "workspace:*",
-    "@kumikijs/mcp": "workspace:*",
     "@kumikijs/runtime": "workspace:*",
-    "@kumikijs/syntax": "workspace:*",
     "@types/node": "catalog:",
     "happy-dom": "catalog:",
-    "kumiki": "workspace:*",
     "typescript": "catalog:",
-    "vitepress": "catalog:",
     "vitest": "catalog:"
   }
 }

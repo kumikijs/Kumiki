@@ -1,23 +1,10 @@
-// `expansionTargets` on its own, as a table over tile bodies, and the checks
-// that read the edges it gives.
-//
-// An edge is a name a tile body renders as a tile: a call, the branches of
-// `for` / `when` / `if` / `match`, and an identifier written as a positional
-// argument where a tile belongs. The last is the one that needs the callee to
-// decide it. A value builtin's content and a user tile's input are values, so
-// an identifier there is read as one — a slot or a bind — whatever tile
-// happens to share its name, and adds no edge. Every reader of the graph sees
-// the difference: E0005 looks for a loop along these edges, and W0212 / W0213
-// read the builtin kinds a tile renders off them.
-
 import { describe, expect, it } from "vitest";
 import type { Program, TileDef } from "../src/ast.ts";
 import { expansionTargets } from "../src/def-graph.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
-import { check } from "../src/typecheck.ts";
+import { codesOf } from "./helpers/diagnostics.ts";
 
-/** The names `tile T = <body>` expands into, in the order the walk meets them. */
 function targets(body: string): string[] {
   const program: Program = parse(lex(`tile T = ${body}\n`));
   const def = program.defs.find((d): d is TileDef => d.kind === "TileDef");
@@ -67,7 +54,7 @@ describe("expansionTargets", () => {
 
 describe("the checks that read the edges", () => {
   const TAIL = `app M caps=[] routes={"/" -> App, "/404" -> App} init=[]\n`;
-  const codes = (src: string) => check(parse(lex(`${src}\n${TAIL}`))).map((e) => e.code);
+  const codes = (src: string) => codesOf(`${src}\n${TAIL}`);
 
   // A slot named after a builtin, shown as text. Nothing in `Row` fires a
   // click — `button` there is the slot's value — so both warnings stand.

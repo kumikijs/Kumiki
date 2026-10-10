@@ -1,4 +1,4 @@
-# Feature (language.md §1.7.1, errors.md E0005): a slot and a tile may share a
+# Feature (language.md, errors.md E0005): a slot and a tile may share a
 # name, and where the name is written decides which of the two it means.
 #
 #   tile leaf = column(text(leaf), Card(leaf))
