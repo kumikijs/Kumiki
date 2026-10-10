@@ -1,8 +1,3 @@
-// The one setter both ways of writing a slot go through: the assignment a
-// reducer lowers to (`_s.setPath`) and `bind=` write-back. A reducer's path can
-// carry an index segment, which is an arbitrary runtime value — so the segments
-// this has to survive are not only the ones a compiler emits deliberately.
-
 import { _setPathHelper, bindLabel, KumikiPanic, type PathSegment } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
@@ -24,10 +19,6 @@ describe("a field path", () => {
 });
 
 describe("a segment that is not a field name", () => {
-  // An index segment is `jsOfExpr(<the index expression>)` — whatever it
-  // evaluates to. Terminating on `path.length` rather than on a `undefined`
-  // head is what keeps one of those from being read as "path exhausted",
-  // which would return the value in place of the whole slot.
   it("takes an undefined index as a key, not as the end of the path", () => {
     expect(_setPathHelper({ seed: 0 }, seg([undefined]), 1)).toEqual({ seed: 0, undefined: 1 });
   });
@@ -45,9 +36,6 @@ describe("a segment that is not a field name", () => {
   });
 
   it("does not read an arbitrary object segment as an unwrap", () => {
-    // Only `{get: true}` is the unwrap. An index that evaluates to an object
-    // is a Map key, stored under its JSON (`entryKey`) — read as an unwrap it
-    // would drop the segment and put the value where the container was.
     expect(_setPathHelper({ seed: { n: 0 } }, seg([{ x: 1 }]), { n: 7 })).toEqual({
       seed: { n: 0 },
       '{"x":1}': { n: 7 },
@@ -56,13 +44,10 @@ describe("a segment that is not a field name", () => {
 
   it("takes a numeric segment as a key", () => {
     expect(_setPathHelper({ 2: "a" }, seg([2]), "b")).toEqual({ 2: "b" });
+    expect(_setPathHelper({}, [5], "x")).toEqual({ 5: "x" });
   });
 });
 
-// language.md §1.6.3 says what an index into a List writes: the element at the
-// position, in a copy that is still a List. An index that names no element is
-// a panic (lifecycle.md §7.2.2), so the dispatch rolls back and reaches
-// `app.error` rather than writing somewhere the type does not describe.
 describe("an index into a List", () => {
   it("replaces the element at the index and leaves a List", () => {
     const out = _setPathHelper([1, 2, 3], [0], 7);
@@ -114,39 +99,20 @@ describe("an index into a List", () => {
 });
 
 describe("an index that names no element of a List", () => {
-  it("panics for an index past the end", () => {
-    expect(() => _setPathHelper([1, 2, 3], [3], 7)).toThrow(KumikiPanic);
-    expect(() => _setPathHelper([1, 2, 3], [3], 7)).toThrow(
-      "Index 3 is out of range for a List of length 3",
-    );
-  });
-
-  it("panics for an index past the end with more of the path behind it", () => {
-    expect(() => _setPathHelper([{ n: 1 }], [5, "n"], 7)).toThrow(KumikiPanic);
-  });
-
-  it("panics for a negative index", () => {
-    expect(() => _setPathHelper([1, 2, 3], [-1], 7)).toThrow(
-      "Index -1 is out of range for a List of length 3",
-    );
-  });
-
-  // The checker requires an `Int` for a List index, so these reach the setter
-  // only through a value the types do not describe.
-  it("panics for a number that is not a whole one", () => {
-    expect(() => _setPathHelper([1, 2, 3], [0.5], 7)).toThrow(KumikiPanic);
-    expect(() => _setPathHelper([1, 2, 3], seg([Number.NaN]), 7)).toThrow(KumikiPanic);
-  });
-
-  it("panics for a whole number spelled as text", () => {
-    expect(() => _setPathHelper([1, 2, 3], seg(["0"]), 7)).toThrow(KumikiPanic);
+  it.each([
+    ["past the end", [1, 2, 3], [3], "Index 3 is out of range for a List of length 3"],
+    ["negative", [1, 2, 3], [-1], "Index -1 is out of range for a List of length 3"],
+    ["past the end with more of the path behind it", [{ n: 1 }], [5, "n"], undefined],
+    // The checker requires an `Int`, so these reach the setter only through an untyped value.
+    ["not a whole number", [1, 2, 3], [0.5], undefined],
+    ["NaN", [1, 2, 3], [Number.NaN], undefined],
+    ["a whole number spelled as text", [1, 2, 3], ["0"], undefined],
+  ])("panics for an index %s", (_what, list, path, message) => {
+    expect(() => _setPathHelper(list, seg(path), 7)).toThrow(KumikiPanic);
+    if (message) expect(() => _setPathHelper(list, seg(path), 7)).toThrow(message);
   });
 });
 
-// A List-typed value that is not there at runtime — a field missing after a
-// restore or a decode — has no element to replace. Building an object in its
-// place would produce `{"0": 7}`, the shape an index write into a List must
-// never leave.
 describe("an index that meets no List", () => {
   it("panics when the value is undefined or null", () => {
     expect(() => _setPathHelper(undefined, [0], 7)).toThrow(KumikiPanic);
@@ -161,9 +127,6 @@ describe("an index that meets no List", () => {
   });
 });
 
-// The paths the List branch must not disturb: a Map is a plain object, and
-// `todos[id].done` (§1.6.3's own example) goes through the object branch it
-// always did.
 describe("an index into a Map", () => {
   it("writes the entry and leaves a plain object", () => {
     expect(_setPathHelper({ a: 1 }, ["b"], 2)).toEqual({ a: 1, b: 2 });
@@ -174,19 +137,8 @@ describe("an index into a Map", () => {
       t1: { done: true, x: 1 },
     });
   });
-
-  // A `Map(Int, V)` key is a number at runtime, exactly like a List index. A
-  // shortcut that treated every numeric segment as a List index would make
-  // this insert a no-op or a panic.
-  it("inserts under a numeric key", () => {
-    expect(_setPathHelper({}, [5], "x")).toEqual({ 5: "x" });
-  });
 });
 
-// A reducer's `[…]` step arrives as `{at: key}`, apart from a field step, so
-// the setter can tell a missing Map entry from a missing record field: the
-// first is `m.update(k, …)` on an absent `k`, which writes nothing (language.md
-// §1.6.3); the second is a level to build.
 describe("an index step", () => {
   const todos = { t1: { title: "a", done: false } };
 
@@ -219,25 +171,16 @@ describe("an index step", () => {
     );
   });
 
-  // `Map({get: Bool}, Int)`: the key is a record that happens to have a `get`
-  // field set to `true`, the shape of the unwrap segment. Inside `{at}` it is a
-  // key, so the write inserts an entry under its `entryKey` encoding rather
-  // than replacing the whole slot with `1`.
   it("takes a record key with `get: true` for a key, not an unwrap", () => {
     expect(_setPathHelper({}, [{ at: { get: true } }], 1)).toEqual({ '{"get":true}': 1 });
   });
 
-  // `m[a][b].f := v` and `m[a][b] := v` are `m.update(a, …)`, so an absent
-  // outer key writes nothing at either depth.
   it("writes nothing through an absent outer key of a nested Map", () => {
     const grid = { x: { y: { n: 0 } } };
     expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }, "n"], 1)).toBe(grid);
     expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }], { n: 2 })).toBe(grid);
   });
 
-  // A present outer key reaches the inner Map, where the rule for the last
-  // step applies: a field through an absent inner key writes nothing, the
-  // entry itself is inserted.
   it("writes through a present outer key into the inner Map", () => {
     const grid = { a: {} };
     expect(_setPathHelper(grid, [{ at: "a" }, { at: "b" }, "n"], 1)).toEqual({ a: {} });
@@ -246,8 +189,6 @@ describe("an index step", () => {
     });
   });
 
-  // `m[k].get.f := v` on `Map(K, Option(R))`: the key decides whether there is
-  // an entry, then `.get` decides whether there is a payload to write through.
   it("writes through `.get` of the entry at a key the Map holds", () => {
     const opts = {
       a: { _tag: "Some", _0: { done: false } },
@@ -267,16 +208,9 @@ describe("an index step", () => {
 });
 
 describe("an unwrap segment", () => {
-  it("edits the payload of a Some and leaves the tag", () => {
-    expect(_setPathHelper({ _tag: "Some", _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({
-      _tag: "Some",
-      _0: { t: "b" },
-    });
-  });
-
-  it("edits the payload of an Ok", () => {
-    expect(_setPathHelper({ _tag: "Ok", _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({
-      _tag: "Ok",
+  it.each(["Some", "Ok"])("edits the payload of %s and leaves the tag", (tag) => {
+    expect(_setPathHelper({ _tag: tag, _0: { t: "a" } }, [{ get: true }, "t"], "b")).toEqual({
+      _tag: tag,
       _0: { t: "b" },
     });
   });
@@ -289,11 +223,6 @@ describe("an unwrap segment", () => {
   });
 
   it("passes a variant that is neither through, the way unwrap reads one", () => {
-    // `_stdlibCore.unwrap` unwraps `Some` / `Ok`, panics on `None` / `Err`, and
-    // returns anything else unchanged — so `v.get.t` on a user variant reads
-    // `v.t`, and this writes the same place. Descending into `_0` instead
-    // would point the two sides at different fields, and would fabricate a
-    // payload on a variant that has none.
     expect(_setPathHelper({ _tag: "Loading" }, [{ get: true }, "t"], "b")).toEqual({
       _tag: "Loading",
       t: "b",
@@ -311,10 +240,6 @@ describe("an unwrap segment", () => {
 });
 
 describe("the label a bind path renders as", () => {
-  // Written into `data-kumiki-bind` by both renderers and reported on an
-  // episode's `binds-updated`. Comparing the two renderers only says they
-  // agree; this says what they agree ON — the source spelling, not the
-  // encoding.
   it("spells an unwrap segment the way the source does", () => {
     expect(bindLabel("draft", [{ get: true }, "title"])).toBe("draft.get.title");
   });

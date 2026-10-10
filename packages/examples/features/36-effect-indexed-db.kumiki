@@ -1,7 +1,7 @@
 # Feature: IndexedDB persistence — store-scoped key/value, with clean failure
 # when the backend is unavailable (sandbox / unsupported environment). Mirrors
 # the storage feature's two-branch shape so the unavailable case stays visible
-# rather than silent (#37 / #79).
+# rather than silent.
 
 type Note = {id: Text, body: Text, createdAt: Time}
 

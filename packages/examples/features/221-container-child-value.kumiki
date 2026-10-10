@@ -1,4 +1,4 @@
-# Feature (language.md §1.7.1): a value shown in a container.
+# Feature (language.md): a value shown in a container.
 #
 # A container's positional arguments are child tiles (`column(A, B)`). A
 # value is shown by a tile that renders it, so a label and its value side by

@@ -1,21 +1,8 @@
-// A positional argument of a builtin that is not a value builtin renders only
-// when it is a tile: a tile call, `match` / control flow, or the name of a tile
-// the program defines (language.md §1.7.1). Codegen drops any other value
-// there, so `column(text("a"), 42)` and `column(let x = 42 in Card(x))` passed
-// `check` and rendered as if the value were not written — and a slot named
-// there, `column(n)`, put a `null` into the child list. It is E0128 at the
-// value, and nothing inside it is checked: under a `let` a tile call reads as
-// a `fn` call and would be reported wrongly, so a correct diagnostic in there
-// (an undefined name, say) is not reported either until the value is moved.
-//
-// This file pins what `check` says; what the built app renders for the same
-// programs is pinned in `packages/tests/value-as-child.test.ts`.
-
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const program = (home: string) => `tile Card in={label: Text} = text($1.label)
 tile Home = ${home}
@@ -29,15 +16,13 @@ app R
 `;
 
 const diagnostics = (home: string) =>
-  check(parse(lex(program(home)))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(program(home)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const codes = (home: string) => check(parse(lex(program(home)))).map((e) => e.code);
+const codes = (home: string) => codesOf(program(home));
 
 const message = (builtin: string) =>
   `A value is not a tile: ${builtin} renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — \`text(…)\` — or, for a \`let\`, write the value where it is used or compute it in a \`fn\``;
 
-// `tile Home = ` is 12 columns wide on line 2, so a value's column is 13 plus
-// its offset in the body.
 const E0128 = (home: string, value: string, builtin = "column") =>
   `E0128 2:${13 + home.indexOf(value)} ${message(builtin)}`;
 
@@ -84,8 +69,6 @@ describe("a value written as a child", () => {
   });
 
   it("is reported in any builtin that is not a value builtin", () => {
-    // `row` renders children; `button` reads no positional argument at all.
-    // A value is dropped by either.
     const row = `row(text("a"), let x = 1 in Card({label: x.show}))`;
     expect(diagnostics(row)).toEqual([E0128(row, "let", "row")]);
     const button = `column(button(42, text="go"))`;
@@ -107,10 +90,6 @@ describe("what renders in a child position is not reported", () => {
   });
 });
 
-// The name of a tile the program defines renders as that tile in a child
-// position, so it is not a value there. A lower-cased one is still E0103 to
-// the checker, which looks it up as a value name; that is a separate gap, and
-// E0128 must not be added on top of it.
 it("the name of a tile in a child position is not E0128", () => {
   expect(codes("column(lower)")).not.toContain("E0128");
 });
@@ -127,8 +106,6 @@ describe("a value where a value belongs is still a value", () => {
 });
 
 describe("a let as a user tile's input is compared with its in=", () => {
-  // `inferType` had no `let` case, so the comparison was skipped as
-  // undecidable and any value passed.
   it.each([
     ["a value of the wrong type", "column(Card(let x = 42 in x))", "E0201"],
     ["a field of the wrong type", "column(Card(let x = {label: 42} in x))", "E0201"],
@@ -142,8 +119,6 @@ describe("a let as a user tile's input is compared with its in=", () => {
 });
 
 describe("the message", () => {
-  // errors.md quotes it, and a message that drifts from the catalogue is a
-  // diagnostic whose documentation answers a different question than the tool.
   const here = path.dirname(fileURLToPath(import.meta.url));
   it.each([
     ["docs/spec/errors.md"],
