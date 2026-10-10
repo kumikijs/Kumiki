@@ -7,24 +7,22 @@ import {
   type TileExpr,
 } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
-import { expansionTargets } from "../def-graph.ts";
+import { expansionTargets, reachedFrom } from "../def-graph.ts";
 import type { SymbolTable } from "./context.ts";
 
+// Answers are kept, so a tile is walked once however many positions ask about it, and the walk is
+// iterative because nothing bounds how long a program may chain tiles.
 export function collectTileBuiltinKinds(
-  tileName: string,
-  sym: SymbolTable,
-  visited: Set<string> = new Set(),
-): Set<string> {
-  if (visited.has(tileName)) return new Set();
-  visited.add(tileName);
-  if (BUILTIN_TILES.has(tileName)) return new Set([tileName]);
-  const def = sym.tiles.get(tileName);
-  if (!def) return new Set();
-  const out = new Set<string>();
-  for (const target of expansionTargets(def.body)) {
-    for (const kind of collectTileBuiltinKinds(target.to, sym, visited)) out.add(kind);
-  }
-  return out;
+  tiles: ReadonlyMap<string, TileDef>,
+): (tileName: string) => ReadonlySet<string> {
+  return reachedFrom(
+    (name) => {
+      if (BUILTIN_TILES.has(name)) return [];
+      const def = tiles.get(name);
+      return def ? expansionTargets(def.body) : [];
+    },
+    (name) => (BUILTIN_TILES.has(name) ? [name] : []),
+  );
 }
 
 type TileIdCollection =

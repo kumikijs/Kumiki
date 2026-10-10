@@ -104,11 +104,23 @@ fresh  self  now  null
 - **Newline is the statement separator**: only inside `do=` can `;` join multiple statements
 - **Identifiers are at most 32 characters**
 - **An expression, type, pattern or tile tree is at most 256 levels deep**: past that the parser reports a positioned error. No program in the examples or benchmarks comes near it.
+- **A tile tree stays within 256 levels once its user tiles are inlined**: code generation inlines every call to a user tile, so tiles that call each other add their depths up. Past the limit the checker reports [E0237](./errors.md#e0237-tile-depth) at the call where the tree goes over.
 - **Multi-line comments prohibited**
 - **Macros prohibited**
 
 ::: details What the 256-level limit is measured against
 A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
+:::
+
+::: details How the inlined tile tree is counted
+The parser sees one definition at a time. The module code generation emits nests as deep as the tile tree with every user tile's body inlined at its call, and nothing else bounds how deep that goes: a chain of definitions, none of them deep, adds up to a module a JavaScript engine refuses to load. So the same bound holds for that tree, counted in tile levels:
+
+- each call is a level — a builtin's and a user tile's alike, and a tile named by a bare identifier (`column(sidebar)`) counts as a call to it;
+- each `for`, `when`, `if` and `match` is a level;
+- a user tile's body hangs one level below its call;
+- an `error-boundary` is a level of its own: it wraps every call of the tile that declares it, with that tile's body and the fallback's body both beneath it.
+
+Siblings do not add up — a tree is as deep as its deepest path — and neither do the expressions in it, which the parser already bounds within each definition. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link, so 128 links reach the limit. A `sub-routes` child is not inlined (the router renders it through `route-outlet`), so it does not count toward its parent's tree.
 :::
 
 ---

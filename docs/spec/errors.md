@@ -909,6 +909,18 @@ The bound type is unaliased first, so `type Qty = Int where positive` and a `nom
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
 
+### E0237 `tile-depth`
+
+A tile's tree nests deeper than 256 levels once the user tiles in it are inlined ([§1.2.3](./language.md#_1-2-3-design-decisions)). Code generation inlines every call to a user tile, so tiles that call each other add their depths up, and the parser — which sees one definition at a time — bounds none of the sum. A chain of definitions each calling the next, none of them deep, reaches a module the JavaScript engine cannot load (V8 runs out of stack parsing it) and, longer still, overflows code generation itself. The bound is the parser's own, held to the tree the module is built from.
+
+> `Tile "<root>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "<from>" expands into "<to>"`
+
+The levels are counted as [§1.2.3](./language.md#_1-2-3-design-decisions) describes: each call, builtin or user, and each `for` / `when` / `if` / `match` is one, a user tile's body hangs below its call, and an `error-boundary` is one more, with the fallback's body beneath it beside the tile's own. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link, so its 129th link is over.
+
+Reported once for each tile no other tile expands into — a route target, or a tile nothing names — since every tile further down is over only because of where it sits in that tree. The position is where the tree goes past the limit: following its deepest path down from `<root>`, the call (or `error-boundary` clause) in `<from>` whose target's body reaches beyond level 256. A tile that expands into itself has no depth and is [E0005](#e0005-tile-cycle)'s alone.
+
+**Fix**: Make the tree shallower. Repetition that a chain of definitions spells out one level at a time belongs in a `for` over a collection, and alternatives in `when` / `match`, each of which is one level however many items or arms it renders. Moving part of the tree into another tile does not help: it is inlined back where it is called.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
