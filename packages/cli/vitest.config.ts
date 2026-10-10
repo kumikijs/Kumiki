@@ -10,7 +10,6 @@ export default defineConfig({
   test: {
     environment: "happy-dom",
     ...sharedTestOptions,
-    testTimeout: 30000,
     unstubEnvs: true,
     server: {
       deps: {

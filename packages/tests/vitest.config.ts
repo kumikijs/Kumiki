@@ -11,7 +11,6 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     setupFiles: ["./src/helpers/setup.ts"],
     server: { deps: { external: [/\/\.smoke-tmp\/[^/]+\/app\.mjs(?:\?|$)/] } },
-    testTimeout: 30000,
     env: { TZ: "America/Los_Angeles" },
   },
 });
