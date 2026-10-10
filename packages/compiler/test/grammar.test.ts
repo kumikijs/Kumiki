@@ -179,6 +179,23 @@ ${APP}`,
     clean(`type Sign = nominal Int where one-of(-1, 0, 1)${APP}`);
   });
 
+  it("accepts a negative literal where a theme value takes a number", () => {
+    const src = `theme T = {spacing: {nudge: -4, half: -0.5, flat: 0}}${APP}`;
+    clean(src);
+    expect(parse(lex(src)).defs[0]).toMatchObject({
+      kind: "ThemeDef",
+      body: { spacing: { nudge: -4, half: -0.5, flat: 0 } },
+    });
+  });
+
+  it("still refuses a `-` in a theme value that is not a number's sign", () => {
+    for (const value of [`-`, `-"4px"`, `-{a: 1}`, `- -4`]) {
+      expect(outcome(`theme T = {spacing: {nudge: ${value}}}${APP}`), value).toEqual([
+        "THROW Parse error at 1:29: Theme values must be string, number, or nested record",
+      ]);
+    }
+  });
+
   it("chains `where` without a bound, as `refinement-type` being recursive says", () => {
     clean(`type Handle = nominal Text where len-gt(3) where len-lt(9) where nonempty${APP}`);
     clean(`type Bare = Text where len-gt(3) where len-lt(9) where nonempty${APP}`);

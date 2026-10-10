@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "label": "the app mounts with the panel closed",
+      "expect": { "noErrors": true, "domExcludes": ["turned"] }
+    },
+    {
+      "label": "opening mounts the panel that slides in from the left and turns back upright",
+      "do": { "click": "#open" },
+      "expect": { "noErrors": true, "domIncludes": ["Hello", "turned"], "state": { "open": true } }
+    }
+  ]
+}

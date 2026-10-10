@@ -133,16 +133,9 @@ export class TypeParser extends TokenStream {
   }
 
   protected parseRefinementArg(): number | string {
+    const n = this.tryEatSignedNumber();
+    if (n !== undefined) return n;
     const t = this.peek();
-    if (t.kind === "op" && t.value === "-" && this.matchTAt(1, "num")) {
-      this.next();
-      const n = this.next() as { value: number };
-      return -n.value;
-    }
-    if (t.kind === "num") {
-      this.next();
-      return t.value;
-    }
     if (t.kind === "str") {
       this.next();
       return t.value;

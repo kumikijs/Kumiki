@@ -1,0 +1,34 @@
+# Feature: a negative keyframe value. `translate-x`, `translate-y` and
+# `rotate` are plain numbers, and the sign is part of a number literal, so a
+# motion can start left of or above where the tile rests, or turn
+# counter-clockwise:
+#
+#   from: {translate-x: -24}   ->  transform: translateX(-24px)
+#   from: {rotate: -90}        ->  transform: rotate(-90deg)
+
+slot open : Bool = false
+
+reducer show on=ui.click(OpenBtn) do= open := true
+
+# Slides in from the left while it fades in.
+motion SlideFromLeft = {
+    keyframes: {from: {translate-x: -24, opacity: 0}, to: {translate-x: 0, opacity: 1}},
+    duration:  "normal",
+    easing:    "ease-out"
+}
+
+# A quarter turn counter-clockwise back to upright.
+motion TurnBack = {
+    keyframes: {from: {rotate: -90}, to: {rotate: 0}},
+    duration:  400
+}
+
+tile OpenBtn = button(text="Open", onClick=show) {id: "open"}
+tile Panel   = card(heading("Hello"), box(text("turned")) {motion: "TurnBack"}) {motion: "SlideFromLeft", pad: "lg", gap: "md"}
+
+tile App = column(OpenBtn, when(open, Panel())) {pad: "lg", gap: "md"}
+
+app MotionNegativeKeyframe
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
