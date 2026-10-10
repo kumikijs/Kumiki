@@ -125,10 +125,18 @@ describe("loopKeys", () => {
     expect(new Set(_stdlibCore.loopKeys(["x", "x", "2|x", "1|2|x"], "App_0")).size).toBe(4);
   });
 
-  it("keys records by position, since every record shows alike", () => {
-    // `show` is not injective for a record, so only the occurrence tells two apart.
+  it("keys records, Maps and Sets by position, whatever they hold", () => {
     const keys = _stdlibCore.loopKeys([{ id: 2 }, { id: 1 }], "App_0");
-    expect(keys).toEqual(["App_0|1|[object Object]", "App_0|2|[object Object]"]);
+    expect(keys).toEqual(["App_0|1|", "App_0|2|"]);
+    expect(_stdlibCore.loopKeys([{ id: 1 }, { id: 2 }], "App_0")).toEqual(keys);
+    expect(_stdlibCore.loopKeys([{ id: 1, done: true }, { id: 2 }], "App_0")).toEqual(keys);
+  });
+
+  it("keys a List element and a variant by what they show", () => {
+    expect(_stdlibCore.loopKeys([[1, 2], { _tag: "Some", _0: 3 }], "App_0")).toEqual([
+      "App_0|1|[1, 2]",
+      "App_0|1|Some",
+    ]);
   });
 });
 

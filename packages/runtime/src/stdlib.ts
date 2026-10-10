@@ -21,6 +21,16 @@ import {
 
 export type KeyKind = "number" | "bool" | "value";
 
+// What the type says and the value does not: a record and a Map are both plain objects, a Set
+// is an object of its keys, and a Tuple is an array like a List.
+export type ShowShape =
+  | 0
+  | { readonly [field: string]: ShowShape }
+  | readonly ["l", ShowShape]
+  | readonly ["t", ...ShowShape[]]
+  | readonly ["m", KeyKind | 0, ShowShape, ShowShape]
+  | readonly ["s", KeyKind | 0, ShowShape];
+
 /** A stored object key, restored to the kind of value it was written from. */
 function restoreKey(key: string, kind: KeyKind | undefined): unknown {
   switch (kind) {
@@ -340,22 +350,39 @@ export const _stdlibCore = {
     }
     return (a as number) + (b as number);
   },
+  // A record, Map or Set element adds no shown value, so among those the key is positional:
+  // a row edited in place keeps its key, and its element.
   loopKeys(xs: readonly unknown[], loop: string): string[] {
     const seen = new Map<string, number>();
     return xs.map((x) => {
-      const shown = _stdlibCore.show(x);
+      const bag = typeof x === "object" && x !== null && isPlainDataBag(x) && !("_tag" in x);
+      const shown = bag ? "" : _stdlibCore.show(x);
       const n = (seen.get(shown) ?? 0) + 1;
       seen.set(shown, n);
       return `${loop}|${n}|${shown}`;
     });
   },
-  show(v: unknown): string {
+  show(v: unknown, shape?: ShowShape): string {
     if (v === null || v === undefined) return "";
-    if (typeof v === "object" && v && "_tag" in v) {
-      const obj = v as { _tag: string };
-      return obj._tag;
-    }
-    return String(v);
+    if (typeof v !== "object" || v instanceof Uint8Array) return String(v);
+    // A descriptor's tag, then its slots; what a slot holds depends on the tag.
+    const d: readonly unknown[] = Array.isArray(shape) ? shape : [];
+    const tag = d[0];
+    if (!tag && "_tag" in v) return (v as { _tag: string })._tag;
+    const at = (x: unknown, s: unknown): string =>
+      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s as ShowShape);
+    const list = Array.isArray(v);
+    const o = v as Record<string, unknown>;
+    // A Map's or Set's `d[1]` is its key kind: a Set is read as the Map of its members to `true`.
+    const items = list
+      ? v.map((x, i) => at(x, d[tag === "t" ? i + 1 : 1]))
+      : tag
+        ? (_stdlibCore.mapEntries(o, (d[1] || undefined) as KeyKind) as [unknown, unknown][]).map(
+            ([k, x]) => at(k, d[2]) + (tag === "m" ? `: ${at(x, d[3])}` : ""),
+          )
+        : Object.keys(o).map((k) => `${k}: ${at(o[k], (shape as Record<string, ShowShape>)?.[k])}`);
+    const [open, close] = tag === "t" ? "()" : list || tag === "s" ? "[]" : "{}";
+    return open + items.join(", ") + close;
   },
   fmt(template: unknown, ...args: unknown[]): string {
     return _stdlibCore.show(template).replace(/\{(\d+)\}/g, (placeholder, digits: string) => {

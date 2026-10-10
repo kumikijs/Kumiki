@@ -250,6 +250,20 @@ An argument outside a function's domain produces what the platform produces — 
 
 `x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
 
+It is also the one text form a value is put into text with: `+` with a `Text` ([§2.4.5](#_2-4-5-string-formatting)), `fmt`, `TypeName.show(v)` ([§2.4.3](#_2-4-3-type-conversion)) and a tile's text all render a value as its `show`. A nullish is the empty string, a variant its tag, a number, a `Bool` and a `Text` their text. A record and a collection are written as the literal a program writes one with:
+
+| Value | `show` |
+|---|---|
+| a record | `{name: "ada", age: 3}` — each field as `name: value`, in the order the record holds them |
+| `List(T)` | `[1, 2]` |
+| `Tuple(T1, …, Tn)` | `(1, "a")` |
+| `Map(K, V)` | `{"a": 1}` — each entry as `key: value`, in the order `keys` answers them |
+| `Set(T)` | `[1, 2]` — its members, in the order `to-list` answers them, as a Set literal lists them ([§2.2.2](#_2-2-2-set-t)) |
+
+Each part of one is written by the same rule, with one difference: a `Text` inside a record or a collection is quoted, escaped as JSON escapes a string (`["a", "say \"hi\""]`), where a `Text` on its own is its text. A variant inside one is its tag (`[Some, None]`, `{role: Admin}`), and an empty List or Set is `[]`, an empty Map `{}`. A Map key and a Set member are the values `keys` / `to-list` hand back: `{3: "c"}` for a `Map(Int, Text)`, <code v-pre>{{x: 0, y: 0}: "o"}</code> for a `Map(Pt, Text)`. `Bytes` is its bytes in decimal, separated by commas (`104,105`), and a `Time` or a `Duration` the number of milliseconds it holds ([§2.2.9](#_2-2-9-duration)), on their own and inside a structure alike.
+
+At run time a Map is an object like a record, a Set an object of its members, and a Tuple an array like a List, so it is the **type** that decides which of them a value is written as. The checker hands `show` that type wherever it shows an expression whose type has a Map, a Set or a Tuple in it, through aliases, generics and a type that contains itself. Where the checker cannot decide the type — the accumulator `$1` of `fold`, a `fn` result with no `->` — a Map is written as a record of its stored keys, a Set as a record of `true`s and a Tuple as a List. That is a gap in what the checker resolves, not a rule a program may rely on.
+
 ### 2.2.8 Time
 
 ```
@@ -530,7 +544,7 @@ The rest of the arithmetic is [§2.2.7](#_2-2-7-int-float), as methods on the nu
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
-A **placeholder** is `{`, one or more decimal digits, `}`. Each one is replaced by the argument at that index — `{0}` is the first argument after the template — rendered the way `+` renders it (the `show` equivalent named below: a variant is its tag, a nullish is the empty string, anything else is its text form), so `fmt("{0}-{1}", "a", "b")` is `"a-b"`. An index may repeat, and the indices may appear in any order: `fmt("{1} {0} {1}", "a", "b")` is `"b a b"`. Substitution is a single left-to-right pass over the template: a `{0}` that appears *inside* a substituted value is text, not a placeholder to fill again.
+A **placeholder** is `{`, one or more decimal digits, `}`. Each one is replaced by the argument at that index — `{0}` is the first argument after the template — rendered the way `+` renders it (its `show`, [§2.2.7](#_2-2-7-int-float): a variant is its tag, a nullish is the empty string, a record or a collection is its literal, anything else is its text form), so `fmt("{0}-{1}", "a", "b")` is `"a-b"`. An index may repeat, and the indices may appear in any order: `fmt("{1} {0} {1}", "a", "b")` is `"b a b"`. Substitution is a single left-to-right pass over the template: a `{0}` that appears *inside* a substituted value is text, not a placeholder to fill again.
 
 The digits are read as one decimal index, so a leading zero is significant only as a digit: `{01}` is index 1.
 
@@ -544,7 +558,7 @@ Neither of the first two stops a program, and neither is silent where it can be 
 
 The call is counted ([E0213](./errors.md#e0213-call-arity-mismatch)) against the signature above — the template is all that is required, because a template with no placeholders takes no arguments.
 
-When you concatenate `Text` with another type using `+`, the equivalent of `show` is called automatically.
+When you concatenate `Text` with another type using `+`, the equivalent of `show` is called automatically ([§2.2.7](#_2-2-7-int-float)): `"p: " + {name: "ada"}` is `p: {name: "ada"}`.
 
 ### 2.4.6 Debugging Aids
 

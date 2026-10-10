@@ -18,7 +18,13 @@ import {
   checkToggleBind,
 } from "./bind.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
-import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
+import {
+  checkCondition,
+  checkExpr,
+  checkIterationTarget,
+  elementTypeOf,
+  noteShown,
+} from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
 import { collectTileBuiltinKinds } from "./tile-collect.ts";
@@ -409,6 +415,8 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    // Only codegen knows which of a builtin's arguments it renders as text.
+    if (BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
@@ -442,6 +450,7 @@ function checkTileCall(
       }
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      if (prop.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(prop.value, sym, ctx);
     }
   }
 }

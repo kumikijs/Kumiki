@@ -1,0 +1,33 @@
+{
+  "steps": [
+    {
+      "label": "each value renders as the literal that builds it",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "record: {name: \"ada\", age: 3}",
+          "show: {name: \"ada\", age: 3}",
+          "fmt: {name: \"ada\", age: 3}",
+          "list: [1, 2]",
+          "words: [\"a\", \"b\"]",
+          "tuple: (1, \"a\")",
+          "map: {\"a\": 1}",
+          "set: [1, 2]",
+          "at: {{x: 0, y: 0}: \"origin\"}",
+          "levels: [Low, High]",
+          "empty: [] {}"
+        ],
+        "domExcludes": ["[object Object]"]
+      }
+    },
+    {
+      "label": "add re-renders the Set and the Map in the same form",
+      "do": { "click": "#add" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["set: [1, 2, 3]", "map: {\"a\": 1, \"b\": 2}"],
+        "domExcludes": ["[object Object]"]
+      }
+    }
+  ]
+}

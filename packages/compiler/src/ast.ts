@@ -1,4 +1,4 @@
-import type { IndexedDbStore, KeyKind } from "@kumikijs/runtime";
+import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
 
 export type Pos = { line: number; col: number };
 
@@ -303,7 +303,14 @@ export type { KeyKind };
 
 export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
 
-export type Expr =
+export type { ShowShape };
+
+export type Expr = ExprForm & {
+  /** Set by the checker where the value is shown; absent without `check()`, so the value is read as itself. */
+  showShape?: ShowShape;
+};
+
+type ExprForm =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
