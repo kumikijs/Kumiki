@@ -132,6 +132,23 @@ export function routeChainResolver(sym: SymbolTable): RouteChainResolver {
   };
 }
 
+type RouteEntry = AppDef["routes"][number];
+
+/**
+ * The `/404` entry E0001 reads: the first that renders a tile, or else the first redirect at
+ * `/404`. A redirect beside a tile is a second `/404`, which is E0008's to report.
+ */
+export function notFoundEntry(routes: AppDef["routes"]): RouteEntry | undefined {
+  let redirect: RouteEntry | undefined;
+  for (const r of routes) {
+    if (r.path !== "/404") continue;
+    if (!r.tile.startsWith(">>")) return r;
+    redirect ??= r;
+  }
+  return redirect;
+}
+
 export function servesNotFound(routes: AppDef["routes"]): boolean {
-  return routes.some((r) => r.path === "/404" && !r.tile.startsWith(">>"));
+  const entry = notFoundEntry(routes);
+  return entry !== undefined && !entry.tile.startsWith(">>");
 }

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { AppDef, KumikiError, Pos } from "@kumikijs/compiler";
+import type { KumikiError, Pos } from "@kumikijs/compiler";
 import {
   BUILTIN_EFFECT_CAPS,
   calleeCandidates,
@@ -8,7 +8,6 @@ import {
   lex,
   nearestName,
   parse,
-  servesNotFound,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
@@ -201,12 +200,11 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ],
   [
     "E0001",
-    (_err, store) => {
-      const app = store.program.defs.find((d): d is AppDef => d.kind === "AppDef");
-      const routes = app?.routes ?? [];
-      if (routes.some((r) => r.path === "/404") && !servesNotFound(routes)) {
-        return "e0001-404-is-a-redirect";
-      }
+    (err, store) => {
+      // Adding an entry repairs `missing-404` alone: a redirect at `/404` is replaced (an entry
+      // beside it would be E0008) and a sub-route at `/404` is removed.
+      if (err.kind === "404-is-redirect") return "e0001-404-is-a-redirect";
+      if (err.kind === "404-in-sub-routes") return "e0001-404-in-sub-routes";
       if (append404Route(store.source) === null) return "e0001-no-routes-clause";
       const defined = store.byQName.has("tile.NotFound");
       return {

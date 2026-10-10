@@ -51,7 +51,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | Code | Kind | Layer | Feature |
 |---|---|---|---|
 | [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | core |
-| [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | routing |
+| [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes) | `missing-404` / `404-is-redirect` / `404-in-sub-routes` | app | routing |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | lifecycle |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | core |
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | core |

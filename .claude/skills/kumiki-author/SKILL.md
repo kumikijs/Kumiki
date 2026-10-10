@@ -27,7 +27,7 @@ app MyApp
     theme  = DefaultTheme
 ```
 
-`routes` must include a `/404` entry (error E0001). Use `->>` for redirects: `"/old" ->> "/"`.
+`routes` must include a `/404` entry that renders a tile, not a redirect (error E0001). Use `->>` for redirects: `"/old" ->> "/"`.
 
 ## Workflow (always verify)
 

@@ -5,10 +5,10 @@ import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./conte
 import { checkExpr, pushMismatch } from "./expr.ts";
 import { container, prim } from "./infer.ts";
 import {
+  notFoundEntry,
   type RouteChainResolver,
   routeInAppInitMessage,
   routeReachedThroughCalls,
-  servesNotFound,
 } from "./route-chain.ts";
 import { checkRouteTargetArity } from "./tile.ts";
 
@@ -41,12 +41,23 @@ export function checkApp(
     }
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
   }
-  if (!servesNotFound(app.routes)) {
+  const notFound = notFoundEntry(app.routes);
+  if (notFound === undefined) {
     errors.push({
       code: "E0001",
       kind: "missing-404",
       message: `app.routes must include a "/404" entry`,
       pos: app.pos,
+    });
+  } else if (notFound.tile.startsWith(">>")) {
+    // Not `missing-404`: that asks for a `/404` entry the map already has, and a second is E0008.
+    errors.push({
+      code: "E0001",
+      kind: "404-is-redirect",
+      message:
+        `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches ` +
+        `and has to render a tile — write "/404" -> <Tile>`,
+      pos: notFound.pathPos,
     });
   }
   const initCtx: Ctx = {
