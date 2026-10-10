@@ -26,6 +26,8 @@ import { reconcileTree } from "./reconcile.ts";
 import { makeReconcileDiag } from "./reconcile-diag.ts";
 import { computeSlotDiffs, reportRejectedBatch, slotAccepts } from "./refinement.ts";
 import {
+  type RenderPanic,
+  recordRenderPanic,
   registerAppRoot,
   unregisterAppRoot,
   withRenderingApp,
@@ -167,11 +169,12 @@ export function mountCore(
   });
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
+  const renderBracket = <T>(fn: () => T): T => withRenderingApp(app, fn, renderPanic);
   const attach = (into: HTMLElement): MountHandle => {
     const view = newView(into, false);
     views.push(view);
     registerAppRoot(into, app);
-    withRenderingApp(app, () => {
+    renderBracket(() => {
       withRenderingView(view.target, () => renderPass(view));
     });
     return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
@@ -184,7 +187,7 @@ export function mountCore(
   let inRouteErrorHandlers = false;
   const render = (): void => {
     if (disposed || inRouteErrorHandlers) return;
-    withRenderingApp(app, () => {
+    renderBracket(() => {
       const touched: string[] = [];
       let tree: TileNode | null = null;
       for (let i = 0; i < views.length; i++) {
@@ -241,10 +244,7 @@ export function mountCore(
           touched = rec.touched;
         } catch (reconcileErr) {
           reportPanic("reconcile", reconcileErr);
-          episode?.recordPanic({
-            ...panicInfo(reconcileErr, "tile-render"),
-            location: "reconcile",
-          });
+          renderPanic(reconcileErr, "reconcile");
           dom = fullRender(renderedTree);
           target.replaceChild(dom, view.root);
         }
@@ -253,10 +253,8 @@ export function mountCore(
         placeRoot(view, dom);
       }
     } catch (e) {
-      const renderRec = panicInfo(e, "tile-render");
       reportPanic("render", e);
-      episode?.recordPanic({ ...renderRec, location: "render" });
-      if (!fireRouteError(renderRec)) {
+      if (!fireRouteError(renderPanic(e, "render"))) {
         dom = renderPanicFallback(e);
         panicked = true;
       } else {
@@ -265,7 +263,7 @@ export function mountCore(
           dom = fullRender(renderedTree);
         } catch (e2) {
           reportPanic("render", e2);
-          episode?.recordPanic({ ...panicInfo(e2, "tile-render"), location: "render" });
+          renderPanic(e2, "render");
           renderedTree = null;
           dom = renderPanicFallback(e2);
           panicked = true;
@@ -299,7 +297,7 @@ export function mountCore(
     }
   }
 
-  function fireRouteError(rec: PanicRecord): boolean {
+  function fireRouteError({ rec, episodeId }: RenderPanic): boolean {
     if (!app.routes || app.routes.length === 0) return false;
     const cur = slotValues.route as ParsedRoute | undefined;
     const pattern = cur?.pattern;
@@ -310,7 +308,7 @@ export function mountCore(
     );
     if (handlers.length === 0) return false;
     const info = {
-      ...userPanicInfo(rec, rec.location ?? "render", safeEpisodeId()),
+      ...userPanicInfo(rec, rec.location ?? "render", episodeId),
       pattern,
     };
     inRouteErrorHandlers = true;
@@ -326,6 +324,13 @@ export function mountCore(
       inRouteErrorHandlers = false;
     }
     return true;
+  }
+
+  // A host logger written against an older `EpisodeLogger` can record a step and
+  // answer no id, so fall back to the open episode as `fireAppError` does.
+  function renderPanic(e: unknown, site: string): RenderPanic {
+    const { rec, episodeId } = recordRenderPanic(episode, e, site);
+    return { rec, episodeId: episodeId ?? safeEpisodeId() };
   }
 
   let inPanicHandler = false;
@@ -509,7 +514,6 @@ export function mountCore(
 
   const seams = app as MountedApp & { _resolveLeave?: (outcome: "yes" | "no") => void };
   seams._rerender = render;
-  seams._episodeId = safeEpisodeId;
   seams._dispatch = (reducerName, el) => {
     const r = app.reducers.find((x) => x.name === reducerName);
     if (!r) return;

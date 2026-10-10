@@ -1,8 +1,8 @@
 import type { AppShape, TileNode } from "@kumikijs/runtime";
-import { renderToString, routing } from "@kumikijs/runtime";
+import { _stdlibCore, KumikiPanic, renderToString, routing } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { captureConsole } from "./helpers/console.ts";
-import { GUEST, userApp, userProvider } from "./helpers/ssr-user-app.ts";
+import { GUEST, type User, userApp, userProvider } from "./helpers/ssr-user-app.ts";
 import { tick } from "./helpers/time.ts";
 
 function makeSsrApp(): AppShape {
@@ -245,5 +245,52 @@ describe("renderToString", () => {
     await renderToString(app);
 
     expect(order.indexOf("fastTwo:start")).toBeLessThan(order.indexOf("slowOne:end"));
+  });
+});
+
+describe("a boundary fallback served by renderToString", () => {
+  /** `makeSsrApp` with a root that panics once `loadUser` has landed, caught the way codegen lowers `error-boundary`. */
+  const withBoundary = (): AppShape => {
+    const app = makeSsrApp();
+    app.root = (): TileNode => {
+      try {
+        const user = app.live?.user as User;
+        if (user.id !== "guest") throw new KumikiPanic(`no avatar for ${user.name}`);
+        return { kind: "text", text: "guest" };
+      } catch (e) {
+        const info = _stdlibCore.boundaryPanic(e, "Profile") as {
+          "episode-id": { _tag: string; _0?: string };
+        };
+        const ep = info["episode-id"];
+        return { kind: "text", text: `fallback episode: ${ep._tag === "Some" ? ep._0 : "(none)"}` };
+      }
+    };
+    return app;
+  };
+
+  it("names the bootstrap episode, which records the panic after the init chain", async () => {
+    let n = 0;
+    const result = await renderToString(withBoundary(), {
+      providers: { "http.get": userProvider() },
+      // Distinct ids: the logger draws effect tokens from the same generator.
+      idGen: () => `ep_${++n}`,
+    });
+    const boot = result.bootstrapEpisode;
+    expect(result.html).toContain(`fallback episode: ${boot.id}`);
+    expect(boot.steps.map((s) => s.kind)).toEqual([
+      "effect-start",
+      "effect-end",
+      "reducer",
+      "signal-update",
+      "panic",
+    ]);
+    expect(boot.steps.at(-1)).toMatchObject({
+      kind: "panic",
+      message: "no avatar for Yui",
+      location: "Profile",
+      category: "tile-render",
+    });
+    expect(boot.status).toBe("panic");
+    expect(result.snapshot.bootstrap).toBe(boot);
   });
 });

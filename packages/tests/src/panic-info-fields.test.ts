@@ -61,6 +61,31 @@ describe("episode-id names the episode the panic happened in", () => {
     expect(report.steps[0]?.domText).toContain(`fallback episode: ${id}`);
   });
 
+  it("gives an error-boundary fallback an id whose episode recorded the panic, once per render", async () => {
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const app: AppShape = await loadApp(EXAMPLE);
+    const report = await runScenario(
+      app,
+      rootAtHome(),
+      { steps: [{ do: BREAK.render }, { do: BREAK.render }] },
+      { episodeLogger: logger },
+    );
+    const ids: string[] = [];
+    for (const step of report.steps) {
+      const text = step.domText;
+      const id = /fallback episode: (ep_[0-9A-Z]{26})/.exec(text)?.[1];
+      const ep = logger.list().find((e) => e.id === id);
+      expect(ep, `no episode ${id} in the log`).toBeDefined();
+      const panics = ep?.steps.filter((s) => s.kind === "panic") ?? [];
+      expect(panics).toHaveLength(1);
+      expect(panics[0]).toMatchObject({ category: "tile-render", location: "Guarded" });
+      expect(text).toContain(`fallback message: ${panics[0]?.message}fallback location: Guarded`);
+      expect(ep?.status).toBe("panic");
+      ids.push(id ?? "");
+    }
+    expect(new Set(ids).size).toBe(2);
+  });
+
   it("is None when no episode logger is attached", async () => {
     const report = await breakIt("reducer", null);
     expect(report.steps[0]?.state.caughtEp).toMatchObject({ _tag: "None" });
