@@ -1,7 +1,6 @@
-# Feature (testing.md §8.1.1): the names a test body writes are references
-# like any other, so `kumiki refs` lists the test, and `kumiki rename` rewrites
-# each one where the test wrote it: a call, an `expect.effects` entry, a
-# `<slots.X>`, a record key.
+# Feature: the names a test body writes are references like any other, so
+# `kumiki refs` lists the test, and `kumiki rename` rewrites each one where the
+# test wrote it: a call, an `expect.effects` entry, a `<slots.X>`, a record key.
 #
 #   given  = {slots: {draft: shout("Buy")}, …}      `draft` is the slot,
 #                                                   `shout` is the fn
@@ -12,7 +11,7 @@
 # a `slots` section (or of an episode-test's `slots-equal`) names a slot, at
 # the key. A call in a slot's value is read the way the expression layer reads
 # it, so `shout("Buy")` calls the fn. Only an `expect.effects` entry and a
-# `mocks` key name an effect, and `<slots.items>` (§8.2.2) names the slot. So
+# `mocks` key name an effect, and `<slots.items>` names the slot. So
 #
 #   kumiki rename <file> effect.persist save    ->  save(<slots.items>)
 #   kumiki rename <file> fn.shout yell          ->  draft: yell("Buy")

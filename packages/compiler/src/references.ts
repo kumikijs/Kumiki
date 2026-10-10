@@ -1,19 +1,3 @@
-// Which top-level definitions does a definition reference, and exactly where?
-//
-// This is what the AI-editing verbs (`refs`, `view --with-deps`, `rename`,
-// `remove --cascade`) need and could not get before: they matched names as text
-// over the source, so a record field, a word in a comment, a string literal and
-// a loop variable all counted as references to a definition that happened to
-// share their spelling — and `rename` rewrote every one of them.
-//
-// The question here is deliberately narrower than the typechecker's. `typecheck`
-// asks "is this name legal in this position"; this asks "which definition does
-// this name denote, and at which source position". Sharing an implementation
-// would mean answering both at once, so the two walks stay separate — but the
-// resolution ORDER below (locals shadow definitions; a bare name in a handler
-// prop is a reducer) is the same order `typecheck` applies, and a divergence
-// would show up as `refs` disagreeing with a compile error.
-
 import type {
   AppDef,
   Def,
@@ -42,25 +26,12 @@ export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | 
 export type Reference = {
   layer: RefLayer;
   name: string;
-  /**
-   * Position of the identifier token itself, so a rewrite can be exact.
-   *
-   * Absent when that token spells a second name as well, which a rewrite for
-   * this one would change with it: a test's `{slots: {count}}` whose value
-   * `count` is a `for-all` name, or `{mocks: {ignore}}`, whose value is the
-   * mock's script. The edge is real (`refs` and `remove --cascade` must see
-   * it), but `rename` has no token it can rewrite for this name alone, and
-   * refuses rather than guessing.
-   */
   pos?: Pos;
 };
 
 /** Definition names by layer, for resolving a bare name to a definition. */
 export type DefIndex = Record<RefLayer, Set<string>>;
 
-// Exhaustive on purpose. With `Partial<…>`, a new `Def` kind would compile and
-// then vanish from the reference graph: `refs` would report it as unreferenced,
-// `remove` would delete it without warning, and `rename` would miss every use.
 const LAYER_OF_DEF: Record<Def["kind"], RefLayer | null> = {
   TypeDef: "type",
   SlotDef: "slot",
@@ -98,15 +69,6 @@ export function buildDefIndex(program: Program): DefIndex {
   return index;
 }
 
-/**
- * Every reference `def` makes to a top-level definition, in no particular
- * order and with duplicates preserved — `rename` needs one entry per
- * occurrence, and `refs` deduplicates for itself.
- *
- * Names that resolve to nothing (builtin tiles, stdlib functions, capability
- * names, variant constructors, local binds) are simply absent. That is the
- * point: over-inclusion is what made `remove --cascade` delete most of a file.
- */
 export function referencesIn(def: Def, index: DefIndex): Reference[] {
   const out: Reference[] = [];
   const w = new Walker(index, out, def.kind === "TestDef");
@@ -162,16 +124,8 @@ class Walker {
   constructor(
     private readonly index: DefIndex,
     private readonly out: Reference[],
-    /**
-     * Whether a `<slots.X>` wildcard is an edge to slot `X`. In a test body it
-     * is: in a reducer-test `expect` it stands for the slot's post-execution
-     * value (testing §8.2.2), and anywhere else in the body it is E0109 but
-     * still spells that slot, so a rename keeps the two in step. Outside a test
-     * body it is E0109 and lowers to a sentinel that reads nothing, so an edge
-     * would be a read that does not happen — and `typecheck` reports a slot
-     * initializer's slot edges as reads (E0304), which would name the one
-     * mistake twice.
-     */
+    // Outside a test body a `<slots.X>` is E0109 and reads nothing, so an edge there would be a
+    // read that does not happen, which E0304 would report a second time.
     private readonly wildcardsNameSlots: boolean,
   ) {}
 
@@ -188,15 +142,10 @@ class Walker {
         this.add("type", t.name, t.pos);
         return;
       case "TypeApp":
-        // `Map(K, V)` and friends are builtin generics; a user type used as a
-        // constructor lands here too, and `add` drops the ones that are not
-        // definitions.
         this.add("type", t.name, t.pos);
         for (const a of t.args) this.typeExpr(a);
         return;
       case "TypeRecord":
-        // Field NAMES are not references — this is the case that made `rename`
-        // rewrite a record schema. Only their types are walked.
         for (const f of t.fields) this.typeExpr(f.type);
         return;
       case "TypeUnion":
@@ -211,11 +160,6 @@ class Walker {
     }
   }
 
-  /**
-   * A bare identifier. Locals win over definitions — a `for x in …` binding
-   * that shares a slot's name is not a reference to that slot. Then slot, then
-   * fn: a name cannot occupy both without the typechecker rejecting it.
-   */
   private bareName(name: string, pos: Pos, locals: ReadonlySet<string>): void {
     if (locals.has(name)) return;
     if (name === "route" || name === "now" || name.startsWith("$")) return;
@@ -245,14 +189,11 @@ class Walker {
         this.expr(e.index, locals);
         return;
       case "Call":
-        // `run-reducer(name)` (§8.3) takes a reducer NAME, not a value.
+        // `run-reducer(name)` takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
           return;
         }
-        // `TodoId.fresh()` is qualified — only an unqualified callee can name a
-        // `fn` definition. (A lowercase `a.b(x)` never reaches here: the parser
-        // requires a capitalised qualifier, so it is a `MethodCall`.)
         if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
@@ -369,11 +310,6 @@ class Walker {
     }
   }
 
-  /**
-   * `emit confirm({onYes: r, onNo: r})` (lifecycle §7.6): those two fields name
-   * reducers, not values. Every other field, and every other effect, takes the
-   * ordinary path.
-   */
   private confirmAwareExpr(effect: string, arg: Expr, locals: ReadonlySet<string>): void {
     if (effect !== "confirm" || arg.kind !== "RecordLit") {
       this.expr(arg, locals);
@@ -396,10 +332,6 @@ class Walker {
       this.add("effect", r.on.effect, r.on.effectPos);
       for (const b of r.on.binds) if (b.name !== "_") locals.add(b.name);
     } else if (r.on.kind === "LifecycleEvent" && r.on.tileTarget) {
-      // `tile.mount(X)` folds the tile name into the event name, so the parser
-      // keeps the name and where `X` sat alongside it. Reporting the pattern's
-      // own position instead would break the contract on `Reference.pos` and
-      // make `rename` abort.
       this.add("tile", r.on.tileTarget.name, r.on.tileTarget.pos);
     }
     for (const s of r.do) this.statement(s, locals);
@@ -419,15 +351,7 @@ class Walker {
         this.add("tile", t.name, t.pos);
         for (const a of t.args) this.tileArg(a, locals);
         for (const p of t.props) {
-          // Three props hold a definition NAME rather than a value expression.
-          // Each mirrors a `typecheck` site that resolves the same way — see
-          // `undef-reducer` for the first two and `undef-motion` for the third.
           if (HANDLER_NAMES.has(p.name)) {
-            // A capitalised name here is a variant tag; `handlerReducerName`
-            // reads it as the reducer the checker resolved, so `rename` sees
-            // the same edge whichever way the name was spelled. A value that
-            // is no name at all (`{onClick: 1}`) is a diagnostic, and falls
-            // through to be walked as the expression it is.
             const reducer = handlerReducerName(p.value);
             if (reducer !== null) {
               this.add("reducer", reducer, p.value.pos);
@@ -435,7 +359,7 @@ class Walker {
             }
           }
           if (t.name === "link" && p.name === "prefetch") {
-            // §3.8: a bare ident or a string literal, both naming a reducer.
+            // A bare ident or a string literal, both naming a reducer.
             if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
             else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
             continue;
@@ -473,26 +397,6 @@ class Walker {
     }
   }
 
-  /**
-   * A tile argument is either a nested tile or a value expression, discriminated
-   * only by its `kind` — the field is the same either way.
-   *
-   * The handler name is asked about before the shape, matching the order
-   * `typecheck` uses, so this walk records the edge the checker resolved. It
-   * used to be the other way round, on the reasoning that the two could only
-   * ever disagree about a program that does not compile; a capitalised name in
-   * a handler argument parses as an argument-less tile call, so that walked
-   * `onClick=Bump` as a **tile** — `refs` reported a tile `Bump` that no
-   * definition declares, and `rename` on the reducer left the wiring behind.
-   * Since the checker resolves such a name to its reducer, the premise is gone
-   * as well as the conclusion: the shape-first order now disagrees about
-   * programs that compile.
-   *
-   * What survives from that reasoning is why being right here matters at all:
-   * `rename` and `remove --cascade` validate before they write, so they never
-   * act on the answer for a program that does not compile; `refs` has no such
-   * gate, and a site it did not list would be a site a reader thinks is free.
-   */
   private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
     if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
@@ -509,24 +413,6 @@ class Walker {
     this.expr(v, locals);
   }
 
-  /**
-   * A `test` names the reducer or tile it drives, and its `given` / `expect`
-   * name slots, effects, tiles and fns. This walk reads them as the checker
-   * does (testing §8.1.1): section by section, through the one reading of a
-   * test body's top level (`testSections`) and of its event (`eventParts`),
-   * with the `for-all` names bound throughout. A section name is read as one
-   * only at the top of a `given` or `expect`, and only for a kind that has
-   * that section; one level down it is a slot, or a field of a slot's value,
-   * like any other key. A key that names no section of the kind (E0714), and a
-   * section value of the wrong shape (E0713), are not read at all: nothing
-   * evaluates them, and a name written there is no reference. A name this walk
-   * missed would be one `refs` does not list and `rename` leaves behind, to be
-   * rejected on the diagnostic the old name then raises.
-   *
-   * A name a test writes as a record key — a slot in `{slots: {count: 0}}`, an
-   * effect in `{mocks: {persist: …}}` — is reported at the key, as `recordKey`
-   * says.
-   */
   test(t: TestDef): void {
     if (t.testKind === "reducer-test") this.add("reducer", t.target ?? "", t.targetPos);
     if (t.testKind === "tile-test") this.add("tile", t.target ?? "", t.targetPos);
@@ -577,25 +463,12 @@ class Walker {
     if (t.mocks) this.mocks(t.mocks, generated);
   }
 
-  /**
-   * `{<slot>: <value>}` — a `given.slots`, an `expect.slots`, or an
-   * episode-test's `expect.slots-equal`. A key names a slot; a value is an
-   * expression, so `{draft: shout("x")}` calls the fn `shout`. `slots-equal`'s
-   * bare `from-log` is no record, and has neither.
-   */
   private slotValues(rec: Expr, locals: ReadonlySet<string>): void {
     for (const f of recordFieldsOf(rec)) {
       this.recordKey("slot", f, () => this.expr(f.value, locals));
     }
   }
 
-  /**
-   * `[persist(x), toast]` — the effects a reducer-test expects. An entry names
-   * an effect whether it is a call or a bare name, and is never the fn of the
-   * same name; a call's arguments are the values it was emitted with. Each
-   * name is reported at its own identifier. Any other entry matches no effect,
-   * and names nothing.
-   */
   private expectedEffects(list: Expr, locals: ReadonlySet<string>): void {
     if (list.kind !== "ListLit") return;
     for (const entry of list.items) {
@@ -608,24 +481,13 @@ class Walker {
     }
   }
 
-  /**
-   * `{<effect>: <script>}` — a reducer-test's `given.mocks`, or an
-   * episode-test's `mocks`. A key names an effect. A value is a script rather
-   * than a call: `ok(v)`, `err(e)`, `delay(ms, ok(v))`, `from-log` or
-   * `ignore`. Those names are the mock's own vocabulary, so a `fn ok` in scope
-   * is not what `ok(v)` calls; only the payload and the delay are expressions.
-   * The walk accepts a superset of the checker's forms: it reads every one of
-   * them in either kind, where the checker takes `delay` only in a
-   * reducer-test and `from-log` / `ignore` only in an episode-test (a form of
-   * the other kind is E0712 / E0713 there). A value that is none of them is
-   * not read.
-   */
   private mocks(rec: Expr, locals: ReadonlySet<string>): void {
     for (const m of recordFieldsOf(rec)) {
       this.recordKey("effect", m, () => this.mockScript(m.value, locals));
     }
   }
 
+  // `ok` / `err` / `delay` are the mock's own vocabulary, never a fn of the same name.
   private mockScript(v: Expr, locals: ReadonlySet<string>): void {
     if (v.kind !== "Call") return;
     if (v.callee === "ok" || v.callee === "err") {
@@ -637,21 +499,9 @@ class Walker {
     }
   }
 
-  /**
-   * One field of a test-body record whose key names a definition of `layer` —
-   * a slot in `{slots: {count: 0}}`, an effect in `{mocks: {persist: …}}` —
-   * with `walkValue` the reading of its value. The parser records a field at
-   * its key's own token, so the key is reported there, and `rename` rewrites
-   * it as it rewrites any identifier.
-   *
-   * `{count}` is one token that is both the key and its value. Where the
-   * value's reading names the same definition, it does so at that token, and
-   * that is the one reference. Where it does not — the value is a `for-all`
-   * name, or a mock's script (`{ignore}` for an effect named `ignore`) — the
-   * token spells two names, and a rewrite for the key would rewrite the value
-   * with it: the key is reported without a position, and `rename` refuses the
-   * name.
-   */
+  // `{count}` is one token for the key and its value. When the value names something else
+  // (a `for-all` name, a mock's script), a rewrite for the key would change it too, so the key
+  // gets no position and `rename` refuses the name.
   private recordKey(layer: RefLayer, f: RecordField, walkValue: () => void): void {
     if (!isWrittenAsItsValue(f)) {
       this.add(layer, f.name, f.pos);
@@ -667,11 +517,6 @@ class Walker {
   app(a: AppDef): void {
     for (const r of a.routes) this.add("tile", r.tile, r.tilePos);
     for (const e of a.init) {
-      // An init entry's callee names an EFFECT, never a fn — so it must not go
-      // through the generic expression walk, which would resolve it as a fn as
-      // well. With a `fn` and an `effect` sharing a name, that produced two
-      // references at one position, and renaming the fn silently repointed
-      // `init` at an effect that no longer exists.
       if (e.kind === "Call" && !e.callee.includes(".")) {
         this.add("effect", e.callee, e.pos);
         for (const a2 of e.args) this.expr(a2, new Set());
@@ -679,11 +524,6 @@ class Walker {
       }
       this.expr(e, new Set());
     }
-    // `app.theme` names either a `theme` definition or the slot whose value
-    // selects one (spec §4.6) — the same two namespaces, resolved in the same
-    // order, that the typechecker accepts. Recording it as a theme
-    // unconditionally dropped the slot form from the graph entirely, so
-    // `rename` left the clause pointing at the old name.
     if (a.theme) {
       const layer = this.index.theme.has(a.theme.name) ? "theme" : "slot";
       this.add(layer, a.theme.name, a.theme.pos);
@@ -700,11 +540,7 @@ class Walker {
   }
 }
 
-/**
- * Whether `f` is written `{name}`, its key standing for its value as well. The
- * parser reads that as `{name: name}`, with the value a `Ref` at the key's own
- * token; a value written after a `:` or `=` starts at a token of its own.
- */
+/** `{name}`: the parser reads it as `{name: name}`, its value a `Ref` at the key's own token. */
 function isWrittenAsItsValue(f: RecordField): boolean {
   return f.value.kind === "Ref" && f.value.pos.line === f.pos.line && f.value.pos.col === f.pos.col;
 }

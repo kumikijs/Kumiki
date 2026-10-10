@@ -1,17 +1,10 @@
-// AST types for Kumiki.
-
-import type { KeyKind } from "@kumikijs/runtime";
+import type { IndexedDbStore, KeyKind } from "@kumikijs/runtime";
 
 export type Pos = { line: number; col: number };
 
 export type Token =
   | { kind: "ident"; value: string; pos: Pos }
   | { kind: "kw"; value: string; pos: Pos }
-  /**
-   * `raw` is the literal as written. `value` is already the rounded double, so
-   * without it a precision diagnostic can only report the rounded number twice
-   * and read as self-contradicting.
-   */
   | { kind: "num"; value: number; raw: string; pos: Pos }
   | { kind: "str"; value: string; pos: Pos }
   | { kind: "op"; value: string; pos: Pos }
@@ -65,17 +58,6 @@ export type TestDef = {
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
 
-/**
- * A name the parser saw a second time in a construct that keeps only one.
- *
- * `app`, `effect` and the theme-record grammar all assemble their fields into
- * a record, so the later of two same-named clauses overwrites the earlier and
- * the duplicate leaves no trace in the tree. Recording it here is what lets
- * the checker report `E0008` — the alternative, throwing from the parser,
- * would stop at the first one and take the whole file's editing verbs with it.
- */
-export type DuplicateName = { name: string; pos: Pos };
-
 export type ThemeDef = {
   kind: "ThemeDef";
   name: string;
@@ -86,8 +68,6 @@ export type ThemeDef = {
 };
 
 // ----- motion layer (reusable, scoped animations) -----
-// A purely-presentational definition modeled on `theme`: the body is a record
-// literal (so it cannot reference slots/effects — purity is structural).
 export type MotionDef = {
   kind: "MotionDef";
   name: string;
@@ -129,7 +109,7 @@ export type TileDef = {
   errorBoundary?: string;
   errorBoundaryPos?: Pos;
   subRoutes?: { path: string; tile: string; tilePos?: Pos; pathPos: Pos }[];
-  /** §3.9 scroll-restoration. Absent ≡ default (true). `false` opts the tile out of automatic restore. */
+  /** Absent ≡ default (true). `false` opts the tile out of automatic restore. */
   scrollRestoration?: boolean;
   /** Clauses written more than once — the later one won silently. */
   duplicateClauses?: DuplicateName[];
@@ -161,9 +141,6 @@ export type EffectDef = {
 };
 
 export type AppHttpConfig = {
-  // `headers` stays as an Expr because it may reference live slot state
-  // (e.g. session tokens) and must be re-evaluated on every request, not frozen
-  // at mount.
   baseUrl?: Expr;
   headers?: Expr;
   on401?: NamedRef;
@@ -174,11 +151,7 @@ export type AppHttpConfig = {
   pos: Pos;
 };
 
-export type AppIndexedDbStore = {
-  name: string;
-  key: string;
-  indexes?: string[];
-};
+export type AppIndexedDbStore = IndexedDbStore;
 
 export type AppIndexedDbConfig = {
   name: string;
@@ -187,11 +160,6 @@ export type AppIndexedDbConfig = {
   pos: Pos;
 };
 
-// app.meta — document-level metadata reflected into <head> at mount.
-// All fields are static string literals (no slot refs): the head is set once
-// at startup and the AI should be able to read these values without running
-// the app. Keys are the spec's closed set (style.md §4): title, description,
-// og-image, favicon. Unknown keys are rejected by the parser.
 export type AppMetaConfig = {
   title?: string;
   description?: string;
@@ -200,27 +168,15 @@ export type AppMetaConfig = {
   pos: Pos;
 };
 
-// app.analytics — opts the app into a default `analytics.send` provider so an
-// app can emit measurement events without a host registering one (runtime.md
-// §10.4.6). `provider: "console"` logs each event; `"noop"` silently absorbs
-// them — useful in tests / preview environments where you want the capability
-// declared but no actual sink. A host-supplied provider for `analytics.send`
-// still takes precedence over this default (the inbound ecosystem seam).
 export type AppAnalyticsConfig = {
   provider: "console" | "noop";
   appId?: string;
   pos: Pos;
 };
 
-/**
- * A name written in the source, with where it was written.
- *
- * The pair exists so the two cannot drift apart: a name recorded without its
- * position leaves a diagnostic pointing at the enclosing definition and leaves
- * `rename` with nothing to rewrite, and every optional-position field so far
- * has had a fallback that the parser made unreachable.
- */
 export type NamedRef = { readonly name: string; readonly pos: Pos };
+
+export type DuplicateName = NamedRef;
 
 export type AppDef = {
   kind: "AppDef";
@@ -235,16 +191,6 @@ export type AppDef = {
   analytics?: AppAnalyticsConfig;
   /** Clauses written more than once — the later one won silently. */
   duplicateClauses?: DuplicateName[];
-  /**
-   * The record literals `meta` / `http` / `indexed-db` / `analytics` were
-   * folded from, kept so checks that walk expressions can still reach them.
-   *
-   * Each config above is a narrowed shape with only the fields it recognises,
-   * which is right for everything that reads it — and which is why the source
-   * has to be kept too: a duplicate key is a property of what was *written*,
-   * and folding a record into a config object is exactly where that evidence
-   * would otherwise be lost.
-   */
   configSources?: Expr[];
   pos: Pos;
 };
@@ -264,11 +210,6 @@ export type TypeExpr =
   | { kind: "TypeNominal"; inner: TypeExpr; refinement?: Refinement; pos: Pos }
   | { kind: "TypeRefinement"; inner: TypeExpr; refinement: Refinement; pos: Pos };
 
-/**
- * Node kinds of `TileExpr`. A tile argument's `value` is typed `Expr | TileExpr`
- * and every consumer has to tell them apart, so the set lives with the types it
- * describes rather than being re-listed at each site.
- */
 const TILE_EXPR_KINDS: ReadonlySet<string> = new Set([
   "TileCall",
   "TileFor",
@@ -281,15 +222,6 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
   return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
-/**
- * The end of an exhaustive `switch` over a node union.
- *
- * A walker whose `switch` ends in a bare `return` compiles unchanged when a
- * node kind is added, and then silently skips it — which for a walker that
- * collects (emits, `run-reducer` targets, references) means a subtree that
- * stops existing. Ending with `assertNever` makes `tsc` the thing that finds
- * the next one.
- */
 export function assertNever(node: never): void {
   void node;
 }
@@ -314,19 +246,7 @@ export type EventPattern =
       kind: "EffectEvent";
       effect: string;
       outcome: "ok" | "err";
-      /**
-       * The payload positionals this trigger binds, in order. `_` is carried
-       * as a name, the way `PVariant.binds` carries it. The position is what
-       * lets a bind that cannot be honoured be reported where the author wrote
-       * the name rather than at the effect it follows.
-       */
       binds: NamedRef[];
-      /**
-       * Where the effect name sits. Always the same token as `pos` here — the
-       * pattern starts at the name — and named separately because that is a
-       * property of this one pattern rather than of a position field, and
-       * because `refs` and the typechecker both want the name, not the pattern.
-       */
       effectPos: Pos;
       pos: Pos;
     }
@@ -334,14 +254,6 @@ export type EventPattern =
   | {
       kind: "LifecycleEvent";
       name: string;
-      /**
-       * The tile `tile.mount(X)` / `tile.unmount(X)` names, and where `X` sits.
-       *
-       * `name` folds the tile in as `tile.mount("X")` because that string is
-       * the key the runtime dispatches on, and reading the tile back out of it
-       * is a decode every caller would have to get right. Absent for the
-       * `app.*` and `route.*` patterns, which name no tile.
-       */
       tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
       pos: Pos;
     };
@@ -371,12 +283,6 @@ export type Statement =
       arms: { pattern: Pattern; body: Statement[] }[];
       pos: Pos;
     }
-  /**
-   * `panic("...")` written as a statement. Stdlib §2.4 places it inside a
-   * reducer, and a reducer body holds statements, not expressions — as an
-   * expression the only way to write it was to assign its result somewhere,
-   * which is the one thing it never produces.
-   */
   | { kind: "PanicStmt"; message: Expr; pos: Pos }
   | { kind: "NoopStmt"; pos: Pos };
 
@@ -388,41 +294,13 @@ export type Lvalue =
       base: Lvalue;
       field: string;
       pos: Pos;
-      /**
-       * The same dispatch decision `FieldAccess` carries, for the write side:
-       * `"field"` means the base is a record that has this field, so the
-       * segment is a plain key. Absent means the base type is unknown — also
-       * the case when codegen runs without `check()` — and keeps the
-       * name-based reading, under which `.get` is the unwrap.
-       */
       accessKind?: "field" | "shortcut";
     };
 
 // ----- Expressions -----
 
-/**
- * How a `Set` element or a `Map` key reads back at runtime. Both are stored
- * under JavaScript object keys, which are strings, so a member that hands keys
- * back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and the `$1`
- * of `Map(K, V).filter` — is told what its declared key type is represented
- * as. Recorded by the type checker on those members when the key type is a
- * number (`"number"`) or a `Bool` (`"bool"`); absent for a `Text` key, and
- * wherever the receiver's type is not known — also the case when codegen runs
- * without `check()` — so the string stands.
- *
- * Defined once, by the runtime that restores the keys (`restoreKey` in
- * `@kumikijs/runtime`'s `stdlib.ts`), and imported here as a type only, so
- * the compiler core stays free of runtime code.
- */
 export type { KeyKind };
 
-/**
- * How a list method's fragment binds its positionals, one value per bullet of
- * stdlib.md §2.2.3: `"pair"` takes each `Tuple(A, B)` apart into `$1` / `$2`;
- * `"key-value"` is a `Map`'s filter or map, handed the key and the value; `"value"`
- * binds the value whole as `$1` and nothing as `$2`; `"undecided"` leaves the
- * binding to the value's shape at run time, taking apart any 2-element array.
- */
 export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
 
 export type Expr =
@@ -430,11 +308,6 @@ export type Expr =
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
-  /**
-   * `(a, b, …)` — the value a `Tuple(T1, …, Tn)` types and a tuple pattern
-   * destructures. Two items minimum; one parenthesised expression is that
-   * expression, which is the older and more common reading of `( … )`.
-   */
   | { kind: "TupleLit"; items: [Expr, Expr, ...Expr[]]; pos: Pos }
   | { kind: "Ref"; name: string; pos: Pos }
   | { kind: "BinOp"; op: BinOp; lhs: Expr; rhs: Expr; pos: Pos }
@@ -444,13 +317,6 @@ export type Expr =
       base: Expr;
       field: string;
       pos: Pos;
-      /**
-       * Dispatch decision filled in by the type checker (ADR-002): `"field"`
-       * means the receiver is a record with this field, so codegen lowers a
-       * field read instead of a method shortcut (kills the #23 shadow). Absent /
-       * `"shortcut"` keeps the name-based shortcut dispatch (back-compat — also
-       * the case when codegen runs without `check()`).
-       */
       accessKind?: "field" | "shortcut";
       /** See {@link KeyKind}. Filled in by the type checker. */
       keyKind?: KeyKind;
@@ -465,15 +331,6 @@ export type Expr =
       pos: Pos;
       /** See {@link KeyKind}. Filled in by the type checker. */
       keyKind?: KeyKind;
-      /**
-       * How a `filter` / `map` / `find` / `sort-by` fragment binds `$1` / `$2`,
-       * decided by the type checker from the receiver's type (see
-       * {@link FragmentShape}). `"undecided"` when the checker could not
-       * decide the receiver's type, or the type is known but §2.2.3 gives the
-       * method no binding on it (a `Set`, `Map.find`, `Option.find`, …).
-       * Absent only when codegen runs without `check()`, which lowers it as
-       * `"undecided"`.
-       */
       fragmentShape?: FragmentShape;
     }
   | { kind: "RecordLit"; fields: { name: string; value: Expr; pos: Pos }[]; pos: Pos }
@@ -481,42 +338,16 @@ export type Expr =
       kind: "ListLit";
       items: Expr[];
       pos: Pos;
-      /**
-       * The literal is checked against a `Set` type, so codegen builds the Set
-       * a program's `add` would (`_s.setOf`) rather than an array. Filled in
-       * by the type checker (`checkAgainst`).
-       *
-       * Unlike `accessKind` and `keyKind`, a missing mark is not a safe
-       * default: a literal with no mark lowers to an array, which every Set
-       * member misreads — so codegen that runs without `check()` builds a
-       * wrong Set. And the mark is never cleared once set, so `checkAgainst`
-       * must only be called with a type the literal really is: a speculative
-       * probe (trying a variant arm, an overload) would leave it behind.
-       */
       asSet?: true;
     }
-  // `{}` is both the empty Map and the empty Set, and the declared type
-  // decides which; every entry is a key and a value, so a non-empty one is a Map.
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
-  // Test `expect` wildcards (spec/testing.md §8.2.2). Legal only inside a
-  // reducer-test `expect`; rejected elsewhere (E0109). `<any-id>` matches any
-  // generated id; `<slots.X>` matches slot X's post-execution value. `pos` is
-  // the `<`; `slotPos` is `X` itself, the identifier a rename of the slot
-  // rewrites.
   | { kind: "Wildcard"; wild: "any-id"; pos: Pos }
   | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
-  // `emit X(args)` used as an expression — yields the dispatched effect's
-  // `EffectId` (spec §2.1.1.1, http.md §6.4). Statement-form `emit` keeps the
-  // separate `Statement.Emit` so existing reducers without a capture stay
-  // unchanged.
   | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
-  // Theme-token reference (spec/style.md §4.3): `@colors.surface`,
-  // `@spacing.md`, `@typography.size.lg`. `group` is the top-level theme
-  // namespace; `path` is the dotted path beneath it (always ≥ 1 segment).
   | { kind: "TokenRef"; group: string; path: string[]; pos: Pos };
 
 export type MatchArm = {
@@ -561,10 +392,6 @@ export type TileMatchArm = {
   body: TileExpr;
 };
 
-/**
- * A tile call's argument: named (`level=2`), which always carries the position
- * of its name, or positional (`"Hi"`), which has neither.
- */
 export type TileArg =
   | { kind: "TileArg"; name: string; namePos: Pos; value: Expr | TileExpr }
   | { kind: "TileArg"; name?: never; namePos?: never; value: Expr | TileExpr };

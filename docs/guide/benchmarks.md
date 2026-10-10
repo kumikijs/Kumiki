@@ -63,7 +63,7 @@ What the table says:
 
 - **Mid-size apps build from the spec alone, in one pass.** Every vendor builds v2; Claude builds the ~600-LOC v3, and Codex misses it by one E0128 (a value written as a child).
 - **Codex builds the ~880-LOC v4** — the only vendor to survive the largest task. Claude holds through v3, then trips on an unsupported `match` pattern at v4 scale; Gemini degrades earliest.
-- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build ([#61](https://github.com/kumikijs/Kumiki/issues/61)) and rules the spec stated only by example ([#62](https://github.com/kumikijs/Kumiki/issues/62)). Both are fixed, and the table above is scored against the patched compiler. The remaining ❌ are genuine authoring errors the toolchain *correctly* rejects.
+- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build and rules the spec stated only by example. Both are fixed, and the table above is scored against the patched compiler. The remaining ❌ are genuine authoring errors the toolchain *correctly* rejects.
 
 ## Reproducing
 
