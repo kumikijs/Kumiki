@@ -6,7 +6,7 @@
 `view --with-deps` of a name that is not defined fails, as `view` does
 
 `kumiki view` reported a qualified name the file does not define as an error and
-exited `1`, as §9.2.5 asks. With `--with-deps` the same name printed an empty
+exited `1`, as ai-edit.md asks. With `--with-deps` the same name printed an empty
 line and exited `0`, so a typo read as a definition with nothing in it:
 
 ```

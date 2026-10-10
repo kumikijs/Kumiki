@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { kumikiGrammar } from "../src/index.ts";
 
-// Walk every rule object in the grammar (top-level patterns + repository),
-// collecting the regex strings and the `#name` include references so we can
-// assert the grammar is internally consistent and free of broken patterns.
 type Rule = {
   include?: string;
   match?: string;
