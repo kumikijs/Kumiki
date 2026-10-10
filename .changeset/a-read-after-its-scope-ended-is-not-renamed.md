@@ -37,7 +37,7 @@ carries it as `endedScope` (`if`, `for` or `match`):
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 8:18: Reference to undefined name "idx" — it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body (see docs/spec/language.md §1.6.7)
+E0103 undef-ref at 8:18: Reference to undefined name "idx" — it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body (see docs/spec/language.md)
 $ kumiki fix app.kumiki --apply
 (no auto-patches available)
 ```
