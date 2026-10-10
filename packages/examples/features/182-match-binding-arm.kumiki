@@ -1,4 +1,4 @@
-# Feature (language.md §1.9): a binding name is a pattern, so `| other -> …`
+# Feature: a binding name is a pattern, so `| other -> …`
 # is an arm after another arm just as it is first, and names whatever the arms
 # above it did not take. Each place a `match` is written takes one: a `fn`
 # body, a value a reducer assigns, a reducer statement, a value builtin's
