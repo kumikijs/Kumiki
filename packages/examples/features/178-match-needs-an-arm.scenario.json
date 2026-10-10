@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "label": "each one-arm match takes the pair apart",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["width: 3", "height: 4", "area: 12"]
+      }
+    },
+    {
+      "label": "the one-arm match statement writes the slot",
+      "do": { "click": "#widen" },
+      "expect": {
+        "noErrors": true,
+        "state": { "size": [4, 4] },
+        "domIncludes": ["width: 4", "height: 4", "area: 16"]
+      }
+    }
+  ]
+}

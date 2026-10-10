@@ -1,0 +1,36 @@
+# Feature: a `match` has at least one arm,
+# and one is enough. A tuple pattern takes the whole pair apart, so one arm
+# covers it, and a one-arm `match` stands below in each place a `match` is
+# written: a `fn` body, a reducer statement, a tile body, and a tile's child.
+#
+# A `match` with no arms is a parse error at the `match`, in every one of
+# those places:
+#
+#   tile Width = match size with
+#   # Parse error at …: match requires at least one arm
+
+slot size : Tuple(Int, Int) = (3, 4)
+
+fn area(s: Tuple(Int, Int)) -> Int = match s with | (w, h) -> w * h
+
+reducer widen on=ui.click(Widen)
+    do= match size with
+        | (w, h) -> size := (w + 1, h)
+
+tile Widen = button(text="widen") {id: "widen"}
+
+tile Width = match size with | (w, _) -> text("width: " + w.show)
+
+tile App
+    = column(
+        heading("one arm is enough"),
+        Widen,
+        Width,
+        match size with | (_, h) -> text("height: " + h.show),
+        text("area: " + area(size).show))
+      {pad: "lg", gap: "md"}
+
+app MatchNeedsAnArm
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

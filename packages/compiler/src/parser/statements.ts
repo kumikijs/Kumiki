@@ -1,13 +1,4 @@
-import type {
-  EventPattern,
-  Expr,
-  Lvalue,
-  NamedRef,
-  Pattern,
-  Pos,
-  Statement,
-  UiEventKind,
-} from "../ast.ts";
+import type { EventPattern, Expr, Lvalue, NamedRef, Pos, Statement, UiEventKind } from "../ast.ts";
 import { ExpressionParser } from "./expressions.ts";
 import { ParseError } from "./token-stream.ts";
 
@@ -201,18 +192,7 @@ export class StatementParser extends ExpressionParser {
       return { kind: "IfStmt", cond, consequent: thenBody, alternate: elseBody, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      const start = this.next();
-      const scrutinee = this.parseExpr();
-      this.eat("kw", "with");
-      const arms: { pattern: Pattern; body: Statement[] }[] = [];
-      while (this.matchOp("|")) {
-        this.next();
-        const pattern = this.parsePattern();
-        this.eat("op", "->");
-        const body = this.parseStatementBody();
-        arms.push({ pattern, body });
-      }
-      return { kind: "MatchStmt", scrutinee, arms, pos: start.pos };
+      return { kind: "MatchStmt", ...this.parseMatch(() => this.parseStatementBody()) };
     }
     if (this.matchOp("(") && this.matchTAt(1, "op", ")")) {
       const tok = this.next();
