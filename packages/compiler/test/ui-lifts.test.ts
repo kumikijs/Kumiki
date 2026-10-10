@@ -121,7 +121,7 @@ describe("firesUnheard / firesUnheardIn", () => {
     }
   });
 
-  it("records the absences that are runtime policy: link for click, five kinds for input", () => {
+  it("records the absences whose renderer does something else: link for click, five for input", () => {
     const recorded = Object.fromEntries(
       UI_LIFTS.filter((l) => l.firesUnheard).map((l) => [
         l.ev,
@@ -134,16 +134,30 @@ describe("firesUnheard / firesUnheardIn", () => {
     });
   });
 
-  it("groups the kinds of a body by what their renderer does instead, with the row's handler", () => {
+  it("groups the kinds of a body by what their renderer does instead, naming the row's handler", () => {
     expect(firesUnheardIn("input", ["text", "switch", "slider", "check"])).toEqual([
-      { kinds: ["check", "switch"], instead: 'listens for "change" instead', handler: "onInput" },
-      { kinds: ["slider"], instead: "listens for it only to write the bind", handler: "onInput" },
+      { kinds: ["check", "switch"], reason: 'listens for "change" instead, never calling onInput' },
+      { kinds: ["slider"], reason: "listens for it only to write the bind, never calling onInput" },
     ]);
   });
 
-  it("answers nothing for a kind whose element fires nothing, or a row with no record", () => {
+  it("gives the click row a default for every kind it leaves out, which only click has", () => {
+    expect(UI_LIFTS.filter((l) => l.everyElementFires).map((l) => l.ev)).toEqual(["click"]);
+  });
+
+  it("answers every kind the click row leaves out: link with its own reason, the rest the default", () => {
+    const leftOut = [...BUILTIN_TILES].filter((k) => !UI_EVENT_TILE_KINDS.click?.has(k)).sort();
+    expect(firesUnheardIn("click", BUILTIN_TILES)).toEqual([
+      { kinds: leftOut.filter((k) => k !== "link"), reason: "never calls onClick" },
+      { kinds: ["link"], reason: "keeps it for navigation, never calling onClick" },
+    ]);
+  });
+
+  it("answers nothing for a kind whose element fires nothing, a lifted kind, or a row with no record", () => {
     expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
     expect(firesUnheardIn("change", ["editable"])).toEqual([]);
+    expect(firesUnheardIn("focus", ["box", "text"])).toEqual([]);
+    expect(firesUnheardIn("click", ["button", "check", "radio", "switch"])).toEqual([]);
     expect(firesUnheardIn("focus", ["check"])).toEqual([]);
   });
 });

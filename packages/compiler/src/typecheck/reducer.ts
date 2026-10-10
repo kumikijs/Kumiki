@@ -132,14 +132,11 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A wrapped control's focused element and a kind whose renderer keeps the
-// event both do fire it, so "no descendant fires it" would be untrue for them.
+// A wrapped control's focused element and a kind whose renderer never calls
+// the handler both do fire it, so "no descendant fires it" would be untrue.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
   const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
-  const unheard = firesUnheardIn(ev, kinds).map(
-    (g) =>
-      `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
-  );
+  const unheard = firesUnheardClauses(ev, kinds);
   if (unheard.length === 0) {
     if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
     return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
@@ -148,13 +145,26 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
 }
 
 function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = g.kinds.join(" / ");
+  const kinds = kindsPhrase(g.kinds);
   const around = `the <${g.wrapper}> around its <${g.focused}>`;
   return g.bubbles
-    ? `a ${kinds} takes no "${ev}" listener on ${around}, ` +
+    ? `${kinds} takes no "${ev}" listener on ${around}, ` +
         `since one there would also hear every "${ev}" from the tiles inside it`
-    : `a ${kinds} listens on ${around}, ` +
+    : `${kinds} listens on ${around}, ` +
         `and the "${ev}" that <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
+}
+
+// W0212 and W0213 both give these as their reason, so the two say the same of
+// a kind.
+export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
+  return firesUnheardIn(ev, kinds).map(
+    (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
+  );
+}
+
+function kindsPhrase(kinds: readonly string[]): string {
+  const named = kinds.join(" / ");
+  return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
 }
 
 function checkStmt(
