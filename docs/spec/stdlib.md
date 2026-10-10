@@ -25,6 +25,8 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 let id = emit fetchQuote()
 ```
 
+Two emits of one effect yield two different ids, and cancelling one leaves the other running. The exception is `policy=latest` / `policy=latest-per-key(...)`, which run one request per key: every emit under a key yields that key's id, which names the request currently running under it ([HTTP §6.4](./http.md#_6-4-cancellation)).
+
 The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
 
 `EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).

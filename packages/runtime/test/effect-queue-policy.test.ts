@@ -40,14 +40,14 @@ function makeQueueApp(): { app: AppShape; log: string[]; peak: () => number } {
         event: { kind: "ui", ev: "click" },
         apply: () => ({
           slots: {},
-          emits: ["a", "b", "c"].map((arg) => ({ effect: "work", args: [arg] })),
+          // Each emit carries the id an `emit` expression stamps, so `kill` can name one.
+          emits: ["a", "b", "c"].map((arg) => ({ effect: "work", args: [arg], id: `work#${arg}` })),
         }),
       },
       {
         name: "kill",
         event: { kind: "ui", ev: "click" },
-        // Every `work` emit shares the key `_`, so this id names the queue.
-        apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["work:_"] }] }),
+        apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["work#b"] }] }),
       },
     ],
     root: () => ({ kind: "column", children: [] }),
@@ -76,15 +76,15 @@ describe("policy=queue runs one at a time", () => {
     dispose();
   });
 
-  it("releases a queued launch that http.cancel cancelled", async () => {
+  it("releases the queued launch that http.cancel cancelled, and only that one", async () => {
     const { app, log } = makeQueueApp();
     const { dispose } = mount(app, host);
     dispatch(app, "go");
     await tick(5);
     dispatch(app, "kill");
     await tick(120);
-    // `a` was already running when the cancel landed.
-    expect(log.filter((l) => l.startsWith("start"))).toEqual(["start a"]);
+    // `a` was already running when the cancel landed; `b` never starts.
+    expect(log.filter((l) => l.startsWith("start"))).toEqual(["start a", "start c"]);
     dispose();
   });
 

@@ -8,13 +8,14 @@ export {
   type ShownField,
   submitHeldBy,
 } from "./core/binding.ts";
-export { overridableInvoke, readStatus } from "./core/effects.ts";
+export { emitId, overridableInvoke, readStatus } from "./core/effects.ts";
 export {
   beginEnvRecord,
   beginEnvReplay,
   type EnvScopeOutcome,
   type EnvScopeReport,
   endEnvScope,
+  newId,
   readEnv,
   withEnvRecord,
   withEnvReplay,

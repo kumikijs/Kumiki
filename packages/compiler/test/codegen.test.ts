@@ -337,8 +337,9 @@ describe("codegen", () => {
       app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
     `;
     const js = compileOrFail(src);
-    expect(js).toContain('_emits.push({ effect: "search"');
-    expect(js).toContain('return "search:_";');
+    expect(js).toContain(
+      'const __e = { effect: "search", args: ["q"] }; _emits.push(__e); return (__e.id = _s.emitId(_effects["search"], __e));',
+    );
     expect(js).toContain('"stored": { value: "" }');
   });
 
@@ -358,8 +359,9 @@ describe("codegen", () => {
     const js = compileOrFail(src);
     expect(js).toMatch(/const __a0 = _s\.now\(\);/);
     expect(js).toMatch(/const __k = \(\(\w+\) => String\(\w+\)\)\(__a0\);/);
-    expect(js).toContain('_emits.push({ effect: "search", args: [__a0], key: __k })');
-    expect(js).toContain('return "search:" + __k;');
+    expect(js).toContain(
+      'const __e = { effect: "search", args: [__a0], key: __k }; _emits.push(__e); return (__e.id = _s.emitId(_effects["search"], __e));',
+    );
     const occurrences = (js.match(/_s\.now\(\)/g) ?? []).length;
     expect(occurrences).toBe(1);
   });

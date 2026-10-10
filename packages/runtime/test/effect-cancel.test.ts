@@ -1,6 +1,7 @@
-import type { AppShape, EffectResult } from "@kumikijs/runtime";
+import type { AppShape, EffectResult, EffectSpec, EmitSpec } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { emitId } from "../src/core.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
 
@@ -151,13 +152,17 @@ describe("dispatcher http.cancel", () => {
           name: "fire",
           event: { kind: "ui", ev: "click" },
           selector: { tile: "Fire" },
-          apply: () => ({ slots: {}, emits: [{ effect: "ping", args: [{ url: "/p" }] }] }),
+          // The id an `emit` expression stamps on its record, so `kill` names this request.
+          apply: () => ({
+            slots: {},
+            emits: [{ effect: "ping", args: [{ url: "/p" }], id: "ping#1" }],
+          }),
         },
         {
           name: "kill",
           event: { kind: "ui", ev: "click" },
           selector: { tile: "Kill" },
-          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["ping:_"] }] }),
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["ping#1"] }] }),
         },
         {
           name: "onOk",
@@ -298,5 +303,38 @@ describe("a latest-per-key emit that carries its key", () => {
 
   it("falls back to keyOf against the live slots when the emit carries no key", async () => {
     expect(await run({ effect: "load", args: ["x"] }, "killB")).toBe(true);
+  });
+});
+
+describe("the EffectId an emit yields", () => {
+  type Policy = EffectSpec["policy"];
+  const idOf = (policy: Policy, emit: EmitSpec): string => emitId(policy ? { policy } : {}, emit);
+
+  it.each([
+    ["no policy", undefined],
+    ["queue", { kind: "queue" }],
+    ["once", { kind: "once" }],
+    ["debounce", { kind: "debounce", ms: 5 }],
+    ["throttle", { kind: "throttle", ms: 5 }],
+  ] as [string, Policy][])("%s: one id per emit, and the one an emit carries", (_l, policy) => {
+    const a = idOf(policy, { effect: "up", args: ["x"] });
+    expect(idOf(policy, { effect: "up", args: ["x"] })).not.toBe(a);
+    expect(idOf(policy, { effect: "up", args: ["x"], id: a })).toBe(a);
+  });
+
+  it("latest: every emit of the effect yields the id of the one request it runs", () => {
+    const policy: Policy = { kind: "latest" };
+    expect(idOf(policy, { effect: "up", args: ["x"] })).toBe(
+      idOf(policy, { effect: "up", args: ["y"] }),
+    );
+  });
+
+  it("latest-per-key: emits under one key share an id, and two keys have two", () => {
+    const policy: Policy = { kind: "latest-per-key", keyOf: (input) => String(input) };
+    const x = idOf(policy, { effect: "up", args: ["x"] });
+    expect(idOf(policy, { effect: "up", args: ["x"] })).toBe(x);
+    expect(idOf(policy, { effect: "up", args: ["y"] })).not.toBe(x);
+    // The key the emit carries wins over the one `keyOf` reads.
+    expect(idOf(policy, { effect: "up", args: ["y"], key: "x" })).toBe(x);
   });
 });

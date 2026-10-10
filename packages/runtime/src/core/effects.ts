@@ -1,3 +1,4 @@
+import { newId, readEnv } from "./env.ts";
 import type {
   AppShape,
   CapabilityProvider,
@@ -42,6 +43,17 @@ export function withAnalyticsDefault(
   return { ...(hostProviders ?? {}), "analytics.send": provider };
 }
 
+// One rule, asked by a reducer body where its `emit` expression runs and by the dispatcher.
+// `latest` and `latest-per-key` run one request per key, and the id names it. Under every other
+// policy each emit is a request of its own; a record that carries no id (a statement-form `emit`,
+// an `app.init` entry) gets a new one, read as a `fresh-id` so a replayed body yields the same.
+export function emitId(eff: Pick<EffectSpec, "policy"> | undefined, emit: EmitSpec): string {
+  const p = eff?.policy;
+  if (p?.kind === "latest") return `${emit.effect}:_`;
+  if (p?.kind === "latest-per-key") return `${emit.effect}:${emit.key ?? p.keyOf(emit.args[0])}`;
+  return emit.id ?? `${emit.effect}#${readEnv("fresh-id", newId)}`;
+}
+
 type Dispatcher = {
   dispatch(emit: EmitSpec): void;
   dispose(): void;
@@ -65,13 +77,16 @@ export function makeEffectDispatcher(
   type TimerEntry = {
     kind: "debounce" | "throttle";
     h: ReturnType<typeof setTimeout>;
+    id?: string;
     token?: string;
     effectName?: string;
   };
-  type QueueEntry = { token: string; effectName: string };
+  type QueueEntry = { id: string; token: string; effectName: string };
   type Queue = { tail: Promise<void>; pending: QueueEntry[] };
   type RunState = {
+    // Keyed by `EffectId`: what `http.cancel` names and `latest` replaces.
     inflight: Map<string, AbortController>;
+    // Keyed by effect name: a debounce or throttle window is the effect's.
     timers: Map<string, TimerEntry>;
     onceSeen: Map<string, Set<string>>;
     queues: Map<string, Queue>;
@@ -86,7 +101,7 @@ export function makeEffectDispatcher(
   const launch = async (
     eff: EffectSpec,
     input: unknown,
-    key: string,
+    id: string,
     presetToken?: string,
   ): Promise<void> => {
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
@@ -99,7 +114,6 @@ export function makeEffectDispatcher(
       return;
     }
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
-    const id = `${eff.name}:${key}`;
     const ctl = new AbortController();
     state.inflight.set(id, ctl);
     try {
@@ -124,20 +138,21 @@ export function makeEffectDispatcher(
             ic.abort();
             state.inflight.delete(target);
           }
-          const q = state.queues.get(target);
-          if (q) {
-            const waiting = q.pending.splice(0, q.pending.length);
-            for (const e of waiting) {
-              if (e.token) onPolicyCancel?.(e.token, e.effectName);
-            }
+          for (const q of state.queues.values()) {
+            const i = q.pending.findIndex((e) => e.id === target);
+            if (i === -1) continue;
+            const [e] = q.pending.splice(i, 1);
+            if (e?.token) onPolicyCancel?.(e.token, e.effectName);
+            break;
           }
-          const t = state.timers.get(target);
-          if (t !== undefined && t.kind === "debounce") {
+          for (const [name, t] of state.timers) {
+            if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
-            state.timers.delete(target);
+            state.timers.delete(name);
             if (t.token && t.effectName) {
               onPolicyCancel?.(t.token, t.effectName);
             }
+            break;
           }
           onCancel?.(target);
         }
@@ -145,19 +160,18 @@ export function makeEffectDispatcher(
       }
       const input = emit.args[0];
       const policy = eff.policy ?? { kind: "default" as const };
-      const key = policy.kind === "latest-per-key" ? (emit.key ?? policy.keyOf(input)) : "_";
-      const id = `${eff.name}:${key}`;
+      const id = emitId(eff, emit);
       if (policy.kind === "once") {
         const seen = state.onceSeen.get(eff.name) ?? new Set<string>();
         const k = JSON.stringify(input ?? null);
         if (seen.has(k)) return;
         seen.add(k);
         state.onceSeen.set(eff.name, seen);
-        void launch(eff, input, key);
+        void launch(eff, input, id);
         return;
       }
       if (policy.kind === "debounce") {
-        const prev = state.timers.get(id);
+        const prev = state.timers.get(eff.name);
         if (prev) {
           clearTimeout(prev.h);
           if (prev.token && prev.effectName) {
@@ -166,32 +180,32 @@ export function makeEffectDispatcher(
         }
         const token = onLaunch?.(eff.name, input) ?? "";
         const h = setTimeout(() => {
-          state.timers.delete(id);
-          void launch(eff, input, key, token);
+          state.timers.delete(eff.name);
+          void launch(eff, input, id, token);
         }, policy.ms);
-        state.timers.set(id, { kind: "debounce", h, token, effectName: eff.name });
+        state.timers.set(eff.name, { kind: "debounce", h, id, token, effectName: eff.name });
         return;
       }
       if (policy.kind === "queue") {
         const token = onLaunch?.(eff.name, input) ?? "";
-        const entry: QueueEntry = { token, effectName: eff.name };
-        const q = state.queues.get(id) ?? { tail: Promise.resolve(), pending: [] };
+        const entry: QueueEntry = { id, token, effectName: eff.name };
+        const q = state.queues.get(eff.name) ?? { tail: Promise.resolve(), pending: [] };
         q.pending.push(entry);
         const runNext = async (): Promise<void> => {
           const idx = q.pending.indexOf(entry);
           if (idx === -1) return;
           q.pending.splice(idx, 1);
-          await launch(eff, input, key, token);
+          await launch(eff, input, id, token);
         };
         q.tail = q.tail.then(runNext, runNext);
-        state.queues.set(id, q);
+        state.queues.set(eff.name, q);
         return;
       }
       if (policy.kind === "throttle") {
-        if (state.timers.has(id)) return;
-        const h = setTimeout(() => state.timers.delete(id), policy.ms);
-        state.timers.set(id, { kind: "throttle", h });
-        void launch(eff, input, key);
+        if (state.timers.has(eff.name)) return;
+        const h = setTimeout(() => state.timers.delete(eff.name), policy.ms);
+        state.timers.set(eff.name, { kind: "throttle", h });
+        void launch(eff, input, id);
         return;
       }
       if (policy.kind === "latest" || policy.kind === "latest-per-key") {
@@ -200,10 +214,10 @@ export function makeEffectDispatcher(
           ic.abort();
           state.inflight.delete(id);
         }
-        void launch(eff, input, key);
+        void launch(eff, input, id);
         return;
       }
-      void launch(eff, input, key);
+      void launch(eff, input, id);
     },
     dispose(): void {
       const pendingTimers = [...state.timers.values()];
