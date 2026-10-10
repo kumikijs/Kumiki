@@ -1,0 +1,56 @@
+# Feature (testing.md): the state `run-reducer` answers is the whole
+# slot table — the declared defaults, then `given.slots`, then the reducer's
+# writes — so a property-test invariant reads a slot the trial neither seeds
+# nor writes at its default, as a reducer-test's `expect` does.
+#
+#   given     = {slots: {count: n}, event: {type: ui.click, target: Inc}}
+#   invariant = run-reducer(inc).slots.label == "x"
+#
+# A chain hands the table on, so every step answers every slot, and the
+# runtime's `route` is part of it.
+
+slot count : Int  = 0
+slot label : Text = "x"
+
+reducer inc on=ui.click(Inc) do= count := count + 1
+
+tile Inc = button(text="+") {id: "inc"}
+
+tile App = column(
+  Inc,
+  text("count: " + count.show),
+  text("label: " + label))
+
+app RunReducerFullState
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
+
+test label-keeps-its-default =
+    property-test
+        for-all   = {n: Int where between(0, 5)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: Inc}}
+        invariant = run-reducer(inc).slots.label == "x"
+
+test count-steps-by-one =
+    property-test
+        for-all   = {n: Int where between(0, 5)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: Inc}}
+        invariant = run-reducer(inc).slots.count == n + 1
+
+test a-chain-keeps-every-slot =
+    property-test
+        for-all   = {n: Int where between(0, 5)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: Inc}}
+        invariant = run-reducer(inc).run-reducer(inc).slots.label == "x" && run-reducer(inc).run-reducer(inc).slots.count == n + 2
+
+test the-route-is-in-the-table =
+    property-test
+        for-all   = {n: Int where between(0, 5)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: Inc}}
+        invariant = run-reducer(inc).slots.route.path == "/"
+
+test reducer-test-sees-the-default =
+    reducer-test inc
+        given  = {slots: {count: 3}, event: {type: ui.click, target: Inc}}
+        expect = {slots: {count: 4, label: "x"}, effects: []}
