@@ -1,4 +1,4 @@
-# Feature (language.md §1.9): a `match` used as a value has an arm for every
+# Feature (language.md): a `match` used as a value has an arm for every
 # value of its scrutinee's type.
 #
 #   match color with | Red -> Green | Green -> Blue | Blue -> Red      # every variant

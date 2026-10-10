@@ -1,4 +1,4 @@
-# Feature (#190): a `contenteditable` div (editable tile) bound to a slot.
+# Feature: a `contenteditable` div (editable tile) bound to a slot.
 # The user types into it — the bind loop keeps slot and DOM textContent in
 # sync so the patch path skips writing the same value, preserving caret
 # and IME composition. A reducer that touches an unrelated slot still
@@ -15,7 +15,7 @@ tile Editor  = editable(bind=note) {id: "editor"}
 
 tile App
     = column(
-        heading("editable preserves focus (#190)"),
+        heading("editable preserves focus"),
         TickBtn,
         Editor,
         text("note: " + note),

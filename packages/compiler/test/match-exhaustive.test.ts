@@ -1,19 +1,7 @@
-import { check, codegen, lex, parse } from "@kumikijs/compiler";
+import { codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-// A `match` used as a value evaluates to one of its arms (language.md §1.9),
-// so its arms have to cover every value of the scrutinee's type. One that
-// leaves a value out is E0227, naming each value it leaves out as a pattern.
-
-const errsOf = (src: string) => check(parse(lex(src)));
-const app = (defs: string): string =>
-  `${defs}
-tile B = button(text="x")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
+import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
 const DEFS = `type Color = Red | Green | Blue
 type Dim = { w: Int }
@@ -36,9 +24,8 @@ slot n  : Int               = 0
 slot ns : List(Int)         = []
 slot nm : Text              = ""`;
 
-const diagnostics = (defs: string) =>
-  errsOf(app(`${DEFS}\n${defs}`)).map((e) => `${e.code} ${e.message}`);
-const inReducer = (body: string) => diagnostics(`reducer r on=ui.click(B) do= ${body}`);
+const diagnostics = (defs: string) => summariesOf(withButtonApp(`${DEFS}\n${defs}`));
+const inReducer = (body: string) => summariesOf(withReducer(DEFS, body));
 
 const missing = (type: string, witnesses: string) =>
   `E0227 This match on "${type}" has no arm for ${witnesses}, and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with \`_ -> …\``;
@@ -47,11 +34,10 @@ describe("a value match whose arms leave a value out", () => {
   it("names the variant of a union it has no arm for, in a reducer and in a tile", () => {
     const reducer = `reducer r on=ui.click(B) do= n := match c with | Red -> 1 | Green -> 2`;
     const tile = `tile Name = text("name: " + (match c with | Red -> "r" | Green -> "g"))`;
-    const src = app(`${DEFS}\n${reducer}\n${tile}`);
+    const src = withButtonApp(`${DEFS}\n${reducer}\n${tile}`);
     const lines = src.split("\n");
     const message = missing("Color", "Blue").slice("E0227 ".length);
-    // Each report sits on its own `match` keyword (columns are 1-based).
-    expect(errsOf(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
+    expect(checkSource(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
       ["E0227", message, lines.indexOf(reducer) + 1, reducer.indexOf("match") + 1],
       ["E0227", message, lines.indexOf(tile) + 1, tile.indexOf("match") + 1],
     ]);
@@ -167,10 +153,6 @@ describe("a value match that covers its scrutinee's type", () => {
 
 describe("the forms the rule leaves to another diagnostic or another construct", () => {
   it("reports a variant arm on a type with no variants as E0208 alone", () => {
-    // `Bool`, `Int` and `Text` have no variants a pattern can name and no
-    // literal patterns (§1.9.1), so `_` or a name covers them. A variant arm
-    // there is the pattern's own mistake; coverage is judged once every arm
-    // fits the scrutinee.
     expect(
       inReducer(`n := match b with | True -> 1 | False -> 0`).map((d) => d.slice(0, 5)),
     ).toEqual(["E0208", "E0208"]);
@@ -194,8 +176,6 @@ describe("the forms the rule leaves to another diagnostic or another construct",
   });
 
   it.each([
-    // `fold`'s result is decided by its lambda, which the checker does not
-    // type, so nothing says which variants the scrutinee can be.
     ["a scrutinee", `n := match cs.fold(c, $2) with | Red -> 1 | Green -> 2`],
     ["a tuple item", `n := match (cs.fold(c, $2), o) with | (Red, _) -> 1 | (Green, Some(v)) -> v`],
     ["the props of the tile that fired", `n := match $el.choice with | Red -> 1`],
@@ -217,9 +197,8 @@ describe("the forms the rule leaves to another diagnostic or another construct",
 
 describe("a value match that no arm matches at run time", () => {
   it("lowers its fall-through to a panic naming where the match is, never to undefined", () => {
-    // codegen() runs without check(), so a non-exhaustive match reaches it.
     const line = `reducer r on=ui.click(B) do= n := match c with | Red -> 1 | Green -> 2`;
-    const src = app(`${DEFS}\n${line}`);
+    const src = withButtonApp(`${DEFS}\n${line}`);
     const { js } = codegen(parse(lex(src)), { runtimeSpecifier: "./runtime.js" });
     const at = `${src.split("\n").indexOf(line) + 1}:${line.indexOf("match") + 1}`;
     expect(js).not.toContain("return undefined");
