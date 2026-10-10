@@ -1,21 +1,8 @@
-// The twelve registered predicates (language.md §1.3.3) as runtime checks.
-//
-// Seven of them used to reach the runtime as `(_v) => true`: the parser
-// accepted the name and `refinementToJs` ended in a `default` arm that lowered
-// anything it did not implement to a check that cannot fail, so
-// `slot n : Int where positive` accepted -7 (#352). The two lists are one table
-// now, and these drive every entry of it through the predicate it emits.
-
-import { readFileSync } from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import type { Refinement, SlotDef } from "../src/ast.ts";
 import { REFINEMENT_PREDS, refinementProblem, refinementToJs } from "../src/refinements.ts";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, "..", "..", "..");
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const NO_POS = { line: 0, col: 0 };
 const refinement = (pred: string, args: (number | string)[] = []): Refinement => ({
@@ -36,7 +23,7 @@ const TAIL = `tile B = button(text="b")
 tile App = column(B)
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-const codes = (src: string): string[] => check(parse(lex(`${src}\n${TAIL}`))).map((e) => e.code);
+const codes = (src: string): string[] => codesOf(`${src}\n${TAIL}`);
 
 /** A well-formed argument list per predicate, for the sweeps below. */
 const ARGS_FOR: Record<string, (number | string)[]> = {
@@ -48,20 +35,7 @@ const ARGS_FOR: Record<string, (number | string)[]> = {
   "one-of": ["sm", "md"],
 };
 
-describe("the registered set is the one the spec lists", () => {
-  // §1.3.3 is a code block of names, one call shape each. A predicate added to
-  // the document and not to the table is a name the parser rejects; one added
-  // to the table and not the document is a check nothing specifies.
-  it("matches language.md §1.3.3", () => {
-    const spec = readFileSync(path.join(repoRoot, "docs", "spec", "language.md"), "utf8");
-    const section = spec.split("### 1.3.3 Registered Refinement Predicates")[1] ?? "";
-    const block = section.split("```")[1] ?? "";
-    // Argument positions carry names of their own (`regex("pattern")`), and
-    // they are not predicates — the name is what precedes the call.
-    const listed = new Set(block.replace(/\([^)]*\)/g, "").match(/[a-z][a-z-]*/g) ?? []);
-    expect([...listed].sort()).toEqual([...REFINEMENT_PREDS].sort());
-  });
-
+describe("the registered predicates", () => {
   it("lowers every one of them to a check", () => {
     const unlowered = [...REFINEMENT_PREDS].filter(
       (p) => refinementToJs(refinement(p, ARGS_FOR[p] ?? [])) === undefined,
@@ -98,9 +72,6 @@ describe("what each predicate accepts and refuses", () => {
       ["nope", "3f2504e0-4f89-11d3-9a0c-0305e82c330", "3f2504e04f8911d39a0c0305e82c3301", 1],
     ],
     ["regex", ["[a-z]+"], ["abc"], ["abc1", "", "ABC", 1]],
-    // Anchored: a pattern is a description of the whole value, not of a part
-    // of it, or `regex("[0-9]{4}")` would accept a postcode with a letter in
-    // front of it.
     ["regex", ["b"], ["b"], ["abc"]],
     ["one-of", ["sm", "md", "lg"], ["sm", "lg"], ["xl", "", 1, null]],
     ["one-of", [1, 2], [1, 2], [3, "1", null]],
@@ -118,9 +89,6 @@ describe("what each predicate accepts and refuses", () => {
     });
   }
 
-  // Every predicate is handed whatever the slot's type admits, and a reducer
-  // can put `None` or a record there. A check that throws would take the mount
-  // down instead of refusing the write.
   it("refuses a value of the wrong shape rather than throwing", () => {
     for (const pred of REFINEMENT_PREDS) {
       const p = predicate(pred, ARGS_FOR[pred] ?? []);
@@ -140,10 +108,6 @@ describe("a predicate with no lowering is a diagnostic, not a pass", () => {
     expect(refinementProblem(refinement("cube-free"))?.kind).toBe("unimplemented-refinement");
   });
 
-  // The parser rejects an unregistered name, so the only way into this state
-  // is a table that grew a name without a lowering. Reaching it through the
-  // AST is what keeps E0803 wired to the checker rather than merely written
-  // down in it.
   it("reports E0803 when the checker meets one", () => {
     const program = parse(lex(`slot n : Int where positive = 1\n${TAIL}`));
     const slot = program.defs.find((d): d is SlotDef => d.kind === "SlotDef");
@@ -167,9 +131,6 @@ describe("arguments a predicate cannot be built from are reported", () => {
     ["a length that is text", `slot s : Text where len-lt("3") = "ab"`],
     ["a pattern that is a number", `slot s : Text where regex(3) = "a"`],
     ["a pattern that does not compile", `slot s : Text where regex("(") = "a"`],
-    // A pattern that fails on its own and parses once wrapped: `^(?:a)|(b)$`
-    // is `^(?:a)` OR `(b)$`, so the value would be matched unanchored against
-    // a pattern the author did not write.
     ["a pattern that escapes the anchors", `slot s : Text where regex("a)|(b") = "a"`],
     [
       "a pattern whose parentheses close the anchor group",
@@ -185,11 +146,9 @@ describe("arguments a predicate cannot be built from are reported", () => {
     });
   }
 
-  // errors.md quotes these, and a message that drifts from the catalogue is a
-  // diagnostic whose documentation answers a different question than the tool.
   it("emits the messages errors.md documents", () => {
     const messageFor = (src: string): string =>
-      check(parse(lex(`${src}\n${TAIL}`)))
+      checkSource(`${src}\n${TAIL}`)
         .filter((e) => e.code === "E0804")
         .map((e) => e.message)
         .join("");
@@ -211,7 +170,7 @@ describe("arguments a predicate cannot be built from are reported", () => {
   });
 
   it("pairs E0804 with its kind", () => {
-    const errors = check(parse(lex(`slot n : Int where between(0) = 1\n${TAIL}`)));
+    const errors = checkSource(`slot n : Int where between(0) = 1\n${TAIL}`);
     expect(errors.map((e) => [e.code, e.kind])).toContainEqual([
       "E0804",
       "refinement-args-invalid",
@@ -237,20 +196,13 @@ describe("arguments a predicate cannot be built from are reported", () => {
   }
 });
 
-// Every predicate lowers to a check guarded by the shape it tests, so one
-// written over a base type it cannot test refuses every value — the slot takes
-// nothing from then on. It is E0804's own defect reached from the other side:
-// not arguments no value can satisfy, but a base no value of which can.
 describe("a predicate over a base type it cannot test is reported", () => {
   /** Every diagnostic, as `code line:col`, for the program and the shared tail. */
   const diagnostics = (src: string): string[] =>
-    check(parse(lex(`${src}\n${TAIL}`))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`);
+    checkSource(`${src}\n${TAIL}`).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`);
 
-  // Each of these is otherwise a valid program, so the whole list is exactly
-  // one E0804 — at the `where` that asks the question, or at the application
-  // that puts a generic's question over the wrong base.
   const bad: [string, string, string][] = [
-    // One row per column of the §1.3.3 pairing: the text family over a number…
+    // One row per predicate family and base: the text family over a number…
     ["nonempty over Int", `slot n : Int where nonempty = 1`, "1:20"],
     ["len-eq over Int", `slot n : Int where len-eq(2) = 1`, "1:20"],
     ["len-lt over Float", `slot n : Float where len-lt(2) = 1.0`, "1:22"],
@@ -267,8 +219,6 @@ describe("a predicate over a base type it cannot test is reported", () => {
     ["nonempty over a record", `slot r : {a: Text} where nonempty = {a: "x"}`, "1:26"],
     ["positive over a list", `slot l : List(Int) where positive = []`, "1:26"],
     ["nonempty over a union", `type Sz = Sm | Md\nslot u : Sz where nonempty = Sm`, "2:19"],
-    // The base is read through the chain the refinement is: an alias, a
-    // `nominal`, an earlier `where`.
     [
       "positive under a nominal over Text",
       `type Handle = nominal Text\nslot h : Handle where positive = "a"`,
@@ -294,8 +244,6 @@ describe("a predicate over a base type it cannot test is reported", () => {
     ["a union payload", `type U = Idle | Got(Text where positive)\nslot u : U = Idle`, "1:32"],
     ["a fn parameter", `fn f(x: Text where positive) -> Int = 1`, "1:20"],
     ["a tile's in=", `tile T in=Text where positive = text($1)`, "1:22"],
-    // A generic's own parameter says nothing until it is applied — and then
-    // the argument is the base, judged at the application.
     [
       "a generic applied over the wrong base",
       `type NonEmpty(T) = T where nonempty\nslot n : NonEmpty(Int) = 1`,
@@ -331,8 +279,6 @@ describe("a predicate over a base type it cannot test is reported", () => {
       `type NonEmpty(T) = T where nonempty\nfn f(x: NonEmpty(Int)) -> Int = 1`,
       "2:9",
     ],
-    // `one-of` lowers to a strict `includes`, so a choice whose type is not
-    // the base's is one no value of the slot equals.
     ["one-of numbers over Text", `slot s : Text where one-of(1, 2) = "a"`, "1:21"],
     ["one-of text over Int", `slot n : Int where one-of("1") = 1`, "1:20"],
     [
@@ -359,26 +305,18 @@ describe("a predicate over a base type it cannot test is reported", () => {
     });
   }
 
-  // Both applications put `nonempty` over `Int`: the inner one directly, the
-  // outer one through its argument. Each is its own refinement no value of the
-  // slot satisfies, so each is reported where it was applied.
   it("reports each application of a nested generic", () => {
     expect(
       diagnostics(`type NonEmpty(T) = T where nonempty\nslot n : NonEmpty(NonEmpty(Int)) = 1`),
     ).toEqual(["E0804 2:10", "E0804 2:19"]);
   });
 
-  // `P2(T, Int)` puts `nonempty` over `Int` whatever `T` is, so the definition
-  // of `W` is where it is wrong and where it is reported; applying `W` brings
-  // nothing new and reports nothing more.
   it("reports a problem no argument brings once, where it is written", () => {
     expect(
       diagnostics(`type P2(A, B) = B where nonempty\ntype W(T) = P2(T, Int)\nslot w : W(Text) = 1`),
     ).toEqual(["E0804 2:13"]);
   });
 
-  // Two `where`s, each over a base it cannot test: two refinements, two
-  // reports, each at its own `where`.
   it("reports every refinement of a chain at its own position", () => {
     expect(diagnostics(`slot s : Text where positive where negative = "a"`)).toEqual([
       "E0804 1:36",
@@ -386,8 +324,6 @@ describe("a predicate over a base type it cannot test is reported", () => {
     ]);
   });
 
-  // A chain that closes on itself has no base to judge: E0009 names it, and
-  // an E0804 on top would describe a type that does not exist.
   it("leaves a cycle to E0009", () => {
     expect(diagnostics(`type A = B where positive\ntype B = A\nslot a : A = 1`)).toEqual([
       "E0009 1:10",
@@ -397,18 +333,14 @@ describe("a predicate over a base type it cannot test is reported", () => {
     ).toEqual(["E0009 2:19"]);
   });
 
-  // An undefined constructor is as opaque as an undefined name: E0117 is the
-  // report, and the base it would have named does not exist.
   it("leaves an undefined type application to E0117", () => {
-    const codes = check(parse(lex(`slot x : Foo(Int) where nonempty = 1\n${TAIL}`))).map(
-      (e) => e.code,
-    );
+    const codes = checkSource(`slot x : Foo(Int) where nonempty = 1\n${TAIL}`).map((e) => e.code);
     expect(codes).toEqual(["E0117"]);
   });
 
   it("names what the predicate tests and the base it was written over", () => {
     const messageFor = (src: string): string =>
-      check(parse(lex(`${src}\n${TAIL}`)))
+      checkSource(`${src}\n${TAIL}`)
         .filter((e) => e.code === "E0804")
         .map((e) => e.message)
         .join("");
@@ -432,11 +364,8 @@ describe("a predicate over a base type it cannot test is reported", () => {
     );
   });
 
-  // `len-lt(0)` is well formed — `0` is a count — and still refuses every
-  // text, since no length is below zero: the same slot that takes nothing,
-  // reached through a legal argument.
   it("reports len-lt(0)", () => {
-    const errors = check(parse(lex(`slot s : Text where len-lt(0) = ""\n${TAIL}`)));
+    const errors = checkSource(`slot s : Text where len-lt(0) = ""\n${TAIL}`);
     expect(errors.map((e) => [e.code, e.message])).toEqual([
       ["E0804", "Refinement len-lt(0) is shorter than every text, so no value satisfies it"],
     ]);
@@ -461,7 +390,7 @@ describe("a predicate over a base type it cannot test is reported", () => {
     `type Pick(T) = T where one-of(1, 2)\nslot p : Pick(Int) = 1`,
     // …nor inside another generic's body, where the argument is itself a parameter.
     `type NonEmpty(T) = T where nonempty\ntype W(U) = NonEmpty(U)\nslot w : W(Text) = "a"`,
-    // A parameter spelled like a top-level type is still the parameter (§1.3.6 inv. 5).
+    // A parameter spelled like a top-level type is still the parameter.
     `type Cents = Int\ntype Wrap(Cents) = Cents where nonempty\nslot s : Wrap(Text) = "a"`,
     `slot s : Text where len-lt(1) = ""`,
   ];

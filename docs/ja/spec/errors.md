@@ -20,7 +20,7 @@ type KumikiError = {
 
 パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。
 
-チェッカのコードは `packages/compiler/src/typecheck.ts` から発行され、`E0000` は上記 2 つのツールが付与する。機械化された spec-drift ガード（`packages/compiler/test/spec-drift.test.ts`）は、コードを付与するすべてのファイルから実装側の集合を抽出する — ツール側で発明されドキュメント化されていないコードは、チェッカ側で発明された場合とまったく同じように失敗する。
+チェッカのコードは `packages/compiler/src/typecheck.ts` と `packages/compiler/src/typecheck/` 配下のモジュールから発行され、`E0000` は上記 2 つのツールが付与する。
 
 ## コード体系
 
@@ -551,7 +551,7 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
-> `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
+> `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
@@ -611,7 +611,7 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 
 `input(type="file")` には `bind=` でスロットを束ねられない。`bind=` の双方向束縛の互換型テーブル（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）にファイルを受け入れる型が無く、ファイルは change イベントの payload 経由でのみ受け取れる（[Forms §5.10](./forms.md#_5-10-file-upload)）。
 
-> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
+> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head (see docs/spec/forms.md)`
 
 ```kumiki invalid
 slot avatar : Option(File) = None
@@ -630,8 +630,8 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 `input` の `accept` / `multiple` prop は `type="file"` のときのみ有効。これらは下層の `<input>` 要素にそのまま流し込まれるため、HTML 仕様としてファイルピッカーに対してのみ意味を持つ（[Forms §5.10](./forms.md#_5-10-file-upload)）。他の `type` で使う場合 — あるいは `type` を省略した場合（デフォルトは `"text"`）— は無効な HTML となり、潜在バグになる。診断は `type` が静的に `"file"` でないと確定できる場合のみ発火し、非リテラルの `type=` 式には触らない。
 
-> `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
-> `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
+> `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`
+> `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`
 
 ```kumiki invalid
 slot draft : Text = ""
@@ -840,7 +840,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 `bind` が書き戻すコントロール — `input`・`textarea`・`select`・`slider`・`check`・`switch`・`radio`・`editable` — に、引数または props ブロックとして `strict` prop が書かれている。
 
-> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md)`
 
 [フォーム §5.1.2](./forms.md#_5-1-2-refinement-の扱い) の以前の版は、第 2 のモードとして `strict=false` を規定していた：refinement が拒否する値を受け取り、フォーム単位の `valid` フラグを false にする。これを実装したものはなく、そのフラグを読むものも言語のどこにもなかったので、この prop は `check` を通り、何もしなかった — フィールドを緩めるつもりでこれを書いた作者は、その兆候もないまま厳格な挙動を得ていた。現在の章のモードは 1 つである：refinement に拒否された bind は slot をそのままにし、フィールドは入力されたものを表示し続け、`error(field=…)` がそのメッセージを出す。
 
@@ -869,7 +869,7 @@ tile が `error-boundary` に指定したフォールバックが、`PanicInfo` 
 
 `radio` に `bind=` があり、`value=` がない。
 
-> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`
+> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md)`
 
 bind した radio が選ばれたときに書き込むものは 1 つ — 自分の値である（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。`value=` がなければ書くものがない。これを報告するものはほかにない：checker が radio の `value=` を bind 先の slot と照合するのは `value=` があるときだけであり、プログラムはコンパイルされ、マウントされ、クリックにも耐える。そのクリックがしたのは slot への `undefined` の書き込みで、refinement のない slot は型によらずそれを受け取る。すると slot がその値と等しいときに選択される radio は、`undefined` が `undefined` と等しいので選択状態で表示され、一方で slot に対するすべての `match` はどの arm にも一致せず、それが描画していたブロックは何も言わずに消える。
 
@@ -881,8 +881,8 @@ bind した radio が選ばれたときに書き込むものは 1 つ — 自分
 
 `input` が、そのフィールド種別と組み合わせられない型を bind している（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。
 
-> `input(bind=…) with type="<kind>" cannot bind a value of type <T>: a <base> binds with type="…" / … (see docs/spec/forms.md §5.1.1)`
-> `input(bind=…) cannot bind a value of type <T>: an input binds a Text, Int, Float or Time[ — bind its payload with ".get"] (see docs/spec/forms.md §5.1.1)`
+> `input(bind=…) with type="<kind>" cannot bind a value of type <T>: a <base> binds with type="…" / … (see docs/spec/forms.md)`
+> `input(bind=…) cannot bind a value of type <T>: an input binds a Text, Int, Float or Time[ — bind its payload with ".get"] (see docs/spec/forms.md)`
 
 bind した `input` はテキストを bind 位置の基底型として読み、その基底型の値を表示し返すので、`Int` / `Float` / `Time` はテキストが往復できるフィールド種別とだけ組み合わせられる：`Int` / `Float` は `type="number"`、`Time` は `type="date"` か `type="datetime-local"`。それ以外のフィールド種別では、往復が何も言わずに壊れる。`type="time"`（あるいは `month`、`week`、`type` なし）のフィールドの `Time` にはミリ秒の数値が表示され、編集のたびに `Time.parse` がそれを拒否するので、フィールドは決して書き込めない。date フィールドの `Int` は、日付ピッカーが保持できない数値を表示する。`Text` は入力されたとおりに書き込まれるので、値が入力されたテキストそのものであるどのフィールドとも組み合わせられる — date フィールドの `Text` は `"2026-03-04"` を保持してそのまま表示する — ので、そのようなテキストを持たないフィールド（`type="checkbox"` など）でだけ報告される。
 
@@ -932,7 +932,7 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 bind していないトグルが選択状態を読む引数 — `check` / `switch` の `value=`、`radio` の `selected=` — が `bind=` の隣に書かれている。
 
-> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md §5.1.1)`
+> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md)`
 
 `bind=` があれば、ボックスにチェックが入るか、radio が選ばれるかは bind した値だけが決める（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。もう一方の引数は同じ問いへの 2 つめの答えであり、読まれない。[W0214](#w0214-fmt-placeholder-argument-mismatch-warning) が報告する引数と同じく、それは何の痕跡も残さない — 引数が何を言っても、コントロールは bind の言うとおりに表示される — ので、最初から渡していないプログラムとどの層も区別できない。radio 自身の `value=` はこの引数ではない：選ばれたときに書き込む値であり、読まれる。
 
