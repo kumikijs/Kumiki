@@ -1,9 +1,3 @@
-// Kumiki stdlib (#71): the collection / value helpers that codegen lowers
-// `_s.*` calls to (docs/spec/stdlib.md §2.2). This is the PRODUCTION slice —
-// the reducer-test / property-test harness lives in `testkit.ts` and is merged
-// into the classic `_stdlib` export by `index.ts`, so `kumiki build` output
-// never ships the test runners.
-
 import {
   _setPathHelper,
   currentEpisodeId,
@@ -25,19 +19,6 @@ import {
   userPanicInfo,
 } from "./core.ts";
 
-/**
- * How a `Set` element or a `Map` key reads back from the string it is stored
- * under (`entryKey` in core.ts) — the checker records it from the receiver's
- * declared key type, and codegen passes it to the readers (`keys` / `entries`
- * / `to-list`, and the predicate of a Map's `filter`). `"value"` is a
- * structured key — a variant, a record, a tuple — stored as its JSON. Absent
- * means the key is `Text`, or a type the checker could not decide, and the
- * string is the value.
- *
- * This is the one definition: the compiler's AST (`KeyKind` in
- * `@kumikijs/compiler`'s `ast.ts`) imports it as a type, so a kind added here
- * is one the checker can record and `restoreKey` has to handle.
- */
 export type KeyKind = "number" | "bool" | "value";
 
 /** A stored object key, restored to the kind of value it was written from. */
@@ -56,13 +37,6 @@ function restoreKey(key: string, kind: KeyKind | undefined): unknown {
   }
 }
 
-/**
- * A structured key, parsed back from the JSON `entryKey` wrote. A key that is
- * not that JSON — one stored before structured keys were encoded (the
- * `"[object Object]"` every record shared), or a decoded Map whose keys are
- * bare variant names — names no value of the key type, so reading it is a
- * panic that says so rather than a bare `SyntaxError` from `JSON.parse`.
- */
 function restoreValueKey(key: string): unknown {
   try {
     return JSON.parse(key);
@@ -78,27 +52,6 @@ function assertNeverKind(kind: never): never {
   throw new Error(`unknown key kind ${String(kind)}`);
 }
 
-/**
- * Value equality — the one answer to "are these two Kumiki values the same".
- * `==` / `!=` and `List.contains` / `unique` ask it here, and so does the test
- * layer wherever it compares two whole values; the reducer-test `expect` match
- * keeps its own walk, because a wildcard may sit at any depth of the expected
- * side and only that walk knows what one matches.
- *
- * Kumiki values are immutable (language.md §1.6.3), so a program has no
- * reference identity it could mean to compare: a List, tuple, record, Map or
- * variant equals another when what it holds is equal, recursively. A List or
- * tuple (a JS array) compares element by element in order, and `Bytes` (a
- * `Uint8Array`) byte by byte. A plain data bag — a record, a variant (`_tag`
- * is one more field), a Map — compares by the same set of own keys holding
- * equal values, regardless of the order they were written in. Anything else
- * (a DOM `File`, a `Blob`, a `Date`) holds its state outside its own
- * enumerable keys and would look like an empty bag, so it equals only itself.
- * Primitives compare with `===`, so `NaN` equals nothing.
- *
- * A Set is not promised a by-value answer: it compares as whatever it is
- * stored as, which depends on how it was built (stdlib.md §2.2.2).
- */
 export function valueEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
@@ -124,17 +77,6 @@ export function valueEqual(a: unknown, b: unknown): boolean {
   return ak.every((k) => Object.hasOwn(bo, k) && valueEqual(ao[k], bo[k]));
 }
 
-/**
- * The millisecond instant a `Time`-shaped value denotes, or `NaN`.
- *
- * A `Time` is a millisecond number, so a number is the instant it counts.
- * Text — a `Time` field a JSON payload filled, which the decoder does not
- * convert — is read by `Time.parse` and nothing else: digits are not a count
- * of milliseconds (`"2026"` is no instant, not two seconds after the epoch).
- * Anything else, `null` and `undefined` included, is `NaN`, never zero: the
- * epoch is a date that looks real, which is the worst thing an absent field
- * can render as.
- */
 function instantOf(value: unknown): number {
   if (typeof value === "number") return value;
   if (typeof value !== "string") return Number.NaN;
@@ -144,13 +86,6 @@ function instantOf(value: unknown): number {
   return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
 }
 
-/**
- * The one text form a `Time` is read from (stdlib.md §2.2.8), by `parseTime`
- * alone: `YYYY-MM-DD`, an optional `[Tt ]HH:MM(:SS(.fraction)?)?`, and an
- * optional zone (`Z`/`z` or `±HH:MM`). Groups: year, month, day, hour, minute,
- * second, fraction, zone, offset sign, offset hours, offset minutes. An absent
- * time is midnight.
- */
 const ISO_TIME =
   /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ]([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.(\d+))?)?)?([Zz]|([+-])([01]\d|2[0-3]):([0-5]\d))?$/;
 
@@ -166,16 +101,6 @@ type PlatformCrypto = {
   getRandomValues?: (bytes: Uint8Array) => Uint8Array;
 };
 
-/**
- * A v4 uuid for when `crypto.randomUUID` is missing — it exists only in a
- * secure context, so a page on plain http falls back here. The result has to
- * pass the `uuid` refinement like any other id `fresh()` returns.
- * `getRandomValues` has no secure-context requirement; `Math.random` is the
- * last resort whenever that is missing too, `crypto` itself or not. That
- * branch is not cryptographically random, which is acceptable because a fresh
- * id only has to be distinct among the ids one app mints, never unguessable —
- * nothing may treat it as a secret.
- */
 function uuidV4(c: PlatformCrypto | undefined): string {
   const bytes = new Uint8Array(16);
   if (c?.getRandomValues) c.getRandomValues(bytes);
@@ -187,23 +112,7 @@ function uuidV4(c: PlatformCrypto | undefined): string {
 }
 
 export const _stdlibCore = {
-  /**
-   * The object key a Map literal's key is stored under — the one encoder
-   * every other member uses (`entryKey` in core.ts), so `{{x: 0, y: 0}: "o"}`
-   * holds the entry `insert({x: 0, y: 0}, "o")` would.
-   */
   entryKey,
-  /**
-   * Record a slot write against its refinement and return the value unchanged
-   * (runtime.md §10.3.3). Codegen wraps every assignment to a refined slot, so
-   * the check happens *per write* rather than on the batch's final value —
-   * without it a `for` loop whose slot leaves and re-enters its range would
-   * pass, and the intermediate value it computed with is readable by later
-   * statements exactly like a committed one.
-   *
-   * The value is returned regardless: the body keeps evaluating, but the batch
-   * is already doomed and nothing it produces will be applied.
-   */
   slotWrite(
     metas: Record<string, SlotGate & RefinementNaming>,
     rejected: RefinementRejection[],
@@ -214,33 +123,9 @@ export const _stdlibCore = {
     if (meta && !slotAccepts(meta, value)) rejected.push(refinementRejectionOf(name, value, meta));
     return value;
   },
-  /**
-   * Resolve a theme-token reference `@<group>.<seg>(.<seg>)*` from a `style`
-   * block (spec/style.md §4.3). Codegen lowers `@colors.surface` to
-   * `_s.token("colors", ["surface"])`.
-   */
   token(group: string, path: string[]): string {
     return tokenRef(group, path);
   },
-  /**
-   * `Time.parse(text)` (stdlib.md §2.2.8) — `Some(ms)`, or `None` for text that
-   * names no instant. The one reading of a `Time` from text: `T.parse` on a
-   * type over `Time` and a bound `input` lower to it, and `formatTime` asks it
-   * for a `Time` held as text.
-   *
-   * The text is ISO 8601 and nothing else: `YYYY-MM-DD`, then optionally a
-   * time `[Tt ]HH:MM(:SS(.fraction)?)?`, then optionally a zone `Z`/`z` or
-   * `±HH:MM`. It is read here field by field rather than handed to
-   * `Date.parse`, which rolls a day past the month's end over into the next
-   * one (`2026-02-30` is March 2nd), reads some non-ISO text with a legacy
-   * parser (`"0050-01-01 10:00"` is 1950), and accepts formats that differ
-   * between engines.
-   *
-   * Without a zone the text is on the LOCAL clock, a date-only string
-   * included: `format` renders local fields, so reading `"2026-08-14"` from a
-   * `type="date"` input as UTC midnight would come back as `2026-08-13` west
-   * of Greenwich. With a zone it is that instant.
-   */
   parseTime(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
     const m = ISO_TIME.exec(String(text ?? ""));
     if (!m) return _stdlibCore.None;
@@ -264,27 +149,7 @@ export const _stdlibCore = {
     const offset = m[9] ? sign * (Number(m[10]) * 60 + Number(m[11])) * 60_000 : 0;
     return _stdlibCore.Some(at.getTime() + offset);
   },
-  /**
-   * `Time.format(pattern)` (stdlib.md §2.2.8). A `Time` is a millisecond
-   * number, and the pattern is a template: `yyyy MM dd HH mm ss` are replaced
-   * by the fields of that instant and everything else is copied through, so
-   * `"yyyy-MM-dd HH:mm"` and `"dd/MM/yyyy"` both work.
-   *
-   * **Local time.** The string has no zone in it, so it is read as the reader's
-   * wall clock. Rendering UTC fields instead would show the wrong day to
-   * everyone whose local date differs from the UTC one at that moment — after
-   * midnight east of Greenwich, and in the evening west of it.
-   */
   formatTime(ms: unknown, pattern: unknown): string {
-    // A `Time` is a millisecond number, and everything the compiler produces
-    // is one. It can still arrive as text from outside the language — a JSON
-    // payload mapped into a `Time` field — and that text is read as
-    // `Time.parse` reads it (`instantOf`), so ISO 8601 renders the instant it
-    // names.
-    //
-    // `null`, `""` and other blanks are NOT 1970, and neither are digits: the
-    // epoch, or a moment after it, is a date that looks real. Those, and text
-    // that names no instant, render as NaN where they can be seen.
     const d = new Date(instantOf(ms));
     const p = typeof pattern === "string" ? pattern : String(pattern ?? "");
     const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
@@ -296,26 +161,15 @@ export const _stdlibCore = {
       mm: pad(d.getMinutes()),
       ss: pad(d.getSeconds()),
     };
-    // One pass over the whole pattern: replacing token by token would let the
-    // digits of an earlier substitution match a later token.
     return p.replace(/yyyy|MM|dd|HH|mm|ss/g, (tok) => fields[tok] ?? tok);
   },
   mapSize(m: unknown): number {
     if (m instanceof Map) return m.size;
+    // `.size` on a receiver the checker could not type, such as a File read off `$event`.
+    if (isFileValue(m)) return m.size;
     if (m && typeof m === "object") return Object.keys(m as object).length;
     return 0;
   },
-  /**
-   * `is-empty` on a Map, List or Text (stdlib.md §2.2.1 / §2.2.3 / §2.2.6), for
-   * both spellings — `x.is-empty` and `x.is-empty()` are one member, so they
-   * lower to this one helper. A List and a Text are counted by `length`; a Map
-   * is an object keyed by its entries, so an empty one has no keys. A missing
-   * value is empty; any other scalar (Int, Float, Bool, Duration) is not.
-   *
-   * The order is load-bearing: a Text is answered first because it is not an
-   * object, and `""` is falsy, so the scalar tail would call the empty Text
-   * not empty.
-   */
   isEmpty(v: unknown): boolean {
     if (typeof v === "string" || Array.isArray(v)) return v.length === 0;
     if (v && typeof v === "object") return Object.keys(v).length === 0;
@@ -361,17 +215,6 @@ export const _stdlibCore = {
     for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== key) out[kk] = vv;
     return out;
   },
-  /**
-   * Polymorphic `.filter` dispatch — what codegen emits for every `.filter`,
-   * whatever the receiver (`m.keys.filter(...)` and `m.filter(...)` alike).
-   * Arrays go through Array.prototype.filter; an Option keeps a `Some` whose
-   * value passes and answers `None` otherwise (§2.2.4) — it is an object too,
-   * so it has to be told apart before the object branch reads its `_tag` /
-   * `_0` fields as entries; any other object — a Map, or a Set, whose
-   * elements are its keys and whose values are `true` — hands the predicate
-   * each `[key, value]` pair, the key restored to its declared kind as `keys`
-   * restores it when codegen passes `kind`.
-   */
   filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.filter((x) => pred(x));
     if (_stdlibCore.variantIs(coll, "Some")) {
@@ -382,9 +225,6 @@ export const _stdlibCore = {
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        // One argument, the `[key, value]` pair, as `.entries` hands a List
-        // predicate its elements: the lambda then reads `$1` / `$2` off the
-        // pair, and never takes a two-element key for the pair itself.
         if (pred([restoreKey(k, kind), v])) out[k] = v;
       }
       return out;
@@ -397,36 +237,14 @@ export const _stdlibCore = {
   listFilter<T>(xs: T[], pred: (x: T) => boolean): T[] {
     return (xs ?? []).filter(pred);
   },
-  /**
-   * `List(T).find(pred)` → `Option(T)` (stdlib.md §2.2.3).
-   *
-   * The raw `Array.prototype.find` answers `undefined` when nothing matches,
-   * which is not a `None` any reader recognises: `.is-some` on it is false
-   * whether or not an element was found, and `match` finds no arm. Wrapped the
-   * same way `listHead` and `listLast` wrap theirs.
-   */
   listFind<T>(xs: T[], pred: (x: T) => boolean): unknown {
     const hit = (xs ?? []).find(pred);
     return hit === undefined ? _stdlibCore.None : _stdlibCore.Some(hit);
   },
-  /**
-   * `.contains(x)`: a substring test on `Text`, and membership on a `List`
-   * (stdlib.md §2.2.3), which asks `==`'s question of each element.
-   */
   contains(recv: unknown, x: unknown): boolean {
     if (typeof recv === "string") return recv.includes(x as string);
     return ((recv as unknown[] | null | undefined) ?? []).some((y) => valueEqual(y, x));
   },
-  /**
-   * `List(T).unique`: the first occurrence of each value, by `==`, in order.
-   *
-   * Not `new Set(xs)`: its SameValueZero cannot see that two separately built
-   * records or variants are equal, and it merges `NaN`s, which `==` never
-   * does. A primitive — which `==` compares with `===` — is still looked up
-   * in a `Set`, so a List of numbers or texts stays linear; a `NaN` is pushed
-   * every time, since no other value equals it. Only an object pays the
-   * pairwise `valueEqual` scan, against the objects kept so far.
-   */
   listUnique<T>(xs: T[] | undefined | null): T[] {
     const out: T[] = [];
     const seenPrimitives = new Set<unknown>();
@@ -446,17 +264,9 @@ export const _stdlibCore = {
   listMap<T, U>(xs: T[], fn: (x: T) => U): U[] {
     return (xs ?? []).map(fn);
   },
-  /**
-   * Polymorphic `.map`: over List elements, over Option/Result Some/Ok, or
-   * over a Map's entries (stdlib.md §2.2.1) — the same keys, each value
-   * replaced by `fn([key, value])`, the key restored to its declared kind as
-   * `keys` restores it. A Map is a plain object, so it is told apart from a
-   * tagged Option / Result first, as `filter` does.
-   */
   mapOver(coll: unknown, fn: (x: unknown) => unknown, kind?: KeyKind): unknown {
     if (Array.isArray(coll)) return coll.map(fn);
-    // Told apart by the variant tag, as `filter` does, not by a `_tag` field
-    // alone, which a `Map(Text, _)` may hold as a key.
+    // Told apart by the variant tag, as `filter` does, not by a `_tag` field alone, which a `Map(Text, _)` may hold as a key.
     for (const tag of ["Some", "Ok"]) {
       if (_stdlibCore.variantIs(coll, tag)) {
         return { _tag: tag, _0: fn((coll as { _0: unknown })._0) };
@@ -466,8 +276,6 @@ export const _stdlibCore = {
     if (coll && typeof coll === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        // One argument, the `[key, value]` pair, as `filter` hands its
-        // predicate: a two-element key is then never taken for the pair.
         out[k] = fn([restoreKey(k, kind), v]);
       }
       return out;
@@ -483,23 +291,6 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  /**
-   * `List(T).sort-by(expr)` (stdlib.md §2.2.3): ascending by the key, in the
-   * order `<` gives it (language.md §1.9.4) — a number, a `Time` (a number at
-   * runtime) or a `Text`, which is all the checker accepts for a key whose type
-   * it knows (a fragment, or a `fn` passed by name with a declared return
-   * type). JavaScript's `<` orders both, so the comparator asks it rather than
-   * subtracting, which answered `NaN` — "equal" — for every pair of Text keys.
-   * `Array.prototype.sort` is stable, so equal keys keep their order.
-   *
-   * A key the checker could not type reaches here as whatever it is. One that
-   * `<` orders against nothing — absent (`undefined` / `null`) or `NaN` — sorts
-   * after every other key, keeping its order: compared as "equal" to every
-   * key, a single missing one would stop the rest from sorting. Any other
-   * pair `<` cannot order (a record, a number against a non-numeric `Text`)
-   * compares as equal, and a numeric key that arrives as `Text` is ordered as
-   * `Text`.
-   */
   listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
     const absent = (k: unknown): boolean => k == null || Number.isNaN(k);
     return [...(xs ?? [])].sort((a, b) => {
@@ -511,12 +302,6 @@ export const _stdlibCore = {
       return ka < kb ? -1 : ka > kb ? 1 : 0;
     });
   },
-  /**
-   * `List(T).sort` — polymorphic. Numeric elements sort numerically (so
-   * `[3,1,2,10].sort` → `[1,2,3,10]`, not the JS default `[1,10,2,3]`); any
-   * other element type falls back to a stable string comparison. Mixed lists
-   * are sorted as strings so the result stays well-defined.
-   */
   listSort(xs: unknown[] | undefined | null): unknown[] {
     const arr = [...(xs ?? [])];
     if (arr.length === 0) return arr;
@@ -547,38 +332,12 @@ export const _stdlibCore = {
     cur[k] = true;
     return cur;
   },
-  /**
-   * `+`. Numeric on two numbers; on anything with a `Text` side it is
-   * concatenation, and stdlib.md §2.4.5 says what that renders: "the
-   * equivalent of `show` is called automatically".
-   *
-   * Through `show` rather than `String`, which is what it used to do. `Text +
-   * <anything>` type-checks (`inferBinOp`), so the two ways a value reaches a
-   * sentence — `"x=" + v` and `fmt("x={0}", v)` — have to agree on what it
-   * looks like, and `String` disagrees exactly where a reader would notice: an
-   * absent `Option` rendered `[object Object]` and a `null` rendered `"null"`
-   * where the spec asks for `None` and for nothing at all.
-   */
   add(a: unknown, b: unknown): unknown {
     if (typeof a === "string" || typeof b === "string") {
       return _stdlibCore.show(a) + _stdlibCore.show(b);
     }
     return (a as number) + (b as number);
   },
-  /**
-   * The implicit key of each tile a `for` renders (runtime.md §10.3.10):
-   * `<loop>|<occurrence>|<shown>`, the loop's name, which occurrence of the
-   * element's shown value this is, and that shown value. So equal values in
-   * one list, and two loops under one parent that share a value, never key two
-   * siblings alike. The exception is one loop in the source expanded twice into
-   * one parent's children, whose expansions are the same loop. The first
-   * occurrence of a value keeps its key wherever it moves, which is what keyed
-   * reconcile matches on. Where `show` is not injective (every record shows
-   * alike, a variant shows its tag), the occurrence is the element's position
-   * among equal shows, so the key is positional. The loop and the count are
-   * written before the value and hold no `|`, so no value's `show` can spell
-   * another element's key.
-   */
   loopKeys(xs: readonly unknown[], loop: string): string[] {
     const seen = new Map<string, number>();
     return xs.map((x) => {
@@ -596,34 +355,15 @@ export const _stdlibCore = {
     }
     return String(v);
   },
-  /**
-   * `fmt(template, ...args)` (stdlib.md §2.4.5). A placeholder is `{`, decimal
-   * digits, `}`; each is replaced by the argument at that index, rendered
-   * through `show` so `fmt("{0}", v)` and `"" + v` never disagree about what a
-   * value looks like.
-   *
-   * One left-to-right pass, which is what a `/g` replace does: a `{0}` that
-   * arrives *inside* a substituted value is text, not a placeholder to fill
-   * again — otherwise a formatted user string could reach back into the
-   * argument list.
-   *
-   * An index the arguments do not reach keeps its placeholder verbatim rather
-   * than rendering empty: a template that outran its arguments is a mistake,
-   * and `"a {1}"` says which index went missing where its author will see it.
-   * Everything that is not `{<digits>}` is copied through, so there is nothing
-   * to escape — the same bargain `formatTime` makes with its own tokens.
-   */
   fmt(template: unknown, ...args: unknown[]): string {
     return _stdlibCore.show(template).replace(/\{(\d+)\}/g, (placeholder, digits: string) => {
       const i = Number(digits);
       return i < args.length ? _stdlibCore.show(args[i]) : placeholder;
     });
   },
-  /** `==` (language.md §1.9.4): by value, through `valueEqual`. `!=` is its negation. */
   eq(a: unknown, b: unknown): boolean {
     return valueEqual(a, b);
   },
-  /** `<T>.fresh()` — a new id, from the platform's generator. Journalled (#337). */
   freshId(): string {
     return readEnv("fresh-id", () => {
       const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
@@ -631,15 +371,9 @@ export const _stdlibCore = {
       return uuidV4(c);
     });
   },
-  /** `now` — the current instant. Journalled (#337). */
   now(): number {
     return readEnv("now", () => Date.now());
   },
-  /**
-   * `random()` — a Float in [0, 1) (stdlib.md §2.4.4). Journalled like the
-   * other three environment reads; why, and what a scope is, is written once
-   * at the top of `core.ts` ("the environment journal", #337).
-   */
   random(): number {
     return readEnv("random", () => Math.random());
   },
@@ -649,11 +383,6 @@ export const _stdlibCore = {
   ): Record<string, unknown> {
     return { ...rec, ...patch };
   },
-  /**
-   * `.get` — the polymorphic unwrap for Option AND Result. Per docs/spec/stdlib.md
-   * §2.2 it PANICS on the empty case (`None` / `Err`); `Some(v)` / `Ok(v)`
-   * unwrap to `v`. A plain (non-variant) value passes through unchanged.
-   */
   unwrap(opt: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {
       const o = opt as { _tag: string; _0?: unknown };
@@ -663,22 +392,9 @@ export const _stdlibCore = {
     }
     return opt;
   },
-  /**
-   * The setter a reducer's assignment lowers to. Shares its implementation
-   * with `bind=` write-back, so `draft.get.title := v` and
-   * `bind=draft.get.title` mean the same thing.
-   */
   setPath(obj: unknown, path: readonly PathSegment[], value: unknown): unknown {
     return _setPathHelper(obj, path, value);
   },
-  /**
-   * `recv[key]` read (language.md §1.6.3). On a List it is the element the
-   * same index names on the left of `:=`, and it panics where that write
-   * panics. On a Map it is the entry at the key, and a key the Map does not
-   * hold is a panic too (lifecycle.md §7.2.2) — the value it would answer is
-   * no `V`, and the next read through it was a raw `TypeError`. `m.get(k)` is
-   * the read that answers `None` there instead.
-   */
   index(recv: unknown, key: unknown): unknown {
     if (Array.isArray(recv)) return recv[listPosition(recv, key)];
     if (isEntryOf(recv, key)) return (recv as Record<string, unknown>)[entryKey(key)];
@@ -689,41 +405,9 @@ export const _stdlibCore = {
   panic(message: unknown): never {
     throw new KumikiPanic(String(message));
   },
-  /**
-   * What a tile's `error-boundary` hands its fallback — and what it refuses to
-   * take (lifecycle.md §7.3).
-   *
-   * A boundary catches a **panic**: the controlled signal §7.2.2 defines, which
-   * `panic(message)` and the polymorphic `.get` raise. Anything else reaching
-   * the `catch` is a defect in the generated code or in the runtime — a
-   * `ReferenceError` from a binding nothing supplied, `_wk`'s deliberate throw
-   * on a key that would collapse two tiles onto one identity — and a fallback
-   * that swallowed one would turn a failure into a rendered page: `smoke` and
-   * `scenario` verify through the error channel, so the defect would leave no
-   * trace at all. Those are re-thrown for the render bailout to report.
-   *
-   * The payload is the shape `app.error` already receives (`handleLivePanic`),
-   * built by the same `userPanicInfo`, so the three ways a panic reaches a
-   * program agree — and so an empty message stays empty instead of stringifying the
-   * error object.
-   */
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
     const rec = panicInfo(e, "tile-render");
-    // The panic names the tile it was attributed to when a frame nearer to it
-    // knew which route target it was building (a `sub-routes` child in the
-    // declaring tile's outlet, #363); `location` — the tile that declares the
-    // boundary — is what it is attributed to otherwise. An empty attribution
-    // is none: only a hand-built entry or a cross-realm panic can carry one.
-    //
-    // The episode comes from the render pass this is inside (§10.5). A render
-    // from a reducer dispatch runs before that dispatch's `endTrigger`, so
-    // there the id names the episode the panic belongs to. A render with no
-    // episode open around it — the first paint, a route change after its
-    // `route.enter` reducers have each closed their own, the `_setSlot` host
-    // seam — has none, and so does a host that attached no logger: `None`,
-    // which is a value the fallback can match on. `currentEpisodeId`'s own
-    // comment enumerates them.
     return userPanicInfo(rec, rec.location || location, currentEpisodeId());
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
@@ -755,9 +439,6 @@ export const _stdlibCore = {
     return !!v && typeof v === "object" && "_tag" in v && (v as { _tag: string })._tag === tag;
   },
 
-  // ----- Issue #5: collection / value helpers for the stdlib methods that the
-  // codegen now lowers to `_s.*` calls. See docs/spec/stdlib.md §2.2. -----
-
   /** List(T).chunk(n) → List(List(T)). The last chunk may be shorter. */
   listChunk(xs: unknown[] | undefined | null, n: number): unknown[] {
     const arr = xs ?? [];
@@ -786,13 +467,6 @@ export const _stdlibCore = {
     if (!(key in obj)) return obj;
     return { ...obj, [key]: fn(obj[key]) };
   },
-  /**
-   * A Set literal (`[1, 2]` where a `Set` is declared): the same value `add`
-   * builds from the same members, so a literal and an `add` chain are one form
-   * (stdlib.md §2.2.2). Going through `setAdd` rather than writing the keys
-   * here is deliberate: however `setAdd` keys a member, a literal keys it the
-   * same way, and an inlined loop would fork the two.
-   */
   setOf(xs: readonly unknown[]): Record<string, true> {
     let s: Record<string, true> = {};
     for (const x of xs) s = _stdlibCore.setAdd(s, x);
@@ -854,10 +528,6 @@ export const _stdlibCore = {
     return _stdlibCore.setDiff(a as Record<string, true>, b as Record<string, true>);
   },
 
-  // ----- Issue #7: argument-less spec stdlib methods (docs/spec/stdlib.md §2.2).
-  // Callable both parenthesis-free (`xs.head`) and parenthesized (`xs.head()`);
-  // codegen lowers both shapes to these. -----
-
   /** List(T).head → Option(T). */
   listHead(xs: unknown[] | undefined | null): unknown {
     const a = xs ?? [];
@@ -875,15 +545,12 @@ export const _stdlibCore = {
   /** Set(T).to-list / Option(T).to-list → List(T). */
   toList(v: unknown, kind?: KeyKind): unknown[] {
     if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
-      // Option: Some(x) → [x], None → [].
       const o = v as { _tag: string; _0?: unknown };
       return o._tag === "Some" ? [o._0] : [];
     }
-    // Return a fresh copy so the result never aliases a slot array, matching
-    // listHead/listTail/listLast which all produce new values.
+    // Return a fresh copy so the result never aliases a slot array, matching listHead/listTail/listLast which all produce new values.
     if (Array.isArray(v)) return [...v];
-    // Set is stored as `{ [entryKey(x)]: true }`, so the element is read back
-    // through its recorded kind.
+    // Set is stored as `{ [entryKey(x)]: true }`, so the element is read back through its recorded kind.
     if (v && typeof v === "object") {
       return Object.keys(v as Record<string, unknown>).map((k) => restoreKey(k, kind));
     }
@@ -905,38 +572,16 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  /**
-   * Text.parse-int → Option(Int): any text `Number` reads as finite, truncated.
-   * Looser than `Int.parse`, which reads decimal digits only (stdlib §2.4.3).
-   */
   parseIntOpt(s: unknown): unknown {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n)
       ? _stdlibCore.Some(Math.trunc(n))
       : _stdlibCore.None;
   },
-  /**
-   * Text.parse-float → Option(Float): any text `Number` reads as finite.
-   * Looser than `Float.parse`, which reads decimal text only (stdlib §2.4.3).
-   */
   parseFloatOpt(s: unknown): unknown {
     const n = Number(s);
     return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
   },
-  /**
-   * `file-url(file)` — URL.createObjectURL equivalent (forms.md §5.10). The
-   * runtime stores picked files as `{name, size, type, _file: File}`; this
-   * helper unwraps `_file` and hands it to URL.createObjectURL.
-   *
-   * Memoised on the File handle and registered for revocation on GC so that
-   * (a) repeated renders of the same `image(src=file-url(...))` reuse one
-   * blob URL and (b) when the picker slot is replaced and the old File
-   * becomes unreachable, the URL is released without manual bookkeeping in
-   * user code. The spec calls this out as "automatic release".
-   *
-   * Passing undefined / None / a value with no `_file` returns "" so a
-   * render that races a slot clear cannot blow up.
-   */
   fileUrl(file: unknown): string {
     if (!file || typeof file !== "object") return "";
     const tagged = file as { _tag?: string; _0?: unknown };
@@ -958,18 +603,6 @@ export const _stdlibCore = {
     return url;
   },
 
-  /**
-   * `prefers-dark()` — the OS colour-scheme preference (style.md §4.6.1).
-   *
-   * Read once per call rather than subscribed to: an `app.start` reducer uses
-   * it to pick the initial theme, and a running app that wants to follow a
-   * mid-session change has `theme = <slot>` plus a reducer to write it.
-   *
-   * The guard is for SSR, where there is no `window` at all. happy-dom does
-   * implement `matchMedia` and answers `false` by default, so the smoke and
-   * scenario tiers take the real path — see `prefers-dark.test.ts`, which
-   * drives both branches by stubbing the media query.
-   */
   prefersDark(): boolean {
     return readEnv("prefers-dark", () => {
       if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
@@ -977,20 +610,10 @@ export const _stdlibCore = {
     });
   },
 
-  // ----- Issue #92: Bytes constructors (docs/spec/stdlib.md §2.1.1 / §2.2.10).
-  // Bytes is represented as Uint8Array at runtime. The constructors are
-  // lenient on nullish / malformed input and return an empty Uint8Array
-  // instead of throwing — same shape as the rest of stdlib (mapValues etc.). -----
-
   /** `Bytes.from-text(text)` — UTF-8 encode. */
   bytesFromText(text: unknown): Uint8Array {
     return new TextEncoder().encode(String(text ?? ""));
   },
-  /**
-   * `Bytes.from-base64(text)` — standard base64 decode. Returns an empty
-   * Uint8Array for nullish input and for malformed base64 (atob would throw
-   * a DOMException otherwise — inconsistent with the rest of stdlib).
-   */
   bytesFromBase64(b64: unknown): Uint8Array {
     if (b64 == null) return new Uint8Array();
     const s = String(b64);
@@ -1013,11 +636,15 @@ export const _stdlibCore = {
   },
 };
 
-// File → blob URL memoisation. WeakMap so a File made unreachable (slot
-// overwritten, picker reset) can be collected; the FinalizationRegistry then
-// revokes the URL it was holding. The registry is environments-gated because
-// older runtimes / SSR shims may not expose it — the cache still works there,
-// only the explicit revoke degrades to "let the browser reclaim at page end".
+function isFileValue(v: unknown): v is { size: number; _file: Blob } {
+  return (
+    typeof Blob !== "undefined" &&
+    !!v &&
+    typeof v === "object" &&
+    (v as { _file?: unknown })._file instanceof Blob
+  );
+}
+
 const _fileUrlCache: WeakMap<Blob, string> = new WeakMap();
 const _fileUrlRegistry: FinalizationRegistry<string> | null =
   typeof FinalizationRegistry !== "undefined" && typeof URL !== "undefined"

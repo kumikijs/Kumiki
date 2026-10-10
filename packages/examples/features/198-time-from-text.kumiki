@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.8): a `Time` is read from text by one grammar,
+# Feature (stdlib.md): a `Time` is read from text by one grammar,
 # ISO 8601's calendar date with an optional time and zone, wherever the text
 # comes from.
 #
