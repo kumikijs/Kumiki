@@ -1,8 +1,10 @@
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { runTestsSource } from "../src/smoke.ts";
-import { runCli, SPAWN } from "./helpers/cli.ts";
-import { seed } from "./helpers/files.ts";
+import { runTests, runTestsSource } from "../src/smoke.ts";
+import { CLI_ARGV, runCli, SPAWN } from "./helpers/cli.ts";
+import { APP_A, seed } from "./helpers/files.ts";
 
 const TESTS = feature("28-tests");
 
@@ -161,5 +163,89 @@ test replay =
       actual:
         "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
     });
+  });
+});
+
+describe("one file after another in one process", () => {
+  const WITH_TEST = `slot count : Int = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), IncBtn)
+${APP_A}
+test inc-increments =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 2}, effects: []}
+`;
+  const NO_TEST = WITH_TEST.slice(0, WITH_TEST.indexOf("\ntest "));
+
+  it("reports neither the tests nor the coverage of the file run before", async () => {
+    const first = await runTests(seed(WITH_TEST, "a.kumiki"), undefined, [], { coverage: true });
+    expect(first.results.map((r) => `${r.name}:${r.pass}`)).toEqual(["inc-increments:false"]);
+    expect(first.coverage?.reducers.used).toEqual(["inc"]);
+
+    const second = await runTests(seed(NO_TEST, "b.kumiki"), undefined, [], { coverage: true });
+    expect(second.results.map((r) => r.name)).toEqual([]);
+    expect({ total: second.total, failed: second.failed }).toEqual({ total: 0, failed: 0 });
+    expect(second.coverage).toEqual({
+      reducers: { total: ["inc"], used: [] },
+      tiles: { total: ["IncBtn", "App"], used: [] },
+      effects: { total: [], used: [] },
+    });
+  });
+
+  it("prints `no tests found` when --watch re-runs a file whose last test was deleted", {
+    timeout: 60000,
+  }, async () => {
+    const file = seed(WITH_TEST, "w.kumiki");
+    const child = spawn(process.execPath, [...CLI_ARGV, "test", file, "--watch"], {
+      stdio: "pipe",
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (s: string) => {
+      stdout += s;
+    });
+    child.stderr.setEncoding("utf8").on("data", (s: string) => {
+      stderr += s;
+    });
+    const until = (done: () => boolean): Promise<void> =>
+      new Promise((settle, fail) => {
+        const check = (): void => {
+          if (!done()) return;
+          child.off("exit", exited);
+          child.stdout.off("data", check);
+          child.stderr.off("data", check);
+          settle();
+        };
+        const exited = (): void => fail(new Error(`watcher exited:\n${stdout}\n${stderr}`));
+        child.on("exit", exited);
+        child.stdout.on("data", check);
+        child.stderr.on("data", check);
+        check();
+      });
+    const CHANGED = "— change detected —";
+    const rerun = (): string => stdout.slice(stdout.indexOf(CHANGED));
+    try {
+      await until(() => stdout.includes("watching for changes"));
+      expect(stdout).toContain("FAIL  inc-increments");
+
+      writeFileSync(file, NO_TEST);
+      // The watcher is installed just after it says it is watching, and a write that
+      // lands first goes unseen, so the write repeats until one is picked up.
+      const again = setInterval(() => writeFileSync(file, NO_TEST), 1000);
+      try {
+        await until(() => stdout.includes(CHANGED));
+      } finally {
+        clearInterval(again);
+      }
+      await until(
+        () => /no tests found|\d+\/\d+ passed/.test(rerun()) || stderr.includes("test run failed"),
+      );
+      expect(rerun()).toContain("no tests found");
+      expect(rerun()).not.toContain("inc-increments");
+    } finally {
+      child.kill();
+    }
   });
 });
