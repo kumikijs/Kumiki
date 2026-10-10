@@ -12,7 +12,7 @@ import {
   type RedirectEntry,
   type RoutingImpl,
   readStatus,
-  reportCapabilityRefusal,
+  reportRefusedEmit,
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
@@ -118,6 +118,18 @@ export async function renderToString(
   }
 }
 
+// A mount installs the standard effects onto `app.effects`; this pass installs and runs none, so
+// an emit of one finds no entry here and is skipped rather than reported as naming no effect.
+export const STANDARD_EFFECTS: ReadonlySet<string> = new Set([
+  "log",
+  "navigate",
+  "navigate-replace",
+  "navigate-back",
+  "scroll-to",
+  "toast",
+  "confirm",
+]);
+
 async function dispatchEmit(
   app: AppShape,
   live: Record<string, unknown>,
@@ -126,11 +138,20 @@ async function dispatchEmit(
   logger: EpisodeLogger,
 ): Promise<void> {
   const effect = app.effects[emit.effect];
-  if (!effect) return;
+  if (!effect) {
+    if (STANDARD_EFFECTS.has(emit.effect)) return;
+    // No effect-start / effect-cancel pair: nothing was claimed, so nothing is left pending to
+    // keep the bootstrap episode from committing.
+    logger.recordPanic(reportRefusedEmit(emit.effect, { category: "effect" }));
+    return;
+  }
   const input = emit.args[0];
   if (effect.cap !== "" && !caps.has(effect.cap)) {
     const token = logger.recordEffectStart(emit.effect, input);
-    logger.recordPanic(reportCapabilityRefusal(emit.effect, effect.cap), token);
+    logger.recordPanic(
+      reportRefusedEmit(emit.effect, { category: "capability", cap: effect.cap }),
+      token,
+    );
     logger.cancelPendingEffect(token, emit.effect);
     return;
   }
