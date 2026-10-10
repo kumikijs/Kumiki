@@ -1,6 +1,3 @@
-// The `form` tile (#71): its own shipping unit, so an app that renders one
-// does not download the nine other input controls.
-
 import type {
   BindSegment,
   TileCtx,
@@ -13,20 +10,6 @@ import { judgeShownField, noteHeldSubmit, resolveApp } from "../../core.ts";
 import type { InputHandlers } from "./_shared.ts";
 import { INPUT_STATE, inputHandlers, reconcileId, setHandlers, tileId } from "./_shared.ts";
 
-/**
- * The slots a control inside `form` binds that fail their validation, judged on
- * what the controls show (forms.md §5.2.2), in the order the controls bind
- * them — empty when the form may submit. `judgeShownField` makes the
- * judgement, the one `error(field=…)` renders from — so a form whose fields
- * show a message does not submit, and one whose fields show none does.
- *
- * "Inside the form" is the set of controls the form's own query finds, handed
- * over as the view rather than the form itself: happy-dom's `<form>` answers
- * `contains` false for its own descendants, which would quietly let every
- * refused value through the scenario and smoke tiers. A refused value a
- * control outside the form shows is not what the form submits, so it does not
- * hold the form back.
- */
 function failingBoundSlots(form: HTMLFormElement): string[] {
   const app = resolveApp(form);
   if (!app) return [];
@@ -42,10 +25,6 @@ function failingBoundSlots(form: HTMLFormElement): string[] {
   return [...slots].filter((slot) => !judgeShownField(app, slot, inForm).valid);
 }
 
-// form.onSubmit lives directly on props (not through a change-shaped event),
-// so store it in the handler slot alongside the shared fields. Both `create`
-// and `patch` route through this so the mounted `<form>`'s submit listener
-// dispatches to the *current* render's onSubmit closure.
 function formHandlers(node: {
   bind?: string;
   bindPath?: BindSegment[];
@@ -67,8 +46,6 @@ export const formTile: TileRenderer<"form"> = (node, ctx: TileCtx) => {
     const state = INPUT_STATE.get(form);
     if (!state?.onSubmit) return;
     const failing = failingBoundSlots(form);
-    // Recorded against the event, for a driver that caused it to ask: a held
-    // submit leaves nothing behind in the app to assert on.
     if (failing.length > 0) noteHeldSubmit(e, failing);
     else state.onSubmit(state.el ?? {});
   });

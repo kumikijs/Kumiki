@@ -1,17 +1,9 @@
-// `kumiki smoke` — runtime verification. Compiles a .kumiki file, mounts it in a
-// headless DOM (happy-dom), exercises its UI, and reports failures that check/build
-// cannot catch: runtime throws, empty renders, and unhandled rejections.
-
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { compile, type KumikiError } from "@kumikijs/compiler";
-import {
-  nodeEpisodeLogReader,
-  nodeRuntimeBundleReader,
-  resolveBuiltinIcons,
-} from "@kumikijs/compiler/node";
+import { nodeEpisodeLogReader, nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
   type AppShape,
   createEpisodeLogger,
@@ -32,11 +24,10 @@ import {
   readHttpFixture,
   useHttpFixture,
 } from "./harness.ts";
+import { builtinIconSubset } from "./icons.ts";
 import { loadSource } from "./store.ts";
+import { messageOf } from "./text.ts";
 
-// The registration in flight or done, shared by every caller. A promise rather
-// than a flag: the import makes this async, so two overlapping calls would both
-// pass a "not yet" check and happy-dom throws on the second registration.
 let domReady: Promise<void> | null = null;
 export function ensureDom(): Promise<void> {
   domReady ??= registerDom().catch((err: unknown) => {
@@ -48,24 +39,11 @@ export function ensureDom(): Promise<void> {
 }
 
 async function registerDom(): Promise<void> {
-  // Loaded on first use, not at the top: happy-dom is a heavy import, and
-  // check / build / the edit verbs never touch a DOM.
   const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
-  // Registers window/document/Event/… onto globalThis, overwriting Node's own
-  // realm globals (Node 22 ships `Event` / `navigator` etc., and elements only
-  // accept events constructed from the DOM realm).
   GlobalRegistrator.register({ url: "http://localhost/" });
-  // …then the doubles the DOM does not supply: a `fetch` that answers from the
-  // example's own fixture instead of the network, and an IntersectionObserver
-  // that actually notifies. Installed after registration, which overwrites both.
   installTestDoubles();
 }
 
-/**
- * Compiled-app shape as returned by codegen — adds the mutable signal slot
- * map (`live`) that the runtime keeps but `AppShape` (the public type) does
- * not expose. Replay reads/resets `live` directly, so callers need to see it.
- */
 export type LoadedApp = AppShape & { live: Record<string, unknown> };
 
 type LoadOptions = { includeTests?: boolean; sourcePath?: string; moduleDir?: string };
@@ -78,7 +56,6 @@ export async function loadApp(
   return (await compileForLoad(source, capabilities, opts)).app;
 }
 
-/** `loadApp`, with the warnings of the compile whose module it loaded. */
 async function compileForLoad(
   source: string,
   capabilities: string[],
@@ -97,30 +74,14 @@ async function compileForLoad(
     throw new Error(compileFailure(source, [...first.warnings, ...first.errors], opts.sourcePath));
   }
 
-  // Two-pass when the source uses `icon(name="...")` literals AND we have a
-  // sourcePath to resolve `@kumikijs/icons` from. Falls through silently if
-  // the package isn't installed.
   let result = first;
-  if (opts.sourcePath && first.usedIcons.length > 0) {
-    const registry = await resolveBuiltinIcons(opts.sourcePath);
-    if (registry) {
-      const subset: Record<string, string> = {};
-      for (const name of first.usedIcons) {
-        const path = registry[name];
-        if (typeof path === "string") subset[name] = path;
-      }
-      if (Object.keys(subset).length > 0) {
-        const second = compile(source, { ...baseOpts, icons: subset });
-        if (second.kind === "ok") result = second;
-      }
-    }
+  const icons = opts.sourcePath ? await builtinIconSubset(opts.sourcePath, first.usedIcons) : null;
+  if (icons) {
+    const second = compile(source, { ...baseOpts, icons });
+    if (second.kind === "ok") result = second;
   }
 
   const patched = result.js.replace(/mount\(App, document\.getElementById\("root"\)[^;]*\);?/, "");
-  // A fresh directory per call, so the same source loaded twice in one process
-  // is two modules rather than one cached one. `moduleDir` exists for a caller
-  // whose module resolver is confined to a project root (vitest): the default
-  // OS temp dir is outside it.
   const dir = mkdtempSync(join(opts.moduleDir ?? tmpdir(), "kumiki-smoke-"));
   const file = join(dir, "app.mjs");
   writeFileSync(file, patched);
@@ -130,11 +91,6 @@ async function compileForLoad(
   return { app, warnings: result.warnings };
 }
 
-/**
- * What `loadApp` throws for a program that does not compile: the file, then
- * each diagnostic — warnings first, then errors — as `kumiki check` prints it.
- * One inside a `test` definition also names that test.
- */
 function compileFailure(source: string, diagnostics: KumikiError[], sourcePath?: string): string {
   // `compile` returned diagnostics rather than throwing, so the source parsed.
   const tests = loadSource(source).defs.filter((e) => e.layer === "test");
@@ -147,10 +103,7 @@ function compileFailure(source: string, diagnostics: KumikiError[], sourcePath?:
   return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
 }
 
-/**
- * Compile + mount + exercise a Kumiki source string; return the smoke report,
- * with the compile's warnings.
- */
+/** Compile + mount + exercise a Kumiki source string; return the smoke report. */
 export async function smokeSource(
   source: string,
   capabilities: string[] = [],
@@ -165,10 +118,6 @@ export async function smokeSource(
 ): Promise<SmokeReport & { warnings: KumikiError[] }> {
   await ensureDom();
   clearStorage();
-  // Effects run for real here (unlike `runScenario`, which replaces every
-  // `invoke`), so the http capability is answered by the example's own
-  // `.http.json`. Without a path there is no fixture, and any request reports
-  // itself rather than reaching a host.
   useHttpFixture(
     opts.httpFixture !== undefined
       ? opts.httpFixture
@@ -177,15 +126,21 @@ export async function smokeSource(
         : null,
   );
   const { app, warnings } = await compileForLoad(source, capabilities, opts);
+  const report = await inFreshRoot((root) =>
+    smoke(app, root, {
+      settleMs: opts.settleMs ?? 20,
+      diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
+    }),
+  );
+  return { ...report, warnings };
+}
+
+async function inFreshRoot<T>(run: (root: HTMLElement) => Promise<T>): Promise<T> {
   const doc = (globalThis as unknown as { document: Document }).document;
   const root = doc.createElement("div");
   doc.body.appendChild(root);
   try {
-    const report = await smoke(app, root, {
-      settleMs: opts.settleMs ?? 20,
-      diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
-    });
-    return { ...report, warnings };
+    return await run(root);
   } finally {
     root.remove();
   }
@@ -199,11 +154,6 @@ export async function smokeFile(
   return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
 }
 
-/**
- * Print the warnings of the compile a verb runs before it runs the file, as
- * `kumiki build` prints them: on stderr, one line each, ahead of the verb's own
- * output, which stays what it is for a file with no warning.
- */
 function printWarnings(warnings: KumikiError[]): void {
   for (const w of warnings) console.error(formatDiagnostic(w));
 }
@@ -227,27 +177,14 @@ export async function smokeCmd(
   for (const i of report.issues) {
     console.error(`  [${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`);
   }
-  // Same stream as the failure it accompanies, so a caller reading stderr sees
-  // the whole picture and stdout stays parseable.
   printDiagnostics(report, console.error);
   process.exit(1);
 }
 
-/**
- * Reconcile churn observed while driving the app. Advisory, never fatal — an
- * app that rebuilds more than it needs to still works — so this leaves the exit
- * code alone (pass `--diagnostics-as-issues` to make them count). Summarised by
- * reason rather than listed one per occurrence: a single unkeyed list produces
- * one entry per interaction.
- */
 function printDiagnostics(report: SmokeReport, write: (line: string) => void): void {
   if (report.diagnostics.length === 0) return;
   const byReason = new Map<string, number>();
   for (const { diagnostic } of report.diagnostics) {
-    // A fallback is summarised by its reason — the kind alone would collapse
-    // six distinct causes into one row. Every other kind IS its own reason, and
-    // reading the kind rather than naming them keeps a new one from being
-    // silently counted as an existing one.
     const label = diagnostic.kind === "reconcile-fallback" ? diagnostic.reason : diagnostic.kind;
     byReason.set(label, (byReason.get(label) ?? 0) + 1);
   }
@@ -258,7 +195,7 @@ function printDiagnostics(report: SmokeReport, write: (line: string) => void): v
   write(`  reconcile diagnostics: ${summary}`);
 }
 
-/** Compile + mount + drive a scenario; return the structured trace, with the compile's warnings. */
+/** Compile + mount + drive a scenario; return the structured trace. */
 export async function runScenarioSource(
   source: string,
   scenario: Scenario,
@@ -267,47 +204,28 @@ export async function runScenarioSource(
 ): Promise<ScenarioReport & { warnings: KumikiError[] }> {
   await ensureDom();
   clearStorage();
-  // A scenario scripts effects at the `invoke` boundary, so http never reaches
-  // `fetch` — the fixture is here for a capability the runner does not wrap,
-  // and to keep a stray request reported rather than live.
   useHttpFixture(opts.sourcePath ? readHttpFixture(opts.sourcePath) : null);
   const { app, warnings } = await compileForLoad(source, capabilities, {
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });
-  const doc = (globalThis as unknown as { document: Document }).document;
-  const root = doc.createElement("div");
-  doc.body.appendChild(root);
-  try {
-    const report = await runScenario(app, root, scenario, {
-      settleMs: 20,
-      episodeLogger: opts.episodeLogger ?? null,
-    });
-    return { ...report, warnings };
-  } finally {
-    root.remove();
-  }
+  const report = await inFreshRoot((root) =>
+    runScenario(app, root, scenario, { settleMs: 20, episodeLogger: opts.episodeLogger ?? null }),
+  );
+  return { ...report, warnings };
 }
 
-/**
- * Read a scenario document, or fail with a message that names the file.
- *
- * Two paths are on the command line, so "which file" is the first thing any
- * failure here has to answer — a read error, a `SyntaxError` that otherwise
- * names only a character offset, or a document that parsed and is not a
- * scenario, which reaches the runner as a `TypeError` about a property.
- */
 function loadScenario(path: string): Scenario {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (e) {
-    throw new Error(`could not read scenario ${path}: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`could not read scenario ${path}: ${messageOf(e)}`);
   }
   let doc: unknown;
   try {
     doc = JSON.parse(raw);
   } catch (e) {
-    throw new Error(`${path} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`${path} is not valid JSON: ${messageOf(e)}`);
   }
   const steps = (doc as { steps?: unknown } | null)?.steps;
   if (!Array.isArray(steps)) {
@@ -328,12 +246,6 @@ export async function runCmd(
   opts: { episodeLog?: string } = {},
 ): Promise<void> {
   const scenario = loadScenario(scenarioPath);
-  // Episode log is opt-in: write only when the caller asked for it via the
-  // `--episode-log <file>` flag or the `KUMIKI_EPISODE_LOG` env var. This keeps
-  // example runs from littering sidecar JSONL next to every .kumiki file. When
-  // enabled, the §10.5 runtime episode logger records each trigger → reducer →
-  // effect-start → effect-end → signal-update chain into memory; we flush the
-  // entire ring to disk after the scenario completes.
   const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
   const episodeLogger = logFile ? createEpisodeLogger() : null;
   const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
@@ -346,22 +258,13 @@ export async function runCmd(
     if (!s) continue;
     const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
     console.log(`[${s.ok ? "ok" : "FAIL"}] ${head}`);
-    // Printed first: the action did not run, so the `error:` and `diagnostic:`
-    // lines below it are what the app did on its own during this step's settle
-    // window — not a response to the action.
     if (s.actionError !== undefined) console.log(`    action failed: ${s.actionError}`);
     for (const e of s.errors) console.log(`    error: ${e}`);
     for (const e of s.expectedErrors) console.log(`    expected error: ${e}`);
-    // The same, for the other channel — a refusal the step asked for is off
-    // `actionError`, and a step whose whole point is that the platform turned
-    // it away must not print as a step where nothing happened.
     if (s.expectedActionError !== undefined) {
       console.log(`    expected refusal: ${s.expectedActionError}`);
     }
     for (const f of s.failures) console.log(`    assert: ${f}`);
-    // Advisory, and attributed to the action above it — that pairing is the
-    // whole reason the runner buffers diagnostics per step. Listed rather than
-    // summarised here (unlike `kumiki smoke`) because a step produces few.
     for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
@@ -372,8 +275,6 @@ export async function runCmd(
   }
   if (!report.ok) process.exit(1);
 }
-
-// ----- `kumiki test` — run in-language `test` definitions -----
 
 type TestRunner = { name: string; kind: string; run: () => TestResult };
 
@@ -386,7 +287,6 @@ export async function runTestsSource(
   return (await compileAndRunTests(source, capabilities, opts)).results;
 }
 
-/** `runTestsSource`, with the warnings of the compile that loaded the tests. */
 async function compileAndRunTests(
   source: string,
   capabilities: string[],
@@ -410,7 +310,7 @@ export async function testFile(path: string, capabilities: string[] = []): Promi
   return runTestsSource(readFileSync(path, "utf8"), capabilities, { sourcePath: path });
 }
 
-/** Render a scalar leaf value for the §8.7.1 value arrow (strings get quoted). */
+/** A scalar leaf value as the `expected -> actual` arrow shows it (strings get quoted). */
 function leafStr(v: unknown): string {
   try {
     return JSON.stringify(v) ?? String(v);
@@ -429,7 +329,7 @@ function matchesFilter(name: string, filter: string | undefined): boolean {
 type CoverageCat = { total: string[]; used: string[] };
 export type Coverage = { reducers: CoverageCat; tiles: CoverageCat; effects: CoverageCat };
 
-/** Print the §8.7 coverage report (per reducer / effect / tile), listing the uncovered. */
+/** Prints coverage per reducer / effect / tile, listing the uncovered. */
 function printCoverage(cov: Coverage): void {
   console.log("\ncoverage");
   for (const [label, cat] of [
@@ -446,26 +346,15 @@ function printCoverage(cov: Coverage): void {
 export type TestReport = {
   /** Test results after applying `filter`. */
   results: TestResult[];
-  /** Filter that produced `results`, verbatim (for callers rendering "no tests match …"). */
   filter: string | undefined;
-  /** Sum of `results` (post-filter). */
   total: number;
-  /** Count of `results[i].pass === true`. */
   passed: number;
-  /** `total - passed`. */
   failed: number;
-  /** §8.7 coverage snapshot, populated only when `opts.coverage === true`. */
+  /** Populated only when `opts.coverage === true`. */
   coverage?: Coverage;
-  /** The warnings of the compile that loaded the tests. */
   warnings: KumikiError[];
 };
 
-/**
- * Pure test runner: compile + mount + run every `test` in `path`, filter by
- * name/prefix, return a structured report. No stdout — printer lives in
- * `testCmd`. `coverage: true` snapshots the runtime coverage bookkeeping
- * (§8.7) that the run populates on the global.
- */
 export async function runTests(
   path: string,
   filter: string | undefined,
@@ -494,16 +383,8 @@ export async function runTests(
   };
 }
 
-/**
- * Print a `TestReport` in the §8.7.1 format and return the number of failures
- * the caller should exit on — the count of failing tests, or 1 for a filter
- * that matched nothing, which is a failure with no failing test behind it.
- */
 function printTestReport(report: TestReport): number {
   if (report.results.length === 0) {
-    // A filter that matches nothing is a failure: the caller named tests that
-    // are not there, and a renamed test would otherwise leave CI green while
-    // running nothing. Having no tests at all when none were asked for is not.
     if (report.filter) {
       console.error(`no tests match "${report.filter}"`);
       return 1;
@@ -512,7 +393,7 @@ function printTestReport(report: TestReport): number {
     return 0;
   }
   for (const r of report.results) {
-    // §8.7.1 tag: `(1ms)`, or `(100 cases, 23ms)` for a property-test.
+    // `(1ms)`, or `(100 cases, 23ms)` for a property-test.
     const bits: string[] = [];
     if (r.cases !== undefined) bits.push(`${r.cases} cases`);
     if (r.ms !== undefined) bits.push(`${r.ms}ms`);
@@ -534,7 +415,7 @@ function printTestReport(report: TestReport): number {
   return report.failed;
 }
 
-/** CLI entry: run `test` definitions, print the §8.7.1 report, exit non-zero on any failure. */
+/** CLI entry: run `test` definitions, print the report, exit non-zero on any failure. */
 export async function testCmd(
   path: string,
   filter: string | undefined,
@@ -547,13 +428,11 @@ export async function testCmd(
     return printTestReport(report);
   };
   if (opts.watch) {
-    // §8.7: re-run on change. Errors are caught so a transient compile failure
-    // doesn't kill the watcher; SIGINT exits cleanly.
     const runSafe = async (): Promise<void> => {
       try {
         await runOnce();
       } catch (e) {
-        console.error(`test run failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`test run failed: ${messageOf(e)}`);
       }
     };
     await runSafe();
