@@ -7,6 +7,7 @@ import {
   type TileExpr,
 } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
+import { forAllGenerator, noGeneratorMessage } from "../codegen/emit-type.ts";
 import {
   bareNameAt,
   fitsRecordPosition,
@@ -98,7 +99,21 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     return;
   }
   if (t.testKind === "property-test") {
-    for (const f of t.forAll ?? []) resolveType(f.type, sym, errors);
+    for (const f of t.forAll ?? []) {
+      const before = errors.length;
+      resolveType(f.type, sym, errors);
+      // A name that resolves to nothing is E0117's to report.
+      if (errors.length > before) continue;
+      const g = forAllGenerator(f.type, sym);
+      if ("refused" in g) {
+        errors.push({
+          code: "E0715",
+          kind: "for-all-no-generator",
+          message: noGeneratorMessage(f.name, g.refused),
+          pos: f.pos,
+        });
+      }
+    }
     const checkRunReducer = (args: Expr[], pos: Pos): void => {
       if (args.length !== 1) {
         errors.push({

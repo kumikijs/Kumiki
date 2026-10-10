@@ -1,60 +1,270 @@
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
 import { refinementBodyJs, refinementToJs } from "../refinements.ts";
+import type { PrimName } from "../stdlib-types.ts";
 import type { GenCtx } from "./context.ts";
 
 export type GenDescData = { t: string; [k: string]: unknown };
 
-/** Translate a type into a property-test generation descriptor. */
-export function typeToGenDesc(t: TypeExpr, gen: GenCtx, seen: Set<string>): GenDescData {
+/**
+ * The generation descriptor of a `for-all` type, or why it has none. The checker reports a
+ * refusal as E0715 and codegen emits the descriptor, so a type the checker accepts is one the
+ * runtime's generator builds in full.
+ */
+export function forAllGenerator(
+  t: TypeExpr,
+  gen: Pick<GenCtx, "types">,
+): { desc: GenDescData } | { refused: string } {
+  try {
+    return { desc: boundRecursion(describe(t, gen, TOP_LEVEL), new Map()) };
+  } catch (e) {
+    if (e instanceof NoGenerator) return { refused: e.message };
+    throw e;
+  }
+}
+
+export function noGeneratorMessage(variable: string, reason: string): string {
+  return `No generator for \`for-all\` "${variable}": ${reason}`;
+}
+
+class NoGenerator extends Error {}
+
+/**
+ * The named types being expanded, each with the key of its arguments, and a generic body's
+ * parameters. A name met again is a step back into it (`Rec`) only under the same arguments.
+ */
+type Expansion = {
+  open: ReadonlyMap<string, string>;
+  params: ReadonlyMap<string, GenDescData | undefined>;
+};
+
+const TOP_LEVEL: Expansion = { open: new Map(), params: new Map() };
+
+function describe(t: TypeExpr, gen: Pick<GenCtx, "types">, at: Expansion): GenDescData {
   switch (t.kind) {
     case "TypePrim":
-      return primGenDesc(t.name);
-    case "TypeApp": {
-      const a = t.args;
-      const d = (x: TypeExpr | undefined): GenDescData =>
-        x ? typeToGenDesc(x, gen, seen) : { t: "Unknown" };
-      if (t.name === "List") return { t: "List", elem: d(a[0]) };
-      if (t.name === "Set") return { t: "Set", elem: d(a[0]) };
-      if (t.name === "Map") return { t: "Map", key: d(a[0]), val: d(a[1]) };
-      if (t.name === "Option") return { t: "Option", inner: d(a[0]) };
-      if (t.name === "Result") return { t: "Result", ok: d(a[0]), err: d(a[1]) };
-      return { t: "Unknown" };
-    }
+      return primDesc(t.name);
     case "TypeRef": {
-      if (seen.has(t.name)) return { t: "Unknown" };
-      const def = gen.types.get(t.name);
-      if (!def) return { t: "Unknown" };
-      const next = new Set(seen);
-      next.add(t.name);
-      return typeToGenDesc(def.body, gen, next);
+      if (!at.params.has(t.name)) return named(t.name, [], gen, at);
+      const arg = at.params.get(t.name);
+      if (!arg) throw new NoGenerator(`type parameter "${t.name}" has no argument`);
+      return arg;
+    }
+    case "TypeApp": {
+      const args = t.args.map((a) => describe(a, gen, at));
+      const arg = (i: number): GenDescData => {
+        const a = args[i];
+        if (!a) throw new NoGenerator(`"${t.name}" is missing an argument`);
+        return a;
+      };
+      switch (t.name) {
+        case "List":
+        case "Set":
+          return { t: t.name, elem: arg(0) };
+        case "Map":
+          return { t: "Map", key: arg(0), val: arg(1) };
+        case "Option":
+          return { t: "Option", inner: arg(0) };
+        case "Result":
+          return { t: "Result", ok: arg(0), err: arg(1) };
+        case "Tuple":
+          return { t: "Tuple", items: args };
+        default:
+          return named(t.name, args, gen, at);
+      }
     }
     case "TypeNominal":
     case "TypeRefinement":
-      return applyRefine(typeToGenDesc(t.inner, gen, seen), t.refinement);
+      return applyRefine(describe(t.inner, gen, at), t.refinement);
     case "TypeRecord":
       return {
         t: "Record",
-        fields: t.fields.map((f) => ({ name: f.name, desc: typeToGenDesc(f.type, gen, seen) })),
+        fields: t.fields.map((f) => ({ name: f.name, desc: describe(f.type, gen, at) })),
       };
     case "TypeUnion":
       return {
         t: "Union",
         variants: t.variants.map((v) => ({
           name: v.name,
-          payloads: v.payloads.map((p) => typeToGenDesc(p, gen, seen)),
+          payloads: v.payloads.map((p) => describe(p, gen, at)),
         })),
       };
     default:
-      return { t: "Unknown" };
+      assertNever(t);
+      throw new NoGenerator("the type is not one the generator knows");
   }
 }
 
-export function primGenDesc(name: string): GenDescData {
-  if (name === "Int" || name === "Time") return { t: "Int" };
-  if (name === "Float") return { t: "Float" };
-  if (name === "Text" || name === "Bytes") return { t: "Text" };
-  if (name === "Bool") return { t: "Bool" };
-  return { t: "Unknown" };
+function primDesc(name: PrimName): GenDescData {
+  switch (name) {
+    case "Int":
+    case "Time":
+      return { t: "Int" };
+    case "Float":
+      return { t: "Float" };
+    case "Text":
+    case "Bytes":
+      return { t: "Text" };
+    case "Bool":
+      return { t: "Bool" };
+    case "Unit":
+      return { t: "Unit" };
+    // A `File` comes from the platform and an `EffectId` from `emit`.
+    case "File":
+    case "EffectId":
+      throw new NoGenerator(`"${name}" has none`);
+    default:
+      assertNever(name);
+      throw new NoGenerator(`"${String(name)}" has none`);
+  }
+}
+
+function named(
+  name: string,
+  args: GenDescData[],
+  gen: Pick<GenCtx, "types">,
+  at: Expansion,
+): GenDescData {
+  const key = JSON.stringify(args);
+  const open = at.open.get(name);
+  if (open !== undefined) {
+    if (open === key) return { t: "Rec", name };
+    // `type Grow(T) = Stop | Deeper(Grow(List(T)))`: each step is a different
+    // type, so there is no one body to step back into.
+    throw new NoGenerator(`"${name}" applies itself to a different argument`);
+  }
+  const def = gen.types.get(name);
+  if (!def) throw new NoGenerator(`"${name}" names no type`);
+  const params = new Map(def.params.map((p, i) => [p, args[i]]));
+  const body = describe(def.body, gen, { open: new Map([...at.open, [name, key]]), params });
+  return stepsInto(body, name) ? { t: "Fix", name, body } : body;
+}
+
+type Structured =
+  | { t: "List" | "Set"; elem: GenDescData }
+  | { t: "Map"; key: GenDescData; val: GenDescData }
+  | { t: "Option"; inner: GenDescData }
+  | { t: "Result"; ok: GenDescData; err: GenDescData }
+  | { t: "Record"; fields: { name: string; desc: GenDescData }[] }
+  | { t: "Tuple"; items: GenDescData[] }
+  | { t: "Union"; variants: { name: string; payloads: GenDescData[] }[] }
+  | { t: "Fix"; name: string; body: GenDescData }
+  | { t: "Rec"; name: string }
+  | { t: "Int" | "Float" | "Text" | "Bool" | "Unit" };
+
+function partsOf(d: GenDescData): GenDescData[] {
+  const s = d as Structured;
+  switch (s.t) {
+    case "List":
+    case "Set":
+      return [s.elem];
+    case "Map":
+      return [s.key, s.val];
+    case "Option":
+      return [s.inner];
+    case "Result":
+      return [s.ok, s.err];
+    case "Record":
+      return s.fields.map((f) => f.desc);
+    case "Tuple":
+      return s.items;
+    case "Union":
+      return s.variants.flatMap((v) => v.payloads);
+    case "Fix":
+      return [s.body];
+    default:
+      return [];
+  }
+}
+
+function stepsInto(d: GenDescData, name: string): boolean {
+  const s = d as Structured;
+  return (s.t === "Rec" && s.name === name) || partsOf(d).some((p) => stepsInto(p, name));
+}
+
+type Ranks = ReadonlyMap<string, number>;
+
+/** How many steps back into a recursive type the shortest value of `d` takes; `Infinity` when none is finite. */
+function rank(d: GenDescData, ranks: Ranks): number {
+  const s = d as Structured;
+  switch (s.t) {
+    case "Rec":
+      return 1 + (ranks.get(s.name) ?? Number.POSITIVE_INFINITY);
+    case "Fix":
+      return fixRank(s, ranks);
+    case "Result":
+      return Math.min(rank(s.ok, ranks), rank(s.err, ranks));
+    case "Union":
+      return Math.min(...s.variants.map((v) => deepest(v.payloads, ranks)));
+    case "Record":
+    case "Tuple":
+      return deepest(partsOf(d), ranks);
+    default:
+      return 0;
+  }
+}
+
+function deepest(parts: GenDescData[], ranks: Ranks): number {
+  return Math.max(0, ...parts.map((p) => rank(p, ranks)));
+}
+
+// Re-reading the body under the last answer, starting from "no finite value", can only lower it.
+function fixRank(fix: { name: string; body: GenDescData }, ranks: Ranks): number {
+  let r = Number.POSITIVE_INFINITY;
+  for (;;) {
+    const next = rank(fix.body, new Map(ranks).set(fix.name, r));
+    if (next >= r) return r;
+    r = next;
+  }
+}
+
+/**
+ * Past its depth bound the runtime's generator takes, at each union or `Result`, a choice marked
+ * `base` (one of least rank), so the value ends. A choice node is marked only when its choices
+ * differ in rank, so a type with no recursion keeps the descriptor it always had.
+ */
+function boundRecursion(d: GenDescData, ranks: Ranks): GenDescData {
+  const s = d as Structured;
+  const bound = (p: GenDescData): GenDescData => boundRecursion(p, ranks);
+  switch (s.t) {
+    case "Fix": {
+      const r = fixRank(s, ranks);
+      if (r === Number.POSITIVE_INFINITY) {
+        throw new NoGenerator(`"${s.name}" has no finite value`);
+      }
+      return { ...s, body: boundRecursion(s.body, new Map(ranks).set(s.name, r)) };
+    }
+    case "Union": {
+      const variants = s.variants.map((v) => ({ ...v, payloads: v.payloads.map(bound) }));
+      const base = cheapest(s.variants.map((v) => deepest(v.payloads, ranks)));
+      return base ? { ...s, variants, base } : { ...s, variants };
+    }
+    case "Result": {
+      const base = cheapest([rank(s.ok, ranks), rank(s.err, ranks)]);
+      const tags = base?.map((i) => (i === 0 ? "Ok" : "Err"));
+      const parts = { ok: bound(s.ok), err: bound(s.err) };
+      return tags ? { ...s, ...parts, base: tags } : { ...s, ...parts };
+    }
+    case "List":
+    case "Set":
+      return { ...s, elem: bound(s.elem) };
+    case "Map":
+      return { ...s, key: bound(s.key), val: bound(s.val) };
+    case "Option":
+      return { ...s, inner: bound(s.inner) };
+    case "Record":
+      return { ...s, fields: s.fields.map((f) => ({ ...f, desc: bound(f.desc) })) };
+    case "Tuple":
+      return { ...s, items: s.items.map(bound) };
+    default:
+      return d;
+  }
+}
+
+/** The indices of the least ranks, or `undefined` when every rank is the same. */
+function cheapest(ranks: number[]): number[] | undefined {
+  const least = Math.min(...ranks);
+  if (ranks.every((r) => r === least)) return undefined;
+  return ranks.flatMap((r, i) => (r === least ? [i] : []));
 }
 
 export function applyRefine(desc: GenDescData, r: Refinement | undefined): GenDescData {
