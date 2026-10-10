@@ -8,10 +8,10 @@ description: Diagnose and fix Kumiki compiler errors. Use when `kumiki check`/`b
 ## First: get the diagnostic
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts check <file>
+pnpm kumiki check <file>
 ```
 
-Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx) documented in `docs/spec/errors.md`. Read that entry first — it states the rule and the fix.
+Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xxx) documented in `docs/spec/errors.md`. Read that entry first — it states the rule and the fix.
 
 ## Error code map (see docs/spec/errors.md for detail)
 
@@ -29,7 +29,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0103` | undefined name / slot — including a `let` read outside the `if` branch, `for` body or match arm that declared it | declare it, or fix the spelling; for a name an inner scope declared, declare it before that scope (`let n = if c then … else …`) or move the read inside — a rename is not the repair |
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
-| `E0108` | `recv.m` where `m` is neither a field nor a member of **that** receiver (stdlib §2.2) — a member of another receiver is not one: `xs.size` on a `List`, `res.filter(…)` on a `Result`, `opt.keys`, `st.map(…)` on a `Set` | use the receiver's own spelling (`List.length`, `Map` / `Set` `.size`), or convert to a receiver that has the member — `res.to-option.filter(…)`, `st.to-list.map(…)`; the message names the receivers that do have it |
+| `E0108` | `recv.m` where `m` is neither a field nor a member of **that** receiver (`docs/spec/stdlib.md`) — a member of another receiver is not one: `xs.size` on a `List`, `res.filter(…)` on a `Result`, `opt.keys`, `st.map(…)` on a `Set` | use the receiver's own spelling (`List.length`, `Map` / `Set` `.size`), or convert to a receiver that has the member — `res.to-option.filter(…)`, `st.to-list.map(…)`; the message names the receivers that do have it |
 | `E0117` | a type name resolves to nothing | fix the spelling, define the type, or add it to the enclosing `type`'s parameter list; try `kumiki_fix` |
 | `E0124` | `T.fresh()` / `T.parse(t)` / `T.show(v)` qualified by a type constructor (`List`, `Map`, `Tuple`, a `type Box(T)`) | name the application as a type — `type IntBox = Box(Int)` — and qualify with that: `IntBox.fresh()`. For `parse` the applied type also needs a base with a text reading — a container has none (E0802), so parse the parts and build it in a `fn`. `kumiki_fix` skips it |
 | `E0118` | `app.theme` names neither a `theme` definition nor a slot | fix the spelling, or declare the theme; try `kumiki_fix` |
@@ -57,7 +57,7 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 | `E0601` | a slot path-shape is written twice in one reducer | chain the writes into one assignment |
 | `E0701`–`E0703` | a11y: button/image/link missing text/alt/aria | add visible text or `aria-label`/`alt` |
 | `E0801` | `obj.method(...)` calls a method the runtime doesn't implement (typo, or unimplemented/wrong-type method like `Option.to-result`) | fix the name or rewrite with an implemented op (`match`, `fold`, …); see `KNOWN_METHODS` / docs/spec/stdlib.md |
-| `E0804` | a `where` refinement cannot build a check that passes anything — a text bound on `between`, a fractional or negative length, `len-lt(0)`, a `regex` pattern that does not compile, an empty `one-of` or one whose literals are not values of its base (`Text where one-of(1)`), or a predicate over a base it does not test (`Text where positive`, `Int where nonempty`, a generic applied as `NonEmpty(Int)`) | write the arguments the predicate takes, over the base it tests; the tables are in docs/spec/language.md §1.3.3 and errors.md E0804 |
+| `E0804` | a `where` refinement cannot build a check that passes anything — a text bound on `between`, a fractional or negative length, `len-lt(0)`, a `regex` pattern that does not compile, an empty `one-of` or one whose literals are not values of its base (`Text where one-of(1)`), or a predicate over a base it does not test (`Text where positive`, `Int where nonempty`, a generic applied as `NonEmpty(Int)`) | write the arguments the predicate takes, over the base it tests; the tables are in docs/spec/language.md (refinements) and errors.md E0804 |
 | `E0000` | parse error (from the lexer/parser) | check the position; look for a missing `)` / wrong keyword |
 | `W0212` | `ui.<ev>(Tile)` reducer subscribes to a tile whose root builtin never fires `<ev>` — silent no-op | re-target the selector at a focusable/event-capable tile, or wire the handler explicitly (`input(onFocus=r)`). See docs/spec/errors.md for the per-event allowed-kinds table. |
 
@@ -66,34 +66,34 @@ Or `kumiki_check` via `@kumiki/mcp`. Each diagnostic has a stable `code` (E0xxx)
 For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` on a `let` read outside the scope that declared it is not a misspelling: do not apply a rename `fix` proposes for it — it would read a different value and still type-check.
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file>          # show planned fixes
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts fix <file> --apply  # apply them
+pnpm kumiki fix <file>          # show planned fixes
+pnpm kumiki fix <file> --apply  # apply them
 ```
 
 Both forms exit `1` while the file still has errors, so the first one exits `1`
 whenever it has anything to propose — that is the proposal succeeding, not
 failing. Read the output, not the code, until `--apply` reports the file clean.
 
-Or `kumiki_fix` via `@kumiki/mcp`.
+Or `kumiki_fix` via `@kumikijs/mcp`.
 
 ## Warnings (W-codes)
 
-`Wxxxx` diagnostics are non-fatal: `kumiki check` exits 0 and prints `ok (N warning(s))`. They still indicate real bugs — the warning catalog (currently just `W0212`) flags subscriptions whose handler is silently dropped, meaning the reducer never fires. If `smoke` reports "interaction did nothing," scan the warning lines first.
+`Wxxxx` diagnostics are non-fatal: `kumiki check` exits 0 and prints `ok (N warning(s))`. They still indicate real bugs: `W0212` and `W0213` flag a subscription or handler that never fires, so its reducer never runs. If `smoke` reports "interaction did nothing," scan the warning lines first.
 
 ## "It checks but misbehaves at runtime"
 
 `check`/`build` prove parse + typecheck + codegen; they do NOT prove the app runs. First reach for the runtime smoke test, which mounts the app in a headless DOM and drives its UI:
 
 ```sh
-pnpm --filter @kumiki/cli exec tsx src/kumiki.ts smoke <file>
+pnpm kumiki smoke <file>
 ```
 
-Or `kumiki_smoke` via `@kumiki/mcp`. It reports the failing phase and the interaction that triggered it (e.g. `[interaction] (...).to_result is not a function (on input input[0])`) — catching throws, empty renders, and unhandled rejections that compilation misses.
+Or `kumiki_smoke` via `@kumikijs/mcp`. It reports the failing phase and the interaction that triggered it (e.g. `[interaction] (...).to_result is not a function (on input input[0])`) — catching throws, empty renders, and unhandled rejections that compilation misses.
 
 There are three verification layers; each catches what the previous cannot:
 
 1. **`check` / `build`** — syntax, types, codegen.
 2. **`smoke`** — *does it run?* mount + auto-exercise; catches runtime throws / empty render. Generic, no per-app knowledge.
-3. **example-specific assertions** (in `packages/tests/` or `packages/cli/test/`) — *is the result correct?* the only layer that catches wrong-but-non-throwing behavior (e.g. a select that always yields the last option). Smoke cannot judge correctness, only liveness.
+3. **scenarios** (`kumiki run <file> <scenario.json>`, and `<name>.scenario.json` beside an example) — *is the result correct?* the only layer that catches wrong-but-non-throwing behavior (e.g. a select that always yields the last option). Smoke cannot judge correctness, only liveness.
 
-When you find a runtime bug: add a minimal reproducing `packages/examples/features/*.kumiki` (CI smoke-tests it automatically), then fix. Most runtime bugs are a wrong method dispatch (List vs Map vs Option), a method the runtime doesn't implement, a missing `key=` on a `for`-rendered tile, or a bind-path issue. Runtime fixes live in `packages/runtime/src/index.ts`; codegen fixes in `packages/compiler/src/codegen.ts`. Keep `pnpm exec turbo run test` green.
+When you find a runtime bug: add a minimal reproducing `packages/examples/features/*.kumiki` with a `.scenario.json` that pins the correct behavior (CI compiles, smokes and runs every example), then fix. Most runtime bugs are a wrong method dispatch (List vs Map vs Option), a method the runtime doesn't implement, a missing `key=` on a `for`-rendered tile, or a bind-path issue. Runtime fixes live in `packages/runtime/src/`; codegen fixes in `packages/compiler/src/codegen/`. Keep `pnpm exec turbo run typecheck test build && pnpm lint` green.

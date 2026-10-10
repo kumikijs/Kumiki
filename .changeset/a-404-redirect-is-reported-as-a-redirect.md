@@ -3,7 +3,7 @@
 "@kumikijs/cli": patch
 ---
 
-A redirect written at `/404` is reported as a redirect, not as a missing `/404`, and a `sub-routes` entry at `/404` is refused (#396).
+A redirect written at `/404` is reported as a redirect, not as a missing `/404`, and a `sub-routes` entry at `/404` is refused.
 
 `/404` is the fallback for paths no route matches. It belongs to `app.routes`, and it renders a tile (routing.md §3.1.3), so `"/404" ->> "/"` is refused. It was refused with the message for a map that has no `/404` at all, which sends the author to add a second one (E0008):
 

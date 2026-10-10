@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.4): `Option(T).filter(pred) : Option(T)`.
+# Feature: `Option(T).filter(pred) : Option(T)`.
 #
 # A `Some` whose value passes the predicate stays that `Some`; a `Some` whose
 # value fails it becomes `None`; a `None` stays `None`. The predicate sees the
