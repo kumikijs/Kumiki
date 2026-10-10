@@ -1,4 +1,4 @@
-import { unaliasType } from "../assignable.ts";
+import { indexPlaceType, unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
@@ -16,7 +16,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
-import type { BindSegment } from "./path-segment.ts";
+import { type PathStep, segmentJs } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
 export function genTile(tile: TileDef, gen: GenCtx): string {
@@ -173,29 +173,34 @@ export function tileExprJs(
   }
 }
 
-export type BindInfo = { root: string; path: BindSegment[]; read: string };
+export type BindInfo = { root: string; path: PathStep[]; pathJs: string; read: string };
 
-export function extractBindPath(args: { name?: string; value: unknown }[]): BindInfo | null {
+export function extractBindPath(
+  args: { name?: string; value: unknown }[],
+  ctx: EvalCtx,
+): BindInfo | null {
   const bindArg = args.find((a) => a.name === "bind");
   if (!bindArg) return null;
   const target = bindTarget(bindArg.value as Expr);
   if (target.root.kind !== "Ref" || target.path === null) return null;
   const root = target.root.name;
   const path = target.path;
-  // Build a safe reader: `((_live["root"] ?? {})["a"] ?? {})["b"] ...`.
+  const keyJs = (key: Expr): string => jsOfExpr(key, ctx);
+  // `.get` and an index read as they do in `rows[i].title`, so an empty Option
+  // or an index that names no element panics here as it does there.
   let readRaw = `_live[${JSON.stringify(root)}]`;
   for (const seg of path) {
-    readRaw =
-      typeof seg === "string"
-        ? `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`
-        : `_s.unwrap(${readRaw})`;
+    if (typeof seg === "string") readRaw = `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`;
+    else if ("at" in seg) readRaw = `_s.index(${readRaw}, ${keyJs(seg.at)})`;
+    else readRaw = `_s.unwrap(${readRaw})`;
   }
-  return { root, path, read: readRaw };
+  const pathJs = `[${path.map((seg) => segmentJs(seg, keyJs)).join(",")}]`;
+  return { root, path, pathJs, read: readRaw };
 }
 
-function bindFields(bindInfo: Pick<BindInfo, "root" | "path">): string[] {
+function bindFields(bindInfo: Pick<BindInfo, "root" | "path" | "pathJs">): string[] {
   const fields = [`bind: ${JSON.stringify(bindInfo.root)}`];
-  if (bindInfo.path.length > 0) fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
+  if (bindInfo.path.length > 0) fields.push(`bindPath: ${bindInfo.pathJs}`);
   return fields;
 }
 
@@ -205,7 +210,7 @@ function toggleJs(
   ctx: EvalCtx,
   propsObj: string,
 ): string {
-  const bindInfo = extractBindPath(t.args);
+  const bindInfo = extractBindPath(t.args, ctx);
   const fields = [`kind: ${JSON.stringify(kind)}`];
   if (bindInfo) {
     fields.push(...bindFields(bindInfo), `checked: !!(${bindInfo.read})`);
@@ -218,7 +223,7 @@ function toggleJs(
 }
 
 function boundReading(
-  bindInfo: { root: string; path: BindSegment[] },
+  bindInfo: { root: string; path: PathStep[] },
   gen: GenCtx,
 ): "Int" | "Float" | "Time" | null {
   let t: TypeExpr | null = gen.slots.find((s) => s.name === bindInfo.root)?.type ?? null;
@@ -226,6 +231,8 @@ function boundReading(
     const u = unaliasType(t, gen);
     if (typeof seg === "string") {
       t = u?.kind === "TypeRecord" ? (u.fields.find((f) => f.name === seg)?.type ?? null) : null;
+    } else if ("at" in seg) {
+      t = indexPlaceType(u);
     } else {
       t =
         u?.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
@@ -360,7 +367,7 @@ function tileCallJs(
       }
       case "input": {
         const fields: string[] = [`kind: "input"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
@@ -387,7 +394,7 @@ function tileCallJs(
       }
       case "textarea": {
         const fields: string[] = [`kind: "textarea"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
@@ -405,7 +412,7 @@ function tileCallJs(
         return toggleJs(name, t, ctx, propsObj);
       case "select": {
         const fields: string[] = [`kind: "select"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
         } else {
@@ -428,7 +435,7 @@ function tileCallJs(
       }
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         let valueJs: string | undefined;
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
@@ -580,7 +587,7 @@ function tileCallJs(
       }
       case "slider": {
         const fields: string[] = [`kind: "slider"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
@@ -618,7 +625,7 @@ function tileCallJs(
       }
       case "editable": {
         const fields: string[] = [`kind: "editable"`];
-        const bindInfo = extractBindPath(t.args);
+        const bindInfo = extractBindPath(t.args, ctx);
         const textJs = contentJs(t, ctx);
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `text: _s.show(${bindInfo.read})`);

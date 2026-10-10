@@ -1,0 +1,36 @@
+# Feature (forms.md): a `bind=` target steps through an index the way
+# the left of `:=` does (language.md). `input(bind=rows[i].title)`
+# shows what the read `rows[i].title` shows and writes what
+# `rows[i].title := v` writes: the element at `i`, in a new List of the same
+# length. The index is read again on every render, as a read of it is, so
+# moving `i` moves each control bound through it to the row it now names.
+#
+# A Map is bound by key. The `for` over `notes.keys` binds each entry where
+# it is shown, so every note is edited in place with no reducer.
+
+type Todo = {title: Text, done: Bool, qty: Int}
+
+slot rows  : List(Todo)      = [{title: "milk", done: false, qty: 1}, {title: "eggs", done: false, qty: 6}]
+slot i     : Int             = 0
+slot notes : Map(Text, Text) = {"a": "first", "b": "second"}
+
+tile NextRow = button(text="next row") {id: "next"}
+
+reducer nextRow
+    on=ui.click(NextRow)
+    do= i := (i + 1) % rows.length
+
+tile App = column(
+    input(bind=rows[i].title, id="title"),
+    check(bind=rows[i].done) {id: "done"},
+    input(bind=rows[i].qty, type="number", id="qty"),
+    NextRow,
+    for k in notes.keys input(bind=notes[k], id="note-" + k) {key: k},
+    text("row=" + i.show),
+    text("rows=" + rows.map($1.title + "/" + $1.done.show + "/" + $1.qty.show).join(",")),
+    text("notes=" + notes.values.join(",")))
+
+app BindThroughIndex
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -6,6 +6,7 @@ import { checkAgainst } from "./against.ts";
 import { type Ctx, type KumikiError, RUNTIME_NAMES, type SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
+import { checkIndexIsPlace } from "./reducer.ts";
 
 const BIND_CONTROLS = new Set([
   "input",
@@ -20,11 +21,17 @@ const BIND_CONTROLS = new Set([
 
 export function checkBindTargetSteps(
   t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
   errors: KumikiError[],
+  ctx: Ctx,
 ): void {
   const bind = t.args.find((a) => a.name === "bind");
   if (!bind || isTileExpr(bind.value)) return;
   for (const step of bindTarget(bind.value).steps) {
+    if (step.kind === "Index") {
+      const base = unaliasType(inferType(step.base, sym, ctx), sym);
+      checkIndexIsPlace(base, "bind", step.pos, sym, errors);
+    }
     if (step.kind !== "MethodCall") continue;
     const hint =
       step.method === "get" && step.args.length === 0
@@ -58,7 +65,7 @@ export function checkBindTargetRoot(
   errors.push({
     code: "E0229",
     kind: "bind-target-not-slot",
-    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}, not a slot — a bind writes back to a slot or a field path into one. ${root.fix} (see docs/spec/forms.md)`,
+    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}, not a slot — a bind writes back to a slot or a path into one. ${root.fix} (see docs/spec/forms.md)`,
     pos: bindArg.value.pos,
   });
 }

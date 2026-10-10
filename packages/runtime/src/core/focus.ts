@@ -31,7 +31,13 @@ export function snapshotFocus(view: HTMLElement): FocusSnapshot | null {
 
 /** Refocus the control the snapshot names: by bind, then by id, then by its position. */
 export function restoreFocus(snap: FocusSnapshot, view: HTMLElement): void {
-  const byBind = snap.bind ? view.querySelectorAll(`[data-kumiki-bind="${snap.bind}"]`) : null;
+  // A marker can hold a quoted index key (`notes["a"]`), so it is compared as a
+  // string rather than spliced into a selector.
+  const byBind = snap.bind
+    ? [...view.querySelectorAll<HTMLElement>("[data-kumiki-bind]")].filter(
+        (e) => e.dataset.kumikiBind === snap.bind,
+      )
+    : null;
   let found: Element | null =
     byBind?.length === 1
       ? (byBind[0] ?? null)

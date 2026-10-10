@@ -1,14 +1,14 @@
-# Feature (forms.md): a `bind=` target is a slot, or a field path into
-# one. The control writes back to the slot its target's root names, so that
-# root has to be a slot where the target is written: a `for` variable, a
-# tile's `$1` or a `match` binding is a value, not a place, and binding one is
-# E0229.
+# Feature (forms.md): a `bind=` target is a slot, or a path into one.
+# The control writes back to the slot its target's root names, so that root
+# has to be a slot where the target is written: a `for` variable, a tile's
+# `$1` or a `match` binding is a value, not a place, and binding one is E0229.
 #
-# The rows of a list are edited the way forms.md recommends. Each row shows its
-# text with `value=` and carries its key in `{todoId: …}`, and one reducer on
-# `ui.input(TodoText)` writes the row the event came from, reading the key
-# from `$el`. The other controls bind a slot by its name — from the page
-# itself, and from inside `Field`, a tile that takes an input of its own.
+# The rows of a list are edited through a reducer, one of the two ways forms.md
+# shows (238-bind-through-index binds them through the slot instead). Each row
+# shows its text with `value=` and carries its key in `{todoId: …}`, and one
+# reducer on `ui.input(TodoText)` writes the row the event came from, reading
+# the key from `$el`. The other controls bind a slot by its name — from the
+# page itself, and from inside `Field`, a tile that takes an input of its own.
 
 type Todo    = {text: Text}
 type Profile = {name: Text, email: Text}

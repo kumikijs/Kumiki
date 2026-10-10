@@ -12,7 +12,7 @@ import {
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
 import { jsOfExpr, reducerEmitJs, reducerNameArg, slotReadJs, tupleArm } from "./expr.ts";
-import { indexSegmentJs, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
+import { isUnwrapStep, type PathStep, segmentJs, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
   const def = gen.slots.find((s) => s.name === slot);
@@ -327,31 +327,18 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
     return `_next[${JSON.stringify(lv.name)}] = ${slotWriteJs(lv.name, rhsJs, ctx.gen)};`;
   }
   const root = lvalueRootName(lv);
-  const path: (
-    | { kind: "field"; name: string }
-    | { kind: "unwrap" }
-    | { kind: "index"; expr: Expr }
-  )[] = [];
+  const path: PathStep[] = [];
   let cur: Lvalue = lv;
   while (cur.kind !== "LSlot") {
     if (cur.kind === "LField") {
-      path.unshift(
-        isUnwrapStep(cur.field, cur.accessKind)
-          ? { kind: "unwrap" }
-          : { kind: "field", name: cur.field },
-      );
-    } else path.unshift({ kind: "index", expr: cur.index });
+      path.unshift(isUnwrapStep(cur.field, cur.accessKind) ? UNWRAP_SEGMENT : cur.field);
+    } else path.unshift({ at: cur.index });
     cur = cur.base;
   }
   const baseJs = `(${slotReadJs(root, ctx.reducerScope)} ?? {})`;
-  let pathExpr = "";
-  for (const seg of path) {
-    if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
-    else if (seg.kind === "unwrap") pathExpr += `, ${JSON.stringify(UNWRAP_SEGMENT)}`;
-    else pathExpr += `, ${indexSegmentJs(jsOfExpr(seg.expr, ctx))}`;
-  }
+  const pathExpr = path.map((step) => segmentJs(step, (key) => jsOfExpr(key, ctx))).join(", ");
   // The runtime's setter, which `bind=` write-back also calls.
-  const updated = `_s.setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;
+  const updated = `_s.setPath(${baseJs}, [${pathExpr}], ${rhsJs})`;
   return `_next[${JSON.stringify(root)}] = ${slotWriteJs(root, updated, ctx.gen)};`;
 }
 

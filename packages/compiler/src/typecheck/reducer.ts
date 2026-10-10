@@ -1,5 +1,5 @@
 import { unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
@@ -284,12 +284,23 @@ function checkIndexLvalue(
 ): void {
   const base = unaliasType(lvalueType(lv.base, sym), sym);
   checkListIndex(base, lv.index, sym, errors, ctx);
+  checkIndexIsPlace(base, "assign", lv.pos, sym, errors);
+}
+
+/** An index step a write goes through, on the left of `:=` or in a `bind=` target. */
+export function checkIndexIsPlace(
+  base: TypeExpr | null,
+  verb: "assign" | "bind",
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
   if (base?.kind !== "TypeApp" || base.name !== "Set") return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
-    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
-    pos: lv.pos,
+    message: `Cannot ${verb} through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    pos,
   });
 }
 

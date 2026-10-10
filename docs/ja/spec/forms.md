@@ -21,9 +21,20 @@ tile Compose = column(
 - ユーザー入力で slot が更新 → tile が再描画
 - 型と refinement は **入力ごとに検査**される
 
-`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのフィールドパスである — `bind=form.email`、あるいは `Option` / `Result` のペイロードを通る `bind=draft.get.title`（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。その根は、ターゲットを書いた位置で slot でなければならない。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
+`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのパスであり、そのステップは代入が書き込みに通るステップと同じである（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）— フィールド（`bind=form.email`）、`Option` / `Result` のペイロードを通る `.get`（`bind=draft.get.title`）、そしてインデックス（`bind=rows[i].title`）。その根は、ターゲットを書いた位置で slot でなければならない。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
 
-したがって、リストの行はループ変数を通して bind しない。行は `value=` で値を表示し、props にキーを持たせ、行のイベントに対する reducer がそのキーでリストに書き込む：
+インデックスのステップは、`:=` の左辺で指すものと同じものを指す：`List` なら `Int` の位置にある要素、`Map` ならキーにあるエントリである。コントロールは読み出し `rows[i].title` が読むものを表示し、`rows[i].title := v` が書くものを同じ setter を通して書く。したがって要素は同じ長さの新しい `List` の中で置き換えられ、他の要素はそのまま残る。キーは任意の式で、その読み出しと同じく描画のたびに読み直される：slot `i` が変われば、コントロールはそのとき `i` が指す要素を表示し、そこへ書く。どの要素も指さないインデックス — `List` の末尾を越えた位置、`Map` が持たないキー — は、読み出しと同じく描画を panic させる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。`Set` はメンバーを持つだけで場所を持たないので、`tags[x] := v` と同じく `bind=tags[x]` は [E0602](./errors.md#e0602-unassignable-member) である。`bind=rows.get(0)` のように呼び出しとして書いたステップも同様である。
+
+したがって、リストの行はループ変数を通してではなく、slot を通して、そのキーまたはインデックスで bind する。Map のキーに対する `for` は、各エントリをそれを表示する場所で bind する：
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+
+tile Todos = column(for k in todos.keys input(bind=todos[k].text) {key: k})
+```
+
+行は `value=` で値を表示し、props にキーを持たせ、書き込みを行のイベントに対する reducer に任せることもできる。reducer はそのキーでリストに書き込む：
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -130,7 +141,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 | prop | 型 | 意味 |
 |---|---|---|
-| `bind` | slot、またはその中へのフィールドパス（[§5.1](#_5-1-個別入力の双方向束縛)） | 双方向束縛 |
+| `bind` | slot、またはその中へのパス（[§5.1](#_5-1-個別入力の双方向束縛)） | 双方向束縛 |
 | `value` | expr | 単方向値（`bind` の代わりに、reducer で更新） |
 | `onChange` | reducer name | 値変更時に呼ばれる reducer |
 | `onInput` | reducer name | input イベントで呼ばれる（onChange より高頻度） |

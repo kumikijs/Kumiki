@@ -1,5 +1,6 @@
 import {
   assignable,
+  indexPlaceType,
   recordFieldType,
   typeToString,
   unaliasType,
@@ -354,13 +355,7 @@ export function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     if (lv.field === "get") return unwrappedType(base);
     return null;
   }
-  if (base.kind === "TypeApp") {
-    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
-    // a right-hand side to be checked against.
-    if (base.name === "List") return base.args[0] ?? null;
-    if (base.name === "Map") return base.args[1] ?? null;
-  }
-  return null;
+  return indexPlaceType(base);
 }
 
 export function checkEmitTarget(

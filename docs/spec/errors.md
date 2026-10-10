@@ -913,11 +913,11 @@ The bound type is unaliased first, so `type Qty = Int where positive` and a `nom
 
 The root of a `bind=` target is not a slot where the target is written ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)).
 
-> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a field path into one. <fix> (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a path into one. <fix> (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to the literal <v>: a literal is a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to this expression: it computes a value, not a slot — … (see docs/spec/forms.md)`
 
-A control writes back to the slot its target's root names, through the field path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Neither is reported by anything else — the program checks, builds, mounts, and survives every edit.
+A control writes back to the slot its target's root names, through the path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Neither is reported by anything else — the program checks, builds, mounts, and survives every edit.
 
 `<what>` is what the checker knows the root to be: `the variable of a for`, `this tile's input` (`$1` in a tile that declares `in=`), `a local name` for any other local (a `match` binding), or `a name the runtime provides` (`route`). A text literal is named `the text literal "<v>"`. A local named like a slot hides the slot, as it does for any read, so `for title in titles input(bind=title)` is reported beside a slot `title`. The controls asked are the ones that write back from a bind: `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio` and `editable`.
 
@@ -929,7 +929,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**Fix**: Bind the slot itself, or a field path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. To edit one row of a list, show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
+**Fix**: Bind the slot itself, or a path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. To edit one row of a list, bind it through the list by its key or index — `for k in todos.keys input(bind=todos[k].text)` — or show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -1111,6 +1111,10 @@ A **`bind=` target** is written through the same way — it is the place the con
 > `Cannot bind through ".get()": a bind target is a path, and a call is not a step of one — the unwrap step is written ".get"`
 
 Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
+
+An index step of a bind target names the place it names on the left of `:=` — a `List` element, a `Map` entry — so an index into a `Set` is E0602 there too, at the index:
+
+> `Cannot bind through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
 
 **Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
 
