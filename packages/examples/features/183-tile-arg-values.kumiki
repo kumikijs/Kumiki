@@ -1,0 +1,52 @@
+# Feature (language.md): a tile argument is a value wherever a value
+# belongs — every named argument, whatever it is called, a value builtin's
+# content, and a user tile's input — so an `if`, a `match`, a call and an
+# expression that starts with a capitalised name are values there.
+#
+#   button(text="Save", disabled=if phase == Busy then true else false)
+#   button(text="Undo", disabled=Idle == phase)
+#   Count(if phase == Busy then 100 else 1)        an Int, as `$1`
+#   Next(if phase == Busy then Idle else Busy)      a variant, as `$1`
+#   Say(shout("ok"))                                what the fn returns
+#
+# A tile argument is a tile only as a positional argument of a builtin that
+# renders it as a child (`column`, `row`, `box`, …): the `if` at the end of
+# `App` picks a tile. A capitalised name written as an event handler of such a
+# builtin is a tile call, and names the reducer it spells.
+
+type Phase = Idle | Busy
+
+slot phase  : Phase = Idle
+slot saved  : Int   = 0
+slot undone : Int   = 0
+
+fn shout(t: Text) -> Text = t + "!"
+
+reducer toggle on=ui.click(Toggle) do= phase := if phase == Busy then Idle else Busy
+reducer save   on=ui.click(Save)   do= saved := saved + 1
+reducer undo   on=ui.click(Undo)   do= undone := undone + 1
+
+tile Toggle = button(text="toggle") {id: "toggle"}
+
+# Save is refused while busy, Undo while idle.
+tile Save = button(text="Save", disabled=if phase == Busy then true else false) {id: "save"}
+tile Undo = button(text="Undo", disabled=Idle == phase) {id: "undo"}
+
+tile Count in=Int   = text("n=" + $1.show)
+tile Next  in=Phase = text(match $1 with | Idle -> "next: idle" | Busy -> "next: busy")
+tile Say   in=Text  = text($1)
+
+tile App = column(
+  Toggle,
+  Save,
+  Undo,
+  Count(if phase == Busy then 100 else 1),
+  Next(if phase == Busy then Idle else Busy),
+  Say(shout("ok")),
+  text("saved: " + saved.show + " undone: " + undone.show),
+  if phase == Busy then text("working") else text("waiting"))
+
+app TileArgValues
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
