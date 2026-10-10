@@ -1,5 +1,5 @@
-# Feature (stdlib.md §2.4, errors.md E0124): a type-member call is qualified by
-# a type, and a type constructor is not one.
+# Feature (E0124): a type-member call is qualified by a type, and a type
+# constructor is not one.
 #
 # `Tagged` below wants its `T`, the way `List` wants an element and `Map` a key
 # and a value, so there is no type for `fresh` to mint or `parse` to read into:

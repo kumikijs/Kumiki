@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.3): `heading(level=n, …)` renders `<h1>` … `<h6>`, so a
+# Feature: `heading(level=n, …)` renders `<h1>` … `<h6>`, so a
 # page written as an outline keeps its outline for screen readers and the
 # document structure. No `level` is an `<h1>`. The level may come from a slot;
 # when it changes, the heading is re-created as the new element, since a tag

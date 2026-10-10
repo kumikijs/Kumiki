@@ -3,9 +3,8 @@
 # counter — proving a manifest-registered capability compiles, is emittable, and
 # is dispatched (and mockable in scenarios, exactly like a standard effect).
 # At runtime its implementation is supplied host-side via mount(..., {providers})
-# — see docs/spec/stdlib.md §2.5 and packages/tests/provider.test.ts. The `.err`
-# branch models a missing/failing provider so the error is visible, not silently
-# dropped (#37).
+# — see packages/tests/src/provider.test.ts. The `.err` branch models a
+# missing/failing provider so the error is visible, not silently dropped.
 
 slot sent   : Int  = 0
 slot status : Text = "idle"

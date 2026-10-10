@@ -9,7 +9,7 @@
       }
     },
     {
-      "label": "one click runs BOTH reducers subscribed to it (§1.6.4), not just the first",
+      "label": "one click runs BOTH reducers subscribed to it, not just the first",
       "do": { "clickText": "Save" },
       "expect": {
         "noErrors": true,
