@@ -321,6 +321,53 @@ describe("runPropertyTest", () => {
     expect(r.cases).toBe(100);
   });
 
+  it.each([1, 10_000])("runs exactly the %i cases a whole-number count asks for", (count) => {
+    let calls = 0;
+    const r = _stdlib.runPropertyTest({
+      name: "counted",
+      vars: { n: { t: "Int", min: 0, max: 10 } },
+      trial: () => {
+        calls += 1;
+        return true;
+      },
+      count,
+    });
+    expect([r.pass, r.cases, calls]).toEqual([true, count, count]);
+  });
+
+  // The invariant fails on every input, so a count that ran a case would report a
+  // counterexample and one that ran none would report a pass.
+  it.each([
+    { count: 0, shown: "0" },
+    { count: 0.5, shown: "0.5" },
+    { count: -3, shown: "-3" },
+    { count: -0, shown: "-0" },
+    { count: Number.NaN, shown: "NaN" },
+    { count: Number.POSITIVE_INFINITY, shown: "Infinity" },
+    { count: "5", shown: '"5"' },
+    { count: null, shown: "null" },
+  ])("fails a count of $shown without running a case, naming the count", ({ count, shown }) => {
+    let calls = 0;
+    const r = _stdlib.runPropertyTest({
+      name: "bad-count",
+      vars: { n: { t: "Int", min: 0, max: 10 } },
+      trial: () => {
+        calls += 1;
+        return false;
+      },
+      count: count as number,
+    });
+    expect(r).toEqual({
+      name: "bad-count",
+      pass: false,
+      expected: "count is a whole number, 1 or more",
+      actual: `count = ${shown}`,
+      diffAt: "(count)",
+      cases: 0,
+    });
+    expect(calls).toBe(0);
+  });
+
   it("fails with a counterexample when the invariant is violated", () => {
     const r = _stdlib.runPropertyTest({
       name: "too-big",

@@ -150,7 +150,7 @@ property-test ::= 'property-test'
 property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
 
-`count` は 1 以上の整数である。ケースを 1 つも走らせない property は何も assert しておらず、`steps` のないシナリオと同じく成功を返してはならない（[§8.10](#_8-10-the-three-layers-of-tooling-verification)）。そのため `count = 0` は、何も検査しないまま通るテストではなく parse error になる。`0.5` や `-3` もケースの個数ではなく、いずれもリテラルの位置で同じ parse error になる：`property-test "<name>" count must be a whole number, 1 or more (got 0.5)`。
+`count` は 1 以上の整数である。ケースを 1 つも走らせない property は何も assert しておらず、`steps` のないシナリオと同じく成功を返してはならない（[§8.10](#_8-10-the-three-layers-of-tooling-verification)）。そのため `count = 0` は、何も検査しないまま通るテストではなく parse error になる。`0.5` や `-3` もケースの個数ではなく、いずれもリテラルの位置で同じ parse error になる：`property-test "<name>" count must be a whole number, 1 or more (got 0.5)`。ランナーも渡された `count` を同じ規則で検査するので、parser を経ずに届いたテスト定義は、何も検査しないまま通るのではなく、ケースを 1 つも走らせずに失敗する（`expected: count is a whole number, 1 or more`、`actual: count = 0`）。
 
 `run-reducer(name)` は reducer が残す状態 `{slots: {…}}` を返し、その `slots` はプログラムが宣言した slot（とランタイムの `route`）で型付けされる。これを通した読み取りは slot そのものの読み取りと同じように検査される: `Set(Int)` に対する `run-reducer(add).slots.tags.to-list` はキーが数値として読み戻される `List(Int)` であり（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、プログラムが宣言していない slot 名は、property を反例として失敗させる `undefined` ではなく [E0108](./errors.md#e0108-undef-member) になる。
 

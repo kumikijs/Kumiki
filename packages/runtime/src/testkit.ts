@@ -4,6 +4,7 @@ import {
   type RefinementRejection,
   reportRejectedBatch,
 } from "./core.ts";
+import { isPositiveInt } from "./positive-int.ts";
 import { valueEqual } from "./stdlib.ts";
 import type {
   EpisodeLogEntry,
@@ -35,6 +36,12 @@ import {
 } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
+
+// JSON has no `-0` and prints NaN and Infinity as `null`; a non-number keeps JSON's quotes.
+function _countStr(v: unknown): string {
+  if (typeof v !== "number") return _jsonStr(v);
+  return Object.is(v, -0) ? "-0" : String(v);
+}
 
 export const _stdlibTest = {
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
@@ -86,7 +93,18 @@ export const _stdlibTest = {
     seed?: number;
   }): TestResult {
     const { name, vars, trial } = input;
-    const count = input.count ?? 100;
+    const count = input.count === undefined ? 100 : input.count;
+    // The parser refuses such a count in source, but a definition built without it lands here.
+    if (!isPositiveInt(count)) {
+      return {
+        name,
+        pass: false,
+        expected: "count is a whole number, 1 or more",
+        actual: `count = ${_countStr(count)}`,
+        diffAt: "(count)",
+        cases: 0,
+      };
+    }
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
     // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
