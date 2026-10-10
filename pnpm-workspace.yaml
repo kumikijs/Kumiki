@@ -2,6 +2,9 @@ packages:
   - packages/*
   - docs
 
+allowBuilds:
+  esbuild: true
+
 catalog:
   '@biomejs/biome': ^2.4.16
   '@happy-dom/global-registrator': ^20.10.2

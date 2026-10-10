@@ -1,6 +1,3 @@
-// Overlay tile renderers (#71): z-stacking overlay, modal/drawer/popover
-// surfaces, `<details>` disclosure, and tooltip.
-
 import {
   applyContainerProps,
   type EventHandler,
@@ -17,15 +14,6 @@ function appendChildren(el: HTMLElement, children: TileNode[], ctx: TileCtx): vo
   }
 }
 
-/**
- * Stretch a positioned element over the box it is positioned against. The four
- * longhands rather than the `inset` shorthand, because a DOM implementation
- * that does not know `inset` drops it on assignment while still keeping it in
- * a style attribute it parses. `happy-dom` — the DOM `kumiki smoke` and the
- * runtime's own suite run in — is one: written as the shorthand, a layer is
- * stretched over nothing there, and the served style stops matching the
- * mounted one for a reason that has nothing to do with either renderer.
- */
 function coverParent(el: HTMLElement): void {
   el.style.top = "0";
   el.style.right = "0";
@@ -33,13 +21,6 @@ function coverParent(el: HTMLElement): void {
   el.style.left = "0";
 }
 
-/**
- * Place an overlay layer inside its `position: relative` container via flexbox.
- * The token combines a vertical part (`top` / `bottom`, default center) and a
- * horizontal part (`left` / `right`, default center), e.g. `top-left`,
- * `bottom`, `center`. Unknown parts fall back to center (consistent with how
- * other style-prop tokens pass through without compile-time validation).
- */
 function applyOverlayAlign(layer: HTMLElement, align: string): void {
   const parts = align.split("-");
   const has = (k: string): boolean => parts.includes(k);
@@ -47,10 +28,6 @@ function applyOverlayAlign(layer: HTMLElement, align: string): void {
   layer.style.justifyContent = has("left") ? "flex-start" : has("right") ? "flex-end" : "center";
 }
 
-// Per-surface handler slot (#190). Modal / drawer / popover / details store
-// their `onClose` (or details' click handler) here so the outer click / toggle
-// listener registered at create time dispatches through the *current* render's
-// callback after a patch. Same rationale as INPUT_STATE in tiles/input/_shared.ts.
 type SurfaceHandlers = { onClose?: EventHandler; el?: Record<string, unknown> };
 const SURFACE_STATE = new WeakMap<HTMLElement, SurfaceHandlers>();
 function surfaceHandlers(node: { props?: TileProps }): SurfaceHandlers {
@@ -62,10 +39,6 @@ function surfaceHandlers(node: { props?: TileProps }): SurfaceHandlers {
 
 export const overlayTiles: TileRenderers = {
   overlay(node, ctx) {
-    // z-axis stacking: child[0] is the base layer (normal flow); later
-    // children are each wrapped in an absolutely-positioned layer covering
-    // the container, placed by the `align` prop. The base layer's layout is
-    // unaffected by the overlays (they are out of flow).
     const div = document.createElement("div");
     div.dataset.kumikiTile = "overlay";
     div.style.position = "relative";
@@ -100,10 +73,6 @@ export const overlayTiles: TileRenderers = {
     return span;
   },
   details(node, ctx) {
-    // `<details>` is the browser-native disclosure element. #190: the element
-    // itself owns "is-open" state (`.open`); reusing the DOM node across a
-    // data-prop change preserves any inner focus / scroll / animation state
-    // that would otherwise be lost through a full teardown.
     const det = document.createElement("details");
     det.dataset.kumikiTile = "details";
     if (node.open) det.open = true;
@@ -123,20 +92,8 @@ function renderSurface(
 ): HTMLElement {
   const wrap = document.createElement("div");
   wrap.dataset.kumikiTile = node.kind;
-  // A modal is a dialog, and its `title` is the name it is announced under.
-  // The served page already said both and the mounted one said neither, so the
-  // role and the name lasted exactly until the client's first render. (The
-  // confirm effect's own overlay carries `role="dialog"` too, with
-  // `aria-modal` rather than a name — see `effects-confirm.ts`.)
-  //
-  // Both land under names `applyCommonProps` also writes, so a tile that
-  // sets its own `role` or `aria.label` still wins — and a render that DROPS
-  // one takes the renderer's value with it, the removal-by-name tradeoff
-  // `patchCommonProps` documents.
   if (node.kind === "modal") wrap.setAttribute("role", "dialog");
   applySurfaceLabel(wrap, node.title);
-  // `open=false` renders a present-but-hidden host so toggling open/closed
-  // is a style flip, not a mount/unmount — and smoke still "renders".
   applySurfaceOpen(wrap, node.kind, node.open);
   if (node.kind === "modal") {
     wrap.style.position = "fixed";
@@ -169,11 +126,6 @@ function renderSurface(
   return wrap;
 }
 
-/**
- * The surface's accessible name, from its `title`. A surface that stops
- * carrying one loses the attribute rather than keeping the stale name — an
- * `aria-label` that says something untrue is worse than none.
- */
 function applySurfaceLabel(wrap: HTMLElement, title: string | undefined): void {
   if (title) wrap.setAttribute("aria-label", title);
   else wrap.removeAttribute("aria-label");
@@ -190,18 +142,10 @@ function applySurfaceOpen(
   } else if (open === false) {
     wrap.style.display = "none";
   } else {
-    // Drawer / popover: clear the `display: none` so the wrap follows the
-    // renderer's default layout. `""` returns the element to its stylesheet-
-    // computed display, matching what create writes on the first render.
     wrap.style.display = "";
   }
 }
 
-/**
- * Update the first-child `<h2>` title, adding / removing it to match `title`.
- * Kept as a helper so surface patchers stay short — otherwise every kind
- * would replicate the same three-branch DOM diff.
- */
 function reconcileSurfaceTitle(inner: HTMLElement, title: string | undefined): void {
   const firstChild = inner.firstElementChild;
   const currentH = firstChild && firstChild.tagName === "H2" ? (firstChild as HTMLElement) : null;
@@ -226,9 +170,6 @@ function patchSurface(
   const wrap = el;
   if (oldNode.open !== newNode.open) applySurfaceOpen(wrap, newNode.kind, newNode.open);
   if (newNode.kind === "drawer" && oldNode.side !== newNode.side) {
-    // Side flip: clear both anchors then re-apply the target side. Skipping
-    // the clear would leave `left: 0` alongside `right: 0` after a right→left
-    // swap and pin the drawer across the whole viewport.
     wrap.style.left = "";
     wrap.style.right = "";
     wrap.style[newNode.side === "right" ? "right" : "left"] = "0";
@@ -241,12 +182,6 @@ function patchSurface(
 
 export const overlayPatchers: TilePatchers = {
   overlay(el, _oldNode, newNode) {
-    // Overlay layout is style-only — re-apply container props so `gap` / `pad`
-    // / theme tokens track the new node. Children are walked by the outer
-    // reconcile; the alignment of layer children is baked into their layer
-    // divs, so a change in `align` on the parent overlay does not flip
-    // already-mounted layers. That matches pre-#190 behaviour (align was
-    // only read at create time), keeping the patch scope predictable.
     applyContainerProps(el, newNode.props);
   },
   modal: patchSurface,
@@ -267,11 +202,6 @@ export const overlayPatchers: TilePatchers = {
   },
   details(el, oldNode, newNode) {
     const det = el as HTMLDetailsElement;
-    // Only overwrite `.open` when it actually diverged. Toggling `.open`
-    // unconditionally would fire the browser's `toggle` event and animate
-    // the panel every render — even for renders that only touched the
-    // summary or children. Preserving open state is exactly what makes this
-    // tile part of #190's acceptance.
     if (oldNode.open !== newNode.open) det.open = !!newNode.open;
     const idProp = newNode.props?.id;
     if (typeof idProp === "string") {
@@ -279,10 +209,6 @@ export const overlayPatchers: TilePatchers = {
     } else if (det.id) {
       det.removeAttribute("id");
     }
-    // Summary is always the first child of the <details> (create appends
-    // it before the panel children). Use `firstElementChild` so a nested
-    // <details> inside the panel is not misidentified as this tile's
-    // summary — `querySelector` walks descendants and could match.
     const summary = det.firstElementChild;
     if (summary && summary.tagName === "SUMMARY" && summary.textContent !== newNode.summary) {
       summary.textContent = newNode.summary;

@@ -1,6 +1,4 @@
 #!/usr/bin/env tsx
-// kumiki-e2e <input.kumiki> <scenario.json> [--headed]
-// Runs a scenario in a real Chromium and prints the trace.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

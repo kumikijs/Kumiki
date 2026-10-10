@@ -80,7 +80,7 @@ export function measureApp(root, app) {
         brotli: total("brotli"),
       },
       // The runtime modules alone, uncompressed — the figure the CLI's counter
-      // size test budgets (packages/cli/test/cli.test.ts).
+      // size test budgets (packages/cli/test/build.test.ts).
       runtime: total("raw") - appJs.raw,
     };
   } finally {
