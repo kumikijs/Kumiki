@@ -1,12 +1,11 @@
-// A type carries every predicate of every definition it is declared through
-// (spec/language.md §1.3.1), so how many predicates one slot's check holds is
-// up to the program. Rollup walks a `&&` chain by recursion and rolldown fails
-// on one as well, both at a few thousand terms — fewer than a chain the parser
-// accepts can carry — while Node loads the same module without complaint. So
-// what holds the emitted check to a shape a bundler takes is a real build.
+// Rollup and rolldown walk a `&&` chain by recursion and fail at a few thousand terms, while
+// Node loads the same module without complaint, so only a real build holds the emitted check to a
+// shape a bundler takes.
 
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildProject } from "./helpers/build-project.ts";
+import { kumiki } from "../src/index.ts";
+import { buildInto, project } from "./helpers/plugin.ts";
 
 /** Forty definitions, each adding 250 `where`s to the one before. */
 function chainOfPredicates(): string {
@@ -26,12 +25,12 @@ app Chain caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
 describe("a slot whose type carries ten thousand predicates", () => {
   it("builds", async () => {
-    const out = await buildProject(
+    const root = project(
       chainOfPredicates(),
       `import App from "./app.kumiki";\nexport default App;\n`,
     );
-    // Every predicate is still a test in what was built: once in the slot's
-    // check and once among its named parts.
+    const out = await buildInto(root, join(root, "dist"), [kumiki()]);
+    // Once in the slot's check and once among its named parts.
     expect(out.split("v >= 0 && v <= 999").length - 1).toBe(2 * 40 * 250);
   }, 60_000);
 });

@@ -1,33 +1,21 @@
-// A bundler plugin exists so the bundler can do its job. Inlining the runtime
-// into every compiled module took that away: a project that imports one
-// `.kumiki` file and calls `mount` — the pattern this plugin's own
-// documentation recommends — shipped the runtime twice, and each further
-// `.kumiki` import added another copy. Two copies is not only size: the
-// runtime keeps module-level state (the injected state-style sheet is found by
-// DOM id while its sequence counter restarts per copy), so the copies disagree.
-//
-// The assertions run a real `vite build` and count copies against a baseline
-// measured from a project that imports the runtime and nothing else — a ratio,
-// not a byte count, so they stay true as the runtime grows. The sizes those
-// copies cost are recorded once, in runtime.md §10.8.1.
-
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
-import { buildProject as buildApp } from "./helpers/build-project.ts";
+import { buildInto, configOf, project, resolveIdOf, transformCode } from "./helpers/plugin.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = join(here, "..", "..", "examples", "apps", "01-counter", "app.kumiki");
+const COUNTER = app("01-counter");
 
 /** A literal the runtime carries and nothing else does — one hit set per copy. */
 const RUNTIME_MARK = "kumiki-state-styles";
 
-/** Build the counter behind `main` and return the concatenated output. */
-const buildProject = (main: string, opts?: KumikiPluginOptions, where?: string) =>
-  buildApp(readFileSync(COUNTER, "utf8"), main, opts, where);
+/** `where` defaults to the workspace, where the project itself resolves `@kumikijs/runtime`. */
+function buildProject(main: string, opts?: KumikiPluginOptions, where?: string): Promise<string> {
+  const root = project(readFileSync(COUNTER, "utf8"), main, where);
+  return buildInto(root, join(root, "dist"), [kumiki(opts)]);
+}
 
 const marks = (code: string): number => code.split(RUNTIME_MARK).length - 1;
 
@@ -53,11 +41,6 @@ describe("the built app carries one runtime", () => {
   }, 60_000);
 
   it("builds where the project cannot resolve the runtime at all", async () => {
-    // The shape the default only works in because of the plugin's fallback: a
-    // project that installed @kumikijs/vite and nothing else. Outside the
-    // workspace there is no node_modules to walk up to, so if the fallback
-    // stopped answering, this build would fail to resolve the import rather
-    // than quietly ship two copies.
     const out = await buildProject(
       MOUNTS_THE_APP,
       undefined,
@@ -67,23 +50,16 @@ describe("the built app carries one runtime", () => {
   }, 60_000);
 
   it("compiles to a module that imports the runtime by default", async () => {
-    const plugin = kumiki();
-    const t = plugin.transform;
-    const fn = typeof t === "function" ? t : t?.handler;
-    const src = readFileSync(COUNTER, "utf8");
-    const out = (await fn?.call({ warn() {} } as never, src, COUNTER)) as { code: string };
-    expect(out.code).toMatch(/from "@kumikijs\/runtime"/);
-    expect(out.code).not.toContain(RUNTIME_MARK);
+    const code = await transformCode(readFileSync(COUNTER, "utf8"), COUNTER);
+    expect(code).toMatch(/from "@kumikijs\/runtime"/);
+    expect(code).not.toContain(RUNTIME_MARK);
   });
 });
 
 describe("resolving the runtime", () => {
   /** The hook, plus a context whose `resolve` answers however the case needs. */
   function resolverWith(answer: unknown) {
-    const plugin = kumiki();
-    const r = plugin.resolveId;
-    const fn = typeof r === "function" ? r : r?.handler;
-    if (!fn) throw new Error("plugin has no resolveId hook");
+    const fn = resolveIdOf();
     const calls: unknown[][] = [];
     const ctx = {
       resolve(...args: unknown[]) {
@@ -100,8 +76,6 @@ describe("resolving the runtime", () => {
   it("says nothing when the project resolves the runtime itself", async () => {
     const { run, calls } = resolverWith({ id: "/proj/node_modules/@kumikijs/runtime/index.js" });
     await expect(run("@kumikijs/runtime")).resolves.toBeNull();
-    // …and it asked, rather than assuming: without `skipSelf` the hook would
-    // re-enter itself.
     expect(calls[0]?.[2]).toMatchObject({ skipSelf: true });
   });
 
@@ -109,8 +83,6 @@ describe("resolving the runtime", () => {
     const { run } = resolverWith(null);
     const id = (await run("@kumikijs/runtime")) as string;
     expect(typeof id).toBe("string");
-    // A path Vite can load: posix-separated (Windows backslashes break the
-    // module graph's id comparisons) and actually on disk.
     expect(id).not.toContain("\\");
     expect(readFileSync(id, "utf8").length).toBeGreaterThan(0);
   });
@@ -123,10 +95,7 @@ describe("resolving the runtime", () => {
   });
 
   it("asks the bundler to keep one copy of the runtime", () => {
-    const plugin = kumiki();
-    const c = plugin.config;
-    const fn = typeof c === "function" ? c : c?.handler;
-    const partial = fn?.call({} as never, {}, { command: "build", mode: "production" }) as
+    const partial = configOf().call({} as never, {}, { command: "build", mode: "production" }) as
       | { resolve?: { dedupe?: string[] } }
       | null
       | undefined;

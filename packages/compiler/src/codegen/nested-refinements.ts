@@ -12,64 +12,12 @@ import {
 import { refinementBodyJs } from "../refinements.ts";
 import { fieldKey } from "./context.ts";
 
-/**
- * The refinements a type carries at every position a value of it has, not only
- * on the type itself (spec/language.md §1.3.3: every predicate is a check the
- * value passes on its way into the slot).
- *
- * `refinementsOf` answers for the type's own chain and stops at a structural
- * type, because nothing written inside a record is a refinement *of the
- * record*. It is still a refinement of the value the record holds, and a write
- * that puts `"nope"` in `form.email` on `{email: Text where email}` is a write
- * of a value the slot's type refuses. This module lowers that: one function
- * per type that answers, for a value, the first predicate it fails — with the
- * path to where it failed — or `undefined`.
- *
- * Which parts of a value are positions, and whether a type carries anything at
- * them, is `refinement-positions.ts`'s to say; whether a *slot* is walked at
- * all is `slotGate` in emit-slot.ts, which reads `carriesNestedRefinement` there.
- *
- * Each walk checks the value's shape first: a record and a map are objects, a
- * `List` and a `Tuple` arrays, a union / `Option` / `Result` value carries one
- * of its tags. A value of the wrong shape answers the position's predicates
- * `false` rather than passing untested or throwing (§1.3.3), and is reported
- * against the first predicate the position carries.
- *
- * A named type (or an applied generic) is lowered once into a module-level
- * helper and referenced from everywhere it occurs, which is what makes a
- * recursive type (`type Tree = {label: Text where nonempty, kids: List(Tree)}`)
- * a function that calls itself rather than a walk that never ends. The value
- * is finite, and a position it does not have fails the shape check instead of
- * recursing (`type Loop = {next: Loop, …}` on a value with no `next`), so the
- * check is too. The names a type's own chain passes through on the way to its
- * end are part of that one helper rather than one each (`chainJs`).
- */
-
-/** A failure as the runtime reads it back: see `RefinementFailure` in core.ts. */
+/** A failure as the runtime reads it back: see `RefinementFailure` in runtime `core/refinement.ts`. */
 const FAIL = (r: Refinement): string =>
   `{ kind: ${JSON.stringify(r.pred)}, args: ${JSON.stringify(r.args)}, path: [] }`;
 
 export type NestedRefinements = {
-  /**
-   * The module-level helper declarations the explainers handed out so far
-   * refer to. The slot table names them by bare identifier (`refineFailure:
-   * _rq0`), and a `const` is in its temporal dead zone for a plain reference as
-   * much as for a call — so these have to precede the slot table (codegen puts
-   * them ahead of everything that names one). Each is a
-   * `const` arrow, including the one a name aliasing another helper gets
-   * (`(v) => _rq3(v)`, never an eager `= _rq3`, whose target may not be
-   * declared yet), so they refer to one another only when they run and their
-   * order among themselves does not matter.
-   */
   readonly decls: string[];
-  /**
-   * The name of a module-level function answering the first predicate a value
-   * of `t` fails, with its path, or `undefined` when `t` carries none at all.
-   * Given a bind path as its second argument, it answers the first failure on
-   * that path — along it or below its end — and passes over the rest.
-   * Defined whenever `carriesNestedRefinement(t)` holds, and the same name for
-   * every `t` that spells the same type.
-   */
   explainerOf(t: TypeExpr): string | undefined;
 };
 
@@ -80,20 +28,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
 
   const carries = (t: TypeExpr): boolean => scanPositions(t, env).carries;
 
-  /**
-   * One step into a position: `f` is the failure found there. The check is
-   * called by name — an inline arrow would be a closure built on every call.
-   *
-   * `o` is the focus a `bind` write is judged by (forms.md §5.6): the bind
-   * path still to walk, or absent for a whole-value check. While it has steps
-   * left, only the position it names is entered — `onPath` says whether this
-   * step is that one — so a sibling's failure cannot refuse a write to a field
-   * beside it. Once it is used up, everything below is checked.
-   *
-   * A position no bind step can name — a container's element, key or entry, a
-   * union's payload — has no `onPath`, and is checked whole whatever the focus
-   * holds: a step it cannot read must not pass over what is below it.
-   */
   const at = (stepJs: string, check: string, valueJs: string, onPath?: string): string => {
     const found = `return { ...f, path: [${stepJs}, ...f.path] };`;
     return onPath === undefined
@@ -111,11 +45,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return fnOf(r ? [`if (!(${shape})) return ${FAIL(r)};`, ...steps] : steps);
   };
 
-  /**
-   * `generics` is the program generics being expanded, outermost first. The
-   * checker reports a type that nests one inside itself past the limit
-   * (E0803), so reaching the limit here means that report was skipped.
-   */
   const explain = (t: TypeExpr, generics: readonly string[]): string | undefined => {
     if (!carries(t)) return undefined;
     switch (t.kind) {
@@ -174,9 +103,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     const known = helpers.get(key);
     if (known) return known;
     const inner = entering(t, generics);
-    // Registered before the body is lowered, so a recursive occurrence inside
-    // it becomes a call to this helper. What the body lowers to depends on the
-    // key alone, so the helper is the same wherever the type occurs.
     const name = `_rq${next++}`;
     helpers.set(key, name);
     const fn = chainJs(body, inner);
@@ -187,7 +113,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return name;
   };
 
-  /** The generics being expanded once `t` is entered, refusing one nested in itself past the limit. */
   const entering = (
     t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
     generics: readonly string[],
@@ -201,18 +126,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return inner;
   };
 
-  /**
-   * The check for `t`'s own chain — its `nominal`s and `where`s and the names
-   * it is declared through — followed in a loop to the type the chain ends
-   * at. Base outward (§1.3.1): whatever that type refuses is named first, then
-   * each predicate met on the way, from the innermost out.
-   *
-   * The whole chain is one check. A helper per name or per wrapper, each
-   * calling the next, would be a frame per step at runtime as well as here,
-   * and nothing bounds how long a chain is. A name that already has a helper
-   * ends the chain and is called instead — that is how a recursive type refers
-   * to itself, and how a chain lowered once is shared.
-   */
+  // One check for the whole chain: a helper per step would be a frame per step at runtime as
+  // well as here, and nothing bounds how long a chain is.
   const chainJs = (t: TypeExpr, generics: readonly string[]): string | undefined => {
     const outermostFirst: Refinement[] = [];
     const entered = new Set<string>();
@@ -244,11 +159,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return fnOf(steps);
   };
 
-  /**
-   * `js`, a stored key, as the key type reads it (`keyRepresentation`): a
-   * number for a type over one, a boolean for `Bool`, the value its JSON
-   * encodes for a structured key, the string itself otherwise.
-   */
   const keyJs = (k: TypeExpr | undefined, js: string): string => {
     switch (keyRepresentation(k ?? null, env)) {
       case "number":
@@ -273,8 +183,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     const tagged = (tag: string, x: TypeExpr | undefined): string[] => {
       const check = sub(x);
       const name = JSON.stringify(tag);
-      // A bind reaches a payload through `.get`, which unwraps `Some` / `Ok`;
-      // an `Err` payload is beside that path, as a sibling field is.
       const onPath = tag === "Err" ? "false" : "o[0]?.get === true";
       return check
         ? [`if (v._tag === ${name}) { ${at(`{ variant: ${name} }`, check, "v._0", onPath)} }`]
@@ -290,13 +198,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
           check ? [`for (const [i, e] of v.entries()) { ${at("i", check, "e")} }`] : [],
         );
       }
-      // A set's members are an object's keys at runtime (`setAdd`,
-      // `setToggle`, and `setOf` for a literal), so they are strings, read back
-      // as the member type reads them (`keyJs`). A Set may still be an array —
-      // one that arrived as JSON (a decoder, a storage read), or a literal in a
-      // position where the checker could not tell it is a Set — or the mix
-      // `add` makes of one (its entries plus keys): an entry whose value is
-      // not the `true` a key maps to is a member held as itself.
       case "Set": {
         const check = sub(a0);
         const members = `Array.isArray(v) ? v : Object.entries(v).map(([k, e]) => (e === true ? ${keyJs(a0, "k")} : e))`;
@@ -350,8 +251,6 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return name;
   };
 
-  // What each type asked about so far answered, so a `Map(TodoId, Todo)` that
-  // is both a slot's type and a decoder's is one helper rather than two copies.
   const answered = new Map<string, string | undefined>();
 
   return {
