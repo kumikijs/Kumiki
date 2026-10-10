@@ -1,5 +1,5 @@
 # Feature: an `error-boundary` fallback's own `error-boundary` holds where the
-# fallback renders (spec/lifecycle.md §7.3).
+# fallback renders (spec/lifecycle.md).
 #
 # `Chart` reads `data.get`, which panics while `data` is `None`, so its
 # boundary shows `ChartFallback` in its place. `ChartFallback` shows the cached

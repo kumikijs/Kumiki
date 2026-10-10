@@ -107,7 +107,7 @@
       }
     },
     {
-      "label": "a login the runtime aborts answers with status 0 (http.md §6.4.1), and the slot holding the HttpError accepts it — the spinner stops and the message shows",
+      "label": "a login the runtime aborts answers with status 0, and the slot holding the HttpError accepts it — the spinner stops and the message shows",
       "do": { "submit": "form" },
       "expect": {
         "noErrors": true,
