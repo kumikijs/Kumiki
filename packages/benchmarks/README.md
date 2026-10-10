@@ -51,7 +51,7 @@ node packages/benchmarks/bundle-size/measure.mjs --root ../other-checkout --out 
 node packages/benchmarks/bundle-size/compare.mjs base.json head.json   # base vs head, Markdown
 ```
 
-Requires the checkout's runtime built (`pnpm --filter @kumikijs/runtime build`, or a whole `pnpm build`): `kumiki build` copies its prebuilt `dist/modules`, while the CLI and compiler run from `src`. `--root` measures another checkout with that checkout's own CLI and runtime, which is how the `Bundle size` workflow (`.github/workflows/bundle-size.yml`) compares a PR's merge commit against its first parent (the base-branch commit it was merged onto) and posts the table as a PR comment. The workflow is informational; the size gate is still the counter budget in `packages/cli/test/cli.test.ts`, whose figure is the `runtime/ raw` column.
+Requires the checkout's runtime built (`pnpm --filter @kumikijs/runtime build`, or a whole `pnpm build`): `kumiki build` copies its prebuilt `dist/modules`, while the CLI and compiler run from `src`. `--root` measures another checkout with that checkout's own CLI and runtime, which is how the `Bundle size` workflow (`.github/workflows/bundle-size.yml`) compares a PR's merge commit against its first parent (the base-branch commit it was merged onto) and posts the table as a PR comment. The workflow is informational; the size gate is still the counter budget in `packages/cli/test/build.test.ts`, whose figure is the `runtime/ raw` column.
 
 ## Reactivity cost (runtime re-render baseline)
 
@@ -65,7 +65,7 @@ Requires the runtime + compiler dist bundles (`pnpm build` upstream, which Turbo
 
 ## Keyed reorder cost (how many children a new order costs)
 
-The companion question for lists: keyed matching (`docs/spec/runtime.md` §10.3.10) says which mounted element belongs to which new child, but not how many of them have to be touched to produce the new order. Re-attaching a node blurs it, so a child moved for no reason loses focus, the caret, an open `<select>` and an in-flight IME composition — the state keyed matching exists to keep. The harness drives a keyed list through five transitions (unchanged / move one / insert at head / remove from the middle / reverse) and counts the container's own child mutations, separating **moves** (an element that was already on the page) from mounts and removals.
+The companion question for lists: keyed matching (`docs/spec/runtime.md`) says which mounted element belongs to which new child, but not how many of them have to be touched to produce the new order. Re-attaching a node blurs it, so a child moved for no reason loses focus, the caret, an open `<select>` and an in-flight IME composition — the state keyed matching exists to keep. The harness drives a keyed list through five transitions (unchanged / move one / insert at head / remove from the middle / reverse) and counts the container's own child mutations, separating **moves** (an element that was already on the page) from mounts and removals.
 
 ```sh
 pnpm --filter @kumikijs/benchmarks measure:keyed-moves   # moves vs the hand-derived minimum vs the whole-sequence sweep, per list size
@@ -82,6 +82,6 @@ Each `vN-*/` task gives a model only its `task-spec.md` + `docs/spec/` and asks 
 pnpm --filter @kumikijs/benchmarks eval learning-cost/v3-issue-tracker/results/Claude/output.kumiki
 ```
 
-Cross-vendor results (Claude / Codex / Gemini) and the full methodology — including how each model failed and why — are in **[learning-cost/summary.md](./learning-cost/summary.md)**. The runs surfaced two real defects, both since fixed (#61 unimplemented built-in tiles, #62 under-specified rules); the scores there are re-evaluated against the patched compiler.
+Cross-vendor results (Claude / Codex / Gemini) and the full methodology — including how each model failed and why — are in **[learning-cost/summary.md](./learning-cost/summary.md)**. The runs surfaced two real defects, both since fixed (unimplemented built-in tiles and under-specified rules); the scores there are re-evaluated against the patched compiler.
 
 To refresh a vendor column: run the model on `vN-*/codex-prompt.txt` or `gemini-prompt.txt`, save its output to `results/<Vendor>/output.kumiki`, then re-run `eval` and update `results/eval.json`.

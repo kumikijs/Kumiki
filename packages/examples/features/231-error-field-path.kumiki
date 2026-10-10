@@ -1,4 +1,4 @@
-# Feature (forms.md §5.7.1): `error(field=…)` takes a path into a slot, and
+# Feature (forms.md): `error(field=…)` takes a path into a slot, and
 # renders only the failure at or below it. Both fields of the pristine `form`
 # fail — `email: ""` and `age: 0`, which a declared default may hold — and
 # each field's tile shows its own message beside the other's: the age's

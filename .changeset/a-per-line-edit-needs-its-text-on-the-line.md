@@ -5,7 +5,7 @@
 A per-line `edit` patch is rejected when its text is not on the line it names
 
 A per-line patch, `{"body:N": "replace 'a' -> 'b'"}`, is the shape of the
-auto-patch in ai-edit §9.6. When `a` was not on line N, for example because the
+auto-patch in ai-edit.md. When `a` was not on line N, for example because the
 line had changed since the patch was made, `edit` replaced nothing. It still
 wrote the file back unchanged, logged an `edit` op, printed `edited …` and
 exited `0`. `patch apply` and the MCP `kumiki_edit` tool did the same, so an

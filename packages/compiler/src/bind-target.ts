@@ -1,34 +1,16 @@
-// What a `bind=` target names (forms.md §5.1): the expression its chain of
-// steps starts from, and the path those steps take. The checker and the
-// lowering both read a target through `bindTarget`, so the root the checker
-// asks to be a slot is the one the lowering writes, and a step the checker
-// refuses is one the lowering would drop.
-
 import type { Expr } from "./ast.ts";
 import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./codegen/path-segment.ts";
 
-/**
- * A step of a bind target: a field (`.title`, the unwrap `.get`), an index
- * (`[k]`), or a call (`.get()`).
- */
 export type BindStep = Expr & { kind: "FieldAccess" | "Index" | "MethodCall" };
 
+/**
+ * The checker and the lowering both read a target through `bindTarget`, so the
+ * root the checker asks to be a slot is the one the lowering writes.
+ */
 export type BindTarget = {
-  /**
-   * What the chain starts from. A target that names a place starts from a
-   * name (a `Ref`), and the control writes to the slot of that name. Whether
-   * the name is a slot where the target is written is the checker's question
-   * (E0229); anything other than a name — a literal, a call, an operator —
-   * names no place.
-   */
   root: Expr;
-  /** The steps from `root` to the target, root first. */
   steps: BindStep[];
-  /**
-   * `steps` as the setter's path (`path-segment.ts`), or `null` when one of
-   * them is not a field step: an index, which the lowering does not write
-   * through, or a call, which names no place (E0602).
-   */
+  /** `null` when a step is an index or a call, which the lowering does not write through. */
   path: BindSegment[] | null;
 };
 
