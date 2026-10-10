@@ -1,4 +1,4 @@
-# Feature (forms.md §5.2.2): a form's `ui.submit` reducer runs only when every
+# Feature: a form's `ui.submit` reducer runs only when every
 # slot a control inside it binds passes its validation — judged on what the
 # control shows, the same judgement `error(field=…)` makes. A pristine address
 # that fails its refinement, and a typed one the refinement refused, both keep

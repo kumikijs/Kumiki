@@ -1,4 +1,4 @@
-# Feature (language.md §1.3.2): a union of the program's own may name its
+# Feature (language.md): a union of the program's own may name its
 # variants `Ok`, `Err`, `Some` or `None`. Variant names are identifiers and
 # none of the four is reserved, so `type Health = Ok | Degraded | Down` is a
 # union like any other.

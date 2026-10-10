@@ -1,5 +1,5 @@
 # Feature: a standard effect's argument is checked against its `in=` like a
-# declared effect's (stdlib.md §2.6, errors.md E0202 / E0213 / E0214).
+# declared effect's (E0202 / E0213 / E0214).
 #
 # `navigate` takes a record, `{path: Text, params: Map(Text, Text), query:
 # Map(Text, Text)}`, and nothing in the program declares it. The checker used to
@@ -8,11 +8,11 @@
 # E0202 now, and `emit navigate-back(1)` / `emit toast()` are E0213.
 #
 # What a call may leave out is part of the rule: `params` and `query` default to
-# `{}` (routing.md §3.7), an `Option` field such as `toast`'s `duration` is
-# treated as `None`, and `confirm`'s `message` as no message. The emits below
-# leave each of those out, `confirm`'s `onYes` / `onNo` name reducers, and the
-# scenario beside this file shows each of them still runs — the `query` written
-# by `navigate-replace` included, read back off `route.query`.
+# `{}`, an `Option` field such as `toast`'s `duration` is treated as `None`, and
+# `confirm`'s `message` as no message. The emits below leave each of those out,
+# `confirm`'s `onYes` / `onNo` name reducers, and the scenario beside this file
+# shows each of them still runs — the `query` written by `navigate-replace`
+# included, read back off `route.query`.
 
 slot notices : Int  = 0
 slot answer  : Text = "-"
