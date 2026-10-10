@@ -1,11 +1,6 @@
-// A `for-all` variable is generated or refused at build time (testing.md
-// §8.3.2, errors.md E0715) — never handed to the trial as a `null` standing in
-// for a value. A tuple, a generic applied to arguments, `Unit` and a recursive
-// type with a value to stop at are generated; a type with no generator is
-// refused at the `for-all` field that names it.
-
-import { check, codegen, type KumikiError, lex, parse } from "@kumikijs/compiler";
+import { codegen, type KumikiError, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf, summariesOf } from "./helpers/diagnostics.ts";
 
 const PRELUDE = `
 type Tree     = Leaf | Node(Int, Tree)
@@ -32,8 +27,6 @@ test p = property-test
   given     = {slots: {}, event: {type: ui.click, target: B}}
   invariant = true`;
 }
-
-const diagnostics = (type: string): KumikiError[] => check(parse(lex(program(type))));
 
 /** The descriptor the generated test module hands the runtime's generator for `x`. */
 function descriptor(type: string): unknown {
@@ -81,8 +74,7 @@ describe("the descriptor a for-all type is generated from", () => {
   });
 
   it("marks where two types that recurse through each other end", () => {
-    // `Neg` steps into `Term`, which holds an `Expr` in every case, so `Lit`
-    // is the only way out; `Term` itself ends at `note: None`.
+    // `Term` holds an `Expr` in every case, so `Lit` is the only way out.
     expect(descriptor("Expr")).toMatchObject({
       t: "Fix",
       name: "Expr",
@@ -116,7 +108,7 @@ describe("a for-all type the generator builds", () => {
     ["a record that recurses through a List", "Rose"],
     ["two types that recurse through each other", "Expr"],
   ])("accepts %s", (_, type) => {
-    expect(diagnostics(type).map((d) => `${d.code} ${d.message}`)).toEqual([]);
+    expect(summariesOf(program(type))).toEqual([]);
   });
 });
 
@@ -134,7 +126,7 @@ describe("a for-all type the generator cannot build", () => {
       '"Grow" applies itself to a different argument',
     ],
   ])("refuses %s, at the for-all field", (_, type, reason) => {
-    const ds = diagnostics(type);
+    const ds = checkSource(program(type));
     expect(ds.map((d) => d.code)).toEqual(["E0715"]);
     const [d] = ds as [KumikiError];
     expect(d.message).toBe(`No generator for \`for-all\` "x": ${reason}`);
@@ -142,7 +134,7 @@ describe("a for-all type the generator cannot build", () => {
   });
 
   it("leaves a name that resolves to nothing to E0117", () => {
-    expect(diagnostics("Nope").map((d) => d.code)).toEqual(["E0117"]);
+    expect(codesOf(program("Nope"))).toEqual(["E0117"]);
   });
 
   it("stops codegen for a caller that skipped check", () => {

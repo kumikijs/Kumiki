@@ -1,14 +1,3 @@
-// What a property-test trial is run on (testing.md §8.3.2): every generated
-// value is a value of its `for-all` type — a tuple element by element, a
-// recursive type to a bounded depth — and so is every value the shrinker
-// offers in its place. A descriptor the generator does not know is an error,
-// never a `null` standing in for a value.
-//
-// The descriptors are the ones codegen emits for the types named in each test
-// (`forAllGenerator`, compiler/src/codegen/emit-type.ts); the CLI's
-// property-test-generation.test.ts runs the same types through a compiled
-// program.
-
 import { _stdlib, type GenDesc, type ReducerSpec } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
@@ -118,9 +107,7 @@ describe("a generated value is a value of its for-all type", () => {
   });
 
   it("keys a Map by a Tuple the way the runtime keys one", () => {
-    // `Map(Tuple(Int, Int), Text)`: an entry put there by `insert` is keyed by
-    // the pair's JSON, so a generated key that reads otherwise is one no
-    // lookup in the program under test could find.
+    // An entry `insert` puts there is keyed by the pair's JSON; any other key no lookup could find.
     const values = generate({
       t: "Map",
       key: { t: "Tuple", items: [{ t: "Int" }, { t: "Int" }] },
@@ -134,7 +121,6 @@ describe("a generated value is a value of its for-all type", () => {
   it("generates a recursive union to a bounded depth, every level a value of it", () => {
     const depths = generate(TREE).map(treeDepth);
     expect(depths).not.toContain(undefined);
-    // The recursive variant is taken, and the depth bound (four levels) ends it.
     expect(Math.max(...(depths as number[]))).toBeGreaterThanOrEqual(2);
     expect(Math.max(...(depths as number[]))).toBeLessThanOrEqual(4);
   });
@@ -173,14 +159,11 @@ describe("a shrunk counterexample is a value of its for-all type", () => {
     expect(e).toMatch(/^[a-z]@[a-z]\.example\.com$/);
     const { u } = minimal({ u: { t: "Text", form: "url" } }) as { u: string };
     expect(u).toMatch(/^https:\/\/[a-z]\.example\.com\/[a-z]$/);
-    // A uuid's shape fixes its length, so no shorter text is one.
     const uuid: Record<string, GenDesc> = { id: { t: "Text", form: "uuid" } };
     expect(minimal(uuid)).toEqual(minimal(uuid, false));
   });
 
   it("shrinks a one-of value through the literals listed before it", () => {
-    // Fails on every literal but the first, so the one before the generated
-    // value is a smaller counterexample even though the first is not.
     const vars: Record<string, GenDesc> = { size: { t: "Text", oneOf: ["xs", "sm", "md", "lg"] } };
     const property = (shrink: boolean) =>
       _stdlib.runPropertyTest({
@@ -234,8 +217,6 @@ describe("a shrunk counterexample is a value of its for-all type", () => {
   });
 });
 
-// testing.md §8.3.1: the reducer did not run, so the trial has no state to
-// check the invariant against.
 describe("a trial whose run-reducer batch is rejected fails", () => {
   type StepApp = Parameters<typeof _stdlib.runReducerStep>[0];
 
@@ -275,8 +256,6 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
   }
 
   it("fails the property, naming the reducer and the rejection", () => {
-    // `n = 3` is the one value `inc` cannot take further: the trial cannot hold
-    // when the reducer did not run.
     const r = property({ n: { t: "Int", min: 0, max: 3 } });
     expect(r.pass).toBe(false);
     expect(r.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":3\}/);
@@ -291,10 +270,7 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
   });
 
   it("shrinks within the for-all type, so a rejection it reports is one a trial met", () => {
-    // `level : Int where between(1, 3)`, and `keep` writes it back unchanged.
-    // The invariant fails from 2 up, which is the counterexample to report.
-    // Shrinking `n` toward 0 would hand `keep` a value the generator never
-    // produces and the slot refuses, and the report would blame that refusal.
+    // Shrinking `n` toward 0 would hand `keep` a value the slot refuses, and the report would blame that.
     const app = appWith("level", [1, 3], {
       name: "keep",
       event: { kind: "ui", ev: "click" },
@@ -312,8 +288,7 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
     expect(r.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":2\}$/);
   });
 
-  // `count : Int where between(0, 100)` and `take` subtracts `step` from it,
-  // so it is refused exactly when `step` is more than `count`.
+  // Refused exactly when `step` is more than `count`.
   const take: ReducerSpec = {
     name: "take",
     event: { kind: "ui", ev: "click" },
@@ -332,9 +307,7 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
     _stdlib.runReducerStep(app, { slots: { count, step } }, "take", {}).slots.count as number;
 
   it("shrinks an invariant failure only through trials in which every step ran", () => {
-    // Fails wherever `take` leaves 10 or less: n in 1..11, where the reducer
-    // commits 0..10. At n = 0 it is refused — a failure of another kind, and
-    // not a smaller case of this one.
+    // n in 1..11 commits 0..10 and fails; n = 0 is refused, a failure of another kind.
     const app = takeApp();
     const r = _stdlib.runPropertyTest({
       name: "take-stays-above-ten",
@@ -345,9 +318,7 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
   });
 
   it("shrinks a refused trial only among trials refused the same way", () => {
-    // From 10, `take` commits for steps 1..10 and is refused past them. The
-    // invariant fails on every step but 3, so the step-1 trial fails too —
-    // with every step run, which is not the failure the refused case reports.
+    // The step-1 trial fails too, but with every step run: not the failure the refused case reports.
     const app = takeApp();
     const property = (shrink: boolean) =>
       _stdlib.runPropertyTest({
@@ -369,9 +340,7 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
   });
 
   it("does not shrink a refused trial toward one refused for another slot", () => {
-    // `split` writes `10 - s` to `low` and `s - 20` to `high`, both held to
-    // `between(0, 100)`: `low` refuses s above 10 and `high` s below 20, so
-    // every trial is refused, by `low`, by `high`, or by both.
+    // `low` refuses s above 10 and `high` s below 20, so every trial is refused by one or both.
     const between = (v: unknown) => typeof v === "number" && v >= 0 && v <= 100;
     const slot = { value: 0, refine: between, refineKind: "between", refineArgs: [0, 100] };
     const app: StepApp = {
@@ -398,9 +367,6 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
         },
         shrink,
       });
-    // The generated case is refused by `low` alone. Every candidate toward 1
-    // is refused by `high`, alone or with `low`, so none is a smaller case of
-    // the failure it reports.
     const generated = property(false).actual;
     expect(generated).toMatch(/— reducer "split" was rejected: slot "low" cannot hold -\d+ \(/);
     expect(generated).not.toContain('slot "high"');
