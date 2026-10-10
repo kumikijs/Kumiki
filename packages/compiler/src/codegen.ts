@@ -1,16 +1,3 @@
-// AST → self-contained ES module that uses the runtime API.
-//
-// The compile pipeline is `lex → parse → check → codegen`. This entry file
-// assembles the app: it drives the per-definition emitters — slot / effect /
-// reducer / tile / fn (and the test DSL) — from `./codegen/`, threads their
-// output into the `createApp()` factory, builds the routes / theme / motion
-// registries + `App` object, bakes the used-icon subset (#101), and emits
-// the mount call. The import-header analysis and selector dispatch wiring
-// also live under `./codegen/`. Expression lowering (`jsOfExpr`) is shared
-// by every layer via `./codegen/expr.ts`. See `docs/spec/index.md` for the
-// layer semantics and `packages/runtime/src/tiles-*.ts` / `effects-*.ts`
-// for the runtime modules the granular per-feature build imports here.
-
 import type {
   AppDef,
   EffectDef,
@@ -50,68 +37,20 @@ export type CodegenOptions = {
    * program without tests. Off for production builds.
    */
   includeTests?: boolean;
-  /**
-   * Emit `export default App;` instead of auto-mounting to `#root`. Use when the
-   * module is imported (e.g. the Vite plugin / Web Component embedding) rather
-   * than run as a standalone page bundle.
-   */
   exportApp?: boolean;
-  /**
-   * Per-app DCE (#71): when set (e.g. `"./runtime"`), import the granular
-   * runtime feature modules from this directory — `<dir>/core.js`,
-   * `<dir>/tiles-<family>.js`, … — instead of the single `runtimeSpecifier`
-   * module, and mount via `mountCore` with only the modules the app uses.
-   * `runtimeModules` on the result lists which files the output imports.
-   * Incompatible with `bundle: true` (the inlining path needs the one-import
-   * monolith shape).
-   */
   runtimeModulesDir?: string;
-  /**
-   * Resolve an `episode-test load = "<path>"` directive (spec §8.6) to its
-   * file contents — the compiler inlines the parsed log into codegen so the
-   * runtime test harness does not need filesystem access. Optional. When
-   * omitted, an `episode-test load = "..."` still emits (with an empty
-   * `episodes: []`), so callers that actually run episode tests must
-   * provide this — otherwise the replay loop is skipped and `from-log`
-   * expectations degenerate into no-ops.
-   */
+  /** Reads an `episode-test`'s `load` file; without it, such a test fails instead of replaying nothing. */
   readEpisodeLog?: (relativePath: string) => string;
-  /**
-   * Optional built-in icon registry (#101). Maps spec-form icon names
-   * (e.g. `"check"`, `"chevron-down"`) to single-path SVG `d` data. When
-   * provided, only entries whose name appears in `usedIcons` (literal
-   * `icon(name="<name>")` references) are baked into the emitted
-   * `App.icons`. Apps that don't reference icons pay zero bundle cost.
-   * `@kumikijs/vite` and the `kumiki` CLI thread `@kumikijs/icons` through
-   * automatically when it is resolvable from the project.
-   */
   icons?: Record<string, string>;
 };
 
 export type CodegenResult = {
   js: string;
-  /**
-   * The granular runtime modules (file basenames under `runtimeModulesDir`,
-   * without extension) the generated code imports — what `kumiki build` must
-   * ship next to the app. Computed in both modes; only meaningful for the
-   * modular one.
-   */
   runtimeModules: string[];
-  /**
-   * Icon names referenced by `icon(name="<literal>")` somewhere in the program
-   * (#101). The toolchain (`@kumikijs/vite`, `kumiki` CLI) reads this to look
-   * up the matching SVG path data in `@kumikijs/icons` and re-run codegen with
-   * the `icons` option so only used paths reach the bundle.
-   */
   usedIcons: string[];
 };
 
 export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
-  // The standard library's definitions first, the program's over them — the
-  // order `check` seeds its own table in, so a program that declares its own
-  // `type Route = …` shadows the entry here on both sides. Codegen used to see
-  // the program's alone, which is why `slot e : Email` reached the runtime
-  // with no `refine` at all: `Email` is synthesised, not declared (#352).
   const types = new Map<string, TypeDef>(STDLIB_TYPES.map((d) => [d.name, d]));
   for (const d of program.defs) {
     if (d.kind === "TypeDef") types.set(d.name, d);
@@ -145,44 +84,23 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     usedReaders: new Set(),
   };
 
-  // The import header is emitted AFTER the body below — generating the body
-  // fills `ctx.usedTiles`, which (with caps/emits) decides the modular imports.
   const lines: string[] = [];
 
-  // Everything that closes over slot state lives inside `createApp()` so each
-  // call produces an independent instance (its own `live` + closures). Multiple
-  // mounts / Web Component instances therefore never share state. Pure module
-  // data (`_s`) stays outside.
   lines.push("function createApp() {");
   lines.push(HANDLER_MEMO_PREAMBLE);
   // The bound-input readers go here once the body below has said which it uses.
   const readersAt = lines.length;
 
-  // fn definitions
   for (const fn of fns) {
     lines.push(genFn(fn, ctx));
   }
 
-  // The refinement walks (`_rq0`, …) go here, once the whole body has been
-  // generated and has asked for all of them: the slot table and a
-  // `Decoder.Json(T)` in an effect request, a reducer or an `app.init` entry
-  // all name them. Each is a `const` arrow that calls the others only when it
-  // runs, so ahead of every reader is the one position that is always right.
   const refinementsAt = lines.length;
 
-  // App-wide HTTP config (#78). Emitted unconditionally so the http effect
-  // handler's `httpFetch(method, req, _http)` reference never trips TDZ even
-  // when an app declares `caps=[http.get]` without an `http={...}` block.
-  // `headers` is a closure to re-evaluate slot references per request.
   lines.push(httpConfigJs(app.http, ctx));
-  // App-wide IndexedDB config (#79). Always emitted so indexed-* effect calls
-  // resolve `_idb`; absent declarations produce `undefined`, which the runtime
-  // handlers turn into a clean error (consistent with the storage-unavailable
-  // contract from #37).
   lines.push(indexedDbConfigJs(app.indexedDb));
   lines.push("");
 
-  // effect handlers (per capability, statically dispatched)
   if (effects.some((e) => failsWithText(e.cap))) lines.push(TEXT_FAILURE_HELPER);
   lines.push("const _effects = {");
   for (const eff of effects) {
@@ -191,29 +109,18 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("};");
   lines.push("");
 
-  // Slots
   for (const line of emitSlots(slots, ctx)) lines.push(line);
   lines.push("");
 
-  // Live slot values
   lines.push("const _live = {};");
   lines.push("for (const [k, v] of Object.entries(_slots)) _live[k] = v.value;");
   lines.push("");
 
-  // Reducers
   lines.push("const _reducers = [");
   for (const r of reducers) lines.push(genReducer(r, ctx));
   lines.push("];");
   lines.push("");
 
-  // Routes table — each route entry produces either a tile factory or a redirect.
-  // If the parent tile declares `sub-routes`, attach a nested route table
-  // (spec/routing.md §3.6) so the runtime can re-match the path inside the
-  // parent's wildcard pattern and inject the matched child into `route-outlet`.
-  // The parent's factory takes the runtime's outlet fill and applies it inside
-  // its own boundary (`genRouteTile`), so the child renders under the parent's
-  // `error-boundary` (lifecycle.md §7.3). Every tile entry also carries `name`,
-  // which is what the runtime attributes a panic raised while building it to.
   lines.push("const _routes = [");
   for (const r of app.routes) {
     if (r.tile.startsWith(">>")) {
@@ -266,8 +173,6 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   const themeRef = app.theme ? JSON.stringify(app.theme.name) : "null";
   lines.push("");
 
-  // Motion registry — reusable, scoped animations (M5). The runtime turns each
-  // into a `@keyframes` + class block at mount. See ADR-001.
   lines.push("const _motions = {");
   for (const m of motions) {
     lines.push(`  ${JSON.stringify(m.name)}: ${JSON.stringify(m.body)},`);
@@ -293,11 +198,6 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   if (app.analytics) lines.push(`  analytics: ${JSON.stringify(appAnalyticsJson(app.analytics))},`);
   lines.push("};");
 
-  // Bake-only-what's-used built-in icon registry (#101). The toolchain passes
-  // `opts.icons` (from @kumikijs/icons) on the second codegen pass; we emit
-  // only the entries whose name appears in a literal `icon(name=...)` call.
-  // The runtime renderer (`tiles/text/icon.ts`) falls back through this map
-  // when `theme.icons[name]` is unset.
   if (opts.icons && ctx.usedIcons.size > 0) {
     const entries: string[] = [];
     for (const name of [...ctx.usedIcons].sort()) {
@@ -313,14 +213,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     }
   }
 
-  // In-language test tile factories close over this instance's live state, so
-  // they are built inside the factory and attached to the app. The test bodies
-  // themselves go here for the same reason and one more: a `tile-test`'s
-  // `expect` is lowered through the full tile pipeline, so it can emit `_h(...)`
-  // — and `_h` is this scope's handler memo. Emitting the tests at module scope
-  // put those calls where the memo does not exist.
   if (opts.includeTests) {
-    // Only a test body reads `_tilesById`, so a program without tests has none.
     if (tests.length > 0) {
       lines.push("const _tilesById = {");
       for (const tile of tiles) {
@@ -334,35 +227,19 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push("App._tests = [");
     for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
-    // Static coverage for `kumiki test --coverage` (§8.7).
+    // Static coverage for `kumiki test --coverage`.
     lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
   }
 
-  // The two splices are order-dependent: `refinementsAt` is the larger index,
-  // so it goes in first and the readers' splice below, at the smaller
-  // `readersAt`, does not move it. Reversed, the refinement declarations
-  // would land as many lines early as the readers block is long, in the
-  // middle of whatever the body emitted there.
   lines.splice(refinementsAt, 0, ...ctx.refinements.decls);
   lines.push("  return App;");
   lines.push("}"); // end createApp
   lines.push("");
-  // The default instance — used by auto-mount, the embedding host, and tooling.
-  // The global is a state oracle for smoke/scenario/e2e/benchmark harnesses
-  // ONLY: the runtime and the generated event handlers do not read it (app
-  // resolution goes through the runtime's mount-root registry / the instance's
-  // own `App` reference). The exact spelling of the next two emitted lines is
-  // load-bearing: cli/test/helpers/build-and-load.ts, tests/helpers/load.ts,
-  // and e2e/src/browser.ts patch them with verbatim string replaces.
   lines.push("const App = createApp();");
   lines.push("globalThis.__kumikiApp = App;");
 
-  // In-language tests (`kumiki test`) run against the default instance — the
-  // bodies are built inside `createApp()` above, so this only publishes the
-  // default instance's copy. Published whenever tests are included, an empty
-  // list too: a runner that loads one program after another in a process
-  // (`kumiki test --watch`, the MCP server) reads these globals, and a module
-  // that left them alone would hand it the previous program's tests.
+  // Published even when empty: a runner that loads one program after another in a
+  // process reads these globals, and would otherwise report the previous program's tests.
   if (opts.includeTests) {
     lines.push("");
     lines.push("globalThis.__kumikiTests = App._tests;");
@@ -373,8 +250,6 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   // After the refinements splice above, which sits at a larger index.
   lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders));
 
-  // ----- runtime usage analysis (#71) — the body above is fully generated, so
-  // `ctx.usedTiles` is complete. -----
   const usage = analyzeRuntimeUsage(
     app,
     reducers,
@@ -388,21 +263,11 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   const header = emitImportHeader(usage, opts);
 
   if (opts.exportApp) {
-    // Module mode: the importer (Vite plugin / embedding host) owns mounting.
-    // `createApp` lets a host spin up multiple independent instances.
     lines.push("export default App;");
     lines.push("export { createApp };");
   } else if (opts.runtimeModulesDir) {
-    // Auto-mount through the granular core: pass exactly the tile renderers /
-    // routing / builtin-effect installers this app imports. Host overrides
-    // (`__kumikiProviders` / `__kumikiMount`) work as in monolith mode.
     const mountOpts = [
       "tiles: _tiles",
-      // Companion to `tiles`: without it `mountCore` defaults to an empty
-      // patcher registry and every data-prop change tears its tile down and
-      // rebuilds it, so the granular build would silently lose the in-place
-      // patch guarantees (focus, caret, <select> open, <video> playback) that
-      // the monolith mount path provides.
       "tilePatchers: _patchers",
       ...(usage.router ? ["routing"] : []),
       ...(usage.toast || usage.confirm
@@ -418,11 +283,6 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     ];
     lines.push(`mountCore(App, document.getElementById("root"), { ${mountOpts.join(", ")} });`);
   } else {
-    // Auto-mount. A host embedding the bundle can register custom-capability
-    // providers by assigning `globalThis.__kumikiProviders`, and pass any other
-    // MountOptions (e.g. `{ router: "memory" }` for a sandboxed preview that
-    // doesn't own the URL, #36) via `globalThis.__kumikiMount`, before this
-    // module loads (the inbound ecosystem seam; see runtime CapabilityProvider).
     lines.push(
       `mount(App, document.getElementById("root"), { providers: globalThis.__kumikiProviders, ...globalThis.__kumikiMount });`,
     );

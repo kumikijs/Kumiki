@@ -1,9 +1,8 @@
-# Feature (routing.md §3.10, runtime.md §10.6.1): a static redirect is resolved
-# before the route is rendered, on the server as on the client. A request for
-# `/old` is served the Home page, and `/settings/legacy` is served the billing
-# child, not the 404 page or the parent's default child. `renderToString`
-# reports the redirect target as the rendered route, so hydration starts from
-# the route the server actually drew.
+# Feature: a static redirect is resolved before the route is rendered, on the
+# server as on the client. A request for `/old` is served the Home page, and
+# `/settings/legacy` is served the billing child, not the 404 page or the
+# parent's default child. `renderToString` reports the redirect target as the
+# rendered route, so hydration starts from the route the server actually drew.
 
 tile Home     = page(heading("Home"),
                      link(to="/old") {text: "old link"},
