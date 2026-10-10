@@ -1,5 +1,5 @@
 import type { TestDef } from "@kumikijs/compiler";
-import { lex, parse } from "@kumikijs/compiler";
+import { lex, ParseError, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { checkSource } from "./helpers/diagnostics.ts";
 
@@ -197,6 +197,44 @@ test rt = property-test
     expect(tests[0]?.count).toBe(50);
     expect(tests[0]?.shrink).toBe(false);
     expect(checkSource(src)).toEqual([]);
+  });
+
+  describe("a property-test's count is a whole number, 1 or more", () => {
+    // The literal sits on line 11, column 15 of every source below.
+    const withCount = (count: string) => `
+slot clicks : Int = 0
+reducer inc on=ui.click(B) do= clicks := clicks + 1
+tile B = button(text="+1", onClick=inc)
+tile App = column(B)
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test rt = property-test
+  for-all   = {n: Int}
+  given     = {slots: {clicks: n}, event: {type: ui.click, target: B}}
+  invariant = run-reducer(inc).slots.clicks == n + 1
+  count     = ${count}
+  shrink    = false`;
+
+    it.each([
+      "0",
+      "0.5",
+      "0.50",
+      "-3",
+      "-0",
+    ])("refuses count = %s at the literal, as written", (count) => {
+      expect(() => parse(lex(withCount(count)))).toThrow(
+        new ParseError(
+          `property-test "rt" count must be a whole number, 1 or more (got ${count})`,
+          { line: 11, col: 15 },
+        ),
+      );
+    });
+
+    it.each(["1", "1.0"])("accepts count = %s, the fewest cases a property can run", (count) => {
+      const src = withCount(count);
+      const tests = parse(lex(src)).defs.filter((d): d is TestDef => d.kind === "TestDef");
+      expect(tests[0]?.count).toBe(1);
+      expect(checkSource(src)).toEqual([]);
+    });
   });
 
   it("rejects run-reducer naming an undefined reducer (E0102)", () => {
