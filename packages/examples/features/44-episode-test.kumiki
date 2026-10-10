@@ -1,14 +1,14 @@
-# Feature: `episode-test` (docs/spec/testing.md §8.6). Replay a recorded
-# runtime episode log against the current code and assert the result matches.
-# The fixture next to this file is the kind of log `kumiki run --episode-log`
-# (§10.5) emits in production — turning a real bug report into a regression
-# test is just "save the log, add an episode-test that loads it".
+# Feature: `episode-test`. Replay a recorded runtime episode log against the
+# current code and assert the result matches. The fixture next to this file is
+# the kind of log `kumiki run --episode-log` emits in production — turning a
+# real bug report into a regression test is just "save the log, add an
+# episode-test that loads it".
 
 type N = nominal Int where between(0, 999)
 slot count : N = 0
 
 # `N` is bounded, so `inc` guards its ceiling: a refused write would discard
-# the whole batch (spec/runtime.md §10.3.3).
+# the whole batch.
 reducer inc on=ui.click(IncBtn) do= if count < 999 then count := count + 1
 
 tile IncBtn = button(text="+")

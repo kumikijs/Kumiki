@@ -1,4 +1,4 @@
-# Feature: an `EffectId` is an opaque handle (stdlib.md §2.1.1.1). A program
+# Feature: an `EffectId` is an opaque handle (stdlib.md). A program
 # compares it with `==` / `!=`, keeps it in a slot of type `EffectId` and hands
 # it to an `http.cancel` effect, and that is all. Rendering it is E0204:
 # `text(handle)`, `heading(handle)` and `handle.show` would show whatever the
@@ -8,7 +8,7 @@
 # a `Text` a `fn` answers, and a `Bool` rendered with `.show`. `start` keeps
 # the handle of the latest search in `lastSearch`; `cancel` hands it to
 # `cancelSearch` and puts the sentinel back. Cancelling a request that has
-# already finished is a no-op (http.md §6.4), so the handle is kept after the
+# already finished is a no-op (http.md), so the handle is kept after the
 # response arrives and the scenario reads the page on both sides of the cancel.
 
 slot query      : Text     = "kumiki"

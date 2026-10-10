@@ -2,15 +2,15 @@ import { resolve } from "node:path";
 import type { EpisodeMockPolicy } from "@kumikijs/runtime";
 import type { Command } from "commander";
 import { parseMockArg, replayCmd } from "../replay.ts";
+import { messageOf } from "../text.ts";
 import { capsFor } from "./_shared/caps.ts";
-import { requireValue } from "./_shared/value.ts";
+import { exitWithUsage, requireValue } from "./_shared/usage.ts";
 
 const USAGE =
   "Usage: kumiki replay <input.kumiki> --from-log <log.jsonl> [<episode-id>] [--mock '<eff>:<spec>']* [--until-step N]";
 
 function parseUntilStep(raw: string): number {
   const n = Number(raw);
-  // Spec §10.5.3 uses a 1-indexed step counter; `0` has no useful meaning.
   if (!Number.isInteger(n) || n < 1) {
     console.error(`invalid --until-step '${raw}': expected positive integer (1-indexed)`);
     process.exit(2);
@@ -22,10 +22,10 @@ function collectMock(raw: string, prev: string[]): string[] {
   return [...prev, raw];
 }
 
-export function registerReplay(program: Command): void {
+export function registerReplay(program: Command): string {
   program
     .command("replay")
-    .description("Replay a recorded episode log against the compiled app (§10.5.3)")
+    .description("Replay a recorded episode log against the compiled app")
     .argument("[input]", "input .kumiki file")
     .argument("[episode-id]", "optional single episode id to replay")
     .option("--from-log <path>", "JSONL episode log to replay from (required)", requireValue(USAGE))
@@ -43,14 +43,7 @@ export function registerReplay(program: Command): void {
         episodeId: string | undefined,
         options: { fromLog?: string; mock: string[]; untilStep?: number },
       ) => {
-        if (!input) {
-          console.error(USAGE);
-          process.exit(2);
-        }
-        if (!options.fromLog) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!input || !options.fromLog) exitWithUsage(USAGE);
         const inputPath = resolve(process.cwd(), input);
         const mocks: Record<string, EpisodeMockPolicy> = {};
         for (const spec of options.mock) {
@@ -58,7 +51,7 @@ export function registerReplay(program: Command): void {
             const m = parseMockArg(spec);
             mocks[m.effect] = m.policy;
           } catch (e) {
-            console.error((e as Error).message);
+            console.error(messageOf(e));
             process.exit(2);
           }
         }
@@ -70,4 +63,5 @@ export function registerReplay(program: Command): void {
         });
       },
     );
+  return USAGE;
 }

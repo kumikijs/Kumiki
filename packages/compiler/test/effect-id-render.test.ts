@@ -1,13 +1,8 @@
-// An `EffectId` is an opaque handle (stdlib.md §2.1.1.1): it is compared with
-// `==` / `!=`, stored in a slot of its type and handed to an `http.cancel`
-// effect, and nothing else. Rendering one is E0204, wherever the text comes
-// from — a value builtin's content, `.show` in each of its spellings, or a
-// `fmt` argument — because what the runtime represents a handle as is its own
-// business, and a page that shows it breaks the day that changes.
-
-import { check, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { VALUE_BUILTIN_CONTENT } from "../src/builtins.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
 const DEFS = `slot handle : EffectId = EffectId.none
 slot hs : List(EffectId) = []
@@ -25,9 +20,9 @@ const program = (body: string) =>
   `${DEFS}\n${body}\napp A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]\n`;
 
 const diagnostics = (body: string) =>
-  check(parse(lex(program(body)))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(program(body)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const codes = (body: string) => check(parse(lex(program(body)))).map((e) => e.code);
+const codes = (body: string) => codesOf(program(body));
 
 /** `body`'s first line, with `expr` inside `column(B, …)`. */
 const tile = (expr: string) => `tile App = column(B, ${expr})`;
@@ -43,8 +38,6 @@ const BESIDE: Partial<Record<keyof typeof VALUE_BUILTIN_CONTENT, string>> = {
 };
 
 describe("a value builtin's content", () => {
-  // Read off the table the lowering reads its content from, so a builtin added
-  // there is held to this rule without a row being written here.
   const builtins = Object.entries(VALUE_BUILTIN_CONTENT) as [
     keyof typeof VALUE_BUILTIN_CONTENT,
     (typeof VALUE_BUILTIN_CONTENT)[keyof typeof VALUE_BUILTIN_CONTENT],
@@ -59,8 +52,6 @@ describe("a value builtin's content", () => {
     });
   }
 
-  // `label`, `link` and `editable` read `text=` when no positional argument is
-  // written, so the handle written there is rendered the same way.
   for (const [name, reading] of builtins) {
     if (!reading.positional || !("named" in reading)) continue;
     const call = `${name}(${[`${reading.named}=handle`, BESIDE[name]].filter(Boolean).join(", ")})`;
@@ -72,9 +63,6 @@ describe("a value builtin's content", () => {
 });
 
 describe("show", () => {
-  // `show` is the one member every other value has (stdlib.md §2.2.7). The
-  // qualified spelling discards its qualifier (§2.4.3), so `Int.show(handle)`
-  // shows the handle too.
   const spellings = ["handle.show", "handle.show()", "EffectId.show(handle)", "Int.show(handle)"];
 
   it.each(spellings)("refuses text(%s)", (expr) => {
@@ -83,7 +71,6 @@ describe("show", () => {
   });
 
   it.each(spellings)("refuses %s outside a tile", (expr) => {
-    // Stored as text, the handle's representation is app data from then on.
     const body = `reducer z on=ui.click(B) do= t := ${expr}\n${tile(`text(t)`)}`;
     expect(diagnostics(body)).toEqual([rendered(body, "handle", ".show")]);
   });
@@ -94,7 +81,6 @@ describe("show", () => {
 });
 
 describe("fmt", () => {
-  // Every argument, the template included, is rendered the way `+` renders it.
   it.each([
     ['fmt("id {0}", handle)', "handle"],
     ["fmt(handle)", "handle"],
@@ -141,16 +127,12 @@ describe("a handle reached through another expression is still a handle", () => 
   });
 
   it("refuses an operator on an alias of EffectId, as on EffectId", () => {
-    // One answer to "is this a handle", for the operators and for rendering.
     const body = `${tile("text(t)")}\ntype Handle = EffectId\nslot mine : Handle = EffectId.none\nreducer z on=ui.click(B) do= t := mine + "x"`;
     expect(codes(body)).toEqual(["E0204"]);
   });
 });
 
 describe("one mistake, one report", () => {
-  // A sum with a handle in it is refused at the operator, and is a `Text` or a
-  // number, never a handle — so the content check has nothing to add. The
-  // operator's report sits where the sum starts.
   it.each([
     '"id " + handle',
     'handle + "id"',
@@ -204,6 +186,34 @@ ${tile("text(t)")}`;
   it("renders a File", () => {
     expect(codes(`tile F in=File = column(text($1), text($1.show))\n${tile("text(t)")}`)).toEqual(
       [],
+    );
+  });
+});
+
+describe("a page that renders an EffectId does not build", () => {
+  const page = (shown: string) => `slot h : EffectId = EffectId.none
+reducer go on=ui.click(Go) do= h := emit toast({kind: "info", text: "x", duration: None})
+tile Go = button(text="go") {id: "go"}
+tile P = column(Go, ${shown})
+app M caps=[notification.show] routes={"/" -> P, "/404" -> P} init=[]
+`;
+
+  it("refuses text(h), heading(h) and h.show", () => {
+    const r = compile(page("text(h), heading(h), text(h.show)"), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    expect(r.kind).toBe("fail");
+    if (r.kind !== "fail") return;
+    expect(r.errors.map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`)).toEqual([
+      "E0204 4:26 text(...) cannot render EffectId — it is an opaque handle",
+      "E0204 4:38 heading(...) cannot render EffectId — it is an opaque handle",
+      "E0204 4:47 .show cannot render EffectId — it is an opaque handle",
+    ]);
+  });
+
+  it("builds what the page derives from the handle instead", () => {
+    compileOrFail(
+      page('text(if h == EffectId.none then "idle" else "sent"), text((h != EffectId.none).show)'),
     );
   });
 });
