@@ -1,4 +1,4 @@
-# Feature (runtime.md §10.5.2): the `--episode-log` file holds every episode
+# Feature (runtime.md): the `--episode-log` file holds every episode
 # the run commits, one JSON object per line.
 #
 #   kumiki run 191-episode-log-keeps-every-episode.kumiki \
