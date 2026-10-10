@@ -1068,7 +1068,7 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label prop`
+> `button must have a text= argument or aria-label`
 
 ### E0702 `a11y-image`
 
@@ -1077,6 +1077,8 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 ### E0703 `a11y-link`
 
 > `link must have inner text or aria-label`
+
+`aria-label` と `alt` は、名前付き引数（`button(aria-label="Close")`）と props ブロック（`button() {aria-label: "Close"}`）のどちらで書いても数える。名前付き引数はどこに書いても prop であり（[言語 §1.7.1](./language.md#_1-7-1-構文)）、どちらも要素に属性を付けるからである。検査が見るのは書かれているかどうかで値ではないので、スロットから読む値も数える。引数にタイルを書いた場合（`button(aria-label=CloseIcon)`）は prop のデータではなく属性を描かないので、数えない。
 
 **修正**：可視テキストか、`aria-label` / `alt` を付与する。フォーム全般の指針は [フォーム](./forms.md)。
 

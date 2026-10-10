@@ -303,7 +303,7 @@ reducer notifySave
 
 ---
 
-## 7.8 アクセシビリティの最小規約
+## 7.8 アクセシビリティの最小規約 {#_7-8-minimal-accessibility-conventions}
 
 | 規約 | 適用 |
 |---|---|

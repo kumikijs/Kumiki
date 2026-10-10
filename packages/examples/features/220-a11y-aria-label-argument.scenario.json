@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "the controls render with no visible text, and nothing has fired",
+      "expect": { "noErrors": true, "state": { "closed": 0 }, "domIncludes": ["closed: 0"] }
+    },
+    {
+      "label": "the button named by an aria-label argument is reached by that name",
+      "do": { "click": "button[aria-label='Close']" },
+      "expect": { "noErrors": true, "state": { "closed": 1 }, "domIncludes": ["closed: 1"] }
+    },
+    {
+      "label": "and so is the one named in its props block",
+      "do": { "click": "button[aria-label='Dismiss']" },
+      "expect": { "noErrors": true, "state": { "closed": 11 }, "domIncludes": ["closed: 11"] }
+    },
+    {
+      "label": "the link named by an aria-label argument navigates",
+      "do": { "click": "a[aria-label='About']" },
+      "expect": { "noErrors": true, "domIncludes": ["About this app"] }
+    },
+    {
+      "label": "the link named in its props block navigates back",
+      "do": { "click": "a[aria-label='Back']" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["closed: 11"],
+        "domExcludes": ["About this app"]
+      }
+    }
+  ]
+}

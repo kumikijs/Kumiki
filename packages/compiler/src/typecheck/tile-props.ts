@@ -58,19 +58,17 @@ export function checkA11y(
   }
   if (t.name === "button") {
     const hasText = t.args.some((a) => a.name === "text");
-    const hasAria = t.props.some((p) => p.name === "aria-label");
-    if (!hasText && !hasAria) {
+    if (!hasText && writtenValue(t, "aria-label") === undefined) {
       errors.push({
         code: "E0701",
         kind: "a11y-button",
-        message: `button must have a text= argument or aria-label prop`,
+        message: `button must have a text= argument or aria-label`,
         pos: t.pos,
       });
     }
   }
   if (t.name === "image") {
-    const hasAlt = t.args.some((a) => a.name === "alt") || t.props.some((p) => p.name === "alt");
-    if (!hasAlt) {
+    if (writtenValue(t, "alt") === undefined) {
       errors.push({
         code: "E0702",
         kind: "a11y-image",
@@ -81,8 +79,7 @@ export function checkA11y(
   }
   if (t.name === "link") {
     const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
-    const hasAria = t.props.some((p) => p.name === "aria-label");
-    if (!hasText && !hasAria) {
+    if (!hasText && writtenValue(t, "aria-label") === undefined) {
       errors.push({
         code: "E0703",
         kind: "a11y-link",
