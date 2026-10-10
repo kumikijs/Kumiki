@@ -1,5 +1,4 @@
-# Feature (language.md §1.6.3): an index step names a place only in a Map or
-# a List.
+# Feature: an index step names a place only in a Map or a List.
 #
 # `m[k] := v` writes the Map's entry under `k`, and `xs[i] := v` the List's
 # element at `i`. No other receiver has a place for an index to name, so an
@@ -8,9 +7,8 @@
 # an `Int`, a `Text`, the `Int` element of a `List(Int)` — is replaced whole.
 #
 # This app makes each of those writes the way that names a place. The
-# refusals are check-time, so they live in
-# `packages/tests/index-write-places.test.ts`, which puts the index spelling
-# of each write back into this program.
+# refusals are check-time, so they live in the compiler's tests, which put the
+# index spelling of each write back into this program.
 
 type Counter = { a: Int }
 

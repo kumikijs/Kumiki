@@ -1,6 +1,6 @@
 # Feature: `prefers-dark()` — the OS colour-scheme preference, read as a Bool.
 #
-# style.md §4.6.1 documents this as the way an app follows the system theme,
+# The style spec documents this as the way an app follows the system theme,
 # and its example is verbatim the `initTheme` reducer below. Nothing in
 # `packages/` implemented it: the call lowered to a bare `prefers_dark(...)`
 # binding, so the reducer that picks the initial theme threw

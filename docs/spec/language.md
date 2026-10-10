@@ -946,7 +946,7 @@ the reading every rule in the check keeps.
 - **A flat global namespace**
 - A separate namespace per layer
 - References are **written by name** and resolved to a content-hash when stored in the CRDT graph
-- Rename = a CRDT op that creates a different hash under the new name and updates references
+- Rename = a CRDT op that gives a definition a new name and updates the references to it. The hash of the definition, and of every definition referencing it, stays the same
 
 → [AI Editing](./ai-edit.md)
 

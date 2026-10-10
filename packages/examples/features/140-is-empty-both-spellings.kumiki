@@ -1,7 +1,7 @@
-# Feature (stdlib.md §2.2.1 / §2.2.3 / §2.2.6): `is-empty : Bool` on a Map, a
-# List and a Text, and the parenthesis-free shortcut — `todos.is-empty` is the
-# same method as `todos.is-empty()`, so the two spellings give the same answer
-# on every receiver.
+# Feature: `is-empty : Bool` on a Map, a List and a Text, and the
+# parenthesis-free shortcut — `todos.is-empty` is the same method as
+# `todos.is-empty()`, so the two spellings give the same answer on every
+# receiver.
 #
 # The Map is the case that matters for the bare spelling (a Map has no
 # `.length` to test), and the non-empty Text for the parenthesised one (a Text
