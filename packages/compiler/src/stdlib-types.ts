@@ -12,7 +12,9 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
   args,
   pos: NO_POS,
 });
-const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
+type RecordType = Extract<TypeExpr, { kind: "TypeRecord" }>;
+
+const record = (fields: Record<string, TypeExpr>): RecordType => ({
   kind: "TypeRecord",
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
@@ -34,6 +36,35 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
   pos: NO_POS,
 });
 
+// `parseLocation` also carries `childPattern` for `route-outlet`; that is runtime bookkeeping,
+// not part of the type.
+export const ROUTE_TYPE: RecordType = record({
+  path: prim("Text"),
+  pattern: prim("Text"),
+  params: app("Map", prim("Text"), prim("Text")),
+  query: app("Map", prim("Text"), prim("Text")),
+  hash: app("Option", prim("Text")),
+});
+
+const PANIC_INFO_FIELDS = {
+  message: prim("Text"),
+  location: prim("Text"),
+  "episode-id": app("Option", prim("Text")),
+  cause: app("Option", prim("Text")),
+  category: prim("Text"),
+};
+
+export const PANIC_INFO_TYPE: RecordType = record(PANIC_INFO_FIELDS);
+
+// What a `route.error(<pattern>)` reducer is handed as `$event`. It is not a `PanicInfo`:
+// a record type matches only its own field set.
+export const ROUTE_ERROR_EVENT_TYPE: RecordType = record({
+  ...PANIC_INFO_FIELDS,
+  pattern: prim("Text"),
+});
+
+// A program's own `type Route` shadows the entry here; a value the runtime builds is typed
+// from the exports above instead, which no program shadows.
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
@@ -48,27 +79,9 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
-  def(
-    "Route",
-    record({
-      path: prim("Text"),
-      pattern: prim("Text"),
-      params: app("Map", prim("Text"), prim("Text")),
-      query: app("Map", prim("Text"), prim("Text")),
-      hash: app("Option", prim("Text")),
-    }),
-  ),
+  def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
-  def(
-    "PanicInfo",
-    record({
-      message: prim("Text"),
-      location: prim("Text"),
-      "episode-id": app("Option", prim("Text")),
-      cause: app("Option", prim("Text")),
-      category: prim("Text"),
-    }),
-  ),
+  def("PanicInfo", PANIC_INFO_TYPE),
   def("FormValue", {
     kind: "TypeUnion",
     variants: [

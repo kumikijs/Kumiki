@@ -1,0 +1,47 @@
+{
+  "steps": [
+    {
+      "label": "the route slot reads the path the app landed on",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["path: /", "id: -", "depth: 0", "entered: -", "last: none / none"]
+      }
+    },
+    {
+      "label": "a reducer reads route.path as the Text it is",
+      "do": { "click": "#measure" },
+      "expect": { "noErrors": true, "domIncludes": ["depth: 1"] }
+    },
+    {
+      "label": "route.enter reads $route.params and $route.pattern",
+      "do": { "navigate": "/items/7" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["path: /items/7", "id: 7", "entered: 7 via /items/:id"]
+      }
+    },
+    {
+      "label": "the same reducer reads the longer path",
+      "do": { "click": "#measure" },
+      "expect": { "noErrors": true, "domIncludes": ["depth: 8"] }
+    },
+    {
+      "label": "a reducer panic reaches app.error as a PanicInfo",
+      "do": { "navigate": "/boom" },
+      "expect": {
+        "domIncludes": ["last: get called on None / reducer"],
+        "domExcludes": ["undefined"],
+        "errorIncludes": ["panic in reducer \"breakOnEnter\""]
+      }
+    },
+    {
+      "label": "a render panic reaches route.error with the matched pattern",
+      "do": { "navigate": "/broken" },
+      "expect": {
+        "domIncludes": ["caught: /broken (tile-render)", "path: /broken"],
+        "domExcludes": ["undefined", "secret:"],
+        "errorIncludes": ["panic in render"]
+      }
+    }
+  ]
+}

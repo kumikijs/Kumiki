@@ -83,6 +83,8 @@ tile TodoDetail = column(
                     ...)
 ```
 
+この slot はどこで読んでも — tile、reducer、`fn`、テスト — この型を持ち、トリガが束縛する [`$route`](#_3-4-ルートライフサイクル) も同じである。型に無いフィールド、たとえば `route.parms` は [E0108](./errors.md#e0108-undef-member) であり、`Int` の slot への `depth := route.path` は [E0201](./errors.md#e0201-type-mismatch) である。プログラムが何を宣言していても、これは標準ライブラリの `Route` である：ランタイムはどちらにしてもこの値を作るので、プログラム自身の `type Route` は自分の型を名付けるだけで、`route` が何であるかは変えない。
+
 ---
 
 ## 3.3 ルート遷移
