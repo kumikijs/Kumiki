@@ -496,6 +496,7 @@ export function mountCore(
     slots: slotValues,
     routing,
     router,
+    root: target,
     fireLifecycle,
     render,
   });

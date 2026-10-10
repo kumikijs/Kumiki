@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "arriving enters the docs route once",
+      "do": { "navigate": "/docs/intro" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Docs intro, page 1", "hash: none", "entered: 1"]
+      }
+    },
+    {
+      "label": "?page=2 keeps the path and changes the query, which runs route.enter again",
+      "do": { "clickText": "Next page" },
+      "expect": { "noErrors": true, "domIncludes": ["Docs intro, page 2", "entered: 2"] }
+    },
+    {
+      "label": "#faq is an in-page jump: the hash changes and route.enter does not run",
+      "do": { "clickText": "Jump to FAQ" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Docs intro, page 2", "hash: faq", "entered: 2"]
+      }
+    },
+    {
+      "label": "install resolves next to /docs/intro",
+      "do": { "clickText": "Install" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Docs install, page 1", "hash: none", "entered: 3"]
+      }
+    },
+    {
+      "label": "../guide resolves one level up",
+      "do": { "clickText": "Guide" },
+      "expect": { "noErrors": true, "domIncludes": ["Guide"], "domExcludes": ["Not found"] }
+    },
+    {
+      "label": "docs/intro resolves from /guide",
+      "do": { "clickText": "Back to the docs" },
+      "expect": { "noErrors": true, "domIncludes": ["Docs intro, page 1", "entered: 4"] }
+    },
+    {
+      "label": "a navigate effect's relative path resolves the same way",
+      "do": { "clickText": "Install, by navigate" },
+      "expect": { "noErrors": true, "domIncludes": ["Docs install, page 1", "entered: 5"] }
+    }
+  ]
+}
