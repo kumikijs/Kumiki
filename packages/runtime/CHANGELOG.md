@@ -1,5 +1,1722 @@
 # @kumikijs/runtime
 
+## 0.14.0
+
+### Minor Changes
+
+- 13eacc9: Fail a `{dispatch}` step that drives nothing
+
+  `{dispatch}` is the one action verb that does not go through a selector: it
+  names a reducer, and the `_dispatch` seam returns silently when the name matches
+  nothing. So a fixture left behind by a rename kept passing:
+
+  ```json
+  { "do": { "dispatch": "addTodo" }, "expect": { "state": { "todos": "" } } }
+  ```
+
+  ```
+  $ kumiki run todos.kumiki renamed.json
+  [ok] step 0: dispatch addTodo
+  scenario passed
+  ```
+
+  The reducer never ran, the slot was still at its initial value, and the
+  assertion happened to describe that value — the same shape as the failed
+  actions that became `actionError`, for the verb that change did not reach.
+
+  A step naming a reducer the app does not have now fails, on `actionError`, where
+  neither `errorIncludes` nor `noErrors` can see it:
+
+  ```
+  [FAIL] step 0: dispatch addTodo
+      action failed: no reducer named "addTodo"
+  ```
+
+  A name close to one that exists is named, under the same threshold `kumiki fix`
+  repairs with — at most two edits, or a quarter of the written name's length.
+  A rename that genuinely renames is usually further than that, and a suggestion
+  that is not the name the author meant sends the repair at the wrong one:
+
+  ```
+      action failed: no reducer named "addTodoIten" — did you mean "addTodoItem"?
+  ```
+
+  A step naming an `on=ui.click(Tile#id)` reducer without the matching `{"id": …}`
+  in its payload fails the same way. On the click path §1.6.2's id filter is the
+  feature — the runtime calls the seam once per same-tile reducer and the
+  mismatched ones drop out — but an explicit `{dispatch}` step names one reducer
+  and asks for it, so one that cannot reach it drove nothing:
+
+  ```
+  action failed: reducer "scopedMiss" is scoped to #edit (§1.6.2), so this step
+  drives nothing — pass payload {"id": "edit"}
+  ```
+
+  The check is a precondition in the runner, not a throw in the seam: `_dispatch`
+  is production code that every codegen'd handler reaches, and making it throw
+  would change what an app does to enforce a test-harness contract. A `{dispatch}`
+  or `{navigate}` on a shape carrying no seam at all now fails too, rather than
+  doing nothing and reporting nothing.
+
+  `@kumikijs/e2e` asks the same question through the same function, so §8.10's
+  "exactly as at the scenario tier" holds for this verb as well.
+
+  `@kumikijs/runtime` also gains `levenshtein` / `nearestName` (the did-you-mean
+  metric and the ranking built on it, moved down from `@kumikijs/compiler`, which
+  re-exports them) on a `./text-distance` subpath, and `dispatchFault` — the rule
+  both tiers ask.
+
+- 1c1cb23: Check a refinement written inside a record, union or container at its path
+
+  ```kumiki
+  slot form : {email: Text where email, age: Int where between(0, 120)} = {email: "ada@example.com", age: 36}
+  ```
+
+  used to be emitted with no check at all: `form.email := "nope"` and `age := 999`
+  both committed, with `check`, `build` and `smoke` silent. A predicate is now
+  checked wherever in the type it is written — a record field, a union variant's
+  payload, a `List` / `Set` element, a `Map` key or value, `Option` / `Result`
+  payloads, a `Tuple` member — through names, generics and recursive types. A
+  refused write discards its reducer's batch like any other, and the report names
+  the predicate and where it failed:
+
+  ```
+  slot "form" cannot hold {"email":"nope","age":36} (email at .email)
+  ```
+
+  `error(field=form)` renders that predicate's message. A slot whose predicates
+  all sit on its own type is emitted exactly as before.
+
+  A value of the wrong shape at a position — a decoded `{}` where a list belongs,
+  an untagged value where an `Option` does — is refused against that position's
+  first predicate, rather than passing untested or throwing. A `Set` member that
+  is not text or a number is not walked, because the runtime keys a set by the
+  member's text. A generic that applies itself to a growing argument more than 32
+  levels deep, with a refinement along it, is `E0803` at build time.
+
+  `HttpStatus` is now `nominal Int where between(0, 599)`: a request that got no
+  response (an abort, a `policy=latest` cancellation, a timeout, a network
+  failure) reports `status: 0` (http.md §6.4.1), and a slot holding the
+  `HttpError` has to accept it.
+
+  For a host that builds `SlotMeta` itself: `refineFailure`, when present, is the
+  whole gate (`slotAccepts`), and `RefinementFailure.path` is a list of
+  `RefinementStep`s, `[]` for the value itself; `showRefinementPath` writes one
+  the way the report does.
+
+  **Upgrading:** a program that declares refinements inside its types now
+  enforces them. A reducer that writes such a value — an empty `text` into a
+  `{text: Text where nonempty}` element, say — is now rejected rather than
+  committed; guard the write, or loosen the type.
+
+  **Data persisted before the upgrade** is checked the same way when it comes
+  back. Storage written by an older build can hold what the type now refuses — a
+  `Map(TodoId, Todo)` keyed by a non-uuid id from the old `fresh()`, a todo whose
+  `text` was saved empty — and the reducer that restores it (`todos :=
+$m.get-or({})` in `02-todomvc`) is then rejected as a whole, including a
+  `ready := true` in the same batch, so an app that waits on that flag stays on
+  its boot screen. Before shipping, either migrate or clear the stored data, or
+  restore it through a `fn` that drops the entries the type refuses.
+
+- 8820b8e: Make every refinement predicate a check that can fail, stdlib nominals included
+
+  `docs/spec/forms.md` §5.6 and `language.md` §1.3.3 present a refinement as a
+  runtime check: the value is validated on its way into the slot, and a write that
+  fails is refused. Five of the twelve predicates were. `refinementToJs` ended in
+
+  ```ts
+  default:
+    return `(_v) => true`;
+  ```
+
+  so `positive`, `negative`, `email`, `url`, `uuid`, `regex` and `one-of` reached
+  the runtime as a check that cannot fail:
+
+  ```
+  slot n : Int where positive = 5
+  reducer bad on=ui.click(B) do= n := 0 - 7    # landed. n held -7.
+  ```
+
+  The standard library's refined nominals were worse, by a different route.
+  `refinementJs` resolved a `TypeRef` through the program's own `type`
+  definitions, and `Email`, `Url`, `Uuid` and `HttpStatus` are synthesised in
+  `stdlib-types.ts` — so the lookup returned `undefined` before any predicate was
+  considered, and `slot e : Email = "not-an-email"` emitted no `refine` and no
+  `refineKind` at all. Every write was accepted, and `error(field=e)` on it
+  rendered nothing, on a form whose whole purpose was to say the address is not
+  one.
+
+  All twelve now lower. What each tests is written down in §1.3.3 rather than left
+  to the implementation: `positive` / `negative` are strict about zero, `email` is
+  `local@host` with a dot in the host, `url` is absolute (a scheme and an
+  authority — `kumiki.dev` is not one), `uuid` is the 8-4-4-4-12 shape in either
+  case, `regex` is anchored so the pattern describes the **whole** value, and
+  `one-of` is membership. A value of the wrong shape answers `false` rather than
+  throwing.
+
+  Codegen's type table is seeded with the standard library's definitions as well
+  as the program's, which is what lets the walk over a type's `where` clauses
+  reach them at all — so `slot e : Email`, `type Handle = Email` and
+  `slot e : Text where email` are one guarantee written three ways.
+
+  The `default` arm is gone in both directions. One table now holds the names the
+  parser accepts and the lowering each has, so the two cannot drift; a registered
+  predicate with no lowering is **E0803** `unimplemented-refinement` at build time
+  (nothing is in that state — it is the guard for the next predicate added to
+  §1.3.3). Arguments are checked too, as **E0804** `refinement-args-invalid`: a
+  refinement no value can satisfy is the same defect as one every value satisfies,
+  and an argument the predicate does not take produces one or the other —
+  `between(5, 1)` and `len-eq(2.5)` refuse everything, `len-gt(-1)` accepts
+  everything, `one-of()` has nothing to admit, and `regex("(")` is not a pattern.
+  `between(0, "x")` is the sharpest of them: the emitted check read
+  `v >= 0 && v <= x`, whose second half is a reference to a name nothing declares,
+  so the first write threw a `ReferenceError`. A `regex` pattern is compiled twice
+  — as written, then anchored — so one whose own parentheses would close the
+  anchor group (`a)|(b`) is reported rather than lowered unanchored.
+
+  Property-test generation moves with the runtime, since the two answer the same
+  question from opposite ends: `email` / `url` / `uuid` generate an instance of
+  the shape, `one-of` draws from the listed literals, and `negative` bounds the
+  sign — a generator that ignored them would drive a property over states the app
+  refuses to be in. `regex` has no constraint to fold and §8.3.2 now says so.
+
+  `packages/examples/features/90-refinement-validation.kumiki` writes to each
+  family from a reducer and its scenario asserts the refusal — the batch is
+  discarded whole, the rejection is reported, and `error(field=…)` on a pristine
+  `Email` slot renders its message.
+
+  Named here rather than fixed here, from the review of this PR. A predicate over
+  a base type it cannot test (`Text where positive`) refuses every write with no
+  diagnostic, and `len-lt(0)` does the same through well-formed arguments (#440).
+  Shrinking a property-test counterexample ignores the descriptor the generator
+  honoured, so a minimised case can sit outside the domain `for-all` declares
+  (#441). The refinements `stdlib-types.ts` declares never pass through the
+  checker that would report them (#442). A `bind` the predicate refuses leaves the
+  input and the slot disagreeing with no message, and the `strict` prop the spec
+  offers as the escape hatch is unimplemented (#443). The generation descriptor
+  is one wire format with two unrelated types (#445).
+
+  **A program can stop working**, and it was already not doing what it said: a
+  write these predicates refuse used to land silently, and now discards its
+  reducer's batch ([runtime.md §10.3.3](https://github.com/kumikijs/Kumiki/blob/main/docs/spec/runtime.md)).
+  The repair is the one a reachable bound has always needed — guard the write, or
+  widen the slot's type and refine at the boundary.
+
+- fbbec02: Make a decoded value that `Decoder.Json(T)`'s `T` refuses the effect's `.err`
+
+  `Decoder.Json(T)` lowered to a bare `"json"` sentinel, so nothing checked the
+  decoded value against `T`. A restore of data the type refuses (a base-36 id
+  from an older `fresh()` under `TodoId = nominal Text where uuid`, an empty
+  `text` on `Text where nonempty`) answered `.ok`, the reducer's writes were
+  refused as a batch (runtime.md §10.3.3), and `02-todomvc`, which sets `ready`
+  in that reducer, stayed on its boot screen with nothing able to clear it.
+
+  Now `Decoder.Json(T)` for a `T` that carries a predicate anywhere in it lowers
+  to the walk a slot of type `T` is gated by, and the storage, session,
+  IndexedDB and HTTP read handlers run it on what they decoded (http.md §6.1.4,
+  §6.7.2). A refused value is `.err`: from storage, session or IndexedDB the
+  `Text` its `out=` declares, such as `decode failed: uuid at .keys["k3j9x"]`,
+  and from HTTP an `HttpError` with the
+  response's status and text, which is not retried. A `T` with no predicate lowers to the
+  sentinel as before. The check ships in a new `effects-decode` runtime module,
+  only with the handlers that import it, so an app that decodes nothing (the
+  counter) is unchanged.
+
+  A host provider for a read capability receives the check as `decode` on the
+  request. A scenario's scripted `.ok` stands for a value already decoded and is
+  not checked.
+
+  `apps/03-blog` decoded its stored session with `Decoder.Json(Option(Session))`,
+  though a storage read already answers `Option` of what it decodes (http.md
+  §6.7.2). The check now reads that `T` literally, so the example decodes
+  `Session`. Its `saveSession` stored the `Option` wrapper that check refuses on
+  the next boot; it now stores the `Session` itself, and logout emits a new
+  `clearSession`, a key-only write that removes the entry.
+
+- fac7523: Report a refused effect to the app
+
+  `runtime.md` §10.4.2 defines the capability check in two clauses — "A violation
+  is not executed **and is notified to `app.error`**" — and only the first was
+  enforced. A violation reached `console.warn` and stopped:
+
+  ```ts
+  console.warn(`Capability "${cap}" not declared in app.caps`);
+  ```
+
+  No `app.error` reducer ran and no `panic` step landed. Worse, neither `smoke`
+  nor `scenario` patches `console.warn` — they watch `console.error` — so an app
+  whose only effect was refused mounted, rendered, and **passed** every
+  verification tier. The compile-time half (E0301) catches the common case, which
+  is exactly why the cases that reach the runtime (a host-built `AppShape`, a
+  `caps` array edited after codegen, a provider that was supposed to register)
+  were the ones a silent channel served worst.
+
+  A refusal is now reported, in three places:
+
+  ```
+  [kumiki] panic in effect "save": capability "storage.write" is not declared in app.caps
+  ```
+
+  to `console.error`, where the tiers read; to the episode as a `panic` step with
+  `category: "capability"` — the value the spec had already declared for it — so
+  `kumiki replay` shows why nothing ran; and to `app.error`, which takes it as an
+  ordinary `PanicInfo`:
+
+  ```kumiki fragment
+  reducer onPanic
+      on=app.error
+      do= lastError := Some($event)     # $event.category is "capability"
+  ```
+
+  Both the live dispatcher and the SSR pass report, in the same words, through
+  one shared builder. What differs is what each can report _to_: `renderToString`
+  has no `app.error` to fire, the same way a reducer panic on that pass is a
+  `panic` step and nothing more, so on the server the console and the episode are
+  the whole of it.
+
+  The episode a refusal attaches to is the one that owns the emit, which is not
+  always the one in focus. A deferred policy (`debounce`, `queue`) launches from
+  a timer or a queue tail, long after the triggering episode closed, so the
+  refusal is recorded against the episode that claimed the `effect-start` — and
+  `episode-id` names it. Without that, a refused `debounce` left its episode
+  holding an `effect-start` and an `effect-cancel` and nothing else, which is
+  exactly what a _replaced_ timer looks like. The one emit with no episode to
+  name is one from `app.init`, dispatched before the first episode opens; it
+  reports to the console and to `app.error` carrying `episode-id: None`.
+
+  **The bootstrap episode of a refused emit is now `status: "panic"`** rather
+  than `"completed"`, because it carries a panic step — which is what that status
+  means on the live path too. Where a refusal records both a `panic` step and an
+  `effect-cancel`, the panic comes first: the cancel settles the episode (a step
+  appended after it lands on one already handed to `onEpisode` and the
+  localStorage mirror), and the reason reads ahead of the consequence.
+
+  One consequence worth naming: the `kumiki dev` error overlay raises on an
+  episode whose status is `"panic"` _and_ whose last step is a `panic`, so a
+  refusal under the default policy now raises it where it previously did not.
+  One whose `panic` step is followed by an `effect-cancel` — the SSR bootstrap,
+  and a deferred-policy refusal — still does not, exactly as before.
+
+  §10.4.2 now says all of this instead of one sentence, in both language tracks.
+  `docs/spec/runtime.md` §10.5.1 and `lifecycle.md` §7.2.3 said the opposite —
+  that `capability` was a value reserved for a callsite not yet wired — and now
+  say it is wired; so do the `PanicCategory` declaration and E0301's rationale,
+  which still described the console warning that is gone. The JA track has no
+  §10.5.1.1, so `runtime.md`'s JA diff is the §10.4.2 hunk alone; `lifecycle.md`
+  and `errors.md` are fixed in both.
+
+- 3e8d1ba: Reproduce a run that read the environment when replaying its episode
+
+  An episode recorded what a reducer _wrote_ and nothing about what it read, and
+  `replayEpisodes` re-executes the reducer body. So the one episode most worth
+  replaying — the one whose reducer rolled a die or stamped a time — was the one
+  replay could not answer for. Recorded `roll: 0 -> 3`, then three separate runs
+  of the same command:
+
+  ```
+  $ kumiki replay r.kumiki --from-log ep.jsonl
+    [reducer] roll6  roll: 0 -> 2, inRange: false -> true
+  $ kumiki replay r.kumiki --from-log ep.jsonl
+    [reducer] roll6  roll: 0 -> 1, inRange: false -> true
+  $ kumiki replay r.kumiki --from-log ep.jsonl
+    [reducer] roll6  roll: 0 -> 3, inRange: false -> true
+  ```
+
+  A `reducer` step now carries `env-reads`: what the body read from the
+  environment while it ran, in the order it asked, each entry `{kind, value}` with
+  `kind` one of `now` / `random` / `fresh-id` / `prefers-dark` — the builtins whose
+  answer comes from outside the program, so that nothing in the slots determines
+  it. Replay installs that reducer's recorded reads before running its body, and
+  those builtins return what they returned during the recording instead of reading
+  the clock / the random source / the id generator / the OS preference again.
+  Replaying an episode that read the environment now reproduces its recorded
+  `slot-diffs` exactly, every time.
+
+  A `panic` step carries the same, plus the `name` of the reducer that threw. A
+  reducer that panicked wrote no `reducer` step at all, so the episode a bug
+  report is most worth carrying — the one that crashed — would otherwise have
+  replayed as an episode with nothing in it, re-read the environment, taken a
+  different branch, and exited 0.
+
+  The scope that is recorded is the reducer body: a read in a tile expression or
+  during a render is not journalled, and nothing replays those. What a read
+  _answers_ is recorded; the local time zone that `now.format(...)` later resolves
+  in is not.
+
+  `random()` used to lower to an inline `Math.random()`, which is invisible to the
+  log; it lowers to `_s.random()` now, beside the three that already went through
+  the runtime. That is a **generation requirement**, not a log-format one: an app
+  built by this compiler against an older `@kumikijs/runtime` fails at runtime
+  with `_s.random is not a function`, exactly as `_s.prefersDark()` did when it
+  was introduced. Compiler and runtime move together.
+
+  `kumiki replay` now reports environment-read provenance — `(env: N read live)`
+  on a step, and an `environment reads:` summary at the end — so "returned the
+  recorded value" and "read the clock again" are distinguishable after the fact.
+  An entry whose `value` is missing or is the wrong type for its `kind` is
+  rejected when the scope opens rather than handed to a reducer body as
+  `undefined`, and counted as `malformed`.
+
+  `withEnvRecord` / `withEnvReplay` are exported for a host that runs reducer
+  bodies itself; they take the body as a callback so the process-wide scope is
+  balanced by construction.
+
+  Log-format compatibility holds in both directions: the field is omitted when a
+  reducer read nothing, so a log written before this is byte-identical to one
+  written now, and a log that carries no `env-reads` still parses and replays,
+  reading live as before. A read with no recorded answer left falls through to the
+  live source rather than failing the replay.
+
+- c858728: A Set literal is a Set (stdlib.md §2.2.2).
+
+  A list literal written where a `Set` is declared lowered to a JavaScript array, while every Set member reads a Set as `{ [key]: true }`. So `slot s : Set(Int) = [5]` answered `s.has(5)` with `false`, `[5, 5]` had size 2, `s.add(5)` made the mix `{"0": 5, "5": true}`, and a reducer-test whose `given` / `expect` slots held Set literals compared an array with an object. `check` said `ok`.
+
+  The checker marks a list literal it checks against a `Set` type, and codegen builds it with `_s.setOf` (new in the runtime), the same value `add` builds from those members. That is every position the checker reads against a type: for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, the argument of `List.contains` / `push` / `prepend` and the value of `Map.insert` / `update`, and a test's slot values, expected effect arguments and mocked results. A `<any-id>` member of a Set literal in a reducer-test `expect` pairs with one generated member. Where the checker cannot type the receiver — `$1` in a fragment over a `List(Set(T))` — a literal argument stays an array.
+
+  New diagnostics on programs `check` used to accept:
+
+  - The argument of `union` / `intersect` / `diff` is checked against the receiver's `Set(T)`: a `List`, a `Set` of another element type or an `Option(Set(T))` there is E0201.
+  - The argument of `List.contains` / `push` / `prepend` is checked against the element type, and the value of `Map.insert` / `update` against the value type (E0201).
+  - A test's slot values are checked against the slot's type, an expected effect's argument against its `in=` type, and a mock's payload against its `out=` type (E0201 / E0214 / E0215), as a slot initializer already was.
+
+  A Set literal of records or variants now holds what the `add` chain of the same members holds: today those members are keyed by their string form, so `[{x: 1}, {x: 2}]` has one member where the array had two. How structured members are keyed is tracked in #658.
+
+- 8d3595f: A scenario step that drives a control the platform would refuse now fails, naming the control and the reason, instead of passing (#369).
+
+  `fill` on a `disabled` input moved the slot and ran the `ui.input` reducer, because the runner wrote the value and dispatched the event itself — so `disabled` never entered the picture. A scenario asserting a guard held was green having tested nothing.
+
+  All three drivers — both verification tiers and `kumiki smoke` — now ask one rule before a verb drives a control (`controlFault` / `readControl`, beside `dispatchFault`): `disabled` refuses every verb that drives one, `readonly` and an `editable`'s `contenteditable="false"` refuse the typing alone. `hover` is deliberately outside the rule — Chromium fires `mouseenter` on a disabled control, measured rather than assumed. The rule cannot be left to the browser: Chromium refuses a real click on a disabled control but delivers a dispatched one, and dispatching is what a driver does.
+
+  `expect.actionErrorIncludes` is the new key that asserts a refusal, so "this button is disabled and clicking it does nothing" is expressible rather than merely green. It matches the refusal alone, not the whole `actionError` channel, so a step cannot claim one on a selector that matched nothing. `kumiki run`'s trace prints a claimed refusal as `expected refusal:`.
+
+  The rule resolves in both directions: a verb aimed at the `<label>` `check` / `radio` / `switch` render is judged by the `<input>` inside it, and a verb aimed at something inside a disabled control — the spinner a `loading` button renders — is judged by that control, since the dispatched event reaches it.
+
+  `kumiki smoke` asks the same rule, and no longer fires at a control a user could not reach.
+
+- fbbec02: A failed storage / session / indexed effect now delivers the `Text` its `out=Result(T, Text)` declares to `.err`, `$e` there is typed `Text`, and declaring any other `E` on these effects is the new E0306 `err-type-not-text` (#504).
+
+  The spec declares these effects' failure as `Text`, but the handlers delivered a `{message: …}` record. A reducer written to the declaration, `problem := $e`, rendered `[object Object]`; one written to the runtime, `$e.message`, contradicted the declared type, so `$e` had to stay unchecked.
+
+  The handlers in `effects-storage.ts` and `effects-indexed.ts` now deliver the failure's message itself (`"Error: storage blocked"`, `"app.indexed-db is not declared"`), and read the storage global and the request inside their own `try`, so a `SecurityError` from the `localStorage` getter or a missing request is that `Text` too. Codegen runs everything in such an effect's invoke inside a `try` — the `map-request`, the host provider and the built-in handler, awaited — and reads every err value, returned or thrown, through one normalizer: a `Text` is itself, an `Error` is `Name: message`, a record with a `Text` `message` is that `message`, anything else is its JSON text. A throw caught there is marked `final`, so `retry=` makes one attempt for it, as it did when the throw reached the dispatcher.
+
+  `.err($e, _)` on one of these effects binds `$e : Text`, so `$e.message` is E0108 and `n := $e` into an `Int` slot is E0201. A program that read `$e.message` must read `$e`, and one that declared `out=Result(T, {message: Text})` must declare `Result(T, Text)`. A host provider for `storage.*` / `session.*` / `indexed.*` should return its failure as a `Text`. HTTP effects are unchanged: they still deliver the `HttpError` record, and `.err` on HTTP and custom capabilities stays unchecked.
+
+- 730690b: Report an action that could not run as its own thing, not as an app error
+
+  `errorIncludes` asserts that the _runtime_ surfaced something — a reducer batch
+  a refinement rejected, an effect error no `.err` reducer consumes. A failed
+  action was reported through the same buffer, so it could satisfy the assertion:
+
+  ```json
+  {
+    "do": { "key": "#typo", "value": "Enter" },
+    "expect": { "errorIncludes": ["no element"] }
+  }
+  ```
+
+  ```
+  $ kumiki run a.kumiki typo.json
+  [ok] step 0: key #typo "Enter"
+  scenario passed
+  ```
+
+  — a fixture asserting that its own mistake happened, having pressed nothing.
+  The same shape worked for `click`, `focus`, `blur`, `hover`, `fill`, `choose`,
+  `clickText` and `submit`.
+
+  An action that cannot run is a fault in the scenario, not an observation about
+  the app, so it is now a channel of its own: `StepResult.actionError`, printed by
+  `kumiki run` and `kumiki_run_scenario` as `action failed:`. It fails the step,
+  and neither `errorIncludes` nor `noErrors` can see it — the two are reported
+  separately because they are different things:
+
+  ```
+  [FAIL] step 0 (typo): click #nope
+      action failed: no element matching selector #nope
+      assert: expected an error including "no element" but got: none
+  ```
+
+  `@kumikijs/e2e` splits the same way. That tier refuses `errorIncludes` outright,
+  but it treats every reported error as fatal, so a fixture's broken selector was
+  reported as a defect in the app. Its `fill` also now names the element it
+  matched — `#box matched <div>, which holds no text to fill` — which
+  Playwright's own refusal does not, so a selector that drifted onto a wrapper
+  reads the same message in both tiers.
+
+- 8f7b051: An index write into a `List` leaves a `List`, an index into a `List` is an `Int`, and an index write into a `Set` is refused (#462).
+
+  `xs[i] := v` on a `List` replaced the list with an object keyed by its indices: the setter shared by reducer assignments and `bind=` write-back ended every step with an object spread, and `{...[1, 2, 3]}` is `{"0": 1, "1": 2, "2": 3}`. `check` said `ok`, and every reader after the write — `.length`, `.head`, a `for`, the state a scenario asserts — saw something other than a List.
+
+  The setter now copies a List and replaces the element at the index, at any depth, so `rows[1].n := 9` and `grid[1][0] := 0` keep every level's shape. An index that names no element — past the end, or negative — is a panic, as lifecycle.md §7.2.2 already listed: the reducer's writes roll back, the episode log records it and `app.error` runs. The read `xs[i]` panics at the same indices instead of reading `undefined`, so both sides of `:=` agree; `xs.get(i)` still answers `None`. An index that meets no List at all — a missing value, or a missing element to write through — panics too, rather than building `{"0": v}` or a partial record. The `Map` and record paths are unchanged.
+
+  A `List` index is checked against `Int` on both sides of `:=`, so `xs[k]` with `k : Text` or `k : Float` is E0201 rather than an index that names nothing at run time.
+
+  A `Set` has membership and no places, so `tags[x] := v` is now E0602, the code a member write already gets, and the message points at `.add` / `.remove` / `.toggle`.
+
+- 3aae0ea: Write through `.get` into the payload instead of a field named `get`
+
+  `language.md` §1.6.3 documents assignment through `.get` — `draft.get.title := v`
+  — and says a write against a `None` is a no-op. A write against a `Some` was
+  not a write at all: the lvalue was flattened into a plain field path, so the
+  assignment set a sibling field named `get` beside `_tag` / `_0` and left the
+  payload untouched. The read side has always lowered `.get` through the
+  polymorphic unwrap, so the same path read correctly and wrote wrong — the
+  editor in `03-blog` typed into a field nothing read back.
+
+  **A write that used to do nothing now edits the payload.** An app that reads
+  the phantom `get` field, or that relied on the payload not changing, changes
+  behaviour.
+
+  **And a `bind=` through `.get` now panics while the value is empty.** It used
+  to walk the path defensively and hand the control an empty string; it reads
+  through the same unwrap as every other `.get` now, so `input(bind=draft.get.title)`
+  with `draft = None` fails during the first render and the app does not mount.
+  Reach the control through a `match` on the Option. This is the more disruptive
+  half of the change for an app already written against the old behaviour.
+
+  Both spellings are fixed together and now share one implementation: the
+  assignment a reducer lowers to and a `bind=` path's write-back both call the
+  runtime's setter, so they cannot disagree about what a path means. A `.get`
+  segment travels as `{get: true}` in `TileNode.bindPath`, which widens from
+  `string[]` to `(string | {get: true})[]`.
+
+  The name stays dispatched rather than reserved: on a record that declares a
+  field named `get`, both sides still resolve it as that field. `Result` is
+  covered the same way `.get` covers it when read — an `Ok` payload is edited, an
+  `Err` is skipped.
+
+- d029b60: Supply every field of `PanicInfo`
+
+  `PanicInfo` declares five fields and the runtime supplied three. `episode-id`
+  and `cause` were never written, so a program that read them got JavaScript's
+  `undefined` — through `+`, that renders:
+
+  ```kumiki fragment
+  reducer onPanic
+      on=app.error
+      do= caught := "episode " + $event.episode-id
+  ```
+
+  ```
+  episode undefined
+  ```
+
+  `episode-id` was typed `Text`, so "absent" was not something the program could
+  match on, and `lifecycle.md` §7.2.3 told reducers to "treat both as
+  None-equivalent" — a rule nothing could enforce and, for a `Text`, nothing could
+  even express.
+
+  `episode-id` is now `Option(Text)`, and is supplied: it carries the id of the
+  episode the panic happened in, which is the join between a panic a user saw and
+  what `kumiki replay` / `kumiki_episode_tail` read back. It is `None` when there
+  is no episode to name — a host that attached no episode logger, or a panic
+  raised outside any dispatch — so the absent case is a value the language can
+  say:
+
+  ```kumiki fragment
+  text("episode: " + $event.episode-id.get-or("(none)"))
+  ```
+
+  `cause` is now supplied too: the **nearest** `Error.cause` message when the
+  throw carried one, `None` otherwise. The chain behind it and the stack with it
+  stay in the episode log, where §7.2.3 already says they belong; `episode-id` is
+  how to reach them.
+
+  All three paths a panic reaches a program — an `app.error` reducer, a
+  `route.error` reducer, and an `error-boundary` fallback — are handed the same
+  record, built by one function (`userPanicInfo`) rather than three literals. #362
+  aligned the boundary's payload with the live one by hand, and both were then
+  missing the same two fields in the same way; a shared builder is what keeps them
+  from drifting again.
+
+  The runtime's `EpisodeLogger` gains `currentId()` — the question `hasOpenEpisode`
+  answers, with the answer a caller can name — and a mounted app publishes an
+  episode seam so the boundary path, which runs inside an app's own inlined
+  runtime copy, can read it across that boundary.
+
+  **A hand-written `EpisodeLogger` needs a `currentId()`.** It is a required
+  member, so a logger built against the previous shape no longer satisfies the
+  type. Anything from `createEpisodeLogger()` already has it. The runtime does not
+  assume it at runtime: a logger without one degrades to `episode-id: None` and
+  warns once, rather than throwing from inside a panic catch.
+
+- 5907ee2: Substitute the placeholders in `fmt`
+
+  `fmt(template, ...args)` returned its template. `packages/runtime/src/stdlib.ts`
+  carried a helper for every other builtin — `panic`, `file-url`, `prefers-dark`,
+  `Bytes.from-text` — and none for `fmt`, so codegen's `_s.fmt ? _s.fmt(…) :
+template` guard always took the else branch:
+
+  ```
+  reducer go on=ui.click(B) do= t := fmt("{0}-{1}", "a", "b")
+
+  [FAIL] step 0: clickText "go"
+      assert: state t: expected "a-b", got "{0}-{1}"
+  ```
+
+  `check`, `build` and `smoke` were all green for that program, and would be for
+  any program: a template is a `Text`, exactly like the formatted result it stood
+  in for, so no tier short of one that reads the string could tell them apart.
+  `packages/examples/apps/03-blog` built its auth header with it, so every request
+  that app made sent `Authorization: Bearer {0}` and the token never left the
+  browser.
+
+  The runtime helper exists now. A placeholder is `{`, one or more decimal digits,
+  `}`; each is replaced by the argument at that index, rendered through `show`.
+  Substitution is one left-to-right pass, so a `{0}` arriving _inside_ a
+  substituted value is text rather than a placeholder that reaches back into the
+  argument list.
+
+  Before this, [stdlib.md §2.4.5](https://kumiki.dev/spec/stdlib#_2-4-5-string-formatting)
+  said substitution was **not implemented**, so the whole semantics was undefined
+  rather than any particular corner of it. It is written down now (EN + JA), and
+  these are the three easiest to get wrong:
+
+  - An index the arguments do not reach keeps its placeholder verbatim —
+    `fmt("{0} {1}", "a")` is `"a {1}"`. Not an error, and not empty: a template
+    that outran its arguments is a mistake, and the rendering that names the
+    missing index is the one its author will see.
+  - An argument no placeholder names is dropped — `fmt("{0}", "a", "b")` is
+    `"a"`. This is the half with no trace at all: the result is identical to the
+    correct call's.
+  - A `{` that opens no placeholder is copied through, and so is a `}` that closes
+    nothing. No escape, the same bargain `Time.format` makes with its own tokens,
+    so `fmt("{{0}}", "a")` is `"{a}"`. The digits are read as one decimal index,
+    so `{01}` is index 1.
+
+  **New warning, [W0214](https://kumiki.dev/spec/errors#w0214-fmt-placeholder-argument-mismatch-warning)
+  `fmt-placeholder-argument-mismatch`.** A `fmt` whose **literal** template and
+  argument list disagree, in either direction, is reported by `check` — one
+  warning per call, naming both halves when a call is wrong both ways. Non-fatal,
+  so `check` still exits 0 and `build` still emits. A template that is an
+  expression carries no placeholder set to count and is left to the runtime rules
+  above.
+
+  **`+` renders through `show` now.** `_s.add` was `String(a) + String(b)`, which
+  never called `show` — so `"x=" + someOption` was `"x=[object Object]"` and
+  `"x=" + nothing` was `"x=null"`, where §2.4.5 has always said "the equivalent of
+  `show` is called automatically" and `fmt` now says `None` and `""`. `Text +
+<anything>` type-checks, so the two ways to put a value in a sentence had to
+  agree; the spec was right and `add` was wrong. Numeric `+` is untouched.
+
+  **A throwing `app.http.headers` is reported.** The thunk is called per request
+  behind a `try`, and the `catch` returned `{}` silently: every global header
+  vanished, the server answered 401, and an app with `on-401` logged its user out
+  for no stated reason — with nothing on `console.error`, so `smoke` and
+  `scenario` saw a run that passed. It logs now, which is the channel
+  `lifecycle.md §7.2` already sends a panic down. The request still goes out.
+
+  The codegen guard is gone: `fmt` lowers to a plain `_s.fmt(…)` call. Keeping it
+  would mean a future runtime without the helper formats nothing and reports
+  nothing, which is the shape this bug had. That makes it a **generation
+  requirement** rather than a behaviour change — an app built by this compiler
+  against an older `@kumikijs/runtime` fails with `_s.fmt is not a function`, as
+  `_s.prefersDark()` and `_s.random()` did when they were introduced. Compiler and
+  runtime move together.
+
+  `packages/examples/features/88-string-formatting.kumiki` pins each rule with a
+  scenario — including a template held in a slot, which is the case the runtime
+  rules exist for — and the blog app's `Authorization` header is now asserted
+  end-to-end rather than assumed.
+
+- db913dc: fix(compiler): give a route target the chrome every other call site gets.
+
+  A user tile carries two things the runtime needs: the `_named(…)` marker it
+  diffs `tile.mount` / `tile.unmount` against (lifecycle.md §7.1.6), and the
+  `try` / `catch` its `error-boundary` lowers to (§7.3). Both are applied by
+  `tileCallJs`, the lowering for a _call site_. A route target is lowered
+  straight from the route table by `genTile` — the body and nothing else — so a
+  tile had both guarantees everywhere except at a route root.
+
+  For the boundary that inverted the guarantee. The same tile, the same
+  declaration, two positions:
+
+  ```kumiki
+  tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
+  tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
+  tile Host = column(Boom())
+  ```
+
+  `routes={"/" -> Host}` caught the panic and rendered the fallback.
+  `routes={"/" -> Boom}` — the position §7.3 names — let it escape, and the app
+  did not mount. `check` and `build` were green either way.
+
+  For the marker it was a silence: `on=tile.mount(Panel)` never fired if `Panel`
+  was named by a route, and fired if the same `Panel` was a child.
+
+  A route target is now lowered as what it is — a call site of that tile — at all
+  three route-table sites: a plain route, a `sub-routes` parent, and a
+  `sub-routes` child. The boundary belongs to the tile, which is what §7.3 says:
+  it scopes the boundary to renders _under that tile_, and says nothing about
+  where the tile was written.
+
+  **Observable** for a program that already declared either: a `tile.mount` /
+  `tile.unmount` reducer on a route target starts firing, and a route root's
+  `error-boundary` starts catching where the panic used to escape to the built-in
+  top-level display. The third one is the headline: a route root whose render
+  panics used to leave the app unmounted — `smoke` reported a failure and nothing
+  rendered — and now mounts with the fallback in place.
+
+  A tile that is showing its fallback fires no `tile.mount` for itself, because
+  the boundary wraps the marker from the outside and the tile did not render.
+  That was already true at a call site; it is now true at a route root too, which
+  is the point — the two positions agree.
+
+  `genTile`'s other caller — the `_tilesById` table a `tile-test` compares against
+  — is deliberately unchanged. Not because of the marker: `tileStructEqual`
+  leaves the `_tile` marker out of the comparison, so `_named` is invisible to a
+  `tile-test`. It is the boundary, which would make a test on a
+  panicking tile compare the fallback tree instead.
+
+  **A boundary catches a panic, and re-raises anything else.** Giving a route
+  target one closes a detection path, so what it will not swallow has to be
+  decided rather than inherited: `smoke` and `scenario` both verify through the
+  error channel, and before this, declaring a boundary was enough to hide a
+  defect from them entirely.
+
+  ```kumiki
+  tile Needs in=Text error-boundary=Fallback = column(text($1))
+  app M caps=[] routes={"/" -> Needs, "/404" -> Host} init=[]
+  ```
+
+  `smoke` said `ok — mounted, rendered, no runtime errors` on a program that
+  renders nothing but `_d_1 is not defined` — the route target with an `in=`
+  (#361). The same happened to `_wk`'s deliberate throw on a key that would
+  collapse two tiles onto one identity, whose own comment asks for the render
+  bailout to see it.
+
+  A panic is the controlled signal lifecycle.md §7.2.2 defines — `panic(message)`,
+  the polymorphic `.get`. A `ReferenceError` is not one, and is re-raised for the
+  top-level display. The fallback's payload is now built by the same `panicInfo`
+  `app.error` uses, so it carries `category` (it read `undefined` before) and an
+  empty message stays empty instead of stringifying the error object.
+
+  **`error-boundary` naming no tile is `E0105`.** It was the only tile-name
+  position nothing resolved: the lowering skipped a name it could not find and
+  produced a tile with no boundary and no diagnostic, so a misspelling stayed
+  invisible until something panicked. The skip is a throw now, so the check and
+  the lowering cannot drift apart.
+
+- 891a942: Conjoin every `where` a type carries, and name the one that refused a value
+
+  The grammar lets a type carry more than one `where`, and the parser folds the
+  first onto the `nominal` node as a property and wraps the rest. Codegen read
+  exactly one layer, so the outermost predicate was emitted and every inner one
+  disappeared:
+
+  ```
+  type Handle = nominal Text where len-gt(3) where nonempty
+  ```
+
+  ```js
+  "h": { value: "abcd", refine: (v) => typeof v === "string" && v.length > 0, … }
+  ```
+
+  `h := "ab"` was accepted at runtime by a type that says the value must be longer
+  than three characters, and nothing reported it — `check` was silent, `build` was
+  silent, and the emitted descriptor looked well formed.
+
+  `language.md` §1.3.1 now states the reading, in both language tracks: the
+  predicates **conjoin**, and a value is accepted only when every one of them
+  holds. It is the reading the rest of the compiler already had — the checker
+  peels every layer to decide nominal identity, and the property-test generator
+  folds every layer into its bound — so the fix is codegen catching up rather than
+  the language moving.
+
+  The predicates are collected along the edges that lead from a type to the next
+  name — an alias, a `nominal` wrapper, a `where` — so they accumulate over a name
+  as well as over one type expression: with `type Short = Text where len-lt(9)`, a
+  `nominal Short where len-gt(3)` carries both. A type written in terms of itself
+  terminates the walk rather than looping. (A generic that hands a parameter back,
+  `type NonEmpty(T) = T where nonempty`, is an edge normalization follows and this
+  walk does not yet — its refinement is still dropped, tracked separately.)
+
+  `refinement-type` is recursive in §1.3.1, but the parser tested for `where`
+  twice with no loop, so a third one was a parse error against a grammar that
+  admits any number. It chains now, and the predicates a type can carry are no
+  longer capped at two.
+
+  A conjunction cannot say _which_ predicate refused a value, so a slot whose type
+  carries several now also emits them separately (`refineAll`), ordered as the
+  chain is read — from the base outward, which inside one type expression is the
+  order they are written. Both places a predicate is named read it: the rejection
+  reported for a discarded reducer batch and the `error` tile's message. A
+  pristine `Text where nonempty where len-lt(7)` field reads "Required" instead of
+  naming a bound the empty value is well inside, and a write refused by an inner
+  predicate is reported against that one rather than against the outermost.
+
+  **What changes for an existing program.** A type whose predicates were being
+  dropped is now enforced, which is the fix and is also a behaviour change:
+
+  - `type Handle = nominal Short` over a refined `Short` emitted **no** `refine`
+    at all and accepted every write; it is checked now, and codegen wraps writes
+    to it in `_s.slotWrite` where it did not before.
+  - `refineKind` used to hold the outermost predicate and now holds the first of
+    the chain, so a report that reads it without `refineAll` can name a different
+    predicate than it did — for a single-predicate type, the common case, nothing
+    moves and the emitted descriptor is byte-identical.
+  - A type whose predicates contradict each other (`Text where between(1, 5)
+where nonempty` — `check` does not yet reject a predicate against its base
+    type) used to work by dropping one of them, and now refuses every value.
+
+- 2546469: Match a path against the most specific route, not the first one written
+
+  `docs/spec/routing.md` §3.1.2 ranks routes static > parameter > wildcard and
+  keeps definition order for ties. The router tried routes in source order and
+  took the first match, so with `"/todos/:id"` written above `"/todos/new"`, the
+  path `/todos/new` rendered the detail tile with `id = "new"`. The outcome
+  depended on which entry was appended first.
+
+  Routes are now compared segment by segment from the left: at the first segment
+  where two patterns differ in kind, a static segment wins over a parameter and a
+  parameter wins over a wildcard. Only a full tie falls back to definition order.
+  Redirects are ranked in the same table as the routes that render: the first
+  entry in that order owns the path, so `"/todos/new" -> NewTodo` now renders even
+  when `"/todos/*" ->> "/"` is written above it (a redirect used to be tried before
+  any page). Inside a `sub-routes` parent, children and child redirects share the
+  order the same way, and only the parent that owns the path is consulted. The
+  winning pattern is also the one `route.enter` names. When `renderToString` is
+  handed `routing`, it picks the rendered route in the same order; it does not
+  follow redirects. §3.1.2, §3.6.3 and §3.10 spell this out in both language
+  tracks.
+  `packages/examples/features/153-route-specificity.kumiki` declares the routes
+  in the unhelpful order, and its scenario checks each one.
+
+- 2061f11: Seed the `route` slot in the test harness, the way `mount` does
+
+  A reducer that reads `route.path` works in an app and panicked under `kumiki
+test`: `route` is maintained by the runtime rather than declared by a program,
+  so the harness — which rebuilt its slot table from the declared slots and the
+  test's `given` — had no such slot, and there was no way to write a passing test
+  for that reducer at all. E0119 makes reading it the _recommended_ spelling, so
+  this was reachable by following the compiler's own advice.
+
+  Both reset paths now seed `route` with the same empty route `mount` seeds:
+  `resetLive`, shared by `reducer-test`, its multi-step form, `tile-test` and
+  `run-reducer`; and `resetLiveFromSlots`, which `episode-test` and `kumiki
+replay` use. A test may name `route` in `given.slots` to drive a reducer that
+  branches on the current route, and one that names only some of its fields takes
+  the empty route's values for the rest — an abbreviation cannot hand a reducer an
+  undefined `params`.
+
+  `given.slots` / `expect.slots` naming `route` is no longer `E0103 undef-slot`,
+  in a `reducer-test` and in an `episode-test`'s `slots-equal` alike: a reserved
+  slot name is a slot a test may write, which is the only kind of slot the
+  program cannot declare itself. A field the route does not have is **E0108** and
+  a `route` that is not a record is **E0201** — without those the completion
+  would swallow a typo, leaving a green test that ran against the empty route.
+
+- b7e922c: Serve the element tree the client builds, for every tile kind
+
+  The SSR parity gate compared a hand-written half of the tile catalogue, and it
+  compared the **root element only** — every fixture had `children: []`. So a kind
+  with no row was indistinguishable from a kind verified to agree, and a kind
+  whose children differed passed on the strength of its outer `<div>`.
+
+  Eight kinds diverged. The server served an `error` as a `<div>` with no colour
+  where the renderer builds a red `<span>`; a `toast` without the padding and
+  corners the renderer paints; `data-lang` on the `<pre>` rather than on the
+  `<code>` the renderer marks; a `tooltip` without `data-placement`; a `markdown`
+  body as its raw source in one text node instead of the paragraphs the renderer
+  parses, so the first paint ran the whole document together into one block; an
+  `overlay`'s children flat, without the absolutely-positioned layer each one
+  after the first is wrapped in, so a stack painted as a column; and a closed
+  `modal` / `drawer` / `popover` as an empty string rather than the
+  present-but-hidden host the renderer mounts — so a crawler was served a page
+  with the dialog's content missing and the first paint laid out as if the
+  surface were not there.
+
+  Two divergences were the client's. A `<select>` carried no `data-kumiki-bind`,
+  though §10.3.5 names it alongside `input` / `textarea` and §10.3.9 re-identifies
+  a focused picker by that marker; and a `modal` had neither `role="dialog"` nor
+  the `aria-label` its `title` gives it, both of which the served page already
+  had and the client's first render then dropped. An overlay layer and a modal
+  host now stretch with the four inset longhands instead of the `inset`
+  shorthand, which a DOM that does not implement it — `happy-dom`, the one
+  `kumiki smoke` runs in — drops on assignment, leaving the layer covering
+  nothing. The server also stopped serving `title=""` / `placeholder=""` /
+  `colspan="0"` and the like where the renderer writes no attribute at all, and
+  it now skips the `null` children a `when` leaves behind rather than throwing on
+  the first one.
+
+  The gate itself is now total over `TileNode["kind"]` and compares the subtree
+  rather than the root, so a kind with no row fails to typecheck and a kind whose
+  children drift fails the suite. Form state the client keeps as a non-reflecting
+  property (`value`, `checked`, `selected`) is asserted on the served markup
+  directly, since an attribute dropped from both sides of a comparison is one the
+  comparison cannot speak for.
+
+- fe8e6a4: Ship tiles one at a time, and link them with `kumiki build --bundle`
+
+  A counter with one button downloaded the `select` tile's 70-line option
+  reconciler, the `contenteditable` IME guard, the slider, and the `link` tile's
+  URL-disposition check and allowlist. `kumiki build` shipped runtime modules per
+  tile _family_ (#71), and a family is a taxonomy, not a unit of code.
+
+  Two changes, which only work together.
+
+  **The module boundary now follows the code.** `text` and `input` ship one
+  module per tile (`tiles-text-link`, `tiles-input-button`, plus
+  `tiles-input-shared` for what the controls genuinely share). `layout` and the
+  rest still ship whole, because they are already one unit: layout's thirteen
+  kinds share five renderers — `page` and `column` are both `renderFlexColumn`,
+  six more are `renderBox` — so splitting it would ship the same bytes under more
+  names. The compiler's `PER_TILE_FAMILIES` says which is which, and a
+  cross-package test fails if a listed family gains a kind the runtime build has
+  no module for.
+
+  **`kumiki build --bundle`** links the generated module and the runtime modules
+  it imports into one minified `app.js`, and emits no `runtime/`.
+
+  | app                   | before   | `--bundle`          |
+  | --------------------- | -------- | ------------------- |
+  | 01-counter            | 24.70 kB | **17.70 kB** (−28%) |
+  | 02-todomvc            | 29.17 kB | **22.81 kB** (−22%) |
+  | 04-issue-tracker      | 32.75 kB | **26.50 kB** (−19%) |
+  | 05-project-management | 37.18 kB | **29.87 kB** (−20%) |
+
+  (gzip -9, whole output directory. Raw drops by about the same: 192.81 → 137.60
+  kB for the largest.)
+
+  **Why they need each other.** Bundling alone leaves the tiles: a family module
+  exports one object literal holding every renderer, and the app names the whole
+  object, so nothing tree-shakes it — bundling the counter without the split is
+  20.87 kB against 17.37 kB with it. And the split alone _costs_ large apps:
+  compression builds its dictionary per response, so nineteen small modules
+  compress worse than seven bigger ones, and 04/05 come out ~3% larger
+  uncompressed-payload-for-payload even though their raw bytes drop. The default
+  modular build therefore moves a little in both directions — counter −12.5%,
+  issue-tracker +3.3% gzipped — and `--bundle` is where the win is.
+
+  **`--bundle` stays opt-in because it implies minification.** The cache
+  granularity a modular layout buys — `runtime/core.js` keeping a URL that
+  survives an app change — is the smaller half of the argument, and nothing
+  outside HTTP caching depends on that layout: the e2e tier, the MCP server, the
+  Vite plugin and smoke/run/test all take the `bundle: true` monolith path, and
+  the emitted `index.html` never names `runtime/`. What is load-bearing is that
+  `app.js` stays _readable_. The AI debug loop reads its stack traces, and three
+  harnesses string-replace codegen's emitted lines verbatim. A default that
+  minified would take both away, which is the same reason `--minify` is opt-in.
+
+  **New dependency, and one module subpath goes away.** `@kumikijs/cli` now
+  depends on `rolldown`, which serves both flags — `--minify` keeps `./runtime/*`
+  external and minifies the app module alone, `--bundle` pulls them in. It is
+  pinned to `1.0.3`, the exact version `vite` (already a CLI dependency) pins, so
+  the two share one copy instead of shipping a second native toolchain; that pin
+  should move only together with vite's. It is imported lazily, inside the two
+  functions that use it, so `check` / `list` / `view` / `fix` and `@kumikijs/mcp`
+  at startup do not pay to load a native addon for flags they never pass.
+
+  `@kumikijs/runtime`'s `./modules/*` subpath no longer resolves
+  `./modules/tiles-text.js` or `./modules/tiles-input.js` — those two families
+  are now `tiles-text-<kind>` / `tiles-input-<kind>` plus `tiles-input-shared`.
+  The subpath is there for `kumiki build` to copy from rather than as an API, and
+  nothing in this repo deep-imports it, but a host that did will need the new
+  names.
+
+  Nothing about authoring changes. The monolith `mount()` still assembles every
+  family, `textTiles` / `inputTiles` are still exported with the same contents,
+  and the browser tier (25 Playwright cases, including the select / editable /
+  video / keyed-list identity guards the tile split could have broken) is green.
+
+### Patch Changes
+
+- 6cae7d8: Cover the child in a `route-outlet` with the parent's `error-boundary`
+
+  `docs/spec/lifecycle.md` §7.3 says a render panic is caught by the nearest
+  enclosing `error-boundary`. A child a `sub-routes` entry injects into the
+  parent's `route-outlet` is under the parent in the rendered tree, and was not
+  covered by the parent's boundary:
+
+  ```kumiki
+  tile Boom = column(text(xs.head.get.show))            # declares no boundary
+  tile Shell error-boundary=Fallback sub-routes={"/shell/a" -> Boom} = column(route-outlet())
+  ```
+
+  Navigating to `/shell/a` rendered the built-in top-level display, not
+  `Fallback`. `pickRootTile` returned from the parent's factory — and so from the
+  `try` / `catch` its boundary lowers to — before it built the child, so the child
+  rendered outside it. A boundary on the shell, the obvious way to write "one
+  fallback for this whole section", silently covered the frame and nothing else.
+
+  The parent's factory now takes the outlet's contents as a callback and applies
+  it around its own tree from inside its boundary, so the child is built under the
+  parent's guard. What follows is pinned beside it: the nearest boundary wins (a
+  child that declares its own shows its own fallback inside the outlet, and the
+  shell stays up), and the fallback's `PanicInfo.location` names the tile that
+  panicked rather than the one that declared the boundary — every route entry now
+  carries the name of the tile it targets, and a panic raised while building it is
+  attributed to that tile when nothing nearer has. The same attribution reaches
+  the built-in display: `data-kumiki-panic` names the route tile that panicked
+  where it used to be empty.
+
+  §7.3 says which reading holds, in both language tracks, and the known exception
+  its implementation status carried is gone. Routing §3.6.3 names the case.
+  `packages/examples/features/92-outlet-error-boundary.kumiki` is the section
+  with one fallback and a child that keeps its own, and its scenario asserts both.
+
+  `route.error`'s `$event.location` moves with it: for a render panic it was
+  absent, and it is the route target's name now — the same attribution the
+  built-in display carries. `app.error` and the episode log are unchanged; both
+  set `location` themselves.
+
+  `RouteEntry.tile` takes an optional `OutletFill` (new export). The runtime
+  always passes one, so an entry written as `tile: () => …` — a host's, or one a
+  runtime bundle from before this change emitted — still type-checks on both
+  sides and still renders its child: a parent that declares no parameter has
+  its outlet filled after it returns, outside its boundary, which is the
+  behaviour that factory was written for. A parent whose matched child finds no
+  `route-outlet` in the rendered tree (one under `when` / `if` / `match` that is
+  absent at runtime — E0113 accepts it) now reports the discarded child on
+  `console.error`, where the smoke and scenario tiers listen.
+
+- 027cf25: A non-`Text` key reads back as its declared type from `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and as the `$1` of a `Map(K, V).filter` predicate (#467).
+
+  A Set is stored as `{ [key]: true }` and a Map as a plain object, so their keys are JavaScript object keys — strings. The readers returned them as they were stored, so a `Set(Int)` built with `add` answered `["7", "8"]` under a `List(Int)` type. Every later reader disagreed with it: `contains(7)` was false, `sort` ordered text, `fold(0, $1 + $2)` concatenated, a `for k in m.keys` over a `Map(Int, V)` bound strings, and `m.filter($1 == 3)` kept nothing. `check` and `build` both said `ok`.
+
+  The checker now records, on each of those members, how the receiver's key type is represented — a number for `Int` / `Float` / `Time` (and a `nominal` / `where` over one), a boolean for `Bool` — and codegen passes it to the runtime helper, which restores the keys it reads. A `Text` key lowers exactly as before. The storage and `add` / `remove` / `toggle` / `has` are unchanged, and already agree: they key by `String(x)`. stdlib.md §2.2.2 states the rule.
+
+  For the receiver's type to be known in more places, two things the checker left untyped now have types:
+
+  - **`$1` / `$2` in a fragment** are bound to what the lowering hands it, read off the receiver: the element of a `List` or `Option`, the halves of a `.entries` tuple, a Map's key and value under `filter`, `fold`'s element, `Map.update`'s value. So `rs.map($1.ids.to-list)` restores keys, and a value passed on through them is checked like any other: `xs.map(loud($1))` with `loud(t: Text)` over a `List(Int)` is now E0201. Where the lowering's reading is not certain (an element that is itself a `List` or `Set`, `fold`'s accumulator) nothing is bound, as before.
+  - **`run-reducer(r)` in a property-test invariant** answers `{slots: {…}}` typed with the program's slots, so `run-reducer(add).slots.st.to-list.contains(7)` no longer reports a counterexample against a correct program, and a slot name the program does not declare is E0108.
+
+  **`T.fresh()` on a type a `Text` does not go into is now E0802.** `fresh` mints a uuid `Text` whatever `T` says; on a `nominal Int` the string used to pass silently, and with keys now restored by type a `Set` of such ids read them back as `NaN`. Declare the id `nominal Text`. The E0124 message for `fresh` on a type constructor names that half of the repair too.
+
+- 3db2d76: Leave an off-origin link to the browser instead of throwing
+
+  `link(to="https://example.com/docs")` without `external: true` was intercepted
+  like any other link: the click handler called `preventDefault()` and handed the
+  target to `history.pushState`, which refuses an off-origin URL.
+
+  ```
+  SecurityError: Failed to execute 'pushState' on 'History': A history state object
+  with URL 'https://example.com/docs' cannot be created in a document with origin
+  'http://localhost:3000'
+  ```
+
+  The navigation was cancelled _and_ did not happen, so the link was dead, and the
+  console named the History API rather than the link.
+
+  The handler now decides whether the target is one this app's router can serve —
+  before `preventDefault()`, so the browser still owns the click — and falls back
+  to native navigation when it is not, the same fallback it already takes for a
+  link outside any live mount. A one-line `console.warn` naming the link and its
+  target goes with it. Same-origin targets are unaffected: a relative path, an
+  absolute URL to this origin and a protocol-relative one all still route.
+
+  Falling back is limited to the schemes a click can be handed to a browser for
+  (`http:`, `https:`, `mailto:`, `tel:`, `sms:`). `to` is an arbitrary expression,
+  so a slot filled from an HTTP response can reach it, and "the router cannot
+  serve this" must not become "the document executes it": a `javascript:` target
+  is cancelled and reported instead, with or without `external`. It did not work
+  before this either — it threw out of `pushState`.
+
+  `external: true` remains the way a link says it leaves the app, and is still
+  what opens it in a new browsing context — it is no longer what decides whether
+  an off-origin link works at all.
+
+- e7da073: Show why a bound field was refused, and report the `strict` prop nothing implemented
+
+  A `bind` whose value the slot's refinement refuses leaves the slot on the last
+  value it accepted, and the control keeps what was typed. `error(field=…)` used
+  to judge the slot, which still held the old, valid value — so the field showed
+  `ada@examplecom`, the slot held `ada@example.com`, and the page said nothing.
+  The error tile now judges what the field shows: while a control shows a value
+  its refinement refused, that value's message is rendered, across unrelated
+  reducers too, until the field is edited to a value the slot takes or a reducer
+  rewrites the slot and the field follows.
+  With one app mounted into several hosts, each view's error tile speaks only
+  for its own view's field, and during an IME composition the message is settled
+  when the composition ends rather than for every intermediate value.
+
+  `strict=false`, which forms.md §5.1.2 used to describe as a second mode, was
+  never implemented and its `valid` flag had no reader. The section now has one
+  mode, and `strict` on any bind control kind (`input`, `textarea`, `select`,
+  `slider`, `check`, `switch`, `radio`, `editable`), bound or not, is **E0219**:
+
+  > `"strict" is not a prop of input: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+
+- 18f2e91: A replayed episode hands its entry reducer the payload the live run handed it (`runtime.md` §10.5.3).
+
+  The live runtime records `trigger.payload` as the reducer payload itself — `{$el, $event}` for a UI event, `{$1}` for an effect result — and the replay executor behind `kumiki replay` and `episode-test` wrapped it a second time as `{$el: payload, $event: payload}`. So `$el.idx` and `$event.value` replayed as `undefined`, and an episode opened by an effect result panicked on its `$1`:
+
+  ```
+  [reducer] clicked  n: 0 -> undefined
+  [panic:reducer] Cannot read properties of undefined (reading 'text')  reducer "loaded"
+  ```
+
+  The payload is now passed on unchanged. An `ssr.hydrate` bootstrap episode, whose trigger carries no payload, hands its first `.ok` / `.err` reducer the value of the last `effect-end` of that effect and outcome recorded before it, and a `from-log` mock of that effect continues after it. An `episode-test` with `slots-equal: from-log, no-panics: true` over a log of the unchanged program now passes for both.
+
+  When the log carries no such `effect-end` (a trimmed or hand-edited log), the reducer still runs with no `$1`, but replay now says so instead of leaving the panic to read as a reducer bug: the episode line ends in `(no recorded result for <reducer>)`, the run ends with an `entry results missing:` summary, and `ReplayReport.entryResultsMissing` lists the episodes.
+
+- 13a5cbb: A `tile-test` compares every content field its expected node carries, not only `kind`, `text` and `children` (`testing.md` §8.4). That covers the fields a builtin lifts (`src`, `to`, `value`, `options`, a toggle's checked state, …) and every other named argument the expected node is written with (`alt`, `disabled`, `variant`, `aria-*`, `id`, …). Each `aria-*` attribute is compared on its own, so stating `aria-label` asserts the label alone, at `button.aria-label`; a toggle's checked state is reported as `check.value`, the argument that sets it.
+
+  ```kumiki
+  tile Pic = image(src="/real.png")
+
+  test pic-src =
+      tile-test Pic
+          given  = {slots: {}}
+          expect = image(src="/WRONG.png")
+  ```
+
+  This test passed. So did a `link` with the wrong `to`, a `check` with the wrong checked state, an `input` with the wrong `value`, an `image` with the wrong `alt` and `button(text="Go", disabled=true)` against an enabled button. The snapshot never looked at those fields, and the report could not show them. They now fail with the field's path and the value arrow:
+
+  ```
+  FAIL  pic-src
+    expected: image(src="/WRONG.png")
+    actual:   image(src="/real.png")
+    diff at:  image.src  "/WRONG.png" -> "/real.png"
+  ```
+
+  The `expected:` and `actual:` lines print only the compared fields, on both sides.
+
+  Some things stay out of the comparison: the `{…}` block (styles, classes and any prop written there, which the compiler now leaves out of a tile-test's expected tree), handlers, a node's `key`, a control's `bind` wiring, a link's `prefetch`, and any field the expected node does not carry. A builtin's default for an argument left out _is_ carried. `check()` is an unchecked check and a `select` with no `options=` has none; §8.4 lists every such default.
+
+  `kumiki fix --auto-patch` proposes a literal repair for a tile-test only when the failing field is text. A `checked` state or an `options` list is often decided by `given.slots`, so rewriting the slot's initial literal could not make the test pass.
+
+- e2a3cda: Send each `HttpBody` variant as what it names
+
+  A request body that was not a JS string was `JSON.stringify`ed as-is under
+  `Content-Type: application/json`, and nothing read the variant. So `Form(m)`
+  posted `{"_tag":"Form","_0":{…}}` as JSON, `Json(v)` posted the wrapper instead
+  of `v`, `Text(t)` posted a JSON object, and `Empty` sent a body. `apps/03-blog`
+  logs in and saves posts with `body: Json($1)`, so both requests carried the
+  wrapper.
+
+  Now (http.md §6.1.3 / §6.1.5): `Form` is URL-encoded as
+  `application/x-www-form-urlencoded`, `Json` sends its payload as
+  `application/json` (`Json` of `Unit` sends `null`), `Text` sends the text,
+  `Multipart` a `FormData`, `Bytes` the bytes, and `Empty` no body. Any other
+  body (a record, a list, a bare `Text`) is JSON, as the spec says; a bare `Text`
+  used to go out as the raw string with no Content-Type.
+
+  A `Multipart` `FileV` that holds no file (a file record restored from
+  persistence) fails the effect with `HttpError{status: 0}` instead of uploading
+  `"[object Object]"`. A `Content-Type` set on a `Multipart` body is dropped, so
+  fetch writes the one with the boundary.
+
+  Header names are compared case-insensitively when the defaults,
+  `app.http.headers` and the effect's own `headers` are merged, so a global
+  `Content-Type` and an effect's `content-type` no longer both reach the server.
+
+- 36340c7: Send an HTTP effect's `query` as the URL's query string
+
+  http.md §6.1.2 puts `query: Map(Text, Text)` in every HTTP request, and the
+  spec's own expansion example carries `query: {}`. The built-in handler fetched
+  `base-url + url` and never read it, so `map-request={url: "/search", query:
+{"q": $1}}` requested `/search` — `check` and `build` said ok, the headers from
+  the same record were sent, and the server answered an unfiltered request.
+
+  Each entry is now URL-encoded and appended to `url`, after any query string it
+  already carries and before a fragment: `{url: "/search?x=1", query: {"q":
+"a b&c"}}` requests `/search?x=1&q=a+b%26c`. An empty `query` leaves the url as
+  written. Example 127 makes the request through the real handler in `smoke`,
+  against a fixture that answers only the encoded URL.
+
+  This holds for every `http.*` method, not only `http.get`: a `query` on an
+  `http.post` effect was dropped the same way and is now sent, and the spec's
+  `http-post` signature now lists `query` (put / patch / delete share its shape).
+
+- f2a7d92: Report a 2xx whose body does not decode with its real status, and do not retry it
+
+  `res.json()` ran inside the same `try` as `fetch`, so a parse error on a
+  successful response landed in the connection-error catch and came back as
+  `{status: 0, message: "SyntaxError: …", body: ""}`. The retry loop reads
+  `status: 0` as a connection error, so a `retry=` POST that the server had
+  accepted (201, answered with an HTML page or an empty body) was sent again on
+  every attempt, which duplicated the order.
+
+  The body is now read as text and parsed separately. A parse failure is an
+  `HttpError` with the response's status, a `message` starting `decode failed:`,
+  and the text in `body` (http.md §6.1.4). It is neither a 5xx nor status 0, so
+  it is not retried (§6.5). A rejected fetch is still `status: 0` and still
+  retried, and so is a 5xx.
+
+- b33d62d: `check` / `switch` / `radio` honour `bind=`
+
+  `check(bind=b)` and `switch(bind=b)` show the bound `Bool` and write the box's
+  new state back when it is ticked; `radio(group=…, bind=f, value=V)` is selected
+  exactly when `f == V` and writes `V` when chosen (forms.md §5.1.1, §5.5.2). The
+  compiler accepted `bind=` on all three and codegen dropped it, so every box
+  rendered unticked and clicking one wrote nothing. The write goes through the
+  same path as `input` — refinement refusal, the `data-kumiki-bind` marker, SSR —
+  and runs before the control's own `onClick` / `onChange`, so a handler reads
+  the slot already written. A `check` / `switch` bound to something other than a
+  `Bool` is E0201 at `kumiki check` time, a radio `value` of another union E0216.
+
+  **New error, E0225 `radio-bind-without-value`**: a `radio` with `bind=` and no
+  `value=` has nothing to write when chosen. It used to write `undefined` into
+  the slot, then show itself chosen while every `match` on the slot fell through.
+
+  **New warning, W0216 `selection-beside-bind`**: `value=` on a `check` /
+  `switch`, or `selected=` on a `radio`, written beside a `bind=` is not read —
+  the bound value decides the selection.
+
+  Focus now stays on the radio a user chose. Every radio of a bound group
+  carries the same `data-kumiki-bind` marker, and restoring focus after the
+  re-render took the first control carrying it; a marker more than one control
+  carries now falls through to the id and the DOM path.
+
+- 39eb32b: Let a `ui.input` selector reach an `editable`
+
+  `reducer edited on=ui.input(Ed)` with `tile Ed = editable(…)` compiled to
+  nothing: the lift table listed `input` and `textarea` only, so codegen emitted
+  no handler and the reducer never ran. The checker reported it — as W0212, with
+  a reason that was not true, saying the tile has no descendant that fires
+  `input`. It does: the `editable` renderer registers its own `input` listener
+  and calls the tile's `onInput` from it, which is why writing the handler on the
+  tile (`editable(onInput=edited)`) already worked.
+
+  **A subscription that did nothing now runs.** An app carrying a
+  `ui.input(<editable tile>)` reducer got the W0212 warning and no behaviour;
+  after this it gets the behaviour and no warning.
+
+  `change` is deliberately not extended the same way — a `contenteditable`
+  element fires no `change` event, so that row's omission is the rule, not a gap.
+
+  The scenario runner's `fill` verb now writes an `editable` through
+  `textContent`, the property its renderer reads back, and dispatches `input`
+  alone. Filling one used to set a `value` the element does not read, so the
+  event carried the text the control held _before_ the step.
+
+  `fill` also **fails the step** when its selector matches an element that holds
+  no text — a `div`, a container — the way every other action already does with a
+  target it cannot drive. Such a step used to set a property nothing reads,
+  dispatch two events nothing hears, and pass.
+
+- 0f4dc74: Evaluate a `latest-per-key` key once, at the `emit`
+
+  With `policy=latest-per-key(noteKey)`, a reducer that wrote `noteKey := "b"` and
+  then did `lastId := emit load(x)` kept `"load:a"`, built from the value the slot
+  had _before_ the reducer ran. The dispatcher evaluated the key again after the
+  reducer's writes were applied, so it registered the request as `"load:b"`.
+  Handing `lastId` to `emit cancel(...)` then matched nothing in flight and did
+  nothing, silently. The same happened the other way round when the body wrote the
+  key slot _after_ the emit, and when the emit sat under `let … in` or in a `match`
+  arm.
+
+  `docs/spec/http.md` §6.4 now says when the key is evaluated: once, where the
+  `emit` runs, seeing the reducer body's writes up to that statement and none
+  after it. A reducer's emit carries that key to the dispatcher (`EmitSpec.key`,
+  optional), which runs the request under it, and the `EffectId` the emit yields is
+  built from the same value. An emit with no key of its own — an `app.init` entry,
+  or a hand-written `apply` — is keyed at dispatch as before.
+
+- 5072599: `==` / `!=`, `List.contains` and `List.unique` compare by value (language.md §1.9.4).
+
+  `==` compared anything but a primitive or a variant with a primitive payload by JavaScript reference, so `xs == []` was false on an empty list, `p == {x: 1, y: 2}` was false for that same record, and `Some(Some(1)) == Some(Some(1))` was false. `contains` lowered to `Array.prototype.includes` and `unique` to `new Set`, so `[Admin, Editor].contains(Admin)` was false and `[Admin, Admin].unique` kept both. A property test comparing a List slot with `==` could never pass. `check` said `ok` to all of it.
+
+  All three, and the test layer's own comparisons, now go through one helper, `valueEqual`: Lists and tuples compare element by element, records, variants and Maps by the same keys holding equal values, recursively; a DOM `File` or other non-plain object compares by identity, and `Bytes` by its bytes. A `Set` compares as the keys it is stored under, which depends on how it was built, so Set equality is not promised. `unique` keeps the first occurrence of each value in order, and `Text.contains` is still a substring test.
+
+- 2adec5b: A `for` over a list that repeats a value re-renders in place
+
+  Every tile a `for` renders gets an implicit key so the reconciler can match it
+  across renders. The key was `show(x)` alone, so `[7, 3, 7]` gave two siblings
+  the key `"7"`, and so did two `for` loops under one parent that shared a
+  value. The first paint worked. Every later render, including one caused by an
+  unrelated slot, then failed with `duplicate TileNode.key "7"` and rebuilt the
+  whole tree. That replaced every element on the page, including an `<input>`
+  beside the list, which lost its focus and caret on every keystroke.
+
+  The same failure hit every list of records, the most common shape a `for`
+  renders: a record shows as `[object Object]`, so `for t in todos text(t.title)`
+  over two todos failed on its first re-render with
+  `duplicate TileNode.key "[object Object]"`. A list of `None`s failed the same
+  way, and an element whose shown value is empty was an empty key that `_wk`
+  refused.
+
+  The implicit key now has three parts, in this order: the loop, which
+  occurrence of the element's shown value this is, and that shown value
+  (`_s.loopKeys`). A loop is named by the tile it is written in and its ordinal
+  there (`App_0`, `App_1`, …), so a blank line or an edit elsewhere in the file
+  leaves the keys as they were. The key is unique among a parent's children,
+  except when one loop in the source is expanded twice into one parent's
+  children (`column(Items, Items)` for `tile Items = for …`), which keeps the
+  duplicate-key panic; give each use its own container. A loop whose every tile
+  call has its own `{key: …}` computes no implicit keys.
+
+  A reorder of elements with distinct shown values keeps every key, so it moves
+  the elements it already has, as before. Two limits (runtime.md §10.3.10): an
+  insert or remove before a repeated value renumbers its later occurrences, so
+  the elements of equal values may trade places; and where `show` is not
+  injective (records, variants with a payload) the implicit key is the
+  element's position, so a reorder patches rows in place instead of moving them.
+  A reorderable list of records wants an explicit key, `{key: t.id}`.
+
+  Explicit `{key: …}` keys are unchanged: the author promises they are unique
+  among their siblings. When every child at that level is keyed, colliding
+  explicit keys stay a reconcile panic (`duplicate TileNode.key …`) followed by
+  a full rebuild, not a fallback to position, and a test pins it.
+
+  The compiler's output now calls `_s.loopKeys`, so it needs a runtime from this
+  release or later; both packages are bumped together.
+
+- 6f38fd8: A form submits only while the fields bound inside it are valid
+
+  forms.md §5.2.2 calls a form's `ui.submit` reducer only when every bound slot
+  passes validation; the submit listener called it unconditionally. So a field
+  showing a refused address beside "Invalid email format" still submitted, and
+  the reducer read the slot's last accepted value rather than what the field
+  showed. The form now judges every slot a control inside it binds on what the
+  controls show — the judgement `error(field=…)` makes, through one shared
+  `judgeShownField` — and does not call the reducer while any fails, whether the
+  submit comes from a button or Enter.
+
+- 1c1cb23: `<T>.fresh()` returns a uuid outside a secure context too
+
+  `crypto.randomUUID` exists only in a secure context. On a page served over plain
+  http the runtime fell back to a base-36 string that is not a uuid, so once the
+  `uuid` refinement gates a keyed slot, every write of a fresh id was rejected.
+  The fallback now builds a v4 uuid from `crypto.getRandomValues`.
+  If `getRandomValues` is missing as well, the bytes come from `Math.random`,
+  which is not cryptographically random; a fresh id only has to be distinct, never
+  unguessable.
+
+  **Replaying an old recording:** an episode journal or scenario recorded before
+  this change holds the base-36 ids `fresh()` returned then, and replaying it into
+  a slot whose ids are `uuid`-gated now refuses those writes — reported, not
+  silent. Re-record it, or replace the ids with uuids.
+
+- dbae0a7: Render `heading(level=n, …)` as `<h{n}>`
+
+  stdlib.md §2.3 gives `heading` a `level` prop (1-6), and the compiler passes it
+  through, but both renderers always drew an `<h1>`. A page written as an
+  `h1` > `h2` > `h3` outline rendered as a flat run of `h1`s, which broke the
+  document outline and the heading navigation screen readers use.
+
+  The DOM renderer and the SSR renderer share one `headingTag`, so both draw
+  `<h1>` … `<h6>` for the level, and `<h1>` when there is none. A fractional
+  level drops its fraction, and one outside 1-6 is drawn at the nearer end. A
+  level that changes between renders re-creates the element through the patcher's
+  `PatchRequiresRebuild`, the path `list` takes when `ordered` flips. §2.3.2
+  states this in both language tracks. `packages/examples/features/156-heading-level.kumiki`
+  has an outline and a slot-driven level.
+
+- 4cd6c29: `x.is-empty` and `x.is-empty()` now give the same, correct answer on a Map, a List and a Text (stdlib.md §2.2.3: the parenthesis-free shortcut is the same method).
+
+  The two spellings had two unrelated lowerings. The bare one was `x.length === 0 || x === ""`, and a Map has no `length` and is not `""`, so an empty Map was not empty and `when(todos.is-empty, …)` on a `Map` never showed its empty state. The parenthesised one asked for a Map's size, which is 0 for anything that is not an object, so every non-object was empty — `"abc".is-empty()` was `true`. Both now lower to one runtime helper, `isEmpty`.
+
+  Receivers outside those three change too: `n.is-empty()` on an Int, Float, Bool or Duration went from `true` to `false`, which is what the bare spelling already answered.
+
+- 29aa08e: `m[k].f := v` writes nothing at an absent key, and `m[k]` read there is a panic
+
+  language.md §1.6.3 expands `todos[id].done := true` to
+  `todos := todos.update(id, $1.copy(done=true))`, and `update` does nothing when
+  the key is absent. The setter behaved differently: it built the missing entry,
+  so `todos` ended up as `{"t9": {"done": true}}`, an entry with no `title` that
+  the declared type `Todo` does not describe.
+
+  The setter could not tell a missing Map entry from a missing record field,
+  because each is a string step that finds `undefined`. A reducer's index step now
+  reaches the setter as `{at: key}`, separate from a field step, and a write
+  through an absent key leaves the Map as it was. `m[k] := v` still inserts.
+
+  The read had the matching gap. `todos["zz"].title` threw a JavaScript
+  `TypeError`, which bypassed the panic model. `m[k]` at an absent key is now a
+  panic (lifecycle.md §7.2.2), as an index past the end of a List already is:
+  the reducer's writes roll back and `app.error` runs. `m.get(k)` is still the
+  read that answers `None`.
+
+  **Migration.** A tile that reads `m[k]` at a key that may be absent used to
+  render `undefined` there; it now panics during render (the first render
+  included), and the nearest `error-boundary` or the built-in panic display
+  takes the page. Read such a key in a tile through `m.get-or(k, d)`, or through
+  `m.get(k)` and a `match` on the Option.
+
+  A write path whose index key is a record with a `get: true` field
+  (`Map({get: Bool}, V)`) now writes the entry under that key. It used to be
+  taken for a `.get` unwrap, so `m[{get: true}] := v` replaced the whole slot
+  with `v`.
+
+- 46d9dca: `Map(K, V).map(expr)` maps each entry
+
+  `m.map($2 + "!")` did not go through the Map. The polymorphic `.map` helper
+  knew about Lists, Options and Results, and passed anything else to the
+  fragment whole, so a `Map(Int, Text)` slot ended up holding the string
+  `"[object Object]!"`. Both `check` and `build` passed.
+
+  `map` now returns a Map with the same keys, and each value becomes `expr`
+  evaluated with `$1` set to the key and `$2` to the value (stdlib.md §2.2.1).
+  The key is restored to its declared type the way `keys` and `Map.filter`
+  restore it, so `m.map($1 * 10)` on a `Map(Int, Int)` is arithmetic, and a
+  key that is itself a pair, such as a `Tuple(Int, Int)`, is still all of `$1`
+  with `$2` the value. The
+  checker binds `$1` / `$2` for `Map.map`, so a fragment that uses them with
+  the wrong type is reported, and records its fragment as handed the key and
+  the value, as it does a Map's `filter`: a `fn` of two named there
+  (`m.map(label)`) takes the key and the value instead of being refused with
+  **E0213**, and the E0103 / E0213 messages name a Map's map among the places
+  a `$2` is bound.
+
+- 4b126f4: A Set element or a Map key is one entry per value, whatever its type (stdlib.md §2.2.1 / §2.2.2).
+
+  The Set and Map members disagreed about how a key becomes an object key. `add` / `has` / `toggle` wrote `String(x)`, `get` / `insert` / `m[k]` / `m[k] := v` used the raw value as a property name, and `remove` compared the stored string with the raw key. So every union value and every record was the one key `"[object Object]"`: `picked.add(Red).has(Blue)` was `true`, and `votes[Red]` and `votes[Green]` were one count. `remove` on an `Int`, `Float`, nominal-`Int` or `Bool` key removed nothing. `check` said `ok` to all of it.
+
+  Every member now stores and looks a key up through one encoder, `entryKey`: `String(x)` for a primitive, as before, and for a record, variant, tuple or `Option` its JSON with each record's fields in sorted order. `to-list` / `keys` / `entries` and a `Map.filter` predicate read such a key back as the value it was written from: the checker records the new `"value"` key kind for it. The slot gate now walks a `Set` of records too (language.md §1.3.3), since its members come back out of their keys.
+
+  A key written in a Map literal is stored through the same encoder, and a `Map.filter` predicate is handed each entry as one `(key, value)` pair, so `$2` is the value even when the key is itself a two-element tuple.
+
+  **Persisted structured keys no longer read back.** A record or variant key stored before this change (as `"[object Object]"`), or a decoded `Map` whose structured keys are bare variant names, is not the JSON a structured key reads back from: `keys` / `entries` / `to-list` and a `Map.filter` over it now panic with a message naming the key, where they used to answer the wrong string. Rebuild such a container through its members to re-key it.
+
+- 21dc29e: `Option(T).filter` answers an `Option` (#466).
+
+  `.filter` is polymorphic, and an `Option` is an object at runtime, so the helper read `Some(3)` as a Map: the predicate was called with the Option's own fields (`"_tag"`, `"_0"`), and the result was an object built from whichever of them survived — neither a `Some` nor a `None`. `is-some` on it was false, `get-or` could not unwrap it, and `match` found no arm, while `check` and `build` both said `ok`.
+
+  A `Some` whose value passes the predicate now stays that `Some`, one whose value fails it becomes `None`, and a `None` stays `None` without calling the predicate, as stdlib.md §2.2.4 gives it.
+
+- 1b92331: The result type of a member the receiver decides is now resolved, so its value can no longer land in a slot of another type unreported (#383).
+
+  A member whose result was built out of the receiver's own type argument had no type at all. So `xs.head` on a `List(Int)` resolved to nothing, and `n := xs.head` put an `Option(Int)` into a slot declared `Int` with `check` saying `ok`. From there every reader disagrees with the slot: `is-some` is false on a value that is present, and `match` finds no arm. `t := opt.is-some` and `n := xs.get(0)` were the same gap.
+
+  All of them resolve now, and **both spellings answer the same type** — `xs.head` parses as a field access and `xs.head()` as a method call (`stdlib.md` §2.2.3's parenthesis-free shortcut). Where a member has two readings the argument count tells them apart, as it already did for `.get-or`.
+
+  What resolves, from `stdlib.md` §2.2:
+
+  - a fixed `Bool` — `is-empty`, `is-some`, `is-none`, `is-ok`, `is-err`, `has`, `contains`, `starts-with`, `ends-with`
+  - a fixed `Int` — `length` on a `List` / `Text`, `size` on a `Map` / `Set`
+  - an `Option` of the receiver's own element — `List.get(i)`, `head`, `last`, `find`
+  - the receiver's own type back — `tail`, `push`, `prepend`, `concat`, `slice`, `reverse`, `sort`, `sort-by`, `unique`, `filter`, `insert`, `remove`, `update`, `merge`, `add`, `toggle`, `union`, `intersect`, `diff`, `or`, and `Text`'s `upper` / `lower` / `trim` / `replace`
+  - a different container — `Map.keys` / `values` / `entries`, `Set.to-list`, `Option.to-list`, `Result.to-option`, `List.chunk`, `Text.split`
+  - a `Text` — `List.join`
+  - an `Option` of a parsed number — `Text.parse-int` / `parse-float`
+  - `Result.get-err`, which answers the error type rather than the ok one
+
+  `.get` on a `List` is among these: it resolved for `Map` / `Option` / `Result` and not for `List`, though §2.2 gives all four.
+
+  `.get`'s argument count is now decided by its receiver too. `Map(K, V).get(k)` and `List(T).get(i)` take one; `Option(T).get` and `Result(T, E).get` take none and unwrap. A count that does not fit the receiver is reported (E0213) and names the reading the written count would have selected — where `o.get()` used to be told it "expects 1 argument(s)", which is the `Map` reading's count, and `o.get(1)` was reported by nothing.
+
+  Left undecidable on purpose: `map`, `flat-map`, `fold` and `map-err`, whose result a lambda body decides rather than the receiver; `pow`, which has no fixed result at all (§2.2.7); and a receiver whose own type the checker cannot decide. An undecidable result is checked against nothing, while a wrong one reports a program that works.
+
+  The `Time` (§2.2.8) and `Duration` (§2.2.9) members are a family of their own and are not included: they answer in each other's types rather than in a type argument, and `Duration` is a nominal over `Int` rather than a primitive.
+
+  **Runtime**: `List(T).find(pred)` now returns `Option(T)`, as §2.2.3 has always said. It returned the raw element, or `undefined` when nothing matched — which is neither `Some` nor `None`, so `.is-some` on it was false whether or not an element was found and `match` found no arm. The spec's own example (`language.md` §1.8.4, `p.tags.find($1 == t).is-some`) was affected.
+
+  Refs #383.
+
+- 3573ca7: A `bind` into one field of a record slot is judged at that field
+
+  With a refinement written inside a record type, `input(bind=form.age)` was
+  refused whenever any field of the record failed — so a pristine form whose
+  default fails several fields could only be filled in one order, silently. A
+  bind write is now judged at the path it writes (forms.md §5.6): the predicates
+  along it, the slot's own included, and everything below where it ends; a
+  failing sibling no longer refuses it. The generated per-type explainer takes
+  the bind path as an optional focus, and a refused field is remembered as its
+  own value and laid over the slot as it now is, so `error(field=…)` judges
+  what every field shows even after a sibling is written.
+  A position no bind step can name (a container's element, key or entry, a
+  union's payload) is checked whole whatever steps the focus has left, and a
+  control bound to the whole slot is laid under the fields bound into it,
+  whichever was refused first.
+
+- d8ff739: Resolve a responsive `cols` / `rows` map, and use the theme's breakpoints
+
+  style.md §4.5 shows `grid(A, B, C, D) { cols: {base: 1, md: 2, lg: 4} }`, but
+  the grid's tracks accepted only a number or a string. A breakpoint map fell
+  through to the default `repeat(3, 1fr)`, so the grid had three columns on a
+  phone and three on a desktop. The SSR renderer carried its own copy with the
+  same gap. Separately, the viewport pick hard-coded 640 / 768 / 1024 / 1280 px,
+  so a theme that declared `md: "500px"` still switched at 768 px.
+
+  The grid's `cols` and `rows` now go through the same responsive pick as
+  `gap` / `pad`: the viewport's breakpoint on mount, `base` in SSR. The DOM and SSR
+  renderers share one `gridTracks`, which lives in core beside `propStyleDecls`. The
+  pick reads the active theme's `breakpoints` over the §4.2 defaults, so a theme can
+  move a key or add one of its own, and tries them widest first by their px size
+  (rem and em count 16px each), so `md: "48rem"` sits above `sm: "640px"`. A width
+  that is not px, rem, em or a number is left out. §4.2 and §4.5 state this in both
+  language tracks.
+  `packages/examples/features/158-responsive-breakpoints.kumiki` uses a theme with
+  moved and added breakpoints, and the e2e tier checks its grid in Chromium at
+  four viewport widths.
+
+- 3573ca7: Fire `route.error` once for a render that panics
+
+  A `route.error` reducer's write re-rendered the page on the spot, and that page
+  was the one that had just panicked. So it panicked again and fired the reducer
+  again, one level deeper each time — about a thousand nested renders — until the
+  stack overflowed. The overflow itself was then caught as a render panic with no
+  tile to name, so which `$event` the reducer last saw depended on the frame it
+  landed in: sometimes the route target (`"Boom"`), sometimes `"render"`. That is
+  why a test pinning `$event.location` failed only some of the time.
+
+  The handlers' writes no longer render on their own. The render that caught the
+  panic already renders once more after they return, which is where a navigation
+  they asked for takes effect; if that render still panics, the built-in panic
+  display is shown and the handlers are not fired again.
+
+- 58d3da3: Fire `route.leave` on every move to another path, even within one pattern
+
+  Moving from `/todos/1/edit` to `/todos/2/edit` fired `route.enter` again with
+  the new params, but skipped `route.leave`, because the leave chain only ran
+  when the old and new patterns differed. The §3.5.2 unsaved-changes guard on
+  `route.leave("/todos/:id/edit")` therefore never saw a "next item" link, and
+  the edits were dropped without the `confirm`. A child switch under a
+  `sub-routes` parent had the same gap: the parent's pattern was re-entered and
+  never left.
+
+  Leave now runs whenever the path or the pattern changes, before enter. It
+  receives the old route as `$route`, and a `confirm` it emits holds a
+  params-only move exactly as it holds a move between patterns. A query-only,
+  hash-only or same-path navigation stays on the route: it runs no leave (so no
+  guard asks) and re-runs enter, as before. When the guard's "No" reverts a held
+  move, the URL now gets the old route's query and hash back along with its path.
+  routing.md §3.4 states this in both language tracks.
+  `packages/examples/features/155-leave-on-param-change.kumiki` walks the guard
+  through a params-only move and a child switch.
+
+- 8d4eb0c: fix(runtime): let `runScenario` dispose the mount it made.
+
+  The handle `mount` returns was dropped on the floor, so the app the runner
+  started never stopped. Two things followed from that, and only one of them was
+  loud.
+
+  A `timer` reducer kept its `setInterval` after the report was returned. Under a
+  test runner that tears its DOM environment down between files — vitest with
+  happy-dom, which is how this repository's scenario tier runs — the next tick
+  renders into a world with no `document` and raises
+  `ReferenceError: document is not defined` as an unhandled error, out of a run
+  whose every test passed. Whether a tick lands before the process exits is a
+  matter of timing, so it read as a flake: it failed CI twice during the v0.13
+  release and passed on re-run both times.
+
+  The quiet one: the shape stayed registered as mounted, so a second run of the
+  same `AppShape` was not a second run. It became another _view_ of the first —
+  `app.init` did not fire again, and the `onDiagnostic` this runner always passes
+  was refused with a warning, leaving every step's `diagnostics` empty for the
+  rest of that shape's life.
+
+  `runScenario` now disposes in its `finally`, the same shape `runSmoke` already
+  had. Each step's `state` and `domText` are captured as the step runs, so the
+  report is unchanged — but the root is empty once the call returns. A caller
+  that needs to query elements rather than read `domText` should mount the app
+  itself, which `docs/spec/testing.md` now states under Scenario Execution.
+
+- d3d6611: `sort-by` orders a `Text` key, and reports a key with no order
+
+  `users.sort-by($1.name)` returned the list unchanged. The comparator subtracted
+  the two keys, and two `Text`s subtract to `NaN`, which a JavaScript sort reads
+  as "equal", so no element moved. It passed `check`. Numeric and `Time` keys
+  worked, which is why it went unnoticed.
+
+  The comparator now asks `<`, so a key is ordered the way `a < b` orders it
+  (language.md §1.9.4): numbers and `Time` numerically, `Text` as two `Text`s
+  compare. The sort stays stable. A key `<` does not order — a record, a variant,
+  a `Bool`, an `Option`, a container — is E0201 at check time instead of a silent
+  no-op, whether it is written as a fragment (`$1.kind`) or as a `fn` passed by
+  name (`users.sort-by(kindOf)`), whose declared return type is the key's type.
+
+  `Text` order is UTF-16 code-unit order, not a locale's collation: `"Z"` sorts
+  before `"a"`, and kana and kanji by code point rather than by reading.
+
+  One case orders differently from before. A key declared numeric or `Time` whose
+  value arrives at runtime as `Text` — an HTTP JSON body is not converted to the
+  declared types, so `{"age": "30"}` lands in an `Int` field as a string — used to
+  be coerced by the subtraction and sorted numerically. It is now ordered as the
+  `Text` it is, the way `<` would order it: `"10"` before `"9"`.
+
+  A key with no value to order — absent, or `NaN`, which only a key the checker
+  could not type can be — now sorts after every other key, keeping its order.
+  Compared as "equal" to everything, a single one used to stop the rest of the
+  list from sorting.
+
+- d9d29ca: Apply the capability check on the server render pass
+
+  `renderToString` invoked every effect an `init` emit or an effect reducer
+  named, whether or not its capability appeared in `app.caps`. The live
+  dispatcher has always refused those, so the effect ran once on the server and
+  never again after hydration — for an HTTP or storage effect, the difference
+  between a request issued from the prerender and no request at all.
+
+  The server pass now applies the same rule as the live dispatcher, exempting
+  standard presentation effects the same way (an empty `cap`), and consults the
+  gate before any host provider so an undeclared capability cannot be answered by
+  a host implementation.
+
+  **This changes what a deployed app renders** if its `caps` omits a capability
+  the server pass had been honouring silently: slots that used to arrive
+  prefilled now serve at their declared defaults, which is what the client
+  already showed once hydration replaced them. Declaring the capability restores
+  the old behaviour on both sides.
+
+  A refused emit is recorded on the bootstrap episode as an `effect-start`
+  followed by an `effect-cancel` — the shape a replaced `debounce` timer leaves —
+  so the pass is accounted for in the record the hydrated client reads and not
+  only in the server's console. The live path records nothing for the same
+  refusal under the default policy, where the gate returns before any token is
+  claimed; the two logs therefore describe one refusal differently, and
+  `runtime.md` §10.5.1.1 now says so.
+
+- ead317d: Resolve `->>` redirects in `renderToString`, as `mount` does
+
+  `mount` resolves a static redirect with `routing.findRedirect` before its first
+  route sync. `renderToString` only called `parseLocation`, which skips redirect
+  entries, so a redirected URL was served the `/404` tile. A redirect inside a
+  `sub-routes` map was served the parent's default child instead. Hydration then
+  replaced the page with the target. The shipped `apps/03-blog` declares
+  `"/" ->> "/posts"`, so its server-rendered home page was "Page not found".
+
+  The SSR pass now resolves the redirect first through the same
+  `findRedirect` and renders the target. `route` reads the target while the
+  tiles render, and `snapshot.route` and the bootstrap episode's
+  `trigger.target` name it. The requested `route` may carry a query and a hash
+  (`/old?ref=x` is redirected as `/old`); it is split the way the client's router
+  reads a location, with the pathname kept as written, so `//foo` and `/a/../b`
+  land where they land in a browser rather than being normalized. Without a routing module, a
+  redirect written for exactly the requested path applies, matching the
+  literal-string fallback used for routes. runtime.md §10.6.1 says this in both
+  language tracks. `packages/examples/features/154-ssr-redirect.kumiki` has a
+  top-level and a sub-route redirect.
+
+- 7cedcce: `storage-remove` removes its key and `storage-clear` clears the storage
+
+  http.md §6.7.2 declares three effects on `cap=storage.write`: a write
+  (`{key, value}`), a remove (`{key}`) and a clear (`Unit`). The handler only
+  knew `setItem`. A remove stored `JSON.stringify(undefined)`, which `setItem`
+  writes as the string `"undefined"`, and reported ok, so every later read of the
+  key failed to parse. A clear threw destructuring its `Unit` input and always
+  erred. `session.write` shares the code (§6.7.4), so `session-remove` and
+  `session-clear` did the same.
+
+  A clear is now decided by the declaration: a `storage.write` / `session.write`
+  effect declared `in=Unit` with no `map-request` calls the new `storageClear` /
+  `sessionClear` handlers, which empty the whole origin's storage. Every other
+  write reads the request: a record with no `value` field removes the key (a
+  later read answers `None`), and a record with a `value` field writes it,
+  whatever the value is. A request that is not a record (an empty one included,
+  which a `Map` index that finds nothing also produces), a key that is not a
+  non-empty text, or a value JSON cannot encode is an `err` that changes
+  nothing, so a bad request can no longer wipe or corrupt the storage. A failed
+  Web Storage call is an `err` whose message names the call and the key.
+
+  Codegen passes the `map-request` record through as built, instead of
+  rebuilding it as `{key, value}` and so always giving it a `value` field. This
+  changes what a host provider for `storage.write` / `session.write` receives:
+  the request as `map-request` built it (as stdlib.md §2.5 already says), not a
+  `{key, value}` projection, and no request at all for a clear. A provider that
+  only implemented `setItem` must now handle a remove and a clear as well.
+
+- ad2c6f8: A submit button with a click reducer submits its form in a browser
+
+  The button renderer cancelled every click it had a handler for, and
+  cancelling a submit button's click cancels its activation: as soon as a
+  `ui.click` reducer (or a lifted one, or `onClick=`) targeted a
+  `type="submit"` button, its form never submitted — by click or by Enter —
+  while the scenario tier, whose clicks were not cancelable, passed. The click
+  is no longer cancelled (forms.md §5.2.2: the click reducer and the submit are
+  independent; `type="button"` is what keeps a button from submitting), and the
+  scenario and smoke tiers now dispatch cancelable clicks, as a user's click is.
+  That includes a button inside a form that writes no `type`: it is `submit` by
+  the HTML default, so its click reducer now runs and the form submits. The
+  issue tracker example's Cancel button now says `type="button"`, as §5.2.2 asks
+  of a button in a form that is not meant to submit it.
+
+- fe8e6a4: Publish the `.js` artifacts without their JSDoc
+
+  The largest file any of these packages ships was mostly prose. `dist/index.js`
+  of `@kumikijs/runtime` — the package entry, and the `./bundle` export codegen
+  inlines for `bundle: true` / smoke / run / test — was 296 kB, of which 83 kB
+  was JSDoc. `@kumikijs/compiler`'s was 372 kB with 95 kB of it.
+
+  That prose has two better readers than a published bundle. Editors read it
+  from the `.d.ts`, which keeps every block. People read it from the source on
+  GitHub. What was left was a per-install download nobody opens.
+
+  `tsdown.shared.ts` now carries one output setting for every package:
+
+  ```ts
+  comments: { legal: true, annotation: true, jsdoc: false }
+  ```
+
+  | artifact                  | before | after  | gzip before → after |
+  | ------------------------- | ------ | ------ | ------------------- |
+  | `@kumikijs/runtime` dist  | 621 kB | 538 kB | 163 kB → 128 kB     |
+  | `@kumikijs/compiler` dist | 423 kB | 328 kB | 105 kB → 65 kB      |
+  | `@kumikijs/cli` dist      | 196 kB | 162 kB | 45 kB → 30 kB       |
+  | `@kumikijs/mcp` dist      | 33 kB  | 29 kB  | 10 kB → 9 kB        |
+
+  This is not minification, and the two comment kinds a build cannot regenerate
+  are kept:
+
+  - `annotation` (`@__PURE__`, `@__NO_SIDE_EFFECTS__`, `@vite-ignore`). Dropping
+    these would silently cost downstream bundlers the tree-shaking
+    `sideEffects: false` promises — a fatter app bundle with no error anywhere.
+  - `legal` (`@license`, `@preserve`, `//!`, `/*!`), which has to survive
+    redistribution.
+
+  Identifiers, formatting and the trailing `export { … }` line are untouched, so
+  `@kumikijs/runtime`'s `dist/index.js` stays unminified, readable in a stack
+  trace, and inline-able by `inlineRuntime` exactly as before.
+  `packages/tests/dist-comments.test.ts` pins all of that: no JSDoc in any
+  published `.js`, JSDoc still in the `.d.ts`, annotations still present, and an
+  `inlineRuntime` round-trip over the real built bundle.
+
+  What a compiled app downloads is unchanged — `kumiki build` ships
+  `dist/modules/*`, which were already minified. An app built with
+  `bundle: true` inlines 83 kB less.
+
+- 1a3b24c: Repaint every tile when `app.theme`'s slot switches the theme
+
+  With `app … theme = themeName`, changing the slot re-applied only the body
+  style and the base stylesheet. Token props (`bg`, `color`, `pad`, `gap`,
+  `radius`, …) are resolved to literal values when a tile renders, and the
+  reconciler leaves a tile untouched when its own props did not change. After a
+  Light → Dark toggle the page background was dark, but every box kept Light's
+  colours and spacing.
+
+  Each view now records the theme its tree was painted under. A pass that finds
+  the resolved theme changed builds the tree afresh instead of diffing it, so
+  every tile, nested ones included, carries the new theme's values, the same as
+  a fresh mount under that theme. That applies to a hydrated view too. Focus and
+  selection come back the way they do after any rebuild. Enter animations
+  (`transition`, `motion`) do not play again on the rebuilt elements: a one-shot
+  animation shows its final frame and a repeating one keeps running. DOM state no
+  slot holds starts over, including text a `bind` refused, whose field error goes
+  with it. runtime.md §10.3.6 describes what a switch re-applies, in both
+  language tracks. `packages/examples/features/157-theme-switch.kumiki` toggles
+  between two themes.
+
+- f9a999c: `Time.parse` reads ISO 8601 `YYYY-MM-DD` with an optional time and zone, and refuses everything else, including a date that is not on the calendar
+
+  `Time.parse("2026-02-30")` was `Some` of March 2nd, and `"2026-13-01"` was
+  January 1st of the next year. The text went to the platform's parser, which
+  normalises an out-of-range field instead of refusing it, reads some non-ISO
+  text with a legacy parser (`"0050-01-01 10:00"` was 1950), and accepts
+  formats such as `"2026/02/30"` or `"Aug 14 2026"` that differ between engines.
+
+  `Time.parse` now reads the text itself, as stdlib.md §2.2.8 states:
+  `YYYY-MM-DD`, then optionally `T`, `t` or a space and `HH:MM`, `:SS` and a
+  fraction, then optionally `Z`, `z` or `±HH:MM`. The date has to be on the
+  calendar (leap years included) and the year is the one written. Without a
+  zone the text is local time, as a date-only string already was; with one it
+  is that instant. Anything else is `None`: a date off the calendar in any of
+  these forms, the extended-year form `+002026-08-14`, a non-ISO date, and text
+  with blanks around it (`" 2026-02-28"` was UTC midnight, not the local one).
+
+- b9e5ca6: An `input` bound to an `Int` / `Float` / `Time` slot writes a value of that type
+
+  `input(bind=age, type="number")` wrote the field's string into the `Int` slot,
+  so `age + 1` rendered `51`; a `Time` slot bound with `type="date"` became the
+  string `"2026-03-04"`. The field's text is now read the way `Int.parse` /
+  `Float.parse` / `Time.parse` read text — by the bound position's base, through
+  a record field or, with `.get`, an `Option` or `Result` payload, and through
+  aliases and nominals — and text that spells no value of it is refused like a
+  refinement violation: the slot keeps its value, the field what was typed, and
+  `error(field=…)` says why ("Must be a whole number" / "Must be a number" /
+  "Must be a date", overridable as `theme.errors.int` / `float` / `time`), on a
+  slot with no refinement too and before any refinement's message. A `Time` is
+  shown to a `type="date"` field as `yyyy-MM-dd` (a `type="datetime-local"` one
+  as `yyyy-MM-ddTHH:mm`), and a field whose text already reads as the slot's
+  value (`"2.50"` for 2.5) is not rewritten under the caret.
+
+  `kumiki check` reports an `input` whose field kind does not go with the bound
+  type (E0226): an `Int` / `Float` outside `type="number"`, a `Time` outside
+  `type="date"` / `"datetime-local"` (a `type="time"` field was shown the
+  millisecond count and could never write), and a type no field reads — a
+  `Bool`, a record, or an `Option` bound whole rather than through `.get`.
+
 ## 0.13.0
 
 ### Minor Changes

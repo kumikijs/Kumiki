@@ -1,82 +1,14 @@
 import type { Expr, TileExpr, UiEventKind } from "./ast.ts";
 
-/**
- * Source of truth for the ui-event ⇄ DOM-handler mapping.
- *
- * `ev`: kumiki-side ui-kind (from `ui.<ev>(...)` reducer selectors).
- * `handler`: the JSX-style prop name codegen emits on the tile.
- * `tiles`: root-builtin tile kinds a `ui.<ev>(Tile)` SELECTOR lifts a handler
- *   onto. `null` = any tile (currently only `hover`, which the runtime wires
- *   uniformly via `applyUiEventHandlers`).
- *
- *   For `key` / `focus` / `blur` the runtime attaches the listener to
- *   whatever element a renderer returned, so which kinds a selector reaches
- *   is decided by where those events arrive at that element — see
- *   `FOCUSABLE_ROOT`, `LABEL_WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`,
- *   which the three rows are built from. For `click` / `submit` / `change` /
- *   `input` each kind's renderer decides whether it calls the handler, and an
- *   absence there records that decision. Some are facts about the element
- *   (`editable` fires no `change`); some are runtime policy (`link` reserves
- *   `click` for navigation, and `slider` listens for `input` only to write its
- *   bind, never calling `onInput`). The comment on each row says which.
- * `firesUnheard`: the runtime-policy absences of that row — a kind left out of
- *   `tiles` although its element fires `ev`, mapped to what its renderer does
- *   with the event instead of calling `handler`. W0212 gives that as its
- *   reason. For a left-out kind found neither here nor by
- *   `labelWrappedUnreached`, it says no descendant fires the event.
- *
- * Consumers:
- *  - `codegen/selector.ts#propsFor` — emits one chained handler per row when
- *    an enclosing tile of an allowed kind has matching reducers, and captures
- *    explicit `onX=r` wirings so they are not re-emitted as data props.
- *  - `typecheck.ts#checkReducer` — emits W0212 when a reducer's selector
- *    targets a tile not listed in `tiles`, giving the reason
- *    `labelWrappedUnreached` or `firesUnheardIn` names when one names one;
- *    `checkTile` resolves an explicit handler's value as a reducer name
- *    rather than an expression.
- *  - `references.ts` — the same resolution for the AI-editing verbs, so
- *    `refs` / `rename` / `remove --cascade` see the handler → reducer edge.
- *  - `docs/spec/errors.md` §W0212 — published version of this table.
- *
- * Adding a new ui-kind takes one row here (plus the `UiEventKind` enum
- * entry in `ast.ts` and the grammar in `docs/spec/language.md`).
- *
- * Runtime-event ≠ emit-prop: for `check / radio / switch` the runtime
- * listens to the DOM `change` event but invokes `onClick` (see
- * `packages/runtime/src/tiles/input/`). The compile-time table only
- * encodes (ev → emit-prop) + (ev → allowed tile-kinds); the runtime
- * renderers own the (tile, handler) → DOM-event resolution.
- */
 export type UiLift = {
   readonly ev: UiEventKind;
   readonly handler: string;
   readonly tiles: ReadonlySet<string> | null;
+  // A kind left out of `tiles` although its element fires `ev`, mapped to what
+  // its renderer does with the event instead of calling `handler`.
   readonly firesUnheard?: Readonly<Record<string, string>>;
 };
 
-/**
- * Kinds whose rendered element is itself focusable, so `focus`, `blur` and
- * `keydown` all arrive at the element the runtime attaches its listeners to
- * (`applyUiEventHandlers`). The `key` / `focus` / `blur` rows are built from
- * this list, `LABEL_WRAPPED_CONTROL` and `ROOT_LISTENED_BUBBLES`, so the three
- * rows cannot drift apart.
- *
- * - `input` / `textarea` / `button` / `select` / `slider`: form controls (a
- *   `slider` is a bare `<input type="range">`, operated with arrow keys).
- * - `editable`: a `<div contenteditable="true">` is an editing host, so it is
- *   focusable without a `tabindex` (its `tabIndex` IDL attribute reads -1,
- *   the reflection default, which says nothing about the tab order).
- * - `link`: an `<a>` whose `href` is always assigned, so it is focusable and in
- *   the tab order. A keydown on it runs `ui.key(Link)` BEFORE the browser acts
- *   on the key: on Enter the browser then activates the link, and the link's
- *   own click listener navigates as always. The reducer sees the key and
- *   cannot stop the navigation. This is unlike `click`, which the link reserves
- *   for navigation and which is therefore absent from the `click` row.
- *
- * What this list cannot answer is whether one *instance* can take focus: a
- * `disabled` control, or an `editable` rendered `contenteditable="false"`,
- * fires none of the three. That is a runtime property of the element.
- */
 const FOCUSABLE_ROOT = [
   "input",
   "textarea",
@@ -87,30 +19,10 @@ const FOCUSABLE_ROOT = [
   "link",
 ] as const;
 
-/**
- * Kinds rendered as a `<label>` wrapping their focusable `<input>`, so the
- * runtime's listeners sit on the label and not on the control that takes
- * focus. Which events reach the label is `ROOT_LISTENED_BUBBLES`: `keydown`
- * BUBBLES from the inner `<input>` to the label, so a `ui.key` selector lands;
- * `focus` and `blur` do NOT bubble, so no `ui.focus` / `ui.blur` listener on
- * the label ever runs, and W0212 is correct to emit for them. The `<input>`
- * does fire them, so W0212 gives that reason (`labelWrappedUnreached`) rather
- * than saying no descendant fires the event. These three look like one case
- * with the focusable controls and are two.
- */
 const LABEL_WRAPPED_CONTROL = ["check", "radio", "switch"] as const;
 
-/**
- * The three events the runtime listens for on the element a renderer returned
- * (`applyUiEventHandlers`; its fourth listener, `mouseenter`, is the `hover`
- * row, which any tile takes), and whether each bubbles. A `FOCUSABLE_ROOT`
- * kind receives all three on that element. A `LABEL_WRAPPED_CONTROL` kind
- * receives only the ones that bubble from its `<input>` to its `<label>`.
- *
- * The `key` / `focus` / `blur` rows are built from this, and so is the reason
- * W0212 gives for a label-wrapped kind a row leaves out, so the row and the
- * reason cannot disagree.
- */
+// The events the runtime listens for on the element a renderer returned, and
+// whether each bubbles from a label-wrapped control's <input> to its <label>.
 const ROOT_LISTENED_BUBBLES = { key: true, focus: false, blur: false } as const;
 
 type RootListened = keyof typeof ROOT_LISTENED_BUBBLES;
@@ -119,7 +31,6 @@ function isRootListened(ev: UiEventKind): ev is RootListened {
   return Object.hasOwn(ROOT_LISTENED_BUBBLES, ev);
 }
 
-/** The kinds a `key` / `focus` / `blur` selector reaches. */
 function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
   const reached: readonly string[] = ROOT_LISTENED_BUBBLES[ev]
     ? [...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]
@@ -129,16 +40,6 @@ function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
 
 const LABEL_WRAPPED: ReadonlySet<string> = new Set(LABEL_WRAPPED_CONTROL);
 
-/**
- * The label-wrapped kinds among `kinds` whose `<input>` fires `ev` where their
- * listener never receives it: `ev` is one the runtime listens for on the
- * `<label>` and it does not bubble there. Sorted. Empty when that is not why
- * `ev` misses these kinds: for an event the label receives (`key`), and for
- * one the `<input>` does not fire at all (`submit`).
- *
- * W0212 reads it to say so. For these kinds "no descendant fires it" is
- * untrue, because the `<input>` does.
- */
 export function labelWrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): string[] {
   if (!isRootListened(ev) || ROOT_LISTENED_BUBBLES[ev]) return [];
   return [...kinds].filter((k) => LABEL_WRAPPED.has(k)).sort();
@@ -148,11 +49,6 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "click",
     handler: "onClick",
-    // `link` is intentionally omitted even though `<a>` fires click natively:
-    // the runtime's link renderer reserves the click event for navigation
-    // interception and does not invoke user `onClick` reducers
-    // (`packages/runtime/src/tiles/text/`). Lifting that requires a separate
-    // runtime change. Runtime policy, so it is recorded in `firesUnheard`.
     tiles: new Set(["button", "check", "switch", "radio"]),
     firesUnheard: { link: "keeps it for navigation" },
   },
@@ -160,20 +56,11 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "change",
     handler: "onChange",
-    // `editable` is absent because a `<div contenteditable>` fires no `change`
-    // event at all — the omission is the rule here, not a gap.
     tiles: new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
   },
   {
     ev: "input",
     handler: "onInput",
-    // An `editable` does fire `input`, and its renderer calls the tile's
-    // `onInput` from that listener, so a selector lands on it like any other
-    // text control. The kinds in `firesUnheard` are absent by their renderers'
-    // choice, not the DOM's: an `<input type="range">`, a checkbox, a radio and
-    // a `<select>` all fire `input`. The `slider` renderer listens to it to
-    // write the bind; the others listen for `change` alone. None of them calls
-    // `onInput`.
     tiles: new Set(["input", "textarea", "editable"]),
     firesUnheard: {
       slider: "listens for it only to write the bind",
@@ -189,16 +76,6 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   { ev: "blur", handler: "onBlur", tiles: rootListenedTiles("blur") },
 ];
 
-/**
- * The kinds among `kinds` that fire `ev` where no reducer hears it, from the
- * row's `firesUnheard`: grouped by what their renderer does with the event
- * instead, each group's kinds sorted, the groups in the order of their first
- * kind. Empty for a kind whose element fires nothing, and for every kind of
- * a row with no such record.
- *
- * W0212 reads it to say so. For these kinds "no descendant fires it" is
- * untrue, because the element does.
- */
 export function firesUnheardIn(
   ev: UiEventKind,
   kinds: Iterable<string>,
@@ -229,28 +106,6 @@ function liftTilesFor(handler: string): ReadonlySet<string> | null {
   return UI_LIFTS.find((l) => l.handler === handler)?.tiles ?? null;
 }
 
-/**
- * Which tile kinds honour a handler prop that is written on them directly —
- * `button(text="x", onClick=r)`, `row(...) {onKeyDown: r}`. `null` means the
- * runtime attaches the listener whatever the tile is.
- *
- * Not the same question as `UI_EVENT_TILE_KINDS`, which answers where a
- * `ui.<ev>(Tile)` *selector* lands, so the sets are related but not equal:
- * `onClose` is honoured by the overlay tiles and no ui-event lifts to it at
- * all. Every entry below is therefore derived from the lift table except
- * `onClose`, which the lift table cannot supply.
- *
- * The four `null`s are the handlers `applyUiEventHandlers` installs on
- * whatever element the tile produced. That is about the LISTENER, not about
- * the event reaching it: `focus` and `blur` do not bubble, so a plain `div` —
- * one that is neither `contenteditable` nor given a `tabindex` — never fires
- * them, and `keydown` reaches a container only from a focusable descendant.
- * (`editable` is the `contenteditable` case, which is why it sits in those
- * rows of the lift table.) Reporting them would need a focusability answer
- * for the tile's root. `FOCUSABLE_ROOT` above is one, but this table does not
- * consult it, and whether it should is an open question rather than a
- * settled "different check".
- */
 export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
   onClick: liftTilesFor("onClick"),
   onChange: liftTilesFor("onChange"),
@@ -263,59 +118,11 @@ export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
   onClose: new Set(["modal", "drawer", "popover"]),
 };
 
-/**
- * All handler-prop names that bind a reducer rather than a value, in both the
- * `f(onX=r)` and `f() {onX: r}` forms. Read by codegen (capture the explicit
- * wiring, and skip it when building the `el` payload), by the typechecker
- * (resolve the name as a reducer), and by the reference walker (record the
- * edge). Includes `onClose` even though no ui-event lifts to it — it is an
- * explicit-only handler the overlay tiles (`modal`, `drawer`, `popover`)
- * accept via the late-flush path.
- */
 export const HANDLER_NAMES: ReadonlySet<string> = new Set<string>([
   ...UI_LIFTS.map((l) => l.handler),
   "onClose",
 ]);
 
-/**
- * The reducer a handler binding names, or `null` when the value is not a name.
- *
- * A handler position is resolved in the reducer namespace (§1.7.3), so what
- * decides the value is the name written there — not the shape the parser gave
- * it. Which shape arrives is decided by capitalisation and by the tile the
- * argument sits on (`parseArgValue` branches on `VALUE_ARG_BUILTINS`), neither
- * of which the author is saying anything with in this position:
- *
- *  - `Ref` — a lowercase name, in either form.
- *  - `TileCall` with no arguments and no props — a named argument of a builtin
- *    that takes tiles (`box(text("x"), onClick=Bump)`). Capitalisation is not
- *    what routes here: a lowercase builtin's name lands in this branch too,
- *    and `onClick=divider()` answers `divider`, which resolves to no reducer.
- *  - `Variant` with an empty payload — a capitalised name everywhere else: a
- *    props block, a named argument of a value-arg builtin such as `link`, and
- *    a named argument of a user tile.
- *
- * The call and brace forms are the same node as the bare name: the parser
- * gives `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` one identical
- * `TileCall`, and `Bump` / `Bump()` one identical `Variant`. Nothing here can
- * tell them apart, so all of them name the reducer — which is what
- * `docs/spec/language.md` §1.7.3 says.
- *
- * Anything else is not a name and answers `null`: `1`, a variant tag carrying
- * a payload (`Some(1)`), and a tile call carrying arguments (`box(text("z"))`)
- * or props (`Card {x: 1}`). Those emptiness tests are load-bearing in three
- * files at once, and relaxing them fails silently in all three: the checker
- * (`checkHandlerBinding`) would stop reporting a nested tile, codegen
- * (`propsFor`'s `recordExplicit`) would swallow the value, and the reference
- * walker (`tileArg`) would stop walking the subtree. Only the checker half is
- * pinned by a test. Concretely: `onClick=Some(1)` would be read as a reducer
- * called `Some`, and a listener wired for a reducer nobody named.
- *
- * One function rather than one shape test per consumer: the checker, codegen
- * and the reference walker have to agree about what a handler names, and each
- * deciding for itself is what left a capitalised reducer name accepted by one
- * and invisible to the others.
- */
 export function handlerReducerName(value: Expr | TileExpr): string | null {
   switch (value.kind) {
     case "Ref":

@@ -1,7 +1,7 @@
 # Feature: localStorage persistence — load on start (once), save on change (debounce).
 # Models BOTH branches: the `.err` reducers turn a storage backend that is
 # unavailable (sandbox / private mode) into a visible `unavailable` status
-# instead of a silent no-op (#37).
+# instead of a silent no-op.
 
 slot text   : Text = ""
 slot ready  : Bool = false
