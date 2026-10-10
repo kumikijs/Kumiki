@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-The index of a `Map(K, V)` is checked against `K`, on both sides of `:=` (language.md §1.6.3).
+The index of a `Map(K, V)` is checked against `K`, on both sides of `:=`.
 
 A `List` index was checked against `Int` on either side of `:=`, and a `Map` index against nothing. With `TodoId` and `PostId` both declared `nominal Text`, `notes[post]` on a `Map(TodoId, Text)` passed `check`, and so did the write `notes[post] := v`, the write through an entry `todos[post].done := true` on a `Map(TodoId, Todo)`, and `mt[1]` on a `Map(Text, Int)`. The program then indexed the Map with a value of another id space: the read panicked at run time (`Key "p1" is not in the Map`) where that value was no key and answered another entity's entry where it was one, and the write stored an entry under it.
 

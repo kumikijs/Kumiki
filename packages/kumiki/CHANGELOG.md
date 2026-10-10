@@ -1,5 +1,53 @@
 # kumiki
 
+## 0.4.1
+
+### Patch Changes
+
+- fe8e6a4: Publish the `.js` artifacts without their JSDoc
+
+  The largest file any of these packages ships was mostly prose. `dist/index.js`
+  of `@kumikijs/runtime` — the package entry, and the `./bundle` export codegen
+  inlines for `bundle: true` / smoke / run / test — was 296 kB, of which 83 kB
+  was JSDoc. `@kumikijs/compiler`'s was 372 kB with 95 kB of it.
+
+  That prose has two better readers than a published bundle. Editors read it
+  from the `.d.ts`, which keeps every block. People read it from the source on
+  GitHub. What was left was a per-install download nobody opens.
+
+  `tsdown.shared.ts` now carries one output setting for every package:
+
+  ```ts
+  comments: { legal: true, annotation: true, jsdoc: false }
+  ```
+
+  | artifact                  | before | after  | gzip before → after |
+  | ------------------------- | ------ | ------ | ------------------- |
+  | `@kumikijs/runtime` dist  | 621 kB | 538 kB | 163 kB → 128 kB     |
+  | `@kumikijs/compiler` dist | 423 kB | 328 kB | 105 kB → 65 kB      |
+  | `@kumikijs/cli` dist      | 196 kB | 162 kB | 45 kB → 30 kB       |
+  | `@kumikijs/mcp` dist      | 33 kB  | 29 kB  | 10 kB → 9 kB        |
+
+  This is not minification, and the two comment kinds a build cannot regenerate
+  are kept:
+
+  - `annotation` (`@__PURE__`, `@__NO_SIDE_EFFECTS__`, `@vite-ignore`). Dropping
+    these would silently cost downstream bundlers the tree-shaking
+    `sideEffects: false` promises — a fatter app bundle with no error anywhere.
+  - `legal` (`@license`, `@preserve`, `//!`, `/*!`), which has to survive
+    redistribution.
+
+  Identifiers, formatting and the trailing `export { … }` line are untouched, so
+  `@kumikijs/runtime`'s `dist/index.js` stays unminified, readable in a stack
+  trace, and inline-able by `inlineRuntime` exactly as before.
+  `packages/tests/dist-comments.test.ts` pins all of that: no JSDoc in any
+  published `.js`, JSDoc still in the `.d.ts`, annotations still present, and an
+  `inlineRuntime` round-trip over the real built bundle.
+
+  What a compiled app downloads is unchanged — `kumiki build` ships
+  `dist/modules/*`, which were already minified. An app built with
+  `bundle: true` inlines 83 kB less.
+
 ## 0.4.0
 
 ### Minor Changes
@@ -17,74 +65,17 @@
   version the toolchain is actually tested on, rather than one that no longer
   receives security fixes.
 
-### Patch Changes
-
-- Updated dependencies [bf37539]
-- Updated dependencies [f48fd58]
-- Updated dependencies [301b09a]
-- Updated dependencies [7a754ad]
-- Updated dependencies [d398cbc]
-- Updated dependencies [732cb16]
-- Updated dependencies [4de2473]
-- Updated dependencies [db8e843]
-  - @kumikijs/cli@0.8.0
-
-## 0.3.10
-
-### Patch Changes
-
-- Updated dependencies [35df48f]
-- Updated dependencies [46bee64]
-- Updated dependencies [46bee64]
-- Updated dependencies [75a809b]
-- Updated dependencies [46bee64]
-- Updated dependencies [46bee64]
-- Updated dependencies [88bd531]
-- Updated dependencies [fb02913]
-- Updated dependencies [cad3f0c]
-- Updated dependencies [46bee64]
-- Updated dependencies [687ae40]
-  - @kumikijs/cli@0.7.0
-
-## 0.3.9
-
-### Patch Changes
-
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-- Updated dependencies [07e9c6b]
-  - @kumikijs/cli@0.6.0
-
 ## 0.3.8
 
 ### Patch Changes
 
 - @kumikijs/cli@0.5.1
 
-## 0.3.7
-
-### Patch Changes
-
-- Updated dependencies [c40b121]
-- Updated dependencies [7e589bc]
-- Updated dependencies [a27e63c]
-  - @kumikijs/cli@0.5.0
-
 ## 0.3.6
 
 ### Patch Changes
 
 - @kumikijs/cli@0.4.1
-
-## 0.3.5
-
-### Patch Changes
-
-- Updated dependencies [33fc749]
-  - @kumikijs/cli@0.4.0
 
 ## 0.3.4
 
@@ -138,11 +129,6 @@
   E0108 is a deliberate tightening (pre-1.0): a program that previously compiled
   `recv.bogus` to `undefined` now fails to compile.
 
-### Patch Changes
-
-- Updated dependencies [be38e20]
-  - @kumikijs/cli@0.3.0
-
 ## 0.2.1
 
 ### Patch Changes
@@ -162,8 +148,3 @@
   - **M5 `motion` layer** — reusable, closed-grammar, scoped animations referenced from a tile's `motion` prop; honors `prefers-reduced-motion`; errors E0107, E0401–E0403.
 
   See CHANGELOG.md for the full detail.
-
-### Patch Changes
-
-- Updated dependencies [77938ee]
-  - @kumikijs/cli@0.2.0

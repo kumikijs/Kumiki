@@ -1,4 +1,4 @@
-# Feature (language.md §1.6.3): the index of a `Map(K, V)` is a `K`.
+# Feature (language.md): the index of a `Map(K, V)` is a `K`.
 #
 # An index step into a Map names the entry at the key, so the key has the
 # Map's key type, on both sides of `:=`: the read `m[k]`, the write
@@ -6,7 +6,7 @@
 # List index follows, where the position is an `Int`.
 #
 # A key is accepted the way a value is where its type is declared. Two
-# nominal types over one base do not accept each other (§1.3.5), so on
+# nominal types over one base do not accept each other, so on
 # `notes : Map(TodoId, Text)` the key `post : PostId` is E0201
 # `Expected TodoId but got PostId` in each of the three forms, and on
 # `counts : Map(Text, Int)` the key `1` is `Expected Text but got Int`. A
