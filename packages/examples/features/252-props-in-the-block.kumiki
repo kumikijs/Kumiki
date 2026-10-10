@@ -1,4 +1,4 @@
-# Feature (language.md §1.7.1): a named argument and a `{…}` entry of the
+# Feature (language.md): a named argument and a `{…}` entry of the
 # same name are one prop. That includes the props a builtin lifts onto its
 # own node rather than leaving in the props bag — a modal's `open`, a
 # select's `options`, a list's `ordered` — so each call below renders from
@@ -9,7 +9,7 @@
 # The scenario chooses "Pear" from the options the block supplies. Whether
 # the note is shown and which list element renders are not in a headless
 # scenario's view (it reads text, not styles or tag names);
-# `packages/tests/prop-spellings.test.ts` mounts this example and reads them
+# `packages/tests/src/prop-spellings.test.ts` mounts this example and reads them
 # from the DOM.
 
 slot pick    : Text = "a"

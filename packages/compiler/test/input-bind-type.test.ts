@@ -1,13 +1,5 @@
-// An `input` reads its text as the bound position's type and shows that type's
-// value back (forms.md §5.1.1), so an `Int` / `Float` / `Time` goes only with
-// the field kinds its text round-trips through. A `Time` bound to a
-// `type="time"` field was shown its millisecond count, which `Time.parse`
-// refused on every edit: the field could never write and never said why. A
-// type with no row in the table at all (a `Bool`, an `Option` bound without
-// `.get`) was written the field's string.
-
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const TAIL = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 const SLOTS = `
@@ -27,7 +19,7 @@ slot c : Cents = 0
 slot o : Order = {qty: 1, note: ""}
 slot k : Text = "number"
 `;
-const diagsOf = (input: string) => check(parse(lex(`${SLOTS}\ntile App = ${input}\n${TAIL}`)));
+const diagsOf = (input: string) => checkSource(`${SLOTS}\ntile App = ${input}\n${TAIL}`);
 const e0226 = (input: string) => diagsOf(input).filter((d) => d.code === "E0226");
 
 describe("an input's field kind has to go with the bound type (E0226)", () => {
@@ -64,21 +56,21 @@ describe("an input's field kind has to go with the bound type (E0226)", () => {
   it("names the field kinds the bound base goes with, at the type= it disagrees with", () => {
     const [d] = e0226(`input(bind=t, type="time")`);
     expect(d?.message).toBe(
-      `input(bind=…) with type="time" cannot bind a value of type Time: a Time binds with type="date" / type="datetime-local" (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) with type="time" cannot bind a value of type Time: a Time binds with type="date" / type="datetime-local" (see docs/spec/forms.md)`,
     );
     expect(d?.pos.col).toBe(`tile App = input(bind=t, type=`.length + 1);
     const [none] = e0226(`input(bind=n)`);
     expect(none?.message).toBe(
-      `input(bind=…) with no type= (a "text" field) cannot bind a value of type Int: an Int binds with type="number" (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) with no type= (a "text" field) cannot bind a value of type Int: an Int binds with type="number" (see docs/spec/forms.md)`,
     );
   });
 
   it("points an Option or Result bound whole at its payload", () => {
     expect(e0226(`input(bind=oi, type="number")`)[0]?.message).toBe(
-      `input(bind=…) cannot bind a value of type Option(Int): an input binds a Text, Int, Float or Time — bind its payload with ".get" (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) cannot bind a value of type Option(Int): an input binds a Text, Int, Float or Time — bind its payload with ".get" (see docs/spec/forms.md)`,
     );
     expect(e0226(`input(bind=b)`)[0]?.message).toBe(
-      `input(bind=…) cannot bind a value of type Bool: an input binds a Text, Int, Float or Time (see docs/spec/forms.md §5.1.1)`,
+      `input(bind=…) cannot bind a value of type Bool: an input binds a Text, Int, Float or Time (see docs/spec/forms.md)`,
     );
   });
 
@@ -89,8 +81,6 @@ describe("an input's field kind has to go with the bound type (E0226)", () => {
     ["a Time in a datetime-local field", `input(bind=t, type="datetime-local")`],
     ["a Text with no type", `input(bind=s)`],
     ["a Text in an email field", `input(bind=s, type="email")`],
-    // A Text is written as typed, so every field whose value is the edited
-    // text round-trips it: a date field's Text holds "2026-03-04".
     ["a Text in a date field", `input(bind=s, type="date")`],
     ["a Text in a number field", `input(bind=s, type="number")`],
     ["an aliased Int in a number field", `input(bind=q, type="number")`],
@@ -119,14 +109,15 @@ describe("an input's field kind has to go with the bound type (E0226)", () => {
     expect(e0226(`input(bind=b, type=k)`)).toHaveLength(1);
   });
 
-  it("reads the bind and the field kind from the {…} block as from the arguments", () => {
-    // The lowering renders the field the block names, so the check is of that
-    // field — and when both spellings are written, of the block's.
-    expect(e0226(`input(bind=n) {type: "number"}`)).toEqual([]);
-    expect(e0226(`input(type="number") {bind: n}`)).toEqual([]);
-    expect(e0226(`input(bind=t) {type: "time"}`)).toHaveLength(1);
-    expect(e0226(`input() {bind: n}`)).toHaveLength(1);
-    expect(e0226(`input(bind=n, type="text") {type: "number"}`)).toEqual([]);
-    expect(e0226(`input(bind=n, type="number") {type: "text"}`)).toHaveLength(1);
+  // The check is of the field the lowering renders, which is the block's when both are written.
+  it.each([
+    [`input(bind=n) {type: "number"}`, 0],
+    [`input(type="number") {bind: n}`, 0],
+    [`input(bind=t) {type: "time"}`, 1],
+    [`input() {bind: n}`, 1],
+    [`input(bind=n, type="text") {type: "number"}`, 0],
+    [`input(bind=n, type="number") {type: "text"}`, 1],
+  ])("reads the bind and the field kind of %s from the {…} block as from the arguments", (input, n) => {
+    expect(e0226(input)).toHaveLength(n);
   });
 });
