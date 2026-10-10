@@ -1,9 +1,8 @@
-// Icon renderer (#101) — built-in path lookup, theme.icons override, props,
-// and graceful placeholder fallback when neither registry knows a name.
-
 import type { AppShape } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 const CHECK_PATH = "M4 12l6 6L20 6";
 const CUSTOM_CHECK = "M0 0 L24 24";
@@ -15,12 +14,7 @@ function makeIconApp(opts: {
   iconName?: string;
   iconProps?: Record<string, unknown>;
 }): AppShape {
-  return {
-    slots: {},
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
+  return bareApp({
     ...(opts.appIcons ? { icons: opts.appIcons } : {}),
     ...(opts.themeIcons
       ? {
@@ -33,7 +27,7 @@ function makeIconApp(opts: {
       name: opts.iconName ?? "check",
       ...(opts.iconProps ? { props: opts.iconProps } : {}),
     }),
-  };
+  });
 }
 
 function rootSpan(host: HTMLElement): HTMLSpanElement {
@@ -46,8 +40,7 @@ describe("icon renderer", () => {
   let host: HTMLElement;
 
   beforeEach(() => {
-    host = document.createElement("div");
-    document.body.appendChild(host);
+    host = freshRoot();
   });
 
   afterEach(() => {

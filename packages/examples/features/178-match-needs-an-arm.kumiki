@@ -1,4 +1,4 @@
-# Feature (language.md §1.6.1, §1.7.1, §1.9): a `match` has at least one arm,
+# Feature: a `match` has at least one arm,
 # and one is enough. A tuple pattern takes the whole pair apart, so one arm
 # covers it, and a one-arm `match` stands below in each place a `match` is
 # written: a `fn` body, a reducer statement, a tile body, and a tile's child.
