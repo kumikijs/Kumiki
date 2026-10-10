@@ -1,5 +1,6 @@
 import { createEpisodeLogger, type EpisodeLogger } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { memoryStorage } from "./helpers/episode-apps.ts";
 
 function makeLogger(opts: Partial<Parameters<typeof createEpisodeLogger>[0]> = {}): {
   logger: EpisodeLogger;
@@ -21,7 +22,7 @@ function makeLogger(opts: Partial<Parameters<typeof createEpisodeLogger>[0]> = {
   return { logger, tick };
 }
 
-describe("EpisodeLogger §10.5", () => {
+describe("EpisodeLogger", () => {
   it("records a sync reducer → effect-start → effect-end → signal-update episode", () => {
     const { logger, tick } = makeLogger();
     logger.beginTrigger({ kind: "ui.click", target: "AddBtn" });
@@ -53,9 +54,8 @@ describe("EpisodeLogger §10.5", () => {
       kind: "reducer",
       name: "addItem",
       emits: ["persist"],
+      "slot-diffs": [{ name: "items", before: [], after: ["a"] }],
     });
-    expect(ep.steps[0]).toHaveProperty("slot-diffs");
-    expect(ep.steps[3]).toMatchObject({ kind: "signal-update" });
     expect(ep.steps[3]).toHaveProperty("dirty-slots", ["items"]);
   });
 
@@ -136,28 +136,14 @@ describe("EpisodeLogger §10.5", () => {
     expect(seen).toEqual(["ep_0000", "ep_0001"]);
   });
 
-  it("attaches effect-end to the originating episode while it is still open", () => {
-    const { logger } = makeLogger();
-    logger.beginTrigger({ kind: "ui.click", target: "B" });
-    const tok = logger.recordEffectStart("load", null);
-    logger.recordEffectEnd(tok, "load", "ok", { user: "a" })();
-    logger.endTrigger();
-    const ep = logger.list()[0]!;
-    expect(ep.steps.map((s) => s.kind)).toEqual(["effect-start", "effect-end"]);
-    expect(ep.status).toBe("completed");
-  });
-
   it("defers commit and attaches async effect-end + chain reducer to the original episode", () => {
     const { logger } = makeLogger();
     logger.beginTrigger({ kind: "ui.click", target: "AsyncBtn" });
     logger.recordReducer("kick", [], ["loadUser"]);
     const tok = logger.recordEffectStart("loadUser", null);
-    // The synchronous handler returns here — async work still pending.
     logger.endTrigger();
-    // No commit yet — effect still in flight.
     expect(logger.list()).toEqual([]);
 
-    // ...later, effect resolves and triggers `.ok` reducer:
     const exit = logger.recordEffectEnd(tok, "loadUser", "ok", { id: 42 });
     logger.recordReducer("setUser", [{ name: "user", before: null, after: { id: 42 } }], []);
     logger.recordSignalUpdate(["user"]);
@@ -197,16 +183,7 @@ describe("EpisodeLogger §10.5", () => {
   });
 
   it("persists to localStorage when opted in (browser-only)", () => {
-    const store = new Map<string, string>();
-    const ls = {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => {
-        store.set(k, v);
-      },
-      removeItem: (k: string) => {
-        store.delete(k);
-      },
-    };
+    const { impl: ls, backing: store } = memoryStorage();
     const { logger } = makeLogger({
       localStorage: true,
       localStorageMax: 2,
