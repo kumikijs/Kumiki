@@ -1,11 +1,3 @@
-// `_wk` and `_children` on their own, with no mount (runtime.md §10.3.10).
-// `_named` joins them where a chain of calls copies a node between two `_wk`s.
-//
-// All three ship as source text in `RUNTIME_HELPERS`, inlined at the top of
-// every compiled app, so they are evaluated here the same way. A mounted
-// example says whether a reorder kept the DOM; these say which key each node
-// got, and name the branch that went wrong when it did not.
-
 import { describe, expect, it } from "vitest";
 import { RUNTIME_HELPERS } from "../src/codegen/runtime-helpers.ts";
 
@@ -23,13 +15,7 @@ const { _wk, _children, _named } = new Function(
 const t = (text: string): Node => ({ kind: "text", text });
 const keys = (tree: Tree): unknown[] => (tree as Node[]).map((n) => n.key);
 
-/**
- * The child list of `column(for x1 in xs … for xn in xs text(…))` with one
- * element per list, built the way the codegen wraps it: each `for` below the
- * first is the body of the one above, so its list is keyed under that one's
- * iteration key, and the innermost `for` keys the `text`. `loopKeys[d]` is the
- * implicit key of depth `d`'s one iteration.
- */
+/** `column(for x1 in xs … for xn in xs text(…))`, wrapped as the codegen wraps it. */
 function nestedFors(loopKeys: string[]): Node[] {
   const list = (d: number): Tree => {
     const key = loopKeys[d] as string;
@@ -38,12 +24,7 @@ function nestedFors(loopKeys: string[]): Node[] {
   return _children(list(0));
 }
 
-/**
- * The child list of `column(L1)` for `tile Li = for x in xs L(i+1)` and
- * `tile Ln = for x in xs text(…)`: each call sits in a `for`, so the node the
- * callee's list renders is keyed under the call's iteration key, after
- * `_named` has copied it.
- */
+/** `column(L1)` for `tile Li = for x in xs L(i+1)`, wrapped as the codegen wraps it. */
 function forChain(loopKeys: string[]): Node[] {
   const body = (d: number): Tree => {
     const key = loopKeys[d] as string;
@@ -54,10 +35,7 @@ function forChain(loopKeys: string[]): Node[] {
   return _children(_named(body(0), "L1"));
 }
 
-/**
- * `count` distinct implicit keys, shaped as `_s.loopKeys` writes them, each
- * with a shown value holding quotes for JSON to escape.
- */
+// Each shown value holds quotes, so a key re-escaped per level would grow.
 const loopKeysOf = (count: number): string[] =>
   Array.from({ length: count }, (_, d) => `Page_${d}|1|"${d}"`);
 

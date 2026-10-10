@@ -1,5 +1,5 @@
-# Feature (runtime.md §10.3.10): a node of nested `for`s is keyed by every
-# loop over it, one element per loop, however deep the nest goes.
+# Feature: a node of nested `for`s is keyed by every loop over it, one
+# element per loop, however deep the nest goes.
 #
 # `Deep` nests 28 `for`s in one tile. `C1` … `C28` nest 28 across tiles: each
 # is a `for` whose body calls the next. Every list but the outermost and the
