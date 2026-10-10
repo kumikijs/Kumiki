@@ -35,17 +35,19 @@ describe("httpFetch", () => {
       "POST",
       {
         url: "/x",
-        headers: { "X-User": "input-wins", "Content-Type": "application/xml" },
+        headers: { "x-user": "input-wins", "content-type": "application/xml" },
         body: { hello: "world" },
       },
       {
-        headers: () => ({ "X-User": "global-loses", "X-Global": "yes" }),
+        headers: () => ({ "X-User": "global-loses", "X-Global": "yes", ACCEPT: "text/x-global" }),
       },
     );
-    const sent = (calls[0]?.init.headers ?? {}) as Record<string, string>;
-    expect(sent["X-User"]).toBe("input-wins");
-    expect(sent["X-Global"]).toBe("yes");
-    expect(sent["Content-Type"]).toBe("application/xml");
+    expect(calls[0]?.init.headers).toEqual({
+      ACCEPT: "text/x-global",
+      "content-type": "application/xml",
+      "x-user": "input-wins",
+      "X-Global": "yes",
+    });
   });
 
   it("threads credentials default same-origin and respects override", async () => {
@@ -233,6 +235,19 @@ describe("httpFetch request body", () => {
     const { calls } = stubFetch(() => new Response(null));
     await httpFetch(method, { url: "/q", body: { _tag: "Json", _0: { a: 1 } } });
     expect(calls[0]?.init.body).toBeUndefined();
-    expect(calls[0]?.init.headers).toEqual({});
+    expect(calls[0]?.init.headers).toEqual({ Accept: "application/json" });
+  });
+
+  it.each([
+    ["no decoder", undefined, { Accept: "application/json" }],
+    ["Decoder.Json(T) as the sentinel", "json", { Accept: "application/json" }],
+    ["Decoder.Json(T) as a check", () => undefined, { Accept: "application/json" }],
+    ["Decoder.Text", "text", {}],
+    ["Decoder.Bytes", "bytes", {}],
+    ["Decoder.None", "none", {}],
+  ])("sends the Accept that %s implies", async (_, decode, expected) => {
+    const { calls } = stubFetch(() => new Response("null"));
+    await httpFetch("GET", { url: "/q", decode });
+    expect(calls[0]?.init.headers).toEqual(expected);
   });
 });
