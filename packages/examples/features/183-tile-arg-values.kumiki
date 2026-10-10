@@ -1,4 +1,4 @@
-# Feature (language.md §1.7.1): a tile argument is a value wherever a value
+# Feature (language.md): a tile argument is a value wherever a value
 # belongs — every named argument, whatever it is called, a value builtin's
 # content, and a user tile's input — so an `if`, a `match`, a call and an
 # expression that starts with a capitalised name are values there.
@@ -12,7 +12,7 @@
 # A tile argument is a tile only as a positional argument of a builtin that
 # renders it as a child (`column`, `row`, `box`, …): the `if` at the end of
 # `App` picks a tile. A capitalised name written as an event handler of such a
-# builtin is a tile call (§1.7.3), and names the reducer it spells.
+# builtin is a tile call, and names the reducer it spells.
 
 type Phase = Idle | Busy
 

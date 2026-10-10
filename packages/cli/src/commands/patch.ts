@@ -1,23 +1,18 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { patchApplyFile, patchRevert } from "../mutate.ts";
+import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const APPLY_USAGE = "Usage: kumiki patch apply <file> <ops.jsonl>";
 const REVERT_USAGE = "Usage: kumiki patch revert <file> <op-id>";
+const USAGE =
+  "Usage: kumiki patch apply <file> <ops.jsonl>\n       kumiki patch revert <file> <op-id>";
 
-export function registerPatch(program: Command): void {
+export function registerPatch(program: Command): string {
   const patch = program
     .command("patch")
     .description("Apply or revert batched op-log patches")
-    // Bare `kumiki patch` used to fall through to the parser's `default:` usage
-    // block (exit 2). Commander's default for a group command is to print help
-    // and exit 0, which loses the shape signal. Restore the pre-refactor
-    // behavior explicitly.
-    .action(() => {
-      console.error(APPLY_USAGE);
-      console.error(REVERT_USAGE);
-      process.exit(2);
-    });
+    .action(() => exitWithUsage(`${APPLY_USAGE}\n${REVERT_USAGE}`));
 
   patch
     .command("apply")
@@ -26,17 +21,11 @@ export function registerPatch(program: Command): void {
     .argument("[ops-file]", "ops JSONL file")
     .allowExcessArguments(false)
     .action((file: string | undefined, opsFile: string | undefined) => {
-      if (!file || !opsFile) {
-        console.error(APPLY_USAGE);
-        process.exit(2);
-      }
-      try {
+      if (!file || !opsFile) exitWithUsage(APPLY_USAGE);
+      printOrExit(() => {
         const ids = patchApplyFile(resolve(process.cwd(), file), resolve(process.cwd(), opsFile));
-        console.log(`applied ${ids.length} ops: ${ids.join(", ")}`);
-      } catch (e) {
-        console.error(String(e));
-        process.exit(1);
-      }
+        return `applied ${ids.length} ops: ${ids.join(", ")}`;
+      });
     });
 
   patch
@@ -46,16 +35,11 @@ export function registerPatch(program: Command): void {
     .argument("[op-id]", "the op id to revert")
     .allowExcessArguments(false)
     .action((file: string | undefined, opId: string | undefined) => {
-      if (!file || !opId) {
-        console.error(REVERT_USAGE);
-        process.exit(2);
-      }
-      try {
+      if (!file || !opId) exitWithUsage(REVERT_USAGE);
+      printOrExit(() => {
         const newId = patchRevert(resolve(process.cwd(), file), opId);
-        console.log(`reverted ${opId}  (${newId})`);
-      } catch (e) {
-        console.error(String(e));
-        process.exit(1);
-      }
+        return `reverted ${opId}  (${newId})`;
+      });
     });
+  return USAGE;
 }

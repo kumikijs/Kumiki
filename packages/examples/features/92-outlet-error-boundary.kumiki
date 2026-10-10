@@ -1,5 +1,5 @@
 # Feature: an `error-boundary` on a `sub-routes` parent covers the child in
-# its `route-outlet` (spec/lifecycle.md §7.3, spec/routing.md §3.6).
+# its `route-outlet`.
 #
 # A boundary holds for everything that renders under the tile, and a child the
 # runtime injects into the parent's outlet is under it. So the obvious way to

@@ -20,7 +20,7 @@ type KumikiError = {
 
 A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
 
-The checker's codes come from `packages/compiler/src/typecheck.ts`; `E0000` is assigned by the two tools named above. The mechanized spec-drift guard (`packages/compiler/test/spec-drift.test.ts`) extracts the implementation side from every file that assigns a code, so a code invented in a tool and documented nowhere fails the same way as one invented in the checker.
+The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is assigned by the two tools named above.
 
 ## The Code System
 
@@ -59,7 +59,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
-| `E0001` | yes | Inject a `NotFound` tile and add `"/404" -> NotFound` to `app.routes`. |
+| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
 | `E0103` | yes | Close-name suggestion against known slot / binding names. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
@@ -67,7 +67,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0107` | yes | Close-name suggestion against declared motion names. |
 | `E0116` | yes | Close-name suggestion against declared `fn` names plus the built-in calls (scoped — a slot or tile whose name is close is not a candidate). |
 | `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
-| `E0301` | yes | Append the required capability to the app's `caps = [...]` array. |
+| `E0301` | yes | Append the required capability to the app's `caps = [...]` array, right after its last entry, so a comment after that entry stays a comment. |
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
 | `E0209` | yes | Close-name suggestion against variant tags of the scrutinee union (built-in `Option` / `Result` plus user `TypeDef` bodies, resolved through aliases). |
 | `E0117` | yes | Close-name suggestion against type names — the program's own `type` definitions first, then the primitives, the standard library's domain types, and the generic constructors (scoped — a slot or fn whose name is close is not a candidate). |
@@ -571,7 +571,7 @@ A value does not have the type its position requires.
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
-> `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md §5.1.1)`
+> `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
@@ -631,7 +631,7 @@ A value of type `EffectId` is used in an operation that is not defined on it. Th
 
 `input(type="file")` cannot bind a slot via `bind=`. The `bind=` two-way binding table ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) has no acceptable type for files — files are surfaced through the change event payload instead ([Forms §5.10](./forms.md#_5-10-file-upload)).
 
-> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head`
+> `input(type="file") does not support bind="<name>"; receive files via a ui.change reducer with $event.files.head (see docs/spec/forms.md)`
 
 ```kumiki invalid
 slot avatar : Option(File) = None
@@ -650,8 +650,8 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 The `accept` and `multiple` props on `input` apply only when `type="file"`. They are rendered onto the underlying `<input>` element, where they are valid HTML only for a file picker ([Forms §5.10](./forms.md#_5-10-file-upload)). Used on any other input type — or when `type` is omitted (it defaults to `"text"`) — they are invalid HTML and a latent bug. The diagnostic fires only when the type is statically known to not be `"file"`; a non-literal `type=` expression is left alone.
 
-> `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs`
-> `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs`
+> `input prop "accept" requires type="file" (got type="text"); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`
+> `input prop "multiple" requires type="file" (got no type, defaults to "text"); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`
 
 ```kumiki invalid
 slot draft : Text = ""
@@ -857,7 +857,7 @@ Fires for both forms of the loop — inside a tile and inside a reducer's `do=` 
 
 A `strict` prop is written on a control `bind` writes back from — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`, `editable` — as an argument or in the props block.
 
-> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md §5.1.2)`
+> `"strict" is not a prop of <tile>: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md)`
 
 An earlier revision of [Forms §5.1.2](./forms.md#_5-1-2-handling-of-refinement) specified `strict=false` as a second mode: take a value the refinement refuses, and turn a form-level `valid` flag false. Nothing implemented it, and the flag had no reader anywhere in the language, so the prop passed `check` and did nothing — an author who wrote it to relax a field got the strict behaviour with no sign of it. The chapter has one mode now: a bind its refinement refuses leaves the slot as it was, the field keeps what was typed, and `error(field=…)` renders the message for it.
 
@@ -886,7 +886,7 @@ The report is attached to the clause, not to the tile: two clauses naming the sa
 
 A `radio` carries a `bind=` and no `value=`.
 
-> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md §5.1.1)`
+> `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md)`
 
 A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while every `match` on the slot falls through and the block it renders disappears without a word.
 
@@ -898,8 +898,8 @@ An error, not a warning: a radio with nothing to write asserts nothing when it i
 
 An `input` binds a type its field kind does not go with ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)).
 
-> `input(bind=…) with type="<kind>" cannot bind a value of type <T>: a <base> binds with type="…" / … (see docs/spec/forms.md §5.1.1)`
-> `input(bind=…) cannot bind a value of type <T>: an input binds a Text, Int, Float or Time[ — bind its payload with ".get"] (see docs/spec/forms.md §5.1.1)`
+> `input(bind=…) with type="<kind>" cannot bind a value of type <T>: a <base> binds with type="…" / … (see docs/spec/forms.md)`
+> `input(bind=…) cannot bind a value of type <T>: an input binds a Text, Int, Float or Time[ — bind its payload with ".get"] (see docs/spec/forms.md)`
 
 A bound `input` reads its text as the bound position's base and shows that base's value back, so an `Int`, `Float` or `Time` goes only with the field kinds its text round-trips through: `type="number"` for an `Int` or a `Float`, `type="date"` or `type="datetime-local"` for a `Time`. Any other field kind breaks the round trip without a word. A `Time` in a `type="time"` field (or `month`, `week`, or no `type` at all) is shown its millisecond count, which `Time.parse` then refuses on every edit, so the field can never write. An `Int` in a date field shows a number the date picker cannot hold. A `Text` is written as typed, so it goes with every field whose value is the text typed — a `Text` in a date field holds `"2026-03-04"` and shows it back — and is reported only in a field that has no such text (`type="checkbox"`, …).
 
@@ -949,7 +949,7 @@ Only a literal template is checked. `fmt(tpl, x)` over a slot or a field has no 
 
 The argument a toggle reads for its selection when it is unbound — `value=` on a `check` or `switch`, `selected=` on a `radio` — is written beside a `bind=`.
 
-> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md §5.1.1)`
+> `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md)`
 
 With a `bind=`, the bound value alone decides whether a box is ticked or a radio chosen ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), so the other argument is a second answer to the same question and is not read. Like the argument [W0214](#w0214-fmt-placeholder-argument-mismatch-warning) reports, it leaves nothing behind — the control shows what the bind says, whatever the argument said — so no tier can tell it from a program that never passed it. A radio's own `value=` is not this argument: it is what the radio writes when chosen, and is read.
 

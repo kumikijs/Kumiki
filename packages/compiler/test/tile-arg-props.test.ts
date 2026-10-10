@@ -1,17 +1,8 @@
-// A named argument and the props block of the same name are the same prop.
-//
-// The spec writes them interchangeably — `button(text="Log in",
-// loading=loginPending)` sits a few lines from `{variant: "ghost"}` in
-// forms.md — but lowering lifted only the arguments each kind names and threw
-// the rest away. `image(alt="A cat")` satisfied the a11y check and rendered no
-// `alt`; `button(disabled=true)` rendered an enabled button.
-//
-// The DOM half of these claims lives in `packages/tests/tile-props.test.ts`,
-// which compiles and mounts. Here we hold the compiler to the shape it emits,
-// because that is where the prop went missing.
-
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { loweredOf } from "./helpers/module.ts";
+import { withRoot } from "./helpers/programs.ts";
 
 function emit(tile: string, extra = ""): string {
   const source = `${extra}
@@ -46,7 +37,7 @@ app P
     routes = {"/" -> Probe, "/404" -> Probe}
     init   = []
 `;
-  return check(parse(lex(source)))
+  return checkSource(source)
     .filter((e) => e.severity !== "warning")
     .map((e) => e.code);
 }
@@ -58,7 +49,7 @@ function propsOf(js: string): string {
   return js.slice(at, js.indexOf("\n", at));
 }
 
-describe("a named argument reaches props (#251)", () => {
+describe("a named argument reaches props", () => {
   it("carries an argument the kind does not lift", () => {
     const js = propsOf(emit('image(src="/a.png", alt="A cat", width=120, loading="lazy")'));
     expect(js).toContain('alt: "A cat"');
@@ -73,15 +64,9 @@ describe("a named argument reaches props (#251)", () => {
   });
 
   it("does not lower a tile-valued argument as if it were prop data", () => {
-    // A named argument parses as a value, so the tile written there is a
-    // `when` or a `for`: neither has a value form.
-    // One route's worth of output: the tile is inlined once per route, and
-    // `/404` is mandatory, so counting over the whole module counts twice.
+    // A named argument parses as a value, so only a `when` or a `for` puts a tile there.
     const js = emit('box(header=when(n > 0, text("inner")), text("body"))', "slot n : Int = 1");
     const route = js.slice(js.indexOf('pattern: "/"'), js.indexOf('pattern: "/404"'));
-    // Only the positional child is a node. A tile under a name no kind lifts
-    // is dropped, as it was before — but it must not reappear inside `props`,
-    // where a second copy of its node would be built on every render.
     expect(route.split('kind: "text"').length - 1).toBe(1);
     expect(propsOf(js)).not.toContain("header:");
   });
@@ -99,34 +84,12 @@ describe("a named argument reaches props (#251)", () => {
 
   it("folds a bare aria-* into the aria map rather than a prop of its own", () => {
     const js = propsOf(emit('region(text("x")) {aria: {hidden: "true"}, aria-label: "Main"}'));
-    // One `aria` value holding both, because the runtime reads only that key:
-    // finding `aria-*` among the props would mean enumerating a props bag that
-    // a host tile may refuse to enumerate.
     expect(js).toContain('aria: { ...({ "hidden": "true" }), "aria-label": "Main" }');
     expect(js).not.toContain("aria_label");
   });
 });
 
 describe("which argument a user tile takes as its input", () => {
-  // `checkTileInput` counts the positional arguments and codegen took
-  // `args[0]`, so a named argument written first was consumed as the tile's
-  // `$1`. The checker saw a call with no positional argument to a tile that
-  // wants none and said ok; codegen bound `$1` to the handler's *name*, and
-  // the emitted module read a bare `bump` that nothing declares — the mount
-  // died in render with `bump is not defined`.
-  //
-  // The two halves count the same arguments now. What a named argument means
-  // is unchanged: it is a prop, and it reaches the tile's root node.
-
-  /**
-   * What one user tile's call site passes as its input, or `""` when it is
-   * rendered without one.
-   *
-   * Found by the name the call site closes with rather than by the first IIFE
-   * in the route: a tile whose body renders another user tile emits that one's
-   * IIFE first, so scanning forward from the header reads the inner call's
-   * argument and answers the same thing before and after this fix.
-   */
   const inputArg = (js: string, tile: string): string => {
     const route = js.slice(js.indexOf('pattern: "/"'), js.indexOf('pattern: "/404"'));
     const applied = `, ${JSON.stringify(tile)}); })(`;
@@ -161,54 +124,31 @@ describe("which argument a user tile takes as its input", () => {
   });
 
   it("takes the positional argument over a named one that is not a handler", () => {
-    // The quieter half of the same defect: a handler value is a `Ref`, so the
-    // old lowering emitted a bare reducer name and the mount died. A literal
-    // or a slot read was consumed as `$1` in silence — `bind` worse than the
-    // rest, since it is dropped from props as well, so the written argument
-    // vanished and `$1` became a slot read.
     expect(inputArg(emit('column(Row(alt="x", "hi"), text(n.show))', HOST), "Row")).toBe('"hi"');
     expect(inputArg(emit('column(Row(bind=draft, "hi"), text(n.show))', HOST), "Row")).toBe('"hi"');
   });
 
-  it("reports a tile written as a named argument, which nothing renders", () => {
-    // It used to be inlined in place of the tile's body, which was wrong and
-    // visible. Taking the positional argument makes it invisible instead: a
-    // builtin container skips named arguments, the builtins that read one by
-    // name all want a value, and `propsFor` drops a tile-valued one — so the
-    // checker reports the shape rather than letting it disappear. A named
-    // argument parses as a value, so the tile written there is a `when` or a
-    // `for`: neither has a value form.
-    expect(codesFor('column(Btn(header=when(n > 0, text("inner"))), text(n.show))', HOST)).toEqual([
-      "E0201",
-    ]);
-    expect(codesFor('column(Btn(header=for x in [1] text("inner")), text(n.show))', HOST)).toEqual([
-      "E0201",
-    ]);
+  // A named argument parses as a value, so only a `when` or a `for` puts a tile there.
+  it.each([
+    'column(Btn(header=when(n > 0, text("inner"))), text(n.show))',
+    'column(Btn(header=for x in [1] text("inner")), text(n.show))',
+  ])("reports a tile written as a named argument, which nothing renders: %s", (tile) => {
+    expect(codesFor(tile, HOST)).toEqual(["E0201"]);
   });
 
   it("reads the outer call's input when the tile renders another user tile", () => {
-    // `Wrap`'s body emits `Row`'s IIFE, so the inner application site comes
-    // first in the text. What is asserted here is the outer one — without
-    // that, a reading of these tests would answer `_d_1` and say the same
-    // thing before and after the fix.
     const js = emit('column(Wrap(onClick=bump, "hi"), text(n.show))', HOST);
     expect(inputArg(js, "Wrap")).toBe('"hi"');
     expect(inputArg(js, "Row")).toBe("_d_1");
   });
 
   it("still reports the arity a tile declares", () => {
-    // Unchanged in both directions: the positional arguments are what is
-    // counted, and a named one is not one of them.
     expect(codesFor("column(Row(), text(n.show))", HOST)).toEqual(["E0213"]);
     expect(codesFor('column(Row("a", "b"), text(n.show))', HOST)).toEqual(["E0213"]);
     expect(codesFor('column(Btn("x"), text(n.show))', HOST)).toEqual(["E0213"]);
   });
 
   it("answers a wrong arity with the diagnostic, not with output", () => {
-    // Codegen is never reached for a call the checker rejected, and this is
-    // the lock on that: `compile` returns the diagnostics rather than an
-    // emitted module for a call whose second positional argument is past what
-    // the tile declares.
     const result = compile(
       `${HOST}
 tile Probe = column(Row("a", "b"), text(n.show))
@@ -225,14 +165,42 @@ app P
 });
 
 describe("which argument a builtin takes as its content", () => {
-  // The DOM half is `packages/tests/builtin-content-arg.test.ts`. `level` has no
-  // DOM trace to read there, so the prop half of the issue's own program is
-  // held here, at the shape emitted.
   it("shows the positional argument and keeps the named one a prop", () => {
     const js = emit('heading(level=2, "Title")');
     // What is shown, without depending on the order of the node's fields.
     expect(js).toContain('_s.show("Title")');
     expect(js).not.toContain("_s.show(2)");
     expect(propsOf(js)).toContain("level: 2");
+  });
+});
+
+describe("button(type=…) reaches the tile node", () => {
+  it("emits the type when the tile says one", () => {
+    const js = loweredOf(withRoot("Send", 'tile Send = button(text="send", type="submit")'));
+    expect(js).toContain('type: "submit"');
+  });
+
+  it("emits nothing when the tile does not, leaving the HTML default", () => {
+    const js = loweredOf(withRoot("Plain", 'tile Plain = button(text="plain")'));
+    const node = js.slice(js.indexOf('kind: "button"'));
+    expect(node.slice(0, node.indexOf("props:"))).not.toContain("type");
+  });
+
+  it("rejects a literal type that is not one of the three", () => {
+    const src = withRoot("Bad", 'tile Bad = button(text="x", type="submmit")');
+    expect(codesOf(src)).toEqual(["E0201"]);
+    for (const ok of ["submit", "button", "reset"]) {
+      expect(codesOf(withRoot("Ok", `tile Ok = button(text="x", type="${ok}")`)), ok).toEqual([]);
+    }
+  });
+
+  it("takes an expression, not only a literal", () => {
+    const src = withRoot(
+      "Send",
+      `slot mode : Text = "button"
+tile Send = button(text="send", type=mode)`,
+    );
+    expect(loweredOf(src)).toContain('type: _live["mode"]');
+    expect(codesOf(src)).toEqual([]);
   });
 });
