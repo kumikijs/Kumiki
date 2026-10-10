@@ -96,6 +96,7 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    fnResults: { answers: new Map(), reading: [], onLoop: new Set() },
   };
 
   for (const def of program.defs) {

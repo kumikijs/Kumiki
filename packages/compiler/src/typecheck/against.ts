@@ -58,6 +58,18 @@ export function checkAgainst(
     }
     return;
   }
+  if (e.kind === "MapLit" && e.entries.length === 0) {
+    // `{}` is the empty Map, Set and record at once, so the declared type decides.
+    if (refusesEmptyBraces(d)) {
+      pushMismatch(
+        errors,
+        code,
+        `Expected ${typeToString(declared)} but got {}, an empty Map, Set or record`,
+        e.pos,
+      );
+    }
+    return;
+  }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
     if (d.name === "Set") return;
     if (d.name === "Map") {
@@ -433,3 +445,18 @@ export function effectInput(
     omittable: (f) => builtinFieldOmittable(builtin, f),
   };
 }
+
+// A name that resolves to nothing is not read here: E0117 reports the name, not the value.
+function refusesEmptyBraces(d: TypeExpr): boolean {
+  switch (d.kind) {
+    case "TypePrim":
+    case "TypeUnion":
+      return true;
+    case "TypeApp":
+      return REFUSES_EMPTY_BRACES.has(d.name);
+    default:
+      return false;
+  }
+}
+
+const REFUSES_EMPTY_BRACES: ReadonlySet<string> = new Set(["List", "Option", "Result", "Tuple"]);

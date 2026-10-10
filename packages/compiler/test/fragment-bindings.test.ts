@@ -50,6 +50,13 @@ describe("$1 is the element a List hands its fragment", () => {
     expect(diagnostics(defs, "xs.map(loud($1))", "List(Text)")).toEqual([]);
   });
 
+  it("binds the element of a List a fn with no -> answers, which is its body's type", () => {
+    const defs = `${LOUD}\nfn anything(n: Int) = [n]`;
+    expect(diagnostics(defs, "anything(1).map(loud($1))", "List(Text)")).toEqual([
+      "E0201 Expected Text but got Int",
+    ]);
+  });
+
   it("binds the element to $2 of fold, and leaves the accumulator open", () => {
     const defs = `${LOUD}\nslot xs : List(Int) = [1, 2]`;
     expect(diagnostics(defs, `xs.fold("", loud($2))`, "Text", '""')).toEqual([
@@ -108,7 +115,7 @@ app A
 
 describe("where the lowering's reading is not certain, nothing is bound", () => {
   it("a receiver whose type is not decided", () => {
-    const defs = `${LOUD}\nfn anything(n: Int) = [n]`;
+    const defs = `${LOUD}\nfn anything(n: Int) = [n].map($1)`;
     expect(diagnostics(defs, "anything(1).map(loud($1))", "List(Text)")).not.toContain(
       "E0201 Expected Text but got Int",
     );

@@ -36,7 +36,19 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  fnResults: FnResults;
   app?: AppDef;
+};
+
+/**
+ * The results of the `fn`s declared without `->`, each read off its body once per check:
+ * `reading` holds the `fn`s whose bodies are being read right now, innermost last, and `onLoop`
+ * every `fn` found calling back into one of those.
+ */
+export type FnResults = {
+  answers: Map<string, TypeExpr | null>;
+  reading: string[];
+  onLoop: Set<string>;
 };
 
 export type Ctx = {

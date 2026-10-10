@@ -6,6 +6,7 @@ import { hasMember, isOwnMember } from "../stdlib-members.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
 import type { Ctx, SymbolTable } from "./context.ts";
 import { binOpResult } from "./expr.ts";
+import { fnResultType } from "./fn.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -331,6 +332,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
         if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
         if (base.name === "Map") return base.args[1] ?? null;
       }
+      if (base?.kind === "TypeRecord" && e.index.kind === "Str") {
+        return recordFieldType(base, e.index.value);
+      }
       return null;
     }
     case "MethodCall": {
@@ -427,7 +431,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
       if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
-      return sym.fns.get(e.callee)?.ret ?? null;
+      return fnResultType(e.callee, sym);
     }
     default:
       return null;

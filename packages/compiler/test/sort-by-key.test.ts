@@ -62,12 +62,6 @@ describe("the key sort-by orders by", () => {
   it("is left alone when the checker cannot type it", () => {
     expect(diagnostics("users.sort-by($1.tags.fold(0, $1 + 1))")).toEqual([]);
   });
-
-  it("is left alone when it is a fn with no declared return type", () => {
-    expect(
-      diagnostics("users.sort-by(kindOf)", "fn kindOf(u: User) = u.kind").join("\n"),
-    ).not.toContain("E0201");
-  });
 });
 
 describe("the key of sort-by given as a fn name", () => {
@@ -88,6 +82,13 @@ describe("the key of sort-by given as a fn name", () => {
     expect(diagnostics(`users.sort-by(${name})`, decl)).toEqual([
       `E0201 ".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${shown}`,
     ]);
+  });
+
+  it("is E0201 when a fn with no -> has a body with no order, as with one", () => {
+    expect(diagnostics("users.sort-by(kindOf)", "fn kindOf(u: User) = u.kind")).toEqual([
+      `E0201 ".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is Kind`,
+    ]);
+    expect(diagnostics("users.sort-by(nameOf)", "fn nameOf(u: User) = u.name")).toEqual([]);
   });
 
   it("reports only the arity of a fn that does not fit, not its key as well", () => {
