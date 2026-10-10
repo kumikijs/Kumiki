@@ -1,9 +1,9 @@
-# Feature: `http.cancel` capability + `EffectId` captured at emit time (#102).
+# Feature: `http.cancel` capability + `EffectId` captured at emit time.
 # `searchEffectId` records the id returned by `emit search(...)`. A click on
 # Cancel emits `cancel(searchEffectId)`, which the runtime maps to abort of the
 # in-flight fetch — surfacing `{status:0, message:"aborted"}` to the .err
-# reducer per spec http.md §6.4.1. Storing `EffectId.none` after cancel keeps
-# a subsequent Cancel click a safe no-op.
+# reducer. Storing `EffectId.none` after cancel keeps a subsequent Cancel click
+# a safe no-op.
 
 slot query           : Text     = ""
 slot result          : Text     = "idle"

@@ -1,4 +1,4 @@
-# Feature: which parents can key-match their children (spec/runtime.md §10.3.10).
+# Feature: which parents can key-match their children.
 #
 # Keys are necessary but not sufficient. `overlay` stacks its layers by putting
 # every child after the first inside a positioning wrapper, so the reconciler

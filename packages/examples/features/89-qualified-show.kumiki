@@ -1,7 +1,7 @@
-# Feature (spec/stdlib.md §2.2): `T.show(v)` is the qualified spelling of the
-# `v.show` method, and it is a `Text` for every capitalised `T`. Codegen says
-# so with one regex and one helper — `_s.show(v)`, the qualifier discarded —
-# and the checker has to say the same thing.
+# Feature: `T.show(v)` is the qualified spelling of the `v.show` method, and it
+# is a `Text` for every capitalised `T`. Codegen says so with one regex and one
+# helper — `_s.show(v)`, the qualifier discarded — and the checker has to say
+# the same thing.
 #
 # It did not, for the two qualifiers that also name constructors. `Duration.*`
 # was answered with `Duration` and `Bytes.*` with `Bytes` before the member was

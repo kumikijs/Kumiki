@@ -1,30 +1,12 @@
-// Real key presses for a `video` and a `details` under the `ui.key` /
-// `ui.focus` / `ui.blur` rows of the lift table (errors.md §W0212).
-//
-// The `.browser.json` of the same example drives focus and blur, and has no
-// key action. Three claims need the keyboard:
-//
-// - a `<video>` with `controls` is in the tab order, so Tab onto it runs its
-//   `ui.focus` reducer, a key on it `ui.key`, and Tab off it `ui.blur`;
-// - one without `controls` is not, so Tab passes it by;
-// - a `details` takes no `key` listener, so a key in its panel reaches the
-//   reducer `ui.key(Faq)` lifted onto the input there exactly once, and a key
-//   on its `<summary>` reaches only the `onKeyDown` written on the details.
-//
-// The program is example 236, the one its `.scenario.json` and
-// `.browser.json` drive.
+// The example's `.browser.json` has no key action, and these claims need the
+// real keyboard and tab order.
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "236-media-details-focus.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("236-media-details-focus"), "utf8");
 
 const log = (page: Page): Promise<string> =>
   page.evaluate(() =>

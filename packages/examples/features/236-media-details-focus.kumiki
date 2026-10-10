@@ -1,4 +1,4 @@
-# Feature (errors.md §W0212): which `ui.key` / `ui.focus` / `ui.blur`
+# Feature (W0212): which `ui.key` / `ui.focus` / `ui.blur`
 # selectors reach a `video` and a `details`.
 #
 #   video     the `<video>` its renderer returns takes focus itself when it has

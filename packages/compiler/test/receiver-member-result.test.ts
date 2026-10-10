@@ -1,25 +1,7 @@
-// The result type of a member the receiver decides (stdlib.md §2.2).
-//
-// A flat name → type table cannot express a type built out of the receiver's
-// own arguments, so `xs.head` on a `List(Int)` had no type and `n := xs.head`
-// put an `Option(Int)` in a slot declared `Int`. Nothing reported it, and the
-// readers disagree with what is in the slot from then on: `is-some` is false
-// on a value that is there, and `match` finds no arm.
-//
-// The fix is one resolver, asked by both arms of `inferType` — so the two
-// spellings of one member (`xs.head` is a `FieldAccess`, `xs.head()` a
-// `MethodCall`) cannot answer differently, which is a property of the shape
-// rather than something these tests have to police case by case.
-//
-// Two directions are pinned. `rejects` assigns the result into a slot of a
-// deliberately wrong type, so E0201 means the type resolved at all. `accepts`
-// assigns it into a slot of the type §2.2 gives it and asserts a clean
-// program, which is what catches a *wrong* entry: resolving `tail` to an
-// `Option` or `values` to a `List` of the key type would satisfy the first
-// direction and report working programs.
-
-import { check, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
 const DECLS = `slot xs   : List(Int)         = []
 slot ts   : List(Text)        = []
@@ -64,8 +46,6 @@ const withSink = (sinkType: string, expr: string): string =>
 reducer act on=ui.click(Btn)
     do= sink := ${expr}`);
 
-const codesOf = (src: string): string[] => check(parse(lex(src))).map((e) => e.code);
-
 /** The member resolved to something, and that something is not `sinkType`. */
 const rejects = (sinkType: string, expr: string): boolean =>
   codesOf(withSink(sinkType, expr)).includes("E0201");
@@ -74,7 +54,6 @@ const rejects = (sinkType: string, expr: string): boolean =>
 const accepts = (sinkType: string, expr: string): string[] => codesOf(withSink(sinkType, expr));
 
 describe("a member whose result the receiver decides resolves to that result", () => {
-  // Family 1 — a fixed `Bool`, whatever the receiver's arguments are.
   it.each([
     "xs.is-empty",
     "txt.is-empty",
@@ -92,15 +71,10 @@ describe("a member whose result the receiver decides resolves to that result", (
     expect(rejects("Text", expr)).toBe(true);
   });
 
-  // Family 2 — a fixed `Int`. `length` and `size` are not interchangeable:
-  // §2.2.3 gives a List `length`, §2.2.1 and §2.2.2 give a Map and a Set
-  // `size`. Each is asked of the receiver that declares it.
   it.each(["xs.length", "txt.length", "m.size", "st.size"])("%s is an Int", (expr) => {
     expect(rejects("Text", expr)).toBe(true);
   });
 
-  // Family 3 — an `Option` built out of the receiver's own type argument,
-  // which is the one a flat table cannot express at all.
   it.each([
     "xs.get(0)",
     "xs.head",
@@ -114,10 +88,6 @@ describe("a member whose result the receiver decides resolves to that result", (
     expect(rejects("Int", expr)).toBe(true);
   });
 
-  // Family 4 — the receiver's own type back. `slice` and `remove` are the
-  // cases that prove this has to be keyed by receiver rather than by name:
-  // `slice` answers a `List` on a List and a `Text` on a Text, and `remove`
-  // answers a Map on a Map and a Set on a Set.
   it.each([
     "xs.tail",
     "xs.reverse",
@@ -168,7 +138,6 @@ describe("a member whose result the receiver decides resolves to that result", (
     expect(rejects("Int", expr)).toBe(true);
   });
 
-  // Family 5 — a container other than the receiver's own.
   it.each([
     "m.keys",
     "m.values",
@@ -194,12 +163,9 @@ describe("a member whose result the receiver decides resolves to that result", (
   });
 });
 
-describe("every entry answers the exact type stdlib §2.2 gives it", () => {
-  // The other direction, and the expensive one to get wrong: an entry that
-  // resolves to the wrong type reports a program that works. Every member the
-  // resolver answers for is here, assigned into a slot of its declared type.
+describe("every entry answers its member's exact type", () => {
   it.each([
-    // Text (§2.2.6)
+    // Text
     ["Int", "txt.length"],
     ["Bool", "txt.is-empty"],
     ["Bool", 'txt.starts-with("a")'],
@@ -213,7 +179,7 @@ describe("every entry answers the exact type stdlib §2.2 gives it", () => {
     ["List(Text)", 'txt.split(",")'],
     ["Option(Int)", "txt.parse-int"],
     ["Option(Float)", "txt.parse-float"],
-    // Map (§2.2.1)
+    // Map
     ["Int", "m.size"],
     ["Bool", "m.is-empty"],
     ["Bool", 'm.has("k")'],
@@ -226,7 +192,7 @@ describe("every entry answers the exact type stdlib §2.2 gives it", () => {
     ["Map(Text, Int)", 'm.update("k", $1 + 1)'],
     ["Map(Text, Int)", "m.merge(m)"],
     ["Map(Text, Int)", "m.filter($2 > 1)"],
-    // Set (§2.2.2)
+    // Set
     ["Int", "st.size"],
     ["Bool", "st.has(1)"],
     ["Set(Int)", "st.add(1)"],
@@ -236,7 +202,7 @@ describe("every entry answers the exact type stdlib §2.2 gives it", () => {
     ["Set(Int)", "st.intersect(st)"],
     ["Set(Int)", "st.diff(st)"],
     ["List(Int)", "st.to-list"],
-    // List (§2.2.3)
+    // List
     ["Int", "xs.length"],
     ["Bool", "xs.is-empty"],
     ["Bool", "xs.contains(1)"],
@@ -256,14 +222,14 @@ describe("every entry answers the exact type stdlib §2.2 gives it", () => {
     ["List(Int)", "xs.filter($1 > 1)"],
     ["Text", 'xs.join(",")'],
     ["List(List(Int))", "xs.chunk(2)"],
-    // Option (§2.2.4)
+    // Option
     ["Bool", "opt.is-some"],
     ["Bool", "opt.is-none"],
     ["Int", "opt.get"],
     ["Option(Int)", "opt.filter($1 > 1)"],
     ["Option(Int)", "opt.or(opt)"],
     ["List(Int)", "opt.to-list"],
-    // Result (§2.2.5)
+    // Result
     ["Bool", "res.is-ok"],
     ["Bool", "res.is-err"],
     ["Int", "res.get"],
@@ -276,9 +242,6 @@ describe("every entry answers the exact type stdlib §2.2 gives it", () => {
 });
 
 describe("the element type comes from the receiver, not from the member", () => {
-  // A flat table could answer "List" but never "List of what". These pin the
-  // argument being carried through, which is the whole point of resolving from
-  // the receiver.
   it("m.keys is a List(Text) on a Map(Text, Int)", () => {
     expect(codesOf(withSink("List(Int)", "m.keys"))).toContain("E0201");
   });
@@ -293,9 +256,6 @@ describe("the element type comes from the receiver, not from the member", () => 
 });
 
 describe("both spellings of an argument-less member answer the same type", () => {
-  // `xs.head` parses as a FieldAccess and `xs.head()` as a MethodCall, and the
-  // two are resolved by one function, so this is a property of the shape —
-  // these cases pin that the shape is actually shared.
   it.each([
     ["Int", "xs.head"],
     ["Text", "xs.reverse"],
@@ -310,10 +270,6 @@ describe("both spellings of an argument-less member answer the same type", () =>
 });
 
 describe("a decided result reaches a loop variable too", () => {
-  // `for x in <expr>` binds the element type of whatever the expression
-  // resolves to, so resolving these results reaches past assignment. The
-  // accepting cases are the ones that matter: a wrong element type here
-  // reports a loop body that runs.
   const inLoop = (body: string): string[] =>
     codesOf(
       program(`slot sink : Int = 0
@@ -342,13 +298,8 @@ reducer act on=ui.click(Btn)
 });
 
 describe("the receiver decides how many arguments .get takes", () => {
-  // One name, two readings: `Map(K, V).get(k)` and `List(T).get(i)` against
-  // `Option(T).get` and `Result(T, E).get`, which take none and unwrap. A
-  // single minimum cannot state that, and the result type says nothing — a
-  // count its receiver does not take resolves to nothing, and so is checked
-  // against nothing.
   const messages = (expr: string): string[] =>
-    check(parse(lex(withSink("Text", expr)))).map((e) => e.message);
+    checkSource(withSink("Text", expr)).map((e) => e.message);
 
   it("reports an argument passed to the unwrapping reading", () => {
     expect(codesOf(withSink("Text", "opt.get(1)"))).toEqual(["E0213"]);
@@ -380,9 +331,6 @@ describe("what stays undecidable", () => {
     expect(codesOf(withSink("Text", "$event.head"))).toEqual([]);
   });
 
-  // A lambda body decides these, not the receiver, so they are left alone
-  // rather than resolved wrongly. `map` on a `List(Int)` is a `List(T')`, and
-  // `T'` is whatever the expression says.
   it.each([
     "xs.map($1 + 1)",
     "xs.fold(0, $1 + $2)",
@@ -391,9 +339,6 @@ describe("what stays undecidable", () => {
     expect(codesOf(withSink("Text", expr))).toEqual([]);
   });
 
-  // `Time` (§2.2.8) and `Duration` (§2.2.9) are a family of their own: they
-  // answer in each other's types rather than in a type argument, and
-  // `Duration` is a nominal over `Int` rather than a prim.
   it.each([
     "dur.to-ms",
     'inst.format("yyyy")',
@@ -402,9 +347,91 @@ describe("what stays undecidable", () => {
     expect(codesOf(withSink("List(Int)", expr))).toEqual([]);
   });
 
-  // `pow` has no result type even from a receiver — `2.pow(3)` is an Int and
-  // `2.pow(-1)` is 0.5 (§2.2.7).
   it("pow stays undecidable", () => {
     expect(codesOf(withSink("Text", "xs.length.pow(2)"))).toEqual([]);
+  });
+});
+
+/** Three results, each written into a slot of another type. */
+const WRONG_SLOT_WRITES = withButtonApp(`slot xs  : List(Int)   = []
+slot opt : Option(Int) = None
+slot n   : Int         = 0
+slot t   : Text        = ""
+reducer a on=ui.click(B) do= n := xs.head
+reducer b on=ui.click(B) do= t := opt.is-some
+reducer c on=ui.click(B) do= n := xs.get(0)`);
+
+describe("a receiver-decided result lands in a slot of its own type", () => {
+  it("check reports all three writes", () => {
+    const codes = codesOf(WRONG_SLOT_WRITES);
+    expect(codes.filter((c) => c === "E0201")).toHaveLength(3);
+  });
+
+  it("build refuses to emit it", () => {
+    const r = compile(WRONG_SLOT_WRITES, { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind).toBe("fail");
+    if (r.kind !== "fail") return;
+    expect(r.errors.map((e) => e.code)).toContain("E0201");
+  });
+});
+
+describe("what must keep compiling", () => {
+  it.each([
+    [
+      "head into an Option",
+      `slot xs : List(Int) = []\nslot o : Option(Int) = None`,
+      "o := xs.head",
+    ],
+    [
+      "get into an Option",
+      `slot xs : List(Int) = []\nslot o : Option(Int) = None`,
+      "o := xs.get(0)",
+    ],
+    [
+      "keys into a List of the key type",
+      `slot m : Map(Text, Int) = {}\nslot ks : List(Text) = []`,
+      "ks := m.keys",
+    ],
+    [
+      "values into a List of the value type",
+      `slot m : Map(Text, Int) = {}\nslot vs : List(Int) = []`,
+      "vs := m.values",
+    ],
+    ["sort into the same List", `slot xs : List(Int) = []`, "xs := xs.sort"],
+    ["insert into the same Map", `slot m : Map(Text, Int) = {}`, 'm := m.insert("k", 1)'],
+    ["to-list into a List", `slot s : Set(Int) = []\nslot xs : List(Int) = []`, "xs := s.to-list"],
+    ["is-empty into a Bool", `slot xs : List(Int) = []\nslot b : Bool = false`, "b := xs.is-empty"],
+    ["length into an Int", `slot xs : List(Int) = []\nslot n : Int = 0`, "n := xs.length"],
+    [
+      "the chained unwrap the spec leans on",
+      `slot m : Map(Text, Int) = {}\nslot n : Int = 0`,
+      'n := m.get("k").get-or(0)',
+    ],
+    [
+      "find into an Option",
+      `slot xs : List(Int) = []\nslot o : Option(Int) = None`,
+      "o := xs.find($1 > 1)",
+    ],
+    [
+      "the membership test the spec's own example is written as",
+      `slot xs : List(Int) = []\nslot b : Bool = false`,
+      "b := xs.find($1 > 1).is-some",
+    ],
+    [
+      "the unwrapping .get, written without arguments",
+      `slot o : Option(Int) = None\nslot n : Int = 0`,
+      "n := o.get",
+    ],
+  ])("accepts %s", (_label, decls, body) => {
+    const src = withButtonApp(`${decls}\nreducer a on=ui.click(B) do= ${body}`);
+    expect(checkSource(src)).toEqual([]);
+  });
+
+  it("still emits a program built from these shapes", () => {
+    const src =
+      withButtonApp(`slot m : Map(Text, Int) = {}\nslot xs : List(Int) = []\nslot n : Int = 0
+reducer a on=ui.click(B) do= n := m.get("k").get-or(xs.length)`);
+    const r = compile(src, { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind).toBe("ok");
   });
 });

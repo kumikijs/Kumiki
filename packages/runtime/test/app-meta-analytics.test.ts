@@ -1,25 +1,16 @@
-import type { AppShape, CapabilityProvider } from "@kumikijs/runtime";
+import type { AppShape, CapabilityProvider, TileNode } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
-function baseApp(overrides: Partial<AppShape>): AppShape {
-  return {
-    slots: {},
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
-    root: () => ({ kind: "text", text: "x" }),
-    ...overrides,
-  };
-}
+const textRoot = (): TileNode => ({ kind: "text", text: "x" });
 
-describe("runtime: app.meta (#80)", () => {
+describe("runtime: app.meta", () => {
   let root: HTMLElement;
 
   beforeEach(() => {
-    root = document.createElement("div");
-    document.body.appendChild(root);
+    root = freshRoot();
     document.title = "";
     for (const sel of [
       'meta[name="description"]',
@@ -31,12 +22,13 @@ describe("runtime: app.meta (#80)", () => {
   });
 
   afterEach(() => {
-    document.body.removeChild(root);
+    root.remove();
   });
 
   it("reflects title / description / og-image / favicon into <head>", () => {
     mount(
-      baseApp({
+      bareApp({
+        root: textRoot,
         meta: {
           title: "Hello Kumiki",
           description: "An app",
@@ -64,7 +56,7 @@ describe("runtime: app.meta (#80)", () => {
     stale.setAttribute("content", "stale");
     document.head.appendChild(stale);
 
-    mount(baseApp({ meta: { description: "fresh" } }), root);
+    mount(bareApp({ root: textRoot, meta: { description: "fresh" } }), root);
 
     const found = document.head.querySelectorAll('meta[name="description"]');
     expect(found).toHaveLength(1);
@@ -73,96 +65,65 @@ describe("runtime: app.meta (#80)", () => {
 
   it("touches nothing when meta is undefined", () => {
     document.title = "untouched";
-    mount(baseApp({}), root);
+    mount(bareApp({ root: textRoot }), root);
     expect(document.title).toBe("untouched");
     expect(document.head.querySelector('meta[name="description"]')).toBeNull();
   });
 });
 
-describe("runtime: app.analytics (#80)", () => {
+/** An app that sends `event` through `analytics.send` at init. */
+function trackingApp(analytics: NonNullable<AppShape["analytics"]>, event: string): AppShape {
+  return bareApp({
+    caps: ["analytics.send"],
+    effects: {
+      track: {
+        name: "track",
+        cap: "analytics.send",
+        invoke: async (input, caps) => {
+          const p = caps.provider("analytics.send");
+          if (p) return p(input, caps);
+          return { kind: "err", value: { message: "no provider" } };
+        },
+      },
+    },
+    init: [{ effect: "track", args: [{ event }] }],
+    analytics,
+    root: textRoot,
+  });
+}
+
+const settleInit = async (): Promise<void> => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
+
+describe("runtime: app.analytics", () => {
   let root: HTMLElement;
 
   beforeEach(() => {
-    root = document.createElement("div");
-    document.body.appendChild(root);
+    root = freshRoot();
   });
 
   afterEach(() => {
-    document.body.removeChild(root);
+    root.remove();
     vi.restoreAllMocks();
   });
 
   it("console provider logs events tagged with app-id when no host provider is set", async () => {
-    const logged: unknown[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args) => {
-      logged.push(args);
-    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mount(trackingApp({ provider: "console", appId: "demo" }, "open"), root);
+    await settleInit();
 
-    const app: AppShape = {
-      slots: {},
-      caps: ["analytics.send"],
-      effects: {
-        track: {
-          name: "track",
-          cap: "analytics.send",
-          invoke: async (input, caps) => {
-            const p = caps.provider("analytics.send");
-            if (p) return p(input, caps);
-            return { kind: "err", value: { message: "no provider" } };
-          },
-        },
-      },
-      init: [{ effect: "track", args: [{ event: "open" }] }],
-      reducers: [],
-      analytics: { provider: "console", appId: "demo" },
-      root: () => ({ kind: "text", text: "x" }),
-    };
-
-    mount(app, root);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const hit = logged.find(
-      (entry) =>
-        Array.isArray(entry) &&
-        entry[0] === "[kumiki:analytics]" &&
-        entry[1] &&
-        typeof entry[1] === "object" &&
-        (entry[1] as Record<string, unknown>).event === "open",
-    );
-    expect(hit).toBeDefined();
-    expect((hit as unknown[])[1]).toEqual({ event: "open", appId: "demo" });
+    const calls = logSpy.mock.calls.filter((c) => c[0] === "[kumiki:analytics]");
+    expect(calls).toEqual([["[kumiki:analytics]", { event: "open", appId: "demo" }]]);
   });
 
   it("noop provider swallows events without logging", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mount(trackingApp({ provider: "noop" }, "open"), root);
+    await settleInit();
 
-    const app: AppShape = {
-      slots: {},
-      caps: ["analytics.send"],
-      effects: {
-        track: {
-          name: "track",
-          cap: "analytics.send",
-          invoke: async (input, caps) => {
-            const p = caps.provider("analytics.send");
-            if (p) return p(input, caps);
-            return { kind: "err", value: { message: "no provider" } };
-          },
-        },
-      },
-      init: [{ effect: "track", args: [{ event: "open" }] }],
-      reducers: [],
-      analytics: { provider: "noop" },
-      root: () => ({ kind: "text", text: "x" }),
-    };
-
-    mount(app, root);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const calls = logSpy.mock.calls.filter((c) => c[0] === "[kumiki:analytics]");
-    expect(calls).toHaveLength(0);
+    expect(logSpy.mock.calls.filter((c) => c[0] === "[kumiki:analytics]")).toHaveLength(0);
   });
 
   it("host-supplied analytics.send provider wins over app.analytics default", async () => {
@@ -171,30 +132,10 @@ describe("runtime: app.analytics (#80)", () => {
       hostCalls.push(input);
       return { kind: "ok", value: null };
     };
-
-    const app: AppShape = {
-      slots: {},
-      caps: ["analytics.send"],
-      effects: {
-        track: {
-          name: "track",
-          cap: "analytics.send",
-          invoke: async (input, caps) => {
-            const p = caps.provider("analytics.send");
-            if (p) return p(input, caps);
-            return { kind: "err", value: { message: "no provider" } };
-          },
-        },
-      },
-      init: [{ effect: "track", args: [{ event: "hosted" }] }],
-      reducers: [],
-      analytics: { provider: "console", appId: "demo" },
-      root: () => ({ kind: "text", text: "x" }),
-    };
-
-    mount(app, root, { providers: { "analytics.send": hostProvider } });
-    await Promise.resolve();
-    await Promise.resolve();
+    mount(trackingApp({ provider: "console", appId: "demo" }, "hosted"), root, {
+      providers: { "analytics.send": hostProvider },
+    });
+    await settleInit();
 
     expect(hostCalls).toEqual([{ event: "hosted" }]);
   });

@@ -1,4 +1,4 @@
-# Feature (errors.md §W0212): which `ui.<ev>` selectors reach a `check`, a
+# Feature (W0212): which `ui.<ev>` selectors reach a `check`, a
 # `switch` or a `radio`. Each renders a <label> around its <input>, and the
 # listener a selector asks for goes on the <label>:
 #
