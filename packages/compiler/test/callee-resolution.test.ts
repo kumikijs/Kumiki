@@ -420,14 +420,10 @@ describe("a qualified stdlib member is read the same way without its parentheses
 
   it("claims the qualifier position and not the name", () => {
     const src = `type Duration = Short | Long
-slot d : Duration = Short
-slot t : Text = ""
-reducer pick on=ui.click(B) do= d := Long
-tile B = button(text="b")
-tile App = column(B, text(t), text(d.show))
+tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(codesOf(src)).toEqual([]);
+    expect(codesOf(src)).toEqual(["E0231"]);
   });
 
   it("leaves a listed name usable as a value and as a pattern", () => {

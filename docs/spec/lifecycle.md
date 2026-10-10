@@ -142,7 +142,7 @@ reducer onPanic
         emit toast({kind: "error", text: "Something went wrong"})
 ```
 
-The `PanicInfo` type:
+The `PanicInfo` type, which the [standard library provides](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library) — a program names it and does not declare it ([E0231](./errors.md#e0231-reserved-type-name)):
 
 ```kumiki fragment
 type PanicInfo = {

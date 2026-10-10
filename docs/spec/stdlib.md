@@ -56,6 +56,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error`, of `route.error(<pattern>)` (which adds `pattern`), and of an `error-boundary` tile's `in=` |
 
+A program uses these names without declaring them. `PanicInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` are **reserved**: the runtime or the standard library builds or reads their values, so a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name) and the name keeps the definition above. `Url`, `Email`, `Uuid` and `FormData` name types only a program builds values of; a program may declare its own type under one of them, and its uses of the name then mean that type ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
+
 ---
 
 ## 2.2 Collection Methods

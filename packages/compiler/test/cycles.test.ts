@@ -447,10 +447,17 @@ slot c : Alias(Int) = 1`),
     expect(typeCodes(`type Loop(T) = Loop(T)`)).toEqual(["E0009"]);
   });
 
-  it("reports a program that redeclares a standard library type as its own cycle", () => {
-    expect(typeCodes(`type Route = Route`)).toEqual(["E0009"]);
-    // An alias *to* one is an ordinary chain that ends at its record.
+  it("follows an alias to a standard library type to its own definition", () => {
     expect(typeCodes(`type A = HttpError`)).toEqual([]);
+    expect(typeCodes(`type A = B\ntype B = Route`)).toEqual([]);
+  });
+
+  it("reports a program that redeclares a declarable standard library type as its own cycle", () => {
+    expect(typeCodes(`type Email = Email`)).toEqual(["E0009"]);
+  });
+
+  it("reads a reserved standard library type as the standard library's, not as a loop", () => {
+    expect(typeCodes(`type Route = Route`)).toEqual(["E0231"]);
   });
 
   const usedFrom: [string, string][] = [

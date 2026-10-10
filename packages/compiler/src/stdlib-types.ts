@@ -81,6 +81,23 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   }),
 ];
 
+// The runtime or the standard library builds or reads values of these, so a
+// program's own definition would be what the checker reasoned about while the
+// runtime kept to the entry above. The other entries name types only a program
+// builds values of, and a program may declare its own.
+export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+  "PanicInfo",
+  "Route",
+  "HttpError",
+  "HttpStatus",
+  "Duration",
+  "FormValue",
+]);
+
+export function isReservedTypeName(name: string): boolean {
+  return RESERVED_TYPE_NAMES.has(name);
+}
+
 export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new Map([
   ["List", 1],
   ["Set", 1],
