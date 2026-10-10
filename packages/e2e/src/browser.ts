@@ -11,6 +11,7 @@ import {
   dispatchFault,
   judgeRefusal,
   partialMatch,
+  RUNTIME_OVERLAY_SELECTORS,
   type ScenarioStep as RuntimeScenarioStep,
   readControl,
   readInvalidControls,
@@ -49,6 +50,9 @@ function htmlPage(body: string): string {
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
 <body>${body}</body></html>`;
 }
+
+/** Each run loads a fresh page, so every runtime overlay in it is this run's. */
+const STEP_TEXT = ["#root", "[id^='kumiki-root-']", ...RUNTIME_OVERLAY_SELECTORS].join(", ");
 
 const buildHtml = (js: string): string => htmlPage(`<div id="root"></div>${moduleScript(js)}`);
 
@@ -232,9 +236,15 @@ async function serveScenario(
         await page.waitForTimeout(settleMs);
       }
       const state = (await page.evaluate(stateFn).catch(() => ({}))) as Record<string, unknown>;
+      // Each element's text apart, in document order, as at the scenario tier.
       const visibleText = await page
-        .locator("body")
-        .innerText()
+        .evaluate(
+          (sel: string) =>
+            Array.from(document.querySelectorAll<HTMLElement>(sel), (el) => el.innerText).join(
+              "\n",
+            ),
+          STEP_TEXT,
+        )
         .catch(() => "");
       const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
       const failures = [

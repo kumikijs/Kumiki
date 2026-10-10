@@ -12,12 +12,10 @@
 # `on=navigate.ok(...)` fires once the navigation lands.
 
 slot arrivals : Int = 0
-slot notices  : Int = 0
 
 reducer go       on=ui.click(GoBtn)     do= emit navigate({path: "/other", params: {}})
 reducer back     on=ui.click(BackBtn)   do= emit navigate-back()
-reducer notify   on=ui.click(NotifyBtn) do= notices := notices + 1
-                                            emit toast({kind: "info", text: "notified"})
+reducer notify   on=ui.click(NotifyBtn) do= emit toast({kind: "info", text: "notified"})
 reducer arrived  on=navigate.ok(_, _)   do= arrivals := arrivals + 1
 
 tile GoBtn     = button(text="Go", onClick=go)
@@ -27,7 +25,6 @@ tile NotifyBtn = button(text="Notify", onClick=notify)
 tile Home  = page(
                heading("Home"),
                text("arrivals: " + arrivals.show),
-               text("notices: " + notices.show),
                GoBtn,
                NotifyBtn)
 

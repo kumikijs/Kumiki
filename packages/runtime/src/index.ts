@@ -151,6 +151,7 @@ export {
   type EpisodeTrigger,
   type SlotDiff,
 } from "./episode.ts";
+export { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
 export { routing } from "./router.ts";
 export {
   partialMatch,

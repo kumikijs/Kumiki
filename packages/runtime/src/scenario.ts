@@ -9,6 +9,7 @@ import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
+import { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
 import { stateMismatches, textMismatches } from "./scenario/expect.ts";
 import {
   type Action,
@@ -43,6 +44,8 @@ export type ScenarioReport<S = StepResult> = { ok: boolean; steps: S[] };
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+const OVERLAYS = RUNTIME_OVERLAY_SELECTORS.join(", ");
+
 type Dispatchable = AppShape & {
   _dispatch?: (name: string, el: Record<string, unknown>) => void;
   _navigate?: (path: string, replace?: boolean) => void;
@@ -62,6 +65,13 @@ export async function runScenario(
 ): Promise<ScenarioReport> {
   const settleMs = opts.settleMs ?? 25;
   const steps: StepResult[] = [];
+
+  // An overlay already in the document was left by an earlier run or test, and must not answer this run's assertions.
+  const preexisting = new Set(Array.from(document.querySelectorAll(OVERLAYS)));
+  const opened = (): Element[] =>
+    Array.from(document.querySelectorAll(OVERLAYS)).filter((el) => !preexisting.has(el));
+  // Apart, so a substring cannot match across the boundary between the root and an overlay.
+  const rendered = (): string => [root, ...opened()].map((el) => el.textContent ?? "").join("\n");
 
   let errorBuf: string[] = [];
   const onError = (ev: ErrorEvent): void => {
@@ -122,20 +132,22 @@ export async function runScenario(
   try {
     const problems = validateScenario(scenario);
     if (problems.length > 0) {
-      steps.push(mkStep("scenario document", undefined, [], [], app, root, problems));
+      steps.push(mkStep("scenario document", undefined, [], [], app, rendered(), problems));
       return finish();
     }
     try {
       dispose = mount(app, root, mountOpts).dispose;
     } catch (e) {
-      steps.push(mkStep(undefined, "mount", [`mount threw: ${errStr(e)}`], [], app, root, []));
+      steps.push(
+        mkStep(undefined, "mount", [`mount threw: ${errStr(e)}`], [], app, rendered(), []),
+      );
       return finish();
     }
     await settle(settleMs);
 
     if (errorBuf.length > 0) {
       steps.push(
-        mkStep("mount", undefined, [...errorBuf], [...emitBuf], app, root, [], [...diagBuf]),
+        mkStep("mount", undefined, [...errorBuf], [...emitBuf], app, rendered(), [], [...diagBuf]),
       );
     }
 
@@ -159,16 +171,18 @@ export async function runScenario(
       );
       const unexpected = errorBuf.filter((e) => !expected.includes(e));
       const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
+      // Read once, so the assertions and the trace's `domText` see one text.
+      const text = rendered();
       const result = mkStep(
         step.label,
         actionDesc,
         unexpected,
         [...emitBuf],
         app,
-        root,
+        text,
         [
           ...verdict.failures,
-          ...evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, root),
+          ...evaluateExpect(step.expect, { all: errorBuf, unexpected }, app, text),
         ],
         [...diagBuf],
         expected,
@@ -184,6 +198,8 @@ export async function runScenario(
     } catch {
       // The report is already built. A fault on the way out is worth less than the run it would replace, and the same choice `smoke` makes.
     }
+    // A toast's timer may still be running and a confirm may be unanswered; neither may outlive the report in a shared document.
+    for (const el of opened()) el.remove();
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);
     w.removeEventListener?.("unhandledrejection", onRejection);
@@ -200,7 +216,7 @@ function mkStep(
   errors: string[],
   emits: { effect: string; args: unknown[] }[],
   app: AppShape,
-  root: HTMLElement,
+  text: string,
   failures: string[],
   diagnostics: RuntimeDiagnostic[] = [],
   expectedErrors: string[] = [],
@@ -213,7 +229,7 @@ function mkStep(
     expectedErrors,
     emits,
     state: snapshotState(app),
-    domText: (root.textContent ?? "").replace(/\s+/g, " ").trim(),
+    domText: text.replace(/\s+/g, " ").trim(),
     failures,
     diagnostics,
   };
@@ -362,7 +378,7 @@ function evaluateExpect(
   // One object rather than two adjacent `string[]`s: swapping them would still compile and would quietly invert what `noErrors` and `errorIncludes` mean.
   reported: { all: string[]; unexpected: string[] },
   app: AppShape,
-  root: HTMLElement,
+  text: string,
 ): string[] {
   if (!expect) return [];
   const failures: string[] = [];
@@ -379,7 +395,7 @@ function evaluateExpect(
     }
   }
   if (expect.state) failures.push(...stateMismatches(expect.state, snapshotState(app)));
-  failures.push(...textMismatches(expect, root.textContent ?? "", "DOM"));
+  failures.push(...textMismatches(expect, text, "DOM"));
   return failures;
 }
 

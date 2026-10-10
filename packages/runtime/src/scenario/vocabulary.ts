@@ -34,9 +34,9 @@ type CommonExpect = {
   actionErrorIncludes?: string[];
   /** Partial match against the slot state (slot name or dotted path → expected value). */
   state?: Record<string, unknown>;
-  /** Substrings that must appear in the rendered text. */
+  /** Substrings that must appear in the rendered text: the mount root's and the runtime overlays'. */
   domIncludes?: string[];
-  /** Substrings that must NOT appear in the rendered text. */
+  /** Substrings that must NOT appear in the rendered text, read as `domIncludes` reads it. */
   domExcludes?: string[];
 };
 
