@@ -1,160 +1,39 @@
-// AC for #163: kumiki add/replace grow --body-file <path>, and edit grows
-// --patch-file <path>. Positional body is joined with a single space, so a
-// multi-line definition round-tripped through the shell collapses. --body-file
-// reads the file (or stdin, when path is "-") verbatim so tabs / newlines /
-// multi-space runs survive.
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
+import { runCli, SPAWN } from "./helpers/cli.ts";
+import { seed } from "./helpers/files.ts";
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CLI_ARGV } from "./helpers/cli.ts";
-
-/** Run the CLI, capturing stdout+stderr and the exit code without throwing. */
-function runCli(args: string[], input?: string): { out: string; code: number } {
-  if (input !== undefined) {
-    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: ["pipe", "pipe", "pipe"],
-      encoding: "utf8",
-      input,
-    });
-    return {
-      out: `${res.stdout ?? ""}${res.stderr ?? ""}`,
-      code: res.status ?? (res.error ? 1 : 0),
-    };
-  }
-  try {
-    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-    return { out, code: 0 };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; status?: number };
-    return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-  }
-}
-
-const SEED_SRC = `tile App = column(heading("hi"))
+const SOURCE = `slot count : Int = 0
+tile App = column(heading("hi"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-describe("kumiki add --body-file", () => {
-  let dir: string;
-  let target: string;
-  let bodyFile: string;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "kumiki-body-file-"));
-    target = join(dir, "app.kumiki");
-    bodyFile = join(dir, "body.txt");
-    writeFileSync(target, SEED_SRC);
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("reads the body from <path> and preserves newlines and multi-space runs", {
-    timeout: 30000,
-  }, () => {
-    // The positional-body join would collapse this to a single-space run.
-    writeFileSync(bodyFile, "Int\n    =    0");
-    const { out, code } = runCli(["add", target, "slot", "count", "--body-file", bodyFile]);
-    expect(code).toBe(0);
-    expect(out).toMatch(/added slot\.count/);
-    const after = readFileSync(target, "utf8");
-    expect(after).toContain("Int\n    =    0");
-    expect(after).toContain("slot count");
-  });
-
-  it("reads the body from stdin when --body-file is '-'", { timeout: 30000 }, () => {
-    const { out, code } = runCli(
-      ["add", target, "slot", "count", "--body-file", "-"],
-      "Int\n  = 0",
-    );
-    expect(code).toBe(0);
-    expect(out).toMatch(/added slot\.count/);
-    expect(readFileSync(target, "utf8")).toContain("Int\n  = 0");
-  });
-
-  it("exits 2 when --body-file and a positional body are given together", {
-    timeout: 30000,
-  }, () => {
-    writeFileSync(bodyFile, "Int = 0");
-    const { out, code } = runCli([
-      "add",
-      target,
-      "slot",
-      "count",
-      "Int",
-      "=",
-      "0",
-      "--body-file",
-      bodyFile,
-    ]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/mutually exclusive/);
-    expect(out).toMatch(/Usage: kumiki add/);
-  });
-
-  it("exits 2 when neither --body-file nor a positional body is given", { timeout: 30000 }, () => {
-    const { out, code } = runCli(["add", target, "slot", "count"]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/Usage: kumiki add/);
-  });
-
-  // Regression for CRIT-2 (PR #195 review): without an argParser rejecting
-  // `--`-prefixed values, commander happily consumes the next flag token as
-  // the body path, then --body-file surfaces as ENOENT for a nonsense name.
-  it("exits 2 when --body-file's next token is another flag", { timeout: 30000 }, () => {
-    const { out, code } = runCli(["add", target, "slot", "count", "--body-file", "--strict-a11y"]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/Usage: kumiki add/);
-  });
-
-  // Regression for IMP-1 (PR #195 review): ENOENT used to bubble up as a raw
-  // Error string + exit 1, which is inconsistent with the flag-shape errors
-  // in the rest of the CLI. Should land as exit 2 with the flag + path named.
-  it("exits 2 with a named error when --body-file points at a missing path", {
-    timeout: 30000,
-  }, () => {
-    const { out, code } = runCli([
-      "add",
-      target,
-      "slot",
-      "count",
-      "--body-file",
-      join(dir, "does-not-exist.txt"),
-    ]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/--body-file/);
-    expect(out).toMatch(/cannot read/);
-  });
+let target: string;
+/** Write `content` beside the target; its path. */
+let beside: (name: string, content: string) => string;
+beforeEach(() => {
+  target = seed(SOURCE);
+  beside = (name, content) => {
+    const file = join(dirname(target), name);
+    writeFileSync(file, content);
+    return file;
+  };
 });
 
-describe("kumiki replace --body-file", () => {
-  let dir: string;
-  let target: string;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "kumiki-body-file-"));
-    target = join(dir, "app.kumiki");
-    writeFileSync(
-      target,
-      `slot count : Int = 0
-tile App = column(heading("hi"))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`,
-    );
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+describe("reading a body or a patch from a file", () => {
+  it("add --body-file reads <path>, keeping newlines and multi-space runs", SPAWN, () => {
+    const bodyFile = beside("body.txt", "Int\n    =    0");
+    const { out, code } = runCli(["add", target, "slot", "total", "--body-file", bodyFile]);
+    expect(code).toBe(0);
+    expect(out).toMatch(/added slot\.total/);
+    const after = readFileSync(target, "utf8");
+    expect(after).toContain("slot total");
+    expect(after).toContain("Int\n    =    0");
   });
 
-  it("reads the replacement body from <path> and preserves whitespace", { timeout: 30000 }, () => {
-    const bodyFile = join(dir, "body.txt");
-    writeFileSync(bodyFile, "Int\n    =    42");
+  it("replace --body-file reads <path>, keeping whitespace", SPAWN, () => {
+    const bodyFile = beside("body.txt", "Int\n    =    42");
     const { out, code } = runCli(["replace", target, "slot.count", "--body-file", bodyFile]);
     expect(code).toBe(0);
     expect(out).toMatch(/replaced slot\.count/);
@@ -163,90 +42,72 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(after).not.toContain(": Int = 0");
   });
 
-  it("exits 2 when --body-file and a positional body are given together", {
-    timeout: 30000,
-  }, () => {
-    const bodyFile = join(dir, "body.txt");
-    writeFileSync(bodyFile, "Int = 42");
-    const { out, code } = runCli([
-      "replace",
-      target,
-      "slot.count",
-      "Int",
-      "=",
-      "42",
-      "--body-file",
-      bodyFile,
-    ]);
-    expect(code).toBe(2);
-    expect(out).toMatch(/mutually exclusive/);
-    expect(out).toMatch(/Usage: kumiki replace/);
-  });
-
-  it("reads the replacement body from stdin when --body-file is '-'", { timeout: 30000 }, () => {
-    const { out, code } = runCli(
-      ["replace", target, "slot.count", "--body-file", "-"],
-      "Int\n    =    77",
-    );
+  it.each([
+    ["add", ["slot", "total"], "Int\n  = 0", /added slot\.total/],
+    ["replace", ["slot.count"], "Int\n    =    77", /replaced slot\.count/],
+  ])("%s --body-file - reads stdin", SPAWN, (verb, args, body, reported) => {
+    const { out, code } = runCli([verb, target, ...args, "--body-file", "-"], { input: body });
     expect(code).toBe(0);
-    expect(out).toMatch(/replaced slot\.count/);
-    expect(readFileSync(target, "utf8")).toContain("Int\n    =    77");
+    expect(out).toMatch(reported);
+    expect(readFileSync(target, "utf8")).toContain(body);
   });
-});
 
-describe("kumiki edit --patch-file", () => {
-  let dir: string;
-  let target: string;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "kumiki-patch-file-"));
-    target = join(dir, "app.kumiki");
-    writeFileSync(
-      target,
-      `slot count : Int = 0
-tile App = column(heading("hi"))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`,
+  it("edit --patch-file loads the patch JSON from <path>", SPAWN, () => {
+    const patchFile = beside(
+      "patch.json",
+      JSON.stringify({ find: "Int = 0", replace: "Int = 100" }),
     );
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("loads the patch JSON from <path>", { timeout: 30000 }, () => {
-    const patchFile = join(dir, "patch.json");
-    // editDef accepts either {find, replace} or per-line {"body:<n>": "replace 'a' -> 'b'"}.
-    writeFileSync(patchFile, JSON.stringify({ find: "Int = 0", replace: "Int = 100" }));
     const { out, code } = runCli(["edit", target, "slot.count", "--patch-file", patchFile]);
     expect(code).toBe(0);
     expect(out).toMatch(/edited slot\.count/);
     expect(readFileSync(target, "utf8")).toContain("Int = 100");
   });
+});
 
-  it("exits 2 when --patch-file and a positional patch-json are both given", {
-    timeout: 30000,
-  }, () => {
-    const patchFile = join(dir, "patch.json");
-    writeFileSync(patchFile, JSON.stringify({ find: "Int = 0", replace: "Int = 100" }));
-    const { out, code } = runCli([
+describe("refusing a body or a patch given ambiguously", () => {
+  it.each([
+    ["add", ["slot", "total", "Int", "=", "0"], "--body-file", "Int = 0"],
+    ["replace", ["slot.count", "Int", "=", "42"], "--body-file", "Int = 42"],
+    [
       "edit",
-      target,
-      "slot.count",
-      '{"find":"Int = 0","replace":"Int = 200"}',
+      ["slot.count", '{"find":"Int = 0","replace":"Int = 200"}'],
       "--patch-file",
-      patchFile,
-    ]);
+      JSON.stringify({ find: "Int = 0", replace: "Int = 100" }),
+    ],
+  ])("%s exits 2 when a positional and %s are both given", SPAWN, (verb, args, flag, content) => {
+    const { out, code } = runCli([verb, target, ...args, flag, beside("input", content)]);
     expect(code).toBe(2);
     expect(out).toMatch(/mutually exclusive/);
-    expect(out).toMatch(/Usage: kumiki edit/);
+    expect(out).toMatch(new RegExp(`Usage: kumiki ${verb}`));
+    expect(readFileSync(target, "utf8")).toBe(SOURCE);
   });
 
-  // Regression: broken JSON in a patch file used to bubble a raw SyntaxError
-  // that didn't name the file, so users couldn't tell which of many patches
-  // was malformed.
-  it("names --patch-file in the error when the file's JSON is invalid", { timeout: 30000 }, () => {
-    const patchFile = join(dir, "broken.json");
-    writeFileSync(patchFile, "{ not valid json");
+  it.each([
+    ["add", ["slot", "total"], "--body-file"],
+    ["replace", ["slot.count"], "--body-file"],
+    ["edit", ["slot.count"], "--patch-file"],
+  ])("%s exits 2 when %s is followed by another flag", SPAWN, (verb, args, flag) => {
+    const { out, code } = runCli([verb, target, ...args, flag, "--strict-a11y"]);
+    expect(code).toBe(2);
+    expect(out).toMatch(new RegExp(`Usage: kumiki ${verb}`));
+  });
+
+  it("add exits 2 when neither --body-file nor a positional body is given", SPAWN, () => {
+    const { out, code } = runCli(["add", target, "slot", "total"]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/Usage: kumiki add/);
+  });
+
+  it("add exits 2 with a named error when --body-file points at a missing path", SPAWN, () => {
+    const missing = join(dirname(target), "does-not-exist.txt");
+    const { out, code } = runCli(["add", target, "slot", "total", "--body-file", missing]);
+    expect(code).toBe(2);
+    expect(out).toMatch(/--body-file/);
+    expect(out).toMatch(/cannot read/);
+  });
+
+  it("edit names --patch-file in the error when the file's JSON is invalid", SPAWN, () => {
+    const patchFile = beside("broken.json", "{ not valid json");
     const { out, code } = runCli(["edit", target, "slot.count", "--patch-file", patchFile]);
     expect(code).toBe(2);
     expect(out).toMatch(/invalid JSON in --patch-file/);

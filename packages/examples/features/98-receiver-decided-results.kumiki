@@ -1,5 +1,5 @@
-# Feature (stdlib.md §2.2): the result type of a member is decided by the
-# receiver, and the element type is carried through.
+# Feature: the result type of a member is decided by the receiver, and the
+# element type is carried through.
 #
 #   List(T).head     : Option(T)      not T
 #   Map(K, V).keys   : List(K)        not List(V)
