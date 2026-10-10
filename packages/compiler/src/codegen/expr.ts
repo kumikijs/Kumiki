@@ -96,6 +96,11 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return e.value ? "true" : "false";
     case "Unit":
       return "null";
+    case "Null":
+      // Only reached without `check()`; a JavaScript `null` would be a value of no Kumiki type.
+      throw new Error(
+        `\`null\` at ${e.pos.line}:${e.pos.col} has no lowering — run \`check\` for the diagnostic`,
+      );
     case "Ref": {
       if (ctx.localBinds.has(e.name)) return bindRef(ctx, e.name);
       if (e.name === "now") return `_s.now()`;

@@ -89,14 +89,14 @@ A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line.
 ### 1.2.2 Reserved Words
 
 ```
-type  slot  effect  reducer  tile  fn  app
+type  slot  effect  reducer  tile  fn  app  test
 nominal  where  when  for  in  let  if  then  else  match  with
 on  do  emit  cap  out  policy  retry
 true  false
 fresh  self  now  null
 ```
 
-`null` is reserved but **prohibited in programs** (type error).
+`null` is reserved but **prohibited in programs**: written where an expression goes it is [E0235](./errors.md#e0235-null-value), and it names no record field ([§1.9](#_1-9-expression-language)). A value that may be absent is an `Option`, and `None` is its absence.
 
 ### 1.2.3 Design Decisions
 
@@ -827,7 +827,7 @@ expr        ::= literal
 call        ::= qname '(' (expr (',' expr)*)? ')'
 record-lit  ::= '{' (field-init (',' field-init)*)? '}'
 field-init  ::= field-name ('=' | ':') expr | field-name
-field-name  ::= identifier | reserved-word     ; §1.2.2, except true / false / now
+field-name  ::= identifier | reserved-word     ; §1.2.2, except true / false / now / null
 collection-lit ::= '[' (expr (',' expr)*)? ']'
                  | '{' (entry (',' entry)*)? '}'
 entry       ::= expr ':' expr
@@ -844,7 +844,7 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
 unop        ::= '-' | '!'
 ```
 
-**A `{ … }` literal is a record when its first key is a field name, and a Map otherwise.** A field name is an identifier or any reserved word except the three that are a value on their own — `true`, `false`, `now` — so `{type: ui.click, target: Go}` and `{for: "name"}` are records. Those three are keys. `{true: "on", false: "off"}` is a `Map(Bool, Text)`, the same Map `{(true): "on", false: "off"}` writes, and `{now: "start"}` is a `Map(Time, Text)`. Any other first key — a string, a number, `Some(1)`, a name in parentheses `(k)` — makes the literal a Map as well. The first key decides for the whole literal: `{a: 1, true: 2}` is a parse error at `true`, which is a value, not a record field name. `{true}` and `{true = 1}` are the same parse error: a Map key is followed by `:`, so a `true` followed by `,`, `=` or `}` stands where a field name goes.
+**A `{ … }` literal is a record when its first key is a field name, and a Map otherwise.** A field name is an identifier or any reserved word except the four that are an expression on their own — the values `true`, `false` and `now`, and `null`, which is no value at all — so `{type: ui.click, target: Go}` and `{for: "name"}` are records. Those four are keys. `{true: "on", false: "off"}` is a `Map(Bool, Text)`, the same Map `{(true): "on", false: "off"}` writes, and `{now: "start"}` is a `Map(Time, Text)`. `{null: 1}` is a Map too, and its key is [E0235](./errors.md#e0235-null-value). Any other first key — a string, a number, `Some(1)`, a name in parentheses `(k)` — makes the literal a Map as well. The first key decides for the whole literal: `{a: 1, true: 2}` is a parse error at `true`, which is a value, not a record field name. `{true}` and `{true = 1}` are the same parse error: a Map key is followed by `:`, so a `true` followed by `,`, `=` or `}` stands where a field name goes. A `null` in any of these places is a parse error too, and its message says `null` is not a value either.
 
 An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
@@ -852,7 +852,7 @@ An `if` and a `match` evaluate to one of their branches, so **every branch has t
 
 - **Lambda expressions prohibited**
 - **`try/catch` prohibited**
-- **`null` / `undefined` prohibited**
+- **`null` / `undefined` prohibited** — `null` is [E0235](./errors.md#e0235-null-value); a value that may be absent is an `Option`
 - **`while` loops prohibited**
 - **Assignment expressions prohibited** (`:=` is a statement and cannot be used within an expression)
 - **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:

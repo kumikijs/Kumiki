@@ -94,6 +94,32 @@ describe("a value keyword where a record field name goes", () => {
   });
 });
 
+describe("`null` as a key", () => {
+  it("makes the literal a Map whose key is `null`", () => {
+    expect(parsed("{null: 1}")).toMatchObject({
+      kind: "MapLit",
+      entries: [{ key: { kind: "Null" }, value: { kind: "Num", value: 1 } }],
+    });
+  });
+
+  it("is E0235 at the key, and the Map is checked as any other", () => {
+    expect(diagnostics("slot m : Map(Int, Int) = {null: 1}")).toEqual([
+      "E0235 1:27 `null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+    ]);
+  });
+
+  it.each([
+    ["{null}", 17],
+    ["{null = 1}", 17],
+    ["{a: 1, null: 2}", 23],
+    ["{a, null}", 20],
+  ])("is refused where a record field name goes in %s", (literal, col) => {
+    expect(() => parsed(literal)).toThrow(
+      `Parse error at 1:${col}: \`null\` is not a record field name, and not a value — Kumiki has no null`,
+    );
+  });
+});
+
 describe("the Map literal checks against its declared Map type", () => {
   it("as a slot's initial value", () => {
     expect(diagnostics('slot labels : Map(Bool, Text) = {true: "on", false: "off"}')).toEqual([]);
