@@ -1,5 +1,5 @@
-# Feature (language.md §1.6.5): within a `fn`, `$1`, `$2`, ... are the
-# arguments in order — each is the parameter at its position, with its type.
+# Feature: within a `fn`, `$1`, `$2`, ... are the arguments in order — each is
+# the parameter at its position, with its type.
 #
 # A fragment inside the body binds its own `$1` / `$2`: in `doubled`, the
 # receiver `$1` is the fn's list and the fragment's `$1` is each element; in
