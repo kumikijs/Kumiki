@@ -544,7 +544,7 @@ The first is a value as a positional argument. The second is a value where a who
 
 Codegen drops a value in a positional argument, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
 
-A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. A tile as a value builtin's content is [E0236](#e0236-tile-as-content). Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
 
 **Fix**: Show the value with a tile — `column(text(n.show))`, `when(c, text(total.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that. Write a builtin tile's call where it is named — `column(divider())`.
 
@@ -923,6 +923,26 @@ The second form is a bound type with no row in the table at all: a `Bool` (bind 
 The bound type is unaliased first, so `type Qty = Int where positive` and a `nominal Int` are an `Int` here. Only a literal `type=` is judged against it; a `type=` written as an expression is not known here, and only the second form applies beside one. A bind whose type cannot be read is not reported (its own code, such as [E0103](#e0103-undef-ref-undef-slot), names it), and `type="file"` with a bind is [E0205](#e0205-bind-on-file-input).
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
+
+### E0236 `tile-as-content`
+
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable`, from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child).
+
+> ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
+
+`<content>` is the builtin with a value where it reads its content: `text(x.show)`, or `image(src=x.show)` / `label(text=x.show)` where the content is written as a named argument.
+
+A tile there is one of:
+
+- a `when` or a `for`, which only a `tile-expr` has;
+- a call of a builtin (`text(column(…))`) or of a tile the program defines (`text(Card({label: "a"}))`, `text(lower())`), or the name of a tile the program defines (`text(Header)`);
+- a tile in an arm of a value `if` / `match` — `text(if c then Header else "b")` — which is what the content is when that arm is taken. Each tile arm is reported.
+
+The content is read as an expression, so a name is first the value it names: a slot, a `let` or loop variable, a `match` binding and a `fn` named like a tile (`heading(label(x))` with a `fn label`) are values, and so is a capitalised name that a union has as a tag. A builtin's name written without its call (`text(code)`) calls nothing, and is the undefined name it is ([E0103](#e0103-undef-ref-undef-slot)). A value `if` / `match` whose arms are values (`text(match m with | A -> "a" | B -> "b")`) is a value.
+
+Each tile is reported where it is written, and nothing else in the content is checked — the tile's own arguments, an `if`'s condition, its other arm: the content is moved whole, into a container or out for a value, and a diagnostic in it shows once it is.
+
+**Fix**: Write the tile as a child of a container — `column(when(c, column(…)))`, `column(Header)`, `column(if c then Header else text("b"))` — or show a value with the builtin — `text(x.show)`.
 
 ### W0213 `handler-on-inert-tile` (warning)
 

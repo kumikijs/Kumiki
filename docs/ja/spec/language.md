@@ -655,6 +655,7 @@ pattern      ::= identifier
 - それ以外の tile 引数内（`column`, `row`, `card` 等）の `match` は tile 式（`TileMatch`）として扱われる。各 arm は tile を返す
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
+- 値 builtin の内容は値であり、そこに書いた tile は決して描画されない：`when` / `for`、tile の呼び出しや名前（`text(column(…))`、`text(Header)`）、値の `if` / `match` の腕にある tile（`text(if c then Header else "b")`）は [E0236](./errors.md#e0236-tile-as-content) である。tile はコンテナの子として書く —— `column(when(c, …))` —— か、値を表示する —— `text(x.show)`
 
 ### 1.7.2 不変条件
 
