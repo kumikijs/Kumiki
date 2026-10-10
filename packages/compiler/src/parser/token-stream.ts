@@ -98,6 +98,17 @@ export class TokenStream {
     return undefined;
   }
 
+  /** A number literal with an optional leading `-`, and the text it is written as. */
+  protected eatSignedNumberLit(): { value: number; raw: string } {
+    if (this.matchOp("-") && this.matchTAt(1, "num")) {
+      this.next();
+      const t = this.eat("num");
+      return { value: -t.value, raw: `-${t.raw}` };
+    }
+    const t = this.eat("num");
+    return { value: t.value, raw: t.raw };
+  }
+
   protected parseDuration(): number {
     const numTok = this.peek();
     const n = this.eatSignedNumber();
