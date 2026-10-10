@@ -1,5 +1,5 @@
 # Multi-subscribe
-# Two reducers subscribe to ui.click(SaveBtn). Per spec §1.6.4 they both fire,
+# Two reducers subscribe to ui.click(SaveBtn). They both fire,
 # in source order: first `save` bumps `version`, then `audit` records the click
 # count in `log`. Click the button — both slots advance together.
 

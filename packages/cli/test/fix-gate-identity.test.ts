@@ -1,37 +1,14 @@
-// What the regression gate reads a diagnostic as.
-//
-// It compared `code@line:col`, so a repair that changed a fragment's length
-// moved every diagnostic to its right — and `E0001`'s repair, which prepends a
-// tile, moved every diagnostic below it. A moved diagnostic is not in the
-// before-set, so the gate called it introduced and rolled the whole plan back
-// over a diagnostic no patch had touched.
-
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { applyFixPlan } from "@kumikijs/cli";
-import { afterEach, describe, expect, it } from "vitest";
-
-let dir = "";
-const fixture = (prefix: string, lines: string[]): string => {
-  dir = mkdtempSync(join(tmpdir(), prefix));
-  const file = join(dir, "in.kumiki");
-  writeFileSync(file, `${lines.join("\n")}\n`);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
+import { describe, expect, it } from "vitest";
+import { seedLines } from "./helpers/files.ts";
 
 const at = (e: { code: string; pos: { line: number; col: number } }): string =>
   `${e.code}@${e.pos.line}:${e.pos.col}`;
 
 describe("a diagnostic a repair merely moved is not an introduced one", () => {
   it("along its line — the repair is shorter than what it replaced", () => {
-    // `$route` → `route` is repairable and one character shorter, so the
-    // unrepairable `qqqqqqqqqq` beside it lands one column to the left.
-    const file = fixture("kumiki-gate-column-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       "reducer clicked on=ui.click(B) do= seen := $route.path + qqqqqqqqqq",
       'tile B = button(text="go")',
@@ -52,10 +29,7 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
   });
 
   it("down the file — the repair inserts lines above it", () => {
-    // `E0001` prepends a `tile NotFound` block, so every diagnostic below it
-    // moves two lines down. This is the commonest repair in the catalogue, and
-    // one unrepairable name anywhere under it used to block the whole plan.
-    const file = fixture("kumiki-gate-row-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       'reducer clicked on=ui.click(B) do= seen := "x"',
       'tile B = button(text="go")',
@@ -75,9 +49,7 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
   });
 
   it("when two diagnostics share a code and only one is repairable", () => {
-    // Both are E0103, so a comparison keyed on the code alone cannot tell
-    // "repaired counter" from "repaired counter, broke something else".
-    const file = fixture("kumiki-gate-samecode-", [
+    const file = seedLines([
       "slot counter : Int = 0",
       "slot n : Int = 0",
       "reducer r on=ui.click(B) do= n := countr + qqqqqqqqqq",
@@ -100,14 +72,7 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
 
 describe("a repair that leaves the file no cleaner still rolls back", () => {
   it("when it rewords a diagnostic while another repair resolves one", () => {
-    // `E0211` rewrites the first match on the reducer's line, which here is the
-    // reducer's own name — so the selector stays undeclared and the diagnostic
-    // comes back saying `Reducer "Button"` instead of `Reducer "Bttn"`. The
-    // `$route` repair beside it is real, so the *counts* balance: one E0211
-    // before and after, one E0119 gone. A comparison keyed on the code alone
-    // reads that as a clean repair and writes a file whose reducer was renamed
-    // for nothing.
-    const file = fixture("kumiki-gate-reworded-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       'tile Button = button(text="go")',
       "reducer Bttn on=ui.click(Bttn) do= seen := $route.path",
@@ -131,10 +96,7 @@ describe("a repair that leaves the file no cleaner still rolls back", () => {
   });
 
   it("when it swaps one diagnostic for another", () => {
-    // `cap=lgo` is E0301; adding `lgo` to app.caps clears it and immediately
-    // raises E0302 unknown-capability. The count is 1 either way — the thing
-    // the comparison exists to catch, and dropping position must not lose it.
-    const file = fixture("kumiki-gate-swap-", [
+    const file = seedLines([
       "effect logHello cap=lgo",
       "                in=Text",
       "                out=Unit",
@@ -160,9 +122,7 @@ describe("a repair that leaves the file no cleaner still rolls back", () => {
   });
 
   it("when the repair creates a type error where a name error was", () => {
-    // `cnt` resolves to the nearest declared name `cn`, which is a `Text` in
-    // an `Int` sum. Same position, different code and message.
-    const file = fixture("kumiki-gate-introduced-", [
+    const file = seedLines([
       "slot n  : Int  = 0",
       'slot cn : Text = ""',
       "reducer bump on=ui.click(Btn) do= n := cnt + 1",

@@ -1,8 +1,8 @@
-# Feature: the remaining documented built-in tiles (stdlib §2.3) that codegen
-# previously accepted at `check` but crashed on at `build` (issue #61):
-# code / video / list / table / modal / drawer / tooltip / popover / toast /
-# progress / slider / switch / error. This example pins all of them as
-# check + build + smoke covered so the registry can't silently re-drift.
+# Feature: the remaining documented built-in tiles that codegen once
+# accepted at `check` but crashed on at `build`: code / video / list / table /
+# modal / drawer / tooltip / popover / toast / progress / slider / switch /
+# error. This example pins all of them as check + build + smoke covered so the
+# registry can't silently re-drift.
 
 slot name   : Text where nonempty = ""
 slot vol    : Int  = 50

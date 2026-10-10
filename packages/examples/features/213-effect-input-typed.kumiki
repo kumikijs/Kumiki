@@ -1,4 +1,4 @@
-# Feature (language.md §1.5.2): an effect's own expressions — its
+# Feature (language.md): an effect's own expressions — its
 # `map-request` and its `latest-per-key` key — are applied to the effect's
 # input, so their `$1` has the type the effect's `in=` declares, as a tile's
 # `$1` has the type of the tile's own `in=`.

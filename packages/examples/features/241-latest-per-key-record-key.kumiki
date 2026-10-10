@@ -1,7 +1,7 @@
-# Feature (language.md §1.5.2, http.md §6.4): a `latest-per-key` key may be a
+# Feature (language.md, http.md): a `latest-per-key` key may be a
 # record — or a tuple, a List, an Option or a variant — and two emits share a
 # key, so that the second aborts the first, exactly when their keys are `==`.
-# The key is written the way a Map key is stored (stdlib.md §2.2.2), so
+# The key is written the way a Map key is stored (stdlib.md), so
 # `{user: "ada", page: 1}` and `{user: "ada", page: 2}` are two keys: the two
 # requests `both` starts in one reducer body are in flight at once, and both
 # complete.
