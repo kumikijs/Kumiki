@@ -1,5 +1,5 @@
-# Feature (forms.md §5.1): a `bind=` target steps through an index the way
-# the left of `:=` does (language.md §1.6.3). `input(bind=rows[i].title)`
+# Feature (forms.md): a `bind=` target steps through an index the way
+# the left of `:=` does (language.md). `input(bind=rows[i].title)`
 # shows what the read `rows[i].title` shows and writes what
 # `rows[i].title := v` writes: the element at `i`, in a new List of the same
 # length. The index is read again on every render, as a read of it is, so

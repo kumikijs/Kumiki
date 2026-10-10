@@ -1,23 +1,8 @@
-// A refinement written inside a type — a record field, a union payload, a
-// container element — is a check on the value on its way into the slot, the
-// same as one written on the type itself (spec/language.md §1.3.3).
-// Codegen used to gate a slot on its own chain only, so on
-//
-//     slot form : {email: Text where email} = {email: "ada@example.com"}
-//
-// the slot was emitted with no `refine`, and `form.email := "nope"` committed
-// with `check`, `build` and `smoke` all silent (#444).
-
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
 import { type AppShape, type BindSegment, type SlotMeta, slotAccepts } from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
 
 const SRC = `
 type Contact = {email: Text where email, age: Int where between(0, 120)}
@@ -57,12 +42,7 @@ app Nested
 
 /** Compile `src`, import the module, and hand back its slot table. */
 async function load(src: string): Promise<Record<string, SlotMeta>> {
-  const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok") throw new Error(JSON.stringify(result.errors));
-  const dir = mkdtempSync(join(TMP_ROOT, "nested-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
-  const mod: { default: AppShape } = await import(`${pathToFileURL(file).href}?t=${Date.now()}`);
+  const mod = await importModule<{ default: AppShape }>(compileOrFail(src, LOADABLE), "nested");
   return mod.default.slots;
 }
 
@@ -188,8 +168,6 @@ describe("a refinement on a container element", () => {
   });
 
   it("checks a Map's values, and its keys as the type they were declared", () => {
-    // A map is an object at runtime, so its keys arrive as strings; an `Int`
-    // key's predicate still has to see a number.
     expect(refineOf("byId")({ 1: "abc", 2: "de" })).toBe(true);
     expect(failureOf("byId", { 1: "abcd" })).toEqual({
       kind: "len-lt",
@@ -250,9 +228,6 @@ describe("positions nest, and a type may be recursive", () => {
 });
 
 describe("a Set's members, in either runtime form", () => {
-  // A Set is an object keyed by `entryKey(member)` once `add` / `toggle`
-  // built it, and still an array when it came from a literal; a literal a member was
-  // added to is both at once (the array's entries plus a key).
   it("reads a numeric member back as a number from a key", () => {
     expect(refineOf("nums")({ 1: true, 2: true })).toBe(true);
     expect(failureOf("nums", { 1: true, 0: true })).toEqual({
@@ -302,8 +277,6 @@ describe("a slot the walk does not gate", () => {
 });
 
 describe("a value of the wrong shape", () => {
-  // §1.3.3: a predicate answers a value of the wrong shape with `false`
-  // rather than raising — the position's first predicate refuses it.
   it("is refused at the position whose shape it lacks, not passed or thrown", () => {
     expect(failureOf("tags", {})).toEqual({ kind: "len-lt", args: [4], path: [] });
     expect(failureOf("tags", "abcdefg")).toEqual({ kind: "len-lt", args: [4], path: [] });
@@ -321,8 +294,6 @@ describe("a value of the wrong shape", () => {
 
 describe("the helpers a walk is made of", () => {
   it("stop at a directly recursive record's missing field instead of recursing", async () => {
-    // No finite value has the type, so none is well typed — but a decoded
-    // payload can still arrive holding one, and the walk has to end on it.
     const loop = await load(
       program(`type Loop = {next: Loop, name: Text where nonempty}
 slot l : Option(Loop) = None`),
@@ -337,8 +308,6 @@ slot l : Option(Loop) = None`),
   });
 
   it("are declared so that a name aliasing one still being lowered loads", async () => {
-    // Lowering B reaches A, whose body is B again: A's helper stands for B's,
-    // which is not declared yet when A's is.
     const aliased = await load(
       program(`type B = {x: Option(A), n: Text where nonempty}
 type A = B
@@ -390,12 +359,6 @@ slot t : T(${arg}) = {v: ${arg === "Int" ? "1" : '"a"'}, next: None}`);
   });
 });
 
-// A `bind` into part of a slot is judged at the path it writes (forms.md
-// §5.6): the gate takes that path as a focus, enters only the position each
-// step names, and checks everything below where it ends. The focus has to
-// survive every helper between the slot and the field — an alias of a named
-// type is a wrapper around that type's helper, and a nominal or refined type
-// calls its inner type's — or a sibling's failure refuses the write again.
 describe("a gate asked about one bind path", () => {
   const FOCUS = program(`type Short   = Text where len-lt(12)
 type City    = nominal Short where nonempty
@@ -499,10 +462,6 @@ slot draft  : Option(Entry) = None`);
     expect(res({ _tag: "Err", _0: "nope" })?.path).toEqual([{ variant: "Err" }]);
   });
 
-  // No bind step names a List element, a Set member, a Map key or entry, a
-  // Tuple member or a user union's payload, so a focus that reaches one with
-  // steps left has nothing there to follow: everything below is checked, and
-  // a step the gate cannot read is never a reason to pass over a failure.
   const unnamed: [string, string, unknown, BindSegment[], unknown[]][] = [
     [
       "a List element",

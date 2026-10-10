@@ -24,7 +24,7 @@ step that filled it stayed clean. With a `for` variable as the root already
 refused (E0229), there was no way to bind a field of a list element at all.
 
 An index step is now a step of a bind target, as it is of the left of `:=`
-(forms.md §5.1, language.md §1.6.3). The control shows what the read
+(forms.md, language.md). The control shows what the read
 `rows[i].title` reads and writes what `rows[i].title := v` writes, through
 the same setter: the element of a `List` at an `Int`, the entry of a `Map` at
 a key. The key is any expression and is read again on every render, so a

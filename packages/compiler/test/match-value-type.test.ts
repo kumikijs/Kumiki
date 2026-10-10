@@ -1,29 +1,8 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
-// A `match` used as a value had no type. Its arms bound their payloads
-// with the right types — `| Some(id) -> p := id` reported — but the value the
-// arms produce was never compared with where it lands, so
-// `p := match ou with | Some(id) -> id | None -> p` put a `UserId` into a
-// `PostId` slot without a word, while `p := ou.get-or(p)` reported the same
-// mistake.
-//
-// Two readers had to learn it: a destination with a declared type checks each
-// arm the way it checks each branch of an `if`, and `inferType` answers the
-// arms' common type for the positions that have no declared type (a `let`, an
-// operand, a receiver).
-
-const errsOf = (src: string) => check(parse(lex(src)));
-const app = (defs: string): string =>
-  `${defs}
-tile B = button(text="x")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-
-const diagnostics = (src: string) => errsOf(app(src)).map((e) => `${e.code} ${e.message}`);
+const diagnostics = (src: string) => summariesOf(withButtonApp(src));
 
 const IDS = `type PostId = nominal Text where uuid
 type UserId = nominal Text where uuid
@@ -44,7 +23,7 @@ describe("a match assigned to a declared destination", () => {
 
   it("reports at each arm that does not fit, not at the match", () => {
     const line = `reducer r on=ui.click(B) do= p := match ou with | Some(id) -> id | None -> u`;
-    const errs = errsOf(app(`${IDS}\n${line}`));
+    const errs = checkSource(withButtonApp(`${IDS}\n${line}`));
     // Columns are 1-based: each report sits on the arm's value, after its `-> `.
     const someArm = line.indexOf("-> id") + 4;
     const noneArm = line.indexOf("-> u") + 4;
@@ -97,10 +76,8 @@ slot f  : Float          = 0.0`;
   });
 
   it("reads an arm's bind over an outer name of the same spelling", () => {
-    // The `Some` arm's `id` is the `UserId` payload; the `None` arm's `id` is
-    // the outer `PostId`. Exactly one arm is wrong, and it is the `Some` arm.
     const line = `reducer r on=ui.click(B) do= let id = p; p := match ou with | Some(id) -> id | None -> id`;
-    const errs = errsOf(app(`${IDS}\n${line}`));
+    const errs = checkSource(withButtonApp(`${IDS}\n${line}`));
     expect(errs.map((e) => [e.code, e.message, e.pos.col])).toEqual([
       ["E0201", "Expected PostId but got UserId", line.indexOf("-> id") + 4],
     ]);
@@ -135,8 +112,6 @@ slot f  : Float          = 0.0`;
   });
 
   it("reports a pattern's own mistake once, not once per reader", () => {
-    // `Ok` is not a tag of an `Option`. `checkExpr` owns that report; the arm
-    // scope the destination check builds must not repeat it.
     const codes = inReducer(`n := match ou with | Ok(x) -> 1 | None -> 0`).map((d) =>
       d.slice(0, 5),
     );
@@ -159,9 +134,6 @@ describe("a match with no declared destination has its arms' common type", () =>
   });
 
   it("drops the nominal when the arms disagree, keeping the base they share", () => {
-    // `UserId` and `PostId` refuse each other but are both `nominal Text`, so
-    // the `match` has type `Text` (`sharedBase`), exactly as an `if` does —
-    // not the first arm's type, which would report the other arm's value.
     expect(inReducer(`let v = match ou with | Some(id) -> id | None -> p; n := v`)).toEqual([
       "E0201 Expected Int but got Text",
     ]);
@@ -174,10 +146,6 @@ describe("a match with no declared destination has its arms' common type", () =>
   });
 
   it("has no type when one arm's value is undecidable, rather than the other arm's", () => {
-    // `inferType` gives a `let` expression no type, so the `None` arm is
-    // undecidable and so is the whole `match`. Its value is a `PostId`, so
-    // were it decidable the `match` would be `Text` (above) and `p := v` would
-    // pass; answering the `Some` arm's `UserId` instead would report it.
     expect(
       inReducer(`let v = match ou with | Some(id) -> id | None -> (let w = p in w); p := v`),
     ).toEqual([]);
@@ -185,10 +153,6 @@ describe("a match with no declared destination has its arms' common type", () =>
 });
 
 describe("a name or tuple pattern binds the type as written", () => {
-  // language.md §1.9: each arm is read with the types its pattern binds. A
-  // name pattern binds the scrutinee's type and a tuple pattern each element's
-  // declared type, nominal included, the same as a variant pattern's payload.
-  // Binding the base (`Text`) let a `UserId` into a `PostId` slot unreported.
   const TUPLE = `${IDS}\nslot tt : Tuple(UserId, PostId) = ("b", "a")`;
 
   it.each([
@@ -208,16 +172,12 @@ describe("a name or tuple pattern binds the type as written", () => {
     expect(inReducer(body, TUPLE)).toEqual(["E0201 Expected Int but got UserId"]);
   });
 
-  // The two readers the arms' value reaches without a declared destination:
-  // `inferType` carries the binder's type through a `let`, and `==` compares
-  // it with the other operand. Each report sits where a direct read of `u`
-  // would put it.
   const reportsAt = (body: string, message: string, at: string, offset = 0) => {
     const line = `reducer r on=ui.click(B) do= ${body}`;
-    const src = app(`${TUPLE}\nslot b : Bool = false\n${line}`);
+    const src = withButtonApp(`${TUPLE}\nslot b : Bool = false\n${line}`);
     const lineNo = src.split("\n").indexOf(line) + 1;
     // Columns are 1-based.
-    expect(errsOf(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
+    expect(checkSource(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
       ["E0201", message, lineNo, line.indexOf(at) + offset + 1],
     ]);
   };

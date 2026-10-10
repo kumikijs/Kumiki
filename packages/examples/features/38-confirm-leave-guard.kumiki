@@ -1,10 +1,9 @@
 # Feature: confirm effect + route.leave guard.
 #
-# lifecycle.md §7.6: `confirm` is a built-in effect that renders a modal
-# dialog with Yes / No, dispatching the named reducer for the chosen
-# answer.
-# routing.md §3.5.2: a `route.leave` reducer can emit `confirm` to gate
-# the transition — Yes commits, No stays on the old route.
+# `confirm` is a built-in effect that renders a modal dialog with Yes / No,
+# dispatching the named reducer for the chosen answer. A `route.leave` reducer
+# can emit `confirm` to gate the transition — Yes commits, No stays on the old
+# route.
 
 slot dirty   : Bool = false
 slot saved   : Int  = 0

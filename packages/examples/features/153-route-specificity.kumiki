@@ -1,7 +1,7 @@
-# Feature (routing.md §3.1.2): the most specific route wins, whatever order the
-# entries are written in. Segment by segment a static segment beats a
-# parameter, and a parameter beats a wildcard; only routes that tie on every
-# segment fall back to definition order.
+# Feature: the most specific route wins, whatever order the entries are written
+# in. Segment by segment a static segment beats a parameter, and a parameter
+# beats a wildcard; only routes that tie on every segment fall back to
+# definition order.
 #
 # `/todos/:id` is declared before `/todos/new` here, yet `/todos/new` renders
 # the form: the static segment `new` outranks `:id`. Likewise `/todos/:id`

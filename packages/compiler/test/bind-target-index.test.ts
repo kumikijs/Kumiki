@@ -1,14 +1,7 @@
-// A `bind=` target steps through an index as the left of `:=` does (forms.md
-// §5.1, language.md §1.6.3): a List element at an `Int`, a Map entry at a
-// key. The lowering carries the step in the control's bind path, where the
-// runtime's one setter writes through it, and the checker asks of the step
-// what it asks of the same step on the left of `:=`: a Set has no places, so
-// an index into one is E0602 with the write side's sentence. The DOM half —
-// what the controls show and write as the index moves — is in
-// packages/tests/bind-through-index.test.ts.
-
-import { BUILTIN_TILES, check, codegen, lex, parse } from "@kumikijs/compiler";
+import { BUILTIN_TILES, codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 const HEAD = `type Size = Small | Large
 type Todo = {title: Text, done: Bool, qty: Int, size: Size}
@@ -22,21 +15,15 @@ slot draft : Option(D) = Some({title: "d"})
 slot title : Text = "t"
 tile B = button(text="b")
 `;
-const APP = `
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
 
-const diagnostics = (defs: string) => check(parse(lex(`${HEAD}${defs}${APP}`)));
+const program = (defs: string) => withApp(`${HEAD}${defs}`);
+const diagnostics = (defs: string) => checkSource(program(defs));
 const lowered = (defs: string): string =>
-  codegen(parse(lex(`${HEAD}${defs}${APP}`)), { runtimeSpecifier: "./runtime.js" }).js;
+  codegen(parse(lex(program(defs))), { runtimeSpecifier: "./runtime.js" }).js;
 
 describe("a bind target that steps through an index", () => {
-  // Found from the lowering rather than from a list, as the root check finds
-  // the controls it asks: a builtin that lowers `bind=title` is one whose
-  // bind an index step has to reach.
+  // Found from the lowering rather than from a list: a builtin that lowers
+  // `bind=title` is one whose bind an index step has to reach.
   const binding = [...BUILTIN_TILES]
     .filter((name) =>
       lowered(`tile App = column(${name}(bind=title, value="v"))`).includes(`bind: "title"`),
@@ -52,11 +39,8 @@ describe("a bind target that steps through an index", () => {
   });
 
   it("carries each step to the setter, the index as the key it computes", () => {
-    // The segment `:=` lowers an index step to, `{ at: <key> }`, with the key
-    // read where the control renders: `i` is the slot, read again each render.
     const js = lowered("tile App = column(input(bind=rows[i].title))");
     expect(js).toContain(`bind: "rows", bindPath: [{ at: _live["i"] },"title"]`);
-    // And what it shows is the read of the same path, through `_s.index`.
     expect(js).toContain(`_s.index(_live["rows"], _live["i"])`);
     const write = lowered(`reducer r on=ui.click(B) do= rows[i].title := "x"
 tile App = column(B)`);
@@ -94,29 +78,27 @@ tile App = column(B)`);
   });
 
   it("is reported on every control that binds", () => {
-    const codes = diagnostics(
+    const positions = diagnostics(
       `tile App = column(textarea(bind=s["a"]), select(bind=s["a"], options=[]))`,
     )
       .filter((d) => d.code === "E0602")
       .map((d) => d.pos);
-    expect(codes).toEqual([
+    expect(positions).toEqual([
       { line: 12, col: 33 },
       { line: 12, col: 54 },
     ]);
   });
 
-  it("takes an Int for a List index, as the read and the write do", () => {
-    expect(
-      diagnostics(`tile App = column(input(bind=rows["x"].title))`).map((d) => d.code),
-    ).toEqual(["E0201"]);
+  it.each([
+    ["a List index takes an Int, as the read and the write do", 'rows["x"].title', ["E0201"]],
+    ["a call step is left to E0602", "rows.get(0).get.title", ["E0602"]],
+  ])("%s", (_label, target, expected) => {
+    expect(codesOf(program(`tile App = column(input(bind=${target}))`))).toEqual(expected);
   });
 
-  it("leaves a call step to E0602 and a for variable's root to E0229", () => {
-    expect(
-      diagnostics("tile App = column(input(bind=rows.get(0).get.title))").map((d) => d.code),
-    ).toEqual(["E0602"]);
-    expect(
-      diagnostics("tile App = column(for r in rows input(bind=r.title))").map((d) => d.code),
-    ).toEqual(["E0229"]);
+  it("leaves a for variable's root to E0229", () => {
+    expect(codesOf(program("tile App = column(for r in rows input(bind=r.title))"))).toEqual([
+      "E0229",
+    ]);
   });
 });

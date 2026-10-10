@@ -29,12 +29,12 @@ typing in both, `Object.keys(app.live)` was `["todos", "title", "route", "t",
 "$1"]` — so `todos` and `title` kept their values; the literal got no bind at
 all.
 
-A `bind=` target is a slot, or a field path into one (forms.md §5.1), and its
+A `bind=` target is a slot, or a field path into one (forms.md), and its
 root has to be a slot where the target is written. Each of these is now
 **E0229 `bind-target-not-slot`**, at the target, naming the root and what the
 checker knows it to be:
 
-> `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — a bind writes back to a slot or a field path into one. To edit a row, show it with value= and update the list from a reducer (see docs/spec/forms.md §5.1)`
+> `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — a bind writes back to a slot or a field path into one. To edit a row, show it with value= and update the list from a reducer (see docs/spec/forms.md)`
 >
 > `input(bind=…) cannot write to "$1": it is this tile's input, not a slot — …`
 >
@@ -50,7 +50,7 @@ asked — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`,
 before, and so does a slot bound by name inside a tile that takes an input.
 
 The checker and the lowering read a target through one function, so the root
-the checker asks about is the one the lowering writes. forms.md §5.1 now says
+the checker asks about is the one the lowering writes. forms.md now says
 which targets `bind=` accepts and shows how a row of a list is edited: show it
 with `value=`, carry its key in its props, and write the list from a reducer
 on the row's event.

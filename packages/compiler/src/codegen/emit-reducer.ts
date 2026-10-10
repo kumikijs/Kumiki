@@ -14,17 +14,6 @@ import { slotGate } from "./emit-slot.ts";
 import { jsOfExpr, reducerEmitJs, reducerNameArg, slotReadJs, tupleArm } from "./expr.ts";
 import { isUnwrapStep, type PathStep, segmentJs, UNWRAP_SEGMENT } from "./path-segment.ts";
 
-/**
- * Wrap a write to `slot` so the refinement is checked *as it happens*
- * (spec/runtime.md §10.3.3). Slots with no refinement are emitted bare — the
- * wrapper would be dead weight on every assignment in the program.
- *
- * Checking the batch's final value alone is not enough: `_next` is a map, so a
- * `for` loop writing the same slot repeatedly only preserves the last value,
- * and an intermediate that left the slot's range would never be seen. That
- * intermediate is readable by later statements in the body exactly like a
- * committed one, which is the leak this rule exists to close.
- */
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
   const def = gen.slots.find((s) => s.name === slot);
   if (!def || slotGate(def.type, gen) === "none") return valueJs;
@@ -214,7 +203,6 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
     for (const b of r.on.binds) if (b.name !== "_") locals.add(b.name);
   const ctx = makeEvalCtx(gen, locals, true);
 
-  // event descriptor
   let eventJs: string;
   let selectorJs = "undefined";
   if (r.on.kind === "UiEvent") {
@@ -229,7 +217,6 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
     eventJs = `{ kind: "lifecycle", name: ${JSON.stringify(r.on.name)} }`;
   }
 
-  // emits collection
   const stmtLines: string[] = [];
   stmtLines.push(`const _next = {};`);
   stmtLines.push(`const _emits = [];`);
@@ -243,10 +230,6 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
       stmtLines.push(`const ${bindRef(ctx, name)} = _payload[${JSON.stringify(`$${i + 1}`)}];`);
     }
   }
-  // Seeded from the table the checker's E0121 gate reads, so an effect-event
-  // bind can never be a second declaration of one of these names. A `let` in
-  // the body may still take one, and shadows it: `declareBind` gives the
-  // shadow an identifier of its own (language.md §1.6.7).
   for (const [name, seed] of RESERVED_BIND_NAMES) {
     stmtLines.push(`const ${bindRef(ctx, name)} = ${seed};`);
   }
@@ -277,10 +260,6 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
   }
   if (s.kind === "IfStmt") {
     const cond = jsOfExpr(s.cond, ctx);
-    // A branch is a block of its own, so a `let` in one is out of scope on the
-    // statement after the `if` — and in the other branch. Generating both
-    // against `ctx` let such a declaration rename the name for code that the
-    // declaration does not reach, which reads as `n$1 is not defined`.
     const thenCtx = childCtx(ctx);
     const elseCtx = childCtx(ctx);
     const thenBody = s.consequent.map((b) => genStatement(b, thenCtx)).join("\n  ");
@@ -323,20 +302,10 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
     return `/* no-op */`;
   }
   if (s.kind === "LetStmt") {
-    // The right-hand side is generated before the name is declared, so `let x =
-    // x + 1` reads the binding it shadows. The declaration then takes an
-    // identifier of its own where a name is already in scope: a reducer's
-    // top-level `let` shares its JS block with the trigger's binds and the
-    // positional-binding declarations, so a second `const` under the same name
-    // is a module that does not load.
     const rhs = jsOfExpr(s.rhs, ctx);
     return `const ${declareBind(ctx, s.name)} = ${rhs};`;
   }
   if (s.kind === "Emit") {
-    // `confirm` (lifecycle §7.6) carries `onYes`/`onNo` reducer references —
-    // bare identifiers naming a top-level reducer. Encode those fields as
-    // string literals so the runtime can dispatch by name; everything else
-    // (title/message and any non-Ref values) takes the normal expression path.
     if (s.effect === "confirm") {
       const args = s.args.map((a) => jsOfConfirmArg(a, ctx)).join(", ");
       return `_emits.push({ effect: "confirm", args: [${args}] });`;
@@ -346,8 +315,6 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
   if (s.kind === "StopTimer") {
     return `_stops.push(${JSON.stringify(s.name)});`;
   }
-  // The same helper the expression form lowers to — it throws, so a statement
-  // is the shape that always fitted.
   if (s.kind === "PanicStmt") {
     return `_s.panic(${jsOfExpr(s.message, ctx)});`;
   }
@@ -359,8 +326,6 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
   if (lv.kind === "LSlot") {
     return `_next[${JSON.stringify(lv.name)}] = ${slotWriteJs(lv.name, rhsJs, ctx.gen)};`;
   }
-  // Build update for nested lvalue.
-  // The root slot name + path → produce a new object.
   const root = lvalueRootName(lv);
   const path: PathStep[] = [];
   let cur: Lvalue = lv;
@@ -370,9 +335,6 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
     } else path.unshift({ at: cur.index });
     cur = cur.base;
   }
-  // Generate an inline `setPath(root, path, value)` expression. Inside a reducer
-  // body we read from `_next` first so successive writes in a `for` loop see
-  // the previous iteration's updates.
   const baseJs = `(${slotReadJs(root, ctx.reducerScope)} ?? {})`;
   const pathExpr = path.map((step) => segmentJs(step, (key) => jsOfExpr(key, ctx))).join(", ");
   // The runtime's setter, which `bind=` write-back also calls.
@@ -385,12 +347,6 @@ export function lvalueRootName(lv: Lvalue): string {
   return lv.name;
 }
 
-/**
- * Encode an argument to `emit confirm`. The single positional arg is a record
- * literal whose `onYes` / `onNo` fields name reducers; encode those as string
- * literals so the runtime can dispatch by name. Everything else falls back to
- * the normal expression path.
- */
 export function jsOfConfirmArg(a: Expr, ctx: EvalCtx): string {
   if (a.kind !== "RecordLit") return jsOfExpr(a, ctx);
   const parts = a.fields.map((f) => {

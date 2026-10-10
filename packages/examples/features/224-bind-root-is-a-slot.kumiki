@@ -1,9 +1,9 @@
-# Feature (forms.md §5.1): a `bind=` target is a slot, or a path into one.
+# Feature (forms.md): a `bind=` target is a slot, or a path into one.
 # The control writes back to the slot its target's root names, so that root
 # has to be a slot where the target is written: a `for` variable, a tile's
 # `$1` or a `match` binding is a value, not a place, and binding one is E0229.
 #
-# The rows of a list are edited through a reducer, one of the two ways §5.1
+# The rows of a list are edited through a reducer, one of the two ways forms.md
 # shows (238-bind-through-index binds them through the slot instead). Each row
 # shows its text with `value=` and carries its key in `{todoId: …}`, and one
 # reducer on `ui.input(TodoText)` writes the row the event came from, reading
