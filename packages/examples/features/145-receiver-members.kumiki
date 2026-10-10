@@ -1,14 +1,14 @@
-# Feature: a member belongs to the receivers stdlib.md §2.2 lists it for, not
-# to every receiver some container has it on (§2.2.3's dispatch rule).
+# Feature: a member belongs to the receivers the standard library lists it
+# for, not to every receiver some container has it on.
 #
 # `res.filter($1 > 2)` on a `Result` used to pass `check`, because `filter` is
 # a member of a `Map`, a `List` and an `Option` — and the runtime read the
 # `Result` as a `Map` and answered `{}`. `opt.keys` handed back the Option's
 # own `_tag` / `_0` as data. Each is E0108 now, naming the receiver and the
 # receivers that do have the member. What this program writes instead is the
-# spelling §2.2 gives each receiver: a `Result` becomes an `Option` before it
-# is filtered, a `Set` becomes a `List` before it is mapped, and a `List` is
-# measured by `length` (a `Map` / `Set` by `size`).
+# spelling the standard library gives each receiver: a `Result` becomes an
+# `Option` before it is filtered, a `Set` becomes a `List` before it is mapped,
+# and a `List` is measured by `length` (a `Map` / `Set` by `size`).
 #
 # A `Duration` is a `nominal Int` with `to-ms` besides, and stays one under a
 # `where`: `delay.to-ms` on a `Duration where between(…)` reads the Duration
