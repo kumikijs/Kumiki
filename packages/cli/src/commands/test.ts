@@ -2,10 +2,11 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { testCmd } from "../smoke.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki test <input.kumiki> [name|prefix*]";
 
-export function registerTest(program: Command): void {
+export function registerTest(program: Command): string {
   program
     .command("test")
     .description("Run in-language reducer-test / tile-test / property-test definitions")
@@ -20,10 +21,7 @@ export function registerTest(program: Command): void {
         filter: string | undefined,
         options: { coverage?: boolean; watch?: boolean },
       ) => {
-        if (!input) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!input) exitWithUsage(USAGE);
         const inputPath = resolve(process.cwd(), input);
         await testCmd(inputPath, filter, capsFor(inputPath).capabilities, {
           coverage: Boolean(options.coverage),
@@ -31,4 +29,5 @@ export function registerTest(program: Command): void {
         });
       },
     );
+  return USAGE;
 }

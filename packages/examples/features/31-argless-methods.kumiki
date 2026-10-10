@@ -1,6 +1,6 @@
-# Feature: argument-less stdlib methods (spec/stdlib.md §2.2), written in the
-# parenthesis-free form the spec recommends (§2.2.3). Before issue #7 these
-# compiled clean but evaluated to `undefined` at runtime; now they work.
+# Feature: argument-less stdlib methods, written in the parenthesis-free form
+# the spec recommends. These once compiled clean but evaluated to `undefined` at
+# runtime; now they work.
 
 slot nums  : List(Int) = [3, 1, 2]
 slot text  : Text      = "42"
