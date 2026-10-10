@@ -174,6 +174,9 @@ export function substituteType(t: TypeExpr, sub: ReadonlyMap<string, TypeExpr>):
     case "TypeRef":
       return sub.get(t.name) ?? t;
     case "TypeApp":
+      // A parameter takes no arguments (E0210 where written); left in place, the head
+      // would resolve against a top-level type that shares the parameter's name.
+      if (sub.has(t.name)) return unknownType(t.pos);
       return { ...t, args: t.args.map((a) => substituteType(a, sub)) };
     case "TypeRecord":
       return {

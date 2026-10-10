@@ -611,3 +611,102 @@ describe("generic instantiation", () => {
     expect(appCodes(`type Box(T) = {v: T}\nslot b : Box = {v: 1}`)).toEqual(["E0210"]);
   });
 });
+
+describe("a type parameter applied to arguments (E0210)", () => {
+  const reports = (defs: string) =>
+    checkSource(withButtonApp(defs)).map(
+      (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
+    );
+
+  it.each([
+    [
+      `type H(T) = {v: T(Int)}`,
+      'E0210 1:17 Type parameter "T" of "H" takes no type arguments, but is written "T(Int)"',
+    ],
+    [
+      `type H(T) = {v: T(Int, Text)}`,
+      'E0210 1:17 Type parameter "T" of "H" takes no type arguments, but is written "T(Int, Text)"',
+    ],
+    [
+      `type H(K, V) = {v: List(V(K))}`,
+      'E0210 1:25 Type parameter "V" of "H" takes no type arguments, but is written "V(K)"',
+    ],
+    [
+      `type H(T) = {v: T()}`,
+      'E0210 1:17 Type parameter "T" of "H" takes no type arguments, but is written "T()"',
+    ],
+  ])("reports the application in %s, naming the parameter and its definition", (defs, want) => {
+    expect(reports(defs)).toEqual([want]);
+  });
+
+  it("emits it as type-arity-mismatch", () => {
+    const found = checkSource(withButtonApp(`type H(T) = {v: T(Int)}`));
+    expect(found.map((e) => [e.code, e.kind])).toEqual([["E0210", "type-arity-mismatch"]]);
+  });
+
+  it.each([
+    ["in a record field", `type H(T) = {v: T(Int)}\nslot h : H(Text) = {v: 1}`],
+    ["to two arguments", `type H(T) = {v: T(Int, Text)}\nslot h : H(Text) = {v: 1}`],
+    ["to no arguments", `type H(T) = {v: T()}\nslot h : H(Text) = {v: 1}`],
+    ["as the whole body", `type H(T) = T(Int)\nslot h : H(Text) = 1`],
+    ["in a List element", `type H(T) = {v: List(T(Int))}\nslot h : H(Text) = {v: [1]}`],
+    ["in an Option payload", `type H(T) = {v: Option(T(Int))}\nslot h : H(Text) = {v: Some(1)}`],
+    ["in a variant payload", `type H(T) = Has(T(Int)) | Empty\nslot h : H(Text) = Has(1)`],
+    ["in a nominal", `type H(T) = nominal T(Int)\nslot h : H(Text) = 1`],
+    ["in a refinement", `type H(T) = T(Int) where positive\nslot h : H(Text) = 1`],
+    [
+      "in a declared generic's argument",
+      `type NE(X) = X where nonempty\ntype H(T) = {v: NE(T(Int))}\nslot h : H(Text) = {v: 1}`,
+    ],
+    ["to another parameter", `type H(A, B) = {v: B(A)}\nslot h : H(Text, Int) = {v: 1}`],
+    [
+      "under an alias of an instantiation",
+      `type H(T) = {v: T(Int)}\ntype J = H(Text)\nslot j : J = {v: 1}`,
+    ],
+    [
+      "under an instantiation a fn takes",
+      `type H(T) = {v: T(Int)}\nfn f(x: H(Text)) -> Int = 1\nslot s : Int = f({v: 1})`,
+    ],
+  ])("reports a parameter applied %s once", (_where, defs) => {
+    expect(appCodes(defs)).toEqual(["E0210"]);
+  });
+
+  it.each([
+    ["a program type", `type T = Int\ntype H(T) = {v: T(Int)}\nslot h : H(Text) = {v: "x"}`],
+    ["a stdlib constructor", `type H(List) = {v: List(Int)}\nslot h : H(Text) = {v: ["x"]}`],
+    [
+      "a program generic",
+      `type NE(X) = X where nonempty\ntype H(NE, A) = {v: NE(A)}\nslot h : H(Text, Int) = {v: 1}`,
+    ],
+  ])("reports a parameter that shadows %s once", (_what, defs) => {
+    expect(appCodes(defs)).toEqual(["E0210"]);
+  });
+
+  it.each([
+    `n := h.v`,
+    `n := h.v + 1`,
+  ])("reports nothing more where a value of the instantiation is used: %s", (body) => {
+    const defs = `type H(T) = {v: T(Int)}\nslot h : H(Text) = {v: 1}\nslot n : Int = 0`;
+    expect(reducerCodes(defs, body)).toEqual(["E0210"]);
+  });
+
+  it("still resolves the arguments it is written with", () => {
+    expect(appCodes(`type H(T) = {v: T(Foo)}\nslot h : H(Text) = {v: 1}`)).toEqual([
+      "E0210",
+      "E0117",
+    ]);
+  });
+
+  const G = `type G(U) = {u: U}\ntype W(T) = {v: G(T), w: List(G(T))}`;
+  it.each([
+    [`type H(T) = {v: T}\nslot h : H(Text) = {v: "x"}`, []],
+    [`type H(T) = {v: T}\nslot h : H(Text) = {v: 1}`, ["E0201"]],
+    [`type T = Int\ntype H(T) = {v: T}\nslot h : H(Text) = {v: "x"}`, []],
+    [`type H(T) = {v: List(T)}\nslot h : H(Text) = {v: [1]}`, ["E0201"]],
+    [`${G}\nslot w : W(Int) = {v: {u: 1}, w: [{u: 2}]}`, []],
+    [`${G}\nslot w : W(Int) = {v: {u: "x"}, w: []}`, ["E0201"]],
+    [`${G}\nslot w : W(Int) = {v: {u: 1}, w: [{u: "x"}]}`, ["E0201"]],
+  ])("still checks a bare parameter, and a generic applied to one: %s", (defs, want) => {
+    expect(appCodes(defs)).toEqual(want);
+  });
+});
