@@ -1,18 +1,12 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildAndLoad } from "./helpers/build-and-load.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const BLOG = resolve(here, "../../examples/apps/03-blog/app.kumiki");
+const BLOG = app("03-blog");
 
 const flush = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
 
-// The ids are uuids because the blog declares them so (`PostId` / `UserId` are
-// `nominal Text where uuid`), and a refinement inside a type is checked where
-// it is written (language.md §1.3.3): a `Map(PostId, …)` keyed by "p001"
-// refuses every write, so the index would never render.
 const P1 = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
 const P2 = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
@@ -54,8 +48,6 @@ describe("blog e2e (built from .kumiki)", () => {
   const rootId = "blog-root";
   let disposers: Array<{ dispose: () => void }> = [];
 
-  // Dispose every mount so its timers / route listeners don't leak into the
-  // next test (same cross-test isolation guard as the TodoMVC suite).
   function track(d: { dispose: () => void }): { dispose: () => void } {
     disposers.push(d);
     return d;

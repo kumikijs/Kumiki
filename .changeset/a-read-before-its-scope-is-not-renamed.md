@@ -38,7 +38,7 @@ it (the same kinds: `if`, `for`, `match`, `let-in`, `for-expr`, `match-expr`):
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 3:24: Reference to undefined name "idx" — it is declared later, at 3:35, and scoped to a tile's "for" body: move the read into the body (see docs/spec/language.md §1.6.7)
+E0103 undef-ref at 3:24: Reference to undefined name "idx" — it is declared later, at 3:35, and scoped to a tile's "for" body: move the read into the body (see docs/spec/language.md)
 $ kumiki fix app.kumiki
 (no auto-patches available)
 ```

@@ -1,11 +1,5 @@
 name: Bundle size
 
-# What each example app ships, on the PR's merge commit against its base:
-# `kumiki build --bundle` and `--minify`, raw / gzip / brotli. Informational —
-# the gate on size stays the counter budget in packages/cli/test/cli.test.ts;
-# this shows every app, and by how much a PR moves it, before it reaches that
-# line. See packages/benchmarks/bundle-size/.
-
 on:
   pull_request:
 
@@ -23,27 +17,15 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      # Neither checkout keeps its token in .git/config: this job's token can
-      # write to the PR, and `pnpm install` / `pnpm build` run the checked-out
-      # code. The comment step gets the token from github-script instead.
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          # The merge commit and its first parent, which the next step reads.
           fetch-depth: 2
 
-      # The base is the merge commit's first parent: the base-branch commit
-      # GitHub merged this PR onto. Not `pull_request.base.sha`, which stays at
-      # the base as of the PR's last base change — once the base branch moves,
-      # the merge commit carries commits that sha does not, and their size
-      # change would be reported as this PR's.
       - name: Find the base
         id: base
         run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
 
-      # The base goes in its own shallow checkout — one commit, not the
-      # history — and is measured with the head's script but its own CLI and
-      # runtime (`--root`), so the two reports differ only by the PR's change.
       - uses: actions/checkout@v6
         with:
           ref: ${{ steps.base.outputs.sha }}
@@ -59,9 +41,6 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # `kumiki build` copies the runtime's prebuilt dist/modules; the CLI and
-      # compiler run from src through tsx, so the runtime is all either side
-      # needs built.
       - name: Build head
         run: pnpm --filter @kumikijs/runtime build
 
@@ -74,9 +53,6 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --filter @kumikijs/runtime build
 
-      # A base whose CLI predates `kumiki build --bundle` (`main` until the
-      # release that ships it) cannot build what the script asks for. It
-      # writes no report then, and Compare shows the head's sizes alone.
       - name: Measure base
         continue-on-error: true
         run: node packages/benchmarks/bundle-size/measure.mjs --root .bundle-size-base --out "$RUNNER_TEMP/base.json"
@@ -86,8 +62,6 @@ jobs:
           node packages/benchmarks/bundle-size/compare.mjs "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json" > "$RUNNER_TEMP/bundle-size.md"
           cat "$RUNNER_TEMP/bundle-size.md" >> "$GITHUB_STEP_SUMMARY"
 
-      # A fork's token cannot write to the PR; the job summary above still has
-      # the table there.
       - name: Comment on the PR
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/github-script@v8
