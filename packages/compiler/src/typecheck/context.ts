@@ -18,7 +18,12 @@ export type KumikiError = {
   pos: Pos;
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
+  /** E0103 only: the nested body that declared the name and ended before this read. */
+  endedScope?: StatementScope;
 };
+
+/** The nested statement bodies of a reducer, each a scope of its own. */
+export type StatementScope = "if" | "for" | "match";
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -50,6 +55,8 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
+  /** Names a reducer's ended bodies declared and the enclosing scope does not bind. */
+  endedScopes?: Map<string, StatementScope>;
   oneValueFragment?: { method: string; hides: boolean };
 };
 

@@ -4,7 +4,14 @@ import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./against.ts";
-import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import {
+  bindLocal,
+  type Ctx,
+  innerScope,
+  type KumikiError,
+  type StatementScope,
+  type SymbolTable,
+} from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim, typeName } from "./infer.ts";
@@ -19,6 +26,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
+    endedScopes: new Map(),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -136,10 +144,10 @@ function checkStmt(
   if (s.kind === "ForStmt") {
     checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
-    const inner = innerScope(ctx);
-    bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
     const bodyWrites = new Set<string>(writtenRoots);
-    for (const st of s.body) checkStmt(st, sym, errors, inner, bodyWrites);
+    checkBody("for", s.body, sym, errors, ctx, bodyWrites, (inner) =>
+      bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx)),
+    );
     for (const r of bodyWrites) writtenRoots.add(r);
     return;
   }
@@ -147,11 +155,9 @@ function checkStmt(
     checkExpr(s.cond, sym, errors, ctx);
     checkCondition(s.cond, inferType(s.cond, sym, ctx), sym, errors, '"if"');
     const thenWrites = new Set<string>(writtenRoots);
-    const thenScope = innerScope(ctx);
-    for (const st of s.consequent) checkStmt(st, sym, errors, thenScope, thenWrites);
+    checkBody("if", s.consequent, sym, errors, ctx, thenWrites);
     const elseWrites = new Set<string>(writtenRoots);
-    const elseScope = innerScope(ctx);
-    for (const st of s.alternate) checkStmt(st, sym, errors, elseScope, elseWrites);
+    checkBody("if", s.alternate, sym, errors, ctx, elseWrites);
     for (const r of thenWrites) writtenRoots.add(r);
     for (const r of elseWrites) writtenRoots.add(r);
     return;
@@ -162,11 +168,11 @@ function checkStmt(
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
-      const inner = innerScope(ctx);
       checkPatternBindsAreDistinct(arm.pattern, errors);
-      checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
       const armWrites = new Set<string>(writtenRoots);
-      for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
+      checkBody("match", arm.body, sym, errors, ctx, armWrites, (inner) =>
+        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner),
+      );
       armSets.push(armWrites);
     }
     for (const set of armSets) for (const r of set) writtenRoots.add(r);
@@ -239,6 +245,24 @@ function checkStmt(
   checkLvalue(s.lvalue, sym, errors, ctx);
   checkExpr(s.rhs, sym, errors, ctx);
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
+}
+
+/** Names the body declared that `ctx` does not bind end with it; `endedScopes` records them. */
+function checkBody(
+  kind: StatementScope,
+  body: Statement[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+  writtenRoots: Set<string>,
+  bind?: (inner: Ctx) => void,
+): void {
+  const inner = innerScope(ctx);
+  bind?.(inner);
+  for (const st of body) checkStmt(st, sym, errors, inner, writtenRoots);
+  for (const name of inner.localBinds) {
+    if (!ctx.localBinds.has(name)) ctx.endedScopes?.set(name, kind);
+  }
 }
 
 function lvalueShape(lv: Lvalue): string {

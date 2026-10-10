@@ -152,6 +152,48 @@ test inc-works =
     expect(passing.code).toBe(0);
   });
 
+  // `idx` is one edit from the slot `id`, and the read renamed to `id`
+  // type-checks: a rename would leave a clean file that reads another slot.
+  const OUT_OF_SCOPE = `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+reducer tally on=ui.click(Btn)
+    do= for idx in [1] { () }
+        total := idx
+tile Btn = button(text="go")
+tile App = column(Btn, heading("Total: " + total.show))
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("exits 1 proposing nothing for a read after the body that declared it", SPAWN, () => {
+    const { stdout, code } = runCli(["fix", write("scope-dry.kumiki", OUT_OF_SCOPE)]);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 under --apply with that read left as written", SPAWN, () => {
+    const file = write("scope-apply.kumiki", OUT_OF_SCOPE);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(OUT_OF_SCOPE);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(stderr).toContain(
+      'E0103 Reference to undefined name "idx" — it is scoped to a "for" body',
+    );
+    expect(code).toBe(1);
+  });
+
+  it("still repairs a misspelling beside that read under --apply", SPAWN, () => {
+    const src = OUT_OF_SCOPE.replace("total := idx", "total := idx\n        count := cont");
+    const file = write("scope-misspelling.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--apply"]);
+    expect(stdout).toContain("applied 1 fix(es) — 1 error(s) remain");
+    expect(readFileSync(file, "utf8")).toBe(src.replace("count := cont", "count := count"));
+    expect(code).toBe(1);
+  });
+
   it("applies a patch to a file that also has a warning", SPAWN, () => {
     const { stdout, code } = runCli([
       "fix",
