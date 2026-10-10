@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "label": "the boundary shows the fallback, and the fallback is what mounted",
+      "expect": {
+        "noErrors": true,
+        "state": { "fallbackShown": 1, "fallbackGone": 0, "chartShown": 0 },
+        "domIncludes": ["chart unavailable: get called on None (attempts: 0)"]
+      }
+    },
+    {
+      "label": "re-rendering the fallback while the panic persists is not a new appearance",
+      "do": { "clickText": "retry" },
+      "expect": {
+        "noErrors": true,
+        "state": { "attempts": 1, "fallbackShown": 1, "fallbackGone": 0, "chartShown": 0 },
+        "domIncludes": ["chart unavailable: get called on None (attempts: 1)"]
+      }
+    },
+    {
+      "label": "the tile renders without panicking, so the fallback unmounts and the tile mounts",
+      "do": { "clickText": "load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "fallbackShown": 1, "fallbackGone": 1, "chartShown": 1 },
+        "domIncludes": ["chart: 42"],
+        "domExcludes": ["chart unavailable"]
+      }
+    }
+  ]
+}

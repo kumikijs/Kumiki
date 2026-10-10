@@ -312,17 +312,4 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
 `);
     expect(root.textContent).toContain("len=0");
   });
-
-  it("gives the fallback tile no mount marker of its own", async () => {
-    const { app, root } = await mountRoute(`slot xs : List(Int) = []
-slot fbMounts : Int = 0
-reducer sawFb on=tile.mount(Fallback) do= fbMounts := fbMounts + 1
-tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
-tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
-tile Host = column(Boom())
-app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
-`);
-    expect(root.textContent).toContain("caught:");
-    expect(app.live?.fbMounts).toBe(0);
-  });
 });
