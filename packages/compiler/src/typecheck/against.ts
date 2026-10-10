@@ -213,6 +213,7 @@ function checkVariantAgainst(
   ctx: Ctx,
   code: MismatchCode,
 ): void {
+  sym.judgedVariants.add(e);
   const payloadsOf = (): TypeExpr[] | "unknown-tag" | null => {
     if (d.kind === "TypeUnion") {
       const v = d.variants.find((variant) => variant.name === e.name);

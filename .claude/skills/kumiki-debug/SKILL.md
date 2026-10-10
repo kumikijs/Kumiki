@@ -63,7 +63,7 @@ Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xx
 
 ## Auto-fix
 
-For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` on a `let` read outside the scope that declared it is not a misspelling: do not apply a rename `fix` proposes for it — it would read a different value and still type-check.
+For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls; variant tags for `undef-variant`; tags, types and namespaces for `undef-qualifier`), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` on a `let` read outside the scope that declared it is not a misspelling: do not apply a rename `fix` proposes for it — it would read a different value and still type-check.
 
 ```sh
 pnpm kumiki fix <file>          # show planned fixes

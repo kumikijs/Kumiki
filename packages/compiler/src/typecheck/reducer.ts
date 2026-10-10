@@ -183,7 +183,8 @@ function checkStmt(
     const confirmArg = s.effect === "confirm" && s.args.length === 1 ? s.args[0] : undefined;
     if (confirmArg && confirmArg.kind === "RecordLit") {
       for (const f of confirmArg.fields) {
-        if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+        const names = f.name === "onYes" || f.name === "onNo";
+        if (names && f.value.kind === "Ref") {
           if (!sym.reducers.has(f.value.name)) {
             errors.push({
               code: "E0103",
@@ -194,6 +195,9 @@ function checkStmt(
           }
           continue;
         }
+        // A capitalised reducer name parses as a tag; the `ReducerRef` check
+        // already reports it, and resolving it as a tag would report it twice.
+        if (names && f.value.kind === "Variant" && f.value.payload.length === 0) continue;
         checkExpr(f.value, sym, errors, ctx);
       }
       return;

@@ -51,7 +51,7 @@ type KumikiError = {
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
 | `E0107` | あり | 宣言済み motion 名に対する近傍名の提案。 |
-| `E0116` | あり | 宣言済み `fn` 名と組み込み呼び出しに対する近傍名の提案（スコープ限定 — 名前の近い slot や tile は候補にならない）。 |
+| `E0116` | あり | 宣言済み `fn` 名と組み込み呼び出しに対する近傍名の提案（スコープ限定 — 名前の近い slot や tile は候補にならない）。`undef-variant` はプログラムが書くすべての union のタグと標準ライブラリのタグに対して、`undef-qualifier` はそれらのタグ・型名・組み込み呼び出しの名前空間に対して提案する——メッセージ自身の提案が選ばれる候補と同じである。 |
 | `E0117` | あり | 型名に対する近傍名の提案。プログラム自身の `type` 定義を先に、続いてプリミティブ・標準ライブラリのドメイン型・generic コンストラクタ（スコープ限定 — 名前の近い slot や fn は候補にならない）。 |
 | `E0118` | あり | 宣言済みの theme 名と slot 名に対する近傍名の提案 — `app.theme` が受け付ける 2 つの名前空間（スコープ限定 — 名前の近い tile や reducer は候補にならない）。 |
 | `E0209` | あり | scrutinee union の variant タグに対する近傍名の提案（組み込みの `Option` / `Result` と、別名を辿ったユーザ `TypeDef` の body）。 |
@@ -345,7 +345,9 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 **修正**：slot の名前を変える。
 
-### E0116 `undef-call`
+### E0116 `undef-call` / `undef-variant` / `undef-qualifier`
+
+名前が何も指していない：呼び出し先（`undef-call`）、variant コンストラクタ（`undef-variant`）、qualifier（`undef-qualifier`）のいずれかである。呼び出し先を先に述べ、残る 2 つはその後に続く。
 
 呼び出し `f(...)` がどの関数も指していない。候補集合はプログラム内の `fn` 定義と組み込み呼び出しで、後者は 3 つの文書に分かれている。
 
@@ -357,7 +359,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 | `file-url` | [フォーム §5.10](./forms.md#_5-10-file-upload) |
 | `prefers-dark` | [スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従) |
 
-`Decoder` / `EffectId` / `Duration` / `Bytes` のメンバを**括弧なし**で書いたものは値ではなく、引数を渡さない呼び出しである。`Decoder.Text` や `EffectId.none` はそう書かれ、`Duration.s` / `Bytes.from-text` も——後者 2 つの名前空間に 0 引数のメンバは無いが——同じ読み方をする。したがってその名前空間が宣言していないメンバは何も持たない値に評価されるのではなくここで報告され（`Duration.nope` は E0116）、実在するメンバに引数を渡さなかった場合は [E0213](#e0213-call-arity-mismatch) になる。この 4 つは上の表が挙げる組み込み呼び出しの qualifier である。それ以外の qualifier に対する括弧なしの `<T>.fresh` / `.parse` / `.show` は呼び出しとして読まれ**ない**——フィールド読みのまま何も持たない値に評価され、診断も出ない。これは規則ではなく既知のギャップである。
+`Decoder` / `EffectId` / `Duration` / `Bytes` のメンバを**括弧なし**で書いたものは値ではなく、引数を渡さない呼び出しである。`Decoder.Text` や `EffectId.none` はそう書かれ、`Duration.s` / `Bytes.from-text` も——後者 2 つの名前空間に 0 引数のメンバは無いが——同じ読み方をする。したがってその名前空間が宣言していないメンバは何も持たない値に評価されるのではなくここで報告され（`Duration.nope` は E0116）、実在するメンバに引数を渡さなかった場合は [E0213](#e0213-call-arity-mismatch) になる。この 4 つは上の表が挙げる組み込み呼び出しの qualifier である。それ以外の qualifier に対する括弧なしの `<T>.fresh` / `.parse` / `.show` は呼び出しとして読まれ**ない**。qualifier が型を指すならフィールド読みのまま何も持たない値に評価され、診断も出ない——これは規則ではなく既知のギャップである。何も指さないなら `undef-qualifier`（後述）になる。
 
 `run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。それ以外の場所に書けば E0116 になる。テスト本体の中では専用の文面を持つ——誤っているのは名前ではなく位置だからである：
 
@@ -371,7 +373,25 @@ lowering が読む `_init` / `_event` は trial の中でしか束縛されな�
 
 `obj.method(...)` に対する同じ関係が `E0801` であり、式の形が異なるため別々に解決される。
 
-**修正**：綴りを直すか、`fn` を宣言する。
+**variant コンストラクタ**とは、式の中の大文字で始まる名前すべてである（ペイロードの有無を問わない）。どの union も宣言していないタグを指すと `undef-variant` になる：
+
+> `Reference to undefined variant "<name>"`
+
+タグとは、プログラムが書くすべての union のタグ——`type` の本体か、slot の型・レコードのフィールド・`fn` の引数や戻り値・`effect` の `in=` / `out=`・property test の `for-all` にインラインで書かれた union のもので、ファイル内のどこに書かれていてもよい——と、標準ライブラリのタグである：`Some` / `None`、`Ok` / `Err`、`FormValue` の `TextV` / `NumberV` / `BoolV` / `FileV`、リクエストボディの `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty`（[HTTP / Storage §6.1.3](./http.md#_6-1-3-httpbody-型)）。コード生成はどんな綴りからも variant を作るため、どの union も宣言していないタグは `{_tag: "<name>"}` へ落ちる：どの `match` arm にも一致せず、他のどの値とも等しくならず、どのフィールドも `undefined` である値である。
+
+宣言された型が variant を判定する位置では、その型を名指してその位置で報告される：`slot s : Status = Zork` は [E0216](#e0216-unknown-variant)、union でない型に与えたタグは [E0201](#e0201-type-mismatch)——`emit` の引数なら [E0202](#e0202-emit-arg-type-mismatch)——である。`undef-variant` は宣言された型が判定しない位置——`let`、`effect` の `map-request`、`==` のオペランド——のためのものであり、1 つの誤りは 1 つの診断になる。
+
+**qualifier** とは、引数リストなしで書かれた `Q.member` の `Q` である。タグ（メンバはそのタグが作る値から読まれる：`Idle.show`）、型（`Time.now`）、上の名前空間（メンバは呼び出し）のいずれかを指せる。どれも指さないものは `undef-qualifier` であり、その名前の variant のメンバが `undefined` に評価されるのではなく、qualifier の位置で報告される：
+
+> `Reference to undefined qualifier "<name>" in "<name>.<member>"`
+
+したがって `decode: Decodr.None` は `Decodr` で報告される。引数リスト付きで書かれた qualifier は呼び出しであり、上の `undef-call` になる。
+
+どちらのメッセージも、近い候補があれば ` — did you mean "<name>"?` で終わる：variant ならタグ、qualifier ならタグ・型名・名前空間から選ばれる。
+
+値ではなく名前を取る位置の大文字の名前はコンストラクタではなく、その位置自身の検査が解決する：イベントトリガのタイル、ハンドラ、テストイベントの対象、`confirm` の `onYes` / `onNo`、ルートの対象、パターン中のタグ（[E0209](#e0209-pat-unknown-variant)）、`Decoder.Json(T)` がデコードする先の型。
+
+**修正**：綴りを直すか、`fn` を宣言するか、タグを union に加える。`kumiki fix` が最も近い名前を提案する。
 
 ### E0117 `undef-type`
 
@@ -383,9 +403,9 @@ lowering が読む `_init` / `_event` は trial の中でしか束縛されな�
 
 型パラメータはそれを宣言した定義の body の中だけでスコープに入る：`type Box(T) = {v: T}` は正しく、`type Box(T) = {v: U}` は誤り。他の宣言箇所（`slot` / `fn` / `effect` / `tile in=`）は型パラメータを持たないので、そこでの未解決名は常にエラーである。
 
-**呼び出しの qualifier** も型名である。`T.fresh()` / `T.parse(t)` / `T.show(v)` は大文字で始まる任意の `T` に対して lowering される——codegen が正規表現で形だけを見ている——ため、どの型も指さない qualifier はここで拒否しなければそのまま lowering される。`parse` は qualifier が解決される基底型によってテキストを読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、どの型にも解決されない名前には読むための基底型がない。`parse` が qualifier の名前で分岐していた頃は、綴り間違いは失敗ではなく分岐の変更になっていた：`Itn.parse("12")` は `Some("12")` を返し、それを `Int` slot が保持して以降の加算はすべて文字列連結になっていた。`fresh` と `show` は qualifier を捨てるので、そこでの綴り間違いは同じ値を返す——それでも名前を報告するのは、どの型も指さない qualifier がそれ自体として誤りだからであり、この 2 つについては検査が lowering より意図的に厳しい。qualifier は他の型名と同じ名前空間（プリミティブを含む）に対して解決され、qualifier として綴られている必要がある：ハイフンを含む名前は qualifier ではなく、それで書かれた呼び出しはこれではなく [E0116](#e0116-undef-call) になる。型**コンストラクタ**に解決される qualifier — `List` や `type Box(T)` — は型を指しているが型そのものではなく、[E0124](#e0124-type-constructor-qualifier) になる。
+**呼び出しの qualifier** も型名である。`T.fresh()` / `T.parse(t)` / `T.show(v)` は大文字で始まる任意の `T` に対して lowering される——codegen が正規表現で形だけを見ている——ため、どの型も指さない qualifier はここで拒否しなければそのまま lowering される。`parse` は qualifier が解決される基底型によってテキストを読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、どの型にも解決されない名前には読むための基底型がない。`parse` が qualifier の名前で分岐していた頃は、綴り間違いは失敗ではなく分岐の変更になっていた：`Itn.parse("12")` は `Some("12")` を返し、それを `Int` slot が保持して以降の加算はすべて文字列連結になっていた。`fresh` と `show` は qualifier を捨てるので、そこでの綴り間違いは同じ値を返す——それでも名前を報告するのは、どの型も指さない qualifier がそれ自体として誤りだからであり、この 2 つについては検査が lowering より意図的に厳しい。qualifier は他の型名と同じ名前空間（プリミティブを含む）に対して解決され、qualifier として綴られている必要がある：ハイフンを含む名前は qualifier ではなく、それで書かれた呼び出しはこれではなく [E0116](#e0116-undef-call-undef-variant-undef-qualifier) になる。型**コンストラクタ**に解決される qualifier — `List` や `type Box(T)` — は型を指しているが型そのものではなく、[E0124](#e0124-type-constructor-qualifier) になる。
 
-`Decoder` / `EffectId` / `Duration` / `Bytes` はその例外であり、括弧の有無にかかわらず、またその名前が型でもあるかどうかにかかわらず適用される：これらのメンバは [E0116](#e0116-undef-call) が挙げる組み込み呼び出しちょうどであり、`fresh`（および引数なしで書かれた `parse` / `show`）はその中では解決されず、これではなくその E0116 になる。引数を与えられた `parse` / `show` は、他の qualifier と同様にこれらの上でも [標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換) の型メンバである: `Duration.parse(t)` は `Option(Duration)`、`Duration.show(d)` は `Text` である。例外がある理由は、`fresh` が書かれた qualifier を無視し、引数なしで書かれた `parse` / `show` がこれらの名前空間のメンバではないからである——`EffectId.fresh()` も `Duration.fresh()` も新しい id の生成へ lowering され、片方は著者が空のセンチネルを書いた場所に、もう片方は `Duration` slot にそのまま入っていて、どちらも報告されていなかった。`Duration` は標準ライブラリ型、`Bytes` はプリミティブなので、実在する型名が `fresh`、および引数なしの `parse` / `show` について答えない唯一の場所がここである。
+`Decoder` / `EffectId` / `Duration` / `Bytes` はその例外であり、括弧の有無にかかわらず、またその名前が型でもあるかどうかにかかわらず適用される：これらのメンバは [E0116](#e0116-undef-call-undef-variant-undef-qualifier) が挙げる組み込み呼び出しちょうどであり、`fresh`（および引数なしで書かれた `parse` / `show`）はその中では解決されず、これではなくその E0116 になる。引数を与えられた `parse` / `show` は、他の qualifier と同様にこれらの上でも [標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換) の型メンバである: `Duration.parse(t)` は `Option(Duration)`、`Duration.show(d)` は `Text` である。例外がある理由は、`fresh` が書かれた qualifier を無視し、引数なしで書かれた `parse` / `show` がこれらの名前空間のメンバではないからである——`EffectId.fresh()` も `Duration.fresh()` も新しい id の生成へ lowering され、片方は著者が空のセンチネルを書いた場所に、もう片方は `Duration` slot にそのまま入っていて、どちらも報告されていなかった。`Duration` は標準ライブラリ型、`Bytes` はプリミティブなので、実在する型名が `fresh`、および引数なしの `parse` / `show` について答えない唯一の場所がここである。
 
 **修正**：綴りを直すか、型を定義するか、外側の定義のパラメータ列に名前を加える。`kumiki fix` が最も近い型名を提案する。
 
@@ -474,7 +494,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 `Tuple` は任意個の引数を取るため、メッセージは個数なしで `type arguments` と書く。可変長であってもゼロではない。2 行目は `parse` のときのメッセージである: そこでは適用を名付けるだけでは修復が終わらないため、テキストに読み方がある基底型を挙げる。3 行目は同じ理由による `fresh` のものである: 適用した型も uuid の `Text` が入る型でなければならず、そうでなければ呼び出しは [E0802](#e0802-unimplemented-function) になる。
 
-名前は型のものなので [E0117](#e0117-undef-type) には当たらず、呼び出し先は型メンバなので [E0116](#e0116-undef-call) にも当たらず、呼び出しが持つべき型が無いので [E0201](#e0201-type-mismatch) にも届かない。それぞれの検査はそれ自体としては正しく、呼び出しはその間に落ちていた: `slot n : Int = Box.fresh()` は何も報告されずに `Int` slot へ uuid 文字列を格納していた。`parse` でも報告はこれ 1 つであり、[E0802](#e0802-unimplemented-function) より先に出る: 型でない qualifier には問うべき読み方がない。
+名前は型のものなので [E0117](#e0117-undef-type) には当たらず、呼び出し先は型メンバなので [E0116](#e0116-undef-call-undef-variant-undef-qualifier) にも当たらず、呼び出しが持つべき型が無いので [E0201](#e0201-type-mismatch) にも届かない。それぞれの検査はそれ自体としては正しく、呼び出しはその間に落ちていた: `slot n : Int = Box.fresh()` は何も報告されずに `Int` slot へ uuid 文字列を格納していた。`parse` でも報告はこれ 1 つであり、[E0802](#e0802-unimplemented-function) より先に出る: 型でない qualifier には問うべき読み方がない。
 
 **修正**：適用を型として名付け、その名前で呼び出しを修飾する — `type Tagged(T) = nominal Text` に対して `type OrderId = Tagged(Int)` とし、`OrderId.fresh()` と書く。`fresh` の場合、適用した型は `Text` が入る型でなければならない（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)）: `type Box(T) = nominal List(T)` に対する `type IntBox = Box(Int)` は型を名付けるが、`IntBox.fresh()` は [E0802](#e0802-unimplemented-function) になる。`parse` の場合、適用した型はさらにテキストの読み方がある基底型を持たなければならない（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）: `type Tagged(T) = nominal Text` に対する `type OrderId = Tagged(Int)` は `Text` として読むが、コンテナには読み方がない — `type IntList = List(Int)` に対する `IntList.parse(t)` は [E0802](#e0802-unimplemented-function) になる — ので、`List.parse` や `Map.parse` などは、部品を `Int`、`Text` … にパースして `fn` で値を組み立てる。`kumiki fix` はこれを修復しない: どの引数を適用するかは作者が決めることであり、skip 理由がそう伝える。
 
@@ -578,7 +598,7 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 
 同一性が読まれるのは各オペランドの **最上位** だけであり、ここが演算子と代入の分かれ目である：`List(Cents) := List(Yen)` は代入可能性が型引数へ降りていくためこのエラーになるが、同じ組に対する `lc == ly` は報告されない。コンテナ・レコードのフィールド・その他あらゆる型引数の内側にある nominal は、比較からは見えない。この沈黙は誤った診断ではなく欠けた診断であり、それがこのコード全体が保つ読み方である。
 
-**この検査は片側だけを主張する。** 確実に誤っているものだけを報告し、解決できないものについては黙る — 未知の型名、結果型を何も解決できないメソッド（[§2.2](./stdlib.md#_2-2-コレクションメソッド) のメンバーはレシーバから答えを決める — `List(T)` の `xs.head` は `Option(T)`、`Map(K, V)` の `m.keys` は `List(K)`、`.get` と `.get-or` は `Option(T)` / `Result(T, E)` を `T` に、`Map` の索きを `Option(V)` またはフォールバック付きで `V` にアンラップする。`.copy` はレシーバをそのまま返し、`show` / `to-int` / `floor` などの固定表はプリミティブを返す。`.map` や `.fold` のようにラムダの本体が決めるメンバーと、レシーバ自身の型が決まらない場合は動的なまま）、解決できない式の `let` 束縛など。誤った診断は動くプログラムを拒否するが、報告漏れは元から存在しなかった診断が増えないだけである。したがって check が緑であることは型の正しさの証明ではなく、名前の存在そのものは引き続き [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) が担保する。
+**この検査は片側だけを主張する。** 確実に誤っているものだけを報告し、解決できないものについては黙る — 未知の型名、結果型を何も解決できないメソッド（[§2.2](./stdlib.md#_2-2-コレクションメソッド) のメンバーはレシーバから答えを決める — `List(T)` の `xs.head` は `Option(T)`、`Map(K, V)` の `m.keys` は `List(K)`、`.get` と `.get-or` は `Option(T)` / `Result(T, E)` を `T` に、`Map` の索きを `Option(V)` またはフォールバック付きで `V` にアンラップする。`.copy` はレシーバをそのまま返し、`show` / `to-int` / `floor` などの固定表はプリミティブを返す。`.map` や `.fold` のようにラムダの本体が決めるメンバーと、レシーバ自身の型が決まらない場合は動的なまま）、解決できない式の `let` 束縛など。誤った診断は動くプログラムを拒否するが、報告漏れは元から存在しなかった診断が増えないだけである。したがって check が緑であることは型の正しさの証明ではなく、名前の存在そのものは引き続き [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call-undef-variant-undef-qualifier) が担保する。
 
 **修正**：値を直すか、宣言型を広げる。nominal どうしの不一致が意図的なものであれば、2 つの型が共有する基底型を経由して変換し、それを戻り型が行き先を表す `fn` として書く — `-> UserId = p + ""` であって、`-> UserId = p` ではない（後者はこのエラーそのものである）。`fn` は意図を記録するだけで、強制されるのは body が基底型に到達していることだけである。
 
@@ -806,6 +826,8 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 > `Variant "<name>" is not a member of type "<type>"`
 
 タグは `{_tag: "Zork"}` へ落ち、どの `match` arm にも一致しない。UI は静かに何も描かず、runtime エラーも出ない。パターン側の同じ誤りが [E0209](#e0209-pat-unknown-variant) である。
+
+どの union も宣言していないタグもここで報告される。宣言された型が、その位置が取るタグを名指すからである。宣言された型が判定しない位置では、同じタグは [E0116](#e0116-undef-call-undef-variant-undef-qualifier) `undef-variant` になる。1 つのタグが両方で報告されることはない。
 
 **修正**：宣言済みのタグを使うか、そのタグを union に加える。`kumiki fix` が最も近いタグを提案する。
 
@@ -1188,7 +1210,7 @@ test typo-section =
 
 2 つ目は、基底型にテキストの読み方がない型に対する `T.parse(text)` — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Unit`、またはそれらの上の `nominal`。読み方のある基底型は [標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換) が挙げている。`trace` と違い、これは実装を待っている欠落ではない: レコードを表すテキストの綴りは存在しないので、どんな lowering にも作るものがない。メッセージが未実装と言わずにそう述べるのはそのためである。呼び出しの型は `Option(T)` だが、lowering は生のテキストを `Some` で包んでいたため、`T` として読む側が取り出す値は文字列だった。どの型も指さない `T` はこれではなく [E0117](#e0117-undef-type) であり、型引数なしで書かれた型コンストラクタ（`List.parse(t)`、`type Box(T) = …` に対する `Box.parse(t)`）は [E0124](#e0124-type-constructor-qualifier) になり — そもそも型ではないので読み方の有無は問われない —、定義が何にも解決されない `T`（未定義の名前の別名、循環）はその定義での報告に任され、`nominal` はその基底型で判断される — `type Cents = nominal Int` は `Int` と同じようにパースされる。
 
-3 つ目は、`Text` が入らない型に対する `T.fresh()` — `Int`、`Bool`、レコード、ユニオン、コンテナ、またはそれらの上の `nominal` / `where`（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)）。`fresh` は `T` が何であれ 1 つの uuid の `Text` へ lowering されるので、それ以外の `T` について生成できる値は存在しない。レコードを表すテキストの綴りが存在しないのと同じである。以前は受け入れられて型が付かなかったため、uuid は呼び出しが書かれた場所へそのまま入っていた: `type TaskId = nominal Int` の id は数値を宣言する場所にある文字列であり、それを宣言されたキー型で読み戻す `Set(TaskId)`（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）は `NaN` を返し、`check` も `build` も ok と言っていた。どの型も指さない `T` は [E0117](#e0117-undef-type)、型引数なしの型コンストラクタは [E0124](#e0124-type-constructor-qualifier)、`Duration` / `EffectId` / `Bytes` / `Decoder` は [E0116](#e0116-undef-call) であり、いずれもこれより先に出る。
+3 つ目は、`Text` が入らない型に対する `T.fresh()` — `Int`、`Bool`、レコード、ユニオン、コンテナ、またはそれらの上の `nominal` / `where`（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)）。`fresh` は `T` が何であれ 1 つの uuid の `Text` へ lowering されるので、それ以外の `T` について生成できる値は存在しない。レコードを表すテキストの綴りが存在しないのと同じである。以前は受け入れられて型が付かなかったため、uuid は呼び出しが書かれた場所へそのまま入っていた: `type TaskId = nominal Int` の id は数値を宣言する場所にある文字列であり、それを宣言されたキー型で読み戻す `Set(TaskId)`（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）は `NaN` を返し、`check` も `build` も ok と言っていた。どの型も指さない `T` は [E0117](#e0117-undef-type)、型引数なしの型コンストラクタは [E0124](#e0124-type-constructor-qualifier)、`Duration` / `EffectId` / `Bytes` / `Decoder` は [E0116](#e0116-undef-call-undef-variant-undef-qualifier) であり、いずれもこれより先に出る。
 
 **修正**：呼び出しを削除する。`trace` はデバッグ補助であり、言語のどの機能もこれに依存していない。`T.parse` の場合は、読み方のある型（`Int.parse`、`Text.parse` など）でテキストを読み、`fn` の中でそこから `T` を組み立てる。`T.fresh()` の場合は、id を `nominal Text` として宣言する — id は量ではなく名前である — か、数値そのものが目的ならカウンタの slot を持ち、そこから次の id を組み立てる。
 

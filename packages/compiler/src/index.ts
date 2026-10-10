@@ -58,7 +58,12 @@ export {
 } from "./references.ts";
 export { refinementToJs } from "./refinements.ts";
 export { typeCandidates } from "./stdlib-types.ts";
-export { collectTimerNames, variantTagsOf } from "./symbols.ts";
+export {
+  collectTimerNames,
+  constructorTags,
+  qualifierCandidates,
+  variantTagsOf,
+} from "./symbols.ts";
 export {
   A11Y_CODES,
   check,
