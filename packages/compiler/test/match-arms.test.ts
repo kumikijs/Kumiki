@@ -1,41 +1,19 @@
-// A `match` lowers to one `if` per arm, in source order, side by side: as an
-// expression or a tile body each arm `return`s its value from the arrow the
-// match is applied as, and as a statement in a reducer body each arm
-// `break`s out of the block labelled around the arms. Nothing in the output
-// nests once per arm, so a match with thousands of arms parses as readily as
-// one with three.
-//
-// Whether the output parses is the half `compile` returning `ok` does not
-// say, so every program here is compiled, written out, handed to
-// `node --check`, then imported and run.
-
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { rmSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { compile } from "@kumikijs/compiler";
 import { afterAll, describe, expect, it } from "vitest";
+import { compileOrFail, LOADABLE, type ReducerShape, writeTmpFile } from "./helpers/module.ts";
+import { withApp } from "./helpers/programs.ts";
 
-const RUNTIME = { runtimeSpecifier: "@kumikijs/runtime", exportApp: true } as const;
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
 const made: string[] = [];
-// Removed whatever the outcome: a 2,000-arm module is hundreds of kilobytes.
+// A 2,000-arm module is hundreds of kilobytes.
 afterAll(() => {
   for (const d of made) rmSync(d, { recursive: true, force: true });
 });
 
-/**
- * The stack, in KiB, `node --check` parses each module with: a quarter of
- * V8's default. How many nested statements the default holds differs from one
- * machine to the next — under two thousand on one, several thousand on
- * another — so the check fixes the stack rather than inherit it. Under this
- * one, on Linux x64, a chain that nests once per arm runs out at about 1,400
- * arms, while output whose depth does not depend on the arm count needs no
- * more stack for 2,000 arms than for 3, which is about what Node itself needs
- * to start.
- */
+// A quarter of V8's default. How many nested statements the default holds differs from one
+// machine to the next, so the check fixes the stack rather than inherit it.
 const STACK_KB = 256;
 
 // A real module load overruns the 5s default on a cold cache.
@@ -45,32 +23,23 @@ type Slots = Record<string, unknown>;
 type TileNode = { kind: string; text?: string };
 type LoadedApp = {
   live: Slots;
-  reducers: { name: string; apply: (live: Slots, payload: Slots) => { slots: Slots } }[];
+  reducers: ReducerShape[];
   routes: { pattern: string; tile: () => TileNode }[];
 };
 
-/**
- * Compile `source` and write the module out, on first use. Answers the file;
- * each test that reads it asks for it, so a program that does not compile
- * fails those tests rather than the collection of the file.
- */
+function emit(source: string): string {
+  const file = writeTmpFile("match-arms", "app.mjs", compileOrFail(source, LOADABLE));
+  made.push(dirname(file));
+  return file;
+}
+
+/** Compiled on first use, so a program that does not compile fails its tests rather than the file's collection. */
 function emitted(source: string): () => string {
   let file: string | undefined;
   return () => {
     file ??= emit(source);
     return file;
   };
-}
-
-function emit(source: string): string {
-  const result = compile(source, RUNTIME);
-  if (result.kind !== "ok")
-    expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-  const dir = mkdtempSync(join(TMP_ROOT, "match-arms-"));
-  made.push(dir);
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, result.js);
-  return file;
 }
 
 /** What `node --check` reports about `file`: "" when it parses, its error line otherwise. */
@@ -89,28 +58,21 @@ async function load(file: string): Promise<LoadedApp> {
   return mod.createApp();
 }
 
-/** One arm: its pattern, and the text the arm answers when it is the one that runs. */
 type Arm = readonly [pattern: string, result: string];
 
-/**
- * A program whose one `match` is over slot `subject`, in one of the three
- * positions a match is lowered from, and a way to run it: `chosen` puts a
- * value in `subject` and answers what the match did with it.
- */
+/** A program whose one `match` is over slot `subject`, and what that match did with a given subject. */
 type Position = {
   program: (decls: string, arms: readonly Arm[]) => string;
   chosen: (app: LoadedApp, subject: unknown) => unknown;
 };
 
-const reducerProgram = (decls: string, body: string): string => `${decls}
+const reducerProgram = (decls: string, body: string): string =>
+  withApp(`${decls}
 slot seen : Text = "unset"
 reducer pick on=ui.click(B) do= ${body}
 tile B = button(text="b", onClick=pick)
-tile Page = column(B)
-app A caps=[] routes={"/" -> Page, "/404" -> Page} init=[]
-`;
+tile App = column(B)`);
 
-/** `pick`'s writes, applied with `subject` in the live slots. */
 function picked(app: LoadedApp, subject: unknown): Slots {
   app.live.subject = subject;
   const pick = app.reducers.find((r) => r.name === "pick");
@@ -118,7 +80,6 @@ function picked(app: LoadedApp, subject: unknown): Slots {
   return pick.apply(app.live, {}).slots;
 }
 
-/** What `seen` was written to, or `NO_WRITE` when the reducer left it alone. */
 const NO_WRITE = Symbol("no write");
 function seenWrite(slots: Slots): unknown {
   return Object.hasOwn(slots, "seen") ? slots.seen : NO_WRITE;
@@ -157,6 +118,8 @@ app A caps=[] routes={"/" -> Shown, "/404" -> Missing} init=[]
   },
 };
 
+const POSITION_CASES = Object.entries(POSITIONS);
+
 const variant = (tag: string) => ({ _tag: tag });
 
 describe("a match with 2,000 arms", () => {
@@ -165,22 +128,20 @@ describe("a match with 2,000 arms", () => {
   const decls = `type Big = ${tags.join(" | ")}\nslot subject : Big = T0`;
   const arms: Arm[] = tags.map((t, i) => [t, `arm ${i}`]);
 
-  for (const [name, position] of Object.entries(POSITIONS)) {
-    describe(`as ${name}`, () => {
-      const file = emitted(position.program(decls, arms));
+  describe.each(POSITION_CASES)("as %s", (_name, position) => {
+    const file = emitted(position.program(decls, arms));
 
-      it("emits a module the engine parses", () => {
-        expect(parseError(file())).toBe("");
-      });
-
-      it("runs the arm for the first, a middle and the last tag", LOADS, async () => {
-        const app = await load(file());
-        for (const i of [0, 1_000, ARMS - 1]) {
-          expect(position.chosen(app, variant(`T${i}`))).toBe(`arm ${i}`);
-        }
-      });
+    it("emits a module the engine parses", () => {
+      expect(parseError(file())).toBe("");
     });
-  }
+
+    it("runs the arm for the first, a middle and the last tag", LOADS, async () => {
+      const app = await load(file());
+      for (const i of [0, 1_000, ARMS - 1]) {
+        expect(position.chosen(app, variant(`T${i}`))).toBe(`arm ${i}`);
+      }
+    });
+  });
 });
 
 describe("a match whose arms overlap", () => {
@@ -193,30 +154,23 @@ slot subject : Tuple(Light, Light) = (Red, Red)`;
   ];
   const pair = (a: string, b: string) => [variant(a), variant(b)];
 
-  for (const [name, position] of Object.entries(POSITIONS)) {
-    describe(`as ${name}`, () => {
-      const file = emitted(position.program(decls, arms));
+  describe.each(POSITION_CASES)("as %s", (_name, position) => {
+    const file = emitted(position.program(decls, arms));
 
-      it("emits a module the engine parses", () => {
-        expect(parseError(file())).toBe("");
-      });
-
-      it(
-        "runs the first arm whose pattern holds, though a later one holds too",
-        LOADS,
-        async () => {
-          // `(Red, Green)` fits the first arm and the second; the second never runs.
-          expect(position.chosen(await load(file()), pair("Red", "Green"))).toBe("first");
-        },
-      );
-
-      it("tries the arms in order, past one whose pattern fails", LOADS, async () => {
-        const app = await load(file());
-        expect(position.chosen(app, pair("Green", "Green"))).toBe("second");
-        expect(position.chosen(app, pair("Green", "Red"))).toBe("rest");
-      });
+    it("emits a module the engine parses", () => {
+      expect(parseError(file())).toBe("");
     });
-  }
+
+    it("runs the first arm whose pattern holds, though a later one holds too", LOADS, async () => {
+      expect(position.chosen(await load(file()), pair("Red", "Green"))).toBe("first");
+    });
+
+    it("tries the arms in order, past one whose pattern fails", LOADS, async () => {
+      const app = await load(file());
+      expect(position.chosen(app, pair("Green", "Green"))).toBe("second");
+      expect(position.chosen(app, pair("Green", "Red"))).toBe("rest");
+    });
+  });
 });
 
 describe("a match no arm of which holds", () => {
@@ -226,35 +180,30 @@ slot subject : Light = Red`;
     ["Red", "red"],
     ["Amber", "amber"],
   ];
-  const OUTCOMES: readonly [position: keyof typeof POSITIONS, does: string, outcome: unknown][] = [
+
+  it.each<[keyof typeof POSITIONS, string, unknown]>([
     ["an expression", "answers undefined, which the assignment writes", undefined],
     ["a reducer statement", "writes nothing", NO_WRITE],
     ["a tile body", "renders an empty text", ""],
-  ];
-
-  for (const [name, does, outcome] of OUTCOMES) {
-    it(`as ${name}, ${does}`, LOADS, async () => {
-      const position = POSITIONS[name];
-      const file = emit(position.program(decls, arms));
-      expect(parseError(file)).toBe("");
-      expect(position.chosen(await load(file), variant("Green"))).toBe(outcome);
-    });
-  }
+  ])("as %s, %s", LOADS, async (name, _does, outcome) => {
+    const position = POSITIONS[name];
+    const file = emit(position.program(decls, arms));
+    expect(parseError(file)).toBe("");
+    expect(position.chosen(await load(file), variant("Green"))).toBe(outcome);
+  });
 });
 
 describe("a match statement inside an arm of another", () => {
-  // Each inner match leaves its own block, not the outer one: the statements
-  // after it in the outer arm still run. Matches in a row label sibling
-  // blocks, which may share a label; a match nested in another — directly,
-  // or through an `if` or a `for` — labels a block inside the other's, which
-  // may not.
-  const source = `type Light = Red | Green
+  // Matches in a row label sibling blocks, which may share a label; a match nested in another,
+  // directly or through an `if` or a `for`, labels a block inside the other's, which may not.
+  const file = emitted(
+    reducerProgram(
+      `type Light = Red | Green
 slot subject : Tuple(Light, Light) = (Red, Red)
-slot seen   : Text = "unset"
 slot after  : Text = "unset"
 slot looped : Text = "unset"
-slot last   : Text = "unset"
-reducer pick on=ui.click(B) do= match subject with
+slot last   : Text = "unset"`,
+      `match subject with
   | (Red, inner) -> {
       match inner with
         | Red -> { seen := "red, red" }
@@ -271,12 +220,9 @@ reducer pick on=ui.click(B) do= match subject with
       }
       last := "outer red"
     }
-  | _ -> { last := "outer other" }
-tile B = button(text="b", onClick=pick)
-tile Page = column(B)
-app A caps=[] routes={"/" -> Page, "/404" -> Page} init=[]
-`;
-  const file = emitted(source);
+  | _ -> { last := "outer other" }`,
+    ),
+  );
 
   it("emits a module the engine parses", () => {
     expect(parseError(file())).toBe("");
