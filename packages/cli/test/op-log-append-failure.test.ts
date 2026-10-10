@@ -1,23 +1,14 @@
 // @vitest-environment node
 //
-// A write op whose append to the op log fails. The source is put back either
-// way, and the message says what the log holds afterwards: what it held before
-// the op; its complete entries, when a skipped last line was cut off before the
-// append; or possibly part of the op, when cutting the log back after the
-// append failed too. In that last case the op has failed rather than been
-// rejected, since the log may hold an op the file does not.
-//
-// `node:fs` is wrapped so that the op log's append fails partway, the way a
-// full disk fails it, and the clean-up after it can fail too. Every other call,
-// and every call on another path, goes to the real function. The file runs in
-// the node environment because under happy-dom, Vitest does not route a
-// module's named `node:fs` imports (mutate.ts's) through `vi.mock`.
+// `node:fs` is wrapped so that the op log's append fails partway, the way a full disk fails it, and
+// the clean-up after it can fail too. Under happy-dom, Vitest does not route a module's named
+// `node:fs` imports through `vi.mock`.
 
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { readOpLog, replaceDef } from "@kumikijs/cli";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { seed } from "./helpers/files.ts";
+import { logPath } from "./helpers/op-log.ts";
 
 const fault = vi.hoisted(() => ({
   /** What lands of an op-log append before it fails; unset, appends go through. */
@@ -83,7 +74,6 @@ const half = (data: string): string => data.slice(0, Math.floor(data.length / 2)
 /** All of the line lands but its newline. */
 const allButNewline = (data: string): string => data.slice(0, -1);
 
-let dir = "";
 let file = "";
 let log = "";
 function reset(): void {
@@ -95,16 +85,13 @@ function reset(): void {
 }
 beforeEach(() => {
   reset();
-  dir = mkdtempSync(join(tmpdir(), "kumiki-op-log-append-"));
-  file = join(dir, "c.kumiki");
-  log = `${file}.kumiki-ops.jsonl`;
-  writeFileSync(file, "slot a : Int = 0\n");
+  file = seed("slot a : Int = 0\n", "c.kumiki");
+  log = logPath(file);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 afterEach(() => {
   reset();
   vi.restoreAllMocks();
-  rmSync(dir, { recursive: true, force: true });
 });
 
 /** What the call threw. */
@@ -120,7 +107,7 @@ function errorOf(call: () => unknown): string {
 const readLog = (): string => readFileSync(log, "utf8");
 
 /** The log as it stands before the failing op: one entry, then `tail`. */
-function seed(tail: string): string {
+function seedLog(tail: string): string {
   replaceDef(file, "slot.a", "Int = 1");
   const entries = readLog();
   appendFileSync(log, tail);
@@ -129,7 +116,7 @@ function seed(tail: string): string {
 
 describe("an append to the op log that fails partway", () => {
   it("after a skipped last line was cut off says so, and leaves the complete entries", () => {
-    const entries = seed(TORN);
+    const entries = seedLog(TORN);
     const source = readFileSync(file, "utf8");
     fault.lands = half;
 
@@ -168,7 +155,7 @@ describe("an append to the op log that fails partway", () => {
 
 describe("a skipped last line that cannot be cut off the op log", () => {
   it("leaves the log as it was and says nothing was written", () => {
-    seed(TORN);
+    seedLog(TORN);
     const before = { source: readFileSync(file, "utf8"), log: readLog() };
     fault.cutOff = true;
 
@@ -184,7 +171,7 @@ describe("an append to the op log that fails, when cutting the log back fails to
     ["entries", ""],
     ["entries and a skipped last line", TORN],
   ])("on a log of %s fails the op, naming the log and both errors", (_, tail) => {
-    const entries = seed(tail);
+    const entries = seedLog(tail);
     const source = readFileSync(file, "utf8");
     fault.lands = allButNewline;
     fault.cutBack = true;
@@ -223,7 +210,7 @@ describe("an append to the op log that fails, when putting the source back fails
       `${ENOSPC}; cutting %log% back to its complete entries failed too (EIO: i/o error, open '%log%'), so its last line may hold part of this op), and restoring %file% failed too (EIO: i/o error, rename '%file%'); the file holds this op's edit`,
     ],
   ])("says what the file and the log hold when %s", (_, cutBack, rest) => {
-    seed("");
+    seedLog("");
     fault.lands = allButNewline;
     fault.cutBack = cutBack;
     fault.restore = true;

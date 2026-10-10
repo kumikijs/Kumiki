@@ -1,14 +1,5 @@
-// The op log is JSONL: one op per line, each line ending in a newline. A last
-// line with no newline after it that does not parse is skipped with a warning
-// naming the log and the line, and the next op logged takes its place. Any
-// other line that is not an op stops the read with the log's path and the
-// line's number, and a write op that meets one is rejected with the file and
-// the log left byte-identical. Where the complete lines end is counted in
-// bytes, so multibyte text does not move it.
-
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   addDef,
   patchApplyFile,
@@ -17,29 +8,24 @@ import {
   replaceDef,
   viewHistory,
 } from "@kumikijs/cli";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { seed } from "./helpers/files.ts";
+import { logPath as opLogOf } from "./helpers/op-log.ts";
 
 /** The start of an op-log line, cut off mid-key. */
 const TORN = '{"op":"replace","layer":"slot","na';
 
-let dir = "";
 let file = "";
 let warnings: string[] = [];
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-op-log-lines-"));
-  file = join(dir, "c.kumiki");
-  writeFileSync(file, "slot a : Int = 0\n");
+  file = seed("slot a : Int = 0\n", "c.kumiki");
   warnings = [];
   vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
     warnings.push(args.join(" "));
   });
 });
-afterEach(() => {
-  vi.restoreAllMocks();
-  rmSync(dir, { recursive: true, force: true });
-});
 
-const logPath = (): string => `${file}.kumiki-ops.jsonl`;
+const logPath = (): string => opLogOf(file);
 const logText = (): string => readFileSync(logPath(), "utf8");
 
 /** Every line of the log, each parsed on its own: what a strict reader sees. */
@@ -133,7 +119,7 @@ describe("an op log with multibyte text", () => {
 describe("patch apply and patch revert on an op log whose last line is torn", () => {
   /** A patch file holding `ops`, one per line. */
   const bundle = (...ops: object[]): string => {
-    const p = join(dir, "ops.jsonl");
+    const p = join(dirname(file), "ops.jsonl");
     writeFileSync(p, `${ops.map((o) => JSON.stringify(o)).join("\n")}\n`);
     return p;
   };
