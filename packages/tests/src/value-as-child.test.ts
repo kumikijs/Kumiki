@@ -28,6 +28,25 @@ describe("a value as a child is refused before it can render nothing", () => {
   });
 });
 
+describe("a value as an arm or a tile body is refused before it is built", () => {
+  it.each([
+    "column(when(n > 0, n))",
+    `column(if n > 0 then Card({label: "a"}) else n)`,
+    "column(for x in [1, 2] x)",
+    "n",
+  ])("%s", async (home) => {
+    expect(check(parse(lex(program(home)))).map((e) => e.code)).toEqual(["E0128"]);
+    await expect(loadSource(program(home))).rejects.toThrow("E0128");
+  });
+});
+
+it("a builtin named in an arm renders as its call does", async () => {
+  const render = async (home: string) => mountApp(await loadSource(program(home))).root.innerHTML;
+  const named = await render("column(when(n == 0, divider))");
+  expect(named).toContain('data-kumiki-tile="divider"');
+  expect(named).toBe(await render("column(when(n == 0, divider()))"));
+});
+
 describe("a value where a value belongs mounts and shows the value", () => {
   it.each([
     [`column(text(let x = "shown" in x))`, "shown"],

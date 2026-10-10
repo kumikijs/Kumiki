@@ -183,12 +183,18 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     });
   }
   checkTileTestInput(t, sym, errors);
-  checkTileExpr(t.expect as TileExpr, sym, errors, {
-    kind: "tile",
-    localBinds: new Set(),
-    localTypes: new Map(),
-    routeBind: "no-payload",
-  });
+  checkTileExpr(
+    t.expect as TileExpr,
+    sym,
+    errors,
+    {
+      kind: "tile",
+      localBinds: new Set(),
+      localTypes: new Map(),
+      routeBind: "no-payload",
+    },
+    { kind: "expect" },
+  );
 }
 
 function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {

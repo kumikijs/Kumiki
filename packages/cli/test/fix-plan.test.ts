@@ -360,6 +360,27 @@ ${APP_A}`,
     ).toBe(true);
   });
 
+  it("suggests a close tile name for a misspelt tile in a when arm (E0105)", () => {
+    const file = seed(`slot open : Bool = true
+tile Header = text("h")
+tile App = column(when(open, Hedaer))
+${APP_A}`);
+    expect(check(load(file).program).map((e) => e.code)).toEqual(["E0105"]);
+    expect(descriptionsOf(file)).toEqual([`replace "Hedaer" with "Header" at 3:30`]);
+    expect(applyFirst(file).errors).toEqual([]);
+  });
+
+  it("proposes no tile for a slot in a when arm whose name is close to one", () => {
+    // The arm is E0128, which has no repair: renaming `item` to the tile `Item` renders something else.
+    const file = seed(`slot open : Bool = true
+slot item : Text = "x"
+tile Item = text("i")
+tile App = column(when(open, item))
+${APP_A}`);
+    expect(check(load(file).program).map((e) => e.code)).toEqual(["E0128"]);
+    expect(descriptionsOf(file)).toEqual([]);
+  });
+
   it("suggests a close variant tag for E0209 on a user union, not a tile of a similar name", () => {
     const file = seed(`type Light = Red | Green
 fn label(l: Light) -> Text = match l with
