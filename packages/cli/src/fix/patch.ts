@@ -3,6 +3,8 @@ import type { Pos } from "@kumikijs/compiler";
 export type PatchAnchor =
   | { kind: "span"; pos: Pos }
   | { kind: "line"; pos: Pos }
+  // Composed after every other patch and in no fixed order among themselves, so its `apply`
+  // finds where to write in the text it is handed, never at a position read off the plan's source.
   | { kind: "region" };
 
 export type AutoPatch = {
