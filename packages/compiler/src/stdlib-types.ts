@@ -12,7 +12,9 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
   args,
   pos: NO_POS,
 });
-const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
+type RecordType = Extract<TypeExpr, { kind: "TypeRecord" }>;
+
+const record = (fields: Record<string, TypeExpr>): RecordType => ({
   kind: "TypeRecord",
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
@@ -80,6 +82,14 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
     pos: NO_POS,
   }),
 ];
+
+// A browser reads a file's bytes only asynchronously, so the record a `change` event
+// delivers cannot hold them; they are not a field.
+export const FILE_FIELDS: RecordType = record({
+  name: prim("Text"),
+  size: prim("Int"),
+  type: prim("Text"),
+});
 
 export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new Map([
   ["List", 1],

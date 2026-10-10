@@ -1,6 +1,7 @@
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { withRoot } from "./helpers/programs.ts";
 
 describe('forms — input(type="file") bind=', () => {
   it("reports bind= on a file input (E0205)", () => {
@@ -138,5 +139,26 @@ describe("the fields of a File", () => {
     if (result.kind !== "ok") return;
     expect(result.js).toContain(`["${field}"]`);
     expect(result.js).not.toContain("_s.mapSize");
+  });
+});
+
+describe("the type of a File's fields", () => {
+  const reading = (result: string, read: string) =>
+    codesOf(withRoot(`text("x")`, `fn get(f: File) -> ${result} = f.${read}`));
+
+  it.each([
+    ["name", "Text"],
+    ["size", "Int"],
+    ["type", "Text"],
+  ])("reads .%s as %s", (field, type) => {
+    expect(reading(type, field)).toEqual([]);
+    expect(reading("Bool", field)).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["content", "Bytes"],
+    ["constructor", "Text"],
+  ])("reports .%s as no field of File", (field, type) => {
+    expect(reading(type, field)).toEqual(["E0108"]);
   });
 });

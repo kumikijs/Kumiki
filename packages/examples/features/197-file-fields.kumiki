@@ -1,0 +1,48 @@
+# Feature (stdlib.md): a `File` is what a file input reports about each
+# picked file, and a program reads three fields on it: `name : Text`,
+# `size : Int` and `type : Text` (the MIME type, `""` when the browser does not
+# know it). Any other field is E0108.
+#
+# The file's bytes are not a field: a browser reads them only asynchronously,
+# so the record the `change` event delivers cannot hold them. They reach a
+# server as a `FileV` part of a `Multipart` body (http.md, forms.md), which is
+# what `upload` sends.
+#
+# The scenario hands `pick` a file record through `{dispatch}`, since a
+# scenario cannot put a real file in the input. `packages/tests/src/file-fields.test.ts`
+# picks a real one, checks the record the runtime builds, and reads the bytes
+# back out of the request `upload` makes.
+
+slot picked : Option(File) = None
+slot sentTo : Text         = "-"
+
+fn summary(p: Option(File)) -> Text
+   = match p with
+       | None    -> "no file"
+       | Some(f) -> f.name + " (" + f.type + ", " + f.size.show + " bytes)"
+
+effect uploadFile cap=http.post
+                  in=File
+                  out=Result({url: Text}, HttpError)
+                  map-request={url: "/api/upload", body: Multipart({"file": FileV($1)}), decode: Decoder.Json({url: Text})}
+
+reducer pick     on=ui.change(Picker)       do= picked := $event.files.head
+reducer upload   on=ui.click(UploadBtn)     do= match picked with
+                                                    | Some(f) -> emit uploadFile(f)
+                                                    | None    -> ()
+reducer uploaded on=uploadFile.ok($r, _)    do= sentTo := $r.url
+
+tile Picker    = input(type="file")
+tile UploadBtn = button(text="Upload") {id: "upload"}
+
+tile App = column(
+             Picker,
+             text("picked: " + summary(picked)),
+             UploadBtn,
+             text("sent to: " + sentTo))
+           {pad: "lg", gap: "md"}
+
+app FileFields
+    caps   = [http.post]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -3,6 +3,7 @@ import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
+import { FILE_FIELDS } from "../stdlib-types.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
 import type { Ctx, SymbolTable } from "./context.ts";
 import { binOpResult } from "./expr.ts";
@@ -19,14 +20,8 @@ export const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
   "breakpoints",
 ]);
 
-export const PRIM_FIELDS: Record<string, Record<string, "Text" | "Int">> = {
-  File: { name: "Text", size: "Int", type: "Text" },
-};
-
-function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | null {
-  const name = PRIM_FIELDS[primName]?.[field];
-  if (!name) return null;
-  return { kind: "TypePrim", name, pos };
+export function primFieldType(primName: PrimName, field: string): TypeExpr | null {
+  return primName === "File" ? recordFieldType(FILE_FIELDS, field) : null;
 }
 
 export const prim = (name: PrimName, pos: Pos): TypeExpr => ({ kind: "TypePrim", name, pos });
@@ -315,7 +310,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (!base) return null;
       if (base.kind === "TypeRecord") return recordFieldType(base, e.field);
       if (base.kind === "TypePrim") {
-        const t = primFieldType(base.name, e.field, e.pos);
+        const t = primFieldType(base.name, e.field);
         if (t) return t;
       }
       const decided = receiverMemberResult(base, e.field, 0, sym, e.pos);
