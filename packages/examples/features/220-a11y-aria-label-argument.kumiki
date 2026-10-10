@@ -1,10 +1,10 @@
-# Feature (lifecycle.md §7.8): under `--strict-a11y`, a `button` or a `link`
+# Feature (lifecycle.md): under `--strict-a11y`, a `button` or a `link`
 # whose only name is `aria-label` passes E0701 / E0703 in either spelling —
 #
 #   button(aria-label="Close")          a named argument
 #   button() {aria-label: "Dismiss"}    the props block
 #
-# A named argument is a prop wherever it is written (language.md §1.7.1), and
+# A named argument is a prop wherever it is written (language.md), and
 # both spellings put the attribute on the element, so the checks read both:
 # `aria-label` here the way E0702 reads `alt` and E0705 reads `for`.
 #

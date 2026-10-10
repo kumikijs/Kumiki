@@ -2,7 +2,7 @@
   "capabilities": [
     {
       "name": "telemetry.track",
-      "description": "Demo custom capability for 27-custom-capability.kumiki — registered here so app.caps accepts it (spec/stdlib.md §2.5)."
+      "description": "Demo custom capability for 27-custom-capability.kumiki — registered here so app.caps accepts it."
     }
   ]
 }

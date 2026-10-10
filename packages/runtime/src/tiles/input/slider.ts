@@ -1,6 +1,3 @@
-// The `slider` tile (#71): its own shipping unit, so an app that renders one
-// does not download the nine other input controls.
-
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
 import {
   applyControlState,
@@ -53,8 +50,6 @@ export const sliderPatcher: TilePatcher<"slider"> = (el, _oldNode, newNode) => {
   else clearBindDataset(inp);
   if (newNode.value != null) {
     const nextValue = String(newNode.value);
-    // Range inputs have no caret; a `.value` write mid-drag would jump the
-    // thumb, so guard on active-drag by checking pointer-focus via focus.
     if (inp.value !== nextValue && document.activeElement !== inp) inp.value = nextValue;
   }
   setHandlers(inp, inputHandlers(newNode));
