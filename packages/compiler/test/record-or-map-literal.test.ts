@@ -1,35 +1,19 @@
-// `{ … }` is a record literal or a Map literal, and the parser tells them
-// apart by the first key (language.md §1.9): a field name followed by `:`,
-// `=`, `,` or `}` makes the literal a record. A field name is an identifier
-// or a reserved word, except the reserved words that are a whole value on
-// their own — `true`, `false` and `now`. Those are keys, so
-// `{true: "on", false: "off"}` is a `Map(Bool, Text)`, and one written where
-// a field name goes (`{a, now}`, `{true}`) is a parse error that says it is a
-// value. Rendering each form is pinned in
-// `packages/tests/record-or-map-literal.test.ts`.
-
 import type { Expr } from "@kumikijs/compiler";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
-/** The expression `literal` parses to, written as a slot's initial value. */
 function parsed(literal: string): Expr {
   const def = parse(lex(`slot s : Int = ${literal}`)).defs[0];
   if (def?.kind !== "SlotDef") throw new Error(`expected a slot, found ${def?.kind}`);
   return def.init;
 }
 
-/** Every diagnostic as `code line:col message`, for `defs` inside a minimal app. */
-function diagnostics(defs: string): string[] {
-  const src = `${defs}
-tile Go = button(text="go")
-tile App = column(Go)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-  return check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-}
+const diagnostics = (defs: string): string[] =>
+  checkSource(withApp(`${defs}\ntile Go = button(text="go")\ntile App = column(Go)`)).map(
+    (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
+  );
 
 describe("a value keyword as the first key", () => {
   it.each([
@@ -95,9 +79,7 @@ describe("a value keyword where a record field name goes", () => {
     );
   });
 
-  // No Map entry is a key without a `:` after it, so a first key followed by
-  // `=`, `,` or `}` is a record's first field, and the field rule refuses a
-  // value keyword there with the same message it gives after the first field.
+  // No Map entry is a key without a `:` after it, so these are a record's first field.
   it.each([
     ["{true}", "true"],
     ["{false}", "false"],
@@ -131,8 +113,6 @@ reducer fill on=ui.click(Go) do= stamps := {now: "start"}`),
     ).toEqual([]);
   });
 
-  // Each entry is checked against the Map's `K` and `V`, so a report lands on
-  // the key or the value that does not fit, not on the whole literal.
   it("and a value of the wrong type is E0201 at that value", () => {
     expect(diagnostics('slot labels : Map(Bool, Text) = {true: 1, false: "off"}')).toEqual([
       "E0201 1:40 Expected Text but got Int",
