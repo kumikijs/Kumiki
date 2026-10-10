@@ -4,7 +4,7 @@
 
 `Time.now` is the builtin `now`
 
-stdlib.md §2.2.8 lists `Time.now : Time`, but only the bare keyword `now` was
+stdlib.md lists `Time.now : Time`, but only the bare keyword `now` was
 implemented. `Time.now` parsed as a field read on a variant named `Time`, so it
 had no type and lowered to `(({ _tag: "Time" }))["now"]`, which is `undefined`.
 `check` and `smoke` passed, a `Time` slot initialised with it formatted as

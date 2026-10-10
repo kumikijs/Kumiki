@@ -1,11 +1,11 @@
-# Feature (stdlib.md §2.2.8 / §2.4.2): `Time.now` is `now`.
+# Feature (stdlib.md): `Time.now` is `now`.
 #
 #   Time.now : Time   ; the current time — the builtin `now`, qualified
 #
 # The qualified spelling names the same builtin as the keyword: a `Time`, read
 # from the clock where it is evaluated, and the same environment read — a
 # reducer that reads it records a `now` entry in its episode, and a replay
-# hands that answer back (runtime.md §10.5.1). `Time.now()` is the same call
+# hands that answer back (runtime.md). `Time.now()` is the same call
 # with its parentheses written.
 #
 # The three spellings below are one builtin. Each slot is read from the clock

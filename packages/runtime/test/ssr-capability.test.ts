@@ -1,25 +1,9 @@
-// The capability check is a runtime gate, not only a compile-time one. Spec
-// runtime.md §10.4.2, in full:
-//
-//   Checks whether each effect's `cap` is included in `app.caps`. A violation
-//   is not executed and is notified to `app.error`.
-//
-// The live dispatcher's `launch` applies the first sentence; the SSR pass did
-// not, so an effect the client refuses to run still ran on the server — a
-// request issued from the prerender and never again after hydration. These
-// tests hold the two passes to that first sentence. The second — the report —
-// is `capability-refusal.test.ts`, which holds both passes to it; what stays
-// here is that a refused effect does not run, and the shape of what does.
-//
-// The `AppShape`s are built by hand because that is the only way to reach the
-// hole: the compiler rejects an emit whose capability is undeclared (E0301),
-// so the reachable cases are a host-built shape and a `caps` array edited
-// after codegen.
-
 import type { AppShape, CapabilityProvider, EffectSpec } from "@kumikijs/runtime";
 import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureConsole } from "./helpers/console.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 type Built = {
   app: AppShape;
@@ -27,12 +11,6 @@ type Built = {
   ran: string[];
 };
 
-/**
- * The `invoke` shape codegen emits: consult the host provider for this
- * capability, fall back to the built-in implementation. Written out here
- * because a fixture that ignores `caps` would pass a gate placed anywhere at
- * all, including below this seam.
- */
 function makeInvoke(cap: string, ran: string[], value: unknown): EffectSpec["invoke"] {
   return async (input, caps) => {
     const provider = caps.provider(cap);
@@ -42,12 +20,6 @@ function makeInvoke(cap: string, ran: string[], value: unknown): EffectSpec["inv
   };
 }
 
-/**
- * An app whose single `init` emit is `save`, plus the reducer that writes
- * `saved` when it succeeds. `cap` and `app.caps` are the two knobs each test
- * turns; everything else is held constant so a difference in outcome is a
- * difference in the gate.
- */
 function makeApp(cap: string, declared: string[]): Built {
   const ran: string[] = [];
   const save: EffectSpec = { name: "save", cap, invoke: makeInvoke(cap, ran, "stored") };
@@ -74,10 +46,7 @@ function makeApp(cap: string, declared: string[]): Built {
 let errors: string[];
 
 beforeEach(() => {
-  errors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
+  errors = captureConsole();
 });
 
 afterEach(() => {
@@ -92,29 +61,21 @@ describe("the SSR pass gates an effect on its capability", () => {
     const { html, snapshot } = await renderToString(app);
 
     expect(ran).toEqual([]);
-    // The reducer chain hangs off the effect result, so the slot still holds
-    // its default: nothing about the app advanced. The page is still served —
-    // a refused effect is not a failed render.
     expect(snapshot.slots.saved).toBe("none");
     expect(html).toContain("saved: none");
   });
 
-  it("invokes one whose capability is declared", async () => {
-    const { app, ran } = makeApp("storage.write", ["storage.write"]);
+  it.each([
+    ["declared", "storage.write", ["storage.write"]],
+    ["a standard presentation effect's empty", "", []],
+  ])("invokes one whose capability is %s", async (_what, cap, declared) => {
+    const { app, ran } = makeApp(cap, declared);
 
     const { html, snapshot } = await renderToString(app);
 
     expect(ran).toEqual(["stored:draft"]);
     expect(snapshot.slots.saved).toBe("stored");
     expect(html).toContain("saved: stored");
-  });
-
-  it("exempts a standard presentation effect, whose cap is empty", async () => {
-    const { app, ran } = makeApp("", []);
-
-    await renderToString(app);
-
-    expect(ran).toEqual(["stored:draft"]);
   });
 
   it("reports in the words the live dispatcher uses", async () => {
@@ -128,9 +89,6 @@ describe("the SSR pass gates an effect on its capability", () => {
   });
 
   it("does not reach a host provider for an undeclared capability", async () => {
-    // The provider seam is consulted from inside `invoke`, so a gate placed
-    // below it would let a host implementation answer for a capability the app
-    // never declared. Pinned by a provider that would answer if asked.
     const provider: Mock<CapabilityProvider> = vi.fn(async () => ({
       kind: "ok" as const,
       value: "from-provider",
@@ -145,8 +103,6 @@ describe("the SSR pass gates an effect on its capability", () => {
   });
 
   it("gates a follow-up emit a reducer produces, not only an init one", async () => {
-    // `dispatchEmit` recurses for the emits an `.ok` reducer returns. The gate
-    // has to sit on that path too, or the second hop escapes it.
     const { app, ran } = makeApp("storage.write", ["storage.write"]);
     app.effects.audit = {
       name: "audit",
@@ -169,9 +125,6 @@ describe("the SSR pass gates an effect on its capability", () => {
   });
 
   it("leaves a declared sibling in the same init alone", async () => {
-    // The gate returns early from one `dispatchEmit` while `Promise.all` is
-    // still running the others, and its cancel settles the episode's pending
-    // counter — a counter both emits share.
     const { app, ran } = makeApp("storage.write", ["log.write"]);
     app.effects.ping = {
       name: "ping",
@@ -183,10 +136,6 @@ describe("the SSR pass gates an effect on its capability", () => {
     const { bootstrapEpisode } = await renderToString(app);
 
     expect(ran).toEqual(["pinged:hello"]);
-    // One episode carries both accounts: the refusal and the chain that ran.
-    // Its status is `panic` because it carries a panic step — the refusal is
-    // reported (§10.4.2's second clause), and the sibling running anyway is
-    // what the steps say, not what the status does.
     expect(bootstrapEpisode.status).toBe("panic");
     expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual([
       "effect-start",
@@ -199,30 +148,12 @@ describe("the SSR pass gates an effect on its capability", () => {
 });
 
 describe("the bootstrap episode records the skip", () => {
-  it("commits rather than stranding on a start that never ends", async () => {
-    // `recordEffectStart` leaves the episode pending until its end lands.
-    // A gate that recorded the start and then returned would keep the
-    // bootstrap episode uncommitted, which `renderToString` rejects outright.
-    // What this pins is that it committed at all; `panic` is the status of an
-    // episode carrying a panic step, not a strand.
+  it("shows the effect that would have run, then why, then its cancel, and commits", async () => {
     const { app } = makeApp("storage.write", []);
 
     const { bootstrapEpisode } = await renderToString(app);
 
     expect(bootstrapEpisode.status).toBe("panic");
-    expect(bootstrapEpisode.steps.at(-1)).toMatchObject({ kind: "effect-cancel" });
-  });
-
-  it("shows the effect that would have run, then why, then its cancel", async () => {
-    // The panic comes before the cancel, not after it: `cancelPendingEffect`
-    // settles the episode, and a step appended to a settled episode is one
-    // `onEpisode` and the localStorage mirror have already been handed
-    // without. The live path is bound to that order for the same reason
-    // (§10.4.2), so the two passes write the same three steps the same way.
-    const { app } = makeApp("storage.write", []);
-
-    const { bootstrapEpisode } = await renderToString(app);
-
     expect(bootstrapEpisode.steps.map((s) => s.kind)).toEqual([
       "effect-start",
       "panic",
@@ -250,15 +181,9 @@ describe("the bootstrap episode records the skip", () => {
 
 describe("after hydration", () => {
   it("leaves the slot at its default, because init does not run again", async () => {
-    // Where the refusal is felt. `app.init` is not re-executed on the client
-    // (§10.6.2 step 5) and the client's own gate refuses the same emit, so an
-    // undeclared capability means the slot never advances at all.
     const { app, ran } = makeApp("storage.write", []);
     const rendered = await renderToString(app);
-    const target = document.createElement("div");
-    document.body.appendChild(target);
-
-    const handle = hydrate(app, target, rendered, { episodeLogger: createEpisodeLogger() });
+    const handle = hydrate(app, freshRoot(), rendered, { episodeLogger: createEpisodeLogger() });
 
     expect(app.live?.saved).toBe("none");
     expect(ran).toEqual([]);
