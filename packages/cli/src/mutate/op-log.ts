@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { directDeps, load, type Store } from "../store.ts";
+import { messageOf } from "../text.ts";
 import { computeHash } from "./hash.ts";
 
 const ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -67,18 +68,64 @@ export function authorOf(): string {
 }
 
 export function readOpLog(path: string): OpLogEntry[] {
+  return readOpLogFile(path).entries;
+}
+
+type OpLogRead = {
+  entries: OpLogEntry[];
+  /** `null` when there is no log. */
+  end: OpLogEnd | null;
+};
+
+/** Where the op log's complete lines end. */
+type OpLogEnd = {
+  /** Their length in bytes. */
+  size: number;
+  /** A skipped last line follows them. */
+  torn: boolean;
+  /** The last of them has no newline after it. */
+  unterminated: boolean;
+};
+
+function readOpLogFile(path: string): OpLogRead {
   const p = opLogPath(path);
-  if (!fs.existsSync(p)) return [];
-  const text = fs.readFileSync(p, "utf8");
-  const out: OpLogEntry[] = [];
-  for (const [i, line] of text.split(/\r?\n/).entries()) {
+  if (!fs.existsSync(p)) return { entries: [], end: null };
+  // Sizes are counted in the bytes, not the decoded text: a byte that is not
+  // valid UTF-8 decodes to U+FFFD, which takes three.
+  const bytes = fs.readFileSync(p);
+  const lines = bytes.toString("utf8").split(/\r?\n/);
+  const entries: OpLogEntry[] = [];
+  let torn = false;
+  for (const [i, line] of lines.entries()) {
     if (!line.trim()) continue;
-    const entry = JSON.parse(line) as OpLogEntry;
-    const problem = opShapeProblem(entry);
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch (e) {
+      // Warned at once, not by `process.emitWarning`, which waits a tick: a
+      // verb that then fails exits before the warning is printed.
+      if (i === lines.length - 1) {
+        console.warn(
+          `warning: ${p}:${i + 1}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
+        );
+        torn = true;
+        continue;
+      }
+      throw new Error(`${p}:${i + 1}: not valid JSON (${messageOf(e)})`);
+    }
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error(`${p}:${i + 1}: not an op object`);
+    }
+    const op = entry as OpLogEntry;
+    const problem = opShapeProblem(op);
     if (problem !== undefined) throw new Error(`${p}:${i + 1}: ${problem}`);
-    out.push(entry);
+    entries.push(op);
   }
-  return out;
+  const size = torn ? bytes.lastIndexOf("\n") + 1 : bytes.length;
+  return {
+    entries,
+    end: { size, torn, unterminated: size > 0 && bytes[size - 1] !== 0x0a },
+  };
 }
 
 export function opShapeProblem(op: RawOp): string | undefined {
@@ -164,7 +211,8 @@ function depsFromBody(store: Store, body: string, selfName: string): string[] {
 
 export function logOp(path: string, op: RawOp): string {
   const id = newId("op");
-  const parent = readOpLog(path).at(-1)?.["op-id"];
+  const log = readOpLogFile(path);
+  const parent = log.entries.at(-1)?.["op-id"];
   const dependsOn = op.body !== undefined ? computeDependsOn(path, op.layer, op.name, op.body) : [];
   const entry: OpLogEntry = {
     op: op.op,
@@ -184,20 +232,45 @@ export function logOp(path: string, op: RawOp): string {
     "parent-ops": parent ? [parent] : [],
     "depends-on": dependsOn,
   };
-  appendLine(opLogPath(path), JSON.stringify(entry));
+  appendLine(opLogPath(path), JSON.stringify(entry), log.end);
   return id;
 }
 
-function appendLine(file: string, line: string): void {
-  const size = fs.existsSync(file) ? fs.statSync(file).size : null;
+/** A failed append that left the op log other than it was. */
+export class OpLogChanged extends Error {
+  /** Cutting the log back failed too, so its last line may hold part of the op. */
+  readonly mayHoldOp: boolean;
+
+  constructor(message: string, mayHoldOp: boolean, options: ErrorOptions) {
+    super(message, options);
+    this.mayHoldOp = mayHoldOp;
+  }
+}
+
+/** Appends after the log's complete lines, so the new line never runs on from a torn or unterminated one. */
+function appendLine(file: string, line: string, end: OpLogEnd | null): void {
+  if (end?.torn) fs.truncateSync(file, end.size);
   try {
-    fs.appendFileSync(file, `${line}\n`);
+    fs.appendFileSync(file, `${end?.unterminated ? "\n" : ""}${line}\n`);
   } catch (e) {
     try {
-      if (size === null) fs.rmSync(file, { force: true });
-      else fs.truncateSync(file, size);
-    } catch {
-      // The append's error is the one to report.
+      if (end === null) fs.rmSync(file, { force: true });
+      else fs.truncateSync(file, end.size);
+    } catch (r) {
+      const cut =
+        end === null ? `removing ${file}` : `cutting ${file} back to its complete entries`;
+      throw new OpLogChanged(
+        `${messageOf(e)}; ${cut} failed too (${messageOf(r)}), so its last line may hold part of this op`,
+        true,
+        { cause: e },
+      );
+    }
+    if (end?.torn) {
+      throw new OpLogChanged(
+        `${messageOf(e)}; ${file} holds its complete entries, and its skipped last line was cut off`,
+        false,
+        { cause: e },
+      );
     }
     throw e;
   }
