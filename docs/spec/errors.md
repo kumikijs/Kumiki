@@ -620,12 +620,19 @@ Argument *count* is [E0213](#e0213-call-arity-mismatch), not this code.
 
 ### E0204 `effect-id-misuse`
 
-A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and `text(...)` rendering are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and rendering as text are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+
+A handle is rendered wherever a value becomes text: as the content of `text(...)` or of any other builtin that renders its content — `heading`, `markdown`, `code`, `label`, `link`, `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Language §1.7.1](./language.md#_1-7-1-syntax)) — as an argument of `fmt(...)`, the template included, and through `.show`. `show` is the member every other value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on an `EffectId` it is this error in each of its spellings — `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). The value's type is read through an alias or a `nominal`, so a `type Handle = EffectId` is a handle on both counts, operators and rendering. A sum with a handle in it is reported once, at the operator: its result is a `Text` or a number, not a handle.
+
+A value that holds a handle without being one is not read through. An `Option(EffectId)` renders its tag, `Some` or `None`, and a record does not render its fields; but a `List(EffectId)` rendered whole, or joined with `.join(…)`, shows each handle and is not reported — a known gap, not a rule.
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
-> `text(...) cannot render EffectId — it is an opaque handle`
+> `<builtin>(...) cannot render EffectId — it is an opaque handle`
+> `.show cannot render EffectId — it is an opaque handle`
 
-**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
+`<builtin>` is the call that renders the handle, as written: `text`, `heading`, …, or `fmt`.
+
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
 
 ### E0205 `bind-on-file-input`
 

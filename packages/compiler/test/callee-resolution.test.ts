@@ -24,7 +24,7 @@ type Probe = Text
 }
 
 const inFn = (callSite: string): string => `slot a : Int = 0
-fn probe() -> Text = (${callSite}).show
+fn probe() -> Int = [${callSite}].length
 tile App = column(text(probe()))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 type Probe = Text
@@ -465,14 +465,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     if (name !== "Decoder.Json") {
       it(`${name} lowers to ${sentinel} with no parentheses`, () => {
         const body = loweringOf(name);
-        expect(body).toContain(`_s.show(${sentinel})`);
+        expect(body).toContain(`[${sentinel}]`);
         expect(body).not.toContain("_tag:");
       });
     }
 
     it(`${name} lowers the same way written as a call`, () => {
       const body = loweringOf(name === "Decoder.Json" ? `${name}(Text)` : `${name}()`);
-      expect(body).toContain(`_s.show(${sentinel})`);
+      expect(body).toContain(`[${sentinel}]`);
     });
   }
 
@@ -492,7 +492,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   it("accepts the constants themselves", () => {
     expect(codesOf(inReducer("t := (Decoder.None).show"))).toEqual([]);
-    expect(codesOf(inReducer("t := (EffectId.none).show"))).toEqual([]);
+    expect(codesOf(inReducer("a := [EffectId.none].length"))).toEqual([]);
   });
 });
 
@@ -569,18 +569,18 @@ describe("every built-in is held to the count its lowering reads", () => {
     const call = callOf(name);
 
     it(`${name} accepts ${arity.min}`, () => {
-      expect(codesOf(inReducer(`t := (${call(arity.min)}).show`))).toEqual([]);
+      expect(codesOf(inReducer(`a := [${call(arity.min)}].length`))).toEqual([]);
     });
 
     if (arity.min > 0) {
       it(`${name} reports one argument too few`, () => {
-        expect(codesOf(inReducer(`t := (${call(arity.min - 1)}).show`))).toEqual(["E0213"]);
+        expect(codesOf(inReducer(`a := [${call(arity.min - 1)}].length`))).toEqual(["E0213"]);
       });
     }
 
     if (Number.isFinite(arity.max)) {
       it(`${name} reports one argument too many`, () => {
-        expect(codesOf(inReducer(`t := (${call(arity.max + 1)}).show`))).toEqual(["E0213"]);
+        expect(codesOf(inReducer(`a := [${call(arity.max + 1)}].length`))).toEqual(["E0213"]);
       });
     }
   }

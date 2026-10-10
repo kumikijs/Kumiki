@@ -116,7 +116,7 @@ export const RECEIVER_MEMBERS = {
   File: [],
 } as const satisfies Record<string, readonly string[]>;
 
-/** Every value has these, whatever its type. */
+/** Every value has these, whatever its type — but an `EffectId`, which has no member at all. */
 export const UNIVERSAL_MEMBERS: ReadonlySet<string> = new Set(["show"]);
 
 export type Receiver = keyof typeof RECEIVER_MEMBERS;
