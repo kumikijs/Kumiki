@@ -1,5 +1,5 @@
 import { unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { AppDef, Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
@@ -74,6 +74,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
       pos: lifecycleTile.pos,
     });
   }
+  checkRoutePattern(r, sym, errors);
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && !sym.tiles.has(r.on.selector.tile)) {
     errors.push({
       code: "E0211",
@@ -124,6 +125,42 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+function declaredRoutePatterns(
+  app: AppDef,
+  sym: SymbolTable,
+): { renders: string[]; redirects: Set<string> } {
+  const renders: string[] = [];
+  const redirects = new Set<string>();
+  const subRoutes = [...sym.tiles.values()].flatMap((t) => t.subRoutes ?? []);
+  for (const { path, tile } of [...app.routes, ...subRoutes]) {
+    if (tile.startsWith(">>")) redirects.add(path);
+    else if (!renders.includes(path)) renders.push(path);
+  }
+  return { renders, redirects };
+}
+
+// With no `app` there are no routes to compare against, and E0003 is the report.
+function checkRoutePattern(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const target = r.on.kind === "LifecycleEvent" ? r.on.routePattern : undefined;
+  if (!target || !sym.app) return;
+  const { renders, redirects } = declaredRoutePatterns(sym.app, sym);
+  if (renders.includes(target.pattern)) return;
+  const quoted = JSON.stringify(target.pattern);
+  const why = redirects.has(target.pattern)
+    ? `${quoted} is a redirect (->>), which the router follows before any route is shown, so the subscription never fires`
+    : `no route is declared at ${quoted}, so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character`;
+  const declared =
+    renders.length > 0
+      ? `Declared routes: ${renders.map((p) => JSON.stringify(p)).join(", ")}`
+      : "The app declares no routes";
+  errors.push({
+    code: "E0228",
+    kind: "undef-route-pattern",
+    message: `Reducer "${r.name}" subscribes to ${target.event}(${quoted}), but ${why}. ${declared}`,
+    pos: target.pos,
+  });
 }
 
 function checkStmt(

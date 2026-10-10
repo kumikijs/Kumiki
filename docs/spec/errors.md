@@ -909,6 +909,17 @@ The bound type is unaliased first, so `type Qty = Int where positive` and a `nom
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
 
+### E0228 `undef-route-pattern`
+
+A `route.enter` / `route.leave` / `route.error` reducer names a pattern that is not a route the app renders ([Routing §3.4](./routing.md#_3-4-route-lifecycle)).
+
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but no route is declared at "<pattern>", so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character. Declared routes: "<p>", …`
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but "<pattern>" is a redirect (->>), which the router follows before any route is shown, so the subscription never fires. Declared routes: "<p>", …`
+
+The runtime fires a route lifecycle event for each pattern the route being shown is matched under — its top-level pattern, and the sub-route pattern it matched below it — and compares the reducer's argument to those as written. So the argument has to be a key of `app.routes` or of a `sub-routes` map whose target is a tile, and anything else is a subscription nothing fires: `route.enter("/*")` names a route declared as `"/*"`, not every route; `route.enter("/bb")` beside a declared `"/b"` is a typo; `route.enter("/users/:userId")` beside a declared `"/users/:id"` spells the key differently; and the key of a `->>` redirect is a path the router replaces before it matches anything. Each compiles to a reducer that never runs — the same dead subscription [E0211](#e0211-undef-tile-in-selector) reports for a tile name. The position is the pattern's string literal, and the message lists the declared routes in declaration order, `app.routes` first. A program with no `app` has no routes to compare against: it is [E0003](#e0003-missing-app), and this check says nothing.
+
+**Fix**: Write the key of the route the reducer is for, as it appears in `app.routes` or in the `sub-routes` map. To run on every route, subscribe to each top-level pattern, or read the [`route` slot](./routing.md#_3-2-current-route-state) where the work is done.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.

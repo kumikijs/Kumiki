@@ -128,11 +128,12 @@ export class StatementParser extends ExpressionParser {
           throw new ParseError(`Unknown route lifecycle event "route.${sub}"`, t.pos);
         }
         this.eat("op", "(");
-        const pattern = this.eat("str").value;
+        const patternTok = this.eat("str");
         this.eat("op", ")");
         return {
           kind: "LifecycleEvent",
-          name: `route.${sub}(${JSON.stringify(pattern)})`,
+          name: `route.${sub}(${JSON.stringify(patternTok.value)})`,
+          routePattern: { event: `route.${sub}`, pattern: patternTok.value, pos: patternTok.pos },
           pos: t.pos,
         };
       }

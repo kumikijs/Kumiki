@@ -255,6 +255,11 @@ export type EventPattern =
       kind: "LifecycleEvent";
       name: string;
       tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
+      routePattern?: {
+        readonly event: "route.enter" | "route.leave" | "route.error";
+        readonly pattern: string;
+        readonly pos: Pos;
+      };
       pos: Pos;
     };
 
