@@ -1,7 +1,6 @@
-# Feature (style.md §4.5): a style prop can branch by breakpoint with a
-# `{base, …}` map, and the breakpoints are the active theme's. `Narrow` moves
-# `md` down to 500px and adds a `wide` key of its own; a key a theme leaves
-# out keeps its §4.2 default.
+# Feature: a style prop can branch by breakpoint with a `{base, …}` map, and the
+# breakpoints are the active theme's. `Narrow` moves `md` down to 500px and adds
+# a `wide` key of its own; a key a theme leaves out keeps its default.
 #
 # `cols` and `rows` take a map like any other responsive prop: the grid below
 # is one column on a phone, two from `md`, four from `lg` and six from `wide`.

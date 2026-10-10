@@ -1,5 +1,5 @@
 # Feature: a tile whose whole body is another user tile puts both on screen
-# (spec/lifecycle.md §7.1.6).
+# (spec/lifecycle.md).
 #
 # `SettingsPage` is `Panel` and nothing else, so the tree `Panel` renders is
 # the whole of both tiles. "open" shows it: `tile.mount(SettingsPage)` and

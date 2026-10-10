@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { sharedTestOptions } from "../../vitest.shared.ts";
 
 export default defineConfig({
   server: {
@@ -8,7 +9,6 @@ export default defineConfig({
   },
   test: {
     environment: "happy-dom",
-    globals: true,
-    include: ["test/**/*.test.ts"],
+    ...sharedTestOptions,
   },
 });
