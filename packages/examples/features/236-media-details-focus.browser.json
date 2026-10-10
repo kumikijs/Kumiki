@@ -1,0 +1,80 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired, and the clip is a <video> with no controls",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "controls": false,
+          "log": ""
+        },
+        "elementState": {
+          "#clip": {
+            "tagName": "VIDEO",
+            "controls": false
+          },
+          "#faq": {
+            "tagName": "DETAILS",
+            "open": true
+          }
+        }
+      }
+    },
+    {
+      "label": "without controls the video takes no focus, so its ui.focus reducer does not run",
+      "do": {
+        "focus": "#clip"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ""
+        }
+      }
+    },
+    {
+      "label": "the toggle turns the controls on",
+      "do": {
+        "click": "#toggle"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "controls": true,
+          "log": ""
+        },
+        "elementState": {
+          "#clip": {
+            "controls": true
+          }
+        }
+      }
+    },
+    {
+      "label": "with controls the video takes focus itself, and its ui.focus reducer runs",
+      "do": {
+        "focus": "#clip"
+      },
+      "expect": {
+        "noErrors": true,
+        "focused": "#clip",
+        "state": {
+          "log": "cf "
+        }
+      }
+    },
+    {
+      "label": "and its ui.blur reducer when it loses focus",
+      "do": {
+        "blur": "#clip"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "cf cb "
+        },
+        "domIncludes": ["log: cf cb"]
+      }
+    }
+  ]
+}

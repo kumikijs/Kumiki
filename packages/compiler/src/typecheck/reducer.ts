@@ -2,7 +2,12 @@ import { unaliasType } from "../assignable.ts";
 import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { firesUnheardIn, labelWrappedUnreached, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
+import {
+  firesUnheardIn,
+  UI_EVENT_TILE_KINDS,
+  type WrappedUnreached,
+  wrappedUnreached,
+} from "../ui-lifts.ts";
 import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./against.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
@@ -127,24 +132,29 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A label-wrapped control's <input> and a kind whose renderer keeps the event
-// both do fire it, so "no descendant fires it" would be untrue for them.
+// A wrapped control's focused element and a kind whose renderer keeps the
+// event both do fire it, so "no descendant fires it" would be untrue for them.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unreached = labelWrappedUnreached(ev, kinds);
-  const unheard = firesUnheardIn(ev, kinds);
-  const labelClause =
-    `a ${unreached.join(" / ")} listens on the <label> around its <input>, ` +
-    `and the "${ev}" that <input> fires does not bubble to the <label>`;
-  if (unheard.length === 0) {
-    if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
-    return `"${ev}" never reaches a listener in tile "${tile}": ${labelClause}`;
-  }
-  const clauses = unheard.map(
+  const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
+  const unheard = firesUnheardIn(ev, kinds).map(
     (g) =>
       `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
   );
-  if (unreached.length > 0) clauses.unshift(labelClause);
-  return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
+  if (unheard.length === 0) {
+    if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
+    return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
+  }
+  return `"${ev}" never reaches a reducer in tile "${tile}": ${[...unreached, ...unheard].join("; ")}`;
+}
+
+function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
+  const kinds = g.kinds.join(" / ");
+  const around = `the <${g.wrapper}> around its <${g.focused}>`;
+  return g.bubbles
+    ? `a ${kinds} takes no "${ev}" listener on ${around}, ` +
+        `since one there would also hear every "${ev}" from the tiles inside it`
+    : `a ${kinds} listens on ${around}, ` +
+        `and the "${ev}" that <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }
 
 function checkStmt(

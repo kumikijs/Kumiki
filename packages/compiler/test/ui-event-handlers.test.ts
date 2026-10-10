@@ -277,6 +277,7 @@ app A
     { kind: "slider", tile: "slider(bind=vol, min=0, max=10)", evs: ALL },
     { kind: "link", tile: 'link(to="/", text="home")', evs: ALL },
     { kind: "select", tile: "select(bind=size, options=sizes())", evs: ALL },
+    { kind: "video", tile: 'video(src="/a.mp4", controls=true)', evs: ALL },
     { kind: "check", tile: "check(value=done)", evs: ["key"] },
     { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
     { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
@@ -325,6 +326,36 @@ app A
       });
     }
   }
+
+  it.each(
+    ALL,
+  )("reports ui.%s on details with what keeps it away, and lifts nothing onto it", (ev) => {
+    const tile = 'details(summary="Question", text(note))';
+    const reported = checkSource(source(ev, tile));
+    expect(reported.map((e) => e.code)).toEqual(["W0212"]);
+    expect(reported[0]?.message).toContain("around its <summary>");
+    expect(loweredOf(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
+  });
+
+  it("lifts ui.key on a details onto the input in its panel, and onto nothing else", () => {
+    // A listener on the <details> as well as the input's own would run the
+    // reducer twice per key, since the input's keydown bubbles there.
+    const lifted = (tile: string): number =>
+      loweredOf(source("key", tile)).split(`onKeyDown: _h("hit")`).length - 1;
+    const details = 'details(summary="Question", input(bind=note))';
+    expect(codesOf(source("key", details))).toEqual([]);
+    expect(lifted(details)).toBeGreaterThan(0);
+    expect(lifted(details)).toBe(lifted("box(input(bind=note))"));
+    expect(checkSource(source("key", 'details(summary="Q", text(note))'))).toEqual([
+      expect.objectContaining({
+        code: "W0212",
+        message: expect.stringContaining(
+          `a details takes no "key" listener on the <details> around its <summary>, ` +
+            `since one there would also hear every "key" from the tiles inside it`,
+        ),
+      }),
+    ]);
+  });
 
   it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {
     expect(codesOf(source("change", "editable(bind=note)"))).toEqual(["W0212"]);

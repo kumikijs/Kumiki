@@ -1,0 +1,50 @@
+# Feature (W0212): which `ui.key` / `ui.focus` / `ui.blur`
+# selectors reach a `video` and a `details`.
+#
+#   video     the `<video>` its renderer returns takes focus itself when it has
+#             `controls`, so all three reach `Clip`. Without `controls` it
+#             takes no focus, and none of them fires: a property of the
+#             instance, as `disabled` is of a button. `Toggle` turns the
+#             controls on.
+#   details   the `<summary>` takes focus inside the `<details>` the renderer
+#             returns. Its `focus` and `blur` do not bubble to the
+#             `<details>`. Its `keydown` does, and so does the keydown of
+#             every tile in the panel. `Answer` carries `ui.key(Faq)` lifted
+#             onto it, so a listener on the `<details>` as well would run
+#             `faqTyped` twice for each key pressed in it. None of the three
+#             is lifted onto a `details`: `ui.key(Faq)` reaches `Answer` alone,
+#             once per key.
+#
+# A key on the summary reaches a handler written on the details itself.
+# `onKeyDown=faqKey` runs for it, and for a key in `Answer` too, after
+# `faqTyped`.
+
+slot controls : Bool = false
+slot answer   : Text = ""
+slot log      : Text = ""
+
+reducer toggle    on=ui.click(Toggle) do= controls := not controls
+reducer clipFocus on=ui.focus(Clip)   do= log := log + "cf "
+reducer clipKey   on=ui.key(Clip)     do= log := log + "ck "
+reducer clipBlur  on=ui.blur(Clip)    do= log := log + "cb "
+reducer faqTyped  on=ui.key(Faq)      do= log := log + "ft "
+reducer faqKey    on=ui.key(_)        do= log := log + "fk "
+
+tile Toggle = button(text="controls") {id: "toggle"}
+tile Clip   = video(src="/demo.mp4", controls=controls) {id: "clip"}
+tile Answer = input(bind=answer) {id: "answer"}
+tile Faq    = details(summary="Question", open=true, Answer, onKeyDown=faqKey) {id: "faq"}
+
+tile App
+    = column(
+        heading("what reaches a video and a details"),
+        Toggle,
+        Clip,
+        Faq,
+        text("log: " + log))
+      {pad: "lg", gap: "md"}
+
+app MediaDetailsFocus
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
