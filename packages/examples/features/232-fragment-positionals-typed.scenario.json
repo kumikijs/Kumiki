@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "each fn named as a fragment is applied to the positionals the method hands it: the element, a Map's key and value, fold's accumulator and element",
+      "do": { "click": "#run" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "labels": ["#3", "#1", "#2"],
+          "onHand": { "apple": 3, "plum": 5 },
+          "joined": "312"
+        },
+        "domIncludes": ["labels: #3,#1,#2", "on hand: apple,plum", "joined: 312"]
+      }
+    }
+  ]
+}

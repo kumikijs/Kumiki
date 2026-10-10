@@ -309,19 +309,65 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["zip", 1],
 ]);
 
-export const FRAGMENT_ARGUMENTS: ReadonlyMap<
+/**
+ * Named as the receiver's signature in stdlib.md names its type parameters;
+ * `Acc` is `fold`'s accumulator, whose type is its init's.
+ */
+export type FragmentPositional = "T" | "K" | "V" | "E" | "Acc";
+
+export type FragmentReceiver = "List" | "Option" | "Result" | "Map";
+
+export type FragmentArgument = {
+  index: number;
+  binds: 1 | 2;
+  second?: "element" | "pair-value";
+  /**
+   * What the checker types the positionals as, `$1` first. A receiver with no
+   * row binds them with no type: a `Set`'s `filter` is handed each member as an
+   * `[element, true]` entry under the key it is stored as.
+   */
+  on: Readonly<Partial<Record<FragmentReceiver, readonly FragmentPositional[]>>>;
+};
+
+export const FRAGMENT_ARGUMENTS: ReadonlyMap<string, FragmentArgument> = new Map<
   string,
-  { index: number; binds: 1 | 2; second?: "element" | "pair-value" }
-> = new Map([
-  ["filter", { index: 0, binds: 2, second: "pair-value" }],
-  ["map", { index: 0, binds: 2, second: "pair-value" }],
-  ["find", { index: 0, binds: 2, second: "pair-value" }],
-  ["sort-by", { index: 0, binds: 2, second: "pair-value" }],
-  ["fold", { index: 1, binds: 2, second: "element" }],
-  ["flat-map", { index: 0, binds: 1 }],
-  ["update", { index: 1, binds: 1 }],
-  ["map-err", { index: 0, binds: 1 }],
+  FragmentArgument
+>([
+  [
+    "filter",
+    {
+      index: 0,
+      binds: 2,
+      second: "pair-value",
+      on: { List: ["T"], Option: ["T"], Map: ["K", "V"] },
+    },
+  ],
+  [
+    "map",
+    {
+      index: 0,
+      binds: 2,
+      second: "pair-value",
+      on: { List: ["T"], Option: ["T"], Result: ["T"], Map: ["K", "V"] },
+    },
+  ],
+  ["find", { index: 0, binds: 2, second: "pair-value", on: { List: ["T"] } }],
+  ["sort-by", { index: 0, binds: 2, second: "pair-value", on: { List: ["T"] } }],
+  ["fold", { index: 1, binds: 2, second: "element", on: { List: ["Acc", "T"] } }],
+  ["flat-map", { index: 0, binds: 1, on: { Option: ["T"], Result: ["T"] } }],
+  ["update", { index: 1, binds: 1, on: { Map: ["V"] } }],
+  ["map-err", { index: 0, binds: 1, on: { Result: ["E"] } }],
 ]);
+
+/** `methodCallJs` lowers this call and the checker checks it, so both read the bare name alike. */
+export function fragmentCall(fn: string, arity: number, pos: Pos): Expr & { kind: "Call" } {
+  return {
+    kind: "Call",
+    callee: fn,
+    args: ["$1", "$2"].slice(0, arity).map((name) => ({ kind: "Ref", name, pos })),
+    pos,
+  };
+}
 
 export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "filter",
@@ -458,13 +504,7 @@ function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): E
   if (ctx.localBinds.has(a.name) || ctx.gen.slots.some((s) => s.name === a.name)) return null;
   const fn = ctx.gen.fns.find((f) => f.name === a.name);
   if (!fn) return null;
-  const positionals = ["$1", "$2"].slice(0, fn.params.length);
-  return {
-    kind: "Call",
-    callee: a.name,
-    args: positionals.map((name) => ({ kind: "Ref", name, pos: a.pos })),
-    pos: a.pos,
-  };
+  return fragmentCall(a.name, fn.params.length, a.pos);
 }
 
 export function methodCallJs(

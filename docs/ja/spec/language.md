@@ -791,6 +791,23 @@ items.filter(isActiveOnly)
 
 式断片の位置に置いた fn 名は、メソッドが式断片の positional で行う呼び出しである：`items.map(double)` は `items.map(double($1))`、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。括弧のない fn 名が正しいのは**この位置だけ**である — fn は値ではないので、値の位置に書いた `label` は [E0127](./errors.md#e0127-fn-as-value) であり、呼び出しは `label()` と書く。位置の一覧と、それぞれが束縛する positional の数は E0127 の項に挙げてある。
 
+**各 positional の型**は、メソッドが式断片に渡すものの型であり、レシーバの型から読み取る：
+
+| メソッド | レシーバ | `$1` | `$2` |
+|---|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | `List(T)` | 要素、`T` | — |
+| `filter`, `map` | `Option(T)` | 値、`T` | — |
+| `map` | `Result(T, E)` | `Ok` の値、`T` | — |
+| `filter`, `map` | `Map(K, V)` | キー、`K` | 値、`V` |
+| `fold(init, f)` | `List(T)` | アキュムレータ、init の型 | 要素、`T` |
+| `flat-map` | `Option(T)`, `Result(T, E)` | 値、`T` | — |
+| `update(k, f)` | `Map(K, V)` | 現在の値、`V` | — |
+| `map-err` | `Result(T, E)` | エラー、`E` | — |
+
+`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 引数を init の型 `Int` と、第 2 引数を要素と照合する。
+
+型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` のない `fn` の結果）、§2.2.3 が束縛を与えていない `Set` の `filter`、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
+
 ---
 
 ## 1.9 式言語
