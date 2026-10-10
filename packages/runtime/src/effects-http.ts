@@ -1,20 +1,13 @@
-// http.* built-in capability handler (#71): shipped only when an app declares
-// an HTTP-backed effect.
-
 import type { EffectResult } from "./core.ts";
 import { type Decode, decodeOf, decodeRead } from "./effects-decode.ts";
 
 export type HttpCfg = {
   baseUrl?: string;
-  // `headers` is a thunk so slot references (e.g. an auth token) are
-  // re-evaluated on every request rather than frozen at mount (spec #78).
   headers?: () => Record<string, string>;
   on401?: string;
   on403?: string;
   on5xx?: string;
-  // Timeout in milliseconds; spec http.md §6.9 default is 30s.
   timeout?: number;
-  // fetch credentials mode; spec http.md §6.9 default is "same-origin".
   credentials?: RequestCredentials;
 };
 
@@ -42,12 +35,8 @@ export async function httpFetch(
   try {
     decode = decodeOf(x.decode);
   } catch (e) {
-    // A `decode` that is no decoder fails the effect, before any request.
     return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
   }
-  // Header precedence (spec http.md §6.1.5): auto < global < input, with
-  // names compared case-insensitively so a global `Content-Type` and an input
-  // `content-type` do not both reach fetch.
   const headers: Record<string, string> = {};
   const globalHeaders = httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {};
   for (const [k, v] of Object.entries(globalHeaders)) setHeader(headers, k, v);
@@ -67,18 +56,12 @@ export async function httpFetch(
     }
     const { body, contentType } = encoded;
     if (body !== undefined) init.body = body;
-    // A `FormData` body's Content-Type must carry the boundary only fetch
-    // knows, so one the program set is dropped (§6.1.5).
     if (body instanceof FormData) setHeader(headers, "Content-Type");
     else if (contentType && headerKey(headers, "Content-Type") === undefined) {
       headers["Content-Type"] = contentType;
     }
   }
 
-  // Internal controller drives the timeout; an external `signal` (from the
-  // dispatcher / `http.cancel`) also aborts the in-flight fetch via the
-  // listener below. `AbortSignal.any` would be ideal but is not in every
-  // happy-dom / older browser target — manual fan-in is portable.
   const timeoutMs = httpCfg?.timeout ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -115,10 +98,6 @@ export async function httpFetch(
         },
       };
     }
-    // Reading the body can still fail like a connection (it stays in the outer
-    // catch, status 0). Decoding it cannot: a response arrived, so a body that
-    // does not parse, or parses to a value `Decoder.Json(T)`'s `T` refuses,
-    // keeps its status and text (§6.1.4) and is not retried (§6.5).
     const decoded = await decodeRead(decode, {
       text: () => res.text(),
       bytes: async () => new Uint8Array(await res.arrayBuffer()),
@@ -129,9 +108,6 @@ export async function httpFetch(
       value: { status: res.status, message: decoded.message, body: decoded.text },
     };
   } catch (e) {
-    // spec http.md §6.4.1: cancelled / aborted requests normalize to
-    // `{status:0, message:"aborted"}` so reducers see the same HttpError
-    // shape for manual cancel, `policy=latest` auto-cancel, and timeout.
     const aborted = externallyAborted || isAbortError(e);
     if (aborted) {
       return { kind: "err", value: { status: 0, message: "aborted", body: "" } };
@@ -146,14 +122,6 @@ export async function httpFetch(
 type Tagged = { _tag: string; _0?: unknown };
 type Encoded = { body?: BodyInit; contentType?: string };
 
-/**
- * What a request body is sent as, and the Content-Type it implies when the
- * program set none (http.md §6.1.3 / §6.1.5). An `HttpBody` variant is sent as
- * what it names; a `Multipart` / `Bytes` / `Text` body gets no Content-Type
- * here, so fetch writes its own (the multipart boundary in particular). Any
- * other value — a record, a list, a bare `Text` — is sent as JSON. Throws when
- * the body cannot be sent as written (a `FileV` that holds no file).
- */
 function encodeBody(body: unknown): Encoded {
   const t = body as Tagged | null;
   switch (t !== null && typeof t === "object" ? t._tag : undefined) {
@@ -186,9 +154,6 @@ function formDataOf(entries: Record<string, unknown>): FormData {
     const tagged = v !== null && typeof v === "object" && "_tag" in v ? (v as Tagged) : undefined;
     const inner = tagged ? tagged._0 : v;
     if (tagged?._tag === "FileV") {
-      // `FileV` carries the file record a file input produced; its DOM `File`
-      // is `_file`. A record that lost it (`{}` after a JSON round trip
-      // through persistence) has nothing to upload.
       const file = (inner as { _file?: unknown } | null)?._file ?? inner;
       if (!(file instanceof Blob)) throw new Error(`Multipart field "${name}" holds no file`);
       fd.append(name, file);
@@ -214,11 +179,6 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/**
- * Append the request's `query` (http.md §6.1.2) to `url`: each entry
- * URL-encoded, after any query string the url already carries and before a
- * fragment. An empty or absent query leaves the url as written.
- */
 function withQuery(url: string, query: Record<string, string> | undefined): string {
   const qs = new URLSearchParams(query ?? {}).toString();
   if (!qs) return url;
@@ -237,19 +197,6 @@ function isAbortError(e: unknown): boolean {
   return false;
 }
 
-/**
- * `app.http.headers` is an expression, evaluated per request. A throw from it
- * cannot take the request down — one bad header would otherwise mean no HTTP
- * at all — so the request goes out with no global headers.
- *
- * Reported, not swallowed. Dropping every global header silently is worse than
- * the throw: an app whose `Authorization` vanished gets a 401 and runs its
- * `on-401` reducer, so the visible symptom is a logout with no stated cause,
- * and the headless tiers (which decide failure from `console.error`) see a run
- * that passed. A `panic()` or a `.get` on a `None` in a header expression is
- * the same signal lifecycle.md §7.2 sends everywhere else, and it reaches the
- * console here too.
- */
 function safeCallHeaders(thunk: () => Record<string, string>): Record<string, string> {
   try {
     return thunk() ?? {};

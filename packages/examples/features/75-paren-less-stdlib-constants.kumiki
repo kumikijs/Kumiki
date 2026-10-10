@@ -1,9 +1,8 @@
 # Feature: stdlib constants written without parentheses.
-# `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` (http.md §6.1.4) and
-# `EffectId.none` (stdlib.md §2.1.1.1) read as values, and the spec writes them
-# bare. What the compiler reads is a call given no arguments — the constant is
-# what a member with no arguments to take evaluates to. Every constant below is
-# in the bare form on purpose.
+# `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` and `EffectId.none` read
+# as values, and the spec writes them bare. What the compiler reads is a call
+# given no arguments — the constant is what a member with no arguments to take
+# evaluates to. Every constant below is in the bare form on purpose.
 #
 # A request with no decoder is decoded as JSON, so a decoder that lowered to
 # nothing would parse the body. Each response here is one JSON cannot decode:

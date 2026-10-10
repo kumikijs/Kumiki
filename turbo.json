@@ -3,10 +3,12 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".vitepress/dist/**"]
+      "outputs": ["dist/**", ".vitepress/dist/**"],
+      "outputLogs": "errors-only"
     },
     "check": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "outputLogs": "errors-only"
     },
     "test": {
       "dependsOn": ["^build"],
@@ -15,8 +17,10 @@
         "$TURBO_ROOT$/docs/spec/errors.md",
         "$TURBO_ROOT$/docs/ja/spec/errors.md",
         "$TURBO_ROOT$/packages/examples/**/*.kumiki",
-        "$TURBO_ROOT$/packages/examples/**/*.json"
-      ]
+        "$TURBO_ROOT$/packages/examples/**/*.json",
+        "$TURBO_ROOT$/packages/examples/src/**"
+      ],
+      "outputLogs": "errors-only"
     },
     "test:e2e": {
       "dependsOn": ["^build"],
@@ -26,16 +30,19 @@
         "tests/**",
         "playwright.config.ts",
         "package.json",
+        "../examples/src/**",
         "../examples/features/**/*.browser.json",
         "../examples/features/**/*.kumiki",
         "../examples/apps/**/*.browser.json",
         "../examples/apps/**/*.kumiki"
       ],
-      "outputs": ["playwright-report/**", "test-results/**"]
+      "outputs": ["playwright-report/**", "test-results/**"],
+      "outputLogs": "errors-only"
     },
     "lint": {},
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "outputLogs": "errors-only"
     },
     "dev": {
       "cache": false,

@@ -28,7 +28,7 @@ before: err  "SyntaxError: Unexpected token 'd', "dark" is not valid JSON"
 after:  ok   Some("dark")
 ```
 
-A stored value is now decoded as a response body is (http.md §6.7.2):
+A stored value is now decoded as a response body is (http.md):
 `Decoder.Text` delivers the stored text, `Decoder.Bytes` its UTF-8 bytes,
 `Decoder.None` `Unit` (the read answers only whether the key is there), and
 `Decoder.Json(T)` or no `decode` parses it as before. A stored text that does

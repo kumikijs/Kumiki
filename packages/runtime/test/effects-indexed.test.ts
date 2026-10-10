@@ -1,8 +1,3 @@
-// indexed-* effect coverage for app.indexed-db (#79). The unavailable-config
-// branch matters most: parity with storage (#37) requires a clean error
-// result, not a throw. Happy-path coverage uses a small in-memory mock that
-// implements just enough of the IndexedDB request shape to drive the runtime.
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type IndexedDbCfg,
@@ -17,26 +12,21 @@ const cfg: IndexedDbCfg = {
   stores: [{ name: "notes", key: "id" }],
 };
 
-describe("indexed-* without config (#79)", () => {
-  it("indexedRead returns a clean error when cfg is absent", async () => {
-    const r = await indexedRead({ store: "notes", key: "a" }, undefined);
-    // The err value is the `Text` an `indexed-*` effect's `out=Result(_, Text)`
-    // declares (http.md §6.7), not a record wrapping it.
-    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
-  });
-
-  it("indexedWrite returns a clean error when cfg is absent", async () => {
-    const r = await indexedWrite({ store: "notes", key: "a", value: { id: "a" } }, undefined);
-    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
-  });
-
-  it("indexedDelete returns a clean error when cfg is absent", async () => {
-    const r = await indexedDelete({ store: "notes", key: "a" }, undefined);
-    expect(r).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
+describe("indexed-* without config", () => {
+  // The err value is the `Text` the effect's `Result(_, Text)` declares, not a record wrapping it.
+  it.each([
+    ["indexedRead", () => indexedRead({ store: "notes", key: "a" }, undefined)],
+    [
+      "indexedWrite",
+      () => indexedWrite({ store: "notes", key: "a", value: { id: "a" } }, undefined),
+    ],
+    ["indexedDelete", () => indexedDelete({ store: "notes", key: "a" }, undefined)],
+  ])("%s returns a clean error when cfg is absent", async (_name, run) => {
+    expect(await run()).toEqual({ kind: "err", value: "app.indexed-db is not declared" });
   });
 });
 
-describe("indexed-* unavailable backend (#79)", () => {
+describe("indexed-* unavailable backend", () => {
   const original = (globalThis as { indexedDB?: unknown }).indexedDB;
   beforeEach(() => {
     (globalThis as { indexedDB?: unknown }).indexedDB = undefined;
@@ -53,7 +43,7 @@ describe("indexed-* unavailable backend (#79)", () => {
   });
 });
 
-describe("indexed-* happy path with in-memory mock (#79)", () => {
+describe("indexed-* happy path with in-memory mock", () => {
   const original = (globalThis as { indexedDB?: unknown }).indexedDB;
 
   beforeEach(() => {
@@ -134,9 +124,6 @@ describe("indexed-* happy path with in-memory mock (#79)", () => {
   });
 });
 
-// A minimal mock that mirrors enough of IndexedDB's request/transaction shape
-// for our handlers — fully in-memory, one DB per name. Keeps the test free of
-// fake-indexeddb dependency drift.
 function makeMockIndexedDb(): IDBFactory {
   const dbs = new Map<string, Map<string, Map<string, unknown>>>();
   function makeRequest<T>(value: T): IDBRequest<T> {

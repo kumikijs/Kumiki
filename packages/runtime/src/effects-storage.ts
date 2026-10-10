@@ -1,28 +1,9 @@
-// storage.* / session.* built-in capability handlers (#71, #84):
-// shipped only when an app declares a matching storage-backed effect.
-// `storage-*` uses localStorage; `session-*` is the same shape over
-// sessionStorage (http.md §6.7.4). Both treat backend unavailability
-// (opaque-origin sandbox, private mode, SecurityError) as a clean
-// `err` result so reducers can opt into a `.err` branch (#37). The err value
-// is the failure's message as a plain string: the `Text` these effects
-// declare as `E` in `out=Result(T, Text)` (http.md §6.7).
-
 import type { EffectResult } from "./core.ts";
 import { decodeOf, decodeRead } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
 
-/**
- * The read of http.md §6.7.2. Everything that can throw is inside the `try`:
- * the request itself (an `in=Unit` read with no `map-request` has none), a
- * `decode` that is no decoder, and the backend's getter (it throws
- * `SecurityError` in an opaque-origin sandbox), so a failure is always the
- * `Text` err and never a rejection. A stored value is text, decoded by the
- * read's decoder as a response body is (§6.1.4); its bytes are its UTF-8
- * encoding, as `Bytes.from-text` builds it. A text `Decoder.Json(T)` cannot
- * parse, or whose parsed value `T` refuses, makes the read an `err`.
- */
 async function readFrom(backend: Backend, input: unknown): Promise<EffectResult> {
   try {
     const req = input as { key: string; decode?: unknown };
@@ -40,16 +21,11 @@ async function readFrom(backend: Backend, input: unknown): Promise<EffectResult>
   }
 }
 
-/** An `err` whose value is the message itself, the declared `Text` (http.md §6.7). */
+/** An `err` whose value is the message itself, the declared `Text`. */
 function failed(message: string): EffectResult {
   return { kind: "err", value: message };
 }
 
-/**
- * Run one Web Storage call, answering a failure as an `err` that names the call
- * and its key: a quota error on one key must read differently from a program
- * that built the wrong request.
- */
 function attempt(backend: Backend, call: string, run: (s: Storage) => void): EffectResult {
   try {
     run(globalThis[backend]);
@@ -59,15 +35,6 @@ function attempt(backend: Backend, call: string, run: (s: Storage) => void): Eff
   }
 }
 
-/**
- * The write and the remove of http.md §6.7.2, told apart by the request: a
- * record with a `value` field writes it — whatever it is, so a `None` or an
- * empty list is still a write — and one without removes the key. The clear is
- * not decided here: codegen calls `storageClear` / `sessionClear` for an effect
- * declared `in=Unit` with no `map-request`. A request that is not a record (an
- * empty one included), a key that is not a non-empty text, and a value JSON
- * cannot encode are each an `err` that touches nothing.
- */
 function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   if (typeof input !== "object" || input === null) {
     return failed(`${cap}: the request is not a record (got ${String(input)})`);
@@ -79,8 +46,6 @@ function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   }
   const at = JSON.stringify(key);
   if (!("value" in req)) return attempt(backend, `removeItem(${at})`, (s) => s.removeItem(key));
-  // `JSON.stringify` answers `undefined` (not a string) for `undefined`, a
-  // function or a symbol; stored, that would read back as something else.
   const raw: string | undefined = JSON.stringify(req.value);
   if (raw === undefined) {
     return failed(
