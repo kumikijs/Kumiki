@@ -80,7 +80,7 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
+レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
 decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
 
@@ -267,7 +267,8 @@ id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest
 ### 6.4.1 挙動
 
 - 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
-- キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
+- キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: None}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
+- `HttpError` の `body` は `Option(Text)` である。レスポンスが届き、その本文を読めたときは常に本文テキストの `Some` になる。2xx 以外のステータスと、本文を decode できない 2xx（[6.1.4](#_6-1-4-decoder-型)）がこれにあたる。空の本文は `None` ではなく `Some("")` である。`body` が `None` になるのは、レスポンスが届かなかったとき — 中断、キャンセル、タイムアウト、通信失敗、送れないリクエスト本文で、いずれも `status: 0` — と、レスポンスの本文を読めなかったときである。後者では、2xx 以外のレスポンスは自身の `status` を保ち、2xx のレスポンスは接続の失敗と同じく `status: 0` を報告する。
 - 同 effect に対する `debounce` タイマーは cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
 - `throttle` のウィンドウマーカーは **そのまま維持される**。元の effect はすでに launch 済み（cancel はその進行中リクエストを abort）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
 

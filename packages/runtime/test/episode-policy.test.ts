@@ -1,6 +1,7 @@
 import type { AppShape, EffectResult, EpisodeStep, MountedApp } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { httpError } from "../src/effects-http.ts";
 import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
@@ -149,7 +150,7 @@ describe("policy-deferred effect episode fidelity", () => {
             new Promise<EffectResult>((resolve) => {
               if (++call > 1) resolveNew = resolve;
               signal?.addEventListener("abort", () => {
-                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+                resolve({ kind: "err", value: httpError(0, "aborted") });
               });
             }),
         },

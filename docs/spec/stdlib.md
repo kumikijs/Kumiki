@@ -45,7 +45,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | Type | Definition |
 |---|---|
 | `HttpStatus` | `nominal Int where between(0, 599)` — a response's status, or `0` for a request that got no response at all (an abort, a cancellation, a timeout, a network failure: [HTTP §6.4.1](./http.md#_6-4-1-behavior)). No predicate says "`0` or `100`–`599`", so the range is the tightest one the refinement layer can state |
-| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` |
+| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` — `body` is `Some` of the body text of the response that arrived (`Some("")` for an empty one), and `None` when no response arrived or its body could not be read ([HTTP §6.4.1](./http.md#_6-4-1-behavior)) |
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |

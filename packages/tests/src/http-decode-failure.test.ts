@@ -88,7 +88,7 @@ describe("a 2xx whose body does not decode", () => {
     await clickBuy(app, html);
     const err = storedErr(app);
     expect(err.status).toBe(201);
-    expect(err.body).toBe("<html>Created</html>");
+    expect(err.body).toEqual({ _tag: "Some", _0: "<html>Created</html>" });
     expect(String(err.message)).toMatch(/^decode failed: /);
   });
 

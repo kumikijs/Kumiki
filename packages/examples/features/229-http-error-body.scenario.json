@@ -1,0 +1,42 @@
+{
+  "effects": {
+    "loadReport": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 404,
+          "message": "Not Found",
+          "body": { "_tag": "Some", "_0": "report 7 was archived" }
+        }
+      },
+      {
+        "outcome": "err",
+        "value": { "status": 0, "message": "aborted", "body": { "_tag": "None" } }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "label": "nothing has been loaded yet",
+      "expect": { "noErrors": true, "state": { "report": "none", "problem": "" } }
+    },
+    {
+      "label": "a 404 carries the server's reason in Some, and .err shows it",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "problem": "the server answered 404: report 7 was archived" },
+        "domIncludes": ["problem: the server answered 404: report 7 was archived"]
+      }
+    },
+    {
+      "label": "an aborted request got no response, so its body is None and .err says so",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "problem": "no response (aborted)" },
+        "domIncludes": ["problem: no response (aborted)"]
+      }
+    }
+  ]
+}
