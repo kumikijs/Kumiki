@@ -106,7 +106,7 @@ export function checkAgainst(
     errors.push({
       code: "E0217",
       kind: "int-literal-precision",
-      message: `Int literal ${literal.written} is not exactly representable and was rounded to ${literal.value}`,
+      message: `Int literal ${literal.raw} is not exactly representable and was rounded to ${literal.value}`,
       pos: e.pos,
     });
     return;

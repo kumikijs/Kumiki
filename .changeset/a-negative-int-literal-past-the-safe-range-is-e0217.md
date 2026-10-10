@@ -6,7 +6,7 @@ A negative `Int` literal outside the safe range is E0217, as the positive one is
 
 E0217 `int-literal-precision` exists so that an `Int` literal JavaScript cannot
 represent exactly is reported instead of silently rounded. The sign is part of
-the literal (language.md §1.2), but the lexer emits it as its own operator, and
+the literal (language.md), but the lexer emits it as its own operator, and
 the check matched only an unsigned literal. So every negative literal past the
 bound passed, in every position the check covers:
 
