@@ -17,6 +17,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { typeMemberQualifier } from "./builtin-calls.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -184,15 +185,18 @@ class Walker {
         this.expr(e.base, locals);
         this.expr(e.index, locals);
         return;
-      case "Call":
+      case "Call": {
         // `run-reducer(name)` takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
           return;
         }
-        if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
+        const qualifier = typeMemberQualifier(e.callee, e.args.length);
+        if (qualifier !== undefined) this.add("type", qualifier, e.pos);
+        else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
+      }
       case "MethodCall":
         this.expr(e.receiver, locals);
         if (e.method === "run-reducer") {

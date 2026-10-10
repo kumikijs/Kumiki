@@ -37,6 +37,8 @@ kumiki list <layer>                 # all definition names within a layer
 kumiki list                         # all definition names (with layer prefix)
 ```
 
+A referrer is a definition that names this one at a position where the checker resolves the name to it, and the qualifier of a type-member call is such a position: `ItemId.fresh()`, `ItemId.parse(t)` and `ItemId.show(v)` name the type `ItemId` ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation), [§2.4.3](./stdlib.md#_2-4-3-type-conversion)). The reducer that mints the ids is a referrer of `type.ItemId`, and `rename` rewrites the qualifier with the other references. A built-in call of a namespace — `Duration.ms(5)`, `EffectId.none` — names no type, even when the program declares one of that name ([E0117](./errors.md#e0117-undef-type)).
+
 ### 9.2.2 Write Commands
 
 ```bash

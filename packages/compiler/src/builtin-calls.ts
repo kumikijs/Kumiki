@@ -53,6 +53,32 @@ export function isQualifierName(name: string): boolean {
   return QUALIFIER_RE.test(name);
 }
 
+// A namespace's members are exactly its built-in calls, so any other argless member resolves to
+// nothing (E0116), and in particular to no type member on the name.
+export function isMissingNamespaceMember(callee: string, argCount: number): boolean {
+  const dot = callee.indexOf(".");
+  return (
+    dot > 0 &&
+    argCount === 0 &&
+    QUALIFIED_CALL_NAMESPACES.has(callee.slice(0, dot)) &&
+    !QUALIFIED_BUILTIN_CALLS.has(callee)
+  );
+}
+
+// One rule for the checker, which resolves the name against the type table, and the reference
+// walker, which reads it as an edge to that type, so refs and rename see exactly the qualifiers
+// the checker resolves. The spelling rule is the one builtinArity and codegen apply: a stricter
+// one would report an undefined type for a name with no lowering under any spelling.
+export function typeMemberQualifier(callee: string, argCount: number): string | undefined {
+  const dot = callee.indexOf(".");
+  if (dot <= 0 || !TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) return undefined;
+  const qualifier = callee.slice(0, dot);
+  if (!QUALIFIER_RE.test(qualifier) || isMissingNamespaceMember(callee, argCount)) {
+    return undefined;
+  }
+  return qualifier;
+}
+
 export function builtinArity(callee: string): BuiltinArity | undefined {
   const named = BUILTIN_CALLS.get(callee) ?? QUALIFIED_BUILTIN_CALLS.get(callee);
   if (named) return named;
