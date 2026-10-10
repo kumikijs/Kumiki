@@ -2,7 +2,8 @@
 # holds the field to it.
 #
 #   base-url     assignable to Text — a type built on Text (`Url`) included
-#   timeout      assignable to Int, read as milliseconds — a Duration is one
+#   timeout      assignable to Int, read as milliseconds — a Duration is one —
+#                and a literal is positive
 #   credentials  assignable to Text, and a literal is one of omit /
 #                same-origin / include
 #

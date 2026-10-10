@@ -20,6 +20,7 @@ export function checkAgainst(
   ctx: Ctx,
   code: MismatchCode = "E0201",
   omittable?: Omittable,
+  domain?: LiteralDomain,
 ): void {
   if (declared === null) return;
   if (declared === REDUCER_REF) {
@@ -77,20 +78,21 @@ export function checkAgainst(
     return;
   }
   if (e.kind === "IfExpr") {
-    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable);
-    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable);
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable, domain);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable, domain);
     return;
   }
   if (e.kind === "LetIn") {
     // The body is the value that lands here, read with the name bound.
-    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code, omittable);
+    const scope = letInScope(e, sym, ctx);
+    checkAgainst(e.body, declared, sym, errors, scope, code, omittable, domain);
     return;
   }
   if (e.kind === "MatchExpr") {
     const scrutType = inferType(e.scrutinee, sym, ctx);
     for (const arm of e.arms) {
       const scope = armScope(arm, scrutType, sym, ctx);
-      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
+      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable, domain);
     }
     return;
   }
@@ -113,8 +115,21 @@ export function checkAgainst(
   const actual = inferType(e, sym, ctx);
   if (actual === null || !isKnown(actual, sym)) return;
   const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
-  if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
+  if (!assignable(actual, want ?? declared, sym)) {
+    mismatch(e, actual);
+    return;
+  }
+  const outside = domain?.(e);
+  if (outside) pushMismatch(errors, code, outside, e.pos);
 }
+
+/**
+ * A value domain a site puts on the literals that land in it: the message for a
+ * literal it cannot take, or `null`, also for any other expression, whose value
+ * is decided at run time. It is asked only after the leaf's type is found right,
+ * so a literal is reported once.
+ */
+export type LiteralDomain = (e: Expr) => string | null;
 
 function withoutOmitted(
   d: TypeExpr,

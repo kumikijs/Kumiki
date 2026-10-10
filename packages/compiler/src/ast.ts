@@ -222,6 +222,13 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
   return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
+/** `-1` parses as a negation of a literal, which is still a literal. */
+export function numberLiteral(e: Expr): number | null {
+  if (e.kind === "Num") return e.value;
+  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") return -e.rhs.value;
+  return null;
+}
+
 export function assertNever(node: never): void {
   void node;
 }

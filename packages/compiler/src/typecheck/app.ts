@@ -1,8 +1,8 @@
-import type { AppDef, Expr } from "../ast.ts";
+import { type AppDef, numberLiteral } from "../ast.ts";
 import { STANDARD_CAPABILITIES } from "../capabilities.ts";
-import { checkAgainst, checkEmitTarget } from "./against.ts";
+import { checkAgainst, checkEmitTarget, type LiteralDomain } from "./against.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
-import { checkExpr, pushMismatch } from "./expr.ts";
+import { checkExpr } from "./expr.ts";
 import { container, prim } from "./infer.ts";
 import {
   type RouteChainResolver,
@@ -106,32 +106,31 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
     const text = prim("Text", pos);
     checkAgainst(http.headers, container("Map", [text, text], pos), sym, errors, fieldCtx);
   }
-  if (http.timeout !== undefined)
-    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
-  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+  if (http.timeout !== undefined) {
+    const int = prim("Int", http.timeout.pos);
+    checkAgainst(http.timeout, int, sym, errors, fieldCtx, "E0201", undefined, positiveMs);
+  }
+  if (http.credentials !== undefined) {
+    const text = prim("Text", http.credentials.pos);
+    checkAgainst(http.credentials, text, sym, errors, fieldCtx, "E0201", undefined, fetchMode);
+  }
 }
+
+/** The runtime arms each request's abort with the timeout, and a delay of 0 or less fires it at once. */
+const positiveMs: LiteralDomain = (e) => {
+  const ms = numberLiteral(e);
+  return ms === null || ms > 0
+    ? null
+    : `timeout ${ms} is not a positive number of milliseconds; every request is aborted before it can answer`;
+};
 
 /** The `RequestCredentials` modes of the Fetch standard. */
 const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
 
-function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (e.kind === "IfExpr") {
-    checkHttpCredentials(e.consequent, sym, errors, ctx);
-    checkHttpCredentials(e.alternate, sym, errors, ctx);
-    return;
-  }
-  if (e.kind === "Str") {
-    if (HTTP_CREDENTIALS.includes(e.value)) return;
-    pushMismatch(
-      errors,
-      "E0201",
-      `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`,
-      e.pos,
-    );
-    return;
-  }
-  checkAgainst(e, prim("Text", e.pos), sym, errors, ctx);
-}
+const fetchMode: LiteralDomain = (e) =>
+  e.kind !== "Str" || HTTP_CREDENTIALS.includes(e.value)
+    ? null
+    : `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`;
 
 function checkAppTheme(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const theme = app.theme;
