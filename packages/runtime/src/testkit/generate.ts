@@ -68,6 +68,43 @@ function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
   return `https://${word(6)}.example.com/${word(4)}`;
 }
 
+// Every value in a shape passes the runtime's own check for the form, so a shrunk form stays one.
+const FORM_SHAPES: Record<"email" | "url" | "uuid", RegExp> = {
+  email: /^[a-z]+@[a-z]+\.example\.com$/,
+  url: /^https:\/\/[a-z]+\.example\.com\/[a-z]+$/,
+  uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+};
+
+// `one-of` names the whole domain, whatever the base type is, so it is answered ahead of the type it refines.
+function choicesOf(desc: GenDesc): (number | string)[] | undefined {
+  return "oneOf" in desc && desc.oneOf && desc.oneOf.length > 0 ? desc.oneOf : undefined;
+}
+
+type ScalarDesc = Extract<GenDesc, { t: "Int" | "Float" | "Text" }>;
+
+/**
+ * Whether `v` is in the domain `desc` declares, read from the fields generation builds to. The
+ * spans an unbounded type is sampled from (±1000, 50 characters) are not part of the domain.
+ */
+function admits(desc: ScalarDesc, v: unknown): boolean {
+  const choices = choicesOf(desc);
+  if (choices) return choices.includes(v as number | string);
+  if (desc.t === "Text") {
+    return (
+      typeof v === "string" &&
+      v.length >= (desc.minLen ?? 0) &&
+      v.length <= (desc.maxLen ?? Number.POSITIVE_INFINITY) &&
+      (desc.form === undefined || FORM_SHAPES[desc.form].test(v))
+    );
+  }
+  return (
+    typeof v === "number" &&
+    (desc.t === "Float" || Number.isInteger(v)) &&
+    v >= (desc.min ?? Number.NEGATIVE_INFINITY) &&
+    v <= (desc.max ?? Number.POSITIVE_INFINITY)
+  );
+}
+
 /**
  * How many steps into a recursive type generation takes freely. Past it every choice takes the way
  * that ends soonest (a `base` choice, `None`, an empty collection), so the value ends.
@@ -80,10 +117,8 @@ type GenScope = { types: ReadonlyMap<string, GenDesc>; depth: number };
 const GEN_TOP: GenScope = { types: new Map(), depth: 0 };
 
 export function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN_TOP): unknown {
-  // `one-of` names the whole domain, whatever the base type is, so it is answered ahead of the type it refines.
-  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
-    return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
-  }
+  const choices = choicesOf(desc);
+  if (choices) return choices[Math.floor(rng() * choices.length)];
   const gen = (d: GenDesc): unknown => genValue(d, rng, scope);
   const ending = scope.depth >= GEN_DEPTH;
   switch (desc.t) {
@@ -177,18 +212,19 @@ export function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN
 }
 
 /**
- * Values "simpler" than `v` that are still values of `desc`. A candidate outside the type would be
- * one the generator never produces, which a slot may refuse, so the counterexample reported would
- * be one no generated trial was run on.
+ * Values "simpler" than `v` that are still values of `desc`, simplest first. A candidate outside
+ * the type would be one the generator never produces, which a slot may refuse, so the
+ * counterexample reported would be one no generated trial was run on.
  */
 function shrinkCandidates(
   v: unknown,
   desc: GenDesc,
   types: ReadonlyMap<string, GenDesc>,
 ): unknown[] {
-  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
-    const first = desc.oneOf[0];
-    return v === first ? [] : [first];
+  const choices = choicesOf(desc);
+  if (choices) {
+    const at = choices.indexOf(v as number | string);
+    return at > 0 ? choices.slice(0, at) : [];
   }
   switch (desc.t) {
     case "Int":
@@ -200,16 +236,18 @@ function shrinkCandidates(
       );
       if (v === target) return [];
       const half = target + Math.trunc((v - target) / 2);
-      return half === target ? [target] : [target, half];
+      return (half === target ? [target] : [target, half]).filter((c) => admits(desc, c));
     }
     case "Text": {
-      // A shape (`email`, …) has no shorter instance that is still one.
-      if (typeof v !== "string" || desc.form) return [];
-      const shortest = desc.minLen ?? 0;
-      if (v.length <= shortest) return [];
-      const least = v.slice(0, shortest);
-      const half = v.slice(0, Math.max(shortest, Math.floor(v.length / 2)));
-      return half === least ? [least] : [least, half];
+      if (typeof v !== "string") return [];
+      const out = new Set([
+        v.slice(0, desc.minLen ?? 0),
+        v.slice(0, Math.max(desc.minLen ?? 0, Math.floor(v.length / 2))),
+      ]);
+      // One character shorter is how a form shortens a word and keeps its literal parts.
+      if (desc.form) for (let i = 0; i < v.length; i++) out.add(v.slice(0, i) + v.slice(i + 1));
+      out.delete(v);
+      return [...out].filter((c) => admits(desc, c));
     }
     case "List":
       if (!Array.isArray(v) || v.length === 0) return [];
@@ -232,6 +270,7 @@ function shrinkCandidates(
     case "Option":
       return (v as { _tag?: unknown } | null)?._tag === "Some" ? [{ _tag: "None" }] : [];
     case "Record": {
+      if (!v || typeof v !== "object") return [];
       const o = v as Record<string, unknown>;
       return desc.fields.flatMap((f) =>
         shrinkCandidates(o[f.name], f.desc, types).map((c) => ({ ...o, [f.name]: c })),

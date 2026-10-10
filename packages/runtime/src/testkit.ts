@@ -38,7 +38,14 @@ import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
 /** A `run-reducer` step whose batch a refinement rejected: the reducer did not run, so the trial fails. */
-class RejectedStep extends Error {}
+class RejectedStep extends Error {
+  /** The reducer and each refusing slot's predicate, not the values written, which differ per input. */
+  readonly way: string;
+  constructor(reducer: string, rejected: readonly RefinementRejection[]) {
+    super(rejectedBatchText(reducer, rejected));
+    this.way = JSON.stringify([reducer, rejected.map((r) => [r.slot, r.kind, r.args])]);
+  }
+}
 
 export const _stdlibTest = {
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
@@ -74,7 +81,7 @@ export const _stdlibTest = {
     const res = r.apply(app.live, { $el: event, $event: event });
     const rejected = batchRejections(res, app.slots);
     // Answering the state the step started from would let the invariant hold about a reducer that never ran.
-    if (rejected.length > 0) throw new RejectedStep(rejectedBatchText(name, rejected));
+    if (rejected.length > 0) throw new RejectedStep(name, rejected);
     const next: Record<string, unknown> = { ...slots };
     for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
     return { slots: next };
@@ -91,20 +98,25 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    const failure = (b: Record<string, unknown>): { reason?: string } | undefined => {
+    const failure = (b: Record<string, unknown>): { refused?: RejectedStep } | undefined => {
       try {
         return trial(b) === true ? undefined : {};
       } catch (e) {
-        return e instanceof RejectedStep ? { reason: e.message } : {};
+        return e instanceof RejectedStep ? { refused: e } : {};
       }
     };
-    const fails = (b: Record<string, unknown>): boolean => failure(b) !== undefined;
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
-      if (fails(binds)) {
-        const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
-        const reason = failure(minimal)?.reason;
+      const first = failure(binds);
+      if (first) {
+        // A candidate counts only when it fails the way the generated case did.
+        const sameWay = (b: Record<string, unknown>): boolean => {
+          const f = failure(b);
+          return f !== undefined && f.refused?.way === first.refused?.way;
+        };
+        const minimal = doShrink ? shrinkCounterexample(vars, sameWay, binds) : binds;
+        const reason = failure(minimal)?.refused?.message;
         return {
           name,
           pass: false,
