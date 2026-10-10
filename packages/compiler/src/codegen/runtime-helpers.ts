@@ -14,7 +14,13 @@ function _attachProps(node, props) {
   if (Array.isArray(node)) return node.map((n) => _attachProps(n, props));
   if (typeof node !== "object" || typeof node.kind !== "string") return node;
   if (Object.keys(props).length === 0) return node;
-  return { ...node, props: { ...(node.props || {}), ...props } };
+  return { ...node, props: _mergeProps(node.props || {}, props) };
+}
+function _mergeProps(own, call, inEl) {
+  const out = { ...own, ...call };
+  if (own.aria && call.aria) out.aria = { ...own.aria, ...call.aria };
+  if (!inEl && own.el && call.el) out.el = _mergeProps(own.el, call.el, true);
+  return out;
 }
 function _named(node, name) {
   if (node === null || node === undefined) return node;

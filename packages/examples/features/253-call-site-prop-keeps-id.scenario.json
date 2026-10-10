@@ -1,0 +1,27 @@
+{
+  "steps": [
+    {
+      "label": "nothing has run yet",
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "the button Plain renders fires Plain#plain",
+      "do": { "click": "#plain" },
+      "expect": { "noErrors": true, "state": { "log": "plain;" } }
+    },
+    {
+      "label": "Ghost's call site writes variant, not id, so its button keeps the id ghost and Ghost#ghost fires",
+      "do": { "click": "#ghost" },
+      "expect": { "noErrors": true, "state": { "log": "plain;ghost;" } }
+    },
+    {
+      "label": "Del's call site writes id x, which replaces del; the todoId Del wrote is still in $el",
+      "do": { "click": "#x" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "plain;ghost;x7;" },
+        "domIncludes": ["log: plain;ghost;x7;"]
+      }
+    }
+  ]
+}
