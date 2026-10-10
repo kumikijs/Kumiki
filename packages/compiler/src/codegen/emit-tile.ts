@@ -23,38 +23,14 @@ export function genTile(tile: TileDef, gen: GenCtx): string {
   return tileExprJs(tile.body, gen, ctx, [tile.name]);
 }
 
-/**
- * The chain `name`'s body renders under. A name already in the chain is not
- * appended again — a tile reached twice on one path (a self-referencing body,
- * which `E0005` reports separately) would otherwise grow it without bound, and
- * a repeated name answers no selector the first occurrence does not.
- */
 function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles {
   const outer = chain ?? [];
   return outer.includes(name) ? outer : [...outer, name];
 }
 
-/**
- * A user tile lowered for one position it renders in: a call site, a route
- * target, or another tile's `error-boundary` fallback. Every one of them goes
- * through here, so each gets the same two things, in the same order:
- *
- * - the `_named(…)` marker the runtime diffs `tile.mount` / `tile.unmount`
- *   against (lifecycle.md §7.1.6). Builtin tiles are not marked: only
- *   user-defined tiles fire mount / unmount. A tile whose whole tree is
- *   another user tile's (`tile Outer = Inner`) marks a tree that already
- *   carries the inner name, and the node keeps both, outermost first: both
- *   tiles are on screen, so both mount.
- * - the tile's own `error-boundary` (§7.3), around the marker. It belongs to
- *   the tile, so it holds wherever the tile renders — a fallback's boundary
- *   catches a panic in the fallback, as a call site's catches one in the tile.
- *
- * `tree` is the tile's body, already lowered for the position. `around` is
- * what a position puts between the two: a route target's outlet fill
- * (`genRouteTile`), or the call that evaluates a call site's argument and binds
- * it as `$1`. Both are inside the boundary, so a panic in either is caught as
- * the tile's.
- */
+// Every position a user tile renders in (a call site, a route target, another tile's fallback) goes
+// through here, so each gets the `tile.mount` marker and, around it, the tile's own boundary.
+// `around` is what the position puts between the two, inside the boundary.
 function placedTileJs(
   def: TileDef,
   tree: string,
@@ -70,30 +46,6 @@ function placedTileJs(
   );
 }
 
-/**
- * The `try` / `catch` a tile's `error-boundary` lowers to — a panic while
- * rendering under `def` produces the named fallback instead, with `PanicInfo`
- * as its `$1` (lifecycle.md §7.3). What counts as a panic, and what is re-thrown
- * rather than caught, is `_s.boundaryPanic`'s decision.
- *
- * It wraps `body` from the outside, so the *panicking* tile's marker is
- * discarded along with the tree it was on. The fallback is placed like any
- * other user tile (`placedTileJs`), so its tree carries the fallback's marker
- * and its own boundary goes around it: a panic in the fallback is caught there,
- * and so on along the chain. What the runtime diffs mount / unmount against is
- * the tree that actually rendered: the fallback mounts when it is shown, and
- * unmounts when it leaves — when `def` renders without panicking, or leaves
- * itself. A chain of boundaries that comes back to a tile on it is an infinite
- * tree, which `E0005` refuses before code generation runs.
- *
- * `enclosingTiles` is the chain the PANICKING tile's call site sits in, and
- * `def` is deliberately not on it. The fallback renders where `def`'s tree
- * would have been, so a selector on anything `def` was rendered under still
- * reaches it — that is the §1.6.2 rule that the reach is decided by the path.
- * `def` itself is the one name that does not carry over: its tree, and the
- * `_named(…, def)` marker with it, is what was discarded. The fallback is
- * placed in the same chain, so a fallback of its own renders there too.
- */
 function boundaryJs(
   def: TileDef,
   body: string,
@@ -102,9 +54,6 @@ function boundaryJs(
 ): string {
   if (!def.errorBoundary) return body;
   const fb = gen.tiles.find((x) => x.name === def.errorBoundary);
-  // Unreachable: E0105 refuses a boundary that names no tile. It used to
-  // return `body`, which compiled a program with no boundary and no
-  // diagnostic — the failure only surfaced the day something panicked.
   if (!fb)
     throw new Error(
       `Tile "${def.name}" declares error-boundary=${def.errorBoundary}, which is not a tile`,
@@ -114,59 +63,13 @@ function boundaryJs(
   return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${placedTileJs(fb, fbBody, gen, enclosingTiles)}; } })())`;
 }
 
-/**
- * A tile lowered for the position a route names it in.
- *
- * A route target is a position the tile renders in, so it is placed as a call
- * site is (`placedTileJs`): the `_named(…)` marker the runtime diffs
- * `tile.mount` / `tile.unmount` against (lifecycle.md §7.1.6), and its
- * `error-boundary` (§7.3, which scopes the boundary to renders *under that
- * tile* — a statement about the tile, not about where it was written).
- *
- * Separate from `genTile` because that has another caller: the `_tilesById`
- * table a `tile-test` compares against, which wants the bare tree — the
- * boundary would make a test on a panicking tile compare the fallback.
- *
- * It is the one application that cannot pass anything, so the target may
- * declare no `in=`: the entry lowers to `tile: () => …` — a `sub-routes`
- * parent to `tile: (_fill) => …`, whose one parameter is the outlet fill
- * described below, not an argument the target can read — and there is nothing
- * to bind `$1` to.
- *
- * `where` is the entry being lowered — `Route /x`, `Sub-route /x in tile "Y"`
- * — so the refusal names it, as the undefined-target throws beside the call
- * sites do. One `in=` tile can be named by several entries, and the throw is
- * reported without its stack.
- *
- * `fill` is the JS name of the outlet fill the runtime hands the factory
- * (`OutletFill` in the runtime). A tile that declares `sub-routes` calls it
- * around its own tree, *inside* its boundary, so the child the runtime injects
- * into the `route-outlet` is built under the parent's `try` / `catch` — the
- * §7.3 reading that a boundary covers what renders under the tile, the outlet
- * child included (#363). The child's own boundary, being inner, still wins.
- * A tile with no `sub-routes` has nothing to fill and takes no `fill`.
- */
 export function genRouteTile(tile: TileDef, gen: GenCtx, where: string, fill?: string): string {
-  // Unreachable: E0213 refuses the entry. It used to lower anyway, and the
-  // mount died with `_d_1 is not defined` after `check` and `build` said ok.
   if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
   return placedTileJs(tile, genTile(tile, gen), gen, undefined, (marked) =>
     fill ? `${fill}(${marked})` : marked,
   );
 }
 
-/**
- * What names a `for` in its implicit keys (runtime.md §10.3.10): the tile
- * definition it is written in and its ordinal among that definition's loops,
- * in source order (`App_0`, `App_1`, …). It is stable across renders, distinct
- * per loop in the source, and unchanged by an edit outside that definition or
- * a blank line above the loop, which a source position is not. `id` is the
- * loop's ordinal in the whole program, a JS-safe suffix for the names the
- * lowering declares (a tile name may hold a `-`).
- *
- * A loop no tile definition holds is in a tile-test's `expect` tree; it is
- * named in the order it is first lowered, under a name no tile can have.
- */
 function loopName(t: TileExpr & { kind: "TileFor" }, gen: GenCtx): LoopName {
   let names = loopNames.get(gen.tiles);
   if (!names) {
@@ -223,17 +126,7 @@ export function tileExprJs(
   gen: GenCtx,
   ctx: EvalCtx,
   enclosingTiles?: EnclosingTiles,
-  // When the enclosing scope is a `TileFor`, this carries the implicit key
-  // expression (the iteration's entry of `_s.loopKeys`) that any tile call in the body should
-  // stamp on itself unless it declared an explicit `{key: …}`. Propagates
-  // transparently through TileWhen / TileIf / TileMatch arms; resets at
-  // user-tile boundaries (see `tileCallJs`).
   implicitKeyExpr?: string,
-  // Explicit handlers written on the user-tile call sites whose tree `t` is the
-  // root of, for every node `t` renders at its root to join (see
-  // `explicitHandlers`). It follows the arms of a branch and each iteration of
-  // a `for`, and continues through a nested call site; a child is not the
-  // root, so it goes no further than that.
   rootHandlers?: HandlerWiring,
 ): string {
   switch (t.kind) {
@@ -241,28 +134,14 @@ export function tileExprJs(
       const iter = jsOfExpr(t.iter, ctx);
       const inner = childCtx(ctx);
       const bind = declareBind(inner, t.bind);
-      // The implicit key of each iteration (runtime.md §10.3.10): `_s.loopKeys`
-      // answers, per element, the loop, the occurrence of this value, and the
-      // value's `show`. So a list that repeats a value, or two loops under one
-      // parent that share one, still keys every child apart. The one exception
-      // is a single loop in the source whose tile is expanded twice into one
-      // parent's children: both expansions are the same loop.
       const { name, id } = loopName(t, gen);
       const keys = `__fk${id}`;
       const index = `__fi${id}`;
       const impl = `${keys}[${index}]`;
       const body = tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers);
-      // Returns Array<Node|Node[]>. Caller (collectChildren / _children) flattens.
-      // A body whose every tile call carries its own `{key: …}` never reads the
-      // implicit key, so the keys are not computed on each render.
       const list = body.includes(impl)
         ? `((__xs) => { const ${keys} = _s.loopKeys(__xs, ${JSON.stringify(name)}); return __xs.map((${bind}, ${index}) => (${body})); })((${iter}) || [])`
         : `((${iter}) || []).map((${bind}) => (${body}))`;
-      // A `for` reached by an enclosing `for`'s implicit key — its body, or an
-      // arm of a branch there — renders a list per outer iteration, each node
-      // keyed by this loop alone, so siblings from different outer iterations
-      // would collide once flattened. `_wk` pairs each node's key with the
-      // outer iteration's.
       return implicitKeyExpr ? `_wk(${list}, ${implicitKeyExpr})` : list;
     }
     case "TileWhen":
@@ -291,17 +170,12 @@ export function tileExprJs(
           if (arm.pattern.kind === "PWildcard") {
             return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
-          // PTuple — TileMatch reuses the shared `tupleArm` helper. `ctx` carries
-          // no reducerScope here (tile-match runs in pure render context), so the
-          // arm reads `_live` like the rest of the tile.
           {
             const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v");
             return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
           }
         })
         .join(" else ");
-      // The no-match fallback renders an empty `text` tile, so the text family
-      // must ship whenever a tile-match exists (#71).
       gen.usedTiles.add("text");
       return `((_v) => { ${arms} else { return { kind: "text", text: "" }; } })(${sc})`;
     }
@@ -317,19 +191,8 @@ export function tileExprJs(
   }
 }
 
-/**
- * A `bind=` target lowered: the root slot, the static path below it, and a JS
- * expression reading the value there. Each control decides how it shows that
- * value — `_s.show(…)` for the text controls, as-is for the others.
- */
 export type BindInfo = { root: string; path: BindSegment[]; read: string };
 
-/**
- * For `bind=draft` or `bind=draft.get.title`, extract the root slot name, the
- * static path, and a JS expression to read the value.
- * Only static field-access paths are supported (no Index, no dynamic lookups).
- * Returns null if no `bind=` arg exists or the path isn't statically resolvable.
- */
 export function extractBindPath(args: { name?: string; value: unknown }[]): BindInfo | null {
   const bindArg = args.find((a) => a.name === "bind");
   if (!bindArg) return null;
@@ -354,21 +217,12 @@ export function extractBindPath(args: { name?: string; value: unknown }[]): Bind
   return { root, path, read: readRaw };
 }
 
-/**
- * The `bind` / `bindPath` fields of a bound control's node — every bound kind
- * goes through here, so `bindPath` is omitted for a bare slot in one place.
- */
 function bindFields(bindInfo: Pick<BindInfo, "root" | "path">): string[] {
   const fields = [`bind: ${JSON.stringify(bindInfo.root)}`];
   if (bindInfo.path.length > 0) fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
   return fields;
 }
 
-/**
- * `check` / `switch`: a box that is ticked from `bind=` when it has one — the
- * `Bool` it writes back on change (forms.md §5.1.1) — and from `value=` when it
- * does not.
- */
 function toggleJs(
   kind: "check" | "switch",
   t: TileExpr & { kind: "TileCall" },
@@ -387,17 +241,6 @@ function toggleJs(
   return `({ ${fields.join(", ")} })`;
 }
 
-/**
- * The reading an `input`'s text is parsed by before it is written to the slot
- * it binds (forms.md §5.1.1), decided by the bound position's type alone. That
- * type is followed from the slot through the path — a record field, an
- * `Option`'s or a `Result`'s payload — to the base it unaliases to, as
- * `T.parse` resolves its qualifier, so a `type Qty = Int where positive` or a
- * `nominal Int` reads as an `Int`. Which `type=` a base goes with is not asked
- * here: a field kind the base does not go with is E0226 at check time.
- * `null` for `Text`, which is written as typed, and for a position whose type
- * cannot be read.
- */
 function boundReading(
   bindInfo: { root: string; path: BindSegment[] },
   gen: GenCtx,
@@ -421,13 +264,6 @@ function boundReading(
 
 const readerName = (reading: ParseReading): string => `_read${reading}`;
 
-/**
- * One reader per reading an app's bound inputs use, declared once inside
- * `createApp()`: its `read` is `(text) => Option(T)`, the same reading `T.parse`
- * lowers to — the base's reading only; a refinement the slot's type carries is
- * applied by the slot gate after it. `as` names the base, so a refused text
- * can say which reading it failed (forms.md §5.7.2).
- */
 export function bindReaderDecls(readings: ReadonlySet<ParseReading>): string[] {
   return [...readings]
     .sort()
@@ -437,14 +273,6 @@ export function bindReaderDecls(readings: ReadonlySet<ParseReading>): string[] {
     );
 }
 
-/**
- * What a bound `input` shows. A `Time` is a millisecond number, and a date
- * field takes `yyyy-MM-dd` (a `datetime-local` one `yyyy-MM-ddTHH:mm`) on the
- * local clock `Time.parse` reads a zone-less string on — so the text the field
- * shows reads back as the same day (date) or the same minute (datetime-local)
- * as the instant it came from, not the same millisecond. Everything else shows
- * as `show` does.
- */
 function boundInputValueJs(
   reading: ParseReading | null,
   t: TileExpr & { kind: "TileCall" },
@@ -467,8 +295,6 @@ function tileCallJs(
   rootHandlers?: HandlerWiring,
 ): string {
   const name = t.name;
-  // Explicit `{key: <expr>}` on the tile call wins over the enclosing
-  // TileFor's implicit key. `null` means no wrap.
   const keyJs = keyFor(t, ctx) ?? implicitKeyExpr ?? null;
   const wrap = (lit: string): string => (keyJs ? `_wk(${lit}, ${keyJs})` : lit);
 
@@ -478,10 +304,6 @@ function tileCallJs(
     return wrap(userTileCallJs(t, def, gen, ctx, enclosingTiles, rootHandlers));
   }
 
-  // Builtin tiles. Each case returns the object-literal JS for one node.
-  // Wrapping is centralised at the tail (`return wrap(lit)`) so every builtin
-  // uniformly picks up `_wk(..., key)` when the call site has an explicit or
-  // implicit key, without touching each individual case.
   gen.usedTiles.add(name);
   const propsObj = propsFor(t, ctx, enclosingTiles, explicitHandlers(t, rootHandlers));
   const emitBuiltin = (): string => {
@@ -518,9 +340,6 @@ function tileCallJs(
       case "button": {
         const textArg = t.args.find((a) => a.name === "text");
         const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
-        // `type=` decides whether this button submits the form it is inside
-        // (forms.md §5.2.2). Emitted only when written, so a button that says
-        // nothing keeps the HTML default rather than being given one here.
         const typeArg = t.args.find((a) => a.name === "type");
         const typeField = typeArg ? `type: ${jsOfExpr(asExpr(typeArg.value), ctx)}, ` : "";
         return `({ kind: "button", text: _s.show(${textJs}), ${typeField}props: ${propsObj} })`;
@@ -602,18 +421,11 @@ function tileCallJs(
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
           if (arg.name === "group") fields.push(`group: ${valJs}`);
           else if (arg.name === "value") valueJs = valJs;
-          // A bind decides the selection itself, below; `selected=` beside
-          // one is a second answer to the same question, and is not read
-          // (W0216 says so at `kumiki check` time).
           else if (arg.name === "selected" && !bindInfo) fields.push(`selected: !!(${valJs})`);
         }
         if (valueJs !== undefined) {
           fields.push(`value: ${valueJs}`);
-          // A bound radio with no `value=` has nothing to write when chosen
-          // and is E0225, so a bind is lowered only beside the value it writes.
           if (bindInfo) {
-            // Chosen exactly when the bound slot holds this radio's value
-            // (forms.md §5.5.2), compared as `==` compares.
             fields.push(...bindFields(bindInfo), `selected: _s.eq(${bindInfo.read}, ${valueJs})`);
           }
         }
@@ -633,16 +445,10 @@ function tileCallJs(
       case "link": {
         const toArg = t.args.find((a) => a.name === "to");
         const to = toArg ? jsOfExpr(asExpr(toArg.value), ctx) : '""';
-        // The label is the content argument (the first positional one, else
-        // `text=`); the `{text: …}` prop form is also accepted for back-compat
-        // (§1.7.1).
         const textArg = contentArg(t);
         const textProp = t.props.find((p) => p.name === "text");
         const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
         const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
-        // §3.8 prefetch — the prop value is a bare reducer ident (Ref) or a
-        // string literal. We surface it as a literal string so the runtime can
-        // route it through `_dispatch` without re-resolving identifiers.
         const fields = [`kind: "link"`, `text: _s.show(${text})`, `to: _s.show(${to})`];
         const prefetchProp = t.props.find((p) => p.name === "prefetch");
         if (prefetchProp) {
@@ -676,10 +482,6 @@ function tileCallJs(
       case "icon": {
         const name = contentArg(t);
         const nameExpr = name ? asExpr(name.value) : null;
-        // String-literal names get captured so the toolchain can bake matching
-        // entries from the project's icon registry into `App.icons` (#101). Other
-        // forms (Ref, expression) resolve dynamically through `theme.icons` at
-        // runtime — no compile-time bundling.
         if (nameExpr && nameExpr.kind === "Str") {
           const literal = (nameExpr as Expr & { value: string }).value;
           if (literal) ctx.gen.usedIcons.add(literal);
@@ -787,9 +589,6 @@ function tileCallJs(
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;
       case "details": {
-        // <details>: `summary=` supplies the disclosure label; unnamed args
-        // are the collapsed children. `open` is optional and defaults to
-        // false so the panel starts collapsed (native browser default).
         const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const summaryArg = t.args.find((a) => a.name === "summary");
         const summary = summaryArg ? jsOfExpr(asExpr(summaryArg.value), ctx) : '""';
@@ -804,9 +603,6 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "editable": {
-        // contenteditable: the content argument supplies initial content;
-        // `bind=` optionally writes back user edits. Mirrors the input /
-        // textarea shape so codegen for text-in-bind is uniform.
         const fields: string[] = [`kind: "editable"`];
         const bindInfo = extractBindPath(t.args);
         const textJs = contentJs(t, ctx);
@@ -826,13 +622,7 @@ function tileCallJs(
   return wrap(emitBuiltin());
 }
 
-/**
- * The call `t` of the user tile `def`, lowered where it is written: in `ctx`,
- * under `enclosingTiles`. Its tree is placed as every position a user tile
- * renders in is (`placedTileJs`); what a call adds is its argument, bound as
- * the body's `$1`, and its props. The caller has resolved `def`, and applies
- * the call's key.
- */
+/** The call `t` of the user tile `def`, lowered where it is written; the caller applies its key. */
 function userTileCallJs(
   t: TileExpr & { kind: "TileCall" },
   def: TileDef,
@@ -841,36 +631,16 @@ function userTileCallJs(
   enclosingTiles?: EnclosingTiles,
   rootHandlers?: HandlerWiring,
 ): string {
-  // The callee's body is lowered in a scope of its own. A tile is a pure
-  // function of the slots and its `in` argument (language.md §1.7.2
-  // Invariant 1), so none of the caller's `for` / `match` bindings are
-  // visible in it: a name the body reads as a slot stays the slot wherever
-  // the tile is called from.
   const inner = makeEvalCtx(gen, new Set<string>());
-  // The first positional argument, which is the set `checkTileInput` counts:
-  // the two have to read the same one, or a call the checker approved lowers
-  // to something else. A named argument is a prop and goes to `propsFor`.
   const arg1 = firstPositional(t);
-  // The handlers written here — plus any handed down from call sites this one
-  // is the root of — belong to the nodes the body renders at its root, so
-  // they go down to each one's `propsFor` and join what is wired there. The
-  // props left for `_attachProps` to merge are data only: a handler spread
-  // over the finished node would replace the ones it already has.
   const handlers = explicitHandlers(t, rootHandlers);
   const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
   const bodyHandlers = handlers.size > 0 ? handlers : undefined;
   if (arg1) {
     const v = arg1.value;
-    // `checkTileInput` rejects a tile expression as the positional argument
-    // (E0213 without `in=`, E0201 with it), so a checked program never
-    // passes one here.
     if (isTileExpr(v)) {
       throw new Error(`Tile "${t.name}" called with a tile as its positional argument`);
     }
-    // Evaluate the positional arg and props in the OUTER context (where
-    // `_d_1` still refers to the enclosing tile's `$1`), then pass them in
-    // as arguments so the inner IIFE can rebind `_d_1` without colliding
-    // with the outer scope.
     const oneJs = jsOfExpr(v as Expr, ctx);
     const propsJs = callSiteProps();
     const bodyCtx = addBind(inner, "$1");
@@ -903,19 +673,10 @@ function userTileCallJs(
   return placedTileJs(def, `_attachProps(${bodyJs}, ${propsJs})`, gen, enclosingTiles);
 }
 
-/**
- * The first positional argument of a user tile call: its input. A named
- * argument is a prop wherever it is written. A builtin's content is read by
- * the same rule, through `contentArg`.
- */
 function firstPositional(t: TileExpr & { kind: "TileCall" }): TileArg | undefined {
   return t.args.find((a) => a.name === undefined);
 }
 
-/**
- * A value builtin's content as JS — the argument `contentArg` names from the
- * shared table — and `""` when the call writes none.
- */
 function contentJs(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string {
   const arg = contentArg(t);
   return arg ? jsOfExpr(asExpr(arg.value), ctx) : '""';
@@ -925,20 +686,9 @@ function asExpr(v: Expr | TileExpr): Expr {
   return v as Expr;
 }
 
-/**
- * The children a builtin container renders: its positional arguments that are
- * tiles (language.md §1.7.1), each lowered where it is written.
- *
- * A tile expression is lowered as written. The name of a tile the program
- * defines is that tile called with nothing passed: the parser reads a
- * lower-cased name there as a name, since a slot may share it, so
- * `column(leaf)` arrives as a `Ref` where `column(Leaf)` arrives as a call. It
- * is lowered as that call (`userTileCallJs`), so it renders as the call does —
- * marked for `tile.mount` / `tile.unmount`, inside its own `error-boundary`,
- * its body in a scope of its own. It is the program's tile of that name, the
- * one the checker took it for, even where a builtin shares the name. Anything
- * else renders nothing, and is E0128 at check time.
- */
+// The parser reads a lower-cased name as a name, since a slot may share it, so `column(leaf)` arrives
+// as a `Ref` where `column(Leaf)` arrives as a call; a program's tile of that name is lowered as that
+// call, so it is marked, bounded and scoped as the call is.
 function collectChildren(
   args: { kind: "TileArg"; name?: string; value: Expr | TileExpr }[],
   gen: GenCtx,

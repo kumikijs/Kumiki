@@ -44,7 +44,8 @@ the slot `name`, as `check` read it, not the loop's binding.
 
 Of the repository's examples, only `68-name-uniqueness` writes a tile this way
 (`entry` in `App`); its tree now carries the `entry` marker, and renders as
-before. `docs/spec/lifecycle.md` §7.1.6 and §7.3 say that the case of the
-name makes no difference, in both language tracks, and
+before. `docs/spec/lifecycle.md` says that the case of the name makes no
+difference to `tile.mount`, `tile.unmount` or `error-boundary`, in both
+language tracks, and
 `packages/examples/features/256-lowercase-tile-child.kumiki` shows a
 lower-cased tile mounting, unmounting and falling back to its boundary.

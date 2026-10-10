@@ -1,6 +1,3 @@
-// The `text` tile (#71): its own shipping unit, so an app that renders one
-// does not download the six other text tiles.
-
 import type { TilePatcher, TileRenderer } from "../../core.ts";
 import { applyTextProps } from "../../core.ts";
 

@@ -1,5 +1,5 @@
-# Feature (runtime.md §10.3.10): a key on a call to a user tile whose body is
-# a `for` keys each node that list renders.
+# Feature: a key on a call to a user tile whose body is a `for` keys each node
+# that list renders.
 #
 # `Tags` renders a list — one `text` per tag. The key written at a call site
 # (`Tags {key: "k"}`), or the one a surrounding `for` stamps on the call

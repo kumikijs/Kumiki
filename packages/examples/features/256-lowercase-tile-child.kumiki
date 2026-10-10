@@ -1,5 +1,5 @@
 # Feature: a tile written as a container's child by its bare name is that tile,
-# whatever the name's case (spec/lifecycle.md §7.1.6, §7.3).
+# whatever the name's case (spec/lifecycle.md).
 #
 # `badge` and `chart` are each a slot and the tile that shows it, and the page
 # writes the tiles bare — `row(badge, HideBtn)`, `column(…, chart, …)` — as it

@@ -1,5 +1,5 @@
 # Feature: an `error-boundary` fallback fires `tile.mount` / `tile.unmount`
-# like any other tile on screen (spec/lifecycle.md §7.1.6, §7.3).
+# like any other tile on screen (spec/lifecycle.md).
 #
 # `Chart` reads `data.get`, which panics while `data` is `None`, so its
 # boundary shows `ChartFallback` in its place: `tile.mount(ChartFallback)`
