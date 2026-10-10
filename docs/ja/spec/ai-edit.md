@@ -333,7 +333,7 @@ kumiki mcp serve --store ./project.kumiki-store
 | `kumiki_edit` | `qname, patch` | op-id |
 | `kumiki_rename` | `qname, new_name` | op-id |
 | `kumiki_remove` | `qname, cascade?: bool` | op-id + 削除された定義名（[§9.4.1](#_9-4-1-pre-check-at-op-issuance)） |
-| `kumiki_check` | `scope?: string` | error list (JSON) |
+| `kumiki_check` | `scope?: string` | 診断リスト（JSON）。各要素の `severity` は `"error"` か `"warning"` で、省略されない |
 | `kumiki_fix` | `error_code, apply?: bool` | patch (JSON) |
 | `kumiki_refs` | `qname` | 参照元リスト |
 | `kumiki_history` | `qname` | op 履歴 |

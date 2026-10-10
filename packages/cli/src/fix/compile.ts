@@ -9,6 +9,7 @@ import {
   nearestName,
   parse,
   servesNotFound,
+  severityOf,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
@@ -302,11 +303,11 @@ function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
 }
 
 export function repairable(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity !== "warning");
+  return diagnostics.filter((d) => severityOf(d) === "error");
 }
 
 export function advisory(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity === "warning");
+  return diagnostics.filter((d) => severityOf(d) === "warning");
 }
 
 export type FixPlan = {

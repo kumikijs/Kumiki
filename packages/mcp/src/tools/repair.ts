@@ -1,7 +1,14 @@
 import { applyFixPlan, planFix, plural, runFixFromTest, runTests } from "@kumikijs/cli";
 import { z } from "zod";
 import { absPath, capsForInput, pathCapabilities } from "../input.ts";
-import { failed, json, serialiseFixFromTest, text, toDiagnostics } from "../wire.ts";
+import {
+  DIAGNOSTIC_SHAPE,
+  failed,
+  json,
+  serialiseFixFromTest,
+  text,
+  toDiagnostics,
+} from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
 export function registerRepairTools(tool: RegisterTool): void {
@@ -9,8 +16,7 @@ export function registerRepairTools(tool: RegisterTool): void {
     "kumiki_fix",
     {
       title: "Plan or apply rule-based auto-fixes",
-      description:
-        'Typecheck a file and either propose auto-patches for repairable errors (e.g. misspelled names) or write them to disk. Default is dry-run (`apply: false`); pass `apply: true` to close the loop and persist the fixes. On apply, returns `{ applied, before, after, remaining }` with the residual diagnostics after re-typechecking. Use `only` (e.g. "E0103") to restrict to a single diagnostic code.',
+      description: `Typecheck a file and either propose auto-patches for repairable errors (e.g. misspelled names) or write them to disk. Default is dry-run (\`apply: false\`); pass \`apply: true\` to close the loop and persist the fixes. On apply, returns \`{ applied, before, after, remaining, warnings }\`: after re-typechecking, \`remaining\` holds the diagnostics with \`severity\` \`"error"\` and \`warnings\` those with \`"warning"\`. ${DIAGNOSTIC_SHAPE} Use \`only\` (e.g. "E0103") to restrict to a single diagnostic code.`,
       inputSchema: {
         path: z.string(),
         apply: z
@@ -67,7 +73,8 @@ export function registerRepairTools(tool: RegisterTool): void {
     {
       title: "Fix a failing test (behavioral auto-patch)",
       description:
-        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes and no test that passed before fails; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result) or `regressed` (with the test names). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay).",
+        "Repair a .kumiki file from a specific failing `test` definition. Two tiers: (1) if the file has compile errors blocking the test, rule-based fixes (planFixes) are proposed/applied first; (2) if the file compiles but the test fails, a deterministic literal repair is proposed/applied when one is provable. Default is dry-run (`apply: false`). On apply, the behavioural patch is written only when the patched source compiles, the named test passes and no test that passed before fails; otherwise the outcome is `test-blocked` and the patch is not written — the file is as tier (1) left it (unchanged when `compileFixes` is absent; carrying those compile fixes when present) — and `blocked.reason` says why: `parse-error`, `introduced` (with its diagnostics), `test-runner-threw` (with the runner's `message`), `named-test-missing`, `still-fails` (with the test's result) or `regressed` (with the test names). A dry run proposes the patch without running this gate. Returns a structured `FixFromTestOutcome` — inspect `status` (`already-pass` | `proposed` | `applied` | `test-blocked` | `compile-proposed` | `compile-blocked` | `compile-remaining` | `no-patch` | `not-found` | `write-failed`). `compile-blocked` means a tier-1 repair was found and the regression gate refused it — the file is unchanged, `compileErrors` is what it still has, and `blocked.reason` says which condition refused it: `introduced` (with the diagnostics it would have added), `resolved-none`, or `parse-error` (with the parser's `message` — a repair rule emitted source that does not parse, which is a compiler-side defect rather than a pointless repair). `write-failed` carries `phase` (`compile` | `test`) and a raw `writeError` message; the write that threw landed nothing (on a `test`-phase failure, the compile fixes counted in `compileFixes` were written earlier and stay). " +
+        `\`compileErrors\` and \`blocked.introduced\` are lists of diagnostics. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         path: z.string(),
         testName: z.string().describe("The name of the failing `test` definition to fix."),

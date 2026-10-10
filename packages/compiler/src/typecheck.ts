@@ -22,7 +22,7 @@ import { collectElementIds, collectPrefetchTargets } from "./typecheck/tile-coll
 import { checkTypeDef } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
 
-export type { KumikiError } from "./typecheck/context.ts";
+export { type KumikiError, type Severity, severityOf } from "./typecheck/context.ts";
 export { servesNotFound } from "./typecheck/route-chain.ts";
 export { ROUTE_SLOT_FIELDS } from "./typecheck/slot.ts";
 
