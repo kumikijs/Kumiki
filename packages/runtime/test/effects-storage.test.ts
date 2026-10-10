@@ -1,10 +1,3 @@
-// The storage.* / session.* handlers (http.md §6.7.2 / §6.7.4). Every
-// failure is an `err` result, never a throw and never a partial effect: a
-// request that is not one of the three shapes touches nothing, and a failing
-// Web Storage call names the operation and the key, so a quota error on one
-// key reads differently from a program that built the wrong request. A value
-// is stored as the text §6.7.2 gives it and reads back as the value it was.
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EffectResult } from "../src/core.ts";
 import {
@@ -18,7 +11,7 @@ import {
 
 function message(r: EffectResult): string {
   expect(r.kind).toBe("err");
-  // The declared `Text`, not a record wrapping it (http.md §6.7).
+  // The declared `Text`, not a record wrapping it.
   expect(typeof r.value).toBe("string");
   return r.value as string;
 }
@@ -32,12 +25,6 @@ function snapshot(storage: Storage): Record<string, string> {
   return out;
 }
 
-/**
- * Replace both storages with ones whose `method` throws. The handlers look the
- * storage up on each call, so a stubbed global is what they reach. (A spy on
- * `Storage.prototype` is not enough in happy-dom: a storage that has already
- * been used keeps calling the original method.)
- */
 function failing(method: "setItem" | "removeItem" | "clear", error: string): void {
   for (const name of ["localStorage", "sessionStorage"]) {
     const broken = {
@@ -113,7 +100,7 @@ const HANDLERS = [
 ] as const;
 
 describe("a written value reads back as the value it was", () => {
-  for (const [label, value] of [
+  it.each<[string, unknown]>([
     ["a Bytes", new Uint8Array([104, 105])],
     ["an empty Bytes", new Uint8Array()],
     ["Infinity", Number.POSITIVE_INFINITY],
@@ -127,20 +114,18 @@ describe("a written value reads back as the value it was", () => {
       { $bytes: "aGk=", $float: "NaN", $$j: 1, $: 2, k: new Uint8Array([7]) },
     ],
     ["a Map whose one key is $bytes, beside a NaN", [{ $bytes: "aGk=" }, Number.NaN]],
-  ] as const) {
-    it(label, async () => {
-      for (const [, write, read] of HANDLERS) {
-        expect(await write({ key: "v", value })).toEqual({ kind: "ok", value: null });
-        expect(await read({ key: "v" })).toStrictEqual({
-          kind: "ok",
-          value: { _tag: "Some", _0: value },
-        });
-      }
-    });
-  }
+  ])("%s", async (_, value) => {
+    for (const [, write, read] of HANDLERS) {
+      expect(await write({ key: "v", value })).toEqual({ kind: "ok", value: null });
+      expect(await read({ key: "v" })).toStrictEqual({
+        kind: "ok",
+        value: { _tag: "Some", _0: value },
+      });
+    }
+  });
 });
 
-describe("the stored text (http.md §6.7.2)", () => {
+describe("the stored text", () => {
   it("is the JSON text for a value JSON holds, a Map key that starts with $ included", async () => {
     const value = { $bytes: "aGk=", n: [1, 2.5], o: { _tag: "None" } };
     for (const [, write, , storage] of HANDLERS) {
@@ -213,8 +198,6 @@ describe("storageClear / sessionClear", () => {
 });
 
 describe("a handler resolves to its Text err; it never rejects", () => {
-  // A rejection skips the err contract: it reaches the dispatcher, which
-  // delivers a `{message}` record where `.err` expects the `Text`.
   it("when the storage getter itself throws, as in an opaque-origin sandbox", async () => {
     const names = ["localStorage", "sessionStorage"] as const;
     const saved = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));

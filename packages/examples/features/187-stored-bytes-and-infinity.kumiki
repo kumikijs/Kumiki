@@ -1,4 +1,4 @@
-# Feature (http.md §6.7.2): a value `storage.write` stores reads back through
+# Feature (http.md): a value `storage.write` stores reads back through
 # `storage.read` as the value it was, the two kinds JSON has no form for
 # included: a `Bytes` and a non-finite `Float`.
 #
@@ -15,7 +15,7 @@
 # against the real localStorage, and an unhandled `err` is an error it
 # reports. A scenario's scripted results are JSON, which cannot carry these
 # two values, so the scenario scripts a read that finds nothing;
-# packages/tests/storage-round-trip.test.ts runs the round trip through the
+# packages/tests/src/storage-round-trip.test.ts runs the round trip through the
 # real handler and checks what it reads back.
 
 type Blob = {data: Bytes, ratio: Float}
