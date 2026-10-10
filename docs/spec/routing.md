@@ -110,7 +110,7 @@ reducer save  on=ui.click(SaveBtn)
                   emit navigate({path: "/todos", params: {}})
 ```
 
-Built-in effects:
+Built-in effects — their signatures; a program emits them without declaring them ([E0234](./errors.md#e0234-reserved-effect-name)):
 
 ```kumiki fragment
 effect navigate         cap=nav.push     in={path: Text, params: Map(Text, Text)}    out=Unit

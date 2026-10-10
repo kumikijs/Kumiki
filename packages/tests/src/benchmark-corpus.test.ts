@@ -10,7 +10,12 @@ import { describe, expect, it } from "vitest";
 const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "benchmarks");
 
 const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
-  "learning-cost/v3-issue-tracker/results/Gemini/output.kumiki": ["E0103", "E0213", "W0212"],
+  "learning-cost/v3-issue-tracker/results/Gemini/output.kumiki": [
+    "E0103",
+    "E0213",
+    "E0234",
+    "W0212",
+  ],
   "learning-cost/v3-issue-tracker/results/Codex/output.kumiki": ["E0128"],
   "learning-cost/v4-project-management/results/Claude/output.kumiki": "parse",
   "learning-cost/v4-project-management/results/Gemini/output.kumiki": "parse",

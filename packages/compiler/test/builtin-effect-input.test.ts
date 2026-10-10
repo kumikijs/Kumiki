@@ -129,14 +129,16 @@ describe("the shapes the built-ins take are still accepted", () => {
   });
 });
 
-describe("a declared effect of the same name is the one checked", () => {
+describe("a declaration under a standard effect's name", () => {
   const shadowed = `effect navigate cap=nav.push in=Text out=Unit\n`;
+  const reserved = `E0234 Effect "navigate" collides with the built-in effect navigate; emits of it never run this effect`;
   it("takes the declaration's in=", () => {
-    expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([]);
+    expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([reserved]);
   });
   it("and reports against it", () => {
     expect(diagnostics(`emit navigate({path: "/about"})\n${shadowed}`)).toEqual([
       "E0202 Expected Text but got {path: Text}",
+      reserved,
     ]);
   });
 });

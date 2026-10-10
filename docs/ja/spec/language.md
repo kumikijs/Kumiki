@@ -366,6 +366,10 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
   reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
   （[http.md §6.4](./http.md#_6-4-cancellation)）
+- effect は[標準 effect](./stdlib.md#_2-6-標準-effect)の名前（`navigate`・`navigate-replace`・
+  `navigate-back`・`scroll-to`・`toast`・`confirm`・`log`）を名乗れない：ランタイムはマウント時に
+  それぞれをそれ自身の名前で登録するため、その名前の宣言は決して実行されない
+  （[E0234](./errors.md#e0234-reserved-effect-name)）
 
 ### 1.5.3 例
 

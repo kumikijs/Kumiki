@@ -110,7 +110,7 @@ reducer save  on=ui.click(SaveBtn)
                   emit navigate({path: "/todos", params: {}})
 ```
 
-ビルトイン effect:
+ビルトイン effect — そのシグネチャ。プログラムはこれらを宣言せずに emit する（[E0234](./errors.md#e0234-reserved-effect-name)）:
 
 ```kumiki fragment
 effect navigate         cap=nav.push     in={path: Text, params: Map(Text, Text)}    out=Unit
