@@ -37,7 +37,11 @@ import {
   keyKindOfReader,
   undefMemberError,
 } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import {
+  checkMatchCovers,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+} from "./patterns.ts";
 import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
@@ -332,12 +336,16 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = inferType(e.scrutinee, sym, ctx);
+      let patternsFit = true;
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
       }
+      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }
     case "IfExpr":

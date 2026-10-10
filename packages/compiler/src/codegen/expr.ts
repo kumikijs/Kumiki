@@ -723,10 +723,14 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
   return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
 }
 
+/** A value no arm matches panics rather than answering `undefined`; E0227 leaves only a scrutinee whose type the checker cannot decide. */
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
   const sc = jsOfExpr(e.scrutinee, ctx);
   const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
-  return `((_v) => { ${armsJs} else { return undefined; } })(${sc})`;
+  const miss = JSON.stringify(
+    `No arm of the match at ${e.pos.line}:${e.pos.col} matches its value`,
+  );
+  return `((_v) => { ${armsJs} else { return _s.panic(${miss}); } })(${sc})`;
 }
 
 function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string {

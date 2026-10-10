@@ -833,6 +833,10 @@ unop        ::= '-' | '!'
 
 `if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
 
+`match` では、これは **scrutinee の型のすべての値に arm がある** ということである。union の各 variant（`Option` なら `Some` と `None`、`Result` なら `Ok` と `Err`）と、tuple の要素の組み合わせのそれぞれに arm がいる。variant パターンの bind はどのペイロードも受けるので `Some(v)` はすべての `Some` を覆い、`_` と名前はすべてを覆う。`Bool`・`Int`・`Text`・レコード・リストには名指せる variant がなく、リテラルパターンもない（[§1.9.1](#_1-9-1-禁止事項)）ので、これらを覆うのは `_` か名前である。arm が値を取りこぼす `match` は [E0227](./errors.md#e0227-non-exhaustive-match) になり、取りこぼした値をそれぞれ、それに一致するパターンとして挙げる（`Blue`、`None`、`(Some(_), Green)`）。scrutinee の型が決められない場合 — チェッカーが props に型を付けない `$el` や、`fold` の結果 — どの arm にも一致しない値は **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。reducer の中なら、その書き込みはロールバックされ `app.error` が走る。値としての `match` が、いずれかの arm の値以外に評価されることはない。
+
+reducer 本体の `match` 文（[§1.6.1](#_1-6-1-構文)）とタイル位置の `match`（[§1.7.1](#_1-7-1-構文)）は値ではなく、この規則の対象外である。どの arm にも一致しない `match` 文は、条件が偽のときの `else` なし `if` 文と同じく何も実行せず、どの arm にも一致しないタイルの `match` は空の `text` を描画する。
+
 ### 1.9.1 禁止事項
 
 - **ラムダ式禁止**
