@@ -14,8 +14,8 @@ export type Diagnostic = {
 export const DIAGNOSTIC_SHAPE =
   'Each diagnostic is `{code, kind, message, line, col, severity}`; `severity` is `"error"` (the file fails `check` and `build`) or `"warning"` (advisory: reported, but fails neither; docs/spec/errors.md).';
 
-export function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
+export function text(...parts: string[]) {
+  return { content: parts.map((s) => ({ type: "text" as const, text: s })) };
 }
 
 export function failed(s: string) {
@@ -45,7 +45,7 @@ export function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
 
 export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
-  const base = { ok: o.ok, status: o.status };
+  const base = { ok: o.ok, status: o.status, warnings: toDiagnostics(o.warnings) };
   const withCompileFixes =
     "compileFixes" in o && o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {};
   switch (o.status) {

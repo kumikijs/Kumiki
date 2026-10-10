@@ -92,6 +92,58 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
+  describe("puts the file's warnings beside the outcome", () => {
+    const WARNING = [
+      'slot f : Text = ""',
+      'reducer recordFocus on=ui.focus(Card) do= f := "focused"',
+      'tile Card = box(text("hi"))',
+    ];
+    const FAILING_TEST = [
+      "test t =",
+      "    tile-test Title",
+      "        given  = {slots: {}}",
+      '        expect = heading("Hello")',
+    ];
+    const APP = [
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App, "/404" -> App}',
+      "    init   = []",
+    ];
+    type Wire = { code: string; severity: string };
+    const pairs = (ds: unknown) => (ds as Wire[] | undefined)?.map((d) => [d.code, d.severity]);
+
+    it("on the compile tier, apart from the error that blocks the test", async () => {
+      const file = write("warned.kumiki", [
+        ...WARNING,
+        'tile Title = heading("Helo")',
+        "tile App = column(Card, Title, Missing)",
+        ...APP,
+        ...FAILING_TEST,
+      ]);
+      const parsed = outcome(await callOnce("kumiki_auto_patch", { path: file, testName: "t" }));
+      expect(parsed.status).toBe("no-patch");
+      expect(pairs(parsed.compileErrors)).toEqual([["E0105", "error"]]);
+      expect(pairs(parsed.warnings)).toEqual([["W0212", "warning"]]);
+    });
+
+    it("on the behavioural tier, after the repair it wrote", async () => {
+      const file = write("warned.kumiki", [
+        ...WARNING,
+        'tile Title = heading("Helo")',
+        "tile App = column(Card, Title)",
+        ...APP,
+        ...FAILING_TEST,
+      ]);
+      const parsed = outcome(
+        await callOnce("kumiki_auto_patch", { path: file, testName: "t", apply: true }),
+      );
+      expect(parsed.status).toBe("applied");
+      expect(parsed.compileErrors).toBeUndefined();
+      expect(pairs(parsed.warnings)).toEqual([["W0212", "warning"]]);
+    });
+  });
+
   it("serialises a refusal over unparseable source as compile-blocked, with the parser's message", () => {
     const source = [
       'tile App = column(heading("hi"))',
@@ -133,6 +185,7 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
         },
       ],
       blocked: { reason: "parse-error", message },
+      warnings: [],
     });
   });
 

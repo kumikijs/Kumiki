@@ -1,7 +1,10 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { compile } from "@kumikijs/compiler";
+import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import { describe, expect, it } from "vitest";
 import {
+  COUNTER,
   callOnce,
   callTool,
   FIX_A11Y,
@@ -126,7 +129,10 @@ describe("the diagnostic wire shape", () => {
       const built = await callTool(client, "kumiki_build", { path: file });
       const [head, ...json] = built.split("\n");
       expect(head).toBe("build failed:");
-      expect(pairs(JSON.parse(json.join("\n")) as WireDiagnostic[])).toEqual([["E0103", "error"]]);
+      expect(pairs(JSON.parse(json.join("\n")) as WireDiagnostic[])).toEqual([
+        ["W0212", "warning"],
+        ["E0103", "error"],
+      ]);
 
       const fixed = JSON.parse(
         await callTool(client, "kumiki_fix", { path: file, apply: true }),
@@ -142,6 +148,35 @@ describe("the diagnostic wire shape", () => {
     });
   });
 
+  it("kumiki_build hands a successful build's warnings back in a second content item", async () => {
+    const expected = compile(readFileSync(FIX_WARNING_ONLY, "utf8"), {
+      runtimeSpecifier: "./runtime.js",
+      bundle: true,
+      readRuntimeBundle: nodeRuntimeBundleReader,
+      capabilities: [],
+    });
+    if (expected.kind !== "ok") throw new Error("the warning-only fixture does not compile");
+    await withClient(async (client) => {
+      const build = async (args: Record<string, unknown>) => {
+        const res = await client.callTool({ name: "kumiki_build", arguments: args });
+        expect(res.isError ?? false).toBe(false);
+        return (res.content as { text: string }[]).map((c) => c.text);
+      };
+      const summary = await build({ path: FIX_WARNING_ONLY });
+      expect(summary).toHaveLength(2);
+      const [head = "", warnings = ""] = summary;
+      expect(head).toBe(
+        `build ok — ${expected.js.length} bytes of JS (pass includeJs=true for the source)`,
+      );
+      expect(pairs(JSON.parse(warnings) as WireDiagnostic[])).toEqual([["W0212", "warning"]]);
+      expect(await build({ path: FIX_WARNING_ONLY, includeJs: true })).toEqual([
+        expected.js,
+        warnings,
+      ]);
+      expect(await build({ path: COUNTER })).toHaveLength(1);
+    });
+  });
+
   it.each([
     "kumiki_check",
     "kumiki_build",
@@ -151,5 +186,14 @@ describe("the diagnostic wire shape", () => {
     const description = (await listTools()).find((t) => t.name === name)?.description ?? "";
     expect(description).toContain('`severity` is `"error"`');
     expect(description).toContain('or `"warning"`');
+  });
+
+  it.each([
+    ["kumiki_build", "a second content item holds them as a JSON list of diagnostics"],
+    ["kumiki_build", "the warnings, then the errors that failed it"],
+    ["kumiki_auto_patch", "Every outcome carries `warnings`"],
+  ])("%s says where it puts the warnings: %s", async (name, says) => {
+    const description = (await listTools()).find((t) => t.name === name)?.description ?? "";
+    expect(description).toContain(says);
   });
 });
