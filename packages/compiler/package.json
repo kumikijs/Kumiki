@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/compiler",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "type": "module",
   "description": "Kumiki compiler — lexer, parser, typechecker, and code generator.",
   "license": "Apache-2.0",
@@ -60,6 +60,7 @@
     "@kumikijs/runtime": "workspace:*"
   },
   "devDependencies": {
+    "@kumikijs/examples": "workspace:*",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

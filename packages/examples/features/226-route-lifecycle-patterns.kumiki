@@ -1,4 +1,4 @@
-# Feature (routing.md §3.4): a route lifecycle event names a declared route
+# Feature (routing.md): a route lifecycle event names a declared route
 # pattern — a key of `app.routes` or of a `sub-routes` map — and fires for
 # every pattern the route is matched under: the top-level pattern, then the
 # sub-route it matched. Opening `/settings/account` enters `/settings/*` and
