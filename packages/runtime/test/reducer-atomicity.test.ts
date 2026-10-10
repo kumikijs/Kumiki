@@ -1,22 +1,12 @@
-// A reducer is one batch (spec/runtime.md §10.3.3). A refinement that rejects
-// one slot in that batch must therefore reject the batch, not just the slot.
-//
-// The runtime used to skip only the offending key, which broke the batch in two
-// ways: the remaining writes landed (half a reducer applied), and — because the
-// reducer body reads the batch under construction — a value the slot never took
-// stayed readable by later statements and could be copied somewhere permanent.
-//
-// Both are asserted below, together with the parts of the batch that are not
-// slot writes (emits, stop-timer) and the one path that deliberately keeps the
-// per-field behaviour: two-way `bind`.
-
-import type { AppShape, MountedApp, ReducerSpec } from "@kumikijs/runtime";
-import { _stdlib, mount, renderToString } from "@kumikijs/runtime";
+import type { AppShape, ReducerSpec } from "@kumikijs/runtime";
+import { _stdlib, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp, mountApp } from "./helpers/app.ts";
+import { captureConsole } from "./helpers/console.ts";
 
 /** `count` is capped at 3; `mirror` and `log` are unconstrained bystanders. */
 function makeApp(overrides: Partial<AppShape> = {}): AppShape {
-  const app: AppShape = {
+  return bareApp({
     slots: {
       count: {
         value: 0,
@@ -28,30 +18,15 @@ function makeApp(overrides: Partial<AppShape> = {}): AppShape {
       log: { value: "" },
       trace: { value: "", volatile: true },
     },
-    caps: [],
-    effects: {},
-    init: [],
-    reducers: [],
     root: () => ({ kind: "text", text: "app" }),
     ...overrides,
-  };
-  return app;
-}
-
-function mountApp(app: AppShape): MountedApp {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
-  mount(app, root);
-  return app as MountedApp;
+  });
 }
 
 let errors: string[];
 
 beforeEach(() => {
-  errors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
+  errors = captureConsole("error");
 });
 
 afterEach(() => {
@@ -282,9 +257,6 @@ describe("a rejected batch is reported, never silent", () => {
   });
 });
 
-// The live mount is only one of the five places a reducer batch gets applied.
-// The other four are verification tiers, and a tier that accepts what the app
-// refuses certifies the bug it exists to catch — so each is pinned here.
 describe("every tier applies the same rule", () => {
   const overflow = (name: string): ReducerSpec => ({
     name,
@@ -336,9 +308,6 @@ describe("every tier applies the same rule", () => {
     expect(followUps).toEqual([]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('reducer "booted" was rejected');
-    // A rejected batch is not an *unhandled* error: the `.ok` reducer matched,
-    // it just refused to commit. Reporting both would name a defect that is not
-    // there.
     expect(errors[0]).not.toContain("no .err reducer");
   });
 
@@ -405,13 +374,9 @@ describe("every tier applies the same rule", () => {
       reducers: [overflow("bump")],
       effects: {},
     };
-    // The step has no next state to answer: the reducer did not run. Answering
-    // the state it started from would let the invariant hold about a step that
-    // never happened, and a chained step start from it (testing.md §8.3.1).
     expect(() => _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {})).toThrow(
       'reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))',
     );
-    // The failure carries the rejection, so it is not reported a second time.
     expect(errors.some((e) => e.includes("was rejected"))).toBe(false);
   });
 });
@@ -423,8 +388,6 @@ describe("the paths a batch rejection must not change", () => {
     app._setSlot("count", 2);
     expect(app.live.count).toBe(2);
 
-    // §5.1.2: an out-of-range keystroke leaves the slot alone and says nothing
-    // — a half-typed value is expected, not a defect.
     app._setSlot("count", 9);
     expect(app.live.count).toBe(2);
     expect(errors).toEqual([]);

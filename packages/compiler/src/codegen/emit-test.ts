@@ -8,6 +8,7 @@ import {
   type TileExpr,
 } from "../ast.ts";
 import type { CodegenOptions } from "../codegen.ts";
+import { parseEpisodeLogText } from "../episode-log.ts";
 import {
   bareNameAt,
   expectSection,
@@ -34,12 +35,6 @@ function mockOutcome(v: Expr): "ok" | "err" | undefined {
   return undefined;
 }
 
-/**
- * Static `--coverage` data (§8.7): which reducers / tiles / effects the test
- * suite exercises. A reducer-test/property-test covers its target reducer(s)
- * and the effects those reducers emit; a tile-test covers its tile; mocked
- * effects count as covered too.
- */
 export function coverageJs(
   tests: TestDef[],
   reducers: ReducerDef[],
@@ -67,7 +62,7 @@ export function coverageJs(
   for (const t of tests) {
     if (t.testKind === "reducer-test") {
       if (t.target) markReducer(t.target);
-      const mocks = givenSection(t, "reducer-test", "mocks");
+      const mocks = givenSection<"reducer-test">(t, "mocks");
       if (mocks?.kind === "RecordLit") {
         for (const f of mocks.fields) {
           usedEffects.add(f.name);
@@ -113,20 +108,28 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   const ctx = makeEvalCtx(gen, new Set());
   const nameJs = JSON.stringify(t.name);
   if (t.testKind === "episode-test") {
-    // §8.6: load the episode log at compile time so the runtime test harness
-    // never touches the filesystem. The reader is injected via CodegenOptions
-    // (Node-only callers pass `nodeEpisodeLogReader`); without it we emit an
-    // empty `episodes: []` — the runtime skips the replay loop, so a
-    // `from-log` expect can silently pass. A separate check should refuse to
-    // build an `episode-test load = "..."` when no reader is available.
-    let episodesJs = "[]";
-    if (opts.readEpisodeLog && t.load) {
-      const raw = opts.readEpisodeLog(t.load);
-      const parsed = parseEpisodeLog(raw);
-      episodesJs = JSON.stringify(parsed);
-    }
     const mocksJsStr = t.mocks ? episodeMockJs(t.mocks, ctx) : "{}";
     const expectJs = t.expect ? episodeExpectJs(t.expect as Expr, ctx) : "{}";
+    // Replaying nothing would pass every `from-log` expectation, so an unread log fails the test.
+    if (t.load && !opts.readEpisodeLog) {
+      const failure = {
+        name: t.name,
+        pass: false,
+        expected: `the episodes in ${JSON.stringify(t.load)}`,
+        actual:
+          "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
+        diffAt: "load",
+      };
+      return `  {
+    name: ${nameJs},
+    kind: "episode-test",
+    run: () => (${JSON.stringify(failure)}),
+  },`;
+    }
+    const episodesJs =
+      opts.readEpisodeLog && t.load
+        ? JSON.stringify(parseEpisodeLogText(opts.readEpisodeLog(t.load)))
+        : "[]";
     return `  {
     name: ${nameJs},
     kind: "episode-test",
@@ -141,15 +144,10 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   }
   if (t.testKind === "property-test") {
     const forAll = t.forAll ?? [];
-    // forAll var names are local binds, so invariant/given refs lower to the
-    // `const <name> = _b[...]` we destructure at the top of the trial fn.
     const pctx = makeEvalCtx(gen, new Set(forAll.map((f) => f.name)));
     const varsJs = forAll
       .map((f) => {
-        // E0715 refuses a type with no generator at check time, so this throw
-        // is for a caller that skipped `check`: it names the code, rather than
-        // emitting a descriptor the runtime would have to answer with a
-        // stand-in for a value.
+        // E0715 refuses this at check time; a caller that skipped `check` gets the code, not a stand-in.
         const g = forAllGenerator(f.type, gen);
         if ("refused" in g) throw new Error(`E0715 ${noGeneratorMessage(f.name, g.refused)}`);
         return `${fieldKey(f.name)}: ${JSON.stringify(g.desc)}`;
@@ -158,11 +156,11 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     const binds = forAll
       .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)
       .join(" ");
-    const givenSlots = givenSection(t, "property-test", "slots");
+    const givenSlots = givenSection<"property-test">(t, "slots");
     const initSlotsJs = givenSlots
       ? jsOfExpr(recordValueAt(givenSlots, "given.slots"), pctx)
       : "({})";
-    const event = givenSection(t, "property-test", "event");
+    const event = givenSection<"property-test">(t, "event");
     const eventJs = eventPayloadJs(event, pctx);
     const invariantJs = t.invariant ? jsOfExpr(t.invariant, pctx) : "true";
     const runOpts = [
@@ -187,24 +185,22 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   },`;
   }
   if (t.testKind === "reducer-test") {
-    const slots = givenSection(t, "reducer-test", "slots");
-    const event = givenSection(t, "reducer-test", "event");
+    const slots = givenSection<"reducer-test">(t, "slots");
+    const event = givenSection<"reducer-test">(t, "event");
     const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
     const elJs = eventPayloadJs(event, ctx);
-    const panic = expectSection(t, "reducer-test", "panic");
+    const panic = expectSection<"reducer-test">(t, "panic");
     let expectJs: string;
     if (panic) {
       expectJs = `{ kind: "panic", message: ${jsOfExpr(panic, ctx)} }`;
     } else {
-      const xs = expectSection(t, "reducer-test", "slots");
-      const xe = expectSection(t, "reducer-test", "effects");
+      const xs = expectSection<"reducer-test">(t, "slots");
+      const xe = expectSection<"reducer-test">(t, "effects");
       const xsJs = xs ? jsOfExpr(recordValueAt(xs, "expect.slots"), ctx) : "({})";
       const effectsJs = xe ? effectListJs(xe, ctx) : "[]";
       expectJs = `{ kind: "state", slots: ${xsJs}, effects: ${effectsJs} }`;
     }
-    // §8.5: with `given.mocks`, drive the multi-step emit→result→reducer flow
-    // (effect results injected from the mocks) instead of a single reducer apply.
-    const mocks = givenSection(t, "reducer-test", "mocks");
+    const mocks = givenSection<"reducer-test">(t, "mocks");
     if (mocks) {
       return `  {
     name: ${nameJs},
@@ -231,26 +227,9 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     },
   },`;
   }
-  // tile-test
-  const slots = givenSection(t, "tile-test", "slots");
+  const slots = givenSection<"tile-test">(t, "slots");
   const slotsJs = slots ? jsOfExpr(recordValueAt(slots, "given.slots"), ctx) : "({})";
-  const inField = givenSection(t, "tile-test", "in");
-  // A tile-test applies its target, so `given.in` is that application's single
-  // argument and has to agree with the target's `in=`. Emitting the
-  // disagreement is what produced a `TypeError: Cannot read properties of
-  // undefined` carrying no test name, no position and no code — nothing catches
-  // it, so it reached the CLI and took the rest of the file's results with it —
-  // or, the other way, a snapshot compared against a render that silently never
-  // saw the value. E0213 refuses both at check time, so the throw is for a
-  // caller that skipped `check`, as with `effectListJs` and `episodeMockJs`; it
-  // names the code so the last line of defence is as identifiable as the first.
-  // The checker defers two shapes instead: a `given` with a section nothing
-  // reads (E0714), which this would still count as a missing argument — but
-  // `compile()` stops at that error, so the two never answer the same program —
-  // and a `given` that is not a record at all (E0713), which `givenSection`
-  // above has already thrown on.
-  // A target with no definition is undefined or a built-in, which E0105 refuses
-  // before either question is asked.
+  const inField = givenSection<"tile-test">(t, "in");
   const target = gen.tiles.find((x) => x.name === t.target);
   if (target) {
     const wants = target.in ? 1 : 0;
@@ -262,8 +241,6 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     }
   }
   const inJs = inField ? jsOfExpr(inField, ctx) : "undefined";
-  // Lowered like any tile, but without the `{…}` blocks' data — §8.4 does
-  // not compare styles, and the runtime compares what is left in `props`.
   const expectGen: GenCtx = { ...gen, expectedTree: true };
   const expectedJs = tileExprJs(t.expect as TileExpr, expectGen, { ...ctx, gen: expectGen });
   return `  {
@@ -278,16 +255,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
   },`;
 }
 
-/**
- * Compile a `[eff(a), ...]` expect.effects list into `[{effect, args, argsSpecified}]`.
- * A bare name (`persist`) matches by name only (`argsSpecified: false`); a call
- * (`persist(x)`, even `persist()`) pins the exact arguments (`argsSpecified: true`).
- */
 function effectListJs(e: Expr, ctx: EvalCtx): string {
-  // `[]` is not the absence of an assertion, it is the assertion that no
-  // effect was emitted — so answering a non-list with it turned a forgotten
-  // pair of brackets into a different, passing test. E0713 reports it at
-  // check time; this is what a caller that skipped `check` gets.
   if (e.kind !== "ListLit") {
     throw new Error("expect.effects must be a list of effects");
   }
@@ -304,35 +272,6 @@ function effectListJs(e: Expr, ctx: EvalCtx): string {
   return `[${items.join(", ")}]`;
 }
 
-/**
- * Parse an episode log (one JSON Episode per line — JSONL — or a JSON array).
- * Surfaces malformed lines as a compile-time throw rather than smuggling them
- * into the generated test: a corrupted fixture means the test would lie.
- */
-function parseEpisodeLog(raw: string): unknown[] {
-  const trimmed = raw.trim();
-  if (!trimmed) return [];
-  if (trimmed.startsWith("[")) {
-    const arr = JSON.parse(trimmed);
-    if (!Array.isArray(arr)) throw new Error("episode log: JSON root must be an array");
-    return arr;
-  }
-  const out: unknown[] = [];
-  for (const line of trimmed.split(/\r?\n/)) {
-    const s = line.trim();
-    if (!s) continue;
-    out.push(JSON.parse(s));
-  }
-  return out;
-}
-
-/**
- * Lower an `episode-test`'s `mocks = { effect: from-log | ignore | ok(v) | err(e) }`
- * record into the runtime call shape. `from-log` and `ignore` arrive as bare
- * identifiers (Ref nodes); `ok` / `err` carry a payload Expr that we evaluate
- * in the test's binding context. A `mocks` that is not a record throws E0713
- * (`recordFieldsAt`) rather than lowering to `{}`, which scripted nothing.
- */
 function episodeMockJs(e: Expr, ctx: EvalCtx): string {
   const parts = recordFieldsAt(e, "mocks").map((f) => {
     const v = f.value;
@@ -343,9 +282,6 @@ function episodeMockJs(e: Expr, ctx: EvalCtx): string {
       const value = v.args[0] ? jsOfExpr(v.args[0], ctx) : "null";
       return `${key}: { policy: "fixed", outcome: ${JSON.stringify(v.callee)}, value: ${value} }`;
     }
-    // Defense-in-depth: typecheck (E0712) rejects this before we get here.
-    // If a caller skips check() the loud throw beats silently treating a
-    // typo'd `from_log` as `ignore` and passing the test.
     throw new Error(
       `episode-test mock for "${f.name}" must be \`from-log\`, \`ignore\`, \`ok(...)\`, or \`err(...)\``,
     );
@@ -353,28 +289,14 @@ function episodeMockJs(e: Expr, ctx: EvalCtx): string {
   return `{ ${parts.join(", ")} }`;
 }
 
-/**
- * Lower an `episode-test`'s `expect = { slots-equal, no-panics, no-errors }`.
- * `slots-equal` accepts either the literal `from-log` (use the log's recorded
- * final slot values) or a record of expected slot → value pairs. An `expect`
- * that is not a record throws E0713 rather than lowering to `{}`, which
- * asserted nothing.
- */
 function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
   const parts: string[] = [];
   for (const f of recordFieldsAt(e, "expect")) {
     if (!isSectionName("episode-test", "expect", f.name)) {
-      // Dropping it silently is what an episode-test asserting nothing is made
-      // of: `testkit` leaves `expectedSlots` null, skips both flags, and
-      // reports PASS. E0714 says so at check time; this is what a caller that
-      // skipped `check` gets, as with `effectListJs` and `episodeMockJs`.
       throw new Error(`episode-test expect has no section "${f.name}"`);
     }
     switch (f.name) {
       case "slots-equal": {
-        // The position's bare name (the table's `or`) is passed through as
-        // itself; anything else must be a record (`recordValueAt` throws E0713
-        // rather than evaluating it as the expectation).
         const bare = bareNameAt(f.value, "expect.slots-equal");
         parts.push(
           bare !== undefined
@@ -396,11 +318,6 @@ function episodeExpectJs(e: Expr, ctx: EvalCtx): string {
   return `{ ${parts.join(", ")} }`;
 }
 
-/**
- * Lower a reducer-test's `given.mocks` into the runtime's mock scripts. One
- * that is not a record throws E0713 rather than lowering to `{}`, which
- * scripted nothing.
- */
 function mocksJs(e: Expr, ctx: EvalCtx): string {
   const parts = recordFieldsAt(e, "given.mocks").map(
     (f) => `${fieldKey(f.name)}: ${mockScriptJs(f.value, ctx)}`,
@@ -421,23 +338,11 @@ function mockScriptJs(v: Expr, ctx: EvalCtx): string {
       return `{ outcome: ${JSON.stringify(inner.callee)}, value: ${value}, delayMs: ${ms} }`;
     }
   }
-  // A success mock was the old answer for anything unrecognised, so a mock
-  // written to drive the failure path drove the success one and the test that
-  // asserted the failure passed without ever seeing it. E0713 reports it at
-  // check time; the throw is for a caller that skipped `check`, and keeps this
-  // function and that check from drifting apart.
   throw new Error(
     "a reducer-test mock must be `ok(...)`, `err(...)`, or `delay(ms, ok(...)|err(...))`",
   );
 }
 
-/**
- * The reducer payload (`$el` / `$event`) for a reducer-test's or a
- * property-test's `given.event`. Uses `el` when present (spec §8.5), otherwise
- * the event's other fields (everything except `type` / `target`) so flat
- * `{type, target, value}` forms still reach the reducer. An event that is not
- * a record throws E0713 rather than answering an empty payload.
- */
 function eventPayloadJs(event: Expr | undefined, ctx: EvalCtx): string {
   if (event === undefined) return "({})";
   const fields = recordFieldsAt(event, "given.event");

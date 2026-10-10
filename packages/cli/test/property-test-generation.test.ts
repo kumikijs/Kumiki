@@ -1,11 +1,3 @@
-// A property-test holds only on trials that ran (testing.md §8.3.1, §8.3.2): its
-// `for-all` values are values of their types, and a `run-reducer` whose batch
-// is rejected fails the trial instead of answering the state it started from.
-//
-// Each program goes through `kumiki test`'s own path — compiled with its tests,
-// loaded, run — so the descriptor codegen emits and the generator the runtime
-// reads are the ones a user's run meets.
-
 import { describe, expect, it } from "vitest";
 import { runTestsSource } from "../src/smoke.ts";
 
@@ -18,9 +10,7 @@ const run = async (source: string) =>
   }));
 
 describe("a for-all over a Tuple", () => {
-  // The issue's program: `put` writes the pair back and counts the write. The
-  // pair is refined inside its type, so a trial handed anything but a pair
-  // whose second half is negative would have its batch rejected.
+  // The pair is refined inside its type, so a trial handed any other pair would have its batch rejected.
   const SOURCE = `slot pair : Tuple(Text, Int where negative) = ("a", -1)
 slot hits : Int = 0
 reducer put on=ui.click(PutBtn) do= hits := hits + 1
@@ -47,9 +37,7 @@ test second-half-is-negative =
         invariant = match p with
                       | (_, n) -> n < 0`;
 
-  it("generates each pair element by element, so the reducer runs on every trial", {
-    timeout: 30_000,
-  }, async () => {
+  it("generates each pair element by element, so the reducer runs on every trial", async () => {
     expect(await run(SOURCE)).toEqual([
       { name: "pair-never-moves", pass: true, cases: 100 },
       { name: "put-counts-once", pass: true, cases: 100 },
@@ -59,9 +47,7 @@ test second-half-is-negative =
 });
 
 describe("a for-all over a recursive type", () => {
-  // A `fn` cannot call itself (E0006), so the invariants read two levels down
-  // rather than walking the whole value; a `Node` whose rest is not a `Tree`
-  // fails the match there.
+  // A `fn` cannot call itself (E0006), so the invariants read two levels down.
   const SOURCE = `type Tree = Leaf | Node(Int, Tree)
 fn isTree(t: Tree) -> Bool = match t with
                                | Leaf       -> true
@@ -87,7 +73,7 @@ test a-node-holds-a-tree =
                       | Leaf          -> true
                       | Node(_, rest) -> isTree(rest)`;
 
-  it("generates trees that end, every level a Tree", { timeout: 30_000 }, async () => {
+  it("generates trees that end, every level a Tree", async () => {
     expect(await run(SOURCE)).toEqual([
       { name: "grow-wraps-the-tree", pass: true, cases: 100 },
       { name: "a-node-holds-a-tree", pass: true, cases: 100 },
@@ -96,8 +82,7 @@ test a-node-holds-a-tree =
 });
 
 describe("a trial whose run-reducer batch is rejected", () => {
-  // `inc` holds the invariant whenever it runs. At `n = 3` the write is
-  // refused, so that trial is one where nothing ran.
+  // `inc` holds the invariant whenever it runs; at `n = 3` the write is refused.
   const SOURCE = `slot count : Int where between(0, 3) = 0
 reducer inc on=ui.click(IncBtn) do= count := count + 1
 tile IncBtn = button(text="+1")
@@ -109,9 +94,7 @@ test inc-stays-in-range =
         given     = {slots: {count: n}, event: {type: ui.click, target: IncBtn}}
         invariant = run-reducer(inc).slots.count >= 0`;
 
-  it("fails the property with the counterexample and the rejection", {
-    timeout: 30_000,
-  }, async () => {
+  it("fails the property with the counterexample and the rejection", async () => {
     const [result] = await run(SOURCE);
     expect(result).toMatchObject({ name: "inc-stays-in-range", pass: false });
     expect(result?.actual).toMatch(

@@ -1,4 +1,4 @@
-# Feature (testing.md §8.3.2): a property-test over a `Tuple`.
+# Feature: a property-test over a `Tuple`.
 #
 #   for-all = {p: Tuple(Text, Int where negative)}
 #

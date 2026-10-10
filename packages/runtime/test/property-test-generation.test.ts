@@ -1,14 +1,3 @@
-// What a property-test trial is run on (testing.md §8.3.2): every generated
-// value is a value of its `for-all` type — a tuple element by element, a
-// recursive type to a bounded depth — and so is every value the shrinker
-// offers in its place. A descriptor the generator does not know is an error,
-// never a `null` standing in for a value.
-//
-// The descriptors are the ones codegen emits for the types named in each test
-// (`forAllGenerator`, compiler/src/codegen/emit-type.ts); the CLI's
-// property-test-generation.test.ts runs the same types through a compiled
-// program.
-
 import { _stdlib, type GenDesc, type ReducerSpec } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
@@ -118,9 +107,7 @@ describe("a generated value is a value of its for-all type", () => {
   });
 
   it("keys a Map by a Tuple the way the runtime keys one", () => {
-    // `Map(Tuple(Int, Int), Text)`: an entry put there by `insert` is keyed by
-    // the pair's JSON, so a generated key that reads otherwise is one no
-    // lookup in the program under test could find.
+    // An entry `insert` puts there is keyed by the pair's JSON; any other key no lookup could find.
     const values = generate({
       t: "Map",
       key: { t: "Tuple", items: [{ t: "Int" }, { t: "Int" }] },
@@ -134,7 +121,6 @@ describe("a generated value is a value of its for-all type", () => {
   it("generates a recursive union to a bounded depth, every level a value of it", () => {
     const depths = generate(TREE).map(treeDepth);
     expect(depths).not.toContain(undefined);
-    // The recursive variant is taken, and the depth bound (four levels) ends it.
     expect(Math.max(...(depths as number[]))).toBeGreaterThanOrEqual(2);
     expect(Math.max(...(depths as number[]))).toBeLessThanOrEqual(4);
   });
@@ -209,8 +195,6 @@ describe("a shrunk counterexample is a value of its for-all type", () => {
   });
 });
 
-// testing.md §8.3.1: the reducer did not run, so the trial has no state to
-// check the invariant against.
 describe("a trial whose run-reducer batch is rejected fails", () => {
   type StepApp = Parameters<typeof _stdlib.runReducerStep>[0];
 
@@ -250,8 +234,6 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
   }
 
   it("fails the property, naming the reducer and the rejection", () => {
-    // `n = 3` is the one value `inc` cannot take further: the trial cannot hold
-    // when the reducer did not run.
     const r = property({ n: { t: "Int", min: 0, max: 3 } });
     expect(r.pass).toBe(false);
     expect(r.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":3\}/);
@@ -266,10 +248,7 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
   });
 
   it("shrinks within the for-all type, so a rejection it reports is one a trial met", () => {
-    // `level : Int where between(1, 3)`, and `keep` writes it back unchanged.
-    // The invariant fails from 2 up, which is the counterexample to report.
-    // Shrinking `n` toward 0 would hand `keep` a value the generator never
-    // produces and the slot refuses, and the report would blame that refusal.
+    // Shrinking `n` toward 0 would hand `keep` a value the slot refuses, and the report would blame that.
     const app = appWith("level", [1, 3], {
       name: "keep",
       event: { kind: "ui", ev: "click" },
