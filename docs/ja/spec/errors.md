@@ -887,6 +887,24 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 **修正**：型と組み合わせられるフィールド種別を与える — `input(bind=age, type="number")`、`input(bind=due, type="date")` — か、フィールドが保持する型の slot を bind する。時刻だけなら `type="time"` のフィールドで `Text` として保持するか、`type="datetime-local"` のフィールドで `Time` を使う。`Option` はペイロードを `.get` で bind する。
 
+### E0233 `policy-key-type`
+
+`policy=latest-per-key(<key>)` の key が、key が値を `==` のとおりに区別しない型を持つ（[言語 §1.5.2](./language.md#_1-5-2-意味)）。
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, whose NaN is not == to itself and whose NaN, Infinity and -Infinity are one key inside a record, tuple, List or variant (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and every File is one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+dispatcher は各リクエストをその key で実行し、同じ key で別のリクエストが始まると実行中のリクエストを中断する（[HTTP §6.4](./http.md#_6-4-cancellation)）。key は Map の key が格納されるのと同じ書き方で書かれ（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、その書き方では 3 つの型を除くすべての型で、2 つの key が 1 つの key になるのはそれらが `==` であるときに限られる。`==` が異なるとする 2 つの値を 1 つの key にする key は、プログラムからは見えない理由でリクエストを中断する：
+
+- `Float`：`NaN` は 1 つの key だが `NaN == NaN` は `false` である。また、レコード・タプル・`List`・バリアントの中では `NaN`、`Infinity`、`-Infinity` がすべて 1 つの key になる
+- `File`：すべての `File` が 1 つの key になるが、`==` は File とそれ自身の間でしか成り立たない
+- `Set`：その `==` は作られ方に依存する（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）ので、key もそうなる
+
+メッセージは、key の型がそのいずれかであれば `it is`、エイリアス・ジェネリクス・`nominal` を通して、レコードのフィールド・バリアントのペイロード・コンテナの要素にそのいずれかを持つ場合は `it holds` と言う：`$1` で key にした `type Spot = {lat: Float, lng: Float}` は報告され、`List(Set(Text))` も報告される。型を検査器が決められない key は報告しない。
+
+**修正**：別の型の値を key にする — リクエストを識別する入力のフィールド（`latest-per-key($1.id)`）、Float の `.show` か `.round`、File の `.name`、あるいはそのようなフィールドのレコード（`latest-per-key({user: $1.user, page: $1.page})`）。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。

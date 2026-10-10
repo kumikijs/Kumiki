@@ -357,7 +357,7 @@ describe("codegen", () => {
     `;
     const js = compileOrFail(src);
     expect(js).toMatch(/const __a0 = _s\.now\(\);/);
-    expect(js).toMatch(/const __k = \(\(\w+\) => String\(\w+\)\)\(__a0\);/);
+    expect(js).toMatch(/const __k = \(\(\w+\) => _s\.entryKey\(\w+\)\)\(__a0\);/);
     expect(js).toContain('_emits.push({ effect: "search", args: [__a0], key: __k })');
     expect(js).toContain('return "search:" + __k;');
     const occurrences = (js.match(/_s\.now\(\)/g) ?? []).length;
@@ -434,7 +434,7 @@ describe("expressions outside a reducer body still see the slot table", () => {
   it("lowers a slot reference in latest-per-key to the live map", () => {
     const js = compileOrFail(SRC);
     const keyOf = emittedLine(js, "keyOf:");
-    expect(keyOf).toContain('String(_live["noteKey"])');
+    expect(keyOf).toContain('_s.entryKey(_live["noteKey"])');
   });
 
   it("still binds the key lambda's own $1", () => {

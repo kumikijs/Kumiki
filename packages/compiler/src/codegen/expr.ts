@@ -720,7 +720,7 @@ export function reducerEmitJs(
 
 export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): string {
   const keyCtx = makeEvalCtx(gen, ["$1"], reducerScope);
-  return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
+  return `((${bindRef(keyCtx, "$1")}) => _s.entryKey(${jsOfExpr(key, keyCtx)}))`;
 }
 
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {

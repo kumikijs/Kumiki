@@ -260,7 +260,7 @@ reducer cancelSearch
 
 `emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
 
-id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。key は Map の key が格納されるのと同じ書き方で書かれる（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）— `Text` はそのまま、レコード・タプル・`List`・バリアントは各レコードのフィールドを整列した JSON — ので、2 つの emit が同じ id を持つのはそれらの key が `==` であるときに限られ、そうならない key の型は [E0233](./errors.md#e0233-policy-key-type) になる（[言語 §1.5.2](./language.md#_1-5-2-意味)）。
 
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
