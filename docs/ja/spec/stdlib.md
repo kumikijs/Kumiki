@@ -14,7 +14,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Bool` | 真偽値 | `true`, `false` |
 | `Unit` | 単一値 | `()` |
 | `Bytes` | バイト列 | リテラルなし、`Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` で生成（[§2.2.10](#_2-2-10-bytes) 参照） |
-| `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse(text)` |
+| `Time` | Unix エポックからのミリ秒 | リテラルなし、`now` または `Time.parse(text)` |
 | `EffectId` | `emit` が返す不透明ハンドル（[§2.1.1.1](#_2-1-1-1-effectid) 参照） | リテラルなし、`EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
@@ -49,7 +49,7 @@ let id = emit fetchQuote()
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
-| `Duration` | `nominal Int` (ナノ秒) |
+| `Duration` | `nominal Int` (ミリ秒) |
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
@@ -306,6 +306,8 @@ to-ms                       : Int
 ```
 
 Time / Duration はランタイム上では **raw ミリ秒数**として表現される。`time.plus(Duration.h(72))` のような演算は単なる ms 加算に展開される。
+
+プログラムから見える単位もこれである。`now` と `Time.parse` は Unix エポックからのミリ秒を返し、`to-ms` はその数値をそのまま返す。1 秒離れた二つの時刻の `diff` は `Duration.s(1)` であり、その `to-ms` は `1000` である。
 
 構築子はいずれも大きさを引数に取り、括弧を落としても値にはならない。`Duration.h` は引数のない呼び出しとして読まれ、`Duration.h()` と同じ [E0213](./errors.md#e0213-call-arity-mismatch) になる。下の `Bytes.*` も同じ読み方をする。それ以前は括弧なしの表記はフィールド読みで、何も持たない値に評価されていた——そして何も無い duration は 0 の duration であり、それを報告するものは何もなかった。
 
