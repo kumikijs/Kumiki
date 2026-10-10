@@ -1,6 +1,5 @@
-# Feature (http.md §6.7.2): `storage.write` answers all three of its
-# declarations. A write and a remove are told apart by the request; a clear by
-# the declaration.
+# Feature: `storage.write` answers all three of its declarations. A write and a
+# remove are told apart by the request; a clear by the declaration.
 #
 #   request {key: Text, value: JsonValue}     write the value under the key
 #   request {key: Text}                       remove the key

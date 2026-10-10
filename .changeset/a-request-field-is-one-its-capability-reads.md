@@ -25,8 +25,8 @@ The http.get request has no field "headrs" — did you mean "headers"? (accepted
 ```
 
 The fields each capability's request has now live in one table,
-`REQUEST_FIELDS` in `capabilities.ts`, published as http.md §6.6.1 on both
-tracks and held to it by `spec-drift.test.ts`: `url` / `headers` / `query` /
+`REQUEST_FIELDS` in `capabilities.ts`, published in http.md on both tracks:
+`url` / `headers` / `query` /
 `decode` on `http.get`, plus `body` on `http.post` / `put` / `patch` /
 `delete`; `key` / `decode` on `storage.read` and `session.read`; `key` /
 `value` on `storage.write` and `session.write`; `store` / `key` / `decode` /
