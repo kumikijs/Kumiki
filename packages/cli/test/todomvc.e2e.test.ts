@@ -1,12 +1,10 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildAndLoad } from "./helpers/build-and-load.ts";
 import { defined } from "./helpers/defined.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const TODOMVC = resolve(here, "../../examples/apps/02-todomvc/app.kumiki");
+const TODOMVC = app("02-todomvc");
 
 const flush = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -17,8 +15,6 @@ function getInput(root: HTMLElement): HTMLInputElement {
 }
 
 function getRows(root: HTMLElement): HTMLElement[] {
-  // Each TodoRow expands to a `row` with a checkbox + text + remove button.
-  // We pick rows whose first child is a label containing a checkbox.
   return Array.from(root.querySelectorAll<HTMLElement>('[data-kumiki-tile="row"]')).filter(
     (row) => {
       const first = row.children[0];
@@ -34,10 +30,6 @@ function rowTexts(root: HTMLElement): string[] {
   });
 }
 
-// Re-query the input on every keystroke: each bind write-back re-renders and
-// swaps the node in place (focus restore keeps it focused), and a real user's
-// next key lands on the LIVE element. Events on the detached previous node are
-// a no-op by design — app resolution is anchored to the mounted tree.
 async function typeInto(root: HTMLElement, text: string): Promise<void> {
   getInput(root).focus();
   for (const ch of text) {
@@ -59,10 +51,6 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
   const rootId = "todomvc-root";
   let disposers: Array<{ dispose: () => void }> = [];
 
-  // Track every mount so afterEach can dispose it. Without this, the
-  // `saveTodos` debounce(300ms) timer outlives the test and fires AFTER the
-  // next test's `localStorage.clear()`, writing stale data that the next
-  // test's `loadTodos` then reads back — a cross-test race (flaky).
   function track(d: { dispose: () => void }): { dispose: () => void } {
     disposers.push(d);
     return d;
@@ -96,7 +84,6 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     submitForm(root);
     await flush();
     expect(rowTexts(root)).toEqual(["Buy milk"]);
-    // Draft should be cleared.
     expect(getInput(root).value).toBe("");
   });
 
@@ -142,7 +129,6 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     await typeInto(root, "todo2");
     submitForm(root);
     await flush();
-    // Toggle the first row done.
     const firstCheckbox = defined(
       root.querySelectorAll<HTMLInputElement>(
         '[data-kumiki-tile="check"] input[type="checkbox"]',
@@ -152,7 +138,6 @@ describe("TodoMVC e2e (built from .kumiki)", () => {
     firstCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
 
-    // Find the filter buttons (text "All" / "Active" / "Done").
     const allBtns = Array.from(
       root.querySelectorAll<HTMLButtonElement>('[data-kumiki-tile="button"]'),
     );

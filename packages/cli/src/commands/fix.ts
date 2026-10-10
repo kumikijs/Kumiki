@@ -2,11 +2,12 @@ import type { Command } from "commander";
 import { fixCmd, fixFromTest } from "../fix.ts";
 import { capsFor } from "./_shared/caps.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE =
   "Usage: kumiki fix <file> [--apply] [<code>]\n       kumiki fix <file> --auto-patch <test-name> [--apply]";
 
-export function registerFix(program: Command): void {
+export function registerFix(program: Command): string {
   program
     .command("fix")
     .description("Suggest / apply auto-patches for a diagnostic or a failing test")
@@ -21,10 +22,7 @@ export function registerFix(program: Command): void {
         code: string | undefined,
         options: { apply?: boolean; autoPatch?: string },
       ) => {
-        if (!file) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!file) exitWithUsage(USAGE);
         const apply = Boolean(options.apply);
         const fixPath = sourceFileArg(file);
         if (options.autoPatch !== undefined) {
@@ -34,11 +32,6 @@ export function registerFix(program: Command): void {
             apply,
             capsFor(fixPath).capabilities,
           );
-          // `ok` counts "a fix is available in dry-run" as success, which is a
-          // proposal rather than a repair: the test still fails and the file
-          // is untouched. The exit code answers the same question here as it
-          // does for the diagnostic path — is the file in the state that was
-          // asked for now that the process is ending?
           const repaired = outcome.status === "already-pass" || (apply && outcome.ok);
           if (!repaired) process.exitCode = 1;
           return;
@@ -46,4 +39,5 @@ export function registerFix(program: Command): void {
         process.exitCode = fixCmd(fixPath, apply, code, capsFor(fixPath).capabilities);
       },
     );
+  return USAGE;
 }

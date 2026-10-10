@@ -1,7 +1,3 @@
-// Definition store: parse a .kumiki file, record source ranges, and answer
-// list / view / refs queries. Read-only on disk; mutations go through a
-// separate path that rewrites the file and appends to the op-log.
-
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Def, Program, Token } from "@kumikijs/compiler";
@@ -31,14 +27,6 @@ export type Store = {
   refs?: Map<string, Reference[]>;
 };
 
-/**
- * The label each `Def` kind carries — the seven layers of the language, plus
- * `theme`, `motion` and `test`, which are definitions but not layers.
- *
- * `satisfies Record<Def["kind"], string>` is what makes this total: a new kind
- * of definition is a compile error here rather than a definition that silently
- * lists as `?` and cannot be filtered to.
- */
 const LAYER_OF = {
   TypeDef: "type",
   SlotDef: "slot",
@@ -52,22 +40,10 @@ const LAYER_OF = {
   TestDef: "test",
 } as const satisfies Record<Def["kind"], string>;
 
-/**
- * Every label a `DefEntry` can carry, in the order above. Derived rather than
- * written out a second time, so a definition the store labels is always one
- * `list <label>` and `kumiki_list` accept as a filter.
- */
 export const LAYERS = Object.values(LAYER_OF);
 
-/**
- * `path` resolved against the working directory, or a throw that names it
- * when nothing is there. Every verb, mutator and MCP tool given a `.kumiki`
- * file asks this before it reads the file or anything beside it (§9.2.5), so a
- * mistyped path is refused by name and nothing is written beside it: no lock
- * file for `lock`, no write lock for a write verb. It asks only whether the
- * path exists, not whether the file parses: the history of a file that no
- * longer parses is exactly when `view --history` is wanted.
- */
+// Asks only whether the path exists, not whether it parses: `view --history` is wanted most for a
+// file that no longer parses.
 export function requireSourceFile(path: string): string {
   const abs = resolve(process.cwd(), path);
   // `undefined` is a path with no entry (ENOENT, ENOTDIR). Any other failure
@@ -100,7 +76,6 @@ function buildEntries(program: Program, lines: string[], tokens: Token[]): DefEn
     const layer = LAYER_OF[d.kind];
     const name = "name" in d ? d.name : "_";
     const start = (d as { pos?: { line: number } }).pos?.line ?? 1;
-    // End line: just before the next def's start (or last line of file).
     const next = program.defs[i + 1];
     const nextStart = next && (next as { pos?: { line: number } }).pos?.line;
     const endLine = nextStart ? nextStart - 1 : lines.length;
@@ -126,11 +101,6 @@ export function viewDef(store: Store, qname: string): string | null {
   return store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
 }
 
-/**
- * The definition at `qname` preceded by everything it depends on, directly or
- * not: each once, a dependency before what reads it. `null` when `qname` names
- * no definition, as `viewDef`.
- */
 export function viewWithDeps(store: Store, qname: string): string | null {
   if (!store.byQName.has(qname)) return null;
   const seen = new Set<string>();
@@ -149,12 +119,6 @@ export function viewWithDeps(store: Store, qname: string): string | null {
     .join("\n\n");
 }
 
-/**
- * Every reference each definition makes, resolved against the program's
- * definition index. Computed once per `Store` because `refs`, `view --with-deps`
- * and `remove --cascade` all ask about the same relation, and they used to
- * disagree: one stripped strings before matching and the other did not.
- */
 function refTable(store: Store): Map<string, Reference[]> {
   if (store.refs) return store.refs;
   const index = buildDefIndex(store.program);
@@ -164,11 +128,6 @@ function refTable(store: Store): Map<string, Reference[]> {
   return table;
 }
 
-/**
- * The qnames the definition at `qname` references. A definition is never its
- * own dependency — a recursive tile or fn names itself, and an edge from a node
- * to itself is not a dependency anyone can act on.
- */
 export function directDeps(store: Store, qname: string): string[] {
   const refs = refTable(store).get(qname);
   if (!refs) return [];
@@ -182,11 +141,6 @@ export function directDeps(store: Store, qname: string): string[] {
 
 export type RefSite = { qname: string; layer: string; name: string; line: number };
 
-/**
- * Where `targetQname` is referenced, one entry per definition+line. Layer-aware:
- * a `slot label` and a `tile label` are different targets, and a record field
- * called `label` is not a reference to either.
- */
 export function findReferences(store: Store, targetQname: string): RefSite[] {
   const target = store.byQName.get(targetQname);
   if (!target) return [];
@@ -200,8 +154,6 @@ export function findReferences(store: Store, targetQname: string): RefSite[] {
       const key = `${from}:${r.pos?.line ?? 0}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      // A reference with no identifier of its own (a test's `{slots: {x: …}}`
-      // key) still counts — it is reported at the definition's first line.
       out.push({
         qname: from,
         layer: e.layer,

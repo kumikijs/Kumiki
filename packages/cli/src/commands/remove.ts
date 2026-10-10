@@ -1,10 +1,11 @@
 import type { Command } from "commander";
 import { CASCADE_HELP, describeEdit, removeDef } from "../mutate.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
+import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki remove <file> <qname> [--cascade]";
 
-export function registerRemove(program: Command): void {
+export function registerRemove(program: Command): string {
   program
     .command("remove")
     .description("Remove a definition")
@@ -14,18 +15,13 @@ export function registerRemove(program: Command): void {
     .allowExcessArguments(false)
     .action(
       (file: string | undefined, qname: string | undefined, options: { cascade?: boolean }) => {
-        if (!file || !qname) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!file || !qname) exitWithUsage(USAGE);
         const path = sourceFileArg(file);
-        try {
+        printOrExit(() => {
           const result = removeDef(path, qname, Boolean(options.cascade));
-          console.log(describeEdit({ op: "remove", qname, ...result }));
-        } catch (e) {
-          console.error(String(e));
-          process.exit(1);
-        }
+          return describeEdit({ op: "remove", qname, ...result });
+        });
       },
     );
+  return USAGE;
 }

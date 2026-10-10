@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { viewHash, viewHistory } from "../mutate.ts";
 import { load, viewDef, viewWithDeps } from "../store.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]";
 
@@ -10,8 +11,6 @@ type ViewMode = "text" | "with-deps" | "hash" | "history";
 export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
   const path = sourceFileArg(inputArg);
   if (mode === "history") {
-    // History lives in a sidecar op-log, so this is the one mode that never
-    // opens the .kumiki file: that the file exists is all it asks of it.
     const log = viewHistory(path, qname);
     if (log.length === 0) {
       console.log(`(no history for ${qname})`);
@@ -39,7 +38,7 @@ export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
   console.log(out);
 }
 
-export function registerView(program: Command): void {
+export function registerView(program: Command): string {
   program
     .command("view")
     .description("Print a definition (optionally with deps, hash, or history)")
@@ -55,10 +54,7 @@ export function registerView(program: Command): void {
         qname: string | undefined,
         options: { withDeps?: boolean; hash?: boolean; history?: boolean },
       ) => {
-        if (!input || !qname) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!input || !qname) exitWithUsage(USAGE);
         const mode: ViewMode = options.history
           ? "history"
           : options.hash
@@ -69,4 +65,5 @@ export function registerView(program: Command): void {
         viewCmd(input, qname, mode);
       },
     );
+  return USAGE;
 }

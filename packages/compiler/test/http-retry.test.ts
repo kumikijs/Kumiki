@@ -1,7 +1,7 @@
-import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { compileOrFail } from "./helpers/module.ts";
 
-describe("codegen: effect retry (#83)", () => {
+describe("codegen: effect retry", () => {
   it("emits a linear retry policy on EffectSpec", () => {
     const src = `
       slot tag : Text = ""
@@ -10,10 +10,8 @@ describe("codegen: effect retry (#83)", () => {
       tile Home = column(B)
       app App caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain('retry: { kind: "linear", n: 3, ms: 500 }');
+    const js = compileOrFail(src);
+    expect(js).toContain('retry: { kind: "linear", n: 3, ms: 500 }');
   });
 
   it("emits an exponential retry policy on EffectSpec", () => {
@@ -23,10 +21,8 @@ describe("codegen: effect retry (#83)", () => {
       tile Home = column(B)
       app App caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain('retry: { kind: "exponential", n: 5, ms: 200, factor: 2 }');
+    const js = compileOrFail(src);
+    expect(js).toContain('retry: { kind: "exponential", n: 5, ms: 200, factor: 2 }');
   });
 
   it("emits retry: undefined when no retry clause is given", () => {
@@ -36,10 +32,8 @@ describe("codegen: effect retry (#83)", () => {
       tile Home = column(B)
       app App caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain("retry: undefined");
+    const js = compileOrFail(src);
+    expect(js).toContain("retry: undefined");
   });
 
   it("emits retry: undefined when retry=none", () => {
@@ -49,9 +43,7 @@ describe("codegen: effect retry (#83)", () => {
       tile Home = column(B)
       app App caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain("retry: undefined");
+    const js = compileOrFail(src);
+    expect(js).toContain("retry: undefined");
   });
 });

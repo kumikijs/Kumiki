@@ -1,45 +1,19 @@
-// Granting and releasing an ownership lock (§9.8.3, and the `lock` / `unlock`
-// row of §9.2.5). Enforcing one at op time is lock-every-touched-def.test.ts.
-//
-// A pattern names one or more globs. `lock` grants them only when no other
-// agent holds a glob that some name with exactly one dot, the shape of every
-// qualified name, could match as well. Granting an overlapping glob leaves each
-// agent refused by the other's lock on the names both cover, so nobody can
-// edit them. `unlock` releases what the agent holds, and refuses when that is
-// nothing. Both refuse a path with no file at it.
-
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { lockDef, readOpLog, replaceDef, unlockDef } from "@kumikijs/cli";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { app } from "@kumikijs/examples";
+import { beforeEach, describe, expect, it } from "vitest";
+import { seedCopy } from "./helpers/files.ts";
+import { asAgent } from "./helpers/op-log.ts";
 
-const COUNTER = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../examples/apps/01-counter/app.kumiki",
-);
+const COUNTER = app("01-counter");
 
-let dir = "";
 let file = "";
 let locks = "";
-let prevAuthor: string | undefined;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-lock-grant-"));
-  file = join(dir, "c.kumiki");
+  file = seedCopy(COUNTER, "c.kumiki");
   locks = `${file}.kumiki-locks.json`;
-  copyFileSync(COUNTER, file);
-  prevAuthor = process.env.KUMIKI_AUTHOR;
 });
-afterEach(() => {
-  if (prevAuthor === undefined) delete process.env.KUMIKI_AUTHOR;
-  else process.env.KUMIKI_AUTHOR = prevAuthor;
-  rmSync(dir, { recursive: true, force: true });
-});
-
-const as = (agent: string): void => {
-  process.env.KUMIKI_AUTHOR = agent;
-};
 
 const held = (): unknown => JSON.parse(readFileSync(locks, "utf8"));
 
@@ -121,10 +95,10 @@ describe("lock", () => {
   it("leaves the holder able to edit what it locked", () => {
     lockDef(file, "agent:a", "slot.*");
     expect(() => lockDef(file, "agent:b", "slot.count")).toThrowError(/lock conflict/);
-    as("agent:a");
+    asAgent("agent:a");
     replaceDef(file, "slot.count", "N = 1");
     expect(readOpLog(file).at(-1)).toMatchObject({ op: "replace", name: "count" });
-    as("agent:b");
+    asAgent("agent:b");
     expect(() => replaceDef(file, "slot.count", "N = 2")).toThrowError(
       /lock violation: slot\.count is locked by agent:a/,
     );
@@ -195,8 +169,6 @@ describe("lock", () => {
     );
   });
 
-  // `lock` and every op read a glob the same way. In both, `*` takes the dot of
-  // a qualified name like any other character.
   it.each([
     "*count",
     "slot*",
@@ -206,22 +178,20 @@ describe("lock", () => {
       () => lockDef(file, "agent:b", "slot.count"),
       conflict("slot.count", glob, "agent:a"),
     );
-    as("agent:b");
+    asAgent("agent:b");
     expect(() => replaceDef(file, "slot.count", "N = 1")).toThrowError(
       `lock violation: slot.count is locked by agent:a (pattern "${glob}")`,
     );
   });
 
-  // `*` is the only wildcard. The check `lock` makes and the one every op runs
-  // must read a pattern the same way: if `?` made the `t` before it optional
-  // for ops, agent:a's `slot.count?` would cover `slot.count`, which agent:b was
-  // just granted, and neither could edit it.
+  // If `?` made the `t` before it optional for ops, agent:a's `slot.count?` would
+  // cover `slot.count`, which agent:b was just granted, and neither could edit it.
   it("reads every character but `*` as itself", () => {
     lockDef(file, "agent:a", "slot.count?");
     lockDef(file, "agent:b", "slot.count");
-    as("agent:b");
+    asAgent("agent:b");
     expect(() => replaceDef(file, "slot.count", "N = 1")).not.toThrow();
-    as("agent:a");
+    asAgent("agent:a");
     expect(() => replaceDef(file, "slot.count", "N = 2")).toThrowError(
       /lock violation: slot\.count is locked by agent:b/,
     );
@@ -230,7 +200,7 @@ describe("lock", () => {
 
 describe("lock and unlock", () => {
   it("refuse a file that does not exist, creating no lock file", () => {
-    const missing = join(dir, "missing.kumiki");
+    const missing = join(dirname(file), "missing.kumiki");
     const refusal = `File "${missing}" not found`;
     expect(() => lockDef(missing, "agent:a", "slot.*")).toThrowError(refusal);
     expect(() => unlockDef(missing, "agent:a")).toThrowError(refusal);
