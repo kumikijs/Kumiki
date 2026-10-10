@@ -1,24 +1,11 @@
-// The `fieldset` tile: a `<div>`-based container for a group of fields, with
-// the caption its `legend` names (stdlib.md §2.3.5). It ships with the other
-// form tiles rather than in the layout family, which every app downloads
-// whole, so an app with no fieldset does not download the legend.
+// Ships with the form tiles rather than in the layout family every app downloads, so an app with no fieldset does not download the legend.
 
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
 import { applyContainerProps, attrValue } from "../../core.ts";
 
-/**
- * The `<legend>` elements this module put in front of a fieldset's children.
- * A first child that is not one of them belongs to a child tile, and is never
- * rewritten or removed as if it were the caption.
- */
+/** A first child this module did not put there belongs to a child tile, and is never rewritten or removed as the caption. */
 const LEGENDS = new WeakSet<Element>();
 
-/**
- * Give `el` the caption `props.legend` names, as a `<legend>` ahead of its
- * children, or none when the prop is absent or empty. Create and patch both go
- * through here, so a legend read from a slot follows it: it is added, rewritten
- * in place, or removed.
- */
 function syncLegend(el: HTMLElement, props?: TileProps): void {
   const text = attrValue(props?.legend);
   const first = el.firstElementChild;

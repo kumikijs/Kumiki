@@ -3,7 +3,7 @@
 "@kumikijs/runtime": patch
 ---
 
-Render the input props the stdlib tables list: `check`'s `label`, `fieldset`'s `legend`, a radio's `name=` and a slider's one-way `value=` (#578)
+Render the input props the stdlib tables list: `check`'s `label`, `fieldset`'s `legend`, a radio's `name=` and a slider's one-way `value=`
 
 All four passed `kumiki check` and were then dropped:
 

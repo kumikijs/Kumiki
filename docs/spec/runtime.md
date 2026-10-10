@@ -442,7 +442,7 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
 4. **`TileWhen` / `TileIf` / `TileMatch`** are transparent: the implicit key
    flows through the branch that emits the tile.
 
-**Runtime consumption.** The reconciler in `packages/runtime/src/core.ts`
+**Runtime consumption.** The reconciler in `packages/runtime/src/core/reconcile.ts`
 reads `oldNode.key` and `newNode.key` at the child-list level. `key` is
 included in `TILE_SKIP_TOP` so a key change alone does not trigger
 `replaceWithFreshTile` on the parent — key drives which old child pairs with

@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.3.4 / §2.3.5, forms.md §5.3 / §5.5.2): the props the
+# Feature (stdlib.md, forms.md): the props the
 # input elements list reach the page.
 #
 # - `check`'s `label` is the text beside its box, as `radio`'s is.

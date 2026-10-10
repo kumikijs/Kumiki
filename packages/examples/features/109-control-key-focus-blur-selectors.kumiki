@@ -1,4 +1,4 @@
-# Feature (errors.md §W0212): `ui.key` / `ui.focus` / `ui.blur` reach every
+# Feature (W0212): `ui.key` / `ui.focus` / `ui.blur` reach every
 # control a user can focus. The runtime attaches these three listeners to the
 # element a tile renders, so a selector lands wherever that element receives
 # the event:

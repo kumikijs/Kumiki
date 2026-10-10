@@ -1,25 +1,3 @@
-// Input tile renderers (#71): interactive controls (button, input, textarea,
-// check, radio, select, slider, switch, editable) and the form tiles that
-// hold them (form, fieldset). `bind=` controls write back to their slot
-// through the owning mount's `_setSlot`, resolved from the control element
-// via the multi-mount app registry (`resolveApp` in core) so several apps on
-// one page never cross-wire.
-//
-// Every renderer is paired with a patcher (#190) that mutates the mounted
-// element in place on a data-prop change, preserving browser-internal state
-// (`<select>` open dropdown, `<input>` focus / caret, `contenteditable`
-// caret / IME composition). To keep patching correct across `bind` /
-// `onChange` closure changes without add/remove-listener churn, native
-// listeners are registered ONCE by `create` and dispatch through a
-// per-element handler slot held in `INPUT_STATE` — patchers just overwrite
-// that slot with the new node's handlers.
-//
-// Each control is its own module under `tiles/input/`, sharing only
-// `tiles/input/_shared.ts`, and that is the unit `kumiki build` ships: a
-// counter with one button used to download the select reconciler, the slider,
-// and the contenteditable IME guard as well. This file is the family
-// aggregate the monolith `mount()` assembles them back into.
-
 import type { TilePatchers, TileRenderers } from "./core.ts";
 import { buttonPatcher, buttonTile } from "./tiles/input/button.ts";
 import { checkPatcher, checkTile } from "./tiles/input/check.ts";
