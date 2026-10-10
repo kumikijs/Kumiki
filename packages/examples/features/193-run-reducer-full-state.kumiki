@@ -1,4 +1,4 @@
-# Feature (testing.md §8.3.2): the state `run-reducer` answers is the whole
+# Feature (testing.md): the state `run-reducer` answers is the whole
 # slot table — the declared defaults, then `given.slots`, then the reducer's
 # writes — so a property-test invariant reads a slot the trial neither seeds
 # nor writes at its default, as a reducer-test's `expect` does.
@@ -7,7 +7,7 @@
 #   invariant = run-reducer(inc).slots.label == "x"
 #
 # A chain hands the table on, so every step answers every slot, and the
-# runtime's `route` (§8.2.5) is part of it.
+# runtime's `route` is part of it.
 
 slot count : Int  = 0
 slot label : Text = "x"

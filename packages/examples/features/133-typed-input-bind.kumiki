@@ -1,11 +1,10 @@
-# Feature (forms.md §5.1.1): an `input` bound to an `Int` / `Float` slot reads
-# its text as a number, and one bound to a `Time` slot with `type="date"`
-# reads it as an instant — the way `Int.parse` / `Float.parse` / `Time.parse`
-# read text (stdlib.md §2.4.3). Text that spells no value of the type (`""`,
-# `"1.5"` for an Int) is refused like a refinement violation: the slot keeps
-# its last value, the field keeps what was typed, and `error(field=age)` says
-# why (forms.md §5.7.2) — on a slot with no refinement too. Before this, the
-# field's string was written as-is, so `age + 1` rendered `51`.
+# Feature: an `input` bound to an `Int` / `Float` slot reads its text as a
+# number, and one bound to a `Time` slot with `type="date"` reads it as an
+# instant — the way `Int.parse` / `Float.parse` / `Time.parse` read text. Text
+# that spells no value of the type (`""`, `"1.5"` for an Int) is refused like a
+# refinement violation: the slot keeps its last value, the field keeps what was
+# typed, and `error(field=age)` says why — on a slot with no refinement too.
+# Before this, the field's string was written as-is, so `age + 1` rendered `51`.
 #
 # The scenario's stored date is local midnight on America/Los_Angeles, the
 # zone packages/tests pins; `kumiki run` from another zone reports that step.

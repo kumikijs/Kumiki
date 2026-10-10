@@ -1,6 +1,6 @@
-# Feature (language.md §1.9.4, stdlib.md §2.2.3): equality is by value.
+# Feature: equality is by value.
 #
-#   a == b              : Bool   (any two values; shapes need not match — only two distinct nominals are rejected, §1.9.4)
+#   a == b              : Bool   (any two values; shapes need not match — only two distinct nominals are rejected)
 #   List(T).contains(x) : Bool
 #   List(T).unique      : List(T)
 #
@@ -8,10 +8,10 @@
 # compare. Two Lists, records, tuples, Maps or variants are equal when what
 # they hold is equal, all the way down, and `!=` is the negation. (A Set
 # compares as the keys it is stored under, which depends on how it was
-# built, so Set equality is not a rule to rely on — stdlib.md §2.2.2.)
-# `contains` and `unique` ask the same question as `==`: a List of union
-# values, records or Options finds a member that was built somewhere else,
-# and `unique` keeps the first of each value, in order.
+# built, so Set equality is not a rule to rely on.) `contains` and `unique` ask
+# the same question as `==`: a List of union values, records or Options finds a
+# member that was built somewhere else, and `unique` keeps the first of each
+# value, in order.
 #
 # Every row that expects a match (or a `!=` that expects `false`) is one
 # JavaScript reference or SameValueZero equality gets wrong; each row that
