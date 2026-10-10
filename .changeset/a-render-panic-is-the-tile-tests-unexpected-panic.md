@@ -22,6 +22,6 @@ FAIL  first-shows (0ms)
   diff at:  (unexpected panic)
 ```
 
-A tile-test still has no way to expect the panic: its `expect` is a tile, with no section to write one in (testing.md §8.4). Only the target's render is reported this way. A panic while the test evaluates its own `given` (`given.in` included) or `expect` is a throw in the test's body and keeps its `error:` line.
+A tile-test still has no way to expect the panic: its `expect` is a tile, with no section to write one in (testing.md). Only the target's render is reported this way. A panic while the test evaluates its own `given` (`given.in` included) or `expect` is a throw in the test's body and keeps its `error:` line.
 
 The generated tile-test binds `given.in` ahead of the render, runs the render under the same guard as a reducer-test's reducer, and passes what it caught to `runTileTest`, whose input gains `panic: string | null` beside `actual`. Both runners build the unexpected-panic report through one function.

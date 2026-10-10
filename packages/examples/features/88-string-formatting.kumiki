@@ -1,5 +1,4 @@
-# Feature (spec/stdlib.md §2.4.5): `fmt(template, ...args)` substitutes
-# `{0}` … `{n}`.
+# Feature: `fmt(template, ...args)` substitutes `{0}` … `{n}`.
 #
 # The substitution used to not happen at all: the runtime carried no `fmt`
 # helper, so codegen's `_s.fmt ? … : template` guard always took the else
@@ -8,14 +7,14 @@
 # formatted result it was standing in for, so nothing downstream could tell
 # the two apart. Only a scenario that names the substituted string can.
 #
-# Each slot below pins one rule of §2.4.5. The last three are the ones the
+# Each slot below pins one rule of `fmt`. The last three are the ones the
 # spec used to leave open — an index the arguments do not reach, an argument
 # no placeholder names, and a `{` that opens no placeholder.
 
 slot who      : Text = "Ada"
 slot unread   : Int  = 3
 
-# A template that is an **expression** rather than a literal. §2.4.5's rules
+# A template that is an **expression** rather than a literal. The spec's rules
 # for a disagreeing call are written for exactly this case: a literal template
 # is counted against its arguments at check time (W0214), and a slot carries no
 # placeholder set to count, so what follows is the runtime's answer alone.

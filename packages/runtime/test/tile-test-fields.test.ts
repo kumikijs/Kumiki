@@ -1,10 +1,3 @@
-// What a tile-test compares (testing.md §8.4), on hand-built nodes shaped the
-// way codegen lowers them: content fields at the top level, every named
-// argument folded into `props` beside the `{…}` block's styles and the
-// handlers, plus `el` (the element attribute bag) and `_tile` (the user-tile
-// marker). The compile-and-run cases are in
-// `packages/tests/tile-test-content-fields.test.ts`.
-
 import { _stdlib } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
@@ -20,6 +13,9 @@ describe("a tile-test compares the named arguments in props", () => {
     expect(r.pass).toBe(false);
     expect(r.diffAt).toBe("button.disabled");
     expect(r.leaf).toEqual({ expected: true, actual: undefined });
+    // A field the actual node lacks prints as missing, not as a value.
+    expect(r.expected).toBe('button("Go", disabled=true)');
+    expect(r.actual).toBe('button("Go")');
   });
 
   it("fails a wrong alt", () => {
@@ -108,10 +104,6 @@ describe("a tile-test compares the named arguments in props", () => {
   });
 
   it("compares a toggle's value argument once, as its checked state", () => {
-    // `check(value=true)` lowers to `checked: true` with `value: true` folded
-    // into props; a `check(bind=agreed)` carries the same state as `checked`
-    // alone. The argument is the checked state, not a second field, so the
-    // first difference is the one argument that does differ.
     const r = run(
       { kind: "check", checked: true, props: { value: true, disabled: true } },
       { kind: "check", checked: true, bind: "agreed", props: { disabled: false } },
@@ -194,8 +186,6 @@ describe("a builtin's default is compared", () => {
 
 describe("the expected / actual lines", () => {
   it("print only the fields the expected node states, on both sides", () => {
-    // A bound input carries placeholder, bind, bindPath, parse and (in a
-    // `for`) key; `input(value="Grace")` states none of them.
     const r = run(
       { kind: "input", value: "Grace", props: { value: "Grace" } },
       {
@@ -221,14 +211,5 @@ describe("the expected / actual lines", () => {
       children: [{ kind: "icon", name: "plus", props: {} }],
     };
     expect(run(node, node).expected).toBe('button("Add", icon(name="plus"))');
-  });
-
-  it("print a field the actual node lacks as missing, not as a value", () => {
-    const r = run(
-      { kind: "button", text: "Go", props: { disabled: true } },
-      { kind: "button", text: "Go", props: {} },
-    );
-    expect(r.expected).toBe('button("Go", disabled=true)');
-    expect(r.actual).toBe('button("Go")');
   });
 });
