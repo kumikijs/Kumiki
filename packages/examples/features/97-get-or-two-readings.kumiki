@@ -1,5 +1,5 @@
-# Feature (stdlib.md §2.2.1 / §2.2.4): `.get-or` is one name with two readings,
-# and the receiver decides which.
+# Feature: `.get-or` is one name with two readings, and the receiver decides
+# which.
 #
 #   Option(T).get-or(default)       → T
 #   Result(T, E).get-or(default)    → T

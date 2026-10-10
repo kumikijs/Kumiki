@@ -1,4 +1,4 @@
-# Feature: the empty boundary of a child list (spec/runtime.md §10.3.10).
+# Feature: the empty boundary of a child list.
 #
 # `Results` is a column whose only children come from a `for` over a list that
 # STARTS EMPTY — the shape every list-flavoured app opens on: no todos yet, no

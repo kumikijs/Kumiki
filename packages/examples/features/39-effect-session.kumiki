@@ -1,7 +1,7 @@
 # Feature: sessionStorage persistence — survives reload within the same tab,
-# wiped when the tab closes. Same effect shape as `storage-*` (spec §6.7.4);
+# wiped when the tab closes. Same effect shape as `storage-*`;
 # the `.err` branch keeps an unavailable backend (opaque-origin sandbox /
-# private mode) visible instead of silently failing (#37, #84).
+# private mode) visible instead of silently failing.
 
 slot draft  : Text = ""
 slot ready  : Bool = false

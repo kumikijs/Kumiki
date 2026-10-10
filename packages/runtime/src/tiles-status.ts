@@ -1,6 +1,3 @@
-// Status / messaging tile renderers (#71): spinner, skeleton, progress, the
-// inline toast tile, and the validation `error` tile.
-
 import type { BindReader, TilePatchers, TileRenderers } from "./core.ts";
 import {
   currentTheme,
@@ -11,56 +8,32 @@ import {
   judgeShownField,
 } from "./core.ts";
 
-/**
- * Resolve the current validation message for a slot, for the `error` tile.
- * The value judged is the one the field shows: a value a `bind` wrote and the
- * refinement refused, while its control still shows it, else the slot's own.
- * A field showing text that does not read as its bound `Int` / `Float` / `Time`
- * at all says so, before and whatever the refinement. Otherwise returns ""
- * (no error shown) when the value passes its refinement, when the slot has no
- * refinement, or when no app is mounted. The message text comes
- * from `theme.errors[<pred>]` if overridden, else the spec §5.7.2 default.
- */
 function resolveFieldError(field: string): string {
-  // Render-time lookup: the error tile is being built for the app whose
-  // render pass is running (multi-mount registry in core).
   const app = getRenderingApp();
   if (!app || !field) return "";
   const meta = app.slots?.[field];
   if (!meta) return "";
-  // A field showing a value its slot refused speaks for what it shows: the
-  // slot kept the last value it accepted, and a message computed from that
-  // one would be about a value the user is no longer looking at.
-  // Only a control in the view being rendered speaks for this tile: another
-  // view of the same shape shows the slot's own value. The judgement is the
-  // one a form gates its submit on (§5.2.2).
   const shown = judgeShownField(app, field, getRenderingView());
   if (shown.valid) return "";
   const overrides = currentTheme()?.errors as Record<string, string> | undefined;
-  // Text that does not read as the bound base at all is judged before any
-  // refinement: "1.5" into an `Int where between(0, 120)` is not a number out
-  // of range, and a slot with no refinement still has this to say (§5.1.2).
+  // Text that does not read as the bound base at all is judged before any refinement.
   if (shown.unread) {
     const key = UNREAD_KEY[shown.unread];
     return overrides?.[key] ?? defaultFieldError(key, []);
   }
   const value = shown.value;
-  // The message names the predicate the value fails, which for a type carrying
-  // several is not necessarily the one `refineKind` holds.
   const failed = failedRefinement(value, meta);
   const pred = failed.kind ?? "";
   const args = failed.args ?? [];
   return overrides?.[pred] ?? defaultFieldError(pred, args);
 }
 
-/** The `theme.errors` key, and §5.7.2 row, of text that is no value of a base. */
 const UNREAD_KEY: Readonly<Record<BindReader["as"], string>> = {
   Int: "int",
   Float: "float",
   Time: "time",
 };
 
-/** Spec §5.7.2 default validation messages, keyed by refinement predicate. */
 function defaultFieldError(pred: string, args: (number | string)[]): string {
   switch (pred) {
     case "email":
@@ -100,9 +73,6 @@ function defaultFieldError(pred: string, args: (number | string)[]): string {
 
 export const statusTiles: TileRenderers = {
   spinner(node) {
-    // The rotating ring + its keyframes live in the shared animation
-    // stylesheet, so the spinner works in any style root (document or shadow)
-    // and honors prefers-reduced-motion.
     ensureAnimationStyles();
     const span = document.createElement("span");
     span.dataset.kumikiTile = "spinner";
@@ -121,10 +91,6 @@ export const statusTiles: TileRenderers = {
   skeleton(node) {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "skeleton";
-    // A skeleton is a region whose content has not arrived. `aria-busy` is what
-    // says so to assistive technology, and it is also the only thing that
-    // distinguishes this placeholder from an empty <div> for anything reading
-    // the tree — `kumiki smoke`'s "did this render anything" check included.
     div.setAttribute("aria-busy", "true");
     div.style.background = "#eee";
     div.style.borderRadius = "8px";
@@ -143,8 +109,6 @@ export const statusTiles: TileRenderers = {
   toast(node) {
     const div = document.createElement("div");
     div.dataset.kumikiTile = "toast";
-    // lifecycle.md §7.8: a toast is announced. Politely — it reports something
-    // that has already happened and does not interrupt what the user is doing.
     div.setAttribute("role", "status");
     div.setAttribute("aria-live", "polite");
     if (node.level) div.dataset.level = node.level;
@@ -156,8 +120,6 @@ export const statusTiles: TileRenderers = {
   error(node) {
     const span = document.createElement("span");
     span.dataset.kumikiTile = "error";
-    // Assertively: an error is why the user's action did not go through, and
-    // a screen reader that waits for a pause may never mention it.
     span.setAttribute("role", "alert");
     span.setAttribute("aria-live", "assertive");
     span.dataset.field = node.field;
@@ -208,9 +170,6 @@ export const statusPatchers: TilePatchers = {
     if (div.textContent !== nextText) div.textContent = nextText;
   },
   error(el, _oldNode, newNode) {
-    // The error tile pulls its text from the slot's refinement each render
-    // (via `resolveFieldError`). Re-run it so `input` → `error` reactive
-    // relationships keep tracking without a full subtree rebuild.
     const span = el as HTMLSpanElement;
     if (span.dataset.field !== newNode.field) span.dataset.field = newNode.field;
     const nextText = resolveFieldError(newNode.field);
