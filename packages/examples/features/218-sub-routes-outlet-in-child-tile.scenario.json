@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "the matched child renders in the outlet of a tile the parent renders, two tiles down",
+      "do": { "navigate": "/settings/account" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Account", "Billing", "Account settings"]
+      }
+    },
+    {
+      "label": "a link in the shell switches the child, and the same outlet shows the new one",
+      "do": { "clickText": "Billing" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings", "Billing settings"],
+        "domExcludes": ["Account settings"]
+      }
+    }
+  ]
+}
