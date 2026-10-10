@@ -331,6 +331,7 @@ function walkStatement(s: Statement, f: Finder): void {
 function literalKey(e: Expr): { compare: string; shown: string } | null {
   if (e.kind === "Str") return { compare: `s:${e.value}`, shown: e.value };
   if (e.kind === "Num") return { compare: `n:${e.value}`, shown: String(e.value) };
+  if (e.kind === "Bool") return { compare: `b:${e.value}`, shown: String(e.value) };
   // `-1` parses as a negation of a literal, which is still a literal key.
   if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
     return { compare: `n:${-e.rhs.value}`, shown: String(-e.rhs.value) };

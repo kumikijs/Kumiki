@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "the slot's Bool-keyed literal answers the false entry",
+      "expect": {
+        "noErrors": true,
+        "state": { "labels": { "true": "on", "false": "off" } },
+        "domIncludes": ["light: off"]
+      }
+    },
+    {
+      "label": "and the true entry",
+      "do": { "click": "#flip" },
+      "expect": { "noErrors": true, "state": { "lit": true }, "domIncludes": ["light: on"] }
+    },
+    {
+      "label": "a reducer writes a Bool-keyed literal",
+      "do": { "click": "#rename" },
+      "expect": {
+        "noErrors": true,
+        "state": { "labels": { "true": "yes", "false": "no" } },
+        "domIncludes": ["light: yes"]
+      }
+    }
+  ]
+}

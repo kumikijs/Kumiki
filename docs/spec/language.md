@@ -826,7 +826,8 @@ expr        ::= literal
 
 call        ::= qname '(' (expr (',' expr)*)? ')'
 record-lit  ::= '{' (field-init (',' field-init)*)? '}'
-field-init  ::= identifier '=' expr | identifier
+field-init  ::= field-name ('=' | ':') expr | field-name
+field-name  ::= identifier | reserved-word     ; §1.2.2, except true / false / now
 collection-lit ::= '[' (expr (',' expr)*)? ']'
                  | '{' (entry (',' entry)*)? '}'
 entry       ::= expr ':' expr
@@ -842,6 +843,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
               | '&' | '|'
 unop        ::= '-' | '!'
 ```
+
+**A `{ … }` literal is a record when its first key is a field name, and a Map otherwise.** A field name is an identifier or any reserved word except the three that are a value on their own — `true`, `false`, `now` — so `{type: ui.click, target: Go}` and `{for: "name"}` are records. Those three are keys. `{true: "on", false: "off"}` is a `Map(Bool, Text)`, the same Map `{(true): "on", false: "off"}` writes, and `{now: "start"}` is a `Map(Time, Text)`. Any other first key — a string, a number, `Some(1)`, a name in parentheses `(k)` — makes the literal a Map as well. The first key decides for the whole literal: `{a: 1, true: 2}` is a parse error at `true`, which is a value, not a record field name. `{true}` and `{true = 1}` are the same parse error: a Map key is followed by `:`, so a `true` followed by `,`, `=` or `}` stands where a field name goes.
 
 An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
