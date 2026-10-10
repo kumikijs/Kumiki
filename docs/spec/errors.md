@@ -77,7 +77,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0121` | no | Choosing a replacement name, and rewriting every read of it in the body, is user intent. |
 | `E0122` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent. |
 | `E0123` | no | Which of the two binds is the mistaken one, and what the other should be called, is user intent — as for E0122, whose rule this is at the trigger. |
-| `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. |
+| `E0218` | yes | Append the list accessor the iterated collection is missing (`.keys` for a `Map`, `.to-list` for a `Set`), when the iterated expression is a plain name. No patch for any other target: what an `Option`'s `None` or a `Result`'s `Err` iterates, or where a `Text` is split, is user intent. |
 | `E0220` | no | The fallback's `in=` is fixed, but whether its body reads the panic the way `PanicInfo` gives it is user intent. |
 | `E0210` | no | Adding type arguments requires synthesizing user-intent — outside static repair. |
 | `E0003` | no | Synthesizing an entry point means choosing a root tile, a route table and a capability set — user intent, not static repair. |
@@ -843,15 +843,30 @@ A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — th
 
 ### E0218 `for-over-non-list`
 
-A `for` iterates a `Map` or a `Set` directly. The iteration target of `for` is a list ([Tile Layer Invariants](./language.md#_1-7-2-invariants), inv. 5), and both of those are keyed objects at runtime — the program compiles and then throws where the loop is used: `.map is not a function` in a tile, `object is not iterable` in a reducer.
+A `for` iterates something whose type is decided and is not a `List`. The iteration target of `for` is a list ([Tile Layer Invariants](./language.md#_1-7-2-invariants), inv. 5) — `Map.keys`, `Set.to-list`, or any expression whose type is a `List`, after aliases, generics and `nominal` are followed. Anything else goes wrong where the loop runs: a tile's `for` calls `.map` on the value and a reducer's walks it with `for … of`, so a `Map`, a `Set`, an `Option` or a record throws (`.map is not a function` in a tile, `object is not iterable` in a reducer), and a `Text` in a reducer is walked character by character.
 
 > `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
+> `"for" iterates a List, but this is <type> — iterate its .get-or([]), or match on <Some / None|Ok / Err>`
+> `"for" iterates a List, but this is <type> — match on <Some / None|Ok / Err> to take out its value`
+> `"for" iterates a List, but this is <type> — .split(sep) breaks it into a List(Text)`
+> `"for" iterates a List, but this is <type>`
 
-A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted.
+The type is named as the program writes it, so an alias reads as its name (`Box`, not what it stands for); the remedy is chosen from what it stands for:
 
-Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported.
+| Target | Remedy |
+|---|---|
+| `Map(K, V)` | `.keys`, or `.values` |
+| `Set(T)` | `.to-list` |
+| `Option(List(T))`, `Result(List(T), E)` | `.get-or([])`, or a `match` |
+| any other `Option` / `Result` | a `match` |
+| `Text` | `.split(sep)` |
+| `Int`, `Float`, `Bool`, `Time`, `Bytes`, a record, a union, a `Tuple`, … | none — the message names the type |
 
-**Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set`. `kumiki fix` proposes the suffix.
+A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted. `.get-or([])` iterates nothing for a `None` or an `Err`; a `match` is the form that does something else there.
+
+Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: a `fn` result with no `->`, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has a diagnostic of its own — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once.
+
+**Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set` — `kumiki fix` proposes the suffix. Unwrap an `Option` or a `Result` first: `xs.get-or([])` when its `None` / `Err` should iterate nothing, otherwise `match xs with | Some(ys) -> for y in ys … | None -> …`. Iterate `t.split(sep)` for a `Text`. For any other type, iterate the List the program meant — a field of the record, say.
 
 ### E0219 `bind-strict-prop`
 

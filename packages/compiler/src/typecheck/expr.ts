@@ -46,23 +46,75 @@ export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr 
   return elementType(inferType(iter, sym, ctx), sym);
 }
 
+// Silent on a target that already has a diagnostic: a broken expression has no type to judge.
 export function checkIterationTarget(
   iter: Expr,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const t = unaliasType(inferType(iter, sym, ctx), sym);
-  if (t?.kind !== "TypeApp") return;
-  const remedy = t.name === "Map" ? "keys" : t.name === "Set" ? "to-list" : null;
-  if (!remedy) return;
-  const alternative = t.name === "Map" ? " (or .values, which binds the value)" : "";
+  const before = errors.length;
+  checkExpr(iter, sym, errors, ctx);
+  if (errors.slice(before).some((e) => e.severity !== "warning")) return;
+  const written = inferType(iter, sym, ctx);
+  const target = written && nonListTarget(written, sym);
+  if (!target) return;
   errors.push({
     code: "E0218",
     kind: "for-over-non-list",
-    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}${alternative}`,
+    message: `"for" iterates a List, but this is ${target.shown}${target.remedy ? ` — ${target.remedy}` : ""}`,
     pos: iter.pos,
+    ...(target.accessor ? { accessor: target.accessor } : {}),
   });
+}
+
+type NonListTarget = {
+  shown: string;
+  remedy: string | null;
+  accessor?: "keys" | "to-list";
+};
+
+// The message names the type as written, so an alias reads as the author's name for it; the
+// remedy is chosen from what the alias stands for.
+function nonListTarget(written: TypeExpr, sym: SymbolTable): NonListTarget | null {
+  const t = unaliasType(written, sym);
+  if (t === null || t.kind === "TypeRef") return null;
+  const shown = typeToString(written);
+  if (t.kind === "TypeApp") {
+    switch (t.name) {
+      case "List":
+        return null;
+      // A `Map` has two lists and they bind different things, so the message names both.
+      case "Map":
+        return {
+          shown: "a Map",
+          remedy: "iterate its .keys (or .values, which binds the value)",
+          accessor: "keys",
+        };
+      case "Set":
+        return { shown: "a Set", remedy: "iterate its .to-list", accessor: "to-list" };
+      case "Option":
+        return { shown, remedy: unwrapRemedy(t, "Some / None", sym) };
+      case "Result":
+        return { shown, remedy: unwrapRemedy(t, "Ok / Err", sym) };
+      case "Tuple":
+        return { shown, remedy: null };
+      default:
+        return null;
+    }
+  }
+  if (t.kind === "TypePrim" && t.name === "Text") {
+    return { shown, remedy: ".split(sep) breaks it into a List(Text)" };
+  }
+  return { shown, remedy: null };
+}
+
+// `.get-or([])` is offered only when the payload is a List, the one case its answer iterates.
+function unwrapRemedy(t: TypeExpr & { kind: "TypeApp" }, tags: string, sym: SymbolTable): string {
+  const payload = unaliasType(t.args[0] ?? null, sym);
+  return payload?.kind === "TypeApp" && payload.name === "List"
+    ? `iterate its .get-or([]), or match on ${tags}`
+    : `match on ${tags} to take out its value`;
 }
 
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {

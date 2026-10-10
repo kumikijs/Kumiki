@@ -61,7 +61,7 @@ type KumikiError = {
 | `E0121` | なし | 代わりの名前を選び、body 内のすべての読みを書き換えるのは作者の意図であり、静的修復の外。 |
 | `E0122` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図。 |
 | `E0123` | なし | 2つの束縛のどちらが誤りで、もう一方を何と呼ぶべきかは作者の意図 — E0122 と同じであり、その規則をトリガに適用したものだからである。 |
-| `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。 |
+| `E0218` | あり | 反復対象に欠けているリストアクセサを付ける（`Map` なら `.keys`、`Set` なら `.to-list`）。反復する式が裸の名前のときのみ。それ以外の対象には修正を出さない：`Option` の `None` や `Result` の `Err` で何を反復するか、`Text` をどこで区切るかは作者の意図である。 |
 | `E0220` | なし | フォールバックの `in=` は決まっているが、その body が `PanicInfo` の与える形で panic を読むかは作者の意図である。 |
 | `E0301` | あり | 必要なケイパビリティをアプリの `caps = [...]` 配列の最後の要素の直後へ追記する。その要素の後ろのコメントはコメントのまま残る。 |
 | `E0003` | なし | エントリポイントの合成は root tile・ルートテーブル・ケイパビリティ集合の選択を伴う。静的修復ではなくユーザの意図である。 |
@@ -821,15 +821,30 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### E0218 `for-over-non-list`
 
-`for` が `Map` または `Set` を直接反復している。`for` の反復対象はリストであり（[タイル層の不変条件](./language.md#_1-7-2-不変条件) inv. 5）、この 2 つはランタイムではキー付きオブジェクトである — プログラムはコンパイルを通り、ループが使われる場所で投げる：タイルなら `.map is not a function`、reducer なら `object is not iterable`。
+`for` が、型が決定していて `List` ではないものを反復している。`for` の反復対象はリストである（[タイル層の不変条件](./language.md#_1-7-2-不変条件) inv. 5）— `Map.keys`、`Set.to-list`、または別名・ジェネリクス・`nominal` をたどった型が `List` になる任意の式。それ以外はループが実行される場所で誤動作する：タイルの `for` は値に対して `.map` を呼び、reducer の `for` は `for … of` で値をたどるので、`Map`・`Set`・`Option`・レコードは投げ（タイルなら `.map is not a function`、reducer なら `object is not iterable`）、reducer の中の `Text` は 1 文字ずつたどられる。
 
 > `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
+> `"for" iterates a List, but this is <type> — iterate its .get-or([]), or match on <Some / None|Ok / Err>`
+> `"for" iterates a List, but this is <type> — match on <Some / None|Ok / Err> to take out its value`
+> `"for" iterates a List, but this is <type> — .split(sep) breaks it into a List(Text)`
+> `"for" iterates a List, but this is <type>`
 
-`Map` は 2 つのリストを持ち、束縛するものが違う：`for k in m.keys` はキーを、`for v in m.values` は値を束縛する。メッセージが `.keys` を先に出すのは [§1.7.2](./language.md#_1-7-2-不変条件) inv. 5 が挙げている形がそれだからであり、`kumiki fix` もそちらを提案する — ループ本体がどちらを求めていたかは確認すること。
+型はプログラムが書いたとおりに示されるので、別名はその名前で現れる（`Box` であって、それが表すものではない）。修正の案は別名が表すものから選ぶ：
 
-ループの両方の形 — タイルの中と reducer の `do=` ブロックの中 — で報告される。型が決定できない対象は報告しない。
+| 対象 | 修正の案 |
+|---|---|
+| `Map(K, V)` | `.keys`、または `.values` |
+| `Set(T)` | `.to-list` |
+| `Option(List(T))`、`Result(List(T), E)` | `.get-or([])`、または `match` |
+| それ以外の `Option` / `Result` | `match` |
+| `Text` | `.split(sep)` |
+| `Int`・`Float`・`Bool`・`Time`・`Bytes`・レコード・union・`Tuple` など | なし — メッセージは型を示すだけ |
 
-**修正**：`Map` なら `m.keys`、`Set` なら `s.to-list` を反復する。`kumiki fix` が接尾辞を提案する。
+`Map` は 2 つのリストを持ち、束縛するものが違う：`for k in m.keys` はキーを、`for v in m.values` は値を束縛する。メッセージが `.keys` を先に出すのは [§1.7.2](./language.md#_1-7-2-不変条件) inv. 5 が挙げている形がそれだからであり、`kumiki fix` もそちらを提案する — ループ本体がどちらを求めていたかは確認すること。`.get-or([])` は `None` や `Err` に対して何も反復しない。そこで別のことをするのは `match` の形である。
+
+ループの両方の形 — タイルの中と reducer の `do=` ブロックの中 — で報告される。型が決定できない対象は報告しない：`->` を持たない `fn` の結果、型を持たない reducer のペイロード、型引数、何も指さない型（[E0117](#e0117-undef-type)）。すでに自身の診断を持つ対象 — 引数の数が合わない呼び出し、何にも解決しない名前 — も報告しない：それは 1 つの誤りであり、報告は 1 度である。
+
+**修正**：`Map` なら `m.keys`、`Set` なら `s.to-list` を反復する — `kumiki fix` が接尾辞を提案する。`Option` や `Result` は先に取り出す：`None` / `Err` で何も反復しないなら `xs.get-or([])`、そうでなければ `match xs with | Some(ys) -> for y in ys … | None -> …`。`Text` なら `t.split(sep)` を反復する。それ以外の型では、プログラムが意図したリスト — たとえばレコードのフィールド — を反復する。
 
 ### E0219 `bind-strict-prop`
 
