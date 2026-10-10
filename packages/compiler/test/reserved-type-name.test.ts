@@ -1,43 +1,26 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { isReservedTypeName, RESERVED_TYPE_NAMES, STDLIB_TYPES } from "../src/stdlib-types.ts";
-
-// Six of the standard library's domain types (stdlib.md §2.1.3) name values the
-// runtime or the standard library builds or reads: the `PanicInfo` an
-// error-boundary fallback is applied to, the `Route` the router maintains, the
-// `HttpError` a failed request delivers and its `HttpStatus`, a
-// `Duration.ms(5)`, the `FormValue` a multipart body is read by. A program
-// cannot declare a type under one of those names — the checker would reason
-// about the program's type while the runtime kept to the standard library's.
-// E0231 is reported at the declaration, and every use of the name means the
-// standard library's type.
-//
-// The other four name types only a program builds values of. A program may
-// declare its own, and its uses then mean the program's type.
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-/** One row per reserved name, so dropping one from the rule fails its row. */
 const RESERVED = ["PanicInfo", "Route", "HttpError", "HttpStatus", "Duration", "FormValue"];
 
-/**
- * One row per declarable name: a declaration under it, and a use the standard
- * library's definition would refuse — so each row fails if the name is
- * reserved, and again if the use read the standard library's type.
- */
+// Each use is one the standard library's definition would refuse, so a row
+// fails if the name is reserved, and again if the use read the stdlib type.
 const DECLARABLE: [string, string][] = [
   ["Email", `type Email = {address: Text}\nslot e : Email = {address: "ada@example.com"}`],
-  // The standard library's `Url` is a `nominal`, which another nominal over
-  // `Text` does not accept; the program's alias of `Text` meets it.
   ["Url", `type Url = Text\ntype Slug = nominal Text\nfn slug(u: Url) -> Slug = u`],
   ["Uuid", `type Uuid = Int\nslot id : Uuid = 5`],
   ["FormData", `type FormData = Text\nslot f : FormData = "x"`],
 ];
+
+const collision = (name: string) =>
+  `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`;
 
 describe("the reserved names", () => {
   it("are standard library entries, and the rows below name exactly them", () => {
@@ -47,7 +30,6 @@ describe("the reserved names", () => {
   });
 
   it("and the declarable rows cover every other entry", () => {
-    // A new standard-library type has to be put in one group or the other.
     const declarable = DECLARABLE.map(([name]) => name);
     expect(STDLIB_TYPES.map((t) => t.name).sort()).toEqual([...RESERVED, ...declarable].sort());
     for (const name of declarable) expect(isReservedTypeName(name)).toBe(false);
@@ -55,86 +37,65 @@ describe("the reserved names", () => {
 });
 
 describe("a program declaring a type under a reserved name", () => {
-  for (const name of RESERVED) {
-    it(`is E0231 at the declaration of "${name}"`, () => {
-      const found = check(parse(lex(`slot n : Int = 0\ntype ${name} = {v: Int}\n${TAIL}`)));
-      expect(found).toEqual([
-        {
-          code: "E0231",
-          kind: "reserved-type-name",
-          message: `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`,
-          pos: { line: 2, col: 1 },
-        },
-      ]);
-    });
-  }
-
-  it("reports the declaration whatever its body or parameters", () => {
-    expect(codes(`type Route = Text\n${TAIL}`)).toEqual(["E0231"]);
-    expect(codes(`type Duration = Short | Long\n${TAIL}`)).toEqual(["E0231"]);
-    expect(codes(`type HttpError(T) = {v: T}\n${TAIL}`)).toEqual(["E0231"]);
-  });
-
-  it("reports a declaration identical to the standard library's too", () => {
-    // `type HttpStatus = nominal Int where between(0, 599)` is the definition
-    // the standard library already gives the name. Declaring it again adds
-    // nothing, and would leave the name free to drift from what the runtime
-    // hands over.
-    expect(codes(`type HttpStatus = nominal Int where between(0, 599)\n${TAIL}`)).toEqual([
-      "E0231",
+  it.each(RESERVED)("is E0231 at the declaration of %s", (name) => {
+    expect(checkSource(`slot n : Int = 0\ntype ${name} = {v: Int}\n${TAIL}`)).toEqual([
+      {
+        code: "E0231",
+        kind: "reserved-type-name",
+        message: collision(name),
+        pos: { line: 2, col: 1 },
+      },
     ]);
   });
 
-  it("reports each declaration of the name", () => {
-    // A second declaration is also E0007, which names the duplicate. E0231 is
-    // about the name, so each declaration of it carries one.
-    const found = codes(`type Route = Text\ntype Route = Int\n${TAIL}`);
+  it.each([
+    ["an alias of Text", "type Route = Text"],
+    ["a union", "type Duration = Short | Long"],
+    ["a type parameter", "type HttpError(T) = {v: T}"],
+    [
+      "the standard library's own definition",
+      "type HttpStatus = nominal Int where between(0, 599)",
+    ],
+  ])("reports the declaration whatever its body: %s", (_, decl) => {
+    expect(codesOf(`${decl}\n${TAIL}`)).toEqual(["E0231"]);
+  });
+
+  it("reports each declaration of the name, beside the E0007 for the duplicate", () => {
+    const found = codesOf(`type Route = Text\ntype Route = Int\n${TAIL}`);
     expect(found.filter((c) => c === "E0231")).toHaveLength(2);
     expect(found).toContain("E0007");
   });
 });
 
 describe("a program declaring a type under a declarable name", () => {
-  for (const [name, decls] of DECLARABLE) {
-    it(`is accepted for "${name}", and the uses mean the program's type`, () => {
-      expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
-    });
-  }
+  it.each(DECLARABLE)("is accepted for %s, and the uses mean the program's type", (_, decls) => {
+    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+  });
 });
 
 describe("a use of a reserved name keeps the standard library's type", () => {
   it("checks a slot against the standard library's Route, not the declared Text", () => {
     expect(diagnostics(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([
-      `E0231 1:1 Type "Route" collides with the standard library's Route; uses of it never see this type`,
+      `E0231 1:1 ${collision("Route")}`,
       "E0201 2:18 Expected Route but got Text",
     ]);
   });
 
   it("follows an alias to the standard library's definition, so a self-alias is no cycle", () => {
-    // `type Route = Route` is one mistake — the declaration — and the name it
-    // writes is the standard library's record, so there is no loop to report.
-    expect(codes(`type Route = Route\n${TAIL}`)).toEqual(["E0231"]);
+    expect(codesOf(`type Route = Route\n${TAIL}`)).toEqual(["E0231"]);
   });
 
   it("types an error-boundary fallback's $1 as the PanicInfo the runtime builds", () => {
-    // The fallback reads `$1.message`, which the record the runtime binds has
-    // and the declared `Text` does not: the read is checked against the record.
     const src = `type PanicInfo = Text
 slot secret : Option(Text) = None
 tile Fb in=PanicInfo = column(text("recovered: " + $1.message))
 tile Risky error-boundary=Fb = column(text(secret.get))
 tile App = column(Risky)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    expect(diagnostics(src)).toEqual([
-      `E0231 1:1 Type "PanicInfo" collides with the standard library's PanicInfo; uses of it never see this type`,
-    ]);
+    expect(diagnostics(src)).toEqual([`E0231 1:1 ${collision("PanicInfo")}`]);
   });
-});
 
-describe("a fallback typed by a program's own PanicInfo", () => {
-  it("is refused at the declaration", () => {
-    // Accepted, the checker would read `$1` as the declared `Text` while the
-    // runtime binds the panic record to it.
+  it("refuses a fallback typed by a program's own PanicInfo at the declaration", () => {
     const src = `type PanicInfo = Text
 slot secret : Option(Text) = None
 slot reveal : Bool = false
@@ -144,20 +105,14 @@ tile Btn = button(text="go") {id: "go"}
 reducer go on=ui.click(Btn) do= reveal := true
 tile App = column(Risky, Btn)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    expect(diagnostics(src)).toEqual([
-      `E0231 1:1 Type "PanicInfo" collides with the standard library's PanicInfo; uses of it never see this type`,
-    ]);
+    expect(diagnostics(src)).toEqual([`E0231 1:1 ${collision("PanicInfo")}`]);
   });
 });
 
 describe("the standard library names everywhere else", () => {
-  // Only `type <reserved name> = …` is refused. Each of these writes one of
-  // the names in a position that reads it, or declares something that is not
-  // a type.
-  for (const t of STDLIB_TYPES) {
-    const n = t.name;
+  const positions = (n: string): [string, string][] => {
     const lower = `${n.charAt(0).toLowerCase()}${n.slice(1)}`;
-    const positions: [string, string][] = [
+    return [
       ["a slot annotation", `slot x : Option(${n}) = None`],
       ["a fn parameter and return", `fn f(a: Option(${n})) -> Option(${n}) = a`],
       ["a tile in=", `tile T in=${n} = text("t")`],
@@ -174,12 +129,14 @@ describe("the standard library names everywhere else", () => {
       ["a tile of that name", `tile ${n} = text("t")`],
       ["a variant tag of that name", `type Mine = ${n} | Other\nslot m : Mine = ${n}`],
     ];
-    for (const [where, decls] of positions) {
-      // `slot route` is E0115: that name is the router's slot, not a type's.
-      if (decls.startsWith("slot route ")) continue;
-      it(`leaves "${n}" in ${where} alone`, () => {
-        expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
-      });
-    }
-  }
+  };
+  // `slot route` is E0115: that name is the router's slot, not a type's.
+  const cases = STDLIB_TYPES.flatMap((t) =>
+    positions(t.name)
+      .filter(([, decls]) => !decls.startsWith("slot route "))
+      .map(([where, decls]) => ({ name: t.name, where, decls })),
+  );
+  it.each(cases)("leaves $name in $where alone", ({ decls }) => {
+    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+  });
 });

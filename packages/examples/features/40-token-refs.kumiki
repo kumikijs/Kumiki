@@ -1,6 +1,6 @@
-# Feature: `@token` references inside a `style: {}` block (spec/style.md §4.3).
-# Lets a tile reach theme tokens that the shorthand props (§4.3.1) don't expose
-# (e.g. `border-color`, gradient stops, custom CSS properties).
+# Feature: `@token` references inside a `style: {}` block. Lets a tile reach
+# theme tokens that the shorthand props don't expose (e.g. `border-color`,
+# gradient stops, custom CSS properties).
 
 tile Card = box(text("body")) {
     style: {
