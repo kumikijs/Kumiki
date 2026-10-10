@@ -6,19 +6,9 @@ import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import type { AppShape } from "@kumikijs/runtime";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// Temp bundles go under test-tmp/ as `app.mjs`: vitest.config.ts externalizes
-// that path, so Node imports them without Vite transforming each one.
 const TMP_ROOT = resolve(here, "../../test-tmp");
 mkdirSync(TMP_ROOT, { recursive: true });
 
-/**
- * Compile a .kumiki file as a self-contained bundle, write it to a temp file,
- * dynamic-import it and remove it, loaded or not. Sets `globalThis.__kumikiApp`
- * and returns it.
- *
- * Each call uses a fresh temp file + query-string cache-bust so tests don't
- * share module state.
- */
 export async function buildAndLoad(kumikiPath: string, rootId: string): Promise<AppShape> {
   const src = readFileSync(kumikiPath, "utf8");
   const result = compile(src, {
@@ -31,8 +21,6 @@ export async function buildAndLoad(kumikiPath: string, rootId: string): Promise<
     throw new Error(`compile failed:\n${summary}`);
   }
 
-  // Patch the bottom of the bundle so it stops at `globalThis.__kumikiApp = App`
-  // instead of mounting to a hard-coded "#root" we don't own in tests.
   const patched = result.js
     .replace(/mount\(App, document\.getElementById\("root"\)[^;]*\);?/, "")
     .replace(

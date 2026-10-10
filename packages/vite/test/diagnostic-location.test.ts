@@ -1,20 +1,13 @@
-// Where the overlay puts its caret. The compiler counts columns from 1, as
-// `kumiki check` prints them; Rollup's `loc.column` counts from 0, and Vite's
-// code frame adds it to the offset of the line's start. Each case drives a real
-// dev server, so the assertion is on the frame an author actually sees, not on
-// an object the plugin built.
-
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { createLogger, createServer, type ViteDevServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
+import { APP_A as APP } from "./helpers/plugin.ts";
 import { scratchRoot } from "./helpers/scratch.ts";
 
 const TMP = scratchRoot(import.meta.url);
-
-const APP = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
 let server: ViteDevServer | undefined;
 afterEach(async () => {
@@ -29,8 +22,6 @@ async function serve(src: string): Promise<{ thrown: unknown; warnings: string[]
   writeFileSync(join(root, "bad.kumiki"), src);
   const warnings: string[] = [];
   const logger = createLogger("warn");
-  // Vite colours a warning when the terminal (or CI's FORCE_COLOR) asks for it,
-  // which can split `file:line:col`; the text is what is asserted.
   logger.warn = (msg) => {
     warnings.push(stripVTControlCharacters(msg));
   };
@@ -53,14 +44,12 @@ async function serve(src: string): Promise<{ thrown: unknown; warnings: string[]
 }
 
 /**
- * The source text from the frame's caret to the end of its line — what the
- * author's eye lands on. Vite renders `N  |  <line>` above `   |  <pad>^`.
+ * The source text from the frame's caret to the end of its line — what the author's eye lands on. Vite renders `N  |  <line>` above `   |  <pad>^`.
  */
 function underCaret(frame: string): string {
   const lines = stripVTControlCharacters(frame).split("\n");
   const at = lines.findIndex((l) => /^\s*\|\s*\^+\s*$/.test(l));
   if (at < 1) throw new Error(`no caret in frame:\n${frame}`);
-  // Both rows share one gutter width, so a caret column is a source column.
   return (lines[at - 1] as string).slice((lines[at] as string).indexOf("^"));
 }
 

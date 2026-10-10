@@ -1,17 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import type { AppShape } from "@kumikijs/runtime";
-import { beforeAll, describe, expect, it } from "vitest";
-import { scratchRoot } from "./helpers/scratch.ts";
-
-// A reducer's `[…]` step reaches the runtime's setter as `{at: key}`, apart
-// from a field step (language.md §1.6.3): the two are both a string once
-// evaluated, and only the encoding tells the setter that a missing Map entry
-// is one `m[k].f := v` writes nothing through, where a missing record field is
-// a level to build. The runtime's half is pinned in `set-path.test.ts`; this is
-// the compiler's half — what `genSlotAssign` writes — and the two run together.
+import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
+import { importModule } from "./helpers/module.ts";
 
 const SRC = `type Todo = { title: Text, done: Bool }
 type Cell = { n: Int }
@@ -38,23 +29,12 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = []`;
 
-const TMP_ROOT = scratchRoot(import.meta.url);
-
+// Under the package dir so the generated `import "@kumikijs/runtime"` resolves.
 /** The generated module, mounting nothing (`exportApp`), or the reason it failed. */
 function jsOf(exportApp: boolean): string {
   const result = compile(SRC, { runtimeSpecifier: "@kumikijs/runtime", exportApp });
   if (result.kind !== "ok") throw new Error(JSON.stringify(result));
   return result.js;
-}
-
-async function load(js: string): Promise<AppShape> {
-  const dir = mkdtempSync(join(TMP_ROOT, "index-step-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, js);
-  const mod = (await import(`${pathToFileURL(file).href}?t=${Date.now()}`)) as {
-    default: AppShape;
-  };
-  return mod.default;
 }
 
 /** The slot writes of one run of reducer `name` against `live`. */
@@ -69,7 +49,7 @@ describe("genSlotAssign encodes an index step as {at: key}", () => {
   const js = jsOf(false);
 
   it("checks clean", () => {
-    expect(check(parse(lex(SRC)))).toEqual([]);
+    expect(checkSource(SRC)).toEqual([]);
   });
 
   it("wraps each `[…]` key and leaves field and `.get` steps as they were", () => {
@@ -83,10 +63,7 @@ describe("genSlotAssign encodes an index step as {at: key}", () => {
 });
 
 describe("the emitted write, run", () => {
-  let appP: Promise<AppShape>;
-  beforeAll(() => {
-    appP = load(jsOf(true));
-  });
+  const appP = importModule<{ default: AppShape }>(jsOf(true), "index-step").then((m) => m.default);
   const todo = { title: "a", done: false };
 
   it("writes a field of the entry at a held key, and nothing at an absent one", async () => {
@@ -97,10 +74,6 @@ describe("the emitted write, run", () => {
     expect(run(app, "mark", { sel: "t9", todos: { t1: todo } }).todos).toEqual({ t1: todo });
   });
 
-  // An absent Map slot — `undefined` after a restore or a decode that found
-  // nothing — is read as the empty Map (`?? {}` around the slot read), so the
-  // two writes do what they do on `{}`: the field write finds no entry and
-  // leaves an empty Map, the entry write inserts.
   it("reads an absent Map slot as the empty Map", async () => {
     const app = await appP;
     expect(run(app, "mark", { sel: "t1", todos: undefined }).todos).toEqual({});
