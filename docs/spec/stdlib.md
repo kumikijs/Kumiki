@@ -141,7 +141,7 @@ last                        : Option(T)
 push(x)                     : List(T)
 prepend(x)                  : List(T)
 concat(other)               : List(T)
-slice(start, end)           : List(T)
+slice(start, end)           : List(T)          ; start and end are Int
 reverse                     : List(T)
 sort                        : List(T)          ; T is Ord
 sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
@@ -152,7 +152,7 @@ contains(x)                 : Bool
 find(pred)                  : Option(T)
 fold(init, expr)            : Acc              ; within expr, $1=acc, $2=elem
 join(sep)                   : Text             ; T is Text
-chunk(n)                    : List(List(T))
+chunk(n)                    : List(List(T))    ; n is Int
 zip(other)                  : List(Tuple(T, U))
 ```
 
