@@ -7,9 +7,10 @@ import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./agai
 import {
   bindLocal,
   type Ctx,
+  type EndedScope,
+  endScope,
   innerScope,
   type KumikiError,
-  type StatementScope,
   type SymbolTable,
 } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
@@ -247,9 +248,8 @@ function checkStmt(
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
 }
 
-/** Names the body declared that `ctx` does not bind end with it; `endedScopes` records them. */
 function checkBody(
-  kind: StatementScope,
+  kind: EndedScope,
   body: Statement[],
   sym: SymbolTable,
   errors: KumikiError[],
@@ -260,9 +260,7 @@ function checkBody(
   const inner = innerScope(ctx);
   bind?.(inner);
   for (const st of body) checkStmt(st, sym, errors, inner, writtenRoots);
-  for (const name of inner.localBinds) {
-    if (!ctx.localBinds.has(name)) ctx.endedScopes?.set(name, kind);
-  }
+  endScope(kind, inner, ctx);
 }
 
 function lvalueShape(lv: Lvalue): string {

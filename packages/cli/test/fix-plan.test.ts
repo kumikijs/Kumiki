@@ -530,7 +530,7 @@ describe("planFixesExplained: skip-reason classification", () => {
   });
 });
 
-describe("planFixesExplained: a read after the body that declared it (E0103)", () => {
+describe("planFixesExplained: a read after the scope that declared it ended (E0103)", () => {
   // `idx` is one edit from the slot `id`, so a rename would type-check and read `id`.
   const scoped = (body: string): string => `slot id    : Int = 0
 slot total : Int = 0
@@ -553,15 +553,28 @@ ${APP_A}`;
     };
   };
 
+  // `v` is one edit from the app's name `A`.
+  const inApp = (tile: string) => scoped("()").replace("column(Btn, text(total.show))", tile);
+
   it.each([
-    ["a `for` body", FOR_BODY],
-    ["an `if` branch", "if flag then { let idx = 1 } else { () }\n        total := idx"],
+    ["a `for` body", scoped(FOR_BODY)],
+    ["an `if` branch", scoped("if flag then { let idx = 1 } else { () }\n        total := idx")],
     [
       "a match arm",
-      "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+      scoped(
+        "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+      ),
     ],
-  ])("proposes no rename for a name %s declared", (_form, body) => {
-    const { patches, skipped } = plan(scoped(body));
+    ["a `let … in`", scoped("id := let idx = 1 in idx\n        total := idx")],
+    ["a tile's `for`", inApp("column(Btn, for idx in [1] text(idx.show), text(idx.show))")],
+    [
+      "a tile's `match` arm",
+      inApp(
+        'column(Btn, match Some(1) with | Some(v) -> text(v.show) | None -> text("none"), text(v.show))',
+      ),
+    ],
+  ])("proposes no rename for a name %s declared, read after it", (_form, source) => {
+    const { patches, skipped } = plan(source);
     expect(patches).toEqual([]);
     expect(skipped).toEqual([["E0103", "e0103-read-after-scope-ended"]]);
   });
@@ -583,6 +596,16 @@ ${APP_A}`;
       'Reference to undefined name "cont"',
     ]);
     expect(reworded).toMatchObject(ONE_OF_EACH);
+  });
+
+  it("still renames a misspelling beside a sibling's read", () => {
+    const source = inApp(
+      "column(Btn, for idx in [1] text(idx.show), text(idx.show), text(cont.show))",
+    );
+    expect(plan(source)).toMatchObject({
+      patches: ['replace "cont" with "count" at 8:76'],
+      skipped: [["E0103", "e0103-read-after-scope-ended"]],
+    });
   });
 });
 

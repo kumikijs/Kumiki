@@ -46,7 +46,7 @@ type KumikiError = {
 |---|---|---|
 | `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。app に `routes` 節がないとき、および `/404` がリダイレクトのときはパッチを出さない：E0001 はリダイレクトを数えず、`/404` をもう 1 つ書けば `E0008` になる。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
-| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言した `if` の枝・`for` の本体・match arm の後でその名前を読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読む。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言したスコープ — `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — が終わった後でその名前を読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読む。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
@@ -235,11 +235,17 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 `let` は書かれたスコープに宣言され（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）、`if` の各枝・`for` の本体・match の各 arm はそれぞれ独立したスコープである。したがって `if` の一方の枝で宣言した名前は、もう一方の枝でも `if` の後のどの文でも未定義であり、`for` の本体や match arm で宣言した名前もその後では未定義である。条件で値を選ぶなら、`if` の前で `if` 式を使って一度だけ宣言する — `let n = if c then "a" else "b"` — か、読み出しを枝の中へ移す。
 
-同じ reducer の中でそれより前に、そうした本体の中で名前が宣言されていた場合 — 本体の中の `let`、`for` の束縛、match arm のパターン — メッセージはその本体を名指し、診断の `endedScope` フィールドがその種類を `if`・`for`・`match` で示す。
+名前を束縛する式 — `let … in`、tile の `for`、値のものも tile のものも含む `match` 式の各 arm — はその名前を自分の本体だけに束縛するので、名前は式の後でも未定義である：後の文やオペランドの中でも、tile の兄弟の引数の中でも同じで、`column(for idx in xs text(idx.show), text(idx.show))` の 2 つ目の `idx` がそれにあたる。
+
+同じ定義の中でそれより前に、そうしたスコープの中で名前が宣言されていた場合 — 本体の中の `let`、`for` の束縛、match arm のパターン、`let … in` — メッセージはそのスコープを名指し、診断の `endedScope` フィールドがその種類を示す：reducer の文の本体なら `if`・`for`・`match`、式なら `let-in`・`for-expr`（tile の `for`）・`match-expr`（`match` 式の arm）である。
 
 > `Reference to undefined name "idx" — it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body (see docs/spec/language.md)`
 
-スコープ内に近い名前がいくらあっても本体は名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
+> `Reference to undefined name "n" — it is scoped to the body of a "let … in", which ends with it: move the read into that body, or bind it where both reads see it (see docs/spec/language.md)`
+
+メッセージが示す修正はスコープによって異なる。文の本体が宣言する名前は、その文の前で宣言できる。`let … in` が束縛する値は、両方の読みから見える場所で束縛できる：reducer では `let` 文、`fn` では両方の読みを囲む 1 つの `let … in`、tile では tile の入力である。tile の `for` の変数と `match` arm のパターンはひとつの要素、ひとつの場合を表すので、読みを本体や arm の中へ移す。
+
+スコープ内に近い名前がいくらあってもスコープは名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
 
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 

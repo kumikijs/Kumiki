@@ -12,7 +12,7 @@ import {
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
-import type { Ctx, KumikiError, StatementScope, SymbolTable } from "./context.ts";
+import type { Ctx, EndedScope, KumikiError, SymbolTable } from "./context.ts";
 import { freshResultType, prim } from "./infer.ts";
 
 export function checkCallee(
@@ -213,16 +213,33 @@ export function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
-const ENDED_SCOPE_WORDS: Record<StatementScope, { body: string; inside: string }> = {
-  if: { body: 'an "if" branch', inside: "branch" },
-  for: { body: 'a "for" body', inside: "body" },
-  match: { body: "a match arm", inside: "arm" },
+// A tile `for`'s variable and a `match` arm's pattern stand for one element, one case, so the read
+// moves in; a statement body's name can be declared before it, a `let … in` value bound higher.
+const ENDED_SCOPE_WORDS: Record<EndedScope, { scope: string; repair: string }> = {
+  if: {
+    scope: 'an "if" branch',
+    repair: 'declare it before the "if", or move the read into the branch',
+  },
+  for: {
+    scope: 'a "for" body',
+    repair: 'declare it before the "for", or move the read into the body',
+  },
+  match: {
+    scope: "a match arm",
+    repair: 'declare it before the "match", or move the read into the arm',
+  },
+  "let-in": {
+    scope: 'the body of a "let … in"',
+    repair: "move the read into that body, or bind it where both reads see it",
+  },
+  "for-expr": { scope: `a tile's "for" body`, repair: "move the read into the body" },
+  "match-expr": { scope: 'an arm of a "match" expression', repair: "move the read into the arm" },
 };
 
 /** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
-export function endedScopeHint(scope: StatementScope): string {
-  const { body, inside } = ENDED_SCOPE_WORDS[scope];
-  return ` — it is scoped to ${body}, which ends with it: declare it before the "${scope}", or move the read into the ${inside} (see docs/spec/language.md)`;
+export function endedScopeHint(kind: EndedScope): string {
+  const { scope, repair } = ENDED_SCOPE_WORDS[kind];
+  return ` — it is scoped to ${scope}, which ends with it: ${repair} (see docs/spec/language.md)`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {

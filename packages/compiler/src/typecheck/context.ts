@@ -18,12 +18,15 @@ export type KumikiError = {
   pos: Pos;
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
-  /** E0103 only: the nested body that declared the name and ended before this read. */
-  endedScope?: StatementScope;
+  /** E0103 only: the scope that declared the name and ended before this read. */
+  endedScope?: EndedScope;
 };
 
-/** The nested statement bodies of a reducer, each a scope of its own. */
-export type StatementScope = "if" | "for" | "match";
+/**
+ * A reducer's nested statement bodies (`if`, `for`, `match`), and the expressions that bind a name
+ * for their own body: `let … in`, a tile's `for`, an arm of a `match` expression.
+ */
+export type EndedScope = "if" | "for" | "match" | "let-in" | "for-expr" | "match-expr";
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -55,8 +58,8 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
-  /** Names a reducer's ended bodies declared and the enclosing scope does not bind. */
-  endedScopes?: Map<string, StatementScope>;
+  /** Names the ended scopes declared and the enclosing scope does not bind. */
+  endedScopes: Map<string, EndedScope>;
   oneValueFragment?: { method: string; hides: boolean };
 };
 
@@ -71,11 +74,19 @@ export function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
 }
 
+/** End `inner`, a scope of the kind `kind` opened in `ctx`: its names go out of scope with it. */
+export function endScope(kind: EndedScope, inner: Ctx, ctx: Ctx): void {
+  for (const name of inner.localBinds) {
+    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, kind);
+  }
+}
+
 export function pureScope(binds: string[]): Ctx {
   return {
     kind: "slot-init",
     localBinds: new Set(binds),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     localTypes: new Map(),
   };
 }

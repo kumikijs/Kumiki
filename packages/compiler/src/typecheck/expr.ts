@@ -13,6 +13,7 @@ import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition }
 import {
   bindLocal,
   type Ctx,
+  endScope,
   innerScope,
   type KumikiError,
   type SymbolTable,
@@ -147,7 +148,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      const endedScope = ctx.endedScopes?.get(e.name);
+      const endedScope = ctx.endedScopes.get(e.name);
       if (endedScope !== undefined) {
         errors.push({
           code: "E0103",
@@ -348,6 +349,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkExpr(arm.body, sym, errors, inner);
+        endScope("match-expr", inner, ctx);
       }
       return;
     }
@@ -359,7 +361,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
+      const inner = letInScope(e, sym, ctx);
+      checkExpr(e.body, sym, errors, inner);
+      endScope("let-in", inner, ctx);
       return;
     }
     case "TokenRef":
