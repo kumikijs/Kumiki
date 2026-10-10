@@ -1,9 +1,3 @@
-// Where a `kumiki.caps.json` is allowed to live. The manifest registers a
-// project's custom capabilities, so the project root is the natural place to
-// put it — and a lookup that only checked the `.kumiki` file's own directory
-// ignored it there in silence: the app failed E0302 with nothing to say about
-// where the toolchain had looked.
-
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, parse, resolve } from "node:path";
 import {
@@ -70,16 +64,12 @@ describe("kumiki.caps.json resolution", () => {
   });
 
   it("terminates at the filesystem root when nothing on the path is a project", () => {
-    // A `.kumiki` opened outside any project: the walk has to end somewhere,
-    // and `dirname` of the root is the root itself.
     const fsRoot = parse(process.cwd()).root;
     const found = resolveCapabilityManifest(join(fsRoot, "loose.kumiki"));
     expect(found.searched.at(-1)).toBe(fsRoot);
   });
 
   it("reads the nearest manifest even when it is the broken one", () => {
-    // Falling through to the valid one further up would compile the file
-    // against capabilities its own directory does not register.
     const p = project();
     writeFileSync(join(p.src, "kumiki.caps.json"), "{ not json");
     manifest(p.pkg, "telemetry.track");

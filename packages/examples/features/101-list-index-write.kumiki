@@ -1,4 +1,4 @@
-# Feature (language.md §1.6.3): an index step into a List.
+# Feature: an index step into a List.
 #
 # `xs[i] := v` replaces the element at `i` and leaves a List. Reached through a
 # field or another index, the element is written the same way, and every level
@@ -6,9 +6,9 @@
 # writes several indices, one statement at a time.
 #
 # A List index is an `Int` — any other index is E0201. An index that names no
-# element — past the end, or negative — is a panic (lifecycle.md §7.2.2), on
-# both sides of `:=`: the reducer's writes roll back and `app.error` runs.
-# `xs.get(i)` is the read that answers `None` there instead of panicking.
+# element — past the end, or negative — is a panic, on both sides of `:=`: the
+# reducer's writes roll back and `app.error` runs. `xs.get(i)` is the read that
+# answers `None` there instead of panicking.
 #
 # The panicking writes are armed by entering a route rather than by a button.
 # A reducer panic is reported on the error channel by design, and `smoke`
