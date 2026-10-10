@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { runCmd } from "../smoke.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, requireValue } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki run <input.kumiki> <scenario.json> [--episode-log <file>]";
@@ -25,7 +26,7 @@ export function registerRun(program: Command): string {
         options: { episodeLog?: string },
       ) => {
         if (!input || !scenario) exitWithUsage(USAGE);
-        const inputPath = resolve(process.cwd(), input);
+        const inputPath = sourceFileArg(input);
         const runOpts: { episodeLog?: string } = options.episodeLog
           ? { episodeLog: resolve(process.cwd(), options.episodeLog) }
           : {};

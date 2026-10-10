@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { describeEdit, editDef } from "../mutate.ts";
 import { readInputFile } from "./_shared/body-input.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, parseJsonOrExit, printOrExit, requireValue } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki edit <file> <qname> <patch-json>";
@@ -40,11 +40,12 @@ export function registerEdit(program: Command): string {
       ) => {
         if (!file || !qname) exitWithUsage(USAGE);
         const patch = loadPatch(patchJson, options.patchFile);
+        const path = sourceFileArg(file);
         printOrExit(() =>
           describeEdit({
             op: "edit",
             qname,
-            opId: editDef(resolve(process.cwd(), file), qname, patch),
+            opId: editDef(path, qname, patch),
           }),
         );
       },

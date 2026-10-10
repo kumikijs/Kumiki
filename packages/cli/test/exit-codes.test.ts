@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
@@ -376,6 +376,78 @@ describe("kumiki lock / unlock", () => {
     lockedByA(file);
     expect(runCli(["unlock", file, "agent:a"]).code).toBe(0);
   });
+
+  it("lock and unlock exit 1 for a file that does not exist, and write no lock file", SPAWN, () => {
+    const file = join(tempDir(), "lock-missing.kumiki");
+    const locks = `${file}.kumiki-locks.json`;
+    const refused = { stdout: "", stderr: `File "${file}" not found\n`, code: 1 };
+    expect(runCli(["lock", file, "agent:a", "slot.*"])).toMatchObject(refused);
+    expect(existsSync(locks)).toBe(false);
+    expect(runCli(["unlock", file, "agent:a"])).toMatchObject(refused);
+    expect(existsSync(locks)).toBe(false);
+
+    writeFileSync(file, CLEAN);
+    const granted = runCli(["lock", file, "agent:a", "slot.*"]);
+    expect(granted).toMatchObject({ stdout: "locked slot.* for agent:a\n", stderr: "", code: 0 });
+    const held = { entries: [{ agent: "agent:a", patterns: ["slot.*"] }] };
+    expect(JSON.parse(readFileSync(locks, "utf8"))).toEqual(held);
+    const released = runCli(["unlock", file, "agent:a"]);
+    expect(released).toMatchObject({ stdout: "unlocked agent:a\n", stderr: "", code: 0 });
+    expect(JSON.parse(readFileSync(locks, "utf8"))).toEqual({ entries: [] });
+  });
+});
+
+// Each case runs in a directory of its own holding only the other files the verb is given, so a
+// sidecar (a write lock, an op log, a build directory, Vite's cache) left beside the missing file
+// shows up as a name that was not there before.
+describe("a .kumiki file that does not exist", () => {
+  const SCENARIO = "scenario.json";
+  const OPS = "ops.jsonl";
+  const LOG = "episodes.jsonl";
+  const AUX: Record<string, string> = {
+    [SCENARIO]: JSON.stringify({ steps: [] }),
+    [OPS]: `${JSON.stringify({ op: "add", layer: "slot", name: "x", body: "Int = 1" })}\n`,
+    [LOG]: "",
+  };
+
+  /** A command line for each verb, given the missing file and the directory it would be in. */
+  const CASES: Array<(file: string, at: string) => string[]> = [
+    (f) => ["add", f, "slot", "x", "Int", "=", "1"],
+    (f) => ["replace", f, "slot.count", "Int", "=", "1"],
+    (f) => ["remove", f, "slot.count"],
+    (f) => ["rename", f, "slot.count", "total"],
+    (f) => ["edit", f, "slot.count", JSON.stringify({ find: "0", replace: "1" })],
+    (f, at) => ["patch", "apply", f, join(at, OPS)],
+    (f) => ["patch", "revert", f, "op_0000000000AAAAAAAAAAAAAAAA"],
+    (f) => ["fix", f],
+    (f) => ["fix", f, "--apply"],
+    (f) => ["fix", f, "--auto-patch", "inc-works"],
+    (f) => ["check", f],
+    (f) => ["list", f],
+    (f) => ["view", f, "slot.count"],
+    (f) => ["view", f, "slot.count", "--hash"],
+    (f) => ["view", f, "slot.count", "--with-deps"],
+    (f) => ["view", f, "slot.count", "--history"],
+    (f) => ["refs", f, "slot.count"],
+    (f, at) => ["build", f, join(at, "out")],
+    (f) => ["smoke", f],
+    (f) => ["test", f],
+    (f, at) => ["run", f, join(at, SCENARIO)],
+    (f, at) => ["replay", f, "--from-log", join(at, LOG)],
+    (f) => ["dev", f, "--port", "0"],
+  ];
+
+  for (const argv of CASES) {
+    const label = argv("app.kumiki", ".").join(" ");
+    it(`kumiki ${label} exits 1 naming the path, and leaves nothing beside it`, SPAWN, () => {
+      const at = tempDir();
+      for (const [name, content] of Object.entries(AUX)) writeFileSync(join(at, name), content);
+      const file = join(at, "app.kumiki");
+      const refused = { stdout: "", stderr: `File "${file}" not found\n`, code: 1 };
+      expect(runCli(argv(file, at))).toMatchObject(refused);
+      expect(readdirSync(at).sort()).toEqual(Object.keys(AUX).sort());
+    });
+  }
 });
 
 describe("the verbs that fail on what the program does when it runs", () => {

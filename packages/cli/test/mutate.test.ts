@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { dirname, join } from "node:path";
 import { threadId } from "node:worker_threads";
 import {
   addDef,
@@ -9,6 +10,8 @@ import {
   findReferences,
   listDefs,
   load,
+  patchApplyFile,
+  patchRevert,
   readOpLog,
   removeDef,
   renameDef,
@@ -81,6 +84,30 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
     const body = viewDef(load(path), "slot.draft");
     expect(body).toContain('Text = ""');
     expect(body).not.toContain("where len-lt");
+  });
+
+  it("refuses a file that does not exist, naming it and writing nothing beside it", () => {
+    const dir = dirname(path);
+    const ops = join(dir, "ops.jsonl");
+    writeFileSync(
+      ops,
+      `${JSON.stringify({ op: "add", layer: "slot", name: "x", body: "N = 1" })}\n`,
+    );
+    const missing = join(dir, "missing.kumiki");
+    const writes: Array<() => unknown> = [
+      () => addDef(missing, "slot", "x", "N = 1"),
+      () => replaceDef(missing, "slot.draft", 'Text = ""'),
+      () => removeDef(missing, "slot.draft", false),
+      () => renameDef(missing, "slot.draft", "text"),
+      () => editDef(missing, "slot.draft", { find: '""', replace: '"x"' }),
+      () => patchApplyFile(missing, ops),
+      () => patchRevert(missing, "op_0000000000AAAAAAAAAAAAAAAA"),
+    ];
+    const before = readdirSync(dir).sort();
+    for (const write of writes) {
+      expect(write).toThrowError(`File "${missing}" not found`);
+      expect(readdirSync(dir).sort()).toEqual(before);
+    }
   });
 });
 

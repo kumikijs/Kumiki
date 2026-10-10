@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { unlockDef } from "../mutate.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki unlock <file> <agent-id>";
@@ -14,8 +14,9 @@ export function registerUnlock(program: Command): string {
     .allowExcessArguments(false)
     .action((file: string | undefined, agentId: string | undefined) => {
       if (!file || !agentId) exitWithUsage(USAGE);
+      const path = sourceFileArg(file);
       printOrExit(() => {
-        unlockDef(resolve(process.cwd(), file), agentId);
+        unlockDef(path, agentId);
         return `unlocked ${agentId}`;
       });
     });
