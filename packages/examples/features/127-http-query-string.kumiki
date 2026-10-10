@@ -1,4 +1,4 @@
-# Feature (http.md §6.1.2): an HTTP effect's `query` is sent as the URL's query
+# Feature: an HTTP effect's `query` is sent as the URL's query
 # string.
 #
 # Each entry is URL-encoded and appended to `url`, after any query string the

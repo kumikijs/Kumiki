@@ -1,9 +1,5 @@
-// httpFetch unit coverage for app.http (#78): base-url prepend, header
-// precedence (auto < global < input), credentials, and timeout via
-// AbortController. Each test stubs `globalThis.fetch` so no network is touched.
-
 import { httpFetch } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 type FetchCall = { url: string; init: RequestInit };
 
@@ -19,12 +15,8 @@ function stubFetch(responder: (call: FetchCall) => Response | Promise<Response>)
   return { calls };
 }
 
-describe("httpFetch (#78)", () => {
+describe("httpFetch", () => {
   const originalFetch = globalThis.fetch;
-
-  beforeEach(() => {
-    // Snapshot the real fetch so per-test stubs don't leak.
-  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -50,8 +42,6 @@ describe("httpFetch (#78)", () => {
         headers: () => ({ "X-User": "global-loses", "X-Global": "yes", ACCEPT: "text/x-global" }),
       },
     );
-    // One key per name, case-insensitively: each layer's spelling replaces the
-    // one beneath it.
     expect(calls[0]?.init.headers).toEqual({
       ACCEPT: "text/x-global",
       "content-type": "application/xml",
@@ -91,8 +81,7 @@ describe("httpFetch (#78)", () => {
     expect(v.message).toMatch(/aborted/i);
   });
 
-  // issue #102 — http.cancel + EffectId returned at emit time.
-  it("normalizes external-signal abort to {status:0, message:'aborted'} (#102)", async () => {
+  it("normalizes external-signal abort to {status:0, message:'aborted'}", async () => {
     globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       return new Promise<Response>((_, reject) => {
         init?.signal?.addEventListener("abort", () => {
@@ -119,9 +108,7 @@ describe("httpFetch (#78)", () => {
     expect(v.body).toBe("");
   });
 
-  it("returns immediately with aborted when external signal is already aborted (#102)", async () => {
-    // fetch is never called for an already-aborted signal — but if it is, it
-    // must still resolve to the aborted shape.
+  it("returns immediately with aborted when external signal is already aborted", async () => {
     globalThis.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
       return new Promise<Response>((_, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
@@ -137,8 +124,6 @@ describe("httpFetch (#78)", () => {
     expect(v.message).toBe("aborted");
   });
 
-  // A failed body read stays a connection-shaped error (status 0, retried),
-  // unlike a body that arrived and does not parse (§6.1.4).
   it("reports a body stream that errors mid-read as status 0", async () => {
     stubFetch(
       () =>
@@ -159,8 +144,6 @@ describe("httpFetch (#78)", () => {
     expect(v.message).toMatch(/stream reset/);
   });
 
-  // §6.4.1: an abort while the body is being read is still `aborted`, never a
-  // decode failure carrying the response's status.
   it("reports an abort during the body read as aborted, not a decode failure", async () => {
     let body: ReadableStreamDefaultController<Uint8Array> | undefined;
     stubFetch(
@@ -255,8 +238,6 @@ describe("httpFetch request body", () => {
     expect(calls[0]?.init.headers).toEqual({ Accept: "application/json" });
   });
 
-  // §6.1.5: Accept follows the decoder — the "json" sentinel, a
-  // `Decoder.Json(T)` check, or no decoder at all, which is Json.
   it.each([
     ["no decoder", undefined, { Accept: "application/json" }],
     ["Decoder.Json(T) as the sentinel", "json", { Accept: "application/json" }],

@@ -1,4 +1,4 @@
-# Feature (http.md §6.1.5): the headers the runtime puts on an HTTP request
+# Feature (http.md): the headers the runtime puts on an HTTP request
 # itself, and the program's own headers over them. A header name matches in
 # any letter case, so a header the program sets replaces the default of that
 # name and exactly one value is sent.
@@ -11,7 +11,7 @@
 #   readme  GET    Decoder.Text                     no Accept
 #
 # `app.http.headers` sits between the two: over the defaults, under an
-# effect's own `headers`. `packages/tests/http-default-headers.test.ts` reads
+# effect's own `headers`. `packages/tests/src/http-default-headers.test.ts` reads
 # the headers that reached `fetch` through the real handler; `smoke` makes each
 # request against `188-http-default-headers.http.json`.
 
