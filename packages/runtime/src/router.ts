@@ -1,8 +1,3 @@
-// Routing feature module (#71): router implementations (history / memory),
-// route matching, and the navigation built-in effects. Loaded only by apps
-// that actually route (routes declared, `link` tiles, or nav.* emits) — a
-// counter-class app ships none of this.
-
 import {
   type AppShape,
   type LocationLike,
@@ -29,12 +24,6 @@ function historyRouter(): Router {
   };
 }
 
-/**
- * Split a raw path into the `{ pathname, search, hash }` parseLocation reads.
- * The pathname is kept as written (`//foo`, `/a/../b`), as a browser's
- * `location.pathname` keeps it; SSR splits its requested route with this too,
- * so server and client match the same path.
- */
 export function splitPath(p: string): LocationLike {
   let rest = p || "/";
   let hash = "";
@@ -52,27 +41,17 @@ export function splitPath(p: string): LocationLike {
   return { pathname: rest || "/", search, hash };
 }
 
-/**
- * The origin `resolveTarget` puts `at` on. A router location has no origin of
- * its own, and `.invalid` (RFC 2606) is a name no real target can point at.
- */
+/** A router location has no origin of its own, and `.invalid` (RFC 2606) is one no real target can name. */
 const BASE_ORIGIN = "http://router.invalid";
 
-/**
- * Where a navigation to `to` lands from the location `at` (routing.md §3.3.1).
- * A path (`/docs`) is taken as written, as `initialPath` is. Anything else —
- * `?page=2`, `#faq`, `next`, `../other` — is resolved against `at` by the URL
- * standard, the way a browser resolves a link's href against the page it is
- * on. A target that names an origin of its own (`https://…`, `mailto:`) is
- * left as written: resolving it would drop that origin.
- */
+/** A target that names an origin of its own (`https://…`, `mailto:`) is left as written: resolving it would drop that origin. */
 function resolveTarget(to: string, at: LocationLike): string {
   if (to[0] === "/") return to;
   try {
     const url = new URL(to, BASE_ORIGIN + at.pathname + at.search + at.hash);
     if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
   } catch {
-    // Not a URL even against `at` (`http://[`): there is nothing to resolve.
+    // Not a URL even against `at` (`http://[`).
   }
   return to;
 }
@@ -108,17 +87,12 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
   const query: Record<string, string> = {};
   const params = new URLSearchParams(loc.search);
   for (const [k, v] of params.entries()) query[k] = v;
-  // `Route.hash` is `Option(Text)` (routing.md §3.2), so it is built the way
-  // every other Option is — a bare string here would match neither arm of a
-  // `match route.hash`, and `is-some` would answer `false` for a hash that is
-  // right there in the URL.
   const hash = loc.hash ? someOf(loc.hash.slice(1)) : NONE;
   if (!routes) return { path, pattern: path, params: {}, query, hash };
   for (const r of ranked(routes)) {
     if ("redirectTo" in r) continue;
     const m = matchPattern(r.pattern, path);
     if (m) {
-      // §3.6: when the parent declares sub-routes, re-match within them.
       if (r.subRoutes && r.subRoutes.length > 0) {
         for (const sr of ranked(r.subRoutes)) {
           if ("redirectTo" in sr) continue;
@@ -133,9 +107,6 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
               childPattern: sr.pattern,
             };
         }
-        // §3.6.3: no child matched — fall back to the parent's bare-path
-        // sub-route (the default, e.g. `/settings` under `/settings/*`) if one
-        // is declared. Otherwise fall through to the global /404.
         const bare = parentBare(r.pattern);
         if (bare !== null) {
           for (const sr of r.subRoutes) {
@@ -157,7 +128,6 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
       return { path, pattern: r.pattern, params: m, query, hash };
     }
   }
-  // 404 fallback
   return { path, pattern: "/404", params: {}, query, hash };
 }
 
@@ -166,15 +136,6 @@ function parentBare(pattern: string): string | null {
   return pattern.endsWith("/*") ? pattern.slice(0, -2) || "/" : null;
 }
 
-/**
- * The redirect target for the given location, or `null` if nothing redirects.
- * Redirects and rendering routes share one order (§3.1.2): the first entry of
- * `ranked(routes)` that matches the path owns it. If that entry is a `->>`,
- * its target is the answer; if it is a page, nothing redirects — unless the
- * page declares `sub-routes`, whose entries are resolved the same way, so a
- * child `->>` applies only when it is the child that owns the path
- * (spec §3.6 + §3.10).
- */
 function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
   if (!routes) return null;
   const path = loc.pathname || "/";
@@ -186,7 +147,7 @@ function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | n
   return child && "redirectTo" in child ? child.redirectTo : null;
 }
 
-/** The entry of `list` that owns `path`: its first match in §3.1.2's order. */
+/** The entry of `list` that owns `path`: its first match in specificity order. */
 function firstMatch(list: RouteList, path: string): RouteList[number] | null {
   for (const r of ranked(list)) if (matchPattern(r.pattern, path)) return r;
   return null;
@@ -194,25 +155,19 @@ function firstMatch(list: RouteList, path: string): RouteList[number] | null {
 
 type RouteList = NonNullable<AppShape["routes"]>;
 
-/** A segment's rank in §3.1.2's order: static 0, parameter 1, wildcard 2. */
+/** A segment's rank in specificity order: static 0, parameter 1, wildcard 2. */
 function segmentRank(seg: string | undefined): number {
-  // A pattern that ends here only matches a path that ends here too (the
-  // length check at the end of `matchPattern`), which is as exact as a static
-  // segment.
   if (seg === undefined) return 0;
   return seg === "*" ? 2 : seg.startsWith(":") ? 1 : 0;
 }
 
-/** Negative when `a` is the more specific pattern (§3.1.2), 0 on a tie. */
+/** Negative when `a` is the more specific pattern, 0 on a tie. */
 function compareSpecificity(a: string, b: string): number {
   const as = a.split("/").filter(Boolean);
   const bs = b.split("/").filter(Boolean);
   for (let i = 0; i < Math.max(as.length, bs.length); i++) {
     const d = segmentRank(as[i]) - segmentRank(bs[i]);
     if (d !== 0) return d;
-    // A wildcard swallows the rest of the path, so segments past it never compare.
-    // Checking one side is enough: `d === 0` here and only `*` ranks 2, so
-    // `bs[i]` is `*` as well.
     if (as[i] === "*") return 0;
   }
   return 0;
@@ -220,16 +175,6 @@ function compareSpecificity(a: string, b: string): number {
 
 const rankedCache = new WeakMap<RouteList, RouteList>();
 
-/**
- * `list` in match order (§3.1.2): most specific first, definition order among
- * equals (`sort` is stable). Every first-match lookup — the rendered route, its
- * sub-route, and the redirect that applies — walks this one order. (The §3.6.3
- * bare-path fallback looks a child up by exact pattern instead, where order
- * cannot matter: E0112 rejects two children with one pattern.)
- *
- * Cached by array identity, which assumes a route list is never mutated after
- * the app is created — codegen builds a fresh `_routes` per `createApp()`.
- */
 function ranked(list: RouteList): RouteList {
   let out = rankedCache.get(list);
   if (!out) {
@@ -314,11 +259,6 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
       return { kind: "ok", value: null };
     }),
   };
-  // §3.9 scroll-to — the one standard effect with no capability gate. It moves
-  // the viewport of the page the user is already looking at and reaches nothing
-  // outside it, which `confirm` and `toast` (both on `notification.show`) do
-  // not: those put up UI of their own. `window.scrollTo` is a no-op in headless
-  // DOMs, so it stays safe under smoke / scenario runs.
   app.effects["scroll-to"] = {
     name: "scroll-to",
     cap: "",
@@ -334,21 +274,12 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
   };
 }
 
-/** The URL a parsed route was read from: its path, query and hash. */
 function href({ path, query, hash }: ParsedRoute): string {
   const search = new URLSearchParams(query).toString();
   return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
 }
 
-/**
- * Whether the move from `from` to `to` is an in-page jump (routing.md §3.9):
- * `to` has a hash, and the path and query `from` already shows. For a jump,
- * returns what scrolls the element with that id into view once the page has
- * rendered; `undefined` for any other move. The element is looked up in the
- * document — or the shadow root — `root` is in, by the hash as written and
- * then percent-decoded, as a browser finds a fragment's target. With no such
- * element nothing scrolls.
- */
+/** The element is looked up by the hash as written and then percent-decoded, as a browser finds a fragment's target. */
 function jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined {
   if (to.hash._tag !== "Some") return undefined;
   if (href({ ...from, hash: NONE }) !== href({ ...to, hash: NONE })) return undefined;
@@ -369,8 +300,6 @@ function jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | un
 export const routing: RoutingImpl = {
   createRouter(mode, initialPath) {
     const router = mode === "memory" ? memoryRouter(initialPath) : historyRouter();
-    // One rule resolves a target for either source (§3.3.4: only the source of
-    // the location differs), before the target reaches it.
     const resolving =
       (go: (path: string) => void) =>
       (path: string): void =>

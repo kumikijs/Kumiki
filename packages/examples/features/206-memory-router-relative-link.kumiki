@@ -1,4 +1,4 @@
-# Feature (routing.md §3.3.1, §3.3.4, §3.9): a `link` or `navigate` target that
+# Feature (routing.md): a `link` or `navigate` target that
 # is not a path resolves against the current location, the way a browser
 # resolves an href against the page it is on, and the memory router an embed
 # mounts with resolves it as the history router does. On `/docs/intro`,
@@ -8,10 +8,10 @@
 # `#faq` there is an in-page jump: `route.hash` becomes `Some("faq")`, the FAQ
 # heading (`{id: "faq"}`) scrolls into view, and `route.enter` does not run
 # again. A query-only move such as `?page=2` stays on the route as well, and
-# does run `route.enter` again (§3.4).
+# does run `route.enter` again.
 #
 # `kumiki run` mounts the history router, which is what this scenario drives;
-# packages/tests/relative-route-target.test.ts runs the same targets under the
+# packages/tests/src/relative-route-target.test.ts runs the same targets under the
 # memory router too.
 
 slot enters : Int = 0

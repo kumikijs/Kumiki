@@ -3,9 +3,8 @@
 // Measures how many DOM element nodes the runtime CREATES per single-slot
 // update. The original runtime rebuilt the whole tree every time (a
 // `target.replaceChild` swap); the tile-level keyed diff that replaced it
-// (walker + prop equality kernel live inline in `packages/runtime/src/core.ts`
-// under the `// ---- tile-level keyed diff ----` section — see
-// docs/design/reactivity-v2.md §2 Decision 1(a)) rebuilds only changed
+// (walker + prop equality kernel in `packages/runtime/src/core/reconcile.ts` —
+// see docs/design/reactivity-v2.md, Decision 1(a)) rebuilds only changed
 // subtrees, and the identity-preserving patch layered on top drops even that
 // for tiles whose kind is unchanged: a leaf-only text change creates ZERO new
 // elements, because the mounted `<h1>` gets `.textContent = "Count: N"` in
