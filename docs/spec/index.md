@@ -130,7 +130,6 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
 | [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | testing |
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | testing |
-| [E0715](./errors.md#e0715-for-all-no-generator) | `for-all-no-generator` | type | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
 | [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | core |
@@ -298,6 +297,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
-| `230-property-test-tuple.kumiki` | slot, reducer, fn, tile | testing | [§8.3](./testing.md#_8-3-property-tests) |
+| `171-property-test-count.kumiki` | slot, reducer, tile | testing | [§8.3.1](./testing.md#_8-3-1-syntax) |
 <!-- examples:end -->
 :::
