@@ -1,5 +1,5 @@
 # Feature: under a policy other than `latest` / `latest-per-key`, every `emit`
-# yields an `EffectId` of its own (http.md §6.4), so two requests of one effect
+# yields an `EffectId` of its own (http.md), so two requests of one effect
 # that are in flight together can be cancelled one at a time.
 #
 # `load` declares no policy, so the two requests `start` emits run in parallel,

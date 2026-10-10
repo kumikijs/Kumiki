@@ -1,16 +1,9 @@
-// Coverage for issue #102 — `http.cancel` capability + `EffectId` returned at
-// `emit` time. Verifies the dispatcher's special-case `http.cancel` branch:
-// the in-flight controller is aborted (so `httpFetch`'s fetch sees the abort
-// and resolves to `{status:0, message:"aborted"}`), pending debounce timers
-// are cleared, unknown ids are silent no-ops, and the Episode logger records
-// the cancel when it released something.
-
 import type { AppShape, EffectResult, EffectSpec, EmitSpec } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { emitId } from "../src/core.ts";
-
-const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
+import { freshRoot } from "./helpers/dom.ts";
+import { tick } from "./helpers/time.ts";
 
 type AbortLog = { aborted: boolean; signal?: AbortSignal | undefined };
 
@@ -38,10 +31,6 @@ function makeCancelApp(): {
           new Promise<EffectResult>((resolve) => {
             log.signal = signal;
             resolveFetch = resolve;
-            // §6.4.1: when the dispatcher aborts the signal we mirror what
-            // `httpFetch` would actually return — `{status:0, message:"aborted"}` —
-            // so the rest of the pipeline (.err reducer, no-silent-failure
-            // contract) sees the production shape.
             signal?.addEventListener("abort", () => {
               log.aborted = true;
               resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
@@ -51,7 +40,6 @@ function makeCancelApp(): {
       cancel: {
         name: "cancel",
         cap: "http.cancel",
-        // Dispatcher never calls invoke for cap=http.cancel — kept for shape.
         invoke: async () => ({ kind: "ok", value: null }),
       },
     },
@@ -96,20 +84,17 @@ function makeCancelApp(): {
   return { app, log, lastErr, lastOk, resolveNext };
 }
 
-describe("dispatcher http.cancel (#102)", () => {
+describe("dispatcher http.cancel", () => {
   it("aborts an in-flight effect and surfaces aborted to the .err reducer", async () => {
     const { app, log, lastErr } = makeCancelApp();
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
         app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
       )._dispatch;
-      // The search effect is `policy=latest` so the dispatcher creates a
-      // controller and stores it under `search:_`.
       dispatch("go", {});
-      await tick();
+      await tick(5);
       expect(log.signal).toBeDefined();
       expect(log.aborted).toBe(false);
 
@@ -125,8 +110,7 @@ describe("dispatcher http.cancel (#102)", () => {
 
   it("is a silent no-op for an unknown effect id (no throw, no .err)", async () => {
     const { app, lastErr } = makeCancelApp();
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
@@ -134,7 +118,6 @@ describe("dispatcher http.cancel (#102)", () => {
       )._dispatch;
       dispatch("killGhost", {});
       await tick(10);
-      // No in-flight effect → cancel must not surface a spurious `.err`.
       expect(lastErr?.value).toBeNull();
       dispose();
     } finally {
@@ -142,9 +125,7 @@ describe("dispatcher http.cancel (#102)", () => {
     }
   });
 
-  it("does NOT clear a throttle window on cancel (review fix)", async () => {
-    // spec §6.4.1: a throttle window marker stays put on cancel so a next
-    // emit within the window does not slip past the rate limit.
+  it("does NOT clear a throttle window on cancel", async () => {
     let calls = 0;
     const app: AppShape = {
       slots: { last: { value: "" } },
@@ -171,8 +152,7 @@ describe("dispatcher http.cancel (#102)", () => {
           name: "fire",
           event: { kind: "ui", ev: "click" },
           selector: { tile: "Fire" },
-          // The id this emit yields, as a reducer body's `emit` expression
-          // stamps it, so `kill` names the request the window was opened for.
+          // The id an `emit` expression stamps on its record, so `kill` names this request.
           apply: () => ({
             slots: {},
             emits: [{ effect: "ping", args: [{ url: "/p" }], id: "ping#1" }],
@@ -191,8 +171,7 @@ describe("dispatcher http.cancel (#102)", () => {
         },
       ],
     };
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
@@ -200,12 +179,10 @@ describe("dispatcher http.cancel (#102)", () => {
       )._dispatch;
       dispatch("fire", {});
       await tick(5);
-      // First call launches (throttle window opens).
       expect(calls).toBe(1);
       dispatch("kill", {});
       await tick(5);
-      // Cancel does NOT reset the throttle marker, so a second emit inside the
-      // window is suppressed.
+      // Cancel leaves the throttle window open, so a second emit inside it is suppressed.
       dispatch("fire", {});
       await tick(10);
       expect(calls).toBe(1);
@@ -218,15 +195,14 @@ describe("dispatcher http.cancel (#102)", () => {
   it("records an effect-cancel step in the episode logger", async () => {
     const { app } = makeCancelApp();
     const logger = createEpisodeLogger({ memoryMax: 10 });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root, { episodeLogger: logger });
       const dispatch = (
         app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
       )._dispatch;
       dispatch("go", {});
-      await tick();
+      await tick(5);
       dispatch("kill", {});
       await tick(20);
       const cancelSteps = logger
@@ -242,12 +218,9 @@ describe("dispatcher http.cancel (#102)", () => {
   });
 });
 
-describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", () => {
-  // One effect per kind of release the cancel branch can match. All but
-  // `retried` hold their request open until the test resolves it or the
-  // signal aborts.
-  // `start` emits under the id the test names, the way a reducer body's `emit`
-  // expression stamps the id it yielded; `kill` cancels the id the test names.
+describe("the effect-cancel step an http.cancel records", () => {
+  // One effect per kind of release the cancel branch can match. `start` emits under the id the
+  // test names, as an `emit` expression stamps it; `kill` cancels the id the test names.
   type Held = { resolve: (r: EffectResult) => void; signal?: AbortSignal | undefined };
   function makeApp(): { app: AppShape; held: Record<string, Held[]> } {
     const held: Record<string, Held[]> = { req: [], queued: [], deb: [], thr: [], retried: [] };
@@ -344,8 +317,7 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   ): Promise<void> {
     const { app, held } = makeApp();
     const logger = createEpisodeLogger({ memoryMax: 50 });
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root, { episodeLogger: logger });
       const dispatch = (
@@ -363,10 +335,8 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
     }
   }
 
-  // The steps of the episode the cancel was emitted on, read once it has
-  // committed. Its reducer step says the cancel was emitted, whether or not
-  // anything matched — so a test that finds no `effect-cancel` here has found
-  // the episode that would carry it.
+  // Its reducer step says the cancel was emitted whether or not anything matched, so a test that
+  // finds no `effect-cancel` here has found the episode that would carry it.
   function killEpisode(logger: ReturnType<typeof createEpisodeLogger>): {
     emits: string[];
     cancels: unknown[];
@@ -392,9 +362,9 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   it("a cancel that aborts a request in flight records the id it aborted", async () => {
     await withApp(async ({ start, kill, held, logger }) => {
       start("req", "req#1");
-      await tick();
+      await tick(5);
       kill("req#1");
-      await tick();
+      await tick(5);
       expect(held.req?.[0]?.signal?.aborted).toBe(true);
       expect(killEpisode(logger).cancels).toEqual([
         { kind: "effect-cancel", targetId: "req#1", ts: expect.any(Number) },
@@ -405,9 +375,9 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   it("a cancel of an id no request runs under records no effect-cancel, and the one in flight runs on", async () => {
     await withApp(async ({ start, kill, held, logger }) => {
       start("req", "req#1");
-      await tick();
+      await tick(5);
       kill("req#2");
-      await tick();
+      await tick(5);
       expect(held.req?.[0]?.signal?.aborted).toBe(false);
       expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
       expect(allCancels(logger)).toEqual([]);
@@ -417,7 +387,7 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   it("a cancel while a request waits between retry attempts records its id", async () => {
     await withApp(async ({ start, kill, held, logger }) => {
       start("retried", "retried#1");
-      await tick();
+      await tick(5);
       expect(held.retried).toHaveLength(1);
       kill("retried#1");
       // Past the wait, so the request has delivered its result.
@@ -432,11 +402,11 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   it("a cancel of a request that already completed records no effect-cancel", async () => {
     await withApp(async ({ start, kill, held, logger }) => {
       start("req", "req#1");
-      await tick();
+      await tick(5);
       held.req?.[0]?.resolve({ kind: "ok", value: "done" });
-      await tick();
+      await tick(5);
       kill("req#1");
-      await tick();
+      await tick(5);
       expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
       expect(allCancels(logger)).toEqual([]);
     });
@@ -445,9 +415,9 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   it("a cancel of EffectId.none records no effect-cancel", async () => {
     await withApp(async ({ start, kill, logger }) => {
       start("req", "req#1");
-      await tick();
+      await tick(5);
       kill("");
-      await tick();
+      await tick(5);
       expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
     });
   });
@@ -456,10 +426,10 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
     await withApp(async ({ start, kill, held, logger }) => {
       start("queued", "queued#1");
       start("queued", "queued#2");
-      await tick();
+      await tick(5);
       expect(held.queued).toHaveLength(1);
       kill("queued#2");
-      await tick();
+      await tick(5);
       expect(held.queued?.[0]?.signal?.aborted).toBe(false);
       expect(killEpisode(logger).cancels).toEqual([
         { kind: "effect-cancel", targetId: "queued#2", ts: expect.any(Number) },
@@ -479,7 +449,7 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
     await withApp(async ({ start, kill, logger }) => {
       start("deb", "deb#1");
       kill("deb#1");
-      await tick();
+      await tick(5);
       expect(killEpisode(logger).cancels).toEqual([
         { kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) },
       ]);
@@ -491,7 +461,7 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
       start("deb", "deb#1");
       start("deb", "deb#2");
       kill("deb#1");
-      await tick();
+      await tick(5);
       expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
       // The replace itself released `deb#1`'s claim on its own episode.
       expect(allCancels(logger)).toEqual([
@@ -499,7 +469,7 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
       ]);
       // `deb#2` is still waiting on its timer: cancelling it releases it.
       kill("deb#2");
-      await tick();
+      await tick(5);
       const killEps = logger
         .list()
         .filter((ep) => ep.steps.some((s) => s.kind === "reducer" && s.name === "kill"));
@@ -513,15 +483,15 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   it("a cancel that finds only a throttle window open records no effect-cancel, and the window stays", async () => {
     await withApp(async ({ start, kill, held, logger }) => {
       start("thr", "thr#1");
-      await tick();
+      await tick(5);
       held.thr?.[0]?.resolve({ kind: "ok", value: "done" });
-      await tick();
+      await tick(5);
       kill("thr#1");
-      await tick();
+      await tick(5);
       expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
       // The window is the effect's, not a pending launch: it still holds.
       start("thr", "thr#2");
-      await tick();
+      await tick(5);
       expect(held.thr).toHaveLength(1);
     });
   });
@@ -529,9 +499,9 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   it("a cancel of a throttled request still in flight records its id", async () => {
     await withApp(async ({ start, kill, held, logger }) => {
       start("thr", "thr#1");
-      await tick();
+      await tick(5);
       kill("thr#1");
-      await tick();
+      await tick(5);
       expect(held.thr?.[0]?.signal?.aborted).toBe(true);
       expect(killEpisode(logger).cancels).toEqual([
         { kind: "effect-cancel", targetId: "thr#1", ts: expect.any(Number) },
@@ -540,10 +510,7 @@ describe("the effect-cancel step an http.cancel records (runtime.md §10.5.1)", 
   });
 });
 
-describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
-  // The reducer writes the slot the key reads *after* emitting, so the key the
-  // emit carries ("a") and the one `keyOf` would read from the committed slots
-  // ("b") differ. The request is registered under the carried key.
+describe("a latest-per-key emit that carries its key", () => {
   function makeKeyedApp(emitted: { effect: string; args: unknown[]; key?: string }): {
     app: AppShape;
     log: AbortLog;
@@ -602,15 +569,14 @@ describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
     kill: "killA" | "killB",
   ): Promise<boolean> {
     const { app, log } = makeKeyedApp(emitted);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
+    const root = freshRoot();
     try {
       const { dispose } = mount(app, root);
       const dispatch = (
         app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
       )._dispatch;
       dispatch("go", {});
-      await tick();
+      await tick(5);
       expect(log.signal).toBeDefined();
       dispatch(kill, {});
       await tick(20);
@@ -632,7 +598,7 @@ describe("a latest-per-key emit that carries its key (http.md §6.4)", () => {
   });
 });
 
-describe("the EffectId an emit yields (http.md §6.4)", () => {
+describe("the EffectId an emit yields", () => {
   type Policy = EffectSpec["policy"];
   const idOf = (policy: Policy, emit: EmitSpec): string => emitId(policy ? { policy } : {}, emit);
 
@@ -645,8 +611,6 @@ describe("the EffectId an emit yields (http.md §6.4)", () => {
   ] as [string, Policy][])("%s: one id per emit, and the one an emit carries", (_l, policy) => {
     const a = idOf(policy, { effect: "up", args: ["x"] });
     expect(idOf(policy, { effect: "up", args: ["x"] })).not.toBe(a);
-    // What a reducer body's `emit` expression yielded is on the record, and the
-    // dispatcher asks again: the answer is that id.
     expect(idOf(policy, { effect: "up", args: ["x"], id: a })).toBe(a);
   });
 

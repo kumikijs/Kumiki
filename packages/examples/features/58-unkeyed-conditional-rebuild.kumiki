@@ -1,4 +1,4 @@
-# Feature: what an unkeyed sibling list costs on re-render (spec/runtime.md §10.3.12).
+# Feature: what an unkeyed sibling list costs on re-render.
 #
 # `Notes` is a column whose second child appears and disappears with `open`.
 # None of its children carry a `key`, so the reconciler cannot tell "the hint

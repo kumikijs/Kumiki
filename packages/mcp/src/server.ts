@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// stdio entrypoint for the Kumiki MCP server.
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./index.ts";
