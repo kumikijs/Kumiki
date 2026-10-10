@@ -127,11 +127,18 @@ export class TokenStream {
 
   /** A number literal with the sign the lexer emits as its own operator. */
   protected eatSignedNumber(): number {
+    return this.eatSignedNumberLit().value;
+  }
+
+  /** A number literal with an optional leading `-`, and the text it is written as. */
+  protected eatSignedNumberLit(): { value: number; raw: string } {
     if (this.matchOp("-") && this.matchTAt(1, "num")) {
       this.next();
-      return -this.eat("num").value;
+      const t = this.eat("num");
+      return { value: -t.value, raw: `-${t.raw}` };
     }
-    return this.eat("num").value;
+    const t = this.eat("num");
+    return { value: t.value, raw: t.raw };
   }
 
   protected parseDuration(): number {
