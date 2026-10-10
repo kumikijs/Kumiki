@@ -792,6 +792,11 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 **遅延 policy effect の帰属。** `policy=debounce(d)` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に `setTimeout` が満了する。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、満了後の `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。`debounce` timer が発火前に置換された場合、元 episode に `effect-cancel` step (`targetId = <effect-name>`) を残し、その episode は `effect-end` なしで `status="completed"` として commit する。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
 
+**cancel の帰属。** `effect-cancel` step は何かが解放されたことを記録するもので、書かれる場所は 2 つある：
+
+- `http.cancel` の emit（[http.md §6.4](./http.md#_6-4-cancellation)）がその id の指すものを解放した場合、それを emit した episode に `{"kind": "effect-cancel", "targetId": <EffectId>}` を記録する。解放とは次の 3 つのいずれかである：進行中のリクエストを abort した（リクエストは launch から結果が届くまで進行中であり、`retry` の試行間の待ちもこれに含まれる）、まだ待機中の `queue` エントリを取り除いた、まだ保留中の `debounce` タイマーをクリアした。何も解放しなかった cancel は step を**記録しない**：どのリクエストも実行していない id、既に完了したリクエストの id、`EffectId.none`、policy が捨てた emit の id、そしてウィンドウがまだ開いている完了済みの `throttle` リクエストの id — ウィンドウマーカーは保留中の launch ではなく、cancel はそれを残す。cancel が emit されたことは reducer step の `emits` が既に示している。`effect-cancel` step はそれが効いたことの記録であり、cancel が何も abort しなかったログが abort を主張することはない。abort されたリクエストの `.err`（`message: "aborted"`）は、そのリクエストを開始した episode に着地する。
+- 確保された後、実行前に捨てられた launch は、その `effect-start` を確保した episode に `{"kind": "effect-cancel", "targetId": <effect-name>}` を記録し、その episode を確定させる：後続の emit に置き換えられた、または cancel でクリアされた `debounce` タイマー、cancel が取り除いた `queue` エントリ、アンマウント時にまだ保留中の launch、capability check が拒否した遅延 launch（[§10.4.2](#_10-4-2-capability-check)）がこれにあたる。したがってタイマーをクリアする、またはキューのエントリを取り除く cancel は、両方の step を、それぞれの episode に 1 つずつ書く。
+
 ### 10.5.2 episode store
 
 - メモリに直近 N 件（デフォルト 100）
