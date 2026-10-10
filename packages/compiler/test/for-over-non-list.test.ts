@@ -1,15 +1,7 @@
-// language.md §1.7.2 inv. 5: the iteration target of `for` is a List —
-// `Map.keys`, `Set.to-list`, or any other expression whose type is one.
-// errors.md E0218 reports every target whose type is decided and is not a
-// List, with a remedy that fits the type when one exists, and stays silent on
-// a target whose type cannot be decided or that already has a diagnostic.
-//
-// Both forms of the loop are asked every question: a tile's `for` and a
-// reducer's `for` are different nodes, and a rule that covered one of them
-// would leave the other compiling and then throwing where the loop runs.
-
-import { check, type KumikiError, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 const DECLS = `type Item  = {name: Text, tags: List(Text)}
 type State = {items: List(Item)}
@@ -46,32 +38,31 @@ fn pick() -> Option(List(Int)) = None
 fn one(a: Int) -> Int = a
 `;
 
-const APP = `app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-
 const FORMS = {
-  tile: (target: string) => `${DECLS}
-tile App = column(for x in ${target} text("row"))
-${APP}`,
-  reducer: (target: string) => `${DECLS}
+  tile: (target: string) =>
+    withApp(`${DECLS}
+tile App = column(for x in ${target} text("row"))`),
+  reducer: (target: string) =>
+    withApp(`${DECLS}
 slot n : Int = 0
 reducer tally on=ui.click(Tally) do=
     for x in ${target} { n := n + 1 }
 tile Tally = button(text="tally")
-tile App = column(Tally)
-${APP}`,
+tile App = column(Tally)`),
 } as const;
 
 const FORM_NAMES = Object.keys(FORMS) as (keyof typeof FORMS)[];
 
-function diagnose(src: string): KumikiError[] {
-  return check(parse(lex(src)));
-}
+const diagnose = (src: string) => checkSource(src);
 
 const HEAD = '"for" iterates a List, but this is';
+
+function checkAndBuild(src: string): { checked: string[]; built: string[] } {
+  const checked = checkSource(src).map((e) => `${e.code} ${e.message}`);
+  const r = compile(src, { runtimeSpecifier: "./runtime.js" });
+  const built = r.kind === "fail" ? r.errors.map((e) => `${e.code} ${e.message}`) : [];
+  return { checked, built };
+}
 
 /** Every decided type that is not a List, and what E0218 says about it. */
 const NOT_A_LIST: [target: string, message: string][] = [
@@ -115,10 +106,7 @@ describe("a for over a decided type that is not a List is E0218", () => {
 });
 
 describe("the accessor kumiki fix appends", () => {
-  // A Map's `.keys` and a Set's `.to-list` turn the target into the List the
-  // loop needs by themselves, so the diagnostic carries the name for a repair
-  // to append. Every other target has no such member: `.get-or([])` decides
-  // what `None` iterates, which is the author's call, not a repair's.
+  // Only a Map's `.keys` and a Set's `.to-list` repair the target by themselves.
   it.each([
     ["m", "keys"],
     ["st", "to-list"],
@@ -167,15 +155,14 @@ describe("a for over a List is accepted", () => {
   }
 
   it("takes a tile's $1 declared in=List(X), and a for over the loop variable's List field", () => {
-    const src = `${DECLS}
+    const src = withApp(`${DECLS}
 tile Each in=List(Item) = column(for it in $1 column(for tg in it.tags text(tg)))
-tile App = column(Each(state.items))
-${APP}`;
+tile App = column(Each(state.items))`);
     expect(diagnose(src)).toEqual([]);
   });
 
   it("takes the List a match arm binds, in a tile and in a reducer", () => {
-    const src = `${DECLS}
+    const src = withApp(`${DECLS}
 slot n : Int = 0
 reducer tally on=ui.click(Tally) do=
     match loaded with
@@ -186,13 +173,12 @@ tile App = column(
   Tally,
   match loaded with
     | Some(ys) -> column(for y in ys text(y))
-    | None -> text("none"))
-${APP}`;
+    | None -> text("none"))`);
     expect(diagnose(src)).toEqual([]);
   });
 
   it("takes a List a reducer's let binds, and a nested for over a field of the loop variable", () => {
-    const src = `${DECLS}
+    const src = withApp(`${DECLS}
 slot n : Int = 0
 reducer tally on=ui.click(Tally) do=
     let zs = xs.filter($1 != "")
@@ -200,8 +186,7 @@ reducer tally on=ui.click(Tally) do=
 reducer tags on=ui.click(Tally) do=
     for it in state.items { for tg in it.tags { n := n + 1 } }
 tile Tally = button(text="tally")
-tile App = column(Tally)
-${APP}`;
+tile App = column(Tally)`);
     expect(diagnose(src)).toEqual([]);
   });
 });
@@ -222,8 +207,6 @@ describe("a target E0218 cannot judge is not reported", () => {
       expect(diagnose(src).map((d) => d.code)).not.toContain("E0218");
     });
 
-    // One mistake, one report: the target already has a diagnostic, and the
-    // type the checker reads off a broken expression is not one to judge.
     it(`${form} form: a call with the wrong arity is E0213 alone`, () => {
       expect(diagnose(FORMS[form]("one(1, 2)")).map((d) => d.code)).toEqual(["E0213"]);
     });
@@ -238,12 +221,83 @@ describe("a target E0218 cannot judge is not reported", () => {
   });
 
   it("a field holding an untyped value is undecided, though its record is not", () => {
-    // `box` is a `{rows: ?}`: the record is decided, and the field read off it
-    // is the `?` that stands for "cannot tell".
     const src = FORMS.reducer("box.rows").replace(
       "    for x in box.rows",
       "    let box = {rows: $event.rows}\n    for x in box.rows",
     );
     expect(diagnose(src)).toEqual([]);
+  });
+});
+
+describe("a for over an Option(List(T)) it has not unwrapped", () => {
+  const REDUCER_FORM = withApp(`slot loaded : Option(List(Text)) = Some(["a", "b"])
+slot count  : Int                = 0
+
+reducer tally on=ui.click(Tally)
+    do= for x in loaded { count := count + 1 }
+
+tile Tally = button(text="tally") {id: "tally"}
+tile App = column(Tally, text("count: " + count.show))`);
+
+  const TILE_FORM = withApp(`slot loaded : Option(List(Text)) = Some(["a", "b"])
+tile App = column(for x in loaded text(x))`);
+
+  const OPTION_MESSAGE = `${HEAD} Option(List(Text)) — iterate its .get-or([]), or match on Some / None`;
+
+  it.each([
+    ["reducer", REDUCER_FORM],
+    ["tile", TILE_FORM],
+  ])("%s form: check reports it and build refuses it", (_form, src) => {
+    const { checked, built } = checkAndBuild(src);
+    expect(checked).toEqual([`E0218 ${OPTION_MESSAGE}`]);
+    expect(built).toEqual([`E0218 ${OPTION_MESSAGE}`]);
+  });
+
+  it.each([
+    ["reducer", REDUCER_FORM],
+    ["tile", TILE_FORM],
+  ])("%s form: the unwrapped target checks and builds", (_form, src) => {
+    const { checked, built } = checkAndBuild(src.replace("in loaded", "in loaded.get-or([])"));
+    expect(checked).toEqual([]);
+    expect(built).toEqual([]);
+  });
+});
+
+describe("every decided non-List target in one program is reported, not only the Map", () => {
+  const TARGET_DECLS = `slot t   : Text                    = "abc"
+slot r   : Result(List(Int), Text) = Ok([1])
+slot i   : Int                     = 3
+slot m   : Map(Text, Int)          = {}
+slot rec : {a: Int}                = {a: 1}
+`;
+  const TARGETS = ["t", "r", "i", "m", "rec"];
+
+  function expectEachReported(src: string): void {
+    const lines = src.split("\n");
+    const { checked, built } = checkAndBuild(src);
+    expect(checked.map((c) => c.slice(0, 5))).toEqual(TARGETS.map(() => "E0218"));
+    expect(built).toEqual(checked);
+    const reported = checkSource(src).map((e) => lines[e.pos.line - 1]);
+    expect(reported).toEqual(TARGETS.map((x) => expect.stringContaining(`for v in ${x} `)));
+  }
+
+  it("reducer form", () => {
+    const reducers = TARGETS.map(
+      (x, k) => `reducer r${k} on=ui.click(B) do= for v in ${x} { n := n + 1 }`,
+    ).join("\n");
+    expectEachReported(
+      withApp(`${TARGET_DECLS}slot n : Int = 0
+${reducers}
+tile B = button(text="b") {id: "b"}
+tile App = column(B)`),
+    );
+  });
+
+  it("tile form", () => {
+    const loops = TARGETS.map((x) => `for v in ${x} text("${x}")`).join(",\n  ");
+    expectEachReported(
+      withApp(`${TARGET_DECLS}tile App = column(
+  ${loops})`),
+    );
   });
 });

@@ -1,4 +1,4 @@
-# Feature (language.md §1.7.2 inv. 5): a `for` iterates a List, so an
+# Feature (language.md): a `for` iterates a List, so an
 # `Option(List(T))` is unwrapped before it is iterated — in a tile and in a
 # reducer alike.
 #
