@@ -1,6 +1,6 @@
-# Feature (language.md §1.6.5 / §1.7.3): `$el` is the `{...}` props of the tile
-# that fired the event, read by the names the tile declared them under —
-# kebab-case names included, which are the house style.
+# Feature: `$el` is the `{...}` props of the tile that fired the event, read by
+# the names the tile declared them under — kebab-case names included, which are
+# the house style.
 #
 # A prop reaches `$el` from the props block and from a named argument alike;
 # each row below sends its id both ways, and a click reads each one back.

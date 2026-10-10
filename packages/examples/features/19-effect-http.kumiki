@@ -2,7 +2,7 @@
 # The request is a relative `/api/quote`, so a host serving the bundle next to a
 # real endpoint hits it directly. In the docs playground (a sandboxed srcdoc with
 # no network) a deterministic `http.get` provider serves the quote, so the
-# showcase demonstrates the SUCCESS path offline (#38); the `.err` path stays
+# showcase demonstrates the SUCCESS path offline; the `.err` path stays
 # reachable against an unreachable endpoint.
 
 type Quote = {text: Text, author: Text}

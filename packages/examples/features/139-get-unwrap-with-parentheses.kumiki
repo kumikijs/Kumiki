@@ -1,6 +1,5 @@
-# Feature (stdlib.md §2.2.4 / §2.2.5): `.get` on an Option or a Result is the
-# polymorphic unwrap, "also written paren-free as `value.get`" (§2.2.5's
-# Panic-semantics note) — `o.get()` and `o.get` are one member.
+# Feature: `.get` on an Option or a Result is the polymorphic unwrap, also
+# written paren-free as `value.get` — `o.get()` and `o.get` are one member.
 #
 # `.get` is also the Map / List lookup, which takes a key or an index. The
 # argument count is what tells the two readings apart, so a call with no
