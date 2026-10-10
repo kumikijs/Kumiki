@@ -1,5 +1,5 @@
 import { levenshtein } from "@kumikijs/runtime/text-distance";
-import { type Expr, isTileExpr, type TestDef, type TileExpr } from "./ast.ts";
+import { type Expr, isTileExpr, type Pos, type TestDef, type TileExpr } from "./ast.ts";
 
 export const TEST_SECTIONS = {
   "reducer-test": {
@@ -108,6 +108,59 @@ export function isSectionName<K extends TestKind, P extends TestPart>(
 ): written is SectionName<K, P> {
   const names: readonly string[] = TEST_SECTIONS[kind][part];
   return names.includes(written);
+}
+
+export type RecordField = (Expr & { kind: "RecordLit" })["fields"][number];
+
+export function recordFieldsOf(e: Expr | TileExpr | undefined): RecordField[] {
+  if (e === undefined || isTileExpr(e) || e.kind !== "RecordLit") return [];
+  return e.fields;
+}
+
+/**
+ * The sections of a test's `given` / `expect` that `kind` has, at the top of the part only. The
+ * checker and the reference walk both read a test body through this, so they read the same names.
+ */
+export function testSections<K extends TestKind, P extends TestPart>(
+  t: TestDef,
+  kind: K,
+  part: P,
+  unknown?: (field: RecordField) => void,
+): { section: SectionName<K, P>; value: Expr }[] {
+  const out: { section: SectionName<K, P>; value: Expr }[] = [];
+  for (const f of recordFieldsOf(part === "given" ? t.given : t.expect)) {
+    if (isSectionName(kind, part, f.name)) out.push({ section: f.name, value: f.value });
+    else unknown?.(f);
+  }
+  return out;
+}
+
+/**
+ * A `given.event`'s tile and payload. `type` is the trigger grammar's, not an expression; `target`
+ * names a tile only on a `ui.*` event, since a timer or effect-driven reducer is aimed at none.
+ */
+export function eventParts(event: Expr): {
+  tile: { name: string; pos: Pos } | undefined;
+  payload: RecordField[];
+} {
+  const fields = recordFieldsOf(event);
+  const aimed = isUiEventType(fields.find((f) => f.name === "type")?.value);
+  const target = aimed ? fields.find((f) => f.name === "target")?.value : undefined;
+  return {
+    // A capitalised tile name parses as a `Variant`, a lowercase one as a `Ref`.
+    tile:
+      target?.kind === "Variant" || target?.kind === "Ref"
+        ? { name: target.name, pos: target.pos }
+        : undefined,
+    payload: fields.filter((f) => f.name !== "type" && f.name !== "target"),
+  };
+}
+
+function isUiEventType(type: Expr | undefined): boolean {
+  if (type === undefined) return false;
+  // `ui.click` parses as a field read on the name `ui`.
+  if (type.kind === "FieldAccess") return type.base.kind === "Ref" && type.base.name === "ui";
+  return false;
 }
 
 export function givenSection<K extends TestKind>(

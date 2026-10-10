@@ -84,6 +84,19 @@ not seeded no slot, or asserted none. `slots-equal` alone also takes the bare
 name `from-log` (the log's own final values) in place of a record; it is a name
 like any other at every other position.
 
+The reference graph reads a test body the same way, section by section
+([AI Editing §9.2](./ai-edit.md#_9-2-the-kumiki-cli)): each name resolved above
+is a reference from the test, so `kumiki refs` lists the test under it, and
+nothing under a key that names no section of the test's kind is one. A section
+name is a section only at the top of the `given` or `expect` it belongs to —
+under `slots`, `mocks` or `effects` is a slot like any other — and a `for-all`
+name is the generated value wherever the test reads it, never the `fn` or slot
+of the same name. `kumiki rename` rewrites a name the test wrote as an
+identifier: a call, an `expect.effects` entry, a `<slots.X>`, an event
+`target`. A name written as a record key — a `slots` / `slots-equal` key, a
+`mocks` key — has no position of its own, so `rename` refuses that name rather
+than leave the test naming a definition that no longer exists.
+
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
 nothing left the test running against the slot's default — **passing**, while
