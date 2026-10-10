@@ -26,8 +26,18 @@ function validate(
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
   }
-  const locked = lockViolation(path, touchedDefinitions(before, src));
+  const locked = touchedLockViolation(path, before, src);
   return locked === undefined ? { ok: true } : { ok: false, message: locked };
+}
+
+// Every write of a source asks this — the mutators through `validate`, and `fix` before it
+// writes a repair — so a definition is held to its lock whichever way the write reached it.
+export function touchedLockViolation(
+  path: string,
+  before: string,
+  after: string,
+): string | undefined {
+  return lockViolation(path, touchedDefinitions(before, after));
 }
 
 function touchedDefinitions(before: string, after: string): string[] {

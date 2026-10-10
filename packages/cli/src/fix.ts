@@ -38,6 +38,9 @@ export function rollbackLine(r: {
       return `fixes broke the file: ${r.blocked.message}`;
     case "resolved-none":
       return "(auto-patch rolled back — it resolved none of the reported diagnostics)";
+    case "locked":
+      // The write verbs' own sentence, so the refusal reads the same whichever verb met the lock.
+      return `(auto-patch rolled back — ${r.blocked.message})`;
     case "introduced": {
       const where = r.blocked.introduced
         .map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)
@@ -216,7 +219,11 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
       const b = outcome.blocked;
       if (b.reason === "introduced")
         for (const e of b.introduced) console.error(`  ${e.code} ${e.message}`);
-      else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
+      else if (
+        b.reason === "parse-error" ||
+        b.reason === "test-runner-threw" ||
+        b.reason === "locked"
+      )
         console.error(`  ${b.message}`);
       else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);
       else if (b.reason === "still-fails") printTestLeaf(b.failingTest);

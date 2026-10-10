@@ -12,6 +12,7 @@ import {
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
+import { touchedLockViolation } from "../mutate/commit.ts";
 import { listDefs, load, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
@@ -348,7 +349,8 @@ export type FixApplyResult = {
   blocked?:
     | { reason: "introduced"; introduced: KumikiError[] }
     | { reason: "resolved-none" }
-    | { reason: "parse-error"; message: string };
+    | { reason: "parse-error"; message: string }
+    | { reason: "locked"; message: string };
   writeError?: string;
   skipped: SkipReason[];
 };
@@ -398,14 +400,9 @@ export function applyFixPlan(
       ...(gate.blocked.reason === "parse-error" ? { parseError: gate.blocked.message } : {}),
     };
   }
-  try {
-    atomicWriteFileSync(path, after);
-  } catch (e) {
-    return {
-      ...nothingWritten(plan, before, applied),
-      remaining: plan.errors,
-      writeError: messageOf(e),
-    };
+  const refused = writeFix(path, before, after);
+  if (refused !== undefined) {
+    return { ...nothingWritten(plan, before, applied), remaining: plan.errors, ...refused };
   }
   return {
     applied,
@@ -418,9 +415,29 @@ export function applyFixPlan(
   };
 }
 
+/** Why a write `fix` made did not land; each member is the field it becomes on the result. */
+type WriteRefusal =
+  | { blocked: Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "locked" }> }
+  | { writeError: string };
+
+/** The one place `fix` writes a source, so every repair is held to the ownership lock. */
+export function writeFix(path: string, before: string, after: string): WriteRefusal | undefined {
+  const locked = touchedLockViolation(path, before, after);
+  if (locked !== undefined) return { blocked: { reason: "locked", message: locked } };
+  try {
+    atomicWriteFileSync(path, after);
+  } catch (e) {
+    return { writeError: messageOf(e) };
+  }
+  return undefined;
+}
+
 export type GateVerdict =
   | { blocked?: undefined; remaining: KumikiError[]; warnings: KumikiError[] }
-  | { blocked: NonNullable<FixApplyResult["blocked"]>; remaining: KumikiError[] };
+  | {
+      blocked: Exclude<NonNullable<FixApplyResult["blocked"]>, { reason: "locked" }>;
+      remaining: KumikiError[];
+    };
 
 /** Accepts the composed patches only if they resolve something and introduce nothing. */
 export function gateComposed(
