@@ -77,6 +77,18 @@ export function valueEqual(a: unknown, b: unknown): boolean {
   return ak.every((k) => Object.hasOwn(bo, k) && valueEqual(ao[k], bo[k]));
 }
 
+// Asks `<` rather than subtracting: two `Text`s subtract to `NaN`, which a sort reads as
+// "equal". An absent or `NaN` value sorts last; "equal" to every value, a single one would
+// stop the rest from sorting.
+function ascending(a: unknown, b: unknown): number {
+  const na = a == null || Number.isNaN(a);
+  const nb = b == null || Number.isNaN(b);
+  if (na || nb) return na === nb ? 0 : na ? 1 : -1;
+  const x = a as number | string;
+  const y = b as number | string;
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
 function instantOf(value: unknown): number {
   // Trimmed here, not in `Time.parse`: the reading refuses padded text, but a
   // `Time` that arrived as padded text still renders as the instant it names.
@@ -294,21 +306,11 @@ export const _stdlibCore = {
     return _stdlibCore.None;
   },
   listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
-    const absent = (k: unknown): boolean => k == null || Number.isNaN(k);
-    return [...(xs ?? [])].sort((a, b) => {
-      const ka = keyOf(a) as number | string;
-      const kb = keyOf(b) as number | string;
-      const na = absent(ka);
-      const nb = absent(kb);
-      if (na || nb) return na === nb ? 0 : na ? 1 : -1;
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
+    return [...(xs ?? [])].sort((a, b) => ascending(keyOf(a), keyOf(b)));
   },
   listSort(xs: unknown[] | undefined | null): unknown[] {
     const arr = [...(xs ?? [])];
-    if (arr.length === 0) return arr;
-    const allNumbers = arr.every((x) => typeof x === "number" && Number.isFinite(x));
-    if (allNumbers) return (arr as number[]).sort((a, b) => a - b);
+    if (arr.every((x) => typeof x === "number")) return arr.sort(ascending);
     return arr.sort((a, b) => {
       const sa = String(a);
       const sb = String(b);

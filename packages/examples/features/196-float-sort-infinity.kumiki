@@ -1,0 +1,30 @@
+# Feature (stdlib.md): `sort` orders a `List(Float)` as
+# numbers whatever values it holds.
+#
+#   List(T).sort : List(T)   ; T is Ord; ascending, as < orders it
+#
+# `1.0 / 0.0` is `Infinity`, `-1.0 / 0.0` is `-Infinity` and `(-1.0).sqrt` is
+# `NaN`, and each is a `Float`, so a list holding one still sorts as
+# numbers: `9` before `10`. An infinity sorts where `<` puts it, below or
+# above every finite value. `NaN`, which `<` orders against nothing, sorts
+# after every other value.
+
+slot xs   : List(Float) = [10.0, 9.0, 1.5]
+slot zero : Float = 0.0
+
+reducer addEdges on=ui.click(AddEdges)
+    do= xs := xs.push((-1.0).sqrt).push(1.0 / zero).push(-1.0 / zero)
+
+tile AddEdges = button(text="add edges", id="add-edges")
+
+tile App = column(
+  AddEdges,
+  text("sorted: " + xs.sort.map($1.show).join(",")),
+  text("with Infinity: " + xs.push(1.0 / zero).sort.map($1.show).join(",")),
+  text("with -Infinity: " + xs.push(-1.0 / zero).sort.map($1.show).join(",")),
+  text("with NaN: " + xs.prepend((-1.0).sqrt).sort.map($1.show).join(",")))
+
+app FloatSortInfinity
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

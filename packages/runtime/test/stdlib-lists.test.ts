@@ -68,12 +68,49 @@ describe("listSort", () => {
     expect(_stdlibCore.listSort(null)).toEqual([]);
   });
 
+  it("sorts a list holding an infinity numerically", () => {
+    expect(_stdlibCore.listSort([10, 9, 1.5, Number.POSITIVE_INFINITY])).toEqual([
+      1.5,
+      9,
+      10,
+      Number.POSITIVE_INFINITY,
+    ]);
+    expect(_stdlibCore.listSort([10, Number.NEGATIVE_INFINITY, 9, 1.5])).toEqual([
+      Number.NEGATIVE_INFINITY,
+      1.5,
+      9,
+      10,
+    ]);
+  });
+
+  it("sorts NaN after every other number and the rest numerically", () => {
+    const { NaN: nan, POSITIVE_INFINITY: inf, NEGATIVE_INFINITY: ninf } = Number;
+    expect(_stdlibCore.listSort([nan, 10, 9, inf, nan, ninf, 1.5])).toEqual([
+      ninf,
+      1.5,
+      9,
+      10,
+      inf,
+      nan,
+      nan,
+    ]);
+  });
+
+  it("orders numbers as sort-by orders the same numbers as keys", () => {
+    const xs = [Number.NaN, 10, 2, Number.POSITIVE_INFINITY, -0.5, Number.NEGATIVE_INFINITY, 2];
+    expect(_stdlibCore.listSort(xs)).toEqual(_stdlibCore.listSortBy(xs, (x) => x));
+  });
+
   it("sorts a text list as strings", () => {
     expect(_stdlibCore.listSort(["banana", "apple", "cherry"])).toEqual([
       "apple",
       "banana",
       "cherry",
     ]);
+  });
+
+  it("sorts text that spells a number as text", () => {
+    expect(_stdlibCore.listSort(["9", "10", "Z", "a"])).toEqual(["10", "9", "Z", "a"]);
   });
 
   it("does not mutate the input list", () => {
