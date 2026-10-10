@@ -1,0 +1,52 @@
+# Feature (http.md): a value `storage.write` stores reads back through
+# `storage.read` as the value it was, the two kinds JSON has no form for
+# included: a `Bytes` and a non-finite `Float`.
+#
+# `sent` holds one of each. Save writes it under "blob"; Load reads it back,
+# and `loaded` shows whether what came back equals `sent` (`==` compares by
+# value, `Bytes` byte by byte) beside its two fields. Under "blob",
+# localStorage holds the tagged form:
+#
+#   ~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}
+#
+# A value JSON can hold is stored as its plain JSON text instead.
+#
+# There is no `.err` reducer below on purpose: `smoke` clicks Save, then Load,
+# against the real localStorage, and an unhandled `err` is an error it
+# reports. A scenario's scripted results are JSON, which cannot carry these
+# two values, so the scenario scripts a read that finds nothing;
+# packages/tests/src/storage-round-trip.test.ts runs the round trip through the
+# real handler and checks what it reads back.
+
+type Blob = {data: Bytes, ratio: Float}
+
+slot sent  : Blob = {data: Bytes.from-text("hi"), ratio: 1.0 / 0.0}
+slot shown : Text = "idle"
+
+effect save cap=storage.write
+            in=Blob
+            out=Result(Unit, Text)
+            map-request={key: "blob", value: $1}
+
+effect load cap=storage.read
+            in=Unit
+            out=Result(Option(Blob), Text)
+            map-request={key: "blob", decode: Decoder.Json(Blob)}
+
+reducer goSave on=ui.click(SaveBtn) do= emit save(sent)
+reducer goLoad on=ui.click(LoadBtn) do= emit load()
+reducer saved  on=save.ok(_, _)     do= shown := "saved"
+reducer loaded on=load.ok($o, _)    do=
+    match $o with
+      | Some(b) -> shown := "same=" + (b == sent).show + " data=" + b.data.show + " ratio=" + b.ratio.show
+      | None    -> shown := "nothing stored"
+
+tile SaveBtn = button(text="Save") {id: "save"}
+tile LoadBtn = button(text="Load") {id: "load"}
+
+tile App = column(SaveBtn, LoadBtn, text("shown: " + shown)) {pad: "lg", gap: "md"}
+
+app StoredBytesAndInfinity
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

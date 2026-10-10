@@ -1,0 +1,25 @@
+{
+  "steps": [
+    {
+      "label": "nothing has happened yet",
+      "expect": { "noErrors": true, "state": { "shown": "idle" } }
+    },
+    {
+      "label": "save writes the blob",
+      "do": { "click": "#save" },
+      "expect": { "noErrors": true, "state": { "shown": "saved" } }
+    },
+    {
+      "label": "a load that finds nothing says so",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "shown": "nothing stored" },
+        "domIncludes": ["shown: nothing stored"]
+      }
+    }
+  ],
+  "effects": {
+    "load": [{ "outcome": "ok", "value": { "_tag": "None" } }]
+  }
+}
