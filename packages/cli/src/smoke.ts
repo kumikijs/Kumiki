@@ -274,9 +274,17 @@ export async function runTestsSource(
   const tests = (globalThis as unknown as { __kumikiTests?: TestRunner[] }).__kumikiTests ?? [];
   return tests.map((t) => {
     const t0 = performance.now();
-    const r = t.run();
+    const r = runOne(t);
     return { ...r, ms: Math.round(performance.now() - t0) };
   });
+}
+
+function runOne(t: TestRunner): TestResult {
+  try {
+    return t.run();
+  } catch (e) {
+    return { name: t.name, pass: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function testFile(path: string, capabilities: string[] = []): Promise<TestResult[]> {
@@ -290,6 +298,19 @@ function leafStr(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+/** Shared with `kumiki fix`, so a failing test reads the same in both. */
+export function failureLines(r: TestResult): string[] {
+  const lines: string[] = [];
+  if (r.expected !== undefined) lines.push(`  expected: ${r.expected}`);
+  if (r.actual !== undefined) lines.push(`  actual:   ${r.actual}`);
+  if (r.diffAt !== undefined) {
+    const arrow = r.leaf ? `  ${leafStr(r.leaf.expected)} -> ${leafStr(r.leaf.actual)}` : "";
+    lines.push(`  diff at:  ${r.diffAt}${arrow}`);
+  }
+  if (r.error !== undefined) lines.push(`  error:    ${r.error}`);
+  return lines;
 }
 
 /** Match a test name against a filter: exact, or a `prefix-*` / `prefix*` wildcard. */
@@ -370,12 +391,7 @@ function printTestReport(report: TestReport): number {
       continue;
     }
     console.log(`FAIL  ${r.name}${tag}`);
-    if (r.expected !== undefined) console.log(`  expected: ${r.expected}`);
-    if (r.actual !== undefined) console.log(`  actual:   ${r.actual}`);
-    if (r.diffAt !== undefined) {
-      const arrow = r.leaf ? `  ${leafStr(r.leaf.expected)} -> ${leafStr(r.leaf.actual)}` : "";
-      console.log(`  diff at:  ${r.diffAt}${arrow}`);
-    }
+    for (const line of failureLines(r)) console.log(line);
   }
   console.log(`\n${report.passed}/${report.total} passed`);
   if (report.coverage) printCoverage(report.coverage);
