@@ -1,5 +1,5 @@
 # Feature: a request cancelled while it waits out a retry backoff stops at
-# once (http.md §6.5).
+# once (http.md).
 #
 # `loadQuote` retries a 5xx once, 500ms later, and `policy=latest` cancels the
 # running request when another is emitted. When the first answer is a 503 and
