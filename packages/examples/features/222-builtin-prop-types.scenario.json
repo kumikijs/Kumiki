@@ -1,0 +1,71 @@
+{
+  "steps": [
+    {
+      "label": "the select shows each option's label, and the modal starts closed",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "fruit": "apple",
+          "shown": false,
+          "saves": 0
+        },
+        "domIncludes": ["Apple", "Pear", "fruit=apple", "shown=false", "saves=0"],
+        "domExcludes": ["undefined"]
+      }
+    },
+    {
+      "label": "choosing an option by its label writes its value",
+      "do": {
+        "choose": "#fruit",
+        "value": "Pear"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "fruit": "pear"
+        },
+        "domIncludes": ["fruit=pear"]
+      }
+    },
+    {
+      "label": "the disabled button refuses the click, and its reducer does not run",
+      "do": {
+        "click": "#save"
+      },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<button> is disabled"],
+        "state": {
+          "saves": 0
+        },
+        "domIncludes": ["saves=0"]
+      }
+    },
+    {
+      "label": "Open sets the slot the modal's open reads",
+      "do": {
+        "click": "#open"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "shown": true
+        },
+        "domIncludes": ["shown=true"]
+      }
+    },
+    {
+      "label": "Close inside the modal clears it again",
+      "do": {
+        "click": "#close"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "shown": false
+        },
+        "domIncludes": ["shown=false"]
+      }
+    }
+  ]
+}
