@@ -1,0 +1,43 @@
+# Feature: `t.parse-int` is `Int.parse(t)`, and `t.parse-float` is
+# `Float.parse(t)`. Both spellings read the text one way, so whichever is
+# written, the same text is the same value:
+#
+#   text     Int.parse(t) / t.parse-int    Float.parse(t) / t.parse-float
+#   "12"     Some(12)                      Some(12)
+#   "3.7"    None                          Some(3.7)
+#   "1e3"    None                          Some(1000)
+#   "0x10"   None                          None
+#   " 12 "   None                          None
+#
+# Only decimal text is read, and only the whole of it. A fraction is no
+# `Int`: when truncating is what is meant, read a `Float` and convert it with
+# `.to-int`, as `truncated` below does. Blanks are not read past either:
+# `.trim` the text first when they are expected, as `trimmed` does.
+
+slot typed : Text = "12"
+
+tile App = column(
+             input(bind=typed, id="typed"),
+             text(match Int.parse(typed) with
+                    | Some(n) -> "Int.parse " + n.show
+                    | None    -> "Int.parse none"),
+             text(match typed.parse-int with
+                    | Some(n) -> "parse-int " + n.show
+                    | None    -> "parse-int none"),
+             text(match Float.parse(typed) with
+                    | Some(x) -> "Float.parse " + x.show
+                    | None    -> "Float.parse none"),
+             text(match typed.parse-float with
+                    | Some(x) -> "parse-float " + x.show
+                    | None    -> "parse-float none"),
+             text(match typed.parse-float.map($1.to-int) with
+                    | Some(n) -> "truncated " + n.show
+                    | None    -> "truncated none"),
+             text(match typed.trim.parse-int with
+                    | Some(n) -> "trimmed " + n.show
+                    | None    -> "trimmed none")) {gap: "sm"}
+
+app ParseSpellingsAgree
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

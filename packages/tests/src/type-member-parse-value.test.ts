@@ -160,47 +160,82 @@ slot b : Option(Code) = Some("xyz")`,
   });
 });
 
-describe("Int and Float read decimal text only", () => {
+describe("Int and Float read decimal text only, whichever way the parse is spelt", () => {
   const INTS: [string, unknown][] = [
     ["12", { _tag: "Some", _0: 12 }],
     ["+7", { _tag: "Some", _0: 7 }],
     ["-3", { _tag: "Some", _0: -3 }],
+    ["007", { _tag: "Some", _0: 7 }],
+    // Past 2^53 the digits name a number a Float cannot hold exactly; the
+    // reading is the nearest one, as the number literal's is.
+    ["9007199254740993", { _tag: "Some", _0: 9007199254740992 }],
     ["0x10", { _tag: "None" }],
     ["0b101", { _tag: "None" }],
     ["1e3", { _tag: "None" }],
     [" 12 ", { _tag: "None" }],
+    ["\t7", { _tag: "None" }],
     ["1.5", { _tag: "None" }],
+    ["3.7", { _tag: "None" }],
+    ["1.", { _tag: "None" }],
+    [".5", { _tag: "None" }],
+    ["1_000", { _tag: "None" }],
+    ["Infinity", { _tag: "None" }],
+    ["NaN", { _tag: "None" }],
+    // Digits enough to spell a number past the largest finite one.
+    [`1${"0".repeat(400)}`, { _tag: "None" }],
     ["", { _tag: "None" }],
   ];
   const FLOATS: [string, unknown][] = [
     ["0.25", { _tag: "Some", _0: 0.25 }],
     ["-2.5", { _tag: "Some", _0: -2.5 }],
+    ["+5", { _tag: "Some", _0: 5 }],
     ["3", { _tag: "Some", _0: 3 }],
     ["1e3", { _tag: "Some", _0: 1000 }],
     ["1.5E-1", { _tag: "Some", _0: 0.15 }],
     ["0x10", { _tag: "None" }],
+    ["0b101", { _tag: "None" }],
     [" 1.5", { _tag: "None" }],
+    [" 12 ", { _tag: "None" }],
     [".5", { _tag: "None" }],
     ["1.", { _tag: "None" }],
+    ["1_000", { _tag: "None" }],
     ["Infinity", { _tag: "None" }],
+    ["NaN", { _tag: "None" }],
     ["1e400", { _tag: "None" }],
     ["", { _tag: "None" }],
   ];
 
-  async function readAll(type: string, cases: [string, unknown][]) {
+  // `T.parse(text)`, and `text.parse-int` / `.parse-float` with and without the parentheses: one
+  // table answers all three.
+  const SPELLINGS: Record<"Int" | "Float", [name: string, spell: (text: string) => string][]> = {
+    Int: [
+      ["Int.parse(t)", (t) => `Int.parse(${t})`],
+      ["t.parse-int", (t) => `${t}.parse-int`],
+      ["t.parse-int()", (t) => `${t}.parse-int()`],
+    ],
+    Float: [
+      ["Float.parse(t)", (t) => `Float.parse(${t})`],
+      ["t.parse-float", (t) => `${t}.parse-float`],
+      ["t.parse-float()", (t) => `${t}.parse-float()`],
+    ],
+  };
+
+  async function readAll(
+    type: string,
+    spell: (text: string) => string,
+    cases: [string, unknown][],
+  ) {
     const slots = cases.map((_, i) => `slot s${i} : Option(${type}) = None`).join("\n");
-    const body = cases
-      .map(([t], i) => `s${i} := ${type}.parse(${JSON.stringify(t)})`)
-      .join("\n        ");
+    const body = cases.map(([t], i) => `s${i} := ${spell(JSON.stringify(t))}`).join("\n        ");
     const live = await stateAfterGo(app(slots, body));
     return cases.map(([t], i) => [t, live[`s${i}`]]);
   }
 
   it.each([
-    ["an optional sign and digits as an Int", "Int", INTS],
-    ["a sign, digits, a fraction and an exponent as a Float", "Float", FLOATS],
-  ] as const)("reads %s, and nothing else", async (_what, type, cases) => {
-    expect(await readAll(type, cases)).toEqual(cases);
+    ...SPELLINGS.Int.map(([name, spell]) => ({ name, type: "Int", spell, cases: INTS })),
+    ...SPELLINGS.Float.map(([name, spell]) => ({ name, type: "Float", spell, cases: FLOATS })),
+  ])("$name reads only the text its $type reading takes", async ({ type, spell, cases }) => {
+    expect(await readAll(type, spell, cases)).toEqual(cases);
   });
 
   it("reads a Duration as an Int", async () => {
