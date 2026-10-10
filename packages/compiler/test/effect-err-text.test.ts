@@ -1,9 +1,3 @@
-// Codegen puts `errText` on an effect's spec only when its capability fails
-// with `Text` (stdlib.md §2.5): that is the reading a mock replacing `invoke`
-// (the scenario runner) applies to a scripted err. On any other capability
-// the err is the provider's `E`, an `HttpError` or a custom record, and must
-// reach `.err` as written, so the field must be absent there.
-
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { failsWithText } from "../src/capabilities.ts";

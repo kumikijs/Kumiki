@@ -1,4 +1,4 @@
-# Feature (routing.md §3.6.2): a `sub-routes` parent whose `route-outlet()`
+# Feature (routing.md): a `sub-routes` parent whose `route-outlet()`
 # sits in a tile it renders rather than in its own body.
 #
 # The outlet only has to be in the tree the parent renders. Code generation

@@ -1,5 +1,5 @@
-# Feature (http.md §6.1.3 / §6.1.5): each `HttpBody` variant is sent as what it
-# names, with the Content-Type that goes with it unless the program set one.
+# Feature: each `HttpBody` variant is sent as what it names, with the
+# Content-Type that goes with it unless the program set one.
 #
 #   Form(m)   user=ann&pass=pw     application/x-www-form-urlencoded
 #   Json(v)   {"name":"x"}         application/json
@@ -9,7 +9,7 @@
 #
 # The runtime used to JSON-encode the variant itself, so every one of these
 # went out as `{"_tag":"Form","_0":{…}}` under `application/json`.
-# `packages/tests/http-body.test.ts` reads what reached `fetch`; `smoke` makes
+# `packages/tests/src/http-body.test.ts` reads what reached `fetch`; `smoke` makes
 # each request through the real handler against `128-http-body-variants.http.json`.
 
 slot status : Text = "idle"
