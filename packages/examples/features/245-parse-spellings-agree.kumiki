@@ -1,6 +1,6 @@
-# Feature (stdlib.md §2.2.6, §2.4.3): `t.parse-int` is `Int.parse(t)`, and
-# `t.parse-float` is `Float.parse(t)`. Both spellings read the text one way,
-# so whichever is written, the same text is the same value:
+# Feature: `t.parse-int` is `Int.parse(t)`, and `t.parse-float` is
+# `Float.parse(t)`. Both spellings read the text one way, so whichever is
+# written, the same text is the same value:
 #
 #   text     Int.parse(t) / t.parse-int    Float.parse(t) / t.parse-float
 #   "12"     Some(12)                      Some(12)

@@ -1,28 +1,8 @@
-// `panic("...")` written as a statement, actually run.
-//
-// The compiler tests prove it parses, typechecks and lowers. None of them run
-// it: the example's panic is guarded so the app stays mountable, and the
-// scenario asserts only that it does not fire. So `_s.panic` could be renamed,
-// or the statement lowered to nothing, with every one of those still green.
-//
-// A `reducer-test` with `expect = {panic: "..."}` is the seam that runs one.
-// It also pins that the message reaches the stop rather than being stringified
-// away on the way there.
-
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { testFile } from "../src/smoke.ts";
+import { seed } from "./helpers/files.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "kumiki-panic-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
-
-function write(name: string, source: string): string {
-  const path = join(dir, name);
-  writeFileSync(path, source);
-  return path;
-}
+const write = (name: string, source: string): string => seed(source, name);
 
 const SOURCE = `slot armed : Bool = false
 slot n     : Int  = 0

@@ -1,34 +1,26 @@
-// The write lock's own protocol, one step at a time: what a claim may remove,
-// what a release may remove, and which filesystem failures it rides out.
-
 import * as fs from "node:fs";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { dirname, join } from "node:path";
 import { threadId } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { claimLock, type LockSighting, withWriteLock, writeLockPath } from "../src/write-lock.ts";
+import { tempDir } from "./helpers/files.ts";
 
-// Spread `node:fs` into a plain object so `vi.spyOn(fs, …)` can replace its
-// functions; native module namespaces are frozen.
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual };
 });
 
-let dir = "";
 let file = "";
 let lock = "";
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-write-lock-"));
-  file = join(dir, "c.kumiki");
+  file = join(tempDir(), "c.kumiki");
   lock = writeLockPath(file);
   writeFileSync(file, "");
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env.KUMIKI_WRITE_LOCK_WAIT_MS;
-  rmSync(dir, { recursive: true, force: true });
 });
 
 /** The lock file as it stands now. */
@@ -56,8 +48,6 @@ describe("claiming a lock", () => {
   });
 
   it("leaves in place a lock created after the one it saw was removed", () => {
-    // Two waiters saw the same dead holder. The first removed it and created
-    // its own lock; the second's claim, on what it saw, must not remove that.
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
     const seen = sight();
     rmSync(lock);
@@ -67,10 +57,6 @@ describe("claiming a lock", () => {
   });
 
   it("never removes a lock it did not see, whatever another writer creates meanwhile", () => {
-    // Waiters B and C both saw a dead holder; A has since taken its place and
-    // holds the lock. B's claim, on what it saw, runs while C keeps trying to
-    // create the lock before each of B's filesystem calls. As long as A's
-    // lock stands, no attempt of C's can succeed, and A's lock must stand.
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
     const seen = sight();
     rmSync(lock);
@@ -115,16 +101,14 @@ describe("claiming a lock", () => {
   it("takes over a lock whose claim was left by a waiter that stopped, and leaves no claim behind", () => {
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
     const seen = sight();
-    // A first claim stops before it can remove anything: its files stay, naming
-    // this process, which holds no claim once the call has returned.
     const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
       throw errno("EBUSY");
     });
     expect(claimLock(lock, seen)).toMatchObject({ kind: "failed", code: "EBUSY" });
-    expect(fs.readdirSync(dir).length).toBeGreaterThan(2);
+    expect(fs.readdirSync(dirname(file)).length).toBeGreaterThan(2);
     stuck.mockRestore();
     expect(claimLock(lock, seen)).toEqual({ kind: "removed" });
-    expect(fs.readdirSync(dir)).toEqual(["c.kumiki"]);
+    expect(fs.readdirSync(dirname(file))).toEqual(["c.kumiki"]);
   });
 
   it("a claim held by a live caller makes the claimer back off and leaves the lock", () => {
@@ -153,24 +137,20 @@ describe("claiming a lock", () => {
   });
 });
 
-/**
- * Leave behind the claim a caller makes on `seen`, by failing every unlink
- * while it claims, and return its path.
- */
 function leaveClaim(seen: LockSighting): string {
   const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {
     throw errno("EBUSY");
   });
   claimLock(lock, seen);
   stuck.mockRestore();
-  const claims = fs.readdirSync(dir).filter((name) => name.includes(".takeover-"));
+  const claims = fs.readdirSync(dirname(file)).filter((name) => name.includes(".takeover-"));
   expect(claims).toHaveLength(1);
-  return join(dir, claims[0] as string);
+  return join(dirname(file), claims[0] as string);
 }
 
 describe("waiting on a lock that is being taken over", () => {
   it("names the claim that holds the takeover, and its holder, when the wait runs out", () => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "200");
     writeFileSync(lock, JSON.stringify({ pid: 999_999, host: hostname() }));
     const claim = leaveClaim(sight());
     writeFileSync(claim, liveHolder);
@@ -184,7 +164,7 @@ describe("waiting on a lock that is being taken over", () => {
 
 describe("a claim held by another thread of this process", () => {
   it("makes the claimer back off, and the wait-out message names the thread", () => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "200");
     const dead = JSON.stringify({ pid: 999_999, host: hostname() });
     writeFileSync(lock, dead);
     const seen = sight();
@@ -215,7 +195,7 @@ describe("releasing the lock", () => {
   });
 
   it("returns the result even when the lock cannot be removed, and the next write proceeds", () => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "2000";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "2000");
     const unlink = fs.unlinkSync;
     const stuck = vi.spyOn(fs, "unlinkSync").mockImplementation((path) => {
       if (String(path) === lock) throw errno("EBUSY");
@@ -228,25 +208,22 @@ describe("releasing the lock", () => {
     // The lock left behind names this process, which holds nothing: taken over.
     expect(withWriteLock(file, () => 43)).toBe(43);
     expect(fs.existsSync(lock)).toBe(false);
-    expect(fs.readdirSync(dir)).toEqual(["c.kumiki"]);
+    expect(fs.readdirSync(dirname(file))).toEqual(["c.kumiki"]);
   });
 });
 
 describe("a lock naming this process", () => {
   it("is taken over when it names this thread, which holds nothing", () => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "2000";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "2000");
     writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname(), threadId }));
     expect(withWriteLock(file, () => "done")).toBe("done");
     expect(fs.existsSync(lock)).toBe(false);
   });
 
-  // A lock with no thread names the main thread. Vitest's default `forks` pool
-  // runs this file on a main thread; under `pool: "threads"` it does not, and
-  // write-lock-threads.test.ts covers a worker meeting such a lock.
   it.runIf(threadId === 0)(
     "is taken over when it names no thread, as written before threads were recorded, on the main thread",
     () => {
-      process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "2000";
+      vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "2000");
       writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname() }));
       expect(withWriteLock(file, () => "done")).toBe("done");
       expect(fs.existsSync(lock)).toBe(false);
@@ -254,7 +231,7 @@ describe("a lock naming this process", () => {
   );
 
   it("is waited on when it names another thread, which is running", () => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "200");
     const other = JSON.stringify({ pid: process.pid, host: hostname(), threadId: threadId + 1 });
     writeFileSync(lock, other);
     expect(() => withWriteLock(file, () => "done")).toThrow(
@@ -269,7 +246,7 @@ describe("a lock naming this process", () => {
     ["not a number", "1"],
     ["null", null],
   ])("names no writer when its thread is %s", (_, bad) => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "200");
     writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname(), threadId: bad }));
     expect(() => withWriteLock(file, () => "done")).toThrow("which names no writer");
   });
@@ -283,7 +260,7 @@ describe("acquiring the lock", () => {
     "EMFILE",
     "ENFILE",
   ])("retries a create that fails with %s", (code) => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "2000";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "2000");
     const open = fs.openSync;
     let failures = 3;
     vi.spyOn(fs, "openSync").mockImplementation((path, flags, mode) => {
@@ -295,7 +272,7 @@ describe("acquiring the lock", () => {
   });
 
   it("names the error when a create keeps failing past the deadline", () => {
-    process.env.KUMIKI_WRITE_LOCK_WAIT_MS = "200";
+    vi.stubEnv("KUMIKI_WRITE_LOCK_WAIT_MS", "200");
     const open = fs.openSync;
     vi.spyOn(fs, "openSync").mockImplementation((path, flags, mode) => {
       if (String(path) === lock && flags === "wx") throw errno("EMFILE");

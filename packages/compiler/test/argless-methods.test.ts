@@ -1,10 +1,8 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { compileOrFail } from "./helpers/module.ts";
+import { withRoot } from "./helpers/programs.ts";
 
-// Issue #7: docs/spec/stdlib.md §2.2 argument-less methods. Both call shapes must
-// work — `recv.m` (FieldAccess, the spec-recommended shortcut) and `recv.m()`
-// (MethodCall). Each is written on a receiver §2.2 lists it for: a member of
-// one receiver is E0108 on another.
 const ARGLESS: [method: string, receiver: string][] = [
   ["head", "xs"],
   ["tail", "xs"],
@@ -34,22 +32,16 @@ app A
     init   = []`;
 }
 
-const compileOk = (src: string): string => {
-  const r = compile(src, { runtimeSpecifier: "./runtime.js" });
-  if (r.kind !== "ok") throw new Error(`compile failed: ${JSON.stringify(r)}`);
-  return r.js;
-};
-
-describe("argument-less stdlib methods (issue #7)", () => {
+describe("argument-less stdlib methods", () => {
   it("the parenthesized form no longer trips E0801", () => {
     const body = ARGLESS.map(([m, v]) => `heading((${v}.${m}()).show)`).join(", ");
-    const errs = check(parse(lex(appSrc(body))));
+    const errs = checkSource(appSrc(body));
     expect(errs.filter((e) => e.code === "E0801")).toEqual([]);
   });
 
   it("the no-paren form lowers to the runtime helper, not a silent `undefined`", () => {
     const body = ARGLESS.map(([m, v]) => `heading((${v}.${m}).show)`).join(", ");
-    const js = compileOk(appSrc(body));
+    const js = compileOrFail(appSrc(body));
     expect(js).toContain("_s.listHead(");
     expect(js).toContain("_s.listTail(");
     expect(js).toContain("_s.listLast(");
@@ -60,25 +52,20 @@ describe("argument-less stdlib methods (issue #7)", () => {
     expect(js).toContain("_s.parseFloatOpt(");
     expect(js).toContain("Math.abs(");
     expect(js).toContain("Math.trunc(");
-    // None of the 12 may fall through to the record-field accessor `(base)["m"]`
-    // (the old silent-`undefined` bug). Guards against a future forgotten case.
     for (const [m] of ARGLESS) expect(js, m).not.toContain(`["${m}"]`);
   });
 
   it("the parenthesized form lowers identically", () => {
     const body = ARGLESS.map(([m, v]) => `heading((${v}.${m}()).show)`).join(", ");
-    const js = compileOk(appSrc(body));
+    const js = compileOrFail(appSrc(body));
     expect(js).toContain("_s.listHead(");
     expect(js).toContain("_s.toOption(");
     expect(js).toContain("Math.trunc(");
   });
 });
 
-// `t.parse-int` is `Int.parse(t)` and `t.parse-float` is `Float.parse(t)`
-// (stdlib §2.2.6): every spelling of a reading — the method, `T.parse` on the
-// base or on a type declared over it, and the reader of an `input` bound to
-// one — lowers to the one runtime helper for its base, so no spelling carries
-// a copy of the rule of its own.
+// No spelling of a reading carries a copy of the rule of its own, so none can read a text
+// differently from the others.
 describe("every spelling of an Int or Float reading lowers to the one helper", () => {
   const src = `type Cents = nominal Int where positive
 type Ratio = nominal Float
@@ -109,12 +96,48 @@ app A
   const calls = (js: string, helper: string): number => js.split(`_s.${helper}(`).length - 1;
 
   it("reads every Int and every Float through its base's helper", () => {
-    const js = compileOk(src);
+    const js = compileOrFail(src);
     // Int.parse, Cents.parse, the bound `n`'s reader, and .parse-int.
     expect(calls(js, "parseIntOpt")).toBe(4);
     // Float.parse, Ratio.parse, the bound `x`'s reader, and .parse-float().
     expect(calls(js, "parseFloatOpt")).toBe(4);
     // The decimal-digit pattern is the helper's, and appears nowhere else.
     expect(js).not.toContain("[0-9]");
+  });
+});
+
+describe("a method called with too few arguments is E0213", () => {
+  it("reports the zero-arg call `check` used to pass", () => {
+    const src = withRoot("text(stamp(Time.now))", "fn stamp(t: Time) -> Text = t.format()");
+    expect(codesOf(src)).toEqual(["E0213"]);
+  });
+
+  it("covers the methods that were already like this, not only the new one", () => {
+    const joinSrc = withRoot(
+      "text(j(xs))",
+      `slot xs : List(Text) = []
+fn j(l: List(Text)) -> Text = l.join()`,
+    );
+    expect(codesOf(joinSrc)).toEqual(["E0213"]);
+  });
+
+  it("enforces the minimum, not an exact count", () => {
+    const one = withRoot(
+      "text(v(m))",
+      `slot m : Map(Text, Text) = {}
+fn v(x: Map(Text, Text)) -> Text = x.get-or("k", "fallback")`,
+    );
+    expect(codesOf(one)).toEqual([]);
+    const opt = withRoot(
+      "text(v(m))",
+      `slot m : Map(Text, Text) = {}
+fn v(x: Map(Text, Text)) -> Text = x.get("k").get-or("fallback")`,
+    );
+    expect(codesOf(opt)).toEqual([]);
+  });
+
+  it("says nothing about a method that takes none", () => {
+    const src = withRoot("text(n.show)", "slot n : Int = 0");
+    expect(codesOf(src)).toEqual([]);
   });
 });
