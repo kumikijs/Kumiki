@@ -397,6 +397,72 @@ describe("kumiki lock / unlock", () => {
   });
 });
 
+// Each case runs in a directory of its own, so a file the verb leaves beside the source, or a
+// change to one it was given, shows up.
+describe("a lock file not in the shape lock writes", () => {
+  const SOURCE = `${CLEAN}slot spare : Int = 0\n`;
+  // `patterns` is one string, not a list of one: read a character at a time,
+  // its `*` would lock every definition.
+  const LOCKS = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+  const OPS = "ops.jsonl";
+  const ADDED = "op_0000000000AAAAAAAAAAAAAAAA";
+  /** An op log in which `ADDED` added `slot.spare`, so it can be reverted. */
+  const LOG = `${JSON.stringify({
+    op: "add",
+    layer: "slot",
+    name: "spare",
+    body: "Int = 0",
+    author: "agent:a",
+    ts: 0,
+    "op-id": ADDED,
+    "parent-ops": [],
+    "depends-on": [],
+  })}\n`;
+
+  /** A command line for each verb that reads the lock file, given the source file and its directory. */
+  const CASES: Array<(file: string, at: string) => string[]> = [
+    (f) => ["add", f, "slot", "x", "Int", "=", "1"],
+    (f) => ["replace", f, "tile.App", "column(heading(count.show))"],
+    (f) => ["remove", f, "slot.spare"],
+    (f) => ["rename", f, "slot.spare", "extra"],
+    (f) => ["edit", f, "slot.spare", JSON.stringify({ find: "0", replace: "1" })],
+    (f, at) => ["patch", "apply", f, join(at, OPS)],
+    (f) => ["patch", "revert", f, ADDED],
+    (f) => ["lock", f, "agent:b", "tile.*"],
+    (f) => ["unlock", f, "agent:a"],
+  ];
+
+  for (const argv of CASES) {
+    const label = argv("app.kumiki", ".").join(" ");
+    it(
+      `kumiki ${label} exits 1 naming the lock file and what is wrong with it, and changes no file`,
+      SPAWN,
+      () => {
+        const at = tempDir();
+        const file = join(at, "app.kumiki");
+        const locks = `${file}.kumiki-locks.json`;
+        const files: Record<string, string> = {
+          "app.kumiki": SOURCE,
+          "app.kumiki.kumiki-locks.json": LOCKS,
+          "app.kumiki.kumiki-ops.jsonl": LOG,
+          [OPS]: `${JSON.stringify({ op: "add", layer: "slot", name: "x", body: "Int = 1" })}\n`,
+        };
+        for (const [name, content] of Object.entries(files)) writeFileSync(join(at, name), content);
+
+        const refusal = `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
+        const verb = argv(file, at);
+        const said =
+          verb[0] === "patch" && verb[1] === "apply" ? `patch apply rejected: ${refusal}` : refusal;
+        expect(runCli(verb)).toMatchObject({ stdout: "", stderr: `Error: ${said}\n`, code: 1 });
+        expect(readdirSync(at).sort()).toEqual(Object.keys(files).sort());
+        for (const [name, content] of Object.entries(files)) {
+          expect(readFileSync(join(at, name), "utf8"), name).toBe(content);
+        }
+      },
+    );
+  }
+});
+
 // Each case runs in a directory of its own holding only the other files the verb is given, so a
 // sidecar (a write lock, an op log, a build directory, Vite's cache) left beside the missing file
 // shows up as a name that was not there before.
