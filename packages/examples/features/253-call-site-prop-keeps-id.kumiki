@@ -1,4 +1,4 @@
-# Feature (language.md §1.7.3, §1.6.2): a data prop written where a user tile
+# Feature (language.md): a data prop written where a user tile
 # is called is merged onto what the tile renders one prop at a time. It
 # replaces the prop of the same name, and every prop the call site does not
 # write stays as the tile wrote it, in the rendered element and in the `$el` a

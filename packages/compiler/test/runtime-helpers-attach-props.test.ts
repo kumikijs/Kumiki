@@ -1,10 +1,3 @@
-// `_attachProps` on its own, with no mount (language.md §1.7.3).
-//
-// It ships as source text in `RUNTIME_HELPERS`, inlined at the top of every
-// compiled app, so it is evaluated here the same way. A mounted program says
-// whether a reducer fired; these say which prop each field of the merged node
-// came from.
-
 import { describe, expect, it } from "vitest";
 import { RUNTIME_HELPERS } from "../src/codegen/runtime-helpers.ts";
 
@@ -16,7 +9,7 @@ const { _attachProps } = new Function(`${RUNTIME_HELPERS}\nreturn { _attachProps
   _attachProps: (node: Tree, props: Props | undefined) => Tree;
 };
 
-/** The button `tile Ghost = button(text="Ghost", id="three") {todoId: 7}` renders. */
+// What `tile Ghost = button(text="Ghost", id="three") {todoId: 7}` renders.
 const ghost = (): Node => ({
   kind: "button",
   text: "Ghost",
