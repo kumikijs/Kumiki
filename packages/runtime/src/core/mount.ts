@@ -328,8 +328,8 @@ export function mountCore(
 
   // A host logger written against an older `EpisodeLogger` can record a step and
   // answer no id, so fall back to the open episode as `fireAppError` does.
-  function renderPanic(e: unknown, site: string): RenderPanic {
-    const { rec, episodeId } = recordRenderPanic(episode, e, site);
+  function renderPanic(e: unknown, site: string, handled?: boolean): RenderPanic {
+    const { rec, episodeId } = recordRenderPanic(episode, e, site, handled);
     return { rec, episodeId: episodeId ?? safeEpisodeId() };
   }
 

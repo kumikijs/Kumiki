@@ -789,8 +789,9 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 - `name`: 本体が throw した reducer（throw が reducer 由来のとき）。`location` は散文であり、replay には鍵が要る。`render` / `hydrate` の panic では無い。
 - `env-reads`: その本体が throw する前に読んだ値。`reducer` step と同じ形である。throw した reducer は `reducer` step を**残さない**ので、この 2 つが無ければ、ユーザがバグ報告に添える episode — つまりクラッシュしたもの — こそが replay で再現できないものになる：環境を読み直し、別の分岐を通り、最後まで完走してしまう。
+- `handled`: `error-boundary` がその panic を捕捉して fallback を描画したとき `true` —— プログラムがそれを処理した（[lifecycle.md §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。それ以外の `panic` step には**無く**、これを持たない step は何も処理しなかった panic である。`app.error` reducer は panic を処理済みにしない：reducer の panic を知らされるだけであり、その panic は検証 tier が監視するコンソールにも報告される。panic が処理済みかどうかは、panic を誰かに報告するツールが問うことである —— 開発サーバの error overlay は未処理の panic で開き、処理済みの panic では開かない（[§10.7](#_10-7-development-server)）—— そして `@kumikijs/runtime` はその規則を `isUnhandledPanic(step)` として export する。それを言うのはこのフィールドであって、step の `location` でも episode の step 列の中での位置でもない：捕捉された panic が episode の最後の step になることもあれば、未処理の panic の後に dispatch がその後で記録する step が続くこともある。
 
-`category` が `tile-render` の `panic` step の `location` は、panic を捕捉した場所を名指す：どの `error-boundary` も捕捉しなかったものは `render`、差分処理自身の安全網は `reconcile`、境界が捕捉したものはその境界を宣言した tile である。捕捉された panic も記録される —— 描画を囲んで開いている episode、すなわちその fallback の `episode-id` が名指す episode に —— そして他の `panic` step と同じく、その episode を `status: "panic"` にする。開いている episode に囲まれていない描画は何も記録しない。
+`category` が `tile-render` の `panic` step の `location` は、panic を捕捉した場所を名指す：どの `error-boundary` も捕捉しなかったものは `render`、差分処理自身の安全網は `reconcile`、境界が捕捉したものはその境界を宣言した tile である。捕捉された panic も記録される —— 描画を囲んで開いている episode、すなわちその fallback の `episode-id` が名指す episode に、`handled: true` を付けて —— そして他の `panic` step と同じく、その episode を `status: "panic"` にする：status は episode が `panic` step を持つことを言い、`handled` はそれを何かが処理したかを言う。開いている episode に囲まれていない描画は何も記録しない。
 
 **遅延 policy effect の帰属。** `policy=debounce(d)` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に `setTimeout` が満了する。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、満了後の `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。`debounce` timer が発火前に置換された場合、元 episode に `effect-cancel` step (`targetId = <effect-name>`) を残し、その episode は `effect-end` なしで `status="completed"` として commit する。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
 
@@ -830,7 +831,7 @@ kumiki replay --until-step 5                # 途中まで
   - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`mount` と同じ解決で先に処理され、その行き先が描画される。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、行き先を指す。
   - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。クライアントのルーターがロケーションを読むのと同じ方法で分割され、pathname は**書かれたとおりに**照合される：`//foo` や `/a/../b` は正規化されない。ブラウザの `location.pathname` がそれらを保つためであり、サーバーはクライアントと同じ場所に行き着かなければならない。
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
-- ページを配信する描画は、`app.init` の因果連鎖をまとめたブートストラップエピソード（`trigger.kind = "ssr.hydrate"`）の最後の段であり、その episode の内側で走って、episode は描画の後に commit される。何も panic しない描画は何も足さない。描画中に `error-boundary` が捕捉した panic は、連鎖の step の後に `panic` step（`category: "tile-render"`、`location` は境界を宣言した tile — [§10.5.1](#_10-5-1-structure-of-an-episode)）を足し、episode を `status: "panic"` にする。HTML に配信される fallback は、そのブートストラップエピソードの id を `episode-id` として持つ（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。どの境界も捕捉しない描画 panic はここには記録されず、`renderToString` から throw として抜ける。
+- ページを配信する描画は、`app.init` の因果連鎖をまとめたブートストラップエピソード（`trigger.kind = "ssr.hydrate"`）の最後の段であり、その episode の内側で走って、episode は描画の後に commit される。何も panic しない描画は何も足さない。描画中に `error-boundary` が捕捉した panic は、連鎖の step の後に `panic` step（`category: "tile-render"`、`location` は境界を宣言した tile、`handled: true` — [§10.5.1](#_10-5-1-structure-of-an-episode)）を足し、episode を `status: "panic"` にする。HTML に配信される fallback は、そのブートストラップエピソードの id を `episode-id` として持つ（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。どの境界も捕捉しない描画 panic はここには記録されず、`renderToString` から throw として抜ける。
 - **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` のボックス寸法、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
   - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
   - **配信されない**のは、インライン宣言では運べないもの：`transition` と `hover:` / `focus:` / `active:` ブロック、`motion` 層は注入された CSS に紐づくクラスであり、hydration 時にクライアントが付ける。イベントハンドラ・フォーカス状態・解決済みの `icon` SVG も同様 — プレースホルダはレンダラが書くのと同じ要素・同じ属性だが、クライアントがパスを解決するまでは空でサイズも無いので、icon の到着は後続を動かす。テーマのスタイルシートが塗るものも同じ理由で配信されない：`card` の面・境界・影、`button` / `input` / `link` のリングはクライアントがマウント時に注入する規則であり、サーバはそれらを欠いた箱を配信する。
@@ -862,7 +863,7 @@ Cloudflare Workers / Vercel Edge 等での SSR：
 
 ---
 
-## 10.7 開発サーバ
+## 10.7 開発サーバ {#_10-7-development-server}
 
 ```bash
 kumiki dev                          # 開発サーバ起動
@@ -874,7 +875,7 @@ kumiki dev --strict-a11y
 機能：
 
 - ホットリロード（コード変更時、slot は維持）
-- error overlay（panic 時に詳細表示）
+- error overlay（何も処理しなかった panic の詳細表示：最新の episode の `panic` step のうち `handled: true` を持たない最初のもの —— [§10.5.1](#_10-5-1-structure-of-an-episode) —— を、その episode の step 列のどこにあっても表示する。`error-boundary` が捕捉した panic では overlay は開かず、timeline がその step を処理済みとして示す）
 - episode timeline panel（最近の episode を視覚化）
 - inspector（slot 値、tile ツリー、依存グラフ）
 

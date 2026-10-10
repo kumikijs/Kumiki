@@ -268,7 +268,7 @@ describe("a boundary fallback served by renderToString", () => {
     return app;
   };
 
-  it("names the bootstrap episode, which records the panic after the init chain", async () => {
+  it("names the bootstrap episode, which records the panic as handled after the init chain", async () => {
     let n = 0;
     const result = await renderToString(withBoundary(), {
       providers: { "http.get": userProvider() },
@@ -289,6 +289,7 @@ describe("a boundary fallback served by renderToString", () => {
       message: "no avatar for Yui",
       location: "Profile",
       category: "tile-render",
+      handled: true,
     });
     expect(boot.status).toBe("panic");
     expect(result.snapshot.bootstrap).toBe(boot);
