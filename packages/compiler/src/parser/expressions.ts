@@ -32,16 +32,16 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseLogicOr(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseLogicAnd();
-    let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = "|" as BinOp;
       this.next();
-      const rhs = this.parseLogicAnd();
+      const rhs = this.descend(() => this.parseLogicAnd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
@@ -74,54 +74,54 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseLogicAnd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseCmp();
-    let built = 0;
     while (this.matchOp("&&") || this.matchOp("&")) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       this.next();
-      const rhs = this.parseCmp();
+      const rhs = this.descend(() => this.parseCmp());
       lhs = { kind: "BinOp", op: "&", lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseCmp(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseAdd();
-    let built = 0;
     while (this.matchAnyOp(["==", "!=", "<", ">", "<=", ">="])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseAdd();
+      const rhs = this.descend(() => this.parseAdd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseAdd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseMul();
-    let built = 0;
     while (this.matchAnyOp(["+", "-"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseMul();
+      const rhs = this.descend(() => this.parseMul());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseMul(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseUnary();
-    let built = 0;
     while (this.matchAnyOp(["*", "/", "%"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseUnary();
+      const rhs = this.descend(() => this.parseUnary());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
@@ -133,8 +133,14 @@ export class ExpressionParser extends TypeParser {
       else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
       else break;
     }
-    this.widen(prefixes.length);
+    // The operand is read after the run, at this level, so how deep it goes is known
+    // only once it is read; the run is charged at its first token both before and after.
+    const at = this.peek().pos;
+    this.charge(prefixes.length, at);
+    if (prefixes.length === 0) return this.parsePostfix();
+    const enclosing = this.measure();
     let e = this.parsePostfix();
+    this.charge(this.measured(enclosing) + prefixes.length, at);
     for (const prefix of prefixes.reverse()) {
       e = { kind: "UnaryOp", op: prefix.op, rhs: e, pos: prefix.pos };
     }
@@ -142,12 +148,11 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parsePostfix(): Expr {
+    const chain = this.startChain();
     let e = this.parsePrimary();
-    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         const dotTok = this.next();
         const fldTok = this.peek();
         if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
@@ -203,8 +208,7 @@ export class ExpressionParser extends TypeParser {
           e = { kind: "FieldAccess", base: e, field: fld, pos: e.pos };
         }
       } else if (this.matchOp("[")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -213,6 +217,7 @@ export class ExpressionParser extends TypeParser {
         break;
       }
     }
+    this.endChain(chain);
     return e;
   }
 
