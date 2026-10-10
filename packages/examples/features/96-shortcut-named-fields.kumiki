@@ -1,4 +1,4 @@
-# Feature (language.md §1.6.3): a member name is dispatched, not reserved.
+# Feature: a member name is dispatched, not reserved.
 #
 # The lvalue step set is closed — a field, an index, and `.get` on an Option or
 # Result — so `text.length := 9` is E0602 rather than a write. That rule has to
@@ -57,7 +57,7 @@ reducer stretch on=ui.click(Stretch)
     do= draft.get.length := 99
 
 # An index step, the third member of the closed set, here on a Map — the shape
-# §1.6.3's own example uses. `101-list-index-write.kumiki` writes through an
+# the spec's own example uses. `101-list-index-write.kumiki` writes through an
 # index into a List.
 reducer mark on=ui.click(Mark)
     do= marks["a"] := 1

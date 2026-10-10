@@ -1,31 +1,9 @@
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
-// `stdlib.md` §2.4 gives the type-member calls a result type — `T.fresh()` is a
-// `T` and `T.parse(t)` is an `Option(T)` — and `inferType` had neither. So
-// `TodoId.fresh()` was undecidable, and an undecidable expression is accepted
-// everywhere: `slot p : PostId` took a `UserId.fresh()` without a word, which
-// is the one mistake `nominal` exists to catch and the position it matters most
-// in, `.fresh` being how an id is normally minted (#348).
-//
-// `Duration` and `Bytes` are the carve-out: their other members are
-// constructors, so the qualifier keeps answering for those — but not for
-// `parse`, which is the type member for them as for every other type.
-//
-// Expectations are the whole diagnostic list, not a filtered one — a stray
-// extra report on a program called clean here is exactly what would ship.
-
-const errsOf = (src: string) => check(parse(lex(src)));
-const app = (defs: string): string =>
-  `${defs}
-tile B = button(text="x")
-tile App = column(B)
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`;
-
-const diagnostics = (src: string) => errsOf(app(src)).map((e) => `${e.code} ${e.message}`);
+const diagnostics = (src: string) => summariesOf(withButtonApp(src));
 
 const IDS = `type PostId = nominal Text where uuid
 type UserId = nominal Text where uuid
@@ -65,25 +43,11 @@ slot h : Handle = "a"
 slot d : Deep   = "b"`;
     // An alias names the same type, so it mints the same one.
     expect(inReducer(src, `h := Alias.fresh()`)).toEqual([]);
-    // `Deep` was declared a `Handle`, so it goes where a `Handle` is wanted;
-    // the reverse is the mistake the narrowing was written to catch.
     expect(inReducer(src, `h := Deep.fresh()`)).toEqual([]);
     expect(inReducer(src, `d := Handle.fresh()`)).toEqual(["E0201 Expected Deep but got Handle"]);
   });
 });
 
-/**
- * `fresh` is narrower than `parse`, and the lowering is why: codegen answers
- * every `T.fresh()` with the same `_s.freshId()` — a uuid `Text`, whatever `T`
- * says. So the call has a value only for a type a `Text` inhabits, which is
- * what stdlib §2.4.1 scopes `fresh` to in the first place.
- *
- * Anywhere else the call is E0802, as `T.parse` on a type with no reading of a
- * text is: there is no uuid that is an `Int`. It used to be accepted and left
- * untyped, which stopped being harmless once a key reader restored keys by
- * their declared type — a `nominal Int` id minted by `fresh` and read back from
- * a `Set` became `NaN`, with `check` and `build` both saying ok.
- */
 describe("fresh on a type a uuid Text is not", () => {
   const E0802 = (t: string) =>
     `E0802 "${t}" is not a Text, and fresh mints a uuid Text — declare the id nominal Text`;
@@ -145,15 +109,6 @@ describe("<Type>.parse(t) is an Option(<Type>)", () => {
   });
 });
 
-/**
- * `parse` is lowered by the base its qualifier unaliases to, not by its name,
- * so the types it reads are exactly the bases that have a reading of a text:
- * `Int`, `Float`, `Time`, `Bool`, `Text` and `Bytes`. Anything else — a record,
- * a union, `File`, `EffectId`, `Unit` — has nothing of its type to produce, so
- * the call is reported where it is written instead of being answered with one.
- * A type constructor written without its arguments is not a type at all, and
- * that is reported first, as E0124, on `parse` as on every other member.
- */
 describe("a parse whose qualifier has no reading of a text", () => {
   const E = (qualifier: string) =>
     `E0802 "${qualifier}" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`;
@@ -176,14 +131,6 @@ describe("a parse whose qualifier has no reading of a text", () => {
     ).toEqual([E("Doc")]);
   });
 
-  // A constructor still wanting its arguments names no complete type, so the
-  // call has no `Option(T)` to infer and nothing to lower to. It is a type name,
-  // so E0117 does not answer it either — and `check` used to say `ok` while
-  // `build` threw on it. It is not a type at all, which is the one thing to say
-  // about it: E0124, and no E0802 on top for the reading it cannot have.
-  // The repair has to land on a type `parse` can read into, not just any type:
-  // `type IntList = List(Int)` then `IntList.parse` is E0802 on the next
-  // round, so the message names the second half of the repair up front.
   const PARSE_BASE =
     " and whose base has a reading of a text (Int, Float, Time, Bool, Text or Bytes)";
   it("reports a type constructor written without its arguments", () => {
@@ -233,8 +180,6 @@ slot t : Option(Tally) = Tally.parse("4")`),
     ]);
   });
 
-  // The definition is what is wrong there, and it is reported at the
-  // definition. The parse has no base to judge, so it adds nothing.
   it("adds nothing to an alias that resolves to nothing", () => {
     expect(
       diagnostics(`type Foo = Bar\nslot o : Option(Int) = None
@@ -263,13 +208,6 @@ describe("the text a parse reads", () => {
   });
 });
 
-/**
- * `check` and `build` are two guarantees about one program, and a parse that
- * passes the first and throws out of the second is the worst of both: the
- * author is told the program is fine and then handed a stack trace. So every
- * qualifier shape is compiled here, and a clean `check` has to mean a built
- * program.
- */
 describe("a parse that checks clean compiles", () => {
   const DEFS = `type Point = {x: Int}
 type Tone = Hi | Lo
@@ -309,10 +247,10 @@ type Tally = nominal Cents`;
   it("builds every qualifier check accepts", () => {
     let clean = 0;
     for (const q of QUALIFIERS) {
-      const src = app(
+      const src = withButtonApp(
         `${DEFS}\nslot o : Text = ""\nreducer r on=ui.click(B) do= o := ${q}.parse("x").show`,
       );
-      if (errsOf(src).some((e) => e.severity !== "warning")) continue;
+      if (checkSource(src).some((e) => e.severity !== "warning")) continue;
       clean += 1;
       expect(compile(src, { runtimeSpecifier: "./runtime.js" }).kind, q).toBe("ok");
     }
@@ -330,12 +268,6 @@ describe("the qualifiers that keep their own answers", () => {
     expect(diagnostics(`slot b : Bytes = Bytes.from-text("x")`)).toEqual([]);
   });
 
-  // `parse` is the one member they share with the rule above, and it is the
-  // rule above that answers it: an `Option` of the qualifier, like every other
-  // type (stdlib §2.4.3). Both used to be caught by the namespace branch and
-  // answer the bare type, so the documented spelling was E0201 and the wrong
-  // one was clean. Each direction is asserted per qualifier, so a fix
-  // that moves only one of the four is caught.
   it("gives Duration.parse the Option the spec gives it", () => {
     expect(diagnostics(`slot o : Option(Duration) = Duration.parse("500")`)).toEqual([]);
     expect(diagnostics(`slot d : Duration = Duration.parse("500")`)).toEqual([
@@ -356,11 +288,6 @@ describe("the qualifiers that keep their own answers", () => {
   });
 });
 
-/**
- * A type only matters where it is read, and `fresh` / `parse` feed four places
- * an id normally travels through. The example asserts these in prose; these
- * assert them as diagnostics.
- */
 describe("where the minted type is read", () => {
   it("carries through a let binder", () => {
     expect(inReducer(IDS, `let id = UserId.fresh(); p := id`)).toEqual([
@@ -370,9 +297,6 @@ describe("where the minted type is read", () => {
   });
 
   it("carries through a match arm to the destination", () => {
-    // `match` is the idiomatic way to open the `Option` that `parse` produces.
-    // The arm value is checked against where the `match` lands, and the
-    // binder is typed, so the statement form reports as well.
     const body = (q: string) => `p := match ${q}.parse("a") with | Some(id) -> id | None -> p`;
     expect(inReducer(IDS, body("UserId"))).toEqual(["E0201 Expected PostId but got UserId"]);
     expect(inReducer(IDS, body("PostId"))).toEqual([]);
@@ -394,9 +318,7 @@ describe("where the minted type is read", () => {
     expect(diagnostics(`${IDS}\nfn mint() -> PostId = PostId.fresh()`)).toEqual([]);
   });
 
-  it("reaches the comparison operators, which is the #347 path", () => {
-    // A comparison has no destination, so this is the identity read
-    // symmetrically — and it is the shape a lookup or a router is written in.
+  it("reaches the comparison operators", () => {
     expect(
       inReducer(`${IDS}\nslot n : Int = 0`, `n := if p == UserId.fresh() then 1 else 2`),
     ).toEqual(['E0201 Operator "==" cannot compare PostId with UserId']);
@@ -408,11 +330,6 @@ describe("where the minted type is read", () => {
 
 describe("a qualifier that names no type infers nothing", () => {
   it("reports the undefined type once and nothing about the value", () => {
-    // E0117 owns this report (#276), and answering `null` is what keeps
-    // `qualifierType` honest rather than what keeps the count at one: `relate`
-    // short-circuits on a `TypeRef` it cannot unalias, so an inferred reference
-    // to a name with no definition would add nothing either way. The guard that
-    // does carry weight is the arity one, below.
     expect(inReducer(IDS, `p := Nope.fresh()`)).toEqual([
       'E0117 Reference to undefined type "Nope"',
     ]);
@@ -422,32 +339,16 @@ describe("a qualifier that names no type infers nothing", () => {
   });
 
   it("reads the qualifier by the one spelling rule the lowering does", () => {
-    // A Kumiki name may carry a hyphen and a qualifier may not, so `Post-Id`
-    // is not a type-member call under any spelling — E0116, the callee that
-    // does not resolve, rather than a type answered for a name codegen would
-    // never lower.
     expect(inReducer(IDS, `p := Post-Id.fresh()`)).toEqual([
       'E0116 Call to undefined function "Post-Id.fresh"',
     ]);
   });
 });
 
-/**
- * A qualifier that names a type *constructor* is not a type: `Box` wants its
- * `T`, `List` its element, `Tuple` however many it is given. There is no type
- * for `fresh` to mint or `show` to name, and three separate checks each
- * declined the call — E0117 (the name *is* a type's), E0116 (the callee
- * resolves), E0201 (nothing to compare) — so `slot n : Int = Box.fresh()`
- * put a uuid string in an `Int` slot with nothing reported. `parse` was
- * reported, but as a type with no reading of a text, which a phantom-parameter
- * nominal over `Text` is not; the missing arguments are the earlier mistake.
- */
 describe("a qualifier that is a type constructor, not a type", () => {
   const E = (name: string, args: string, callee: string) =>
     `E0124 Type "${name}" takes ${args}, so it is not a type on its own — "${callee}" needs one that takes none`;
 
-  // `fresh` repaired to an applied type still lands on E0802 unless a `Text`
-  // goes into it, so its message names that half too, as `parse`'s does.
   const FRESH = " and that a Text goes into";
 
   it("reports a declared constructor at the call", () => {
@@ -475,9 +376,6 @@ describe("a qualifier that is a type constructor, not a type", () => {
   });
 
   it("answers exactly as any other type for a qualifier that applies the constructor", () => {
-    // Naming the application is the repair: `IntBox` takes no arguments, so it
-    // is a type, and the call goes back to the rules above — and `fresh` on it
-    // is the E0802 of any type a uuid `Text` is not.
     expect(
       diagnostics(
         `type Box(T) = nominal List(T)\ntype IntBox = Box(Int)\nslot n : Int = IntBox.fresh()`,

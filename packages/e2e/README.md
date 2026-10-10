@@ -35,6 +35,6 @@ pnpm exec tsx packages/e2e/src/cli.ts \
 
 ## When to use it
 
-Within the 3-layer verification ([docs/spec/testing.md](../../docs/spec/testing.md) §8.10), this is the heaviest but most faithful layer. Day to day, run `kumiki check` / `kumiki smoke` / `kumiki run` (happy-dom, fast, CI standard), and use this tier for bugs involving focus, layout, or real rendering, or for final confirmation.
+Within the 3-layer verification ([docs/spec/testing.md](../../docs/spec/testing.md)), this is the heaviest but most faithful layer. Day to day, run `kumiki check` / `kumiki smoke` / `kumiki run` (happy-dom, fast, CI standard), and use this tier for bugs involving focus, layout, or real rendering, or for final confirmation.
 
 Because it's heavy (browser binaries), it's not included in the default `turbo run test`. To use it routinely in CI, add `playwright install chromium` to the workflow.
