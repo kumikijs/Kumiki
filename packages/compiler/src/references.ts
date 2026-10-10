@@ -28,6 +28,12 @@ export type Reference = {
   pos?: Pos;
 };
 
+// A string literal's position is its opening quote; `rename` checks for the old name at each
+// reference's position, so the reference points past the quote, where the name starts.
+function nameInString(literal: Pos): Pos {
+  return { line: literal.line, col: literal.col + 1 };
+}
+
 /** Definition names by layer, for resolving a bare name to a definition. */
 export type DefIndex = Record<RefLayer, Set<string>>;
 
@@ -352,11 +358,13 @@ class Walker {
           if (t.name === "link" && p.name === "prefetch") {
             // A bare ident or a string literal, both naming a reducer.
             if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
-            else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
+            else if (p.value.kind === "Str") {
+              this.add("reducer", p.value.value, nameInString(p.value.pos));
+            }
             continue;
           }
           if (p.name === "motion" && p.value.kind === "Str") {
-            this.add("motion", p.value.value, p.value.pos);
+            this.add("motion", p.value.value, nameInString(p.value.pos));
             continue;
           }
           this.expr(p.value, locals);
