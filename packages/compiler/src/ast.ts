@@ -1,4 +1,4 @@
-import type { KeyKind } from "@kumikijs/runtime";
+import type { IndexedDbStore, KeyKind } from "@kumikijs/runtime";
 
 export type Pos = { line: number; col: number };
 
@@ -57,8 +57,6 @@ export type TestDef = {
 };
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
-
-export type DuplicateName = { name: string; pos: Pos };
 
 export type ThemeDef = {
   kind: "ThemeDef";
@@ -153,11 +151,7 @@ export type AppHttpConfig = {
   pos: Pos;
 };
 
-export type AppIndexedDbStore = {
-  name: string;
-  key: string;
-  indexes?: string[];
-};
+export type AppIndexedDbStore = IndexedDbStore;
 
 export type AppIndexedDbConfig = {
   name: string;
@@ -181,6 +175,8 @@ export type AppAnalyticsConfig = {
 };
 
 export type NamedRef = { readonly name: string; readonly pos: Pos };
+
+export type DuplicateName = NamedRef;
 
 export type AppDef = {
   kind: "AppDef";

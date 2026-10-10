@@ -1,6 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type CompileResult, compile, generateDts, LexError, ParseError } from "@kumikijs/compiler";
+import {
+  type CompileResult,
+  compile,
+  generateDts,
+  LexError,
+  ParseError,
+  type Pos,
+} from "@kumikijs/compiler";
 import {
   type CapabilityLookup,
   CapabilityManifestError,
@@ -89,10 +96,7 @@ function pluginLocalRuntime(ctx: Rollup.PluginContext): string | null {
  * The compiler counts columns from 1, as `kumiki check` prints them; Rollup's `loc.column` counts from 0 (its `line` counts from 1), and Vite's code frame adds it to the offset of the line's start.
  * Every located report goes through here so the overlay's caret lands on the character the compiler named.
  */
-function locOf(
-  file: string,
-  pos: { line: number; col: number },
-): { file: string; line: number; column: number } {
+function locOf(file: string, pos: Pos): { file: string; line: number; column: number } {
   return { file, line: pos.line, column: pos.col - 1 };
 }
 
