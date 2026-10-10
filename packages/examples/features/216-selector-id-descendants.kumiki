@@ -1,4 +1,4 @@
-# Feature (language.md §1.6.2): `Tile#id` on a container matches the id of the
+# Feature (language.md): `Tile#id` on a container matches the id of the
 # descendant that dispatched the event, in either spelling of the id.
 #
 # A selector on a container is wired onto the descendants that fire the event:
@@ -8,7 +8,7 @@
 # `Toolbar#discard` the button `DiscardBtn` renders inside it. The row's own
 # `{id: "toolbar"}` is never what a click dispatches.
 #
-# `id="…"` and `{id: "…"}` are one prop (§1.7.1): `Clear#clear` matches
+# `id="…"` and `{id: "…"}` are one prop: `Clear#clear` matches
 # `button(text="Clear", id="clear")`.
 #
 # Which descendants a selector reaches depends on the event. In `Search`, a
