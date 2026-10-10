@@ -144,6 +144,21 @@ test round-trips =
 `;
       expect(refsOf(src, "test.round-trips")).toContain("reducer.inc@8:33");
     });
+
+    it("reads a call to a declared fn run-reducer as a call to the fn", () => {
+      // A declared fn wins over the builtin of its name, so the argument is a value, not a reducer.
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := run-reducer(count)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.inc")).toEqual([
+        "tile.B@3:25",
+        "slot.count@3:32",
+        "fn.run-reducer@3:41",
+        "slot.count@3:53",
+      ]);
+    });
   });
 
   describe("the app definition", () => {

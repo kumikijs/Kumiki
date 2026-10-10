@@ -7,7 +7,9 @@ import {
   QUALIFIED_CALL_NAMESPACES,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
+  UNQUALIFIED_BUILTIN_CALLS,
 } from "../src/builtin-calls.ts";
+import { jsBinding } from "../src/codegen/context.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 import { compileOrFail, fnLowering } from "./helpers/module.ts";
 
@@ -208,6 +210,118 @@ test round-trips =
         invariant = run-reducer(inc).slots.count == count + 1
 `;
     expect(checkSource(src)).toEqual([]);
+  });
+});
+
+// Generated from the table the checker and codegen both decide by, so a builtin added to it is
+// held to this without a line here.
+describe("a declared fn wins over a builtin of its name", () => {
+  const NAMES = [...UNQUALIFIED_BUILTIN_CALLS, ...UNIMPLEMENTED_CALLS];
+  const isKeyword = (name: string) => lex(name)[0]?.kind === "kw";
+
+  // Two `Int`s to an `Int` is no builtin's signature, so a call checked or lowered as the builtin
+  // cannot pass for the fn's.
+  const declaring = (name: string) => `slot a : Int = 0
+slot b : Int = 0
+slot xs : List(Int) = [1, 2]
+fn ${name}(x: Int, y: Int) -> Int = x + y
+fn viaFn(x: Int) -> Int = ${name}(x, 10)
+reducer r on=ui.click(B) do=
+  a := ${name}(a, 1)
+  b := xs.fold(0, ${name})
+tile B = button(text="b")
+tile App = column(B, text(${name}(a, 2).show), text(viaFn(b).show))
+tile Missing = text("missing")
+app A caps=[] routes={"/" -> App, "/404" -> Missing} init=[]
+test r-adds =
+    reducer-test r
+        given  = {slots: {a: ${name}(0, 0), b: 0, xs: [1]}, event: {type: ui.click, target: B}}
+        expect = {slots: {a: ${name}(0, 1), b: 1}, effects: []}
+test holds =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {a: n}, event: {type: ui.click, target: B}}
+        invariant = ${name}(n, 0) >= n
+`;
+
+  const OWN = "plus";
+
+  // Codegen alone, so the lowering is asserted whatever the checker says.
+  const emit = (name: string, src = declaring(name)) =>
+    codegen(parse(lex(src)), { runtimeSpecifier: "./runtime.js", includeTests: true }).js;
+
+  it("is a program the checker accepts under a name no builtin has", () => {
+    expect(checkSource(declaring(OWN))).toEqual([]);
+  });
+
+  it("reaches every name but the one the lexer reserves", () => {
+    expect(NAMES.filter(isKeyword)).toEqual(["now"]);
+    expect(() => parse(lex(declaring("now")))).toThrow("Expected ident, got kw(now)");
+  });
+
+  const DECLARABLE = NAMES.filter((n) => !isKeyword(n));
+
+  it.each(DECLARABLE)("checks a call to fn %s against the fn's signature", (name) => {
+    expect(checkSource(declaring(name))).toEqual([]);
+  });
+
+  it.each(DECLARABLE)("lowers every call to fn %s to the fn", (name) => {
+    // A builtin lowers through `_s.`, which the look-behind leaves alone.
+    const calls = new RegExp(`(?<![.\\w$])${jsBinding(name)}\\(`, "g");
+    expect(emit(name).replace(calls, `${OWN}(`)).toBe(emit(OWN));
+  });
+
+  it("leaves the reducer statement `panic(message)` the builtin", () => {
+    const src = `slot t : Text = ""
+fn panic(x: Text) -> Text = "soft " + x
+reducer r on=ui.click(B) do=
+  t := panic("expr")
+  panic("stmt")
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(checkSource(src)).toEqual([]);
+    const js = emit("panic", src);
+    expect(js).toContain('_next["t"] = panic("expr");');
+    expect(js).toContain('_s.panic("stmt");');
+    expect(js).not.toContain('_s.panic("expr")');
+  });
+
+  it("leaves run-reducer the builtin where no fn has the name", () => {
+    const src = `slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test holds =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == n + 1
+`;
+    expect(checkSource(src)).toEqual([]);
+    const js = emit("run-reducer", src);
+    expect(js).toContain('_s.runReducerStep(App, _init, "inc", _event)');
+    expect(js).toContain('reducers: { total: ["inc"], used: ["inc"] }');
+  });
+
+  it("counts no reducer as run by a property-test call to fn run-reducer", () => {
+    // Called as the fn, `inc` is the for-all value of that name, and no reducer runs.
+    const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test holds =
+    property-test
+        for-all   = {inc: Int}
+        given     = {slots: {count: inc}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc) == inc + 1
+`;
+    expect(checkSource(src)).toEqual([]);
+    expect(emit("run-reducer", src)).toContain('reducers: { total: ["inc"], used: [] }');
   });
 });
 

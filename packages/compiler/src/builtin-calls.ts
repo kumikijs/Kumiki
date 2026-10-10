@@ -12,6 +12,16 @@ export const BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["prefers-dark", exactly(0)],
 ]);
 
+// Kept out of BUILTIN_CALLS: it lowers only inside a property-test trial, where `_init` and
+// `_event` are bound, so a call anywhere else must stay undefined.
+export const RUN_REDUCER = "run-reducer";
+
+// The names a program's `fn` can share with a builtin, since a `fn` name takes no qualifier.
+export const UNQUALIFIED_BUILTIN_CALLS: ReadonlySet<string> = new Set([
+  ...BUILTIN_CALLS.keys(),
+  RUN_REDUCER,
+]);
+
 /** Callees codegen lowers by their full `Qualifier.member` name. */
 export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["EffectId.none", exactly(0)],
@@ -64,6 +74,13 @@ export function builtinArity(callee: string): BuiltinArity | undefined {
 /** Whether codegen has a lowering for `callee`. */
 export function isBuiltinCallee(callee: string): boolean {
   return builtinArity(callee) !== undefined;
+}
+
+// A `fn` the program declares under a builtin's name wins. Codegen and the checker both ask this,
+// so they cannot read one name two ways.
+export function callsBuiltin(callee: string, declaresFn: (name: string) => boolean): boolean {
+  if (UNQUALIFIED_BUILTIN_CALLS.has(callee)) return !declaresFn(callee);
+  return isBuiltinCallee(callee);
 }
 
 export function calleeCandidates(fnNames: Iterable<string>, missing?: string): string[] {

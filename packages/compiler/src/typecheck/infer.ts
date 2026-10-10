@@ -1,10 +1,10 @@
 import { assignable, isOpaque, recordFieldType, unaliasType, unknownType } from "../assignable.ts";
 import type { Expr, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName } from "../builtin-calls.ts";
+import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
-import type { Ctx, SymbolTable } from "./context.ts";
+import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult } from "./expr.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope } from "./patterns.ts";
@@ -412,8 +412,11 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "EmitExpr":
       return prim("EffectId", e.pos);
     case "Call": {
-      if (e.callee === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
-      const fixed = CALL_RESULT.get(e.callee);
+      const builtin = isBuiltinCall(e.callee, sym);
+      if (builtin && e.callee === RUN_REDUCER && ctx.runReducerScope) {
+        return runReducerState(sym, e.pos);
+      }
+      const fixed = builtin ? CALL_RESULT.get(e.callee) : undefined;
       if (fixed) return prim(fixed, e.pos);
       const dot = e.callee.indexOf(".");
       const qualifier = dot > 0 ? e.callee.slice(0, dot) : null;

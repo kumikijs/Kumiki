@@ -1,0 +1,51 @@
+# Feature (language.md): a `fn` declared under a built-in function's
+# name is what a call of that name reaches.
+#
+# `random`, `fmt`, `panic`, `file-url` and `prefers-dark` are built-in
+# functions (stdlib.md), and so is `run-reducer` in a property-test
+# invariant (testing.md). A program may declare a `fn` under any of those
+# names. Every call written with the name is then a call to that fn: it is
+# checked against the fn's signature and runs the fn's body, in a tile, a
+# reducer, another fn and a fragment position alike. In that program the
+# built-in is out of reach. `now` is a reserved word, so no fn can be named it.
+
+fn random() -> Int = 4
+fn fmt(n: Int) -> Text = "custom " + n.show
+fn panic(why: Text) -> Text = "soft " + why
+fn file-url(name: Text) -> Text = "https://cdn.example/" + name
+fn prefers-dark() -> Text = "maybe"
+fn run-reducer(n: Int) -> Int = n + 1
+
+# Another fn's body reaches the program's fn too.
+fn roll-twice() -> Int = random() + random()
+
+slot rolled : Int        = 0
+slot labels : List(Text) = []
+slot next   : Int        = 0
+
+reducer go on=ui.click(Go)
+    do= rolled := roll-twice()
+        # A fn named in a fragment position is called on each element.
+        labels := [1, 2].map(fmt)
+        next   := run-reducer(rolled)
+
+tile Go = button(text="go") {id: "go"}
+
+tile App
+    = column(
+        heading("fns named like built-ins"),
+        Go,
+        text("random=" + random().show),
+        text("fmt=" + fmt(3)),
+        text("panic=" + panic("x")),
+        text("file-url=" + file-url("a.png")),
+        text("prefers-dark=" + prefers-dark()),
+        text("rolled=" + rolled.show),
+        text("labels=" + labels.join(", ")),
+        text("next=" + next.show))
+      {pad: "lg", gap: "md"}
+
+app FnNamedLikeABuiltin
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

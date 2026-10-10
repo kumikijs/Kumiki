@@ -1,5 +1,6 @@
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
+import { RUN_REDUCER } from "../builtin-calls.ts";
 import { FRAGMENT_ARGUMENTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import {
   checkAgainst,
@@ -14,6 +15,7 @@ import {
   bindLocal,
   type Ctx,
   innerScope,
+  isBuiltinCall,
   type KumikiError,
   type SymbolTable,
   wildcardText,
@@ -204,7 +206,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
       return;
     case "Call":
-      if (ctx.kind === "test" && e.callee === "run-reducer") {
+      if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }

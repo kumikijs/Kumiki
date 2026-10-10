@@ -6,6 +6,7 @@ import {
   type TestDef,
   type TileExpr,
 } from "../ast.ts";
+import { RUN_REDUCER } from "../builtin-calls.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
 import {
   bareNameAt,
@@ -26,6 +27,7 @@ import { checkAgainst, effectInput } from "./against.ts";
 import {
   bindLocal,
   type Ctx,
+  isBuiltinCall,
   type KumikiError,
   type SymbolTable,
   wildcardText,
@@ -130,7 +132,9 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
       }
     };
     walkExpr(t.invariant, (n) => {
-      if (n.kind === "Call" && n.callee === "run-reducer") checkRunReducer(n.args, n.pos);
+      if (n.kind === "Call" && n.callee === RUN_REDUCER && isBuiltinCall(n.callee, sym)) {
+        checkRunReducer(n.args, n.pos);
+      }
       if (n.kind === "MethodCall" && n.method === "run-reducer") checkRunReducer(n.args, n.pos);
     });
     return;
