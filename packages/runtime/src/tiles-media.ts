@@ -1,19 +1,10 @@
-// Media tile renderers (#71): image and video.
-
 import { attrValue, type TilePatchers, type TileRenderers } from "./core.ts";
 
-/** Read `{id: "..."}` from a tile's props (§1.6.2), when the tile kind doesn't lift `id` to a top-level field. */
 function propId(node: { props?: Record<string, unknown> }): string | undefined {
   const raw = node.props?.id;
   return raw == null ? undefined : String(raw);
 }
 
-/**
- * `width` / `height` / `loading` on an `<img>` (stdlib.md §2.3.3). The first
- * two are what reserve the box before the bytes arrive — an image without them
- * moves everything below it when it loads, which is the layout shift the SSR
- * path exists to avoid. Shared by create and patch.
- */
 function applyImageBox(img: HTMLImageElement, props?: Record<string, unknown>): void {
   for (const name of ["width", "height"] as const) {
     const v = attrValue(props?.[name]);
@@ -58,10 +49,6 @@ export const mediaPatchers: TilePatchers = {
     } else if (img.id) {
       img.removeAttribute("id");
     }
-    // Guard the `.src` write against no-op reassignment. Setting `src` to
-    // the same string still triggers a re-request in some browsers (and
-    // clears the cache-warmed decoded-image bitmap), so a bind-driven
-    // rerender that leaves `src` untouched should not thrash the image.
     if (img.getAttribute("src") !== newNode.src) img.src = newNode.src;
     applyImageBox(img, newNode.props);
     const alt = newNode.props?.alt;
@@ -72,10 +59,6 @@ export const mediaPatchers: TilePatchers = {
     }
   },
   video(el, oldNode, newNode) {
-    // #190 acceptance: `<video>` must survive a re-render triggered mid-
-    // playback. Everything that touches playback state (`.load()`,
-    // reassigning `.src` even to the same URL) is gated on the value
-    // actually having changed.
     const v = el as HTMLVideoElement;
     const id = propId(newNode);
     if (id) {

@@ -1,6 +1,5 @@
 # Feature: the route the runtime maintains, and the panic it hands a reducer,
-# are typed values (spec/routing.md §3.2, spec/lifecycle.md §7.2.3,
-# spec/stdlib.md §2.1.3).
+# are typed values (routing.md, lifecycle.md, stdlib.md).
 #
 # `route` — and `$route` in a route.enter / route.leave / route.error reducer —
 # is the standard `Route`. `$event` in an `app.error` reducer is the standard
