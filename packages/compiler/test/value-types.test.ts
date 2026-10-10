@@ -166,6 +166,47 @@ describe("undefined type names (E0117)", () => {
       ),
     ).toEqual([]);
   });
+
+  it.each([
+    ["a slot type", `slot y : Foo(Int) = 1`],
+    ["a fn parameter", `fn f(x: Foo(Int)) -> Int = 1\nslot s : Int = f(1)`],
+    ["a fn parameter used as its result", `fn f(x: Foo(Int)) -> Int = x`],
+    ["a fn result", `fn h() -> Foo(Int) = 1`],
+    ["a record field", `type R = {a: Foo(Int)}\nslot r : R = {a: 1}`],
+    ["a variant payload", `type U = Has(Foo(Int)) | Empty\nslot u : U = Has(1)`],
+    ["a List element", `slot l : List(Foo(Int)) = [1]`],
+    ["an Option payload", `slot o : Option(Foo(Int)) = Some(1)`],
+    ["an alias", `type A = Foo(Int)\nslot a : A = 1`],
+    ["a declared generic's argument", `type NE(T) = T where nonempty\nslot r : NE(Foo(Int)) = 1`],
+    ["two arguments", `slot y : Foo(Int, Text) = 1`],
+    ["a nominal", `type N = nominal Foo(Int)\nslot n : N = 1`],
+    ["an inline nominal", `slot n : nominal Foo(Int) = 1`],
+    ["a refinement", `slot r : Foo(Int) where positive = 1`],
+    ["a misspelt stdlib constructor", `slot l : Lst(Int) = [1]`],
+    ["a primitive written with arguments", `slot z : Int() = 1`],
+  ])("reports an undefined type applied in %s once", (_where, defs) => {
+    expect(appCodes(defs)).toEqual(["E0117"]);
+  });
+
+  it.each([
+    `n := y`,
+    `n := y + 1`,
+    `y := "x"`,
+    `n := match y with | Some(v) -> 1 | None -> 0`,
+  ])("reports nothing more where a value of an undefined application is used: %s", (body) => {
+    expect(reducerCodes(`slot y : Foo(Int) = 1\nslot n : Int = 0`, body)).toEqual(["E0117"]);
+  });
+
+  it.each([
+    [`slot l : List(Int) = ["x"]`, ["E0201"]],
+    [`slot l : List(Int) = "x"`, ["E0201"]],
+    [`slot o : Option(Text) = 1`, ["E0201"]],
+    [`slot o : Option(Text) = Some(1)`, ["E0201"]],
+    [`type G(T) = {v: T}\nslot g : G(Int) = {v: "x"}`, ["E0201"]],
+    [`type G(T) = {v: T}\nslot g : G(Int) = {v: 1}`, []],
+  ])("still checks a value against a stdlib constructor or a declared generic: %s", (defs, want) => {
+    expect(appCodes(defs)).toEqual(want);
+  });
 });
 
 describe("Int literal precision (E0217)", () => {
