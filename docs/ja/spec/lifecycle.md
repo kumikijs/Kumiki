@@ -192,7 +192,9 @@ tile ErrorFallback
 
 したがって `$1` を読む fallback は `in=PanicInfo`（または `PanicInfo` が代入可能な型、たとえばその別名）を宣言しなければならない。何を宣言していても `$1` は panic なので、別の `in=` を宣言した fallback、あるいは `in=` を宣言せずに `$1` を読む fallback は [E0220](./errors.md#e0220-boundary-fallback-input) であり、`error-boundary` 句の位置に報告される。`$1` を読まない fallback は `in=` を宣言しなくてよく、そうすれば同じ tile を route や `sub-routes` のターゲットにもできる。
 
-境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
+境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も、ほかの tile の fallback として描画される場合も含む。
+
+したがって自身の `error-boundary` を宣言した fallback は、その境界に覆われる。fallback の描画中の panic は、その fallback 自身の fallback をその位置に表示し、連鎖の先も同様である。その境界は最初の境界を宣言した tile を囲むどの境界よりも近いので、それが勝つ。自身の境界を持たない fallback の panic は、その tile を囲む境界に、それも無ければ組み込みのトップレベル表示に委ねられる。すでに連鎖上にある tile へ戻ってくる連鎖 —— 自分自身を名指す fallback（`tile Oops in=PanicInfo error-boundary=Oops`）や、互いを名指す 2 つの fallback —— には終わりが無く、[E0005](./errors.md#e0005-tile-cycle) として `error-boundary` 句の位置に報告される。
 
 境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
 
