@@ -1,25 +1,10 @@
-// `fix --auto-patch --apply`'s behavioural tier replaces a literal the failing
-// test's actual value names. Two separate rules:
-//
-//  - which literal is a candidate: a whole token, so a digit inside an
-//    identifier (`Btn1`) or a larger number (`10`) is never one;
-//  - whether the write happens: the gate. The patched source is parsed,
-//    typechecked and tested before it is written, and refused unless the
-//    named test passes and nothing that passed before fails. The gate is
-//    what keeps the contract the compile tier already keeps — this write
-//    either lands a repair or does not happen.
-
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fixFromTest, planTestPatchExplained, runFixFromTest } from "@kumikijs/cli";
 import { check, lex, parse } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { seedLines } from "./helpers/files.ts";
 
-// A switch for the gate's test runner: `null` runs the real one. Swapping the
-// module once, rather than re-importing it per test, keeps a single runtime
-// (and a single happy-dom registration) for the whole file.
 const gateRunner = vi.hoisted(() => ({
   override: null as null | (() => Promise<TestResult[]>),
 }));
@@ -32,17 +17,8 @@ vi.mock("../src/smoke.ts", async (importOriginal) => {
   };
 });
 
-let dir = "";
-const fixture = (lines: string[]): string => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-tier2-gate-"));
-  const file = join(dir, "in.kumiki");
-  writeFileSync(file, `${lines.join("\n")}\n`);
-  return file;
-};
 afterEach(() => {
   vi.restoreAllMocks();
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
 });
 
 const APP_TAIL = [
@@ -94,7 +70,7 @@ const compiles = (src: string): boolean =>
 
 describe("a behavioural candidate is a whole token", () => {
   it("never takes the digit inside an identifier", async () => {
-    const file = fixture(DIGIT_IN_IDENTIFIER);
+    const file = seedLines(DIGIT_IN_IDENTIFIER);
     const outcome = await runFixFromTest(file, "inc-adds-two", true);
 
     const after = readFileSync(file, "utf8");
@@ -105,7 +81,7 @@ describe("a behavioural candidate is a whole token", () => {
   });
 
   it("never takes the digit inside a larger number", async () => {
-    const file = fixture(DIGIT_IN_NUMBER);
+    const file = seedLines(DIGIT_IN_NUMBER);
     const outcome = await runFixFromTest(file, "inc-adds-two", true);
 
     const after = readFileSync(file, "utf8");
@@ -115,7 +91,7 @@ describe("a behavioural candidate is a whole token", () => {
   });
 
   it("never takes a digit inside a comment", async () => {
-    const file = fixture([
+    const file = seedLines([
       "slot count : Int = 0",
       "fn step() -> Int = 3 - 2",
       "# bump by 1",
@@ -129,9 +105,6 @@ describe("a behavioural candidate is a whole token", () => {
 
     expect(outcome.status).toBe("no-patch");
     expect(readFileSync(file, "utf8")).toBe(before);
-    // The outcome's `reason` is the deepest planner's (the arithmetic one, on
-    // a `slots.*` leaf), so the exact-literal planner is asked on its own: it
-    // looked, and found no `1` that is a token.
     const exact = planTestPatchExplained(before, failingLeaf(1, 2));
     expect(exact.patch).toBeNull();
     if (exact.patch === null) expect(exact.reason).toBe("no-scoped-literal-hit");
@@ -139,13 +112,7 @@ describe("a behavioural candidate is a whole token", () => {
 });
 
 describe("the whole-token rule, on the exact-literal planner alone", () => {
-  // No store is passed, so only the exact-literal planner runs and every
-  // outcome below is that planner's.
-
   it("takes `-1` written as a negative number, and not the `-1` inside `count-1`", () => {
-    // `count-1` lexes as one identifier, so the `-1` in it neither starts nor
-    // ends a token. `= -1` is the `-` token followed by the `1` token: it
-    // starts where one token starts and ends where another ends.
     const source = ["slot count-1 : Int = 0", "slot base : Int = -1", ""].join("\n");
     const planned = planTestPatchExplained(source, failingLeaf(-1, 3));
 
@@ -175,14 +142,8 @@ describe("the whole-token rule, on the exact-literal planner alone", () => {
 });
 
 describe("token offsets on a line with CRLF, tabs and non-ASCII text", () => {
-  // The whole-token rule turns the lexer's line/column into a source offset.
-  // Every character kind that could shift that arithmetic sits before the
-  // literal on its line: a tab, a two-unit emoji, a non-ASCII letter, and the
-  // CRLF line ends of every earlier line. A wrong offset would not write the
-  // wrong text — it would quietly find no candidate, so this asserts the
-  // repair happens.
   it("still repairs the literal", async () => {
-    const file = fixture([]);
+    const file = seedLines([]);
     const src = [
       "slot count : Int = 0",
       'fn step() -> Int =\tif "ü🎌" == "é" then 5 else 1',
@@ -204,7 +165,7 @@ describe("token offsets on a line with CRLF, tabs and non-ASCII text", () => {
 describe("the behavioural write is gated", () => {
   it("refuses a patch after which the named test still fails", async () => {
     // The one whole token `1` is an unrelated slot's initial value.
-    const file = fixture([
+    const file = seedLines([
       "slot count : Int = 0",
       "slot other : Int = 1",
       "fn step() -> Int = 3 - 2",
@@ -226,9 +187,7 @@ describe("the behavioural write is gated", () => {
   });
 
   it("reports a patch that does not compile as an outcome, and writes nothing", async () => {
-    // The unique `5` is a refinement bound; replacing it with `1` puts the
-    // lower bound above the upper one (E0804).
-    const file = fixture([
+    const file = seedLines([
       "type Small = nominal Int where between(2, 5)",
       "slot count : Int = 0",
       "slot pick : Small = 2",
@@ -253,7 +212,7 @@ describe("the behavioural write is gated", () => {
   });
 
   it("refuses a patch that makes another passing test fail", async () => {
-    const file = fixture([
+    const file = seedLines([
       'slot message : Text = ""',
       'reducer greet on=ui.click(Btn1) do= message := "world"',
       'tile Btn1 = button(text="+")',
@@ -278,7 +237,7 @@ describe("the behavioural write is gated", () => {
   });
 
   it("says the patch was refused and the file left unchanged", async () => {
-    const file = fixture([
+    const file = seedLines([
       "slot count : Int = 0",
       "slot other : Int = 1",
       "fn step() -> Int = 3 - 2",
@@ -313,16 +272,13 @@ const STILL_FAILS = [
 ];
 
 describe("a refusal after the compile tier wrote", () => {
-  // `stpe` is a typo the compile tier repairs to `step` and writes; the
-  // behavioural patch it then finds (`other`'s `1`) still fails and is
-  // refused. The compile repair is on disk, so the file is not "unchanged".
   const TYPO_THEN_STILL_FAILS = STILL_FAILS.map((l) =>
     l.startsWith("reducer inc") ? l.replace("step()", "stpe()") : l,
   );
 
   it("keeps the compile fix and does not write the behavioural patch", async () => {
     // Pins the outcome, which was already right; the message is the next test.
-    const file = fixture(TYPO_THEN_STILL_FAILS);
+    const file = seedLines(TYPO_THEN_STILL_FAILS);
     const outcome = await runFixFromTest(file, "inc-adds-two", true);
 
     expect(outcome.status).toBe("test-blocked");
@@ -334,7 +290,7 @@ describe("a refusal after the compile tier wrote", () => {
   });
 
   it("says the behavioural patch was not written, not that the file is unchanged", async () => {
-    const file = fixture(TYPO_THEN_STILL_FAILS);
+    const file = seedLines(TYPO_THEN_STILL_FAILS);
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
     vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
@@ -352,9 +308,7 @@ describe("a refusal after the compile tier wrote", () => {
 
 describe("the gate judges only tests that passed before", () => {
   it("writes the patch while another test that already failed keeps failing", async () => {
-    // `wants-seven` fails before (1) and after (2). Refusing on "anything
-    // fails" would block every run that fixes failing tests one at a time.
-    const file = fixture([
+    const file = seedLines([
       ...DIGIT_IN_IDENTIFIER,
       "test wants-seven =",
       "    reducer-test inc",
@@ -368,9 +322,7 @@ describe("the gate judges only tests that passed before", () => {
   });
 
   it("writes the patch when it also fixes another failing test", async () => {
-    // Pins the opposite case: a test that goes from failing to passing is
-    // not a change the gate objects to.
-    const file = fixture([
+    const file = seedLines([
       ...DIGIT_IN_IDENTIFIER,
       "test also-two =",
       "    reducer-test inc",
@@ -385,10 +337,6 @@ describe("the gate judges only tests that passed before", () => {
 });
 
 describe("the gate when the runner misbehaves on the patched source", () => {
-  // No stable program makes the runner throw, or drop the named test, right
-  // after the patched source typechecks, so the gate's runner
-  // (`runTestsSource`) is swapped for the test; `testFile`, which takes the
-  // `before` run, stays real.
   const withRunner = (override: () => Promise<TestResult[]>): typeof runFixFromTest => {
     gateRunner.override = override;
     return runFixFromTest;
@@ -398,7 +346,7 @@ describe("the gate when the runner misbehaves on the patched source", () => {
   });
 
   it("reports a runner that throws as test-runner-threw, with its message", async () => {
-    const file = fixture(DIGIT_IN_IDENTIFIER);
+    const file = seedLines(DIGIT_IN_IDENTIFIER);
     const before = readFileSync(file, "utf8");
     const run = withRunner(async () => {
       throw new Error("the generated module threw");
@@ -417,7 +365,7 @@ describe("the gate when the runner misbehaves on the patched source", () => {
   });
 
   it("reports a named test with no result as named-test-missing, not as a throw", async () => {
-    const file = fixture(DIGIT_IN_IDENTIFIER);
+    const file = seedLines(DIGIT_IN_IDENTIFIER);
     const before = readFileSync(file, "utf8");
     const run = withRunner(async () => []);
 
@@ -431,7 +379,7 @@ describe("the gate when the runner misbehaves on the patched source", () => {
   });
 
   it("counts a test that passed before and has no result after as regressed", async () => {
-    const file = fixture([
+    const file = seedLines([
       ...DIGIT_IN_IDENTIFIER,
       "test adds-one =",
       "    reducer-test inc",
@@ -453,9 +401,7 @@ describe("the gate when the runner misbehaves on the patched source", () => {
 
 describe("a dry run is not gated", () => {
   it("proposes a patch the gate would refuse, and writes nothing", async () => {
-    // Pins the asymmetry: the dry run reports what the planner found; only
-    // `--apply` runs the gate.
-    const file = fixture(STILL_FAILS);
+    const file = seedLines(STILL_FAILS);
     const before = readFileSync(file, "utf8");
     const outcome = await runFixFromTest(file, "inc-adds-two", false);
 

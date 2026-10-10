@@ -17,16 +17,9 @@ type IndexedHandler = "indexedRead" | "indexedWrite" | "indexedDelete";
 export type RuntimeUsage = {
   /** Tile family modules the app renders whole, in stable order. */
   families: TileFamily[];
-  /**
-   * Tile kinds the app renders that ship one module each (#71), in stable
-   * order. Disjoint from `families`: a kind is in exactly one of the two,
-   * according to `PER_TILE_FAMILIES`.
-   */
   tiles: string[];
   /** True when the app actually routes — see the rules below. */
   router: boolean;
-  /** The storage effect handlers referenced by generated invokes
-   * (localStorage + sessionStorage share the `effects-storage` module). */
   storage: StorageHandler[];
   /** The IndexedDB effect handlers referenced by generated invokes. */
   indexed: IndexedHandler[];
@@ -58,17 +51,6 @@ export const TILE_FAMILY_ORDER: TileFamily[] = [
   "status",
 ];
 
-/**
- * Decide which runtime feature modules a compiled app needs (#71).
- *
- * The router is included only when the app can actually navigate: nav.* caps,
- * `navigate*` emits, a `link` / `route-outlet` tile, a redirect route, or any
- * route pattern beyond the `"/"` + `"/404"` boilerplate every app declares.
- * A counter-class app (static single route, no navigation) therefore renders
- * its `"/"` tile without any router code; the URL is never read, so a deep
- * link to an unknown path shows the root tile instead of the 404 tile — an
- * accepted trade-off recorded in the #71 acceptance.
- */
 export function analyzeRuntimeUsage(
   app: AppDef,
   reducers: ReducerDef[],
@@ -82,12 +64,6 @@ export function analyzeRuntimeUsage(
   for (const r of reducers) for (const e of collectEmits(r.do)) emits.add(e);
   for (const e of app.init) if (e.kind === "Call") emits.add(e.callee);
 
-  // A family is shipped whole only when it is not one of the per-tile ones;
-  // its tiles are listed individually otherwise. `usedTiles` can name a tile
-  // the table does not know — a user-defined tile reaches codegen by name — and
-  // what keeps those out of the module list is the `TILE_FAMILY[t]` lookup
-  // returning `undefined`, which no family and no per-tile family matches.
-  // Neither filter may be dropped for being "obviously" total.
   const families = TILE_FAMILY_ORDER.filter(
     (f) => !isPerTileFamily(f) && [...usedTiles].some((t) => TILE_FAMILY[t] === f),
   );
@@ -104,15 +80,11 @@ export function analyzeRuntimeUsage(
   const handlers = new Set(effects.map((e) => storageHandlerOf(e, env)));
   const storage = STORAGE_HANDLER_ORDER.filter((h) => handlers.has(h));
   const indexed: IndexedHandler[] = [];
-  // `indexed.read` is dispatched at runtime by input shape (point vs range
-  // query), so cap → one handler is enough. Spec §6.7.4.
   if (effects.some((e) => e.cap === "indexed.read")) indexed.push("indexedRead");
   if (effects.some((e) => e.cap === "indexed.write")) indexed.push("indexedWrite");
   if (effects.some((e) => e.cap === "indexed.delete")) indexed.push("indexedDelete");
   const http = effects.some((e) => e.cap.startsWith("http."));
   const toast = app.caps.includes("notification.show") || emits.has("toast");
-  // confirm is gated on actual usage (not the cap alone): a `notification.show`
-  // app that only emits toast shouldn't ship the modal renderer.
   const confirm = emits.has("confirm");
   const testkit = includeTests && hasTests;
 
@@ -142,15 +114,6 @@ function tileKey(kind: string): string {
   return /^[A-Za-z_$][\w$]*$/.test(kind) ? kind : JSON.stringify(kind);
 }
 
-/**
- * Build the import header for the compiled module together with the `_s`
- * stdlib binding (and, in the granular path only, the `_tiles` renderer map).
- * `runtimeModulesDir` picks the per-feature granular path — one import per
- * runtime module that `analyzeRuntimeUsage` decided is needed. Otherwise a
- * single monolithic import from `runtimeSpecifier` covers everything;
- * `inlineRuntime` (`bundle: true`) then relies on that one-statement shape
- * to strip and inline the runtime bundle in place.
- */
 export function emitImportHeader(
   usage: RuntimeUsage,
   opts: { runtimeModulesDir?: string; runtimeSpecifier: string },
@@ -195,9 +158,6 @@ export function emitImportHeader(
     header.push(`const _patchers = { ${patcherEntries.join(", ")} };`);
     header.push("");
   } else {
-    // Monolith mode: ONE import line — `inlineRuntime` (bundle: true) strips
-    // exactly this line and resolves the names against the inlined bundle's
-    // top-level bindings, so everything must ride on a single statement.
     const names = [
       "mount",
       "_stdlib",
