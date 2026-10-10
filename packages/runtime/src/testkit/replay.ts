@@ -10,6 +10,7 @@ import {
   type RefinementNaming,
   type RefinementRejection,
   reportRejectedBatch,
+  standInValue,
   withEnvReplay,
 } from "../core.ts";
 import { valueEqual } from "../stdlib.ts";
@@ -28,14 +29,6 @@ export type ReplayApp = {
   reducers: ReducerSpec[];
   effects: Record<string, Pick<EffectSpec, "errText">>;
 };
-
-export function standInValue(
-  eff: Pick<EffectSpec, "errText"> | undefined,
-  outcome: "ok" | "err",
-  value: unknown,
-): unknown {
-  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
-}
 
 export type ReplayEvent =
   | {

@@ -3,6 +3,7 @@ import {
   type ReducerSpec,
   type RefinementRejection,
   reportRejectedBatch,
+  standInValue,
 } from "./core.ts";
 import { valueEqual } from "./stdlib.ts";
 import type {
@@ -31,7 +32,6 @@ import {
   resetLiveFromSlots,
   type SlotMetaLike,
   seedRoute,
-  standInValue,
 } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
@@ -326,5 +326,4 @@ export {
   type ReplayObserver,
   type ReplayReport,
   replayEpisodes,
-  standInValue,
 } from "./testkit/replay.ts";

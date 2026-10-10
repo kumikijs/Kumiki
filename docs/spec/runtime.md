@@ -773,6 +773,8 @@ The one emit with no episode to name is one from `app.init`, dispatched before t
 
 When `retry=...` is specified, retry on an `Err` result that is a 5xx/network error. Exponential backoff adds ±20% jitter.
 
+A request cancelled during the wait between attempts ends the wait at once and makes no further attempt; its `.err` fires right away ([http.md §6.5](./http.md#_6-5-retry)).
+
 ### 10.4.5 Delivery of Results
 
 On effect completion, the result is notified to the runtime as an `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` event. The matching reducer is executed.
