@@ -1,6 +1,5 @@
-# Feature (stdlib.md §2.2.3): a `filter` / `map` / `find` / `sort-by`
-# fragment binds `$1` / `$2` from the receiver's TYPE, not from the length
-# of each value.
+# Feature: a `filter` / `map` / `find` / `sort-by` fragment binds `$1` / `$2`
+# from the receiver's TYPE, not from the length of each value.
 #
 # An `Option(List(Int))` and a `List(List(Int))` hand their fragment a list,
 # and `$1` is that list whole — the `[1, 2]` below has two items, which is
@@ -11,7 +10,7 @@
 #
 # A `fn` named as the fragment binds the same way as the call it stands for:
 # `nested.map(len)` is `nested.map(len($1))`. A Set is not one of the
-# receivers §2.2.3 binds whole — its filter is handed each element as an
+# receivers bound whole — its filter is handed each element as an
 # entry and keeps the elements the predicate keeps.
 
 fn len(xs: List(Int)) -> Int = xs.length
