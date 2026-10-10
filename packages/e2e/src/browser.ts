@@ -1,292 +1,64 @@
-// Real-browser verification tier. Runs the SAME scenario format as the headless-DOM
-// `runScenario`, but in Chromium via Playwright, so it catches what a headless DOM can't:
-// CSS layout / visibility, real focus management, and real rendering. State is
-// still the oracle — read from `window.__kumikiApp.live` in the page.
-
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import {
+  type BrowserAction,
+  type BrowserExpect,
   type ControlVerb,
   chooseOption,
   constraintFault,
   controlFault,
   type DispatchTarget,
+  describeAction,
   dispatchFault,
   judgeRefusal,
+  partialMatch,
+  type ScenarioStep as RuntimeScenarioStep,
   readControl,
   readInvalidControls,
-  type Action as ScenarioAction,
+  type ScenarioReport,
+  type StepOutcome,
   StepRefusal,
+  showValue,
+  stateMismatches,
   submitFault,
+  textMismatches,
+  validateScenario as validateScenarioFor,
 } from "@kumikijs/runtime";
 import { type ConsoleMessage, chromium, type Locator, type Page, type Route } from "playwright";
 
-export type Action =
-  | { dispatch: string; payload?: Record<string, unknown> }
-  | { clickText: string }
-  | { click: string }
-  | { focus: string }
-  | { blur: string }
-  | { fill: string; value: string }
-  | { choose: string; value: string }
-  | { navigate: string }
-  /**
-   * Set a live DOM property on the element matched by `selector`. Seeds
-   * browser-owned state a Kumiki reducer has no way to produce (e.g.
-   * `<video>.currentTime = 3` before triggering a re-render).
-   */
-  | { setProperty: string; property: string; value: unknown }
-  /** Submit the form at, or above, the element the selector matches. */
-  | { submit: string }
-  /** Wait this many milliseconds on top of the step's own settle. */
-  | { wait: number };
-
-export type Expect = {
-  noErrors?: boolean;
-  /**
-   * Substrings that must each appear in this step's `actionError`. The scenario
-   * tier's key, and supported here rather than owned there, because the refusal
-   * it asserts comes from a rule both tiers ask, off one `judgeRefusal` — a
-   * fixture that asserts one
-   * must be runnable at both, or §8.10's promise that they agree is untestable
-   * for exactly the case it was added for.
-   */
-  actionErrorIncludes?: string[];
-  state?: Record<string, unknown>;
-  domIncludes?: string[];
-  domExcludes?: string[];
-  /** Browser-only: a CSS selector that must be the focused element. */
-  focused?: string;
-  /** Browser-only: text that must be actually visible (computed style, not just present). */
-  visible?: string[];
-  /** Browser-only: text that must NOT be visible. */
-  hidden?: string[];
-  /**
-   * Browser-only: CSS selectors that must carry a running keyframe animation
-   * (`getComputedStyle().animationName !== "none"`). A headless DOM can't observe this —
-   * it's the verification tier for the `motion` layer.
-   */
-  animating?: string[];
-  /**
-   * Browser-only: assert on live element properties, keyed by CSS selector.
-   * Each value is a `{ property: expectedValue }` map read via
-   * `document.querySelector(sel)[property]`. Proves that `<select>` open
-   * state / `<video>` currentTime / `<details>` open / `contenteditable`
-   * textContent survive a re-render mid-interaction — behaviour a state-only
-   * oracle cannot see.
-   */
-  elementState?: Record<string, Record<string, unknown>>;
-};
-
-export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
+export type Action = BrowserAction;
+export type Expect = BrowserExpect;
+export type ScenarioStep = RuntimeScenarioStep<Action, Expect>;
 export type Scenario = { steps: ScenarioStep[] };
 
-/**
- * The closed sets this tier answers for — the headless runner's, plus the
- * browser-only names it adds. Kept as lists rather than derived from the types
- * because the check is what makes a fixture's claim falsifiable: a key nobody
- * evaluates is a fixture that passes having asserted nothing.
- */
-const EXPECT_KEYS = [
-  "noErrors",
-  "actionErrorIncludes",
-  "state",
-  "domIncludes",
-  "domExcludes",
-  "focused",
-  "visible",
-  "hidden",
-  "animating",
-  "elementState",
-] as const satisfies readonly (keyof Expect)[];
-
-/**
- * Keys the scenario tier owns. `errorIncludes` asks the runner to *require* an
- * error, and this tier treats every reported error as fatal — a fixture using
- * it cannot pass either way, so it is named rather than accepted. It used to
- * sit in the list above while `evaluateExpect` never read it, which is the
- * exact vacuity the closed set exists to stop.
- */
-const SCENARIO_EXPECT_KEYS = ["errorIncludes"] as const;
-
-/**
- * Actions the scenario tier owns. Both are dispatched there as synthetic DOM
- * events on the tile element; here they would have to be a real key press and a
- * real pointer move, which is a different thing to verify and not yet wired.
- * Named rather than left to fall through as "unknown", so a fixture that used
- * them is told which tier runs it instead of being told they do not exist.
- */
-const SCENARIO_ACTION_KEYS = ["key", "hover"] as const satisfies readonly ScenarioOnly[];
-
-/**
- * Pinned to the scenario tier's own `Action`, in both directions. `satisfies`
- * above rejects a name that tier does not have; `Covers` below rejects one it
- * has and this list forgot, which would degrade the message back to "unknown
- * action". And the day this tier implements one of them, `Exclude` drops it
- * from `ScenarioOnly` and the `satisfies` fails — without that, the gate keeps
- * short-circuiting and the new implementation is unreachable.
- */
-type ScenarioActionKind = ScenarioAction extends infer A
-  ? A extends unknown
-    ? keyof A
-    : never
-  : never;
-type ScenarioOnly = Exclude<ScenarioActionKind, ActionKind | (typeof ACTION_MODIFIERS)[number]>;
-type _ScenarioOnlyCovered = Covers<ScenarioOnly, (typeof SCENARIO_ACTION_KEYS)[number]>;
-/**
- * And this tier's own action kinds are pinned to `CONTROL_DEMANDS`, which the
- * scenario tier cannot do for `setProperty` — that verb exists only here.
- */
-type _ControlVerbsTotal = Covers<
-  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
-  ControlVerb
->;
-
-const ACTION_KEYS = [
-  "dispatch",
-  "clickText",
-  "click",
-  "focus",
-  "blur",
-  "fill",
-  "choose",
-  "navigate",
-  "submit",
-  "wait",
-  "setProperty",
-] as const satisfies readonly ActionKind[];
-
-/** Fields that accompany an action kind rather than naming one. */
-const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
-
-/**
- * Both lists are pinned to the types in both directions, at no runtime cost:
- * `satisfies` rejects a listed key the type no longer has, and the assertions
- * below reject a key the type has and the list forgot — the direction that
- * matters, because a forgotten key is silently skipped.
- */
-type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
-type Covers<Whole extends Part, Part> = Whole;
-type _ExpectKeysCovered = Covers<
-  keyof Expect,
-  (typeof EXPECT_KEYS)[number] | (typeof SCENARIO_EXPECT_KEYS)[number]
->;
-type _ActionKindsCovered = Covers<
-  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
-  (typeof ACTION_KEYS)[number]
->;
-
-/** How long a `wait` may ask for — the scenario tier's bound, so a fixture promotes unchanged. */
-const MAX_WAIT_MS = 60_000;
-
-/**
- * Every problem in a fixture, in the order they appear. Empty for one this
- * tier can execute.
- */
 export function validateScenario(scenario: Scenario): string[] {
-  const problems: string[] = [];
-  // `effects` is the scenario tier's capability-boundary mock, and this tier
-  // drives a real browser on purpose. Silently ignoring it would let a fixture
-  // believe its HTTP was stubbed while the request went out for real.
-  if ((scenario as { effects?: unknown }).effects !== undefined) {
-    problems.push('"effects" is not supported by the browser tier: it drives a real browser');
-  }
-  // A misspelled `steps` reads as absent, so every assertion under it is
-  // skipped and the fixture passes having checked nothing — the same failure
-  // the key lists below guard against, one level up.
-  for (const key of Object.keys(scenario as Record<string, unknown>)) {
-    if (key === "steps" || key === "effects") continue;
-    problems.push(`unknown scenario key "${key}" (steps)`);
-  }
-  if (!Array.isArray(scenario.steps)) {
-    problems.push('a fixture needs a "steps" array');
-    return problems;
-  }
-  if (scenario.steps.length === 0) {
-    problems.push("a fixture with no steps asserts nothing");
-  }
-  const steps = scenario.steps;
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (!step) continue;
-    const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
-    if (step.do !== undefined) problems.push(...validateAction(step.do, where));
-    for (const key of Object.keys((step.expect ?? {}) as Record<string, unknown>)) {
-      if ((EXPECT_KEYS as readonly string[]).includes(key)) continue;
-      if ((SCENARIO_EXPECT_KEYS as readonly string[]).includes(key)) {
-        problems.push(
-          `${where}: "${key}" is a scenario-tier assertion; this tier treats every reported error as fatal`,
-        );
-        continue;
-      }
-      problems.push(`${where}: unknown expect key "${key}" (${EXPECT_KEYS.join(", ")})`);
-    }
-  }
-  return problems;
+  return validateScenarioFor(scenario, "browser");
 }
 
-export type StepResult = {
-  label?: string;
-  action?: string;
-  /**
-   * Whether this step passed. A field rather than a predicate every consumer
-   * rebuilds — see the scenario tier's `StepResult.ok`.
-   */
-  ok: boolean;
-  /**
-   * Why the step's action could not run — a selector matching nothing, a `fill`
-   * aimed at an element that holds no text, a control the platform refuses to
-   * drive. Kept off `errors` because every
-   * entry in that list is fatal *as a defect in the app* here (see the `ok`
-   * computation below), and a fixture's own broken selector is not one. It
-   * fails the step all the same, through this field.
-   */
-  actionError?: string;
-  /**
-   * The action error this step's `actionErrorIncludes` matched — see the
-   * scenario tier's field of the same name.
-   */
-  expectedActionError?: string;
-  errors: string[];
-  state: Record<string, unknown>;
-  visibleText: string;
-  failures: string[];
-};
+export type StepResult = StepOutcome & { visibleText: string };
 
-export type BrowserReport = { ok: boolean; steps: StepResult[] };
+export type BrowserReport = ScenarioReport<StepResult>;
 
 export type BrowserOptions = { headed?: boolean; settleMs?: number };
 
-// Escape any literal `</script` so it can't terminate the inline module.
 const escapeScript = (js: string): string => js.replace(/<\/script/gi, "<\\/script");
 
-function buildHtml(js: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8">
-<style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
-<body><div id="root"></div><script type="module">${escapeScript(js)}</script></body></html>`;
-}
+const moduleScript = (js: string): string => `<script type="module">${escapeScript(js)}</script>`;
 
-/** Root `i` is `#kumiki-root-<i>`; inline module scripts execute in document order. */
-function buildHtmlMulti(bundles: string[]): string {
-  const body = bundles
-    .map(
-      (js, i) =>
-        `<div id="kumiki-root-${i}"></div><script type="module">${escapeScript(js)}</script>`,
-    )
-    .join("\n");
+function htmlPage(body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>body{font-family:system-ui,sans-serif;margin:0;padding:16px}</style></head>
 <body>${body}</body></html>`;
 }
 
-/**
- * Re-target one compiled bundle for co-mounting: auto-mount into its own root
- * div, and register the instance in `window.__kumikiApps` (the single
- * `__kumikiApp` oracle is last-write-wins by construction, so the multi runner
- * reads the array instead). Both replaces are verbatim matches against codegen
- * output; a silent miss would surface as a bewildering mount-into-nothing or a
- * ready-wait timeout, so an unmatched pattern throws instead.
- */
+const buildHtml = (js: string): string => htmlPage(`<div id="root"></div>${moduleScript(js)}`);
+
+/** Root `i` is `#kumiki-root-<i>`; inline module scripts execute in document order. */
+const buildHtmlMulti = (bundles: string[]): string =>
+  htmlPage(
+    bundles.map((js, i) => `<div id="kumiki-root-${i}"></div>${moduleScript(js)}`).join("\n"),
+  );
+
 function patchBundleForMulti(js: string, index: number): string {
   const retargeted = replaceOrThrow(
     js,
@@ -312,11 +84,6 @@ function replaceOrThrow(js: string, search: string, replacement: string, what: s
   return out;
 }
 
-// A synthetic origin the tier-3 runner serves the built app under. The default
-// history-based router uses `history.pushState`, which throws a SecurityError on
-// the null origin returned by page.setContent (about:blank) and data: URLs.
-// Serving from a real (intercepted) HTTP origin lets `navigate` actions round-
-// trip through `pushState` the way a shipped page would.
 const KUMIKI_HOST = "http://kumiki.local";
 const KUMIKI_DOC_URL = `${KUMIKI_HOST}/`;
 const KUMIKI_ROUTE_GLOB = `${KUMIKI_HOST}/**`;
@@ -335,12 +102,6 @@ export async function runScenarioInBrowser(
   }
 }
 
-/**
- * Drive a scenario against an already-open Playwright `Page`. Console / pageerror
- * listeners and the route interceptor installed here are removed before return,
- * so the same `Page` can be reused for another `runOnPage` call without leaking
- * handlers or having the first invocation's HTML shadow the second.
- */
 export async function runOnPage(
   page: Page,
   source: string,
@@ -369,15 +130,6 @@ export async function runOnPage(
   );
 }
 
-/**
- * Drive one scenario against SEVERAL compiled apps co-mounted on a single page
- * (the multi-mount isolation tier). App `i` auto-mounts into `#kumiki-root-<i>`
- * and registers in `window.__kumikiApps`; state keys in `expect.state` are
- * namespaced by app index (`"0.count"`, `"1.name"`). Scope DOM actions to a
- * root (`{"click": "#kumiki-root-0 button"}`); `dispatch` / `navigate` go
- * through the single-app `__kumikiApp` oracle (last bundle wins) — avoid them
- * in multi fixtures.
- */
 export async function runMultiOnPage(
   page: Page,
   sources: string[],
@@ -419,10 +171,6 @@ function compileFailure(action: string, errors: string[]): BrowserReport {
   };
 }
 
-/**
- * Serve `html` at the synthetic origin and drive the scenario. `readyExpr`
- * gates the first step; `stateFn` is the serialized state-oracle read.
- */
 async function serveScenario(
   page: Page,
   html: string,
@@ -439,11 +187,6 @@ async function serveScenario(
   const onPageError = (e: Error): void => {
     errorBuf.push(String(e));
   };
-  // Serve only the app document at the synthetic origin. Any other request
-  // under that origin (subresources, `fetch("/api/...")` from a capability)
-  // must NOT get the HTML shell back — that would surface as a confusing JSON
-  // parse error inside the app. Abort them so the app sees a real network
-  // failure instead of a silently mislabelled response.
   const onRoute = (route: Route): Promise<void> => {
     if (route.request().url() === KUMIKI_DOC_URL) {
       return route.fulfill({ contentType: "text/html; charset=utf-8", body: html });
@@ -451,15 +194,8 @@ async function serveScenario(
     return route.abort();
   };
 
-  page.on("console", onConsole);
-  page.on("pageerror", onPageError);
-  await page.route(KUMIKI_ROUTE_GLOB, onRoute);
-
   const problems = validateScenario(scenario);
   if (problems.length > 0) {
-    page.off("console", onConsole);
-    page.off("pageerror", onPageError);
-    await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
     return {
       ok: false,
       steps: [
@@ -475,6 +211,9 @@ async function serveScenario(
     };
   }
 
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+  await page.route(KUMIKI_ROUTE_GLOB, onRoute);
   try {
     await page.goto(KUMIKI_DOC_URL, { waitUntil: "load" });
     await page.waitForFunction(readyExpr, null, { timeout: 5000 });
@@ -488,9 +227,6 @@ async function serveScenario(
         try {
           await performAction(page, step.do);
         } catch (e) {
-          // Carried rather than flattened, as at the scenario tier: `refuse`
-          // throws in this process (only `readControl` crosses into the page),
-          // so the class survives.
           const message = e instanceof Error ? e.message : String(e);
           fault = e instanceof StepRefusal ? { message, refusal: e } : { message };
         }
@@ -501,9 +237,6 @@ async function serveScenario(
         .locator("body")
         .innerText()
         .catch(() => "");
-      // The same verdict the scenario tier takes, from the same function — the
-      // two used to be a verbatim copy of each other that had already drifted
-      // into different `ok` shapes.
       const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
       const failures = [
         ...verdict.failures,
@@ -529,17 +262,11 @@ async function serveScenario(
     await page.unroute(KUMIKI_ROUTE_GLOB, onRoute);
   }
 
-  // The browser tier is strict on uncaught errors by design: a JS exception or
-  // console error in the app is a real defect that must not slip through as
-  // "green with warnings". `expect.noErrors` in a fixture is therefore
-  // redundant here — accepted for scenario-format compatibility, but not
-  // load-bearing.
   return { ok: steps.every((s) => s.ok), steps };
 }
 
-// Serialized into the page to read sanitized slot state.
-const snapshotStateFn = `(() => {
-  const live = (window.__kumikiApp && window.__kumikiApp.live) || {};
+// Evaluated in the page: copies an app's slots without functions, cycles or the route.
+const sanitizeLiveSrc = `
   const seen = new WeakSet();
   const san = (v) => {
     if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
@@ -550,138 +277,35 @@ const snapshotStateFn = `(() => {
     for (const k of Object.keys(v)) { if (typeof v[k] !== "function") o[k] = san(v[k]); }
     return o;
   };
-  const out = {};
-  for (const k of Object.keys(live)) { if (k !== "route") out[k] = san(live[k]); }
-  return out;
-})()`;
-
-// Multi-mount variant: `{"0": {...app0 slots...}, "1": {...}}` — `readPath`
-// then resolves namespaced expect keys like `"0.count"` with no extra glue.
-const snapshotMultiStateFn = `(() => {
-  const apps = window.__kumikiApps || [];
-  const seen = new WeakSet();
-  const san = (v) => {
-    if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
-    if (seen.has(v)) return "[circular]";
-    seen.add(v);
-    if (Array.isArray(v)) return v.map(san);
-    const o = {};
-    for (const k of Object.keys(v)) { if (typeof v[k] !== "function") o[k] = san(v[k]); }
-    return o;
-  };
-  const out = {};
-  apps.forEach((app, i) => {
+  const slotsOf = (app) => {
     const live = (app && app.live) || {};
     const o = {};
     for (const k of Object.keys(live)) { if (k !== "route") o[k] = san(live[k]); }
-    out[String(i)] = o;
-  });
+    return o;
+  };`;
+
+const snapshotStateFn = `(() => {${sanitizeLiveSrc}
+  return slotsOf(window.__kumikiApp);
+})()`;
+
+const snapshotMultiStateFn = `(() => {${sanitizeLiveSrc}
+  const out = {};
+  (window.__kumikiApps || []).forEach((app, i) => { out[String(i)] = slotsOf(app); });
   return out;
 })()`;
 
-/**
- * The kinds AND the values, matching the scenario tier. Both files open by
- * promising the same scenario format, and `submit` / `wait` exist so a fixture
- * can be promoted from tier 2 to tier 3 unchanged — a `{"wait": "500"}` that
- * one tier refuses and the other hands to `waitForTimeout` breaks that promise.
- */
-function validateAction(action: Action, where: string): string[] {
-  const keys = Object.keys(action as Record<string, unknown>);
-  const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
-  const scenarioOnly = kinds.filter((k) => (SCENARIO_ACTION_KEYS as readonly string[]).includes(k));
-  if (scenarioOnly.length > 0) {
-    return [
-      `${where}: "${scenarioOnly[0]}" is a scenario-tier action; run this fixture with kumiki run`,
-    ];
-  }
-  const unknown = kinds.filter((k) => !(ACTION_KEYS as readonly string[]).includes(k));
-  if (unknown.length > 0) {
-    return [`${where}: unknown action "${unknown[0]}" (${ACTION_KEYS.join(", ")})`];
-  }
-  if (kinds.length === 0) return [`${where}: "do" names no action (${ACTION_KEYS.join(", ")})`];
-  if (kinds.length > 1) {
-    return [`${where}: "do" names ${kinds.join(" and ")}; a step does exactly one thing`];
-  }
-  const kind = kinds[0];
-  const a = action as Record<string, unknown>;
-  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
-    return [`${where}: "${kind}" needs a string "value"`];
-  }
-  if (kind === "setProperty" && typeof a.property !== "string") {
-    return [`${where}: "setProperty" needs a "property" name`];
-  }
-  if (
-    kind === "wait" &&
-    !(typeof a.wait === "number" && Number.isFinite(a.wait) && a.wait >= 0 && a.wait <= MAX_WAIT_MS)
-  ) {
-    return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
-  }
-  return [];
-}
-
-function describeAction(a: Action): string {
-  if ("dispatch" in a) return `dispatch ${a.dispatch}`;
-  if ("clickText" in a) return `clickText "${a.clickText}"`;
-  if ("click" in a) return `click ${a.click}`;
-  if ("focus" in a) return `focus ${a.focus}`;
-  if ("blur" in a) return `blur ${a.blur}`;
-  if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
-  if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
-  if ("submit" in a) return `submit ${a.submit}`;
-  if ("wait" in a) return `wait ${a.wait}ms`;
-  if ("setProperty" in a)
-    return `setProperty ${a.setProperty}.${a.property}=${JSON.stringify(a.value)}`;
-  return `navigate ${a.navigate}`;
-}
-
-/**
- * What the platform would refuse, asked before the verb runs. The same rule the
- * scenario tier asks (`controlFault`) off the same reader (`readControl`), so
- * §8.10's promise that the tiers agree holds by construction rather than by two
- * hand-written tables — one drift less than `dispatchFault` has, where each tier
- * reads the fields itself.
- *
- * `readControl` crosses `page.evaluate` because it closes over nothing: what
- * Playwright serialises is the function's own source. The budget is `fill`'s: a
- * selector matching nothing must not spend the suite's default 30s to say so.
- *
- * Playwright refuses most of these on its own, by timing out on actionability,
- * but in its words and three seconds later — and not all of them. `focus()` on
- * a `disabled` <input> moves nothing and reports nothing (measured), so the
- * silent pass this rule ends exists at this tier too.
- */
 async function refuse(loc: Locator, verb: ControlVerb, where: string): Promise<void> {
   const state = await loc.evaluate(readControl, undefined, { timeout: 3000 });
   const fault = controlFault(verb, where, state);
   if (fault) throw fault;
 }
 
-/**
- * Run one action on the page, throwing what kept it from running. Exported for
- * the tests that must put the page in a state no action reaches before they
- * drive one — a number field holding text that reads as no number, say.
- */
 export async function performAction(page: Page, a: Action): Promise<void> {
   if ("wait" in a) {
     await page.waitForTimeout(a.wait);
     return;
   }
   if ("submit" in a) {
-    // `requestSubmit()` rather than a synthetic event: this tier exists to run
-    // the real thing, so constraint validation and the browser's own submit
-    // sequence are part of what it verifies. The selector may name the form or
-    // anything inside it, as at the scenario tier.
-    //
-    // `requestSubmit()` dispatches the event synchronously, and a listener
-    // added now runs after the form tile's own, so it sees the event once the
-    // gate has judged it. The record is read in the page and the rule asked
-    // here — `submitFault`, the one the scenario tier asks.
-    //
-    // The seam asked is the one of the app that owns the form, found by the
-    // root this runner mounted it in: `#root` for one app, `#kumiki-root-<i>`
-    // for the i-th of several. Any app's seam would answer for an event its own
-    // form tile saw, but an owner without one must fail the step, not pass on
-    // a neighbour's silence.
     const where = describeAction(a);
     const target = page.locator(a.submit).first();
     const outcome = await target.evaluate(
@@ -701,9 +325,6 @@ export async function performAction(page: Page, a: Action): Promise<void> {
         if (!owner) return { kind: "no owner" as const };
         const asker = owner._submitHeldBy;
         if (typeof asker !== "function") return { kind: "no seam" as const };
-        // Whether the event fired at all: `requestSubmit()` runs constraint
-        // validation first, and a control that fails it stops the submit with
-        // no event — no gate judged it, so the record has nothing to say.
         let fired = false;
         let held: readonly string[] | undefined;
         const ask = (e: Event): void => {
@@ -731,9 +352,6 @@ export async function performAction(page: Page, a: Action): Promise<void> {
       );
     }
     if (!outcome.fired) {
-      // Read after the fact: a failed `requestSubmit()` changes no control's
-      // validity, and `readInvalidControls` closes over nothing, so it crosses
-      // into the page as it is.
       const invalid = await target.evaluate(readInvalidControls, undefined, { timeout: 3000 });
       const stopped = constraintFault(where, invalid);
       if (stopped) throw stopped;
@@ -746,15 +364,6 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("dispatch" in a) {
-    // The same precondition the scenario tier asks, on the same rule — §8.10
-    // promises an action that could not run fails the step "exactly as at the
-    // scenario tier", and `{dispatch}` is the verb where the two could most
-    // easily drift: it names a reducer instead of matching a selector, and the
-    // seam returns silently when the name matches nothing.
-    //
-    // Read out of the page rather than judged in it: a `ReducerSpec` carries
-    // `apply`, a function, so it cannot cross `page.evaluate`'s structured
-    // clone — but the two fields the rule needs are plain strings.
     const payload = (a.payload ?? {}) as Record<string, unknown>;
     const targets = await page.evaluate(
       () =>
@@ -776,8 +385,6 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("navigate" in a) {
-    // Only the missing seam, as at the scenario tier: an unrouted path renders
-    // /404, which `domIncludes` can see.
     const navigated = await page.evaluate((path: string) => {
       if (typeof window.__kumikiApp?._navigate !== "function") return false;
       window.__kumikiApp._navigate(path);
@@ -814,24 +421,7 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("fill" in a) {
-    // Playwright refuses a non-fillable element too, but says only that it was
-    // not an <input>, <textarea> or [contenteditable] — never what it did
-    // match. Probing first names the tag, so a selector that drifted onto its
-    // wrapper reads here the way it reads at the scenario tier. Only that case:
-    // what the probe accepts still goes to Playwright, which judges by
-    // `isContentEditable` and actionability — which the `refuse` below has
-    // already answered, in Kumiki's words and in the same words the scenario
-    // tier uses.
-    //
-    // One locator for every call: re-resolving would check one element and fill
-    // whatever a re-render put there afterwards.
     const target = page.locator(a.fill).first();
-    // Before the shape check, and its own probe rather than a field folded into
-    // the one below: a disabled control is refused whatever its shape, and the
-    // scenario tier asks the same question in the same place. Deriving
-    // `fillable` from `ControlState` would save a round trip and cost the
-    // agreement — that reader looks through a <label> wrapper, which `fill`
-    // deliberately does not.
     await refuse(target, "fill", describeAction(a));
     const found = await target.evaluate(
       (el: Element) => ({
@@ -842,8 +432,6 @@ export async function performAction(page: Page, a: Action): Promise<void> {
           el.getAttribute("contenteditable") !== null,
       }),
       undefined,
-      // The budget `fill` would have carried: a selector matching nothing must
-      // not spend the suite's default 30s to say so.
       { timeout: 3000 },
     );
     if (!found.fillable) {
@@ -856,18 +444,13 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("setProperty" in a) {
-    // Found through a locator, as every other verb finds its element: a render
-    // gets the same 3s to attach it, and a selector matching nothing fails the
-    // step in the same words theirs does.
+    // Through a locator, as every other verb finds its element: a render gets the same 3s to
+    // attach it, and a selector matching nothing fails the step in the same words.
     await page
       .locator(a.setProperty)
       .first()
       .evaluate(
         (el: Element, arg: { prop: string; val: unknown }) => {
-          // Dotted paths land on nested holders like `dataset.foo` or
-          // `style.color`. Walk everything but the last segment (must exist),
-          // then assign the last segment. Non-existent intermediate props are
-          // a no-op (a common test-author mistake worth staying silent about).
           const segs = arg.prop.split(".");
           let host: Record<string, unknown> = el as unknown as Record<string, unknown>;
           for (let i = 0; i < segs.length - 1; i++) {
@@ -882,14 +465,10 @@ export async function performAction(page: Page, a: Action): Promise<void> {
       );
     return;
   }
-  // choose
   const loc = page.locator(a.choose).first();
   await refuse(loc, "choose", describeAction(a));
-  // Which option the value names, asked in the page through the locator
-  // `refuse` just resolved, by the rule the scenario tier asks. Playwright is
-  // handed the index, so nothing matches a second time, and a select with no
-  // such option fails here in the same words at both tiers rather than in
-  // Playwright's timeout, which never names the value.
+  // The scenario tier's rule, asked in the page; Playwright gets the index, so a missing option
+  // fails in the same words at both tiers rather than in a timeout that never names the value.
   const choice = await loc.evaluate(
     chooseOption,
     { selector: a.choose, value: a.value },
@@ -911,18 +490,8 @@ async function evaluateExpect(
   if (expect.noErrors && errors.length > 0) {
     failures.push(`expected no errors but got: ${errors.join("; ")}`);
   }
-  // `actionErrorIncludes` is judged by `judgeRefusal` in the step loop, as at
-  // the scenario tier: it reads the fault rather than the page.
-  for (const [key, want] of Object.entries(expect.state ?? {})) {
-    const got = readPath(state, key);
-    if (!matches(want, got)) failures.push(`state ${key}: expected ${j(want)}, got ${j(got)}`);
-  }
-  for (const s of expect.domIncludes ?? []) {
-    if (!visibleText.includes(s)) failures.push(`visible text should include "${s}"`);
-  }
-  for (const s of expect.domExcludes ?? []) {
-    if (visibleText.includes(s)) failures.push(`visible text should NOT include "${s}"`);
-  }
+  failures.push(...stateMismatches(expect.state ?? {}, state));
+  failures.push(...textMismatches(expect, visibleText, "visible text"));
   if (expect.focused) {
     const isFocused = await page
       .evaluate((sel: string) => !!document.activeElement?.matches(sel), expect.focused)
@@ -974,40 +543,14 @@ async function evaluateExpect(
       continue;
     }
     for (const [prop, want] of Object.entries(props)) {
-      if (!matches(want, got[prop])) {
-        failures.push(`elementState ${sel}.${prop}: expected ${j(want)}, got ${j(got[prop])}`);
+      if (!partialMatch(want, got[prop])) {
+        failures.push(
+          `elementState ${sel}.${prop}: expected ${showValue(want)}, got ${showValue(got[prop])}`,
+        );
       }
     }
   }
   return failures;
-}
-
-function readPath(obj: Record<string, unknown>, path: string): unknown {
-  let cur: unknown = obj;
-  for (const seg of path.split(".")) {
-    if (cur === null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-function matches(want: unknown, got: unknown): boolean {
-  if (want === null || typeof want !== "object") return want === got;
-  if (Array.isArray(want)) {
-    if (!Array.isArray(got) || got.length !== want.length) return false;
-    return want.every((w, i) => matches(w, got[i]));
-  }
-  if (got === null || typeof got !== "object") return false;
-  const g = got as Record<string, unknown>;
-  return Object.entries(want as Record<string, unknown>).every(([k, w]) => matches(w, g[k]));
-}
-
-function j(v: unknown): string {
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
 }
 
 declare global {
