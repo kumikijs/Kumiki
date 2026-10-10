@@ -1,12 +1,3 @@
-// indexed.* built-in capability handlers (#79): shipped only when an app
-// declares an indexed-* effect. The DB is opened lazily on the first call so
-// apps that never actually run an effect don't trigger an upgrade transaction.
-// A failure is an `err` whose value is its message as a plain string: the
-// `Text` these effects declare as `E` in `out=Result(T, Text)` (http.md
-// §6.7). The request is read inside each handler's `try`, so one that is
-// missing (an `in=Unit` effect with no `map-request`) is that err too rather
-// than a rejection.
-
 import type { EffectResult } from "./core.ts";
 import { type Decode, decodeRefusal } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
@@ -69,22 +60,12 @@ function ensureCfg(cfg: IndexedDbCfg | undefined): cfg is IndexedDbCfg {
 }
 
 export async function indexedRead(input: unknown, cfg?: IndexedDbCfg): Promise<EffectResult> {
-  // `indexed.read` cap covers two spec-§6.7.4 effects that share the cap:
-  // `indexed-read` (point lookup, returns Option) and `indexed-query` (range,
-  // returns List). Dispatch by input shape — a `key` means point lookup.
-  // `?.`: an `in=Unit` effect with no `map-request` has no request at all,
-  // which falls through to the query and fails there as its `Text` err.
   const x = input as { store: string; key?: unknown } | undefined;
   if (x?.key !== undefined)
     return pointRead(x as { store: string; key: string; decode?: Decode }, cfg);
   return indexedQuery(input, cfg);
 }
 
-/**
- * A stored record is a structured clone, not JSON, so nothing is parsed; a
- * `Decoder.Json(T)` whose `T` refuses the record makes the read an `err`, as a
- * refused `storage.read` is (http.md §6.7.4).
- */
 async function pointRead(
   input: { store: string; key: string; decode?: Decode },
   cfg?: IndexedDbCfg,
@@ -114,8 +95,6 @@ export async function indexedWrite(input: unknown, cfg?: IndexedDbCfg): Promise<
     const db = await openDb(cfg);
     const tx = db.transaction(store, "readwrite");
     const os = tx.objectStore(store);
-    // Honor the store's declared keyPath: stamp it into the record so callers
-    // don't need to repeat the id field in `value`.
     const record =
       value && typeof value === "object"
         ? { ...(value as Record<string, unknown>), [os.keyPath as string]: key }
@@ -161,8 +140,6 @@ export async function indexedQuery(input: unknown, cfg?: IndexedDbCfg): Promise<
 }
 
 function unwrapOption(v: unknown): unknown {
-  // Kumiki's `Option(T)` lowers to `{ _tag: "Some", _0: T } | { _tag: "None" }`;
-  // raw values pass through unchanged so plain JS callers still work.
   if (v && typeof v === "object" && "_tag" in v) {
     const tag = (v as { _tag: string })._tag;
     if (tag === "None") return undefined;

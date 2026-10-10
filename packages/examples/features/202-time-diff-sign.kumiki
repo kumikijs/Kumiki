@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.8): `a.diff(b)` is `a` minus `b`.
+# Feature (stdlib.md): `a.diff(b)` is `a` minus `b`.
 #
 #   diff(other) : Duration   ; the receiver minus `other`
 #

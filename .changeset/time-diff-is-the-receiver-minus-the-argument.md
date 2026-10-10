@@ -24,10 +24,10 @@ before: status(now.minus(Duration.d(2)))  →  DueSoon   (diff = +172800000)
 after:  status(now.minus(Duration.d(2)))  →  Overdue   (diff = -172800000)
 ```
 
-stdlib.md §2.2.8 declared `diff(other) : Duration` without a sign. It now says
+stdlib.md declared `diff(other) : Duration` without a sign. It now says
 that `a.diff(b)` is `a` minus `b`: positive when `a` is the later instant,
 negative when it is the earlier one, so `b.plus(a.diff(b))` is `a`. That is how
-§2.2.9's own `fn elapsed(start: Time) -> Duration = now.diff(start)` already
+its own `fn elapsed(start: Time) -> Duration = now.diff(start)` already
 read it, and `Duration` is a `nominal Int`, which can be negative.
 
 A program that used `diff` as a distance and put the later instant second now
