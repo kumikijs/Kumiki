@@ -1,5 +1,5 @@
 import type { BinOp, Expr, MatchArm, Pattern, Pos } from "../ast.ts";
-import { QUALIFIED_CALL_NAMESPACES } from "../builtin-calls.ts";
+import { qualifiedCallee, readsBareMemberAsCall } from "../builtin-calls.ts";
 import { ParseError } from "./token-stream.ts";
 import { TypeParser } from "./types.ts";
 
@@ -321,14 +321,14 @@ export class ExpressionParser extends TypeParser {
       const name = t.value;
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
       if (
-        QUALIFIED_CALL_NAMESPACES.has(name) &&
+        readsBareMemberAsCall(name) &&
         this.matchOp(".") &&
         (this.matchTAt(1, "ident") || this.matchTAt(1, "kw")) &&
         !this.matchTAt(2, "op", "(")
       ) {
         this.next();
         const member = (this.next() as { value: string }).value;
-        return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, member), args: [], pos: t.pos };
       }
       if (
         isQualifierReceiver &&
@@ -349,7 +349,7 @@ export class ExpressionParser extends TypeParser {
           }
         }
         this.eat("op", ")");
-        return { kind: "Call", callee: `${name}.${sub}`, args, pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, sub), args, pos: t.pos };
       }
       if (this.matchOp("(")) {
         this.next();

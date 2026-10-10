@@ -2,6 +2,7 @@ import { codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_CALLS,
+  BUILTIN_MEMBERS,
   type BuiltinArity,
   QUALIFIED_BUILTIN_CALLS,
   QUALIFIED_CALL_NAMESPACES,
@@ -496,14 +497,130 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
+describe("`Time.now` is the builtin `now`", () => {
+  // Asserted against what the bare keyword gets, never against a copy of it.
+  const SPELLINGS = ["Time.now", "Time.now()"];
+
+  const EVERYWHERE = `slot at : Time = NOW
+fn later(t: Time) -> Time = NOW.plus(Duration.s(1))
+reducer stamp on=ui.click(B) do= at := NOW
+tile B = button(text="b")
+tile App = column(B, text(NOW.format("yyyy")), text(later(at).show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test stamps =
+    reducer-test stamp
+        given  = {slots: {at: NOW}, event: {type: ui.click, target: B}}
+        expect = {slots: {}}
+`;
+
+  const moduleWith = (spelling: string): string =>
+    compileOrFail(EVERYWHERE.replaceAll("NOW", spelling));
+
+  it("lowers to the module `now` lowers to, in a slot, fn, reducer, tile and test", () => {
+    // Codegen embeds no source positions, so a byte-identical module is "the same builtin" in
+    // every position at once, the environment read the runtime journals included.
+    const bare = moduleWith("now");
+    expect(bare.match(/_s\.now\(\)/g)?.length).toBe(5);
+    for (const spelling of SPELLINGS) expect(moduleWith(spelling), spelling).toBe(bare);
+  });
+
+  it("is a Time, refused where a Bool is declared in the sentence `now` gets", () => {
+    const flag = (body: string) =>
+      checkSource(`fn flag() -> Bool = ${body}
+tile App = column(text(flag().show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`);
+    const bare = flag("now");
+    expect(bare).toEqual([
+      {
+        code: "E0201",
+        kind: "type-mismatch",
+        message: "Expected Bool but got Time",
+        pos: { line: 1, col: 21 },
+      },
+    ]);
+    for (const spelling of SPELLINGS) expect(flag(spelling), spelling).toEqual(bare);
+  });
+
+  it.each(SPELLINGS)("%s is a Time where one is declared, with Time's members", (spelling) => {
+    expect(codesOf(inReducer(`t := ${spelling}.plus(Duration.s(1)).format("yyyy")`))).toEqual([]);
+  });
+
+  it("takes no argument, as `now` takes none", () => {
+    expect(checkSource(inReducer("t := Time.now(1).show"))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "now" expects 0 argument(s) but got 1',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
+  });
+
+  it("reads a member Time does not have as a call to nothing, in either spelling", () => {
+    const bare = checkSource(inReducer("t := (Time.nope).show"));
+    expect(bare).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-call",
+        message: 'Call to undefined function "Time.nope"',
+        pos: { line: 4, col: 36 },
+      },
+    ]);
+    expect(checkSource(inReducer("t := (Time.nope()).show"))).toEqual(bare);
+  });
+
+  const BARE_TYPE_MEMBERS: [string, string][] = [
+    ["parse", "E0213"],
+    ["show", "E0213"],
+    ["fresh", "E0802"],
+  ];
+
+  it("covers every type member", () => {
+    expect(BARE_TYPE_MEMBERS.map(([m]) => m).sort()).toEqual([...TYPE_MEMBER_CALLS.keys()].sort());
+  });
+
+  it.each(
+    BARE_TYPE_MEMBERS,
+  )("reports a bare Time.%s as its called spelling (%s)", (member, code) => {
+    const bare = checkSource(inReducer(`t := (Time.${member}).show`));
+    expect(bare.map((e) => e.code)).toEqual([code]);
+    expect(checkSource(inReducer(`t := (Time.${member}()).show`))).toEqual(bare);
+  });
+
+  it("keeps the type members of Time, which a closed namespace refuses", () => {
+    expect(loweringOf('Time.parse("2026-08-14")')).toContain('_s.parseTime("2026-08-14")');
+    expect(codesOf(inReducer("t := Time.show(a)"))).toEqual([]);
+    expect(checkSource(inReducer("t := (Time.parse()).show"))[0]?.message).toBe(
+      'Function "Time.parse" expects 1 argument(s) but got 0',
+    );
+  });
+
+  it("is the spelling `Time`, not a type whose base is Time", () => {
+    const src = `type Stamp = nominal Time
+slot s : Stamp = Stamp.now()
+tile App = column(text(s.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual(["E0116"]);
+  });
+});
+
 describe("every built-in is held to the count its lowering reads", () => {
   const fillerOf = (name: string) => (name === "parse" ? `"1"` : "1");
 
   /** `fresh` / `parse` / `show` resolve on any capitalised qualifier. */
   const QUALIFIER = "Probe";
 
+  // `now` is a keyword and takes no parentheses, so its count is written through `Time.now`.
+  const QUALIFIED_SPELLING = new Map(
+    [...BUILTIN_MEMBERS].map(([written, builtin]) => [builtin, written]),
+  );
+
   function callOf(name: string): (n: number) => string {
-    const spelling = TYPE_MEMBER_CALLS.has(name) ? `${QUALIFIER}.${name}` : name;
+    const spelling = TYPE_MEMBER_CALLS.has(name)
+      ? `${QUALIFIER}.${name}`
+      : (QUALIFIED_SPELLING.get(name) ?? name);
     const filler = fillerOf(name);
     return (n) => `${spelling}(${Array.from({ length: n }, () => filler).join(", ")})`;
   }
@@ -514,15 +631,11 @@ describe("every built-in is held to the count its lowering reads", () => {
     ...TYPE_MEMBER_CALLS,
   ];
 
-  const PARSER_FIXED = new Set(["now"]);
-
-  const NAMED = ALL.filter(([name]) => !PARSER_FIXED.has(name));
-
   it("covers all three tables", () => {
     expect(ALL.length).toBe(
       BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size + TYPE_MEMBER_CALLS.size,
     );
-    expect([...PARSER_FIXED].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
+    expect([...QUALIFIED_SPELLING.keys()].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
   });
 
   const EXPECTED: Record<string, string> = {
@@ -565,7 +678,7 @@ describe("every built-in is held to the count its lowering reads", () => {
     expect(() => parse(lex(inReducer("t := now(1).show")))).toThrow(/Expected/);
   });
 
-  for (const [name, arity] of NAMED) {
+  for (const [name, arity] of ALL) {
     const call = callOf(name);
 
     it(`${name} accepts ${arity.min}`, () => {

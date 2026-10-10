@@ -253,7 +253,7 @@ Kumiki の算術はこれで全部である。`math` 名前空間は存在しな
 ### 2.2.8 Time
 
 ```
-Time.now                    : Time
+Time.now                    : Time            ; 現在時刻 — 組み込みの now（§2.4.2）
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
@@ -482,6 +482,8 @@ id は uuid の `Text` なので、`TypeName` は `Text` が入る型である�
 ```
 now                        : Time          ; 現在時刻
 ```
+
+`Time.now`（[§2.2.8](#_2-2-8-time)）はこの組み込みを型の名前で書いたものであり、`Time.now()` は括弧を書いた同じ呼び出しである。どちらも同じ `Time` で、評価された場所で時計から読まれ、環境読み取りとしても同じである——それを読む reducer は `now` の記録を残し、リプレイはその記録から答える（[ランタイム §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。`now` 自体はキーワードであり、括弧を取らない。qualifier は `Time` そのものである：`now` はあらゆる型名が持つメンバ（[§2.4.1](#_2-4-1-id-生成)・[§2.4.3](#_2-4-3-型変換)）ではないため、`Time` の上に宣言された型はそれを持たない。
 
 ### 2.4.3 型変換
 

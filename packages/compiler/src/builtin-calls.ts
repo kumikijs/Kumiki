@@ -38,6 +38,24 @@ export const QUALIFIED_CALL_NAMESPACES: ReadonlySet<string> = new Set([
   "Bytes",
 ]);
 
+// The parser rewrites these spellings to the builtin they name, so nothing past it sees which
+// spelling was written.
+export const BUILTIN_MEMBERS: ReadonlyMap<string, string> = new Map([["Time.now", "now"]]);
+
+const BUILTIN_MEMBER_QUALIFIERS: ReadonlySet<string> = new Set(
+  [...BUILTIN_MEMBERS.keys()].map((name) => name.slice(0, name.indexOf("."))),
+);
+
+// Unlike a closed namespace, a BUILTIN_MEMBERS qualifier keeps the type members every type has.
+export function readsBareMemberAsCall(qualifier: string): boolean {
+  return QUALIFIED_CALL_NAMESPACES.has(qualifier) || BUILTIN_MEMBER_QUALIFIERS.has(qualifier);
+}
+
+export function qualifiedCallee(qualifier: string, member: string): string {
+  const written = `${qualifier}.${member}`;
+  return BUILTIN_MEMBERS.get(written) ?? written;
+}
+
 export const TYPE_MEMBER_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["fresh", exactly(0)],
   ["parse", exactly(1)],
@@ -67,7 +85,12 @@ export function isBuiltinCallee(callee: string): boolean {
 }
 
 export function calleeCandidates(fnNames: Iterable<string>, missing?: string): string[] {
-  const base = [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
+  const base = [
+    ...BUILTIN_CALLS.keys(),
+    ...QUALIFIED_BUILTIN_CALLS.keys(),
+    ...BUILTIN_MEMBERS.keys(),
+    ...fnNames,
+  ];
   const dot = missing === undefined ? -1 : missing.indexOf(".");
   if (missing === undefined || dot <= 0 || !QUALIFIER_RE.test(missing.slice(0, dot))) return base;
   const qualifier = missing.slice(0, dot);
