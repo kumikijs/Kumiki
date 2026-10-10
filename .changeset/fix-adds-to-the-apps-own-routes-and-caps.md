@@ -4,7 +4,7 @@
 "@kumikijs/mcp": patch
 ---
 
-`kumiki fix --apply` repairs E0001 and E0301 in the app's own `routes` and `caps`, and no longer breaks the file doing it (#641).
+`kumiki fix --apply` repairs E0001 and E0301 in the app's own `routes` and `caps`, and no longer breaks the file doing it.
 
 Both repairs were text patterns. E0001's `routes = {` pattern also matched a tile's `sub-routes = {`, so when a nested-routes layout tile came before the `app`, `"/404" -> NotFound` went into the tile, the E0001 stayed, and the gate rolled the patch back. E0001 also always added `tile NotFound = …`, so a program that already had a `NotFound` tile got E0007 and the same rollback. E0301 split `caps = [...]` on commas and joined it onto one line, so with `nav.push    # links` as the last entry the new cap and the closing `]` ended up inside the comment, and the file stopped parsing.
 

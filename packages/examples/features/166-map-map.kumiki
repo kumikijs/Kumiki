@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.1): `Map(K, V).map(expr)` maps each entry's value.
+# Feature: `Map(K, V).map(expr)` maps each entry's value.
 #
 #   Map(K, V).map(expr) : Map(K, V')   ; within expr, $1 = key : K, $2 = value
 #

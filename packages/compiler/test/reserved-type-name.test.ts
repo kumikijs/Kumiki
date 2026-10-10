@@ -1,4 +1,4 @@
-import { check, lex, parse } from "@kumikijs/compiler";
+import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_TYPE_CONSTRUCTORS,
@@ -8,59 +8,31 @@ import {
   reservedTypeReason,
   STDLIB_TYPES,
 } from "../src/stdlib-types.ts";
-
-// A program cannot declare a type under a name that already means a type in
-// every program (language.md §1.3.6 inv. 6). Three tables of the checker hold
-// those names:
-//
-// - the primitives (`Int`, `File`, …), which the parser reads as themselves
-//   wherever a type is written;
-// - the built-in type constructors (`Option`, `List`, `Map`, …), whose values,
-//   members and arity the checker knows without a definition;
-// - six of the standard library's domain types (stdlib.md §2.1.3), whose values
-//   the runtime or the standard library builds or reads: the `PanicInfo` an
-//   error-boundary fallback is applied to, the `Route` the router maintains,
-//   the `HttpError` a failed request delivers and its `HttpStatus`, a
-//   `Duration.ms(5)`, the `FormValue` a multipart body is read by.
-//
-// E0231 is reported at the declaration, and every use of the name keeps the
-// built-in meaning.
-//
-// The other four domain types name types only a program builds values of. A
-// program may declare its own, and its uses then mean the program's type.
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-const codes = (src: string) => check(parse(lex(src))).map((e) => e.code);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-/** The E0231 message for `name`, by what the name already means. */
-const reservedMessage = (name: string, meaning: string) =>
-  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
 const PRIMITIVE = "the primitive type";
 const CONSTRUCTOR = "the built-in type constructor";
 const RUNTIME = "the standard library's";
 
-/** The six runtime-supplied names, spelled out so dropping one fails its row. */
+const reservedMessage = (name: string, meaning: string) =>
+  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
+
 const RUNTIME_SUPPLIED = ["PanicInfo", "Route", "HttpError", "HttpStatus", "Duration", "FormValue"];
 
-/**
- * One row per reserved name, read from the checker's own tables — a primitive
- * or a constructor added there is reserved without a row being written here.
- */
 const RESERVED: [name: string, meaning: string][] = [
   ...PRIM_TYPE_NAMES.map((n): [string, string] => [n, PRIMITIVE]),
   ...[...BUILTIN_TYPE_CONSTRUCTORS.keys()].map((n): [string, string] => [n, CONSTRUCTOR]),
   ...[...RUNTIME_SUPPLIED_TYPE_NAMES].map((n): [string, string] => [n, RUNTIME]),
 ];
 
-/**
- * Names the rows above must include, so a table that shrank — or a rows
- * expression that stopped reading one — fails here rather than leaving fewer
- * rows that all pass.
- */
+// The rows above are read from the tables, so these spell some out: a table
+// that shrank would otherwise leave fewer rows that all pass.
 const SPOT: [name: string, meaning: string][] = [
   ["Int", PRIMITIVE],
   ["File", PRIMITIVE],
@@ -70,15 +42,10 @@ const SPOT: [name: string, meaning: string][] = [
   ["PanicInfo", RUNTIME],
 ];
 
-/**
- * One row per declarable name: a declaration under it, and a use the standard
- * library's definition would refuse — so each row fails if the name is
- * reserved, and again if the use read the standard library's type.
- */
+// Each use is one the standard library's definition would refuse, so a row
+// fails if the name is reserved, and again if the use read the stdlib type.
 const DECLARABLE: [string, string][] = [
   ["Email", `type Email = {address: Text}\nslot e : Email = {address: "ada@example.com"}`],
-  // The standard library's `Url` is a `nominal`, which another nominal over
-  // `Text` does not accept; the program's alias of `Text` meets it.
   ["Url", `type Url = Text\ntype Slug = nominal Text\nfn slug(u: Url) -> Slug = u`],
   ["Uuid", `type Uuid = Int\nslot id : Uuid = 5`],
   ["FormData", `type FormData = Text\nslot f : FormData = "x"`],
@@ -105,7 +72,6 @@ describe("the reserved names", () => {
   });
 
   it("and the declarable rows cover every other standard library entry", () => {
-    // A new standard-library type has to be put in one group or the other.
     const declarable = DECLARABLE.map(([name]) => name);
     expect(STDLIB_TYPES.map((t) => t.name).sort()).toEqual(
       [...RUNTIME_SUPPLIED, ...declarable].sort(),
@@ -116,81 +82,65 @@ describe("the reserved names", () => {
     }
   });
 
-  it("include every name the parser reads as a primitive", () => {
-    for (const name of PRIM_TYPE_NAMES) {
-      const [def] = parse(lex(`type Box = ${name}`)).defs;
-      expect(def?.kind === "TypeDef" && def.body.kind, name).toBe("TypePrim");
-    }
+  it.each(PRIM_TYPE_NAMES)("include %s, which the parser reads as a primitive", (name) => {
+    const [def] = parse(lex(`type Box = ${name}`)).defs;
+    expect(def?.kind === "TypeDef" && def.body.kind).toBe("TypePrim");
   });
 });
 
 describe("a program declaring a type under a reserved name", () => {
-  for (const [name, meaning] of RESERVED) {
-    it(`is E0231 at the declaration of "${name}"`, () => {
-      const found = check(parse(lex(`slot n : Int = 0\ntype ${name} = {v: Int}\n${TAIL}`)));
-      expect(found).toEqual([
-        {
-          code: "E0231",
-          kind: "reserved-type-name",
-          message: reservedMessage(name, meaning),
-          pos: { line: 2, col: 1 },
-        },
-      ]);
-    });
-  }
-
-  it("reports the declaration whatever its body or parameters", () => {
-    for (const decl of [
-      "type Route = Text",
-      "type Duration = Short | Long",
-      "type HttpError(T) = {v: T}",
-      "type Text = Int",
-      "type Int = nominal Text",
-      "type Bool = Yes | No",
-      "type Time = Int where positive",
-      "type Option = Int",
-      "type List(T) = {v: T}",
-      "type Map(K, V) = {k: K}",
-      "type Result(T, E) = Good(T) | Bad(E)",
-      "type Tuple(A, B) = {a: A, b: B}",
-      "type Set(T) = List(T)",
-    ]) {
-      expect(codes(`${decl}\n${TAIL}`), decl).toEqual(["E0231"]);
-    }
+  it.each(RESERVED)("is E0231 at the declaration of %s", (name, meaning) => {
+    expect(checkSource(`slot n : Int = 0\ntype ${name} = {v: Int}\n${TAIL}`)).toEqual([
+      {
+        code: "E0231",
+        kind: "reserved-type-name",
+        message: reservedMessage(name, meaning),
+        pos: { line: 2, col: 1 },
+      },
+    ]);
   });
 
-  it("reports a declaration identical to the built-in one too", () => {
-    // Declaring again what the name already means adds nothing, and would
-    // leave the name free to drift from it.
-    for (const decl of [
-      "type HttpStatus = nominal Int where between(0, 599)",
-      "type Option(T) = None | Some(T)",
-      "type Result(T, E) = Ok(T) | Err(E)",
-    ]) {
-      expect(codes(`${decl}\n${TAIL}`), decl).toEqual(["E0231"]);
-    }
+  it.each([
+    "type Route = Text",
+    "type Duration = Short | Long",
+    "type HttpError(T) = {v: T}",
+    "type Text = Int",
+    "type Int = nominal Text",
+    "type Bool = Yes | No",
+    "type Time = Int where positive",
+    "type Option = Int",
+    "type List(T) = {v: T}",
+    "type Map(K, V) = {k: K}",
+    "type Result(T, E) = Good(T) | Bad(E)",
+    "type Tuple(A, B) = {a: A, b: B}",
+    "type Set(T) = List(T)",
+  ])("reports the declaration whatever its body: %s", (decl) => {
+    expect(codesOf(`${decl}\n${TAIL}`)).toEqual(["E0231"]);
   });
 
-  it("reports each declaration of the name", () => {
-    // A second declaration is also E0007, which names the duplicate. E0231 is
-    // about the name, so each declaration of it carries one.
-    for (const name of ["Route", "Int", "Option"]) {
-      const found = codes(`type ${name} = Text\ntype ${name} = Bool\n${TAIL}`);
-      expect(
-        found.filter((c) => c === "E0231"),
-        name,
-      ).toHaveLength(2);
-      expect(found, name).toContain("E0007");
-    }
+  it.each([
+    "type HttpStatus = nominal Int where between(0, 599)",
+    "type Option(T) = None | Some(T)",
+    "type Result(T, E) = Ok(T) | Err(E)",
+  ])("reports a declaration identical to the built-in one too: %s", (decl) => {
+    expect(codesOf(`${decl}\n${TAIL}`)).toEqual(["E0231"]);
+  });
+
+  it.each([
+    "Route",
+    "Int",
+    "Option",
+  ])("reports each declaration of %s, beside the E0007 for the duplicate", (name) => {
+    const found = codesOf(`type ${name} = Text\ntype ${name} = Bool\n${TAIL}`);
+    expect(found.filter((c) => c === "E0231")).toHaveLength(2);
+    expect(found).toContain("E0007");
   });
 });
 
 describe("a program declaring a type under a declarable name", () => {
-  for (const [name, decls] of DECLARABLE) {
-    it(`is accepted for "${name}", and the uses mean the program's type`, () => {
-      expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
-    });
-  }
+  it.each(DECLARABLE)("is accepted for %s, and the uses mean the program's type", (_, decls) => {
+    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+  });
 });
 
 describe("a use of a reserved name keeps the standard library's type", () => {
@@ -202,19 +152,28 @@ describe("a use of a reserved name keeps the standard library's type", () => {
   });
 
   it("follows an alias to the standard library's definition, so a self-alias is no cycle", () => {
-    // `type Route = Route` is one mistake — the declaration — and the name it
-    // writes is the standard library's record, so there is no loop to report.
-    expect(codes(`type Route = Route\n${TAIL}`)).toEqual(["E0231"]);
+    expect(codesOf(`type Route = Route\n${TAIL}`)).toEqual(["E0231"]);
   });
 
   it("types an error-boundary fallback's $1 as the PanicInfo the runtime builds", () => {
-    // The fallback reads `$1.message`, which the record the runtime binds has
-    // and the declared `Text` does not: the read is checked against the record.
     const src = `type PanicInfo = Text
 slot secret : Option(Text) = None
 tile Fb in=PanicInfo = column(text("recovered: " + $1.message))
 tile Risky error-boundary=Fb = column(text(secret.get))
 tile App = column(Risky)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+    expect(diagnostics(src)).toEqual([`E0231 1:1 ${reservedMessage("PanicInfo", RUNTIME)}`]);
+  });
+
+  it("refuses a fallback typed by a program's own PanicInfo at the declaration", () => {
+    const src = `type PanicInfo = Text
+slot secret : Option(Text) = None
+slot reveal : Bool = false
+tile Fb in=PanicInfo = column(text("recovered: " + $1))
+tile Risky error-boundary=Fb = when(reveal, text(secret.get))
+tile Btn = button(text="go") {id: "go"}
+reducer go on=ui.click(Btn) do= reveal := true
+tile App = column(Risky, Btn)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     expect(diagnostics(src)).toEqual([`E0231 1:1 ${reservedMessage("PanicInfo", RUNTIME)}`]);
   });
@@ -227,9 +186,7 @@ describe("a use of a primitive name keeps the primitive", () => {
     ]);
   });
 
-  it("checks a slot typed Int as an Int", () => {
-    // `5` is an Int and stands; `"x"` is the Text the declaration meant, which
-    // the primitive refuses.
+  it("checks a slot typed Int as an Int, refusing the Text the declaration meant", () => {
     expect(diagnostics(`type Int = Text\nslot n : Int = 5\nslot t : Int = "x"\n${TAIL}`)).toEqual([
       `E0231 1:1 ${reservedMessage("Int", PRIMITIVE)}`,
       "E0201 3:16 Expected Int but got Text",
@@ -245,7 +202,7 @@ describe("a use of a primitive name keeps the primitive", () => {
   });
 
   it("follows a self-alias to the primitive, so it is no cycle", () => {
-    expect(codes(`type Int = Int\n${TAIL}`)).toEqual(["E0231"]);
+    expect(codesOf(`type Int = Int\n${TAIL}`)).toEqual(["E0231"]);
   });
 });
 
@@ -262,9 +219,7 @@ describe("a use of a constructor name keeps the built-in constructor", () => {
     ]);
   });
 
-  it("reads a bare `Option` as the built-in constructor missing its argument", () => {
-    // The declaration gave `Option` no parameters; the built-in takes one, and
-    // that is the arity the use is measured against.
+  it("measures a bare `Option` against the built-in's arity", () => {
     expect(diagnostics(`type Option = Int\nslot o : Option = 5\n${TAIL}`)).toEqual([
       `E0231 1:1 ${reservedMessage("Option", CONSTRUCTOR)}`,
       `E0210 2:10 Type "Option" expects 1 type argument(s) but got 0`,
@@ -303,47 +258,26 @@ describe("a use of a constructor name keeps the built-in constructor", () => {
     ]);
   });
 
-  it("checks `Set`, `Result` and `Tuple` against the built-ins, with no arity report", () => {
-    for (const src of [
-      `type Set(T) = {v: T}\nslot s : Set(Int) = [1]`,
-      `type Result(T, E) = {v: T}\nslot r : Result(Int, Text) = Err("x")`,
-      `type Tuple = {a: Int}\nslot p : Tuple(Int, Int) = (1, 2)`,
-    ]) {
-      expect(codes(`${src}\n${TAIL}`), src).toEqual(["E0231"]);
-    }
+  it.each([
+    `type Set(T) = {v: T}\nslot s : Set(Int) = [1]`,
+    `type Result(T, E) = {v: T}\nslot r : Result(Int, Text) = Err("x")`,
+    `type Tuple = {a: Int}\nslot p : Tuple(Int, Int) = (1, 2)`,
+  ])("checks against the built-in, with no arity report: %s", (src) => {
+    expect(codesOf(`${src}\n${TAIL}`)).toEqual(["E0231"]);
   });
 
-  it("follows a self-application to the built-in, so it is no cycle", () => {
-    expect(codes(`type List(T) = List(T)\n${TAIL}`)).toEqual(["E0231"]);
-    expect(codes(`type Option = Option(Int)\n${TAIL}`)).toEqual(["E0231"]);
-  });
-});
-
-describe("a fallback typed by a program's own PanicInfo", () => {
-  it("is refused at the declaration", () => {
-    // Accepted, the checker would read `$1` as the declared `Text` while the
-    // runtime binds the panic record to it.
-    const src = `type PanicInfo = Text
-slot secret : Option(Text) = None
-slot reveal : Bool = false
-tile Fb in=PanicInfo = column(text("recovered: " + $1))
-tile Risky error-boundary=Fb = when(reveal, text(secret.get))
-tile Btn = button(text="go") {id: "go"}
-reducer go on=ui.click(Btn) do= reveal := true
-tile App = column(Risky, Btn)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    expect(diagnostics(src)).toEqual([`E0231 1:1 ${reservedMessage("PanicInfo", RUNTIME)}`]);
+  it.each([
+    "type List(T) = List(T)",
+    "type Option = Option(Int)",
+  ])("follows a self-application to the built-in, so it is no cycle: %s", (decl) => {
+    expect(codesOf(`${decl}\n${TAIL}`)).toEqual(["E0231"]);
   });
 });
 
 describe("the standard library names everywhere else", () => {
-  // Only `type <reserved name> = …` is refused. Each of these writes one of
-  // the names in a position that reads it, or declares something that is not
-  // a type.
-  for (const t of STDLIB_TYPES) {
-    const n = t.name;
+  const positions = (n: string): [string, string][] => {
     const lower = `${n.charAt(0).toLowerCase()}${n.slice(1)}`;
-    const positions: [string, string][] = [
+    return [
       ["a slot annotation", `slot x : Option(${n}) = None`],
       ["a fn parameter and return", `fn f(a: Option(${n})) -> Option(${n}) = a`],
       ["a tile in=", `tile T in=${n} = text("t")`],
@@ -360,27 +294,26 @@ describe("the standard library names everywhere else", () => {
       ["a tile of that name", `tile ${n} = text("t")`],
       ["a variant tag of that name", `type Mine = ${n} | Other\nslot m : Mine = ${n}`],
     ];
-    for (const [where, decls] of positions) {
-      // `slot route` is E0115: that name is the router's slot, not a type's.
-      if (decls.startsWith("slot route ")) continue;
-      it(`leaves "${n}" in ${where} alone`, () => {
-        expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
-      });
-    }
-  }
+  };
+  // `slot route` is E0115: that name is the router's slot, not a type's.
+  const cases = STDLIB_TYPES.flatMap((t) =>
+    positions(t.name)
+      .filter(([, decls]) => !decls.startsWith("slot route "))
+      .map(([where, decls]) => ({ name: t.name, where, decls })),
+  );
+  it.each(cases)("leaves $name in $where alone", ({ decls }) => {
+    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+  });
 });
 
 describe("the primitive and constructor names everywhere else", () => {
-  // Only `type <name> = …` is refused. Each of these writes one of the names
-  // in a position that reads it, declares a type under a longer or lower-case
-  // name, or declares something that is not a type.
   const use = (n: string): string =>
     BUILTIN_TYPE_CONSTRUCTORS.has(n)
       ? `${n}(${n === "Map" || n === "Result" ? "Text, Int" : "Int"})`
       : n;
-  for (const n of [...PRIM_TYPE_NAMES, ...BUILTIN_TYPE_CONSTRUCTORS.keys()]) {
+  const positions = (n: string): [string, string][] => {
     const lower = `${n.charAt(0).toLowerCase()}${n.slice(1)}`;
-    const positions: [string, string][] = [
+    return [
       ["a slot annotation", `slot x : Option(${use(n)}) = None`],
       ["a fn parameter and return", `fn f(a: Option(${use(n)})) -> Option(${use(n)}) = a`],
       ["a record field", `type Box = {v: ${use(n)}}\nslot b : Option(Box) = None`],
@@ -392,10 +325,11 @@ describe("the primitive and constructor names everywhere else", () => {
       ["a fn of that spelling", `fn ${lower}(a: Int) -> Int = a`],
       ["a tile of that name", `tile ${n} = text("t")`],
     ];
-    for (const [where, decls] of positions) {
-      it(`leaves "${n}" in ${where} alone`, () => {
-        expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
-      });
-    }
-  }
+  };
+  const cases = [...PRIM_TYPE_NAMES, ...BUILTIN_TYPE_CONSTRUCTORS.keys()].flatMap((name) =>
+    positions(name).map(([where, decls]) => ({ name, where, decls })),
+  );
+  it.each(cases)("leaves $name in $where alone", ({ decls }) => {
+    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+  });
 });

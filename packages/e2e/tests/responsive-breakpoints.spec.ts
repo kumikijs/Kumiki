@@ -1,21 +1,11 @@
-// style.md §4.5 in a real viewport: a responsive `cols` map lays the grid out
-// in the track count its breakpoint names, and the breakpoints are the active
-// theme's. happy-dom has no viewport, so `packages/tests` answers `matchMedia`
-// itself; here Chromium does, and the computed track list is what a user sees.
-
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "158-responsive-breakpoints.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("158-responsive-breakpoints"), "utf8");
 
-/** The same grid and column with no theme, so §4.2's default breakpoints apply. */
+/** The same grid and column with no theme, so the default breakpoints apply. */
 const NO_THEME = `
 tile App = column(
     grid(text("a"), text("b"), text("c"), text("d")) {cols: {base: 1, md: 2, lg: 4}, id: "tracks"},
@@ -80,8 +70,6 @@ test("600px is md under a theme that puts md at 500px", async ({ page }) => {
 
 test("a rows map gives an 80px row from lg (900px under Narrow)", async ({ page }) => {
   await mountAt(page, 1000);
-  // Six cells in four columns: the first row is the declared 80px track, the
-  // second an implicit one sized to its content.
   const rows = await page.evaluate(
     () => getComputedStyle(document.querySelector("#tracks") as HTMLElement).gridTemplateRows,
   );
@@ -98,7 +86,9 @@ for (const [width, cols, g] of [
   [800, 2, "24px"],
   [1100, 4, "24px"],
 ] as const) {
-  test(`with no theme, ${width}px uses the §4.2 defaults (${cols} column(s))`, async ({ page }) => {
+  test(`with no theme, ${width}px uses the default breakpoints (${cols} column(s))`, async ({
+    page,
+  }) => {
     await mountAt(page, width, NO_THEME);
     expect(await columnCount(page)).toBe(cols);
     expect(await gap(page)).toBe(g);

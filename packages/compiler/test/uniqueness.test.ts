@@ -1,29 +1,11 @@
-// A name declared twice, and what happened before it was reported.
-//
-// Symbol collection is `Map.set` without a `has`, so the later definition won
-// and the earlier one vanished. The sharpest case is two reducers of one name:
-// code generation emits both into `_reducers` and the runtime dispatches the
-// first, while the checker validated only the second — so the program that
-// ran was not the program that was checked.
-//
-// Inside a construct the parser is where it happened. `app` and `effect`
-// clauses and `theme` records were assembled into a record whose later key
-// overwrote the earlier one, which for `caps` means the declared capability
-// set silently depended on clause order.
-
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 const APP = `tile App = column(text("x"))\n`;
-const diags = (src: string) => check(parse(lex(src)));
-const codes = (src: string) => diags(src).map((e) => e.code);
 
 describe("a definition declared twice in one layer", () => {
-  // One row per layer: the check is over `program.defs`, so a layer that is
-  // added to the language and not to it is a layer that keeps the old
-  // last-one-wins behaviour.
   const layers: [string, string][] = [
     ["type", `type T = Int\ntype T = Text`],
     ["slot", `slot a : Int = 0\nslot a : Int = 1`],
@@ -39,9 +21,6 @@ describe("a definition declared twice in one layer", () => {
     ],
     ["theme", `theme T = {gap: "1"}\ntheme T = {gap: "2"}`],
     [
-      // `LAYER_OF_DEF` is exhaustive over the `Def` kinds, so every layer it
-      // names needs a row here — the table's own purpose is that a layer
-      // cannot be forgotten, and `test` was forgotten on the first pass.
       "test",
       `slot a : Int = 0
 tile B = button(text="b", onClick=r)
@@ -57,7 +36,7 @@ motion M = {keyframes: {from: {opacity: 1}, to: {opacity: 0}}, duration: 100}`,
   ];
   for (const [layer, defs] of layers) {
     it(`reports a duplicate ${layer}`, () => {
-      expect(codes(`${defs}\n${APP}${TAIL}`)).toContain("E0007");
+      expect(codesOf(`${defs}\n${APP}${TAIL}`)).toContain("E0007");
     });
   }
 
@@ -66,31 +45,27 @@ motion M = {keyframes: {from: {opacity: 1}, to: {opacity: 0}}, duration: 100}`,
 slot a : Int = 1
 slot a : Int = 2
 ${APP}${TAIL}`;
-    const found = diags(src).filter((e) => e.code === "E0007");
+    const found = checkSource(src).filter((e) => e.code === "E0007");
     expect(found.map((e) => `${e.pos.line}:${e.pos.col}`)).toEqual(["2:1", "3:1"]);
     expect(found[0]?.message).toContain(`slot "a"`);
   });
 
   it("leaves the same name in two different layers alone", () => {
-    // Namespaces are per layer, and `tile leaf` next to `slot leaf` is how a
-    // program reaches code generation's bare-identifier child resolution.
-    expect(codes(`slot leaf : Int = 1\ntile leaf = column(text("l"))\n${APP}${TAIL}`)).toEqual([]);
+    expect(codesOf(`slot leaf : Int = 1\ntile leaf = column(text("l"))\n${APP}${TAIL}`)).toEqual(
+      [],
+    );
   });
 
-  it("leaves a program's own definition of a standard library name alone", () => {
-    // Seeded standard-library types live in the same table the checker reads,
-    // so a uniqueness check written over that table would report these as
-    // second declarations. `Email` is the program's to declare; `Route` is
-    // reserved, which is E0231's to say and not E0007's.
-    expect(codes(`type Email = Text\nslot r : Email = "x"\n${APP}${TAIL}`)).toEqual([]);
-    expect(codes(`type Route = {path: Text}\n${APP}${TAIL}`)).toEqual(["E0231"]);
+  it("leaves a program's own definition of a standard library name to E0231, not E0007", () => {
+    expect(codesOf(`type Email = Text\nslot r : Email = "x"\n${APP}${TAIL}`)).toEqual([]);
+    expect(codesOf(`type Route = {path: Text}\n${APP}${TAIL}`)).toEqual(["E0231"]);
   });
 
   it("leaves a second app to E0004", () => {
     const src = `${APP}app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(codes(src)).toEqual(["E0004"]);
+    expect(codesOf(src)).toEqual(["E0004"]);
   });
 });
 
@@ -114,9 +89,6 @@ describe("a name declared twice inside one construct", () => {
     ],
     ["a theme entry", "duplicate-key", `theme T = {gap: "1", gap: "2"}\n${APP}${TAIL}`],
     [
-      // The motion grammar is the theme grammar, but a separate definition
-      // kind — so a duplicate here travels a second wire that must be
-      // connected on its own.
       "a motion keyframe stop",
       "duplicate-key",
       `motion Fade = {keyframes: {from: {opacity: 0}, from: {opacity: 1}, to: {opacity: 1}}, duration: 100}\n${APP}${TAIL}`,
@@ -140,8 +112,6 @@ describe("a name declared twice inside one construct", () => {
     ["a fn parameter", "duplicate-param", `fn f(a: Int, a: Int) -> Int = a\n${APP}${TAIL}`],
     ["a type parameter", "duplicate-param", `type Box(T, T) = {v: T}\n${APP}${TAIL}`],
     ["a union variant", "duplicate-variant", `type U = A | B | A\n${APP}${TAIL}`],
-    // The four constructs no existing check walked. Each is reached only by
-    // the structural descent, so each is a row of its own.
     [
       "a tile clause",
       "duplicate-clause",
@@ -197,15 +167,12 @@ ${APP}${TAIL}`,
   ];
   for (const [what, kind, src] of shapes) {
     it(`reports ${what}`, () => {
-      const found = diags(src).filter((e) => e.code === "E0008");
+      const found = checkSource(src).filter((e) => e.code === "E0008");
       expect(found.length, `no E0008 for ${what}`).toBeGreaterThan(0);
       expect(found[0]?.kind).toBe(kind);
     });
   }
 
-  // The message has to say what kind of thing was duplicated: `kind` is
-  // machine-readable and the position is a point, so the sentence is the only
-  // part that tells a reader which of several names on one line to delete.
   const messages: [string, string, string][] = [
     ["a record type field", "Record type field", "type R = {a: Int, a: Text}"],
     ["a union variant", "Union variant", "type U = A | B | A"],
@@ -221,8 +188,6 @@ ${APP}${TAIL}`,
     ],
     ["a record literal key", "Record field", "slot s : Int = {a: 1, a: 2}.a"],
     ["a map literal key", 'Map key "a"', 'slot s : Map(Text, Int) = {"a": 1, "a": 2}'],
-    // The kind tag that makes `{"1": …, 1: …}` two keys is a comparison
-    // detail; the message names the key the way it was written.
     ["a negative map key", 'Map key "-1"', "slot s : Map(Int, Int) = {-1: 1, -1: 2}"],
     ["a theme entry", "theme key", 'theme T = {gap: "1", gap: "2"}'],
     [
@@ -248,31 +213,26 @@ ${APP}${TAIL}`,
   ];
   for (const [what, says, defs] of messages) {
     it(`names what was duplicated for ${what}`, () => {
-      const err = diags(`${defs}\n${APP}${TAIL}`).find((e) => e.code === "E0008");
+      const err = checkSource(`${defs}\n${APP}${TAIL}`).find((e) => e.code === "E0008");
       expect(err, `no E0008 for ${what}`).toBeDefined();
       expect(err?.message).toContain(says);
     });
   }
 
   it("points at the later occurrence, which is the one to delete", () => {
-    const err = diags(`type R = {a: Int, a: Text}\n${APP}${TAIL}`)[0];
+    const err = checkSource(`type R = {a: Int, a: Text}\n${APP}${TAIL}`)[0];
     expect(err?.code).toBe("E0008");
     expect(err?.message).toContain(`"a"`);
     expect(`${err?.pos.line}:${err?.pos.col}`).toBe("1:19");
   });
 
   it("reports once per occurrence past the first, like E0007 does", () => {
-    // The policy `uniqueness.ts` states, on the E0008 side: three writes are
-    // two edits, so two findings.
-    const found = diags(`type R = {a: Int, a: Text, a: Bool}\n${APP}${TAIL}`).filter(
+    const found = checkSource(`type R = {a: Int, a: Text, a: Bool}\n${APP}${TAIL}`).filter(
       (e) => e.code === "E0008",
     );
     expect(found.map((e) => `${e.pos.line}:${e.pos.col}`)).toEqual(["1:19", "1:28"]);
   });
 
-  // The parser-recorded path (`duplicateClauses` / `duplicateKeys`) carries
-  // its own positions, and nothing else asserts them — a broken hand-off
-  // would still produce a diagnostic, just one pointing at the wrong token.
   const recorded: [string, string, string][] = [
     [
       "an app clause",
@@ -294,50 +254,39 @@ ${APP}${TAIL}`,
   ];
   for (const [what, src, at] of recorded) {
     it(`points at the later occurrence of ${what}`, () => {
-      const err = diags(src).find((e) => e.code === "E0008");
+      const err = checkSource(src).find((e) => e.code === "E0008");
       expect(err, `no E0008 for ${what}`).toBeDefined();
       expect(`${err?.pos.line}:${err?.pos.col}`).toBe(at);
     });
   }
 
   it("compares map keys by kind, not by their text", () => {
-    // `{"1": …, 1: …}` is two keys. Normalising both to `"1"` reported a
-    // duplicate that is not one.
-    expect(codes(`slot s : Map(Text, Int) = {"1": 1, 1: 2}\n${APP}${TAIL}`)).not.toContain("E0008");
-    // And a negated literal is still a literal: `-1` parses as a unary minus
-    // over a number, which a `kind === "Num"` filter does not match.
-    expect(codes(`slot s : Map(Int, Int) = {-1: 1, -1: 2}\n${APP}${TAIL}`)).toContain("E0008");
+    expect(codesOf(`slot s : Map(Text, Int) = {"1": 1, 1: 2}\n${APP}${TAIL}`)).not.toContain(
+      "E0008",
+    );
+    expect(codesOf(`slot s : Map(Int, Int) = {-1: 1, -1: 2}\n${APP}${TAIL}`)).toContain("E0008");
   });
 
   it("says nothing about two computed keys", () => {
-    // Whether they collide is the runtime's question — a documented decision,
-    // so it needs a test that fails if the filter is dropped. A *bare* name
-    // parses as a record shorthand, so the key has to be a real expression
-    // for this to be the map path at all.
     const src = `slot k : Text = "a"
 slot m : Map(Text, Int) = {k.trim(): 1, k.trim(): 2}
 ${APP}${TAIL}`;
-    expect(codes(src)).not.toContain("E0008");
+    expect(codesOf(src)).not.toContain("E0008");
   });
 
   it("does not lose a __proto__ key to the object it is accumulated in", () => {
-    // Theme keys are gathered into a plain object, where `__proto__` replaces
-    // the prototype instead of adding a property — so the key disappeared and
-    // could never be seen twice.
-    expect(codes(`theme T = {c: {__proto__: "a", __proto__: "b"}}\n${APP}${TAIL}`)).toContain(
+    expect(codesOf(`theme T = {c: {__proto__: "a", __proto__: "b"}}\n${APP}${TAIL}`)).toContain(
       "E0008",
     );
   });
 
   it("leaves a repeated sub-route path to E0112, which came first", () => {
-    // One mistake, one diagnostic. `E0112` reads the same rule now, so it
-    // points at the offending entry rather than at the tile that holds it.
     const src = `tile NotFound = page(heading("404"))
 tile A = page(heading("a"))
 tile L sub-routes = { "/x" -> A, "/x" -> A } = page(route-outlet())
 app M caps=[] routes={"/*" -> L, "/404" -> NotFound} init=[]
 `;
-    const found = diags(src);
+    const found = checkSource(src);
     expect(found.map((e) => e.code)).toEqual(["E0112"]);
     expect(`${found[0]?.pos.line}:${found[0]?.pos.col}`).toBe("3:34");
   });
@@ -350,12 +299,10 @@ theme T = {gap: "1", pad: "2"}
 slot s : R = {a: 1, b: "x"}
 ${APP}app A caps=[nav.push] routes={"/" -> App, "/404" -> App} init=[]
 `;
-    expect(codes(src)).toEqual([]);
+    expect(codesOf(src)).toEqual([]);
   });
 
   it("leaves one key per record in sibling records alone", () => {
-    // Sibling scopes, not one scope: an accumulator that forgets to reset
-    // would read these as a duplicate.
-    expect(codes(`theme T = {space: {sm: "1"}, size: {sm: "2"}}\n${APP}${TAIL}`)).toEqual([]);
+    expect(codesOf(`theme T = {space: {sm: "1"}, size: {sm: "2"}}\n${APP}${TAIL}`)).toEqual([]);
   });
 });

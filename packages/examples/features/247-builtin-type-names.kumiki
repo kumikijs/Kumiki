@@ -1,4 +1,4 @@
-# Feature (language.md §1.3.6 inv. 6, errors.md E0231): a primitive and a
+# Feature (language.md, errors.md E0231): a primitive and a
 # built-in type constructor mean the same type in every program. This one
 # writes `Int`, `Text`, `List(…)`, `Option(…)` and `Map(…)` as the built-ins —
 # `bag.items.length` is the built-in List's member, `counts` takes a map

@@ -1,6 +1,6 @@
-# Feature (language.md §1.6.5): an effect-event bind has the type the effect's
-# `out=` declares. On a `Result(T, E)`, `.ok($v, _)` binds `$v : T`; any other
-# `out=` is the whole value on `.ok`.
+# Feature: an effect-event bind has the type the effect's `out=` declares. On a
+# `Result(T, E)`, `.ok($v, _)` binds `$v : T`; any other `out=` is the whole
+# value on `.ok`.
 #
 # So the `.ok` read below is checked like any slot read: `$s` is an
 # `Option(Session)` and is stored as one. Writing `session := $s.get-or(None)`
@@ -9,8 +9,8 @@
 # another type.
 #
 # On a storage / session / indexed effect, `.err($e, _)` binds `$e : E` too:
-# a failed `storage.read` delivers the `Text` its `out=` declares (http.md
-# §6.7), so the reducer stores `$e` as it is, and `$e.message` is E0108.
+# a failed `storage.read` delivers the `Text` its `out=` declares, so the
+# reducer stores `$e` as it is, and `$e.message` is E0108.
 
 type Session = {email: Text}
 
