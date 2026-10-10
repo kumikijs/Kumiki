@@ -1,23 +1,10 @@
-// A builtin tile's prop that stdlib.md §2.3.11 gives a type takes a value of
-// that type, and one that cannot have it is E0201 at the value. A named
-// argument and the `{…}` block are one prop (language.md §1.7.1), so both
-// spellings are checked alike. A text is not read as the type it spells —
-// `"false"` is no `Bool`, `"2"` no number — and an option is read by its
-// `label` and `value` alone, which is why a value of another type is refused
-// rather than rendered.
-//
-// The first block walks the whole table, so a prop added to it is checked the
-// moment it is added; that the table matches the spec is
-// `spec-drift.test.ts`'s. What the built app renders for the issue's shapes is
-// pinned in `packages/tests/builtin-prop-types.test.ts`.
-
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_PROP_ROWS,
   type BuiltinPropType,
   PROP_TYPE_SPELLING,
 } from "../src/builtin-props.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const program = (home: string) => `tile Home = ${home}
 type Pick = {label: Text, value: Text}
@@ -36,7 +23,7 @@ app R
 `;
 
 const diagnostics = (home: string) =>
-  check(parse(lex(program(home)))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(program(home)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
 // `tile Home = ` is 12 columns wide on line 1, so a value's column is 13 plus
 // its offset in the body.

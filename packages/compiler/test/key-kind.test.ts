@@ -1,22 +1,6 @@
-// A `Set` is stored as `{ [key]: true }` and a `Map` as a plain object, so at
-// runtime their keys are JavaScript object keys — strings. The members that
-// hand keys back (`Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and
-// `Map(K, V).filter`, whose predicate is given each key as `$1`; stdlib.md
-// §2.2.1 / §2.2.2) are told by the checker how the declared key type is
-// represented, and codegen passes that along. Without it a `Set(Int)` read
-// back `["7", "8"]` under a `List(Int)` type.
-//
-// What is pinned here is the decision — the `keyKind` the checker records on
-// the reader for each declared key type and for each place a receiver's type
-// can come from — plus one lowering per helper, to show the decision reaches
-// the emitted call. The runtime's side is in `packages/runtime/test/stdlib.test.ts`,
-// and example 102 runs the two together.
-
 import { check, compile, type Expr, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-const app = (defs: string): string =>
-  `${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
+import { withButtonApp } from "./helpers/programs.ts";
 
 /** An initial value a slot of `type` accepts, so the case checks clean. */
 const emptyOf = (type: string): string =>
@@ -27,7 +11,7 @@ type Reader = Extract<Expr, { kind: "FieldAccess" } | { kind: "MethodCall" }>;
 
 /** Every reader node in the checked program, a receiver before a fragment argument. */
 function readersOf(defs: string): Reader[] {
-  const program = parse(lex(app(defs)));
+  const program = parse(lex(withButtonApp(defs)));
   const errors = check(program).filter((e) => e.severity !== "warning");
   if (errors.length > 0) throw new Error(errors.map((e) => `${e.code} ${e.message}`).join("\n"));
   const found: Reader[] = [];
@@ -46,15 +30,10 @@ function readersOf(defs: string): Reader[] {
   return found;
 }
 
-/**
- * The kind recorded on the last reader of a reducer that writes `rhs` into
- * `res` — the one inside the fragment when the receiver is a reader too, as in
- * `m.entries.map($2.to-list)`.
- */
 function kindOf(decls: string, resType: string, rhs: string): string | undefined {
   const last = readersOf(`${decls}
 slot res : ${resType} = ${emptyOf(resType)}
-reducer act on=ui.click(Btn)
+reducer act on=ui.click(B)
     do= res := ${rhs}`).at(-1);
   if (!last) throw new Error(`no reader in ${rhs}`);
   return last.keyKind;
@@ -78,8 +57,6 @@ describe("a reader of a numeric key records number", () => {
     expect(kindOf(`slot m : Map(Int, Text) = {}`, resType, rhs)).toBe("number");
   });
 
-  // The kind is the key type's *representation*, so a name over a number
-  // reads a number back — followed through the nominal and the refinement.
   it("follows a nominal over Int", () => {
     const decls = `type TaskId = nominal Int\nslot st : Set(TaskId) = {}`;
     expect(kindOf(decls, "List(TaskId)", "st.to-list")).toBe("number");
@@ -103,8 +80,6 @@ describe("a reader of a Bool key records bool", () => {
 });
 
 describe("a reader of a structured key records value", () => {
-  // A record, a union value or a tuple is stored under its JSON, and read back
-  // by parsing it.
   it.each([
     ["type Color = Red | Green", "Set(Color)", "st.to-list", "List(Color)"],
     ["type Pt = {x: Int, y: Int}", "Set(Pt)", "st.to-list", "List(Pt)"],
@@ -126,8 +101,6 @@ describe("a Text key records nothing", () => {
     expect(kindOf(`slot st : Set(Text) = {}`, "List(Text)", "st.to-list")).toBeUndefined();
   });
 
-  // The usual shape of an id. A nominal is followed to its base, so this is the
-  // case that would tip to "number" if the base were misread.
   it("Set(TodoId) with TodoId = nominal Text", () => {
     const decls = `type TodoId = nominal Text\nslot st : Set(TodoId) = {}`;
     expect(kindOf(decls, "List(TodoId)", "st.to-list")).toBeUndefined();
@@ -155,9 +128,6 @@ describe("the receiver's type is followed wherever it comes from", () => {
     expect(readers.map((r) => r.keyKind)).toEqual(["number"]);
   });
 
-  // `$1` / `$2` are bound to what the receiver hands the fragment, so a key
-  // reader on them is decided like any other. They used to be bound with no
-  // type, and `rs.map($1.ids.to-list)` read strings back.
   it("the element $1 of a List", () => {
     const decls = `type R = {ids: Set(Int)}\nslot rs : List(R) = []`;
     expect(kindOf(decls, "List(List(Int))", "rs.map($1.ids.to-list)")).toBe("number");
@@ -173,37 +143,31 @@ describe("the receiver's type is followed wherever it comes from", () => {
     expect(kindOf(decls, "Option(List(Int))", "o.map($1.ids.to-list)")).toBe("number");
   });
 
-  // A property-test invariant reads the state `run-reducer` answers. Its
-  // slots are the program's, so `slots.st` has the slot's declared type.
   it("the slots a property-test invariant reads through run-reducer", () => {
     const readers = readersOf(`slot st : Set(Int) = {}
-reducer add on=ui.click(Btn)
+reducer add on=ui.click(B)
     do= st := st.add(7)
 test adds-seven =
     property-test
         for-all   = {n: Int}
-        given     = {slots: {st: {}}, event: {type: ui.click, target: Btn}}
+        given     = {slots: {st: {}}, event: {type: ui.click, target: B}}
         invariant = run-reducer(add).slots.st.to-list.contains(7)`);
     expect(readers.map((r) => r.keyKind)).toEqual(["number"]);
   });
 });
 
-// Typing the state is what lets the key reader above be decided, and it
-// decides the rest of the read too: a slot name the program does not declare
-// is the E0108 it is anywhere else, where it used to read `undefined` at run
-// time and fail the property as a counterexample.
 describe("the state run-reducer answers", () => {
   const withInvariant = (invariant: string) =>
     check(
       parse(
         lex(
-          app(`slot st : Set(Int) = {}
-reducer add on=ui.click(Btn)
+          withButtonApp(`slot st : Set(Int) = {}
+reducer add on=ui.click(B)
     do= st := st.add(7)
 test t =
     property-test
         for-all   = {n: Int}
-        given     = {slots: {st: {}}, event: {type: ui.click, target: Btn}}
+        given     = {slots: {st: {}}, event: {type: ui.click, target: B}}
         invariant = ${invariant}`),
         ),
       ),
@@ -215,8 +179,6 @@ test t =
     ]);
   });
 
-  // `route` is the runtime's slot: no program declares it, and it is in the
-  // state all the same.
   it("carries the runtime's route slot", () => {
     expect(withInvariant('run-reducer(add).slots.route.path == ""')).toEqual([]);
   });
@@ -249,9 +211,9 @@ describe("Map.map is a key reader too", () => {
 describe("the recorded kind reaches the emitted call", () => {
   /** The emitted module for one reducer that writes `rhs` into `res`. */
   function jsFor(decls: string, resType: string, rhs: string): string {
-    const src = app(`${decls}
+    const src = withButtonApp(`${decls}
 slot res : ${resType} = ${emptyOf(resType)}
-reducer act on=ui.click(Btn)
+reducer act on=ui.click(B)
     do= res := ${rhs}`);
     const r = compile(src, { runtimeSpecifier: "./runtime.js" });
     if (r.kind !== "ok") throw new Error(r.errors.map((e) => `${e.code} ${e.message}`).join("\n"));

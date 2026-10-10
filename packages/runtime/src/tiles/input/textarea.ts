@@ -1,6 +1,3 @@
-// The `textarea` tile (#71): its own shipping unit, so an app that renders one
-// does not download the nine other input controls.
-
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
 import {
   applyControlState,
@@ -53,8 +50,6 @@ export const textareaPatcher: TilePatcher<"textarea"> = (el, _oldNode, newNode) 
   if (newNode.bind) bindDataset(ta, newNode.bind, newNode.bindPath);
   else clearBindDataset(ta);
   const nextValue = newNode.value ?? "";
-  // See `input` patcher — write on divergence, caret restore is upstream.
-  // IME guard as above: don't dismiss the IME candidate window mid-compose.
   if (ta.value !== nextValue && !IME_COMPOSING.has(ta)) ta.value = nextValue;
   setHandlers(ta, inputHandlers(newNode));
   applyControlState(el, (newNode as { props?: TileProps }).props);

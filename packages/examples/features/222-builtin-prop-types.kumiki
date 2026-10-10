@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.3.11): a builtin tile's prop takes a value of the type
+# Feature (stdlib.md): a builtin tile's prop takes a value of the type
 # the stdlib table gives it, and each value here is one:
 #
 #   select(options=[{label: "Apple", value: "apple"}, …])   List({label, value})

@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-A builtin tile's prop is checked against the type stdlib.md §2.3.11 gives it, and a value that cannot have that type is **E0201** at the value (#545).
+A builtin tile's prop is checked against the type stdlib.md gives it, and a value that cannot have that type is **E0201** at the value.
 
 Every non-handler prop of a builtin went through the checker with no expected type, so a value of the wrong type passed `check` and rendered as JavaScript reads it:
 
