@@ -1,4 +1,4 @@
-# Feature (routing.md §3.10): a redirect's target can itself be redirected,
+# Feature (routing.md): a redirect's target can itself be redirected,
 # and a target names what its source binds. `/v1` passes through `/v2` and
 # lands on `/`. `/old/42` lands on `/items/42`, where `route.params.id` is
 # "42", and `/docs/a/b` carries the rest of its path to `/help/a/b`. A

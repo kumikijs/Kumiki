@@ -2,7 +2,7 @@
 #
 # A `<button>` in a form submits by default — that is HTML, not Kumiki. So a
 # button meant to do something else (Cancel, Reset, a toolbar action) has to say
-# `type="button"`, and forms.md §5.2.2 gives `type="submit"` as the way to
+# `type="button"`, and the forms spec gives `type="submit"` as the way to
 # submit. Neither reached the DOM: the compiler dropped the argument and the
 # renderer never wrote the attribute, so every button in a form submitted it.
 #

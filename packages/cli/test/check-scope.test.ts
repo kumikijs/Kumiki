@@ -1,12 +1,3 @@
-// `kumiki check --types/--refs/--effects` narrows along one axis: what kind of
-// mistake a diagnostic describes. Three bands are not on that axis — E00
-// structure, E07 opt-in checks and testing-DSL invariants, E08 runtime hazards
-// — so no scope selects them, and a filter that drops what no scope can ask
-// for turns every narrowing flag into a hole. The end-to-end coverage in
-// cli.test.ts reaches this through a spawned CLI process per case, which is
-// why it only exercises a couple of codes; this covers the whole table
-// directly.
-
 import { filterByScope } from "@kumikijs/cli";
 import type { KumikiError } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
@@ -22,8 +13,6 @@ const survives = (code: string, ...scopes: (typeof SCOPES)[number][]) =>
   filterByScope([err(code)], scopes).length === 1;
 
 describe("filterByScope", () => {
-  // Literal here rather than imported from the implementation: a test that
-  // reads the same list it is checking would pass however that list changes.
   const ALWAYS = ["E0001", "E0002", "E0003", "E0004", "E0701", "E0704", "E0712", "E0801"];
 
   for (const scope of SCOPES) {
@@ -33,8 +22,6 @@ describe("filterByScope", () => {
     });
 
     it(`--${scope} keeps E0212, which is gated by --strict-selector-id`, () => {
-      // E0212 sits in E02, which `--types` claims anyway — so only `--refs`
-      // and `--effects` actually depend on the strict-code allowlist.
       expect(survives("E0212", scope)).toBe(true);
     });
 
@@ -62,9 +49,6 @@ describe("filterByScope", () => {
     expect(filterByScope(errors, [])).toBe(errors);
   });
 
-  // The flags name what to keep, so two of them keep both. Taking only the
-  // first dropped the findings the same command line asked for and reported
-  // the file as `ok`.
   it("composes: two scopes keep the union of their bands", () => {
     expect(survives("E0103", "types", "refs")).toBe(true);
     expect(survives("E0201", "types", "refs")).toBe(true);
