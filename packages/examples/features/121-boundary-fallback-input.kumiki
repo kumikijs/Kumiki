@@ -1,7 +1,7 @@
-# Feature (lifecycle.md §7.3): a fallback's `in=` may name an alias of
-# `PanicInfo` — an alias is the same declaration, and every field arrives
-# through it. Before E0220, a fallback declaring `in=Text` here passed `check`
-# and rendered `recovered: [object Object]`.
+# Feature: a fallback's `in=` may name an alias of `PanicInfo` — an alias is the
+# same declaration, and every field arrives through it. Before E0220, a fallback
+# declaring `in=Text` here passed `check` and rendered
+# `recovered: [object Object]`.
 
 type Crash = PanicInfo
 

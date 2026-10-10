@@ -1,4 +1,4 @@
-# HTTP retry — exponential backoff on 5xx / connection errors (spec §6.5, #83)
+# HTTP retry — exponential backoff on 5xx / connection errors
 # Demonstrates: declaring `retry=exponential(N, ms, factor)` on an http effect.
 # The runtime retries 5xx + connection errors with the configured backoff and
 # leaves 4xx as a final failure.

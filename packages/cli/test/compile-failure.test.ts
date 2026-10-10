@@ -1,8 +1,3 @@
-// What `loadApp` throws for a source that does not compile, without the CLI in
-// front of it. The MCP `kumiki_smoke` and `kumiki_run_scenario` tools load
-// source text with no `sourcePath`, so the header names no file while each
-// diagnostic still carries its position and the test it sits in.
-
 import { describe, expect, it } from "vitest";
 import { loadApp } from "../src/smoke.ts";
 

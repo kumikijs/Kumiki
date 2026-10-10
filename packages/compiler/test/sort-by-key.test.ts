@@ -1,9 +1,3 @@
-// `sort-by(expr)` orders a list by `expr` the way `<` orders two values
-// (stdlib.md §2.2.3, language.md §1.9.4): numbers, Text and Time have an
-// order, and nothing else does. A key without one used to pass `check` and
-// leave the list as it found it at runtime, so the checker reports it as the
-// comparison it stands for.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -66,24 +60,16 @@ describe("the key sort-by orders by", () => {
   });
 
   it("is left alone when the checker cannot type it", () => {
-    // What `.fold` answers is decided by its lambda body, which the checker
-    // does not infer (errors.md §E0201, "the check is one-sided"). This key is
-    // an Int at runtime and the program is clean; the silence is the contract.
     expect(diagnostics("users.sort-by($1.tags.fold(0, $1 + 1))")).toEqual([]);
   });
 
   it("is left alone when it is a fn with no declared return type", () => {
-    // The key is a variant and will not sort, but with no `->` there is no
-    // type to read it from; until a fn's return type is inferred this stays a
-    // missing diagnostic rather than a wrong one.
     expect(
       diagnostics("users.sort-by(kindOf)", "fn kindOf(u: User) = u.kind").join("\n"),
     ).not.toContain("E0201");
   });
 });
 
-// A `fn` passed by name is applied to the element (`xs.sort-by(keyOf)` is
-// `xs.sort-by(keyOf($1))`), so the key is what the fn declares it returns.
 describe("the key of sort-by given as a fn name", () => {
   it.each([
     ["Text", "fn nameOf(u: User) -> Text = u.name"],
