@@ -1,5 +1,5 @@
-# Feature (http.md §6.1.4 / §6.5): a 2xx whose body does not parse as JSON is
-# an `HttpError` with the response's own status, and it is not retried.
+# Feature: a 2xx whose body does not parse as JSON is an `HttpError` with the
+# response's own status, and it is not retried.
 #
 # The fixture beside this file accepts the order (201) but answers with an HTML
 # page, so `Decoder.Json(Order)` fails. The request was delivered, so it is
