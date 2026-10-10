@@ -1,12 +1,8 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { build, type PluginOption } from "vite";
 import { expect } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../../src/index.ts";
-
-export const TMP = join(dirname(fileURLToPath(import.meta.url)), "..", "test-tmp");
-mkdirSync(TMP, { recursive: true });
 
 /** The `app` line every fixture whose root tile is `App` ends with. */
 export const APP_A = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
@@ -80,15 +76,15 @@ export async function failureOf(
   return reported;
 }
 
-/** Write `src` as `app.kumiki` in a fresh directory under TMP; return its path. */
-export function writeKumiki(prefix: string, src: string): string {
-  const file = join(mkdtempSync(join(TMP, `${prefix}-`)), "app.kumiki");
+/** Write `src` as `app.kumiki` in a fresh directory under `root`; return its path. */
+export function writeKumiki(root: string, prefix: string, src: string): string {
+  const file = join(mkdtempSync(join(root, `${prefix}-`)), "app.kumiki");
   writeFileSync(file, src);
   return file;
 }
 
-/** A throwaway project holding `source` at `src/app.kumiki` and `main` at `src/main.ts`. */
-export function project(source: string, main = "", where: string = TMP): string {
+/** A throwaway project under `where` holding `source` at `src/app.kumiki` and `main` at `src/main.ts`. */
+export function project(where: string, source: string, main = ""): string {
   const root = mkdtempSync(join(where, "project-"));
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "app.kumiki"), source);

@@ -4,7 +4,10 @@ import { stripVTControlCharacters } from "node:util";
 import { createLogger, createServer, type ViteDevServer } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
-import { APP_A as APP, TMP } from "./helpers/plugin.ts";
+import { APP_A as APP } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
+
+const TMP = scratchRoot(import.meta.url);
 
 let server: ViteDevServer | undefined;
 afterEach(async () => {

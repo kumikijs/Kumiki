@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
@@ -33,7 +33,12 @@ export async function buildAndLoad(kumikiPath: string, rootId: string): Promise<
   writeFileSync(file, patched);
 
   const url = `${pathToFileURL(file).href}?t=${Date.now()}_${Math.random()}`;
-  await import(/* @vite-ignore */ url);
+  try {
+    await import(/* @vite-ignore */ url);
+  } finally {
+    // The bundle imports nothing, so nothing reads the file once it has loaded.
+    rmSync(dir, { recursive: true, force: true });
+  }
 
   const app = (globalThis as unknown as { __kumikiApp?: AppShape }).__kumikiApp;
   if (!app) throw new Error("Generated bundle did not expose __kumikiApp");

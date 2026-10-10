@@ -17,10 +17,15 @@ export type ReducerShape = {
   ) => { slots: Record<string, unknown> };
 };
 
-/** Writes `content` to `name` in a fresh directory under test-tmp and returns its path. */
-export function writeTmpFile(prefix: string, name: string, content: string): string {
-  mkdirSync(TMP_ROOT, { recursive: true });
-  const file = join(mkdtempSync(join(TMP_ROOT, `${prefix}-`)), name);
+/** Writes `content` to `name` in a fresh directory under `root` and returns its path. */
+export function writeTmpFile(
+  prefix: string,
+  name: string,
+  content: string,
+  root: string = TMP_ROOT,
+): string {
+  mkdirSync(root, { recursive: true });
+  const file = join(mkdtempSync(join(root, `${prefix}-`)), name);
   writeFileSync(file, content);
   return file;
 }
