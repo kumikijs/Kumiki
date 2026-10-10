@@ -1,4 +1,4 @@
-# Feature (runtime.md §10.3.8, §10.6.1): a `select` whose option values are
+# Feature (runtime.md): a `select` whose option values are
 # variants, variants with a payload, and records, served the way it mounts.
 #
 # An option is matched by the structural key of its value (a variant's tag
@@ -9,7 +9,7 @@
 # that option `selected`, so its first paint shows "Medium", "In progress" and
 # "2 x 3" before any script runs. The scenario drives the mounted selects;
 # what the server serves is read in
-# packages/tests/served-select-structural-value.test.ts.
+# packages/tests/src/served-select-structural-value.test.ts.
 
 type Size   = S | M | L
 type Status = Backlog | InProgress | Done

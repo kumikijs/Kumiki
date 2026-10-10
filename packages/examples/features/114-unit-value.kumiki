@@ -1,5 +1,5 @@
-# Feature (stdlib.md §2.1): `()` is the one value of `Unit`, and it is typed
-# like any other literal.
+# Feature: `()` is the one value of `Unit`, and it is typed like any other
+# literal.
 #
 # It goes where `Unit` is declared — a `Unit` slot, the ok side of a
 # `Result(Unit, E)`, a `Unit` parameter — and nowhere else. Written where a
