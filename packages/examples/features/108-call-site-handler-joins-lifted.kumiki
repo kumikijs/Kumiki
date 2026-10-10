@@ -1,5 +1,5 @@
-# Feature (language.md §1.7.3, §1.6.4 Invariant 3): a handler written on a
-# user-tile call site joins the handlers already on the nodes that tile renders.
+# Feature: a handler written on a user-tile call site joins the handlers already
+# on the nodes that tile renders.
 #
 # `Btn {onClick: btnOwn}` is merged onto the `button` that `Btn` renders. That
 # button is also inside `Row`, so `ui.click(Row)` is lifted onto it too. Both
