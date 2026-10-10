@@ -8,7 +8,7 @@ const exampleModules = import.meta.glob("../../../packages/examples/features/*.k
 }) as Record<string, string>;
 
 describe("kumiki playground highlighter", () => {
-  it("AC1: renders kumiki source as line-structured Shiki HTML", async () => {
+  it("renders kumiki source as line-structured Shiki HTML", async () => {
     const highlight = await createKumikiHighlighter();
     const html = highlight(
       "slot count : Int = 0\nreducer inc on=ui.click(Btn) do= count := count + 1",
@@ -17,7 +17,7 @@ describe("kumiki playground highlighter", () => {
     expect(html.match(/<span class="line">/g)).toHaveLength(2);
   });
 
-  it("AC2: tokens carry light AND dark theme colors as CSS variables", async () => {
+  it("tokens carry light AND dark theme colors as CSS variables", async () => {
     const highlight = await createKumikiHighlighter();
     const html = highlight("slot count : Int = 0");
     expect(html).toMatch(
@@ -27,7 +27,7 @@ describe("kumiki playground highlighter", () => {
     expect(html).not.toMatch(/<span style="color:/);
   });
 
-  it("AC3: escapes HTML-special characters in the source", async () => {
+  it("escapes HTML-special characters in the source", async () => {
     const highlight = await createKumikiHighlighter();
     const html = highlight('tile A = text(label="<b>&</b>")');
     expect(html).not.toContain("<b>");
@@ -36,7 +36,7 @@ describe("kumiki playground highlighter", () => {
     expect(html).toMatch(/&(#x26|amp);/);
   });
 
-  it("AC4: highlights every feature example without throwing (JS regex engine)", {
+  it("highlights every feature example without throwing (JS regex engine)", {
     timeout: 30_000,
   }, async () => {
     const highlight = await createKumikiHighlighter();
@@ -48,7 +48,7 @@ describe("kumiki playground highlighter", () => {
     }
   });
 
-  it("AC5: overlayPad pads a trailing newline and leaves other code unchanged", () => {
+  it("overlayPad pads a trailing newline and leaves other code unchanged", () => {
     expect(overlayPad("slot x : Int = 0\n")).toBe("slot x : Int = 0\n ");
     expect(overlayPad("slot x : Int = 0")).toBe("slot x : Int = 0");
     expect(overlayPad("")).toBe("");

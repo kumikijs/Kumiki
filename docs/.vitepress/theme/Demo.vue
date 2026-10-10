@@ -6,12 +6,15 @@ const props = withDefaults(defineProps<{ example: string; height?: string }>(), 
 });
 
 const srcdoc = ref("");
+const sandbox = ref("");
 const error = ref("");
 
 onMounted(async () => {
   try {
-    const { compileExample } = await import("./preview");
+    // Imported here rather than at the top so the compiler stays out of every page's eager chunk.
+    const { compileExample, PREVIEW_SANDBOX } = await import("./preview");
     const result = compileExample(props.example);
+    sandbox.value = PREVIEW_SANDBOX;
     if (result.kind === "ok") srcdoc.value = result.srcdoc;
     else error.value = result.message;
   } catch (e) {
@@ -26,7 +29,7 @@ onMounted(async () => {
       v-if="srcdoc"
       :srcdoc="srcdoc"
       :title="`Live demo: ${props.example}`"
-      sandbox="allow-scripts"
+      :sandbox="sandbox"
     ></iframe>
     <p v-else-if="error" class="kd-msg">demo unavailable: {{ error }}</p>
     <p v-else class="kd-msg">loading demo…</p>

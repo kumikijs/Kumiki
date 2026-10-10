@@ -72,14 +72,29 @@ ${seams}</script>
 <script type="module">${js}</script></body></html>`;
 }
 
+// Without allow-forms Chromium blocks a sandboxed form's submission before `submit` fires,
+// and the form tile only reacts to `submit`.
+export const PREVIEW_SANDBOX = "allow-scripts allow-forms";
+
 export type ExamplePreview = { kind: "ok"; srcdoc: string } | { kind: "err"; message: string };
+
+export const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+export function previewDocument(source: string, seams?: string): ExamplePreview {
+  let result: ReturnType<typeof compile>;
+  try {
+    result = compileToJs(source);
+  } catch (e) {
+    return { kind: "err", message: errorMessage(e) };
+  }
+  if (result.kind === "fail") {
+    return { kind: "err", message: result.errors.map((e) => `${e.code} ${e.message}`).join("; ") };
+  }
+  return { kind: "ok", srcdoc: buildSrcdoc(result.js, seams) };
+}
 
 export function compileExample(name: string): ExamplePreview {
   const example = examples.find((e) => e.name === name);
   if (!example) return { kind: "err", message: `unknown example: ${name}` };
-  const result = compileToJs(example.source);
-  if (result.kind === "fail") {
-    return { kind: "err", message: result.errors.map((e) => `${e.code} ${e.message}`).join("; ") };
-  }
-  return { kind: "ok", srcdoc: buildSrcdoc(result.js) };
+  return previewDocument(example.source);
 }

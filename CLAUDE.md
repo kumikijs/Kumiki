@@ -94,7 +94,7 @@ Follow **TDD (t_wada style)**: Design → Acceptance Criteria (as AC, no code) �
 
 - A test exercises behavior through an API. Tests that read source or doc files and grep them are linters in disguise — don't write them; make the invariant a type, a runtime check, or a Biome rule instead.
 - A comment that explains *what* the code does should be a test case instead. Comments carry only a short *why* that the code cannot.
-- Shared test helpers live in each package's `test/helpers/` (`packages/tests/src/helpers/`); don't redefine `freshRoot`, `runCli`, `codes`, etc. per file. Table-drive cases that differ only by data (`it.each`).
+- Shared test helpers live in each package's `test/helpers/` (`packages/tests/src/helpers/`); don't redefine `freshRoot`, `runCli`, `codesOf`, `withApp`, etc. per file. Table-drive cases that differ only by data (`it.each`).
 
 ## Conventions
 
@@ -104,4 +104,5 @@ Follow **TDD (t_wada style)**: Design → Acceptance Criteria (as AC, no code) �
 - **No references that go stale** in code, comments, test names, or examples: no spec section numbers (`§2.2`), no issue/PR numbers or links. Name the spec file if a pointer is needed. Section numbers belong inside `docs/spec/` only.
 - **Publishing**: packages dev-resolve `exports` to `src/*.ts`, and `publishConfig.exports` switches to built `dist/*.js` at publish. tsdown builds the dist. Don't point exports at dist for local dev.
 - **Releases**: Changesets, with every public package in one `fixed` group (one version for all) and private packages unversioned. A changeset's first paragraph is its changelog entry — write one user-facing sentence there; detail goes in the PR. The changelog formatter is `.changeset/changelog.cjs`.
+  If pnpm's native publish fails under npm trusted publishing, the fallback is pnpm 10, which shells out to npm: hold npm at 11 there (`npm install -g npm@11` in `release.yml`), because npm 12 rejects the `--git-checks` flag pnpm 10 forwards.
 - **Git**: never commit to `main`/`dev`; branch first and commit frequently. Feature PRs target `dev`; a release is a `dev` → `main` PR followed by the generated "Version Packages" PR.

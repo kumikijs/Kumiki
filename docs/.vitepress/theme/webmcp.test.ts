@@ -56,19 +56,19 @@ function fakeApi(label: string): PlaygroundApi & { calls: string[] } {
 }
 
 describe("playground WebMCP tool host", () => {
-  it("AC1: does nothing when modelContext is unavailable", () => {
+  it("does nothing when modelContext is unavailable", () => {
     const host = createPlaygroundToolHost();
     expect(() => host.bind(undefined, fakeApi("a"))).not.toThrow();
   });
 
-  it("AC2: first bind registers exactly the four kumiki_* tools", () => {
+  it("first bind registers exactly the four kumiki_* tools", () => {
     const host = createPlaygroundToolHost();
     const { mc, registry } = fakeModelContext();
     host.bind(mc, fakeApi("a"));
     expect([...registry.keys()].sort()).toEqual([...TOOL_NAMES].sort());
   });
 
-  it("AC3: remount does not re-register (no Duplicate tool name)", () => {
+  it("remount does not re-register (no Duplicate tool name)", () => {
     const host = createPlaygroundToolHost();
     const { mc, registry } = fakeModelContext();
     const first = fakeApi("first");
@@ -78,7 +78,7 @@ describe("playground WebMCP tool host", () => {
     expect(registry.size).toBe(TOOL_NAMES.length);
   });
 
-  it("AC4: after remount, execute delegates to the new instance", () => {
+  it("after remount, execute delegates to the new instance", () => {
     const host = createPlaygroundToolHost();
     const { mc, registry } = fakeModelContext();
     const first = fakeApi("first");
@@ -95,7 +95,7 @@ describe("playground WebMCP tool host", () => {
     expect(second.calls).toEqual(["compile:slot x : Int = 0"]);
   });
 
-  it("AC5: execute with no mounted instance returns an error result", () => {
+  it("execute with no mounted instance returns an error result", () => {
     const host = createPlaygroundToolHost();
     const { mc, registry } = fakeModelContext();
     const api = fakeApi("a");
@@ -109,7 +109,7 @@ describe("playground WebMCP tool host", () => {
     }
   });
 
-  it("AC6: releasing a stale instance keeps the active one bound", () => {
+  it("releasing a stale instance keeps the active one bound", () => {
     const host = createPlaygroundToolHost();
     const { mc, registry } = fakeModelContext();
     const first = fakeApi("first");
@@ -123,7 +123,7 @@ describe("playground WebMCP tool host", () => {
     expect(listTool?.execute({})).toEqual(["second.kumiki"]);
   });
 
-  it("AC7: with unregisterTool support, release unregisters and rebind re-registers", () => {
+  it("with unregisterTool support, release unregisters and rebind re-registers", () => {
     const host = createPlaygroundToolHost();
     const { mc, registry } = fakeModelContext({ withUnregister: true });
     const first = fakeApi("first");

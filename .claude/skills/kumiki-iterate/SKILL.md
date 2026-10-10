@@ -97,5 +97,5 @@ are deterministic and hermetic.
 
 If the trace shows the runtime/codegen is wrong (not your Kumiki), add a minimal
 `packages/examples/features/*.kumiki` reproducer with the scenario that fails, fix it in
-`packages/`, and keep `pnpm exec turbo run typecheck test lint build` green. That is how
+`packages/`, and keep `pnpm exec turbo run typecheck test build && pnpm lint` green. That is how
 the repo answers bugs: with an example and a test.

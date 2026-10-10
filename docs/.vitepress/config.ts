@@ -1,6 +1,8 @@
 import { createRequire } from "node:module";
 import { defineConfig } from "vitepress";
 
+// Node's ESM loader evaluates this config and cannot import the .ts entry of @kumikijs/syntax,
+// so the grammar JSON is required directly.
 const nodeRequire = createRequire(import.meta.url);
 const kumikiGrammar = nodeRequire("@kumikijs/syntax/grammar.json");
 

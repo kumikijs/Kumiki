@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { createKumikiHighlighter, type Highlight } from "./highlight";
+import { PREVIEW_SANDBOX } from "./preview";
 import { type Lang, previewApp, showcaseApps } from "./showcase";
 
 const props = withDefaults(defineProps<{ lang?: Lang }>(), { lang: "en" });
@@ -32,12 +33,13 @@ function choose(name: string): void {
 }
 
 function fromHash(): void {
-  const name = decodeURIComponent(location.hash.slice(1));
+  const name = location.hash.slice(1);
   if (apps.some((a) => a.name === name)) selected.value = name;
 }
 
 watch(selected, (name) => {
-  if (location.hash.slice(1) !== name) history.replaceState(null, "", `#${name}`);
+  // VitePress's router ignores a popstate whose state is null, so the entry's state is kept.
+  if (location.hash.slice(1) !== name) history.replaceState(history.state, "", `#${name}`);
 });
 
 onMounted(async () => {
@@ -83,7 +85,7 @@ onBeforeUnmount(() => window.removeEventListener("hashchange", fromHash));
           :key="app.name"
           :srcdoc="preview.srcdoc"
           :title="app.title"
-          sandbox="allow-scripts"
+          :sandbox="PREVIEW_SANDBOX"
         ></iframe>
         <p v-else class="ks-msg">{{ preview?.kind === "err" ? preview.message : "" }}</p>
       </div>

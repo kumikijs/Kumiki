@@ -41,6 +41,8 @@ jobs:
         with:
           version: pnpm run version
           publish: pnpm release
+          # GitHub refuses a release body over 125,000 characters and changesets/action sends each
+          # CHANGELOG section whole; the step below cuts at an entry boundary instead.
           createGithubReleases: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

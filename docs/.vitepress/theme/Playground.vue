@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { check, lex, parse } from "@kumikijs/compiler";
 import { createKumikiHighlighter, type Highlight, overlayPad } from "./highlight";
-import { buildSrcdoc, capabilities, compileToJs, examples } from "./preview";
+import { buildSrcdoc, capabilities, compileToJs, examples, PREVIEW_SANDBOX } from "./preview";
 import { type ModelContext, type PlaygroundApi, playgroundToolHost } from "./webmcp";
 
 type Diag = { code: string; kind: string; message: string; line: number; col: number };
@@ -159,7 +159,7 @@ onBeforeUnmount(() => playgroundToolHost.release(webMcpApi));
         ></textarea>
       </div>
       <div class="sp-preview">
-        <iframe v-if="ok" :srcdoc="srcdoc" title="preview" sandbox="allow-scripts"></iframe>
+        <iframe v-if="ok" :srcdoc="srcdoc" title="preview" :sandbox="PREVIEW_SANDBOX"></iframe>
         <ul v-else-if="diagnostics.length" class="sp-diags">
           <li v-for="(d, i) in diagnostics" :key="i">
             <code>{{ d.code }}</code> {{ d.message }}

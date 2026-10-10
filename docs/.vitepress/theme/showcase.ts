@@ -1,4 +1,4 @@
-import { buildSrcdoc, compileToJs, type ExamplePreview, TELEMETRY_ONLY } from "./preview";
+import { type ExamplePreview, errorMessage, previewDocument, TELEMETRY_ONLY } from "./preview";
 
 const raw = (modules: Record<string, unknown>): Record<string, string> =>
   Object.fromEntries(
@@ -103,11 +103,18 @@ export function installFixtureFetch(fixture: HttpFixture, latencyMs: number): vo
     const key = withQuery in fixture ? withQuery : `${method} ${target.pathname}`;
     await new Promise((resolve) => setTimeout(resolve, latencyMs));
     const found = next(key);
-    if (!found) return new Response(`no demo response for ${withQuery}`, { status: 404 });
+    if (!found) {
+      // The runtime reports a failed response by its statusText, so the miss has to be named there.
+      const miss = `no demo response for ${withQuery}`;
+      console.error(miss);
+      return new Response(miss, { status: 404, statusText: miss });
+    }
+    const status = found.status ?? 200;
     const body = found.json !== undefined ? JSON.stringify(found.json) : (found.text ?? "");
     const headers = new Headers(found.headers);
     if (found.json !== undefined) headers.set("content-type", "application/json");
-    return new Response(body, { status: found.status ?? 200, headers });
+    // The Response constructor throws on a 204 or 205 that carries any body, even an empty string.
+    return new Response(status === 204 || status === 205 ? null : body, { status, headers });
   };
 }
 
@@ -118,14 +125,18 @@ export function fixturePreamble(fixture: HttpFixture | undefined): string {
   return `(${installFixtureFetch.toString()})(${JSON.stringify(fixture)}, ${FETCH_LATENCY_MS});`;
 }
 
+export function previewSource(source: string, fixture: string | undefined): ExamplePreview {
+  let parsed: HttpFixture | undefined;
+  try {
+    parsed = fixture === undefined ? undefined : (JSON.parse(fixture) as HttpFixture);
+  } catch (e) {
+    return { kind: "err", message: `app.http.json: ${errorMessage(e)}` };
+  }
+  return previewDocument(source, `${TELEMETRY_ONLY}\n${fixturePreamble(parsed)}`);
+}
+
 export function previewApp(name: string): ExamplePreview {
   const source = sources[name];
   if (source === undefined) return { kind: "err", message: `unknown app: ${name}` };
-  const result = compileToJs(source);
-  if (result.kind === "fail") {
-    return { kind: "err", message: result.errors.map((e) => `${e.code} ${e.message}`).join("; ") };
-  }
-  const fixture = fixtures[name];
-  const preamble = fixturePreamble(fixture ? (JSON.parse(fixture) as HttpFixture) : undefined);
-  return { kind: "ok", srcdoc: buildSrcdoc(result.js, `${TELEMETRY_ONLY}\n${preamble}`) };
+  return previewSource(source, fixtures[name]);
 }
