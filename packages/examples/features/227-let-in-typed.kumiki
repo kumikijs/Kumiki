@@ -1,4 +1,4 @@
-# Feature (language.md §1.9): `let x = v in body` is a value of its body's type.
+# Feature (language.md): `let x = v in body` is a value of its body's type.
 #
 #   fn label(n: Int) -> Text = let m = n + 1 in m.show
 #

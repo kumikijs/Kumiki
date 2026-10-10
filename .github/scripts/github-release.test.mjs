@@ -1,5 +1,3 @@
-// Run with `node --test .github/scripts/*.test.mjs`.
-
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { changelogSection, parseTag, releaseBody } from "./github-release.mjs";
@@ -61,6 +59,15 @@ describe("changelogSection", () => {
 });
 
 describe("releaseBody", () => {
+  it("says the package had no changes of its own when its section is empty", () => {
+    const expected =
+      "Released at the same version as the other Kumiki packages, with no changes of its own.";
+    assert.equal(releaseBody("", URL), expected);
+    const bumpedOnly = changelogSection("## 0.15.0\n\n## 0.14.0\n\n- abc1234: Older\n", "0.15.0");
+    assert.equal(releaseBody(bumpedOnly, URL), expected);
+    assert.equal(releaseBody("### Patch Changes\n", URL), expected);
+  });
+
   it("is the whole section when it fits", () => {
     const section = changelogSection(CHANGELOG, "0.14.0");
     assert.equal(releaseBody(section, URL, 10_000), section);
