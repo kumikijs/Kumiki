@@ -811,9 +811,11 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### E0217 `int-literal-precision`
 
-`Int` の位置に、JavaScript が正確に表現できる範囲（`Number.MAX_SAFE_INTEGER`、9007199254740991）を超えるリテラルが与えられた。リテラルは AST に載る時点で丸められるため、そのまま実行すれば書かれた値とは違う値で動く。
+`Int` の位置に、JavaScript が正確に表現できる範囲（-9007199254740991 から 9007199254740991 まで、`Number.MIN_SAFE_INTEGER` から `Number.MAX_SAFE_INTEGER`）を外れるリテラルが与えられた。リテラルは AST に載る時点で丸められるため、そのまま実行すれば書かれた値とは違う値で動く。
 
 > `Int literal <value> is not exactly representable and was rounded to <value>`
+
+符号はリテラルの一部である（[§1.2](./language.md#_1-2-字句)）。そのため負のリテラルも、正のリテラルが判定されるすべての位置で同じ範囲に照らして判定され、`-` の位置で、符号付きで報告される。`-9007199254740993` は `-9007199254740992` に丸められたと報告される。
 
 小数部を持つリテラルは精度ではなく型の誤りなので、[E0201](#e0201-type-mismatch) を報告する。
 
