@@ -110,6 +110,8 @@ reducer trackPageView
 
 複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
 
+`tile.mount` と `tile.unmount` は、その tile が描画されるあらゆる位置で、名前の大文字・小文字にかかわらず発火する。小文字の tile をコンテナの子として名前だけで書いた `column(leaf)` は tile `leaf` を名指し（[§1.7.1](./language.md#_1-7-1-構文)）、`column(Leaf)` が `Leaf` について発火させるのと同じく `tile.mount(leaf)` と `tile.unmount(leaf)` を発火させる。
+
 `error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、境界がどこに宣言されていても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が、fallback が消えたとき —— tile が panic せずに描画し直されたとき、あるいはその tile 自体が消えたとき —— に `tile.unmount(<fallback>)` が発火する。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。panic した tile は描画されたものではないので、fallback がその代わりに表示されている間はその tile 自身の `tile.mount` は発火せず、マウント済みの tile が panic し始めるとその `tile.unmount` が発火する。
 
 本体全体が別のユーザー tile である tile —— `tile Outer = Inner` —— は、両方の全体である 1 つのツリーを描画するので、両方が画面上にある。`tile.mount(Outer)` と `tile.mount(Inner)` がともに `Outer` から順に発火し、そのツリーが消えると両方の `tile.unmount` が同じ順で発火する。これは何段でも同じで（`tile A = B` と `tile B = C` なら `A`、`B`、`C` の順に発火する）、本体が、行や分岐で別のユーザー tile を呼ぶ `for`・`when`・`match` である場合も、外側の tile がどこで描画される場合 —— 呼び出し位置、ルートや `sub-routes` のターゲット、`error-boundary` の fallback —— も同じである。複数の場所に表示される tile は画面上の 1 つの tile であり、最初の 1 つが現れたときにマウントし、最後の 1 つが消えたときにアンマウントする。そのため単独でも表示されている `Inner` は、どちらかが残っている間はマウントされたままである。
@@ -194,7 +196,7 @@ tile ErrorFallback
 
 したがって `$1` を読む fallback は `in=PanicInfo`（または `PanicInfo` が代入可能な型、たとえばその別名）を宣言しなければならない。何を宣言していても `$1` は panic なので、別の `in=` を宣言した fallback、あるいは `in=` を宣言せずに `$1` を読む fallback は [E0220](./errors.md#e0220-boundary-fallback-input) であり、`error-boundary` 句の位置に報告される。`$1` を読まない fallback は `in=` を宣言しなくてよく、そうすれば同じ tile を route や `sub-routes` のターゲットにもできる。
 
-境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も、ほかの tile の fallback として描画される場合も含む。
+境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も、ほかの tile の fallback として描画される場合も含む。名前の大文字・小文字も関係しない。小文字の tile をコンテナの子として名前だけで書いた `column(leaf)` は tile `leaf` を名指し（[§1.7.1](./language.md#_1-7-1-構文)）、`column(Leaf)` が `Leaf` を描画するのと同じくその境界の下で描画される。
 
 したがって自身の `error-boundary` を宣言した fallback は、その境界に覆われる。fallback の描画中の panic は、その fallback 自身の fallback をその位置に表示し、連鎖の先も同様である。その境界は最初の境界を宣言した tile を囲むどの境界よりも近いので、それが勝つ。自身の境界を持たない fallback の panic は、その tile を囲む境界に、それも無ければ組み込みのトップレベル表示に委ねられる。すでに連鎖上にある tile へ戻ってくる連鎖 —— 自分自身を名指す fallback（`tile Oops in=PanicInfo error-boundary=Oops`）や、互いを名指す 2 つの fallback —— には終わりが無く、[E0005](./errors.md#e0005-tile-cycle) として `error-boundary` 句の位置に報告される。
 

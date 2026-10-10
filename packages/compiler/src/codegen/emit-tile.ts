@@ -301,48 +301,7 @@ function tileCallJs(
   if (!BUILTIN_TILES.has(name)) {
     const def = gen.tiles.find((x) => x.name === name);
     if (!def) throw new Error(`Tile "${name}" not found`);
-    const inner = makeEvalCtx(gen, new Set<string>());
-    const arg1 = firstPositional(t);
-    const handlers = explicitHandlers(t, rootHandlers);
-    const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
-    const bodyHandlers = handlers.size > 0 ? handlers : undefined;
-    if (arg1) {
-      const v = arg1.value;
-      if (isTileExpr(v)) {
-        throw new Error(`Tile "${name}" called with a tile as its positional argument`);
-      }
-      const oneJs = jsOfExpr(v as Expr, ctx);
-      const propsJs = callSiteProps();
-      const bodyCtx = addBind(inner, "$1");
-      const bodyJs = tileExprJs(
-        def.body,
-        gen,
-        bodyCtx,
-        under(enclosingTiles, def.name),
-        undefined,
-        bodyHandlers,
-      );
-      return wrap(
-        placedTileJs(
-          def,
-          `_attachProps(${bodyJs}, _propsOuter)`,
-          gen,
-          enclosingTiles,
-          (marked) =>
-            `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${marked}; })(${oneJs}, ${propsJs})`,
-        ),
-      );
-    }
-    const propsJs = callSiteProps();
-    const bodyJs = tileExprJs(
-      def.body,
-      gen,
-      inner,
-      under(enclosingTiles, def.name),
-      undefined,
-      bodyHandlers,
-    );
-    return wrap(placedTileJs(def, `_attachProps(${bodyJs}, ${propsJs})`, gen, enclosingTiles));
+    return wrap(userTileCallJs(t, def, gen, ctx, enclosingTiles, rootHandlers));
   }
 
   gen.usedTiles.add(name);
@@ -663,6 +622,57 @@ function tileCallJs(
   return wrap(emitBuiltin());
 }
 
+/** The call `t` of the user tile `def`, lowered where it is written; the caller applies its key. */
+function userTileCallJs(
+  t: TileExpr & { kind: "TileCall" },
+  def: TileDef,
+  gen: GenCtx,
+  ctx: EvalCtx,
+  enclosingTiles?: EnclosingTiles,
+  rootHandlers?: HandlerWiring,
+): string {
+  const inner = makeEvalCtx(gen, new Set<string>());
+  const arg1 = firstPositional(t);
+  const handlers = explicitHandlers(t, rootHandlers);
+  const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
+  const bodyHandlers = handlers.size > 0 ? handlers : undefined;
+  if (arg1) {
+    const v = arg1.value;
+    if (isTileExpr(v)) {
+      throw new Error(`Tile "${t.name}" called with a tile as its positional argument`);
+    }
+    const oneJs = jsOfExpr(v as Expr, ctx);
+    const propsJs = callSiteProps();
+    const bodyCtx = addBind(inner, "$1");
+    const bodyJs = tileExprJs(
+      def.body,
+      gen,
+      bodyCtx,
+      under(enclosingTiles, def.name),
+      undefined,
+      bodyHandlers,
+    );
+    return placedTileJs(
+      def,
+      `_attachProps(${bodyJs}, _propsOuter)`,
+      gen,
+      enclosingTiles,
+      (marked) =>
+        `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${marked}; })(${oneJs}, ${propsJs})`,
+    );
+  }
+  const propsJs = callSiteProps();
+  const bodyJs = tileExprJs(
+    def.body,
+    gen,
+    inner,
+    under(enclosingTiles, def.name),
+    undefined,
+    bodyHandlers,
+  );
+  return placedTileJs(def, `_attachProps(${bodyJs}, ${propsJs})`, gen, enclosingTiles);
+}
+
 function firstPositional(t: TileExpr & { kind: "TileCall" }): TileArg | undefined {
   return t.args.find((a) => a.name === undefined);
 }
@@ -676,6 +686,9 @@ function asExpr(v: Expr | TileExpr): Expr {
   return v as Expr;
 }
 
+// The parser reads a lower-cased name as a name, since a slot may share it, so `column(leaf)` arrives
+// as a `Ref` where `column(Leaf)` arrives as a call; a program's tile of that name is lowered as that
+// call, so it is marked, bounded and scoped as the call is.
 function collectChildren(
   args: { kind: "TileArg"; name?: string; value: Expr | TileExpr }[],
   gen: GenCtx,
@@ -688,11 +701,17 @@ function collectChildren(
     const v = a.value;
     if (isTileExpr(v)) {
       parts.push(tileExprJs(v, gen, ctx, enclosingTiles));
-    } else if ((v as Expr).kind === "Ref") {
-      const refName = (v as Expr & { name: string }).name;
-      const def = gen.tiles.find((x) => x.name === refName);
+    } else if (v.kind === "Ref") {
+      const def = gen.tiles.find((x) => x.name === v.name);
       if (def) {
-        parts.push(tileExprJs(def.body, gen, ctx, under(enclosingTiles, def.name)));
+        const call: TileExpr & { kind: "TileCall" } = {
+          kind: "TileCall",
+          name: def.name,
+          args: [],
+          props: [],
+          pos: v.pos,
+        };
+        parts.push(userTileCallJs(call, def, gen, ctx, enclosingTiles));
       } else {
         parts.push("null");
       }

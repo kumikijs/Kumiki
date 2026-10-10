@@ -499,3 +499,18 @@ app A
     expect(js).not.toContain("_s.fmt ?");
   });
 });
+
+describe("a lower-cased tile written bare as a container's child", () => {
+  it("emits what the call of a capitalised tile emits, the name aside", () => {
+    const lowered = (name: string): string =>
+      compileOrFail(`slot leaf : Text = "hello"
+slot seen : Int = 0
+reducer sawLeaf on=tile.mount(${name}) do= seen := seen + 1
+tile Oops in=PanicInfo = text("caught: " + $1.message)
+tile ${name} error-boundary=Oops = column(text("body " + leaf))
+tile App = column(${name}, text("seen: " + seen.show))
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`);
+    expect(lowered("leaf")).toBe(lowered("Leaf").replaceAll(/\bLeaf\b/g, "leaf"));
+  });
+});
