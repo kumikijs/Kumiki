@@ -203,6 +203,10 @@ reducer guardEdit
 
 `confirm` is a standard effect (→ [Standard Library](./stdlib.md)) that delivers the answer to a separate reducer. See [Lifecycle](./lifecycle.md) for details.
 
+While the dialog is open the move is **held**: the route being left stays on screen, and the `route` slot and `route.enter` wait. The answer's reducer runs first; then Yes completes the move, and No puts the URL back to the route still shown. Only the guard's own dialog settles the move, not a `confirm` another reducer opens meanwhile. The dialog is the runtime's own even when the host has registered a `notification.show` provider ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)).
+
+A navigation that arrives while a move is held replaces it, including one the answer's reducer emits: the held move is dropped, its dialog closes unanswered (neither `onYes` nor `onNo` runs), and the new navigation leaves the route still shown, so that route's leave guards run again. A held move therefore never blocks the next navigation, whether or not its dialog is ever answered.
+
 ---
 
 ## 3.6 Nested Routes

@@ -21,6 +21,8 @@ function leaveGuardApp(editPattern = "/edit"): AppShape {
       dirty: { value: false },
       saved: { value: 0 },
       visits: { value: 0 },
+      abouts: { value: 0 },
+      stays: { value: 0 },
     },
     caps: ["notification.show"],
     reducers: [
@@ -70,6 +72,14 @@ function leaveGuardApp(editPattern = "/edit"): AppShape {
         }),
       },
       {
+        name: "onEnterAbout",
+        event: { kind: "lifecycle", name: 'route.enter("/about")' },
+        apply: (slots) => ({
+          slots: { ...slots, abouts: (slots.abouts as number) + 1 },
+          emits: [],
+        }),
+      },
+      {
         name: "continueLeave",
         event: { kind: "ui", ev: "click" },
         apply: (slots) => ({ slots: { ...slots, dirty: false }, emits: [] }),
@@ -77,7 +87,10 @@ function leaveGuardApp(editPattern = "/edit"): AppShape {
       {
         name: "stayHere",
         event: { kind: "ui", ev: "click" },
-        apply: (slots) => ({ slots, emits: [] }),
+        apply: (slots) => ({
+          slots: { ...slots, stays: (slots.stays as number) + 1 },
+          emits: [],
+        }),
       },
     ],
     effects: {},
@@ -92,6 +105,10 @@ function leaveGuardApp(editPattern = "/edit"): AppShape {
             { kind: "link", to: "/edit", text: "Go edit" },
           ],
         }),
+      },
+      {
+        pattern: "/about",
+        tile: () => ({ kind: "page", children: [{ kind: "heading", text: "About" }] }),
       },
       {
         pattern: editPattern,
@@ -174,6 +191,7 @@ describe("route.leave guard with confirm — No reverts the transition", () => {
       await Promise.resolve();
 
       expect(getModal()).toBeNull();
+      expect(app.live?.stays).toBe(1);
       expect(app.live?.dirty).toBe(true);
       expect(app.live?.visits).toBe(0);
       expect(target.textContent).toContain("Editor");
@@ -284,6 +302,172 @@ describe("route.leave guard — No on a move within one pattern", () => {
       expect(route.params).toEqual({ id: "1" });
       expect(route.query).toEqual({ tab: "a" });
       expect(route.hash).toEqual({ _tag: "Some", _0: "notes" });
+    } finally {
+      handle.dispose();
+    }
+  });
+});
+
+function answer(outcome: "yes" | "no"): void {
+  getModal()
+    ?.querySelector<HTMLButtonElement>(`button[data-kumiki-confirm-action='${outcome}']`)
+    ?.click();
+}
+
+describe("route.leave guard beside a notification.show provider", () => {
+  it("asks through the built-in modal; the provider is handed nothing", async () => {
+    const seen: unknown[] = [];
+    const app = leaveGuardApp() as Hooked;
+    const handle = mount(app, target, {
+      router: "memory",
+      initialPath: "/edit",
+      providers: {
+        "notification.show": (input) => {
+          seen.push(input);
+          return { kind: "ok", value: null };
+        },
+      },
+    });
+    try {
+      app._dispatch?.("edit", {});
+      app._navigate?.("/");
+      await settle();
+      expect(seen).toEqual([]);
+      answer("yes");
+      await Promise.resolve();
+      expect(target.textContent).toContain("Home");
+      expect(app.live?.visits).toBe(1);
+    } finally {
+      handle.dispose();
+    }
+  });
+});
+
+describe("route.leave guard — a navigation while a move is held", () => {
+  it("replaces the held move: its modal closes unanswered and the guard asks again", async () => {
+    const app = leaveGuardApp() as Hooked;
+    const handle = mount(app, target, { router: "memory", initialPath: "/edit" });
+    try {
+      app._dispatch?.("edit", {});
+      app._navigate?.("/");
+      await settle();
+      const held = getModal();
+      expect(held).not.toBeNull();
+
+      app._navigate?.("/about");
+      await settle();
+      expect(held?.isConnected).toBe(false);
+      expect(document.querySelectorAll("[data-kumiki-confirm]")).toHaveLength(1);
+      // Closing it answered nothing: neither reducer ran.
+      expect(app.live?.stays).toBe(0);
+      expect(app.live?.dirty).toBe(true);
+      expect(target.textContent).toContain("Editor");
+
+      answer("yes");
+      await Promise.resolve();
+      expect((app.live?.route as ParsedRoute).path).toBe("/about");
+      expect(app.live?.abouts).toBe(1);
+      expect(app.live?.visits).toBe(0);
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it("is replaced by a navigation the answer's reducer emits, which the answer then leaves be", async () => {
+    const app = leaveGuardApp() as Hooked;
+    app.caps.push("nav.push");
+    const stayHere = app.reducers.find((r) => r.name === "stayHere");
+    if (!stayHere) throw new Error("no stayHere");
+    // No that goes somewhere else instead, edits still unsaved.
+    stayHere.apply = (slots) => ({
+      slots,
+      emits: [{ effect: "navigate", args: [{ path: "/about" }] }],
+    });
+    const handle = mount(app, target, { router: "memory", initialPath: "/edit" });
+    try {
+      app._dispatch?.("edit", {});
+      app._navigate?.("/");
+      await settle();
+      answer("no");
+      await settle();
+      // The guard asked about /about, and No on the first move reverted nothing.
+      expect(document.querySelectorAll("[data-kumiki-confirm]")).toHaveLength(1);
+      expect(target.textContent).toContain("Editor");
+
+      answer("yes");
+      await Promise.resolve();
+      expect((app.live?.route as ParsedRoute).path).toBe("/about");
+      expect(app.live?.abouts).toBe(1);
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it("is settled only by the guard's modal, not by one another reducer opens", async () => {
+    const app = leaveGuardApp() as Hooked;
+    app.reducers.push({
+      name: "askOther",
+      event: { kind: "ui", ev: "click" },
+      apply: (slots) => ({
+        slots,
+        emits: [{ effect: "confirm", args: [{ title: "Other?", onYes: "stayHere" }] }],
+      }),
+    });
+    const handle = mount(app, target, { router: "memory", initialPath: "/edit" });
+    try {
+      app._dispatch?.("edit", {});
+      app._navigate?.("/");
+      await settle();
+      app._dispatch?.("askOther", {});
+      await settle();
+      const [guardModal, other] = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-kumiki-confirm]"),
+      );
+      other?.querySelector<HTMLButtonElement>("button[data-kumiki-confirm-action='yes']")?.click();
+      await Promise.resolve();
+      expect(app.live?.stays).toBe(1);
+      expect(target.textContent).toContain("Editor");
+      expect(guardModal?.isConnected).toBe(true);
+
+      answer("yes");
+      await Promise.resolve();
+      expect(target.textContent).toContain("Home");
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it("gives way to the next navigation when its confirm never answers", async () => {
+    const app = leaveGuardApp() as Hooked;
+    const handle = mount(app, target, { router: "memory", initialPath: "/edit" });
+    try {
+      // A confirm that settles without opening a modal, so no answer arrives.
+      const asked: unknown[] = [];
+      app.effects.confirm = {
+        name: "confirm",
+        cap: "notification.show",
+        invoke: async (input) => {
+          asked.push(input);
+          return { kind: "ok", value: null };
+        },
+      };
+      app._dispatch?.("edit", {});
+      app._navigate?.("/");
+      await settle();
+      expect(asked).toHaveLength(1);
+      expect(target.textContent).toContain("Editor");
+
+      // The next navigation is not swallowed: the guard runs for it…
+      app._navigate?.("/about");
+      await settle();
+      expect(asked).toHaveLength(2);
+
+      // …and with nothing left to ask, the move completes.
+      app._dispatch?.("save", {});
+      app._navigate?.("/");
+      await settle();
+      expect(target.textContent).toContain("Home");
+      expect(app.live?.visits).toBe(1);
     } finally {
       handle.dispose();
     }

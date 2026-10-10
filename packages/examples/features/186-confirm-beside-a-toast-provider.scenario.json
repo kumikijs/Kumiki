@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "starts on the home page",
+      "expect": { "noErrors": true, "domIncludes": ["Home page"], "state": { "homes": 1 } }
+    },
+    {
+      "do": { "clickText": "Edit" },
+      "expect": { "noErrors": true, "domIncludes": ["Editor", "dirty: false"] }
+    },
+    {
+      "do": { "fill": "textarea", "value": "first draft" },
+      "expect": { "noErrors": true, "state": { "dirty": true } }
+    },
+    {
+      "label": "saving shows the toast and clears the edits",
+      "do": { "clickText": "Save" },
+      "expect": { "noErrors": true, "domIncludes": ["saves: 1"], "state": { "dirty": false } }
+    },
+    {
+      "do": { "fill": "textarea", "value": "second draft" },
+      "expect": { "noErrors": true, "state": { "dirty": true } }
+    },
+    {
+      "label": "with unsaved edits the guard holds the move home behind its dialog",
+      "do": { "clickText": "Home" },
+      "expect": { "noErrors": true, "domIncludes": ["Editor"], "state": { "homes": 1 } }
+    },
+    {
+      "label": "a navigation while the move is held replaces it, and the guard asks again",
+      "do": { "navigate": "/about" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Editor"],
+        "state": { "dirty": true, "kept": 0, "homes": 1, "abouts": 0 }
+      }
+    },
+    {
+      "label": "Yes settles the move that replaced it: About, not Home",
+      "do": { "click": "[data-kumiki-confirm] button[data-kumiki-confirm-action='yes']" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["About page"],
+        "state": { "dirty": false, "kept": 0, "homes": 1, "abouts": 1 }
+      }
+    }
+  ]
+}

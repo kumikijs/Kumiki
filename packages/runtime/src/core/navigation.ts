@@ -1,10 +1,12 @@
-import type { AppShape, ParsedRoute, RouteEntry, Router, RoutingImpl } from "./types.ts";
+import type { AppShape, HoldLeave, ParsedRoute, RouteEntry, Router, RoutingImpl } from "./types.ts";
+
+type HeldMove = { oldRoute: ParsedRoute; newRoute: ParsedRoute; close?: () => void };
 
 export type Navigation = {
   navigate(path: string, replace: boolean): void;
   back(): void;
-  /** Settle a navigation a `route.leave` handler held for a `confirm`. */
-  resolveLeave(outcome: "yes" | "no"): void;
+  /** The hook a `confirm` modal opening while a `route.leave` handler holds a move calls. */
+  holdLeave: HoldLeave;
   /** Called for every emitted effect, so a `confirm` raised while leaving holds the navigation. */
   noteEmit(effect: string): void;
   /** Read the initial location and follow out-of-band changes (browser back/forward). */
@@ -21,9 +23,8 @@ export function createNavigation(deps: {
   render: () => void;
 }): Navigation {
   const { app, slots, routing, router, fireLifecycle, render } = deps;
-  let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
-  let leaving = false;
-  let leaveAskedConfirm = false;
+  let pendingLeave: HeldMove | null = null;
+  let leaving: HeldMove | null = null;
   const scrollSaved = new Map<string, { x: number; y: number }>();
   let lastNavSource: "push" | "replace" | "pop" = "push";
   let unsubscribe: (() => void) | undefined;
@@ -37,7 +38,11 @@ export function createNavigation(deps: {
 
   function syncRouteFromLocation(): void {
     if (!routing || !router) return;
-    if (pendingLeave) return;
+    // A navigation while a move is held replaces it. The held move never
+    // committed, so this one leaves the route still shown, guards and all.
+    const dropped = pendingLeave;
+    pendingLeave = null;
+    dropped?.close?.();
     const redirectTo = routing.findRedirect(app.routes, router.read());
     if (redirectTo !== null) router.replace(redirectTo);
     const oldRoute = slots.route as ParsedRoute;
@@ -48,15 +53,14 @@ export function createNavigation(deps: {
       scrollSaved.set(oldRoute.path, { x, y });
     }
     if (oldRoute && oldRoute.path !== newRoute.path) {
-      leaving = true;
-      leaveAskedConfirm = false;
+      const move: HeldMove = { oldRoute, newRoute };
+      leaving = move;
       try {
         fireLifecycle(`route.leave(${JSON.stringify(oldRoute.pattern)})`, { $route: oldRoute });
       } finally {
-        leaving = false;
+        leaving = null;
       }
-      if (leaveAskedConfirm) {
-        pendingLeave = { oldRoute, newRoute };
+      if (pendingLeave === move) {
         render();
         return;
       }
@@ -77,6 +81,19 @@ export function createNavigation(deps: {
     return undefined;
   }
 
+  function resolveLeave(p: HeldMove, outcome: "yes" | "no"): void {
+    if (pendingLeave !== p) return;
+    pendingLeave = null;
+    if (outcome === "yes") {
+      enter(p.newRoute);
+      return;
+    }
+    // `replace` notifies no subscriber, so the leave guard does not run again.
+    if (routing) router?.replace(routing.href(p.oldRoute));
+    slots.route = p.oldRoute;
+    render();
+  }
+
   function applyScrollFor(route: ParsedRoute): void {
     if (typeof window === "undefined" || typeof window.scrollTo !== "function") return;
     if (findRouteEntry(route)?.scrollRestoration === false) return;
@@ -95,20 +112,17 @@ export function createNavigation(deps: {
     back() {
       router?.back();
     },
-    resolveLeave(outcome) {
-      const p = pendingLeave;
-      if (!p) return;
-      pendingLeave = null;
-      if (outcome === "yes") {
-        enter(p.newRoute);
-        return;
-      }
-      if (routing) router?.replace(routing.href(p.oldRoute));
-      slots.route = p.oldRoute;
-      render();
+    // Only the first modal opened for a held move settles it, so a `confirm`
+    // another reducer opens meanwhile cannot answer the guard's question.
+    holdLeave(close) {
+      const move = pendingLeave;
+      if (!move || move.close) return undefined;
+      move.close = close;
+      return (outcome) => resolveLeave(move, outcome);
     },
     noteEmit(effect) {
-      if (leaving && effect === "confirm") leaveAskedConfirm = true;
+      // Held before the dispatch, so the modal the confirm opens finds the move it answers.
+      if (leaving && effect === "confirm") pendingLeave = leaving;
     },
     start() {
       if (!routing || !router || !app.routes || app.routes.length === 0) return;
