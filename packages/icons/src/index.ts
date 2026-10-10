@@ -1,20 +1,15 @@
 /**
  * @kumikijs/icons — the built-in icon set referenced by `icon(name="…")` in
- * Kumiki source (docs/spec/style.md §4.8).
+ * Kumiki source (see the icons section of docs/spec/style.md).
  *
  * Each export is the `d` attribute of a single `<path>` inside a 24×24 viewBox,
  * filled with `currentColor` by the runtime. Custom icons follow the same
  * convention and are registered via `theme.icons` to override any name here.
  *
- * The runtime itself does not import this package — `@kumikijs/vite` and the
- * `kumiki` CLI scan compiled tiles for `icon(name=<literal>)` and bake only the
- * referenced paths into the generated AppShape under `app.icons`. Apps that
- * don't use icons pay zero bundle cost.
- *
  * Visual style: Heroicons v2 Solid (MIT) — 24×24, single-path, fill-based.
  */
 
-// Status (10)
+// Status
 export const check = "M9.55 18 3.85 12.3l1.425-1.425L9.55 15.15l9.175-9.175L20.15 7.4z";
 export const checkCircle =
   "M12 2a10 10 0 100 20 10 10 0 000-20zm-1.1 14.6L6.3 12l1.4-1.4 3.2 3.2 5.4-5.4 1.4 1.4z";
@@ -32,7 +27,7 @@ export const shieldCheck =
 export const shieldExclamation =
   "M12 2 4 5v6c0 4.95 3.42 9.6 8 11 4.58-1.4 8-6.05 8-11V5zm1 14h-2v-2h2zm0-4h-2V7h2z";
 
-// Navigation (14)
+// Navigation
 export const chevronUp = "M7.4 15.4 6 14l6-6 6 6-1.4 1.4-4.6-4.6z";
 export const chevronDown = "M7.4 8.6 6 10l6 6 6-6-1.4-1.4-4.6 4.6z";
 export const chevronLeft = "M15.4 16.6 14 18l-6-6 6-6 1.4 1.4L10.8 12z";
@@ -50,7 +45,7 @@ export const arrowDownLeft = "M17.6 19 7 8.4V17H5V5h12v2H8.4L19 17.6z";
 export const caretUp = "M7 15l5-6 5 6z";
 export const caretDown = "M7 10l5 6 5-6z";
 
-// Actions (16)
+// Actions
 export const plus = "M11 19v-6H5v-2h6V5h2v6h6v2h-6v6z";
 export const minus = "M5 13v-2h14v2z";
 export const edit =
@@ -82,7 +77,7 @@ export const share =
 export const print =
   "M19 8H5q-1.25 0-2.125.875T2 11v6h4v4h12v-4h4v-6q0-1.25-.875-2.125T19 8zm-3 11H8v-5h8zm3-7q-.425 0-.713-.288T18 11q0-.425.288-.713T19 10q.425 0 .713.288T20 11q0 .425-.288.713T19 12zm-1-9H6v4h12z";
 
-// Common UI (14)
+// Common UI
 export const home = "M5 21V9l7-5.25L19 9v12h-5v-6h-4v6z";
 export const user =
   "M12 12q-1.65 0-2.825-1.175T8 8q0-1.65 1.175-2.825T12 4q1.65 0 2.825 1.175T16 8q0 1.65-1.175 2.825T12 12zm-8 8v-2.8q0-.85.438-1.563T5.6 14.55q1.55-.775 3.15-1.163T12 13q1.65 0 3.25.388t3.15 1.162q.725.375 1.163 1.088T20 17.2V20z";
@@ -109,7 +104,7 @@ export const sun =
 export const moon =
   "M12 21q-3.75 0-6.375-2.625T3 12q0-3.75 2.625-6.375T12 3q.35 0 .688.025t.662.075q-1.025.725-1.638 1.888T11.1 7.5q0 2.25 1.575 3.825T16.5 12.9q1.375 0 2.525-.613T20.9 10.65q.05.325.075.662T21 12q0 3.75-2.625 6.375T12 21z";
 
-// File / link (10)
+// File / link
 export const file =
   "M14 2H6q-.825 0-1.413.588T4 4v16q0 .825.588 1.413T6 22h12q.825 0 1.413-.588T20 20V8zM6 20V4h7v5h5v11z";
 export const fileText =
@@ -131,7 +126,7 @@ export const paperclip =
 export const image =
   "M5 21q-.825 0-1.413-.588T3 19V5q0-.825.588-1.413T5 3h14q.825 0 1.413.588T21 5v14q0 .825-.588 1.413T19 21zm1-4h12l-3.75-5-3 4L9 13zm-1 2h14V5H5zm0 0V5z";
 
-// Auth / device (8)
+// Auth / device
 export const lock =
   "M6 22q-.825 0-1.413-.588T4 20V10q0-.825.588-1.413T6 8h1V6q0-2.075 1.463-3.538T12 1q2.075 0 3.538 1.463T17 6v2h1q.825 0 1.413.588T19 10v10q0 .825-.588 1.413T17 22zm6-5q.825 0 1.413-.588T14 15q0-.825-.588-1.413T12 13q-.825 0-1.413.588T10 15q0 .825.588 1.413T12 17zM9 8h6V6q0-1.25-.875-2.125T12 3q-1.25 0-2.125.875T9 6z";
 export const unlock =

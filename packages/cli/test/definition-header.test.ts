@@ -1,15 +1,5 @@
-// A body is a definition without its `<layer> <name>` opener. A tile's clauses
-// and a type's parameters sit between the name and the `=`, so a body can
-// state them, and a `replace` body that does not keeps the ones the
-// definition has. A tile or a type the op log records always states its
-// header, from its `=` when it has none, so a logged body means the same to
-// every reader; a `replace` or an `edit` also records the body it replaced,
-// which is what `patch revert` writes back.
-
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   addDef,
   describeEdit,
@@ -18,30 +8,18 @@ import {
   load,
   patchApplyFile,
   patchRevert,
-  readOpLog,
   removeDef,
   replaceDef,
   viewDef,
 } from "@kumikijs/cli";
 import type { TileDef } from "@kumikijs/compiler";
-import { afterEach, describe, expect, it } from "vitest";
-import { CLI_ARGV } from "./helpers/cli.ts";
+import { describe, expect, it } from "vitest";
+import { runCli, SPAWN } from "./helpers/cli.ts";
 import { defined } from "./helpers/defined.ts";
+import { seed as seedFile, tempDir } from "./helpers/files.ts";
+import { lastOp, logPath, rewriteLogEntry } from "./helpers/op-log.ts";
 
-let dir = "";
-const seed = (source: string): string => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-def-header-"));
-  const file = join(dir, "h.kumiki");
-  writeFileSync(file, source);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
-
-const logPath = (file: string): string => `${file}.kumiki-ops.jsonl`;
-const lastOp = (file: string) => defined(readOpLog(file).at(-1), "an op in the log");
+const seed = (source: string): string => seedFile(source, "h.kumiki");
 /** The op-id of the op just logged, read off the log rather than off the verb's result. */
 const lastOpId = (file: string): string => lastOp(file)["op-id"];
 const textOf = (file: string, qname: string): string =>
@@ -54,23 +32,6 @@ const handEdit = (file: string, from: string, to: string): void => {
   const source = readFileSync(file, "utf8");
   expect(source).toContain(from);
   writeFileSync(file, source.replace(from, to));
-};
-
-/** Rewrite one op-log entry in place, as an earlier version of the CLI would have logged it. */
-const rewriteLogEntry = (
-  file: string,
-  opId: string,
-  edit: (entry: Record<string, unknown>) => void,
-): void => {
-  const lines = readFileSync(logPath(file), "utf8").split("\n");
-  const out = lines.map((line) => {
-    if (!line.trim()) return line;
-    const entry = JSON.parse(line) as Record<string, unknown>;
-    if (entry["op-id"] !== opId) return line;
-    edit(entry);
-    return JSON.stringify(entry);
-  });
-  writeFileSync(logPath(file), out.join("\n"));
 };
 
 const APP = `app A
@@ -295,12 +256,6 @@ describe("a comment after the name", () => {
   });
 });
 
-/**
- * Each form a right-hand side starts with. None of them is read as a header,
- * so a `replace` with any of them keeps the definition's clauses or parameters
- * and writes the body after its `=` as given. A right-hand side a future
- * grammar lets start with `(`, `=` or `<word> =` belongs here, and fails.
- */
 const TYPE_RIGHT_HAND_SIDES = ["T", "Option(T)", "{v: T}", "nominal Int", "Red | Green"];
 const TILE_RIGHT_HAND_SIDES = [
   "heading($1)",
@@ -355,8 +310,6 @@ describe("add writes the clauses and parameters a body states", () => {
   });
 
   it("refuses a name that is not one identifier, writing nothing", () => {
-    // Parameters written into the name would be written into the file, and
-    // the op logged as `type.Box(T)`: a name nothing can view, revert or remove.
     const file = seed("slot n : Int = 0\n");
 
     expect(() => addDef(file, "type", "Box(T)", "{v: T}")).toThrowError(/"Box\(T\)"/);
@@ -388,8 +341,6 @@ describe("patch revert of a replace or an edit", () => {
   });
 
   it("puts back a clause the op log never saw", () => {
-    // The clause is written by hand after the add, so no logged body has it:
-    // the revert has to write back the definition the replace replaced.
     const file = seed(BOUNDARY);
     addDef(file, "tile", "X", 'text("a")');
     handEdit(file, 'tile X = text("a")', 'tile X error-boundary=Oops = text("a")');
@@ -431,9 +382,6 @@ describe("patch revert of a replace or an edit", () => {
   });
 
   it("refuses a logged body that is a whole definition, writing nothing", () => {
-    // An op that records no replaced body falls back to the body the op before
-    // it logged — here a whole definition, which is how an earlier version
-    // logged the body of a tile with clauses.
     const file = seed(INPUT);
     const first = editDef(file, "tile.Greeting", { find: "Hi, ", replace: "Hello, " });
     const second = editDef(file, "tile.Greeting", { find: "Hello, ", replace: "Hey, " });
@@ -467,7 +415,7 @@ describe("a logged body means one thing", () => {
     replaceDef(file, "tile.X", 'text("b")');
     const { op, layer, name, body } = lastOp(file);
     handEdit(file, 'tile X = text("b")', 'tile X error-boundary=Oops = text("b")');
-    const ops = join(dir, "ops.jsonl");
+    const ops = join(dirname(file), "ops.jsonl");
     writeFileSync(ops, `${JSON.stringify({ op, layer, name, body })}\n`);
 
     patchApplyFile(file, ops);
@@ -476,13 +424,6 @@ describe("a logged body means one thing", () => {
   });
 });
 
-/**
- * One definition of each kind, written through `add`. Every label the store
- * puts on a definition has a row, so a new kind of definition that `add` cannot
- * write, or `remove` cannot read back, fails here. `logged` is the body the op
- * log records when it is not the one given: a tile or a type without a header
- * is logged from its `=`.
- */
 const KINDS: { layer: string; name: string; body: string; logged?: string }[] = [
   { layer: "type", name: "Point", body: "{x: Int, y: Int}", logged: "= {x: Int, y: Int}" },
   { layer: "type", name: "Pair", body: "(A, B) = {first: A, second: B}" },
@@ -559,24 +500,10 @@ describe("every kind of definition", () => {
 });
 
 describe("kumiki add and replace, the commands", () => {
-  // Each case pays for a node + tsx start, so the limits allow for a loaded
-  // machine; the child's is the shorter one so it always fires first.
-  const SPAWN = { timeout: 70_000 };
-  const run = (args: string[]): { stdout: string; stderr: string; code: number } => {
-    const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-      timeout: 60_000,
-    });
-    if (res.error) throw res.error;
-    return { stdout: res.stdout ?? "", stderr: res.stderr ?? "", code: res.status ?? Number.NaN };
-  };
-
   it("rejects a layer that labels no definition with 2, before reading the file", SPAWN, () => {
-    dir = mkdtempSync(join(tmpdir(), "kumiki-def-header-"));
-    const missing = join(dir, "missing.kumiki");
+    const missing = join(tempDir(), "missing.kumiki");
 
-    const { stderr, code } = run(["add", missing, "widget", "X", "Int = 0"]);
+    const { stderr, code } = runCli(["add", missing, "widget", "X", "Int = 0"]);
 
     expect(stderr).toContain("widget");
     // The alternatives, so the caller learns `motion` is one and `widget` is not.
@@ -588,7 +515,7 @@ describe("kumiki add and replace, the commands", () => {
   it("adds a motion", SPAWN, () => {
     const file = seed(KIND_BASE);
 
-    const { stderr, code } = run([
+    const { stderr, code } = runCli([
       "add",
       file,
       "motion",
@@ -604,7 +531,7 @@ describe("kumiki add and replace, the commands", () => {
   it("replace prints the clauses the body dropped", SPAWN, () => {
     const file = seed(BOUNDARY);
 
-    const { stdout, code } = run(["replace", file, "tile.Greeting", '= heading("Hello")']);
+    const { stdout, code } = runCli(["replace", file, "tile.Greeting", '= heading("Hello")']);
 
     expect(stdout).toContain("\n  dropped error-boundary");
     expect(code).toBe(0);

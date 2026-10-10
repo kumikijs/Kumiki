@@ -1,3 +1,4 @@
+import { compile } from "@kumikijs/compiler";
 import { parseEpisodeLogText } from "@kumikijs/compiler/node";
 import { describe, expect, it } from "vitest";
 
@@ -37,9 +38,6 @@ describe("parseEpisodeLogText", () => {
   });
 
   it("still parses minimal panic steps (no stack / cause / category)", () => {
-    // A log written by an older runtime uses the minimal panic shape
-    // {kind, message, location?, ts}. New readers MUST accept it as-is —
-    // that's the forward-compat guarantee spec §10.5 promises.
     const raw =
       '{"id":"ep_old","trigger":{"kind":"ui.click","ts":1},"steps":[{"kind":"panic","message":"boom","location":"reducer \\"x\\"","ts":2}],"status":"panic"}';
     const parsed = parseEpisodeLogText(raw);
@@ -51,5 +49,41 @@ describe("parseEpisodeLogText", () => {
     expect(step).not.toHaveProperty("stack");
     expect(step).not.toHaveProperty("cause");
     expect(step).not.toHaveProperty("category");
+  });
+});
+
+describe("an episode-test's log, read at build time", () => {
+  const src = `slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="+", onClick=inc)
+tile App = column(B)
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test replay =
+    episode-test
+        load   = "log.jsonl"
+        mocks  = {}
+        expect = {no-panics: true}`;
+  const build = (log: string) =>
+    compile(src, {
+      runtimeSpecifier: "./runtime.js",
+      includeTests: true,
+      readEpisodeLog: () => log,
+    });
+
+  it("inlines the parsed episodes into the generated test", () => {
+    const r = build('{"id":"ep_0001","steps":[]}');
+    expect(r.kind === "ok" && r.js).toContain('"id":"ep_0001"');
+  });
+
+  it("emits a failing test, not an empty replay, when no reader is given", () => {
+    const r = compile(src, { runtimeSpecifier: "./runtime.js", includeTests: true });
+    if (r.kind !== "ok") throw new Error("expected the source to compile");
+    expect(r.js).not.toContain("runEpisodeTest");
+    expect(r.js).toContain('"pass":false');
+    expect(r.js).toContain('"expected":"the episodes in \\"log.jsonl\\""');
+  });
+
+  it("reads the log the way the CLI does, naming the line that is not JSON", () => {
+    expect(() => build('{"id":"ep_0001"}\n{nope')).toThrow(/episode log: invalid JSON at line 2/);
   });
 });
