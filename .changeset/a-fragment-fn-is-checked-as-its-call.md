@@ -4,7 +4,7 @@
 
 A `fn` named as a fragment is checked as the call it stands for, and `fold`'s accumulator has the init's type
 
-`xs.map(loud)` lowers to `xs.map(loud($1))` (`language.md` §1.8.6), but the checker compared only how many parameters the named `fn` declared. Its parameter types went unchecked, so `loud` ran on an `Int` with nothing reported:
+`xs.map(loud)` lowers to `xs.map(loud($1))` (`language.md`), but the checker compared only how many parameters the named `fn` declared. Its parameter types went unchecked, so `loud` ran on an `Int` with nothing reported:
 
 ```
 fn loud(t: Text) -> Text = t + "!"

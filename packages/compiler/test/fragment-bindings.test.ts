@@ -1,19 +1,8 @@
-// Inside a fragment argument — `xs.map(…)`, `m.filter(…)` — `$1` / `$2` are
-// bound to what the lowering hands the fragment, read off the receiver's type
-// (stdlib.md §2.2, language.md §1.8.6): the element of a `List` or `Option`,
-// the two halves of a `.entries` tuple, a Map's key and value, `fold`'s
-// accumulator (of the init's type) and element. A positional bound with no
-// type decides nothing read through it: `rs.map($1.ids.to-list)` over an
-// untyped `$1` reads a `Set(Int)`'s keys back as strings.
-//
-// Bound, they are checked like any other value, and a `fn` named as the
-// fragment is checked as the call it stands for. Where the lowering's reading
-// is not certain the name stays untyped, because a wrong guess reports a
-// working program.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { FRAGMENT_ARGUMENTS } from "../src/codegen/expr.ts";
+import { summariesOf } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 const diagnostics = (defs: string, rhs: string, resType: string, init = "[]") =>
   check(
@@ -45,8 +34,6 @@ function shapesOf(node: unknown, method: string): unknown[] {
 const LOUD = `fn loud(t: Text) -> Text = t + "!"`;
 
 describe("$1 is the element a List hands its fragment", () => {
-  // The lowering binds from the element type, not from the value's length, so
-  // an element that is a `List` is `$1` whole — two items or not.
   it("binds an element that is itself a List whole", () => {
     const defs = `${LOUD}\nslot xss : List(List(Int)) = []`;
     expect(diagnostics(defs, "xss.map(loud($1))", "List(Text)")).toEqual([
@@ -102,9 +89,6 @@ describe("$1 / $2 are a Map's key and value, and the halves of an entry", () => 
   });
 
   it("records Map.map's fragment as handed the key and the value", () => {
-    // Codegen binds from this decision; without it the fragment falls back to
-    // reading the value's length at run time, and a `fn` of two named there
-    // is refused.
     const ast = parse(
       lex(`slot m : Map(Int, Int) = {}
 slot res : Map(Int, Int) = {}
@@ -130,9 +114,6 @@ app A
 });
 
 describe("a fn named as the fragment is checked as the call it stands for", () => {
-  // `xs.map(loud)` is `xs.map(loud($1))` (language.md §1.8.6): the name is
-  // checked as that call, in the scope that binds the positionals, so the two
-  // spellings report the same mismatch.
   const both = (defs: string, call: (f: string) => string, fn: string, args: string) => ({
     bare: (res: string, init = "[]") => diagnostics(defs, call(fn), res, init),
     inline: (res: string, init = "[]") => diagnostics(defs, call(`${fn}(${args})`), res, init),
@@ -235,24 +216,18 @@ slot r : Result(Int, Text) = Ok(1)`;
         // The argument ahead of the fragment: `fold`'s init, `update`'s key.
         const lead = ["", method === "fold" ? "0, " : '"k", '][fragment.index];
         const errors = (f: string) =>
-          check(
-            parse(
-              lex(`fn probe(${params}) = true
+          summariesOf(
+            withApp(`fn probe(${params}) = true
 fn run(c: ${r.type}) = c.${method}(${lead}${f})
-tile App = text("x")
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []`),
-            ),
-          ).map((e) => `${e.code} ${e.message}`);
+tile App = text("x")`),
+          );
         const want = positionals.map((p) => `E0201 Expected Bool but got ${r.is[p]}`);
         expect(errors(`probe(${args})`), `${receiver}.${method}(probe(${args}))`).toEqual(want);
         expect(errors("probe"), `${receiver}.${method}(probe)`).toEqual(want);
       }
     }
-    // The rows themselves: every fragment method, on each receiver
-    // language.md §1.8.6 lists it for. A `Set`'s `filter` has none.
+    // Every fragment method, on each receiver language.md lists it for. A
+    // `Set`'s `filter` has none.
     expect(rows.sort()).toEqual([
       "List.filter",
       "List.find",
@@ -273,9 +248,6 @@ app A
 });
 
 describe("where the lowering's reading is not certain, nothing is bound", () => {
-  // A `fn` with no `->` has no inferred result yet, so its elements are not
-  // known here. That is a gap in inference, not a rule: once the result is
-  // inferred this is the E0201 above, so only its absence today is pinned.
   it("a receiver whose type is not decided", () => {
     const defs = `${LOUD}\nfn anything(n: Int) = [n]`;
     expect(diagnostics(defs, "anything(1).map(loud($1))", "List(Text)")).not.toContain(
@@ -295,7 +267,7 @@ describe("where the lowering's reading is not certain, nothing is bound", () => 
     }
   });
 
-  it("a Set's filter, which stdlib.md §2.2.3 gives no binding", () => {
+  it("a Set's filter, which stdlib.md gives no binding", () => {
     // `_s.filter` hands a Set's predicate each member as an `[element, true]`
     // entry, its key unrestored, so `$1` is not decided to be the element.
     const defs = `${LOUD}\nslot s : Set(Int) = []`;

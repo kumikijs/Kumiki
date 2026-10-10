@@ -1,4 +1,4 @@
-# Feature (language.md §1.8.6): a fragment's positionals have the types the
+# Feature (language.md): a fragment's positionals have the types the
 # method hands it, and a `fn` named as the fragment is checked as the call it
 # stands for.
 #
