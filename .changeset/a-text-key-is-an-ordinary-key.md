@@ -33,4 +33,4 @@ assigned each key into a fresh object, and assigning `"__proto__"` sets the
 object's prototype instead: `remove` of another key, `intersect`, `diff`,
 `filter` and `map` dropped the entry, and `toggle("__proto__")` on an empty
 Set never added it. They now keep and add it like any other entry.
-stdlib.md §2.2.2 states the rule.
+stdlib.md states the rule.

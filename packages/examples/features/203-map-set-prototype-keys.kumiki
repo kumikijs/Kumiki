@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.1 / §2.2.2): any Text is an ordinary key.
+# Feature (stdlib.md): any Text is an ordinary key.
 #
 #   Map(K, V).has / get / get-or / update / remove / filter / map, m[k]
 #   Set(T).has / toggle / remove / intersect / diff
