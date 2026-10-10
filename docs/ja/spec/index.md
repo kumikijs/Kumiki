@@ -108,7 +108,6 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | ライフサイクル |
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
-| [E0236](./errors.md#e0236-tile-as-content) | `tile-as-content` | tile | コア |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
