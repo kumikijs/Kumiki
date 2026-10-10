@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.1 / §2.2.2): a key reads back as its declared type.
+# Feature: a key reads back as its declared type.
 #
 #   Set(T).to-list     : List(T)
 #   Map(K, V).keys     : List(K)
