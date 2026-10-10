@@ -1,15 +1,13 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { createEpisodeLogger } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { runScenarioSource } from "../src/smoke.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = app("01-counter");
 
 describe("kumiki run --episode-log", () => {
-  it("records §10.5.1-shaped episodes for every reducer fired by the scenario", async () => {
+  it("records an episode for every reducer the scenario fires", async () => {
     const source = readFileSync(COUNTER, "utf8");
     const logger = createEpisodeLogger();
     await runScenarioSource(
@@ -26,9 +24,6 @@ describe("kumiki run --episode-log", () => {
     );
 
     const eps = logger.list();
-    // The counter has no async effects, so each dispatch yields one episode
-    // (the scenario opens 3 — plus an implicit app.start lifecycle if present,
-    // counter has init=[] so none here).
     expect(eps.length).toBeGreaterThanOrEqual(3);
 
     for (const ep of eps) {

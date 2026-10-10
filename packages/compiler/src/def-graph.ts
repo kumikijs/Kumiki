@@ -1,33 +1,10 @@
-// Which definitions is a definition written in terms of, does that relation
-// close a loop, and — for tiles, which code generation inlines — how deep does
-// the tree go once it is followed, and what does it reach?
-//
-// Four layers answer the first two questions with the same shape but different
-// edges, so the traversal lives here once. It deals in names, positions and
-// levels only: the diagnostics themselves are pushed by the typechecker, which
-// is where every coded diagnostic belongs.
-//
-// Every search over definitions is iterative. Recursion there would be the
-// same defect the tile walk had — a program is free to declare a chain of
-// definitions longer than the call stack, and a checker that overflows on one
-// is no better than the crash it exists to prevent. Walking a single tile body
-// does recurse, which is safe for a different reason: a body is bounded by the
-// parser's nesting limit, and the graph between definitions is not — it may
-// close a loop, or run longer than any stack.
-
 import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };
 
-/**
- * A tile edge, placed at the level of the tree its target renders under.
- *
- * `level` counts from the root of the tile that holds the edge, which is 1.
- * The target's body hangs one level below it, which is where code generation
- * inlines it.
- */
+/** `level` counts from the root of the tile holding the edge (1); the target's body hangs below it. */
 export type PlacedEdge = GraphEdge & { readonly level: number };
 
 /** A tile as written, before any tile it names is inlined. */
@@ -39,55 +16,19 @@ export type TileExpansion = {
 };
 
 export type Cycle = {
-  /**
-   * The loop, entry node first and repeated last: `["A", "B", "A"]`.
-   *
-   * Non-empty by construction, and typed that way so a caller can name
-   * `path[0]` without a check that would read as defensive. Reporting
-   * `Tile "undefined" expands into itself` is the failure this rules out.
-   */
   readonly path: readonly [string, ...string[]];
   /** The first edge of the loop — inside the definition `path[0]` names. */
   readonly pos: Pos;
 };
 
-/**
- * The tile names a tile body statically expands into.
- *
- * These are exactly the edges code generation follows when it inlines: nested
- * tile calls, an identifier argument standing in for a tile, and the branches
- * of `for` / `when` / `if` / `match`. Names that turn out to denote a builtin,
- * or nothing at all, are included — the caller knows which table to resolve
- * them against, and code generation resolves a bare identifier to a tile
- * before anything else, so a slot of the same name is not the target.
- *
- * A tile's own `error-boundary` is an edge too, but it belongs to the
- * definition rather than to its body — `tileExpansion` is where it is added.
- * `sub-routes` is not an edge: a sub-route is selected by the router through
- * `route-outlet`, never inlined.
- */
 export function expansionTargets(body: TileExpr): readonly PlacedEdge[] {
   const edges: PlacedEdge[] = [];
   walkTileBody(body, 1, edges);
   return edges;
 }
 
-/**
- * A tile's own depth, and its edges — its body's (`expansionTargets`) and its
- * `error-boundary` — each placed at the level of the tree it renders under.
- *
- * Every node of the tile tree is a level, as the parser counts one inside a
- * definition: a call, builtin or user, and a `for` / `when` / `if` / `match`.
- * A tile written as a bare identifier is a call to it, one level below the
- * call it is an argument of. What is not a tile is not a level — an argument
- * that is a value, and a named argument, which nothing renders.
- *
- * An `error-boundary` is a level as well. Code generation wraps every call of
- * the tile that declares it in the `try` the boundary lowers to, and inlines
- * the fallback's body into the `catch`, so the tile's body and the fallback's
- * both hang beneath it — the body one level further down than it would be
- * without one.
- */
+// An `error-boundary` is a level of its own: codegen wraps every call of the tile in its `try`, so
+// the tile's body and the fallback's both hang beneath it.
 export function tileExpansion(def: TileDef): TileExpansion {
   const edges: PlacedEdge[] = [];
   const depth = walkTileBody(def.body, 1, edges);
@@ -99,12 +40,6 @@ export function tileExpansion(def: TileDef): TileExpansion {
   };
 }
 
-/**
- * Where a `type` body's alias chain goes next, before any definition is looked
- * up: a name it was written in terms of (with whatever arguments it was applied
- * to), one of the enclosing definition's own parameters, or `null` where
- * normalisation stops.
- */
 type AliasHead =
   | {
       readonly kind: "name";
@@ -114,27 +49,8 @@ type AliasHead =
     }
   | { readonly kind: "param"; readonly name: string };
 
-/**
- * Whether a walk along a type's head looks through `nominal` (normalisation,
- * which strips it) or stops there (the search for a nominal declaration, for
- * which the wrapper is the answer).
- */
 export type NominalReading = "through" | "stop";
 
-/**
- * The head of a type expression — what `unaliasType` would look at next.
- *
- * `nominal` and `where` are passed through: neither is a type of its own, so
- * normalisation strips them and carries on to the name underneath. A reading
- * of `"stop"` ends the head at `nominal` instead. A record, a
- * union and a primitive are types in their own right and stop it, so they
- * answer `null` and nothing written inside one is ever reached.
- *
- * A parameter *applied* to arguments answers `null` rather than a head:
- * `unaliasType` carries no parameter scope, so it would resolve such a name
- * against the global table, and the one-sided reading prefers a chain that
- * stops early over an edge that may be to the wrong definition.
- */
 function headOf(
   t: TypeExpr,
   params: ReadonlySet<string>,
@@ -163,9 +79,6 @@ function headOf(
       case "TypeUnion":
         return null;
       default: {
-        // A new `TypeExpr` kind must be classified here rather than silently
-        // ending the chain — one that wraps another type and is missed is a
-        // cycle the search cannot see, exactly as in `walkTileBody`.
         const exhaustive: never = cur;
         void exhaustive;
         return null;
@@ -174,46 +87,11 @@ function headOf(
   }
 }
 
-/**
- * The parameter a generic hands straight back — the index `i` for which
- * normalising `D(a₁ … aₙ)` is normalising `aᵢ` — or `null` when `D` has a type
- * of its own to contribute.
- *
- * `type Alias(T) = T` is the shape, and `type Tag(T) = nominal T` and
- * `type Pos(T) = T where positive` are the same shape under wrappers, since
- * neither wrapper is a type of its own. It is transitive, through the head and
- * through the argument the head hands back: `type Outer(T) = Alias(T)` hands
- * back its parameter by way of `Alias`, and so does `type Twice(T) =
- * Alias(Alias(T))`, by way of `Alias` twice.
- *
- * `nominal` decides whether the wrapper is looked through. Normalisation
- * strips it (`"through"`); the search for a nominal declaration stops at it
- * (`"stop"`), because there the wrapper *is* the answer.
- *
- * Two readers share it. `aliasTarget` follows a chain on through such a
- * generic's argument, since that is where normalisation goes next — otherwise
- * `type A = Alias(A)` has no edge and the loop is invisible.
- * `assignable.ts#unaliasType` and `nominalDecl` take the step in one move
- * rather than expanding the body: normalising `Twice(X)` by expansion walks
- * `Alias` twice, and a chain of definitions that each apply the one below
- * twice doubles that at every level.
- *
- * Returns the classifier rather than one answer so the answers are shared: a
- * definition is classified once however many heads name it, which is what
- * keeps the doubling chain linear here too. Iterative for the reason the
- * module docblock gives — the walk is between definitions, and nothing bounds
- * how many of them a program may chain. A generic whose head comes back to a
- * definition still being classified (`type Loop(T) = Loop(T)`, or two that
- * forward to each other) has no parameter to hand back.
- */
 export function forwardedParams(
   lookup: (name: string) => TypeDef | undefined,
   nominal: NominalReading,
 ): (def: TypeDef) => number | null {
   const answers = new Map<string, number | null>();
-  // Where `expr`, written inside a definition with `params`, ends up: one of
-  // those parameters by index, `null` for somewhere else, or the definition
-  // that has to be classified before this can be told.
   const follow = (expr: TypeExpr, params: readonly string[]): number | null | TypeDef => {
     const scope = new Set(params);
     let cur = expr;
@@ -226,16 +104,12 @@ export function forwardedParams(
       if (!answers.has(def.name)) return def;
       const i = answers.get(def.name);
       if (i === null || i === undefined) return null;
-      // A generic named with too few arguments is E0210's to report; there is
-      // no argument here to carry on with.
       const arg = head.args[i];
       if (!arg) return null;
       cur = arg;
     }
   };
   return (root) => {
-    // Asked again for every application a walk meets, so an answer already
-    // held is read without setting up the walk.
     if (answers.has(root.name)) return answers.get(root.name) ?? null;
     const stack: TypeDef[] = [root];
     const open = new Set<string>([root.name]);
@@ -260,38 +134,6 @@ export function forwardedParams(
   };
 }
 
-/**
- * The definition a `type` is written in terms of — the edge
- * `assignable.ts#unaliasType` takes when it normalises the body — or `null`
- * when the body is a type of its own, or is one of the definition's parameters
- * and so has no meaning until a call site supplies one.
- *
- * An alias (`type A = B`), and a `nominal` / `where` wrapper around one, has no
- * meaning until the definition it names is reached. A record, a union, a
- * primitive and a container are types in their own right, so no name written
- * *inside* one is an edge: `type Node = {value: Int, next: Node}` reaches a
- * record before it reaches itself, and stays legal — comparing two of them
- * terminates because `relate` keys on the types **as written**, which is finite
- * whether or not the values are. That is also why there is at most one edge: an
- * alias chain has one successor, unlike a tile body, which expands into every
- * child it names.
- *
- * A `TypeApp` is an alias step like a bare name is, since `unaliasType`
- * instantiates and keeps going. Its **arguments are followed too**, but only
- * where normalisation follows them — through a generic that hands a parameter
- * straight back (`forwardedParams`), which is the one case where substitution
- * decides what comes next. So `type Alias(T) = T` / `type A = Alias(A)` closes
- * a loop, while `type A = Alias(Option(A))` does not: the argument is a
- * container, and a container is where normalisation stops.
- *
- * `lookup` resolves a name against the `type` definitions in scope. A name it
- * does not answer for is returned as the edge unchanged — the caller knows
- * which table to filter against, as for tiles.
- *
- * The hop loop needs no guard of its own: each hop moves to a head strictly
- * inside the arguments of the previous one, so it is bounded by the body's
- * nesting depth, which the parser bounds.
- */
 export function aliasTarget(
   def: TypeDef,
   lookup: (name: string) => TypeDef | undefined,
@@ -306,18 +148,12 @@ export function aliasTarget(
     const i = forwarded(target);
     if (i === null) return edge;
     const arg = head.args[i];
-    // A generic named with too few arguments is E0210's to report; there is no
-    // argument here to carry the chain on, so it ends at the generic.
     if (!arg) return edge;
     head = headOf(arg, params);
   }
   return null;
 }
 
-/**
- * Collects the edges under `t`, which sits at `level`, and answers the level of
- * the deepest node there.
- */
 function walkTileBody(t: TileExpr, level: number, out: PlacedEdge[]): number {
   switch (t.kind) {
     case "TileFor":
@@ -338,26 +174,11 @@ function walkTileBody(t: TileExpr, level: number, out: PlacedEdge[]): number {
       let deepest = level;
       for (const a of t.args) {
         const v = a.value;
-        // A named argument is a prop, and nothing renders a tile written as
-        // one: a builtin container skips named arguments, the builtins that
-        // read one by name all want a value, and a user tile takes its input
-        // from the positional argument. So there is no expansion edge here —
-        // and for a named argument that is not a handler, the shape is
-        // reported anyway, as E0201 on a user tile.
-        //
-        // An event handler is the same case with a second reason: it names a
-        // reducer, and a capitalised name in that position parses as a tile
-        // call, so `onClick=App` inside `App` reported the tile as expanding
-        // into itself. Since the handler position resolves in the reducer
-        // namespace, such a name is either a reducer (no diagnostic) or an
-        // undefined one (E0102) — never an expansion edge either way, which
-        // is why this `continue` needs no case of its own.
         if (a.name !== undefined) continue;
         if (isTileExpr(v)) deepest = Math.max(deepest, walkTileBody(v, level + 1, out));
         else if ((v as Expr).kind === "Ref") {
-          // Not counted in this body's own depth, since the name may be a
-          // value. If it names a tile, its edge counts it as the call it
-          // lowers to, at `level + 1`, with the tile's body beneath.
+          // Not counted in this body's own depth, since the name may be a value; its edge
+          // counts it if it names a tile.
           const ref = v as Expr & { kind: "Ref" };
           out.push({ to: ref.name, pos: ref.pos, level: level + 1 });
         }
@@ -365,10 +186,6 @@ function walkTileBody(t: TileExpr, level: number, out: PlacedEdge[]): number {
       return deepest;
     }
     default: {
-      // A new `TileExpr` kind must be given its edges here rather than
-      // silently having none — a kind that expands into children and is
-      // missed is a cycle the search cannot see, and a level it adds is
-      // depth the limit cannot see.
       const exhaustive: never = t;
       void exhaustive;
       return level;
@@ -376,30 +193,16 @@ function walkTileBody(t: TileExpr, level: number, out: PlacedEdge[]): number {
   }
 }
 
-/**
- * Every loop reachable from `nodes`, in the order the nodes are given.
- *
- * One loop is reported once however many definitions lead into it, and once
- * however many edges close it. The first comes from never re-entering a node
- * the search has finished with; the second needs `reported`, because a body
- * may take the same back edge more than once — `column(A, A)` and
- * `if c then column(A) else column(A)` both do, and both are ordinary. Two
- * loops that share no node are two reports.
- */
 export function findCycles(
   nodes: Iterable<string>,
   edgesOf: (node: string) => readonly GraphEdge[],
 ): readonly Cycle[] {
   const cycles: Cycle[] = [];
   const finished = new Set<string>();
-  // Keyed by the loop itself rather than by its entry point: two loops through
-  // one node (`A → B → A` and `A → C → A`) are two distinct findings.
   const reported = new Set<string>();
 
   for (const root of nodes) {
     if (finished.has(root)) continue;
-    // `enteredBy` is the position of the edge that reached this node, which is
-    // what a loop through it is reported at.
     const frames: { node: string; edges: readonly GraphEdge[]; next: number; enteredBy?: Pos }[] = [
       { node: root, edges: edgesOf(root), next: 0 },
     ];
@@ -429,9 +232,6 @@ export function findCycles(
         const key = path.join(" ");
         if (reported.has(key)) continue;
         reported.add(key);
-        // The loop is reported at its first edge, so the message and the
-        // position name the same definition. A self-loop has no second frame
-        // to take that edge from — the back edge is the first edge.
         cycles.push({ path, pos: frames[depth + 1]?.enteredBy ?? edge.pos });
         continue;
       }
@@ -443,17 +243,8 @@ export function findCycles(
   return cycles;
 }
 
-/**
- * What a node reaches: `own` of every node reachable from it along `edgesOf`,
- * itself included, gathered into one set.
- *
- * Asked one node at a time, and every answer the walk passes through is kept
- * for the next question, so each node is visited once however many questions
- * reach it. The nodes on one loop reach exactly the same nodes, so they are
- * answered together, as the walk leaves the first of them it entered (Tarjan's
- * strongly connected components). A loop is not this search's to report —
- * `findCycles` does — only a set of nodes that share an answer.
- */
+// Tarjan's strongly connected components: the nodes on one loop reach the same nodes, so they
+// share one answer, and each node is visited once however many questions reach it.
 export function reachedFrom<T>(
   edgesOf: (node: string) => readonly GraphEdge[],
   own: (node: string) => readonly T[],
@@ -475,8 +266,6 @@ export function reachedFrom<T>(
     // Every node a question enters is answered before it returns, so the
     // entry order only has to last for one question.
     const order = new Map<string, number>();
-    // The nodes entered and not yet answered, in entry order: the nodes of a
-    // loop are the run of them from its first.
     const unanswered: string[] = [];
     const enter = (node: string): Frame => {
       const at = order.size;
@@ -501,12 +290,9 @@ export function reachedFrom<T>(
         continue;
       }
       frames.pop();
-      // The node below took the edge that entered this one, so it reaches
-      // everything this one does.
       const below = frames[frames.length - 1];
       if (below) for (const v of frame.reached) below.reached.add(v);
       if (frame.low < frame.at) {
-        // On a loop with a node below it, which answers for the whole loop.
         if (below) below.low = Math.min(below.low, frame.low);
         continue;
       }
@@ -528,19 +314,8 @@ export type Expansion = {
   readonly via: PlacedEdge | null;
 };
 
-/**
- * The depth of every tree reachable from `nodes`, each target hung beneath the
- * edge to it: the deepest of `level + depth(target)` over the edges, and the
- * node's `ownDepth`.
- *
- * A node that reaches a loop is absent. Its tree is infinite, and the loop is
- * `findCycles`'s to report — a depth for it would be a second report of the
- * same mistake, with a number in it that means nothing.
- *
- * Each node is measured once and the answer shared, so a tile reached along
- * many paths — every tile calling the next one twice — costs one visit rather
- * than one per path.
- */
+// A node that reaches a loop is absent: its tree is infinite, and the loop is `findCycles`'s to
+// report.
 export function expansionDepths(
   nodes: Iterable<string>,
   edgesOf: (node: string) => readonly PlacedEdge[],
@@ -555,14 +330,12 @@ export function expansionDepths(
   };
   const measured = new Map<string, Expansion>();
   const unbounded = new Set<string>();
-  // The nodes on the current path: an edge back to one of them closes a loop.
   const open = new Set<string>();
   const enter = (node: string): Frame => {
     open.add(node);
     const best = { depth: ownDepth(node), via: null };
     return { node, edges: edgesOf(node), next: 0, best, reachesLoop: false };
   };
-  // Leaving `frame` by `edge` reaches `target`'s tree, `edge.level` further down.
   const follow = (frame: Frame, edge: PlacedEdge, target: Expansion | undefined): void => {
     if (!target) {
       frame.reachesLoop = true;
@@ -590,8 +363,6 @@ export function expansionDepths(
       open.delete(frame.node);
       if (frame.reachesLoop) unbounded.add(frame.node);
       else measured.set(frame.node, frame.best);
-      // The node below took the edge that entered this one, and is waiting
-      // on its answer.
       const below = frames[frames.length - 1];
       const entered = below?.edges[below.next - 1];
       if (below && entered) follow(below, entered, measured.get(frame.node));

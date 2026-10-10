@@ -1,21 +1,8 @@
-// How deep a tile tree nests once its user tiles are inlined (language.md
-// §1.2.3, E0237).
-//
-// Code generation inlines every call to a user tile, so the module it emits
-// nests as deep as the tree with every call replaced by the callee's body. The
-// parser bounds one definition; this bounds what the definitions add up to. A
-// chain of tiles each calling the next is the shape that reaches it — one
-// definition per level, none of them deep — and unbounded it is a module the
-// engine refuses to load and, longer still, a stack overflow in `compile`.
-//
-// Every level is counted the way the parser counts it inside one definition: a
-// call, builtin or user, is a level, and so are `for`, `when`, `if` and
-// `match`. A link of the chain below is two — the column and the call in it.
-
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
-/** The bound recorded in language.md §1.2.3. */
+/** The nesting bound in language.md. */
 const LIMIT = 256;
 
 const TAIL = `app M caps=[] routes={"/" -> T0, "/404" -> T0} init=[]
@@ -35,7 +22,7 @@ const program = (lines: readonly string[], head = ""): string =>
 const build = (source: string) =>
   compile(source, { runtimeSpecifier: "@kumikijs/runtime", capabilities: [] });
 
-const depthErrors = (source: string) => check(parse(lex(source))).filter((e) => e.code === "E0237");
+const depthErrors = (source: string) => checkSource(source).filter((e) => e.code === "E0237");
 
 describe("a chain of tiles nests no deeper than the limit once inlined", () => {
   it("compiles the longest chain the limit admits", () => {
@@ -124,10 +111,6 @@ describe("a chain of tiles nests no deeper than the limit once inlined", () => {
 });
 
 describe("a check that follows tiles into the tiles they inline reaches the report", () => {
-  // W0212 and W0213 ask what a tile renders anywhere in its tree, which takes
-  // following every call into the callee's body. A chain longer than the call
-  // stack is over the limit, and E0237 is what it gets; these pin that the
-  // checker gets there, and that the walk reached the leaf on the way.
   const LONG = 20_000;
   const head = "slot c : Int = 0\n";
   const observed = (e: { code: string; message: string }) =>
@@ -257,6 +240,6 @@ slot o : Option(Int) = None
     ]);
     // `T0` reaches the loop, so it has no depth and is not reported; the
     // chain `D0` heads is over on its own and nothing measurable calls it.
-    expect(check(parse(lex(src))).map((e) => e.code)).toEqual(["E0005", "E0237"]);
+    expect(codesOf(src)).toEqual(["E0005", "E0237"]);
   });
 });

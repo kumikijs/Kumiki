@@ -1,5 +1,4 @@
 # Feature: scroll restoration — tile-level opt-out + scroll-to effect.
-# Spec: routing.md §3.9.
 #
 # The Chat tile opts out of automatic scrollTo on entry by declaring
 # `scroll-restoration = false`; the runtime keeps the current scroll position
