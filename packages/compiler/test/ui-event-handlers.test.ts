@@ -191,6 +191,15 @@ app A
     expect(codesOf(src('tile Card = box(button(text="go"))'))).toEqual([]);
     expect(codesOf(src('tile Deep = button(text="go")\ntile Card = box(Deep)'))).toEqual([]);
   });
+
+  it("and says nothing about onFocus on a details root that holds a panel", () => {
+    const focused = src('tile Card = details(summary="Q", text("a"))').replace(
+      "Card {onClick: open}",
+      "Card {onFocus: open}",
+    );
+    expect(focused).toContain("Card {onFocus: open}");
+    expect(codesOf(focused)).toEqual([]);
+  });
 });
 
 describe("a ui.input selector reaches an editable", () => {

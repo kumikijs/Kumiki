@@ -144,7 +144,7 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
   return `"${ev}" never reaches a reducer in tile "${tile}": ${[...unreached, ...unheard].join("; ")}`;
 }
 
-function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
+export function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
   const kinds = kindsPhrase(g.kinds);
   const around = `the <${g.wrapper}> around its <${g.focused}>`;
   return g.bubbles

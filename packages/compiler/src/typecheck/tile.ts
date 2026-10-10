@@ -13,6 +13,7 @@ import {
   HANDLER_PROP_TILES,
   handlerReducerName,
   liftForHandler,
+  wrapperNeverReceives,
 } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -26,7 +27,7 @@ import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } f
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { firesUnheardClauses } from "./reducer.ts";
+import { firesUnheardClauses, wrappedClause } from "./reducer.ts";
 import { collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
@@ -488,28 +489,56 @@ function checkHandlerTarget(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  const allowed = HANDLER_PROP_TILES[handler];
-  if (allowed == null) return;
-  const ev = liftForHandler(handler)?.ev;
-  const unheard = (kinds: Iterable<string>): string[] =>
-    ev === undefined ? [] : firesUnheardClauses(ev, kinds);
+  const reach = handlerReach(handler);
+  if (reach === null) return;
   if (BUILTIN_TILES.has(tileName)) {
-    if (allowed.has(tileName)) return;
-    const [because = `${tileName} does not fire it`] = unheard([tileName]);
-    errors.push(inertHandler(tileName, handler, because, allowed, pos));
+    if (reach.reaches(tileName)) return;
+    const [because = `${tileName} does not fire it`] = reach.misses([tileName]);
+    errors.push(inertHandler(tileName, handler, because, reach.onto, pos));
     return;
   }
   if (!sym.tiles.has(tileName)) return;
   const kinds = collectTileBuiltinKinds(tileName, sym);
   if (kinds.size === 0) return;
-  if ([...kinds].some((k) => allowed.has(k))) return;
+  if ([...kinds].some((k) => reach.reaches(k))) return;
   const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
-  const clauses = unheard(kinds);
+  const clauses = reach.misses(kinds);
   const because =
     clauses.length === 0
       ? `${tileName} renders nothing that fires it ${observed}`
-      : `${tileName} renders nothing that calls it: ${clauses.join("; ")} ${observed}`;
-  errors.push(inertHandler(tileName, handler, because, allowed, pos));
+      : `${tileName} renders nothing ${reach.missedAs}: ${clauses.join("; ")} ${observed}`;
+  errors.push(inertHandler(tileName, handler, because, reach.onto, pos));
+}
+
+type HandlerReach = {
+  readonly reaches: (kind: string) => boolean;
+  readonly onto: ReadonlySet<string>;
+  readonly misses: (kinds: Iterable<string>) => string[];
+  readonly missedAs: string;
+};
+
+// A handler the runtime attaches to whatever element the tile produced runs on
+// every kind but a wrapped one whose wrapper never receives the event. Whether
+// a container takes focus is not asked, so none is reported.
+function handlerReach(handler: string): HandlerReach | null {
+  const allowed = HANDLER_PROP_TILES[handler];
+  const lift = liftForHandler(handler);
+  if (allowed != null) {
+    return {
+      reaches: (kind) => allowed.has(kind),
+      onto: allowed,
+      misses: (kinds) => (lift === undefined ? [] : firesUnheardClauses(lift.ev, kinds)),
+      missedAs: "that calls it",
+    };
+  }
+  if (lift === undefined || lift.tiles === null) return null;
+  const { ev, tiles } = lift;
+  return {
+    reaches: (kind) => wrapperNeverReceives(ev, [kind]).length === 0,
+    onto: tiles,
+    misses: (kinds) => wrapperNeverReceives(ev, kinds).map((g) => wrappedClause(ev, g)),
+    missedAs: `where "${ev}" reaches it`,
+  };
 }
 
 /** One W0213, whichever side — builtin or user tile — asked for it. */

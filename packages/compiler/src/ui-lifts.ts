@@ -85,6 +85,13 @@ export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): Wrap
   return [...groups.values()];
 }
 
+// A group whose `ev` bubbles is left out: its wrapper does receive the event,
+// so a handler written there runs (`details(onKeyDown=r)`), although no
+// selector lifts a listener onto it.
+export function wrapperNeverReceives(ev: UiEventKind, kinds: Iterable<string>): WrappedUnreached[] {
+  return wrappedUnreached(ev, kinds).filter((g) => !g.bubbles);
+}
+
 export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "click",

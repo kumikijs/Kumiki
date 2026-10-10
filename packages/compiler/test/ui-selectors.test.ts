@@ -525,6 +525,7 @@ describe("W0212 gives the reason that holds when the element fires the event", (
   describe("W0213 gives the reason W0212 gives for the kind", () => {
     const w0213 = (tiles: string) => {
       const src = `
+        slot done : Bool = false
         slot note : Text = ""
         slot hits : Int = 0
         reducer r on=app.start do= hits := hits + 1
@@ -592,6 +593,92 @@ describe("W0212 gives the reason that holds when the element fires the event", (
       expect(
         w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onChange: r})'),
       ).toContain(`— Inner renders nothing that fires it (observed in body: box, text). `);
+    });
+
+    describe("on a wrapped control, says focus / blur do not bubble to the wrapper", () => {
+      const FOCUS_ONTO =
+        "Put it on button / editable / input / link / select / slider / textarea / video";
+      const SUBSCRIBE = "or subscribe with a reducer's on=ui.<event>(<Tile>)";
+
+      it.each([
+        ["onFocus", "check", "focus", "tile D = check(value=done, onFocus=r)", "check(value=done)"],
+        [
+          "onBlur",
+          "radio",
+          "blur",
+          'tile D = radio(group="g", selected=done, onBlur=r)',
+          'radio(group="g", selected=done)',
+        ],
+        [
+          "onFocus",
+          "switch",
+          "focus",
+          "tile D = switch(value=done) {onFocus: r}",
+          "switch(value=done)",
+        ],
+      ])("says so of %s on a %s", (handler, kind, ev, tiles, bare) => {
+        const message = w0213(tiles);
+        expect(message).toBe(
+          `"${handler}" on ${kind}() is dropped — a ${kind} listens on the <label> around its <input>, ` +
+            `and the "${ev}" that <input> fires does not bubble to the <label>. ` +
+            `${FOCUS_ONTO}, ${SUBSCRIBE}`,
+        );
+        expect(message).toContain(`— ${reasonOf(ev, `tile D = ${bare}`)}. `);
+      });
+
+      it.each([
+        ["onFocus", "focus"],
+        ["onBlur", "blur"],
+      ])("says so of %s on a details", (handler, ev) => {
+        expect(w0213(`tile D = details(summary="Q", text("a"), ${handler}=r)`)).toBe(
+          `"${handler}" on details() is dropped — ` +
+            `${reasonOf(ev, 'tile D = details(summary="Q", text("a"))')}. ` +
+            `${FOCUS_ONTO}, ${SUBSCRIBE}`,
+        );
+      });
+
+      it("says so of a user tile whose body renders only such controls", () => {
+        expect(w0213("tile Inner = check(value=done)\ntile D = column(Inner(onFocus=r))")).toBe(
+          `"onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: ` +
+            `a check listens on the <label> around its <input>, and the "focus" that <input> fires ` +
+            `does not bubble to the <label> (observed in body: check). ` +
+            `${FOCUS_ONTO}, ${SUBSCRIBE}`,
+        );
+        expect(
+          w0213(
+            "tile Inner = if done then check(value=done) else switch(value=done)\n" +
+              "tile D = column(Inner() {onBlur: r})",
+          ),
+        ).toContain(
+          `— Inner renders nothing where "blur" reaches it: a check / switch listens on the <label> ` +
+            `around its <input>, and the "blur" that <input> fires does not bubble to the <label> ` +
+            `(observed in body: check, switch). `,
+        );
+      });
+
+      it.each([
+        ["onFocus on an input", "input(bind=note, onFocus=r)"],
+        ["onClick on a check", "check(value=done, onClick=r)"],
+        ["onChange on a check", "check(value=done, onChange=r)"],
+        ["onKeyDown on a check", "check(value=done, onKeyDown=r)"],
+        ["onKeyDown on a details", 'details(summary="Q", text("a"), onKeyDown=r)'],
+        ["onMouseEnter on a radio", 'radio(group="g", selected=done, onMouseEnter=r)'],
+        [
+          "onFocus on a user tile that may render an input",
+          "Inner(onFocus=r)\ntile Inner = if done then check(value=done) else input(bind=note)",
+        ],
+      ])("says nothing of %s", (_, tile) => {
+        const src = `
+          slot done : Bool = false
+          slot note : Text = ""
+          slot hits : Int = 0
+          reducer r on=app.start do= hits := hits + 1
+          tile D = ${tile}
+          tile App = column(D)
+          app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+        `;
+        expect(codesOf(src)).toEqual([]);
+      });
     });
   });
 });

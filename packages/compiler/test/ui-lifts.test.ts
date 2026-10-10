@@ -12,6 +12,7 @@ import {
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
   wrappedUnreached,
+  wrapperNeverReceives,
 } from "../src/ui-lifts.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
@@ -108,6 +109,26 @@ describe("wrappedUnreached", () => {
       { kinds: ["details"], ...DETAILS, bubbles: false },
     ]);
     expect(wrappedUnreached("focus", ["box", "text", "video"])).toEqual([]);
+  });
+});
+
+describe("wrapperNeverReceives", () => {
+  const WRAPPED = ["check", "radio", "switch", "details"];
+
+  it("answers focus and blur as wrappedUnreached does", () => {
+    for (const ev of ["focus", "blur"] as const) {
+      expect(wrapperNeverReceives(ev, WRAPPED)).toEqual(wrappedUnreached(ev, WRAPPED));
+      expect(wrapperNeverReceives(ev, WRAPPED)).toHaveLength(2);
+    }
+  });
+
+  it("answers no other event, key on a details included", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, WRAPPED).length > 0,
+    );
+    expect(answered.sort()).toEqual(["blur", "focus"]);
+    expect(wrappedUnreached("key", ["details"])).toHaveLength(1);
+    expect(wrapperNeverReceives("key", ["details"])).toEqual([]);
   });
 });
 
