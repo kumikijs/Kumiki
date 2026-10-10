@@ -12,6 +12,7 @@ import {
   reportRejectedBatch,
   withEnvReplay,
 } from "../core.ts";
+import { noReducerNamed } from "../dispatch-check.ts";
 import { valueEqual } from "../stdlib.ts";
 import type {
   EpisodeLogEntry,
@@ -37,6 +38,8 @@ export function standInValue(
   return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
+type MissingEntryReducer = { reducer: string; message: string };
+
 export type ReplayEvent =
   | {
       kind: "episode-start";
@@ -46,6 +49,8 @@ export type ReplayEvent =
        * The entry reducer, when it is an `.ok` / `.err` reducer whose value the log does not carry: it runs with no `$1`.
        */
       entryResultMissing?: string;
+      /** The entry reducer, when the program has none by its name: the episode is not replayed. */
+      entryReducerMissing?: MissingEntryReducer;
     }
   | {
       kind: "reducer";
@@ -120,6 +125,8 @@ export type ReplayReport = {
   envDrift: EnvDrift;
   /** Episodes whose entry reducer's recorded result was not in the log. */
   entryResultsMissing: { episodeId: string; reducer: string }[];
+  /** Episodes not replayed, because the program has no reducer by their entry reducer's name. */
+  entryReducersMissing: ({ episodeId: string } & MissingEntryReducer)[];
 };
 
 export function seedRoute(live: Record<string, unknown>): void {
@@ -233,6 +240,19 @@ export function executeEpisode(
       s.kind === "reducer" || (s.kind === "panic" && typeof s.name === "string"),
   );
   const entry = firstRed && app.reducers.find((r) => r.name === firstRed.name);
+  // The log keeps the name the entry reducer had when it was recorded. An episode that is
+  // not replayed raises no panic and no error, so `no-panics` and `no-errors` would hold
+  // over it on exactly the rename a replay is kept to catch.
+  const entryReducerMissing: MissingEntryReducer | undefined =
+    firstRed && !entry
+      ? {
+          reducer: firstRed.name,
+          message: noReducerNamed(
+            firstRed.name,
+            app.reducers.map((r) => r.name),
+          ),
+        }
+      : undefined;
   const cursors: Record<string, number> = {};
   const entryIn = firstRed && entry ? entryPayload(app.effects, ep, entry, firstRed, cursors) : {};
   // Reported rather than inferred: a trimmed or hand-edited log that
@@ -243,8 +263,11 @@ export function executeEpisode(
     episodeId: ep.id,
     trigger: ep.trigger,
     ...(entryResultMissing !== undefined ? { entryResultMissing } : {}),
+    ...(entryReducerMissing !== undefined ? { entryReducerMissing } : {}),
   };
   if (emit(started)) return { panics, unhandledErrors, stopped: true };
+  // No entry reducer at all is an `ssr.hydrate` bootstrap whose `app.init` results reached
+  // none; replay re-runs reducers only, so running nothing reproduces it.
   if (!firstRed || !entry) {
     emit({ kind: "episode-end", episodeId: ep.id });
     return { panics, unhandledErrors, stopped: false };
@@ -467,9 +490,13 @@ export function replayEpisodes(input: {
   const stepCounter = { n: 0 };
   const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
   const entryResultsMissing: ReplayReport["entryResultsMissing"] = [];
+  const entryReducersMissing: ReplayReport["entryReducersMissing"] = [];
   const noting: ReplayObserver = (ev) => {
     if (ev.kind === "episode-start" && ev.entryResultMissing !== undefined) {
       entryResultsMissing.push({ episodeId: ev.episodeId, reducer: ev.entryResultMissing });
+    }
+    if (ev.kind === "episode-start" && ev.entryReducerMissing !== undefined) {
+      entryReducersMissing.push({ episodeId: ev.episodeId, ...ev.entryReducerMissing });
     }
     return observer(ev);
   };
@@ -492,5 +519,6 @@ export function replayEpisodes(input: {
     finalSlots,
     envDrift,
     entryResultsMissing,
+    entryReducersMissing,
   };
 }
