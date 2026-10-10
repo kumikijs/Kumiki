@@ -1,13 +1,3 @@
-// Panel UI behavior — focused happy-dom tests for `installDevPanel`. Covers
-// the overlay show / dismiss / listener-cleanup paths, the showError API
-// (used by client.ts when HMR remount throws), and the empty-state and
-// expand-step interactions of the timeline.
-//
-// Coverage gaps that this file plugs (see #118 PR review):
-//   - panic overlay show + dismiss + Esc listener removal
-//   - showError surfaces an HMR-time mount failure through the same overlay
-//   - HMR re-mount preserves `app.live` (PR review C3)
-
 import type { AppShape } from "@kumikijs/runtime";
 import { createEpisodeLogger } from "@kumikijs/runtime";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -86,8 +76,6 @@ describe("installDevPanel", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(document.querySelector(".kdp-overlay")).toBeNull();
 
-    // A second Escape after dismiss must be a no-op — the listener should be
-    // gone, so showError again still works cleanly without double-bind.
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     panel.showError("second", "tile B");
     const overlays = document.querySelectorAll(".kdp-overlay");
@@ -127,11 +115,6 @@ describe("installDevPanel", () => {
   });
 
   it("preserves slot values across an HMR-style remount by copying app.live", () => {
-    // The HMR boundary in client.ts does:
-    //   savedLive = currentApp.live; dispose(); currentApp = next; currentApp.live = savedLive;
-    // The runtime contract (core.ts:458-474) is: if app.live is already populated, mount uses
-    // those values instead of resetting from app.slots. Verify that contract directly — it is
-    // the load-bearing invariant behind §10.7 "slots are retained".
     const prevApp = { slots: { count: { value: 0 } }, reducers: [], effects: {} } as Record<
       string,
       unknown
@@ -168,8 +151,6 @@ describe("installDevPanel", () => {
 
     const heads = document.querySelectorAll(".kdp-episode-head");
     expect(heads).toHaveLength(2);
-    // Newest first: the B-target click should precede the A-target click in
-    // the rendered list.
     const text = Array.from(heads).map((h) => h.textContent ?? "");
     const bIdx = text.findIndex((t) => t.includes("B"));
     const aIdx = text.findIndex((t) => t.includes("A"));
@@ -187,8 +168,6 @@ describe("installDevPanel", () => {
     expect(inspector.textContent).toContain("count");
     expect(inspector.textContent).toContain("42");
 
-    // Mutate the underlying live map and call onRemount — the inspector should
-    // refresh from the new state (the HMR contract: panel re-reads via getApp).
     live.count = 99;
     panel.onRemount();
     expect(inspector.textContent).toContain("99");

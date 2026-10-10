@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Kumiki MCP server — exposes the compiler (check/build/list/view/add/replace/remove/fix) and spec search as MCP tools.",
   "license": "Apache-2.0",
@@ -52,12 +52,13 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@kumikijs/cli": "workspace:*",
     "@kumikijs/compiler": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@kumikijs/examples": "workspace:*",
     "@types/node": "catalog:",
     "happy-dom": "catalog:",
     "tsx": "catalog:",

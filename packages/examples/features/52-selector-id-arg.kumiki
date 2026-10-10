@@ -1,4 +1,4 @@
-# Feature: §1.6.2 — `TileName#id` selector also matches tiles whose `id` is
+# Feature: `TileName#id` selector also matches tiles whose `id` is
 # supplied via positional args (`input(id="...")` / `textarea(id="...")`),
 # not just block-style `{id: "..."}`. Codegen folds the arg-style id into
 # the dispatch payload `el.id` so runtime filtering treats both forms the
