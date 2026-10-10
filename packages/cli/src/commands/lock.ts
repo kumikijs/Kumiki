@@ -1,10 +1,11 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { lockDef, lockPatternProblem } from "../mutate.ts";
+import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki lock <file> <agent-id> <pattern>";
 
-export function registerLock(program: Command): void {
+export function registerLock(program: Command): string {
   program
     .command("lock")
     .description("Lock a name / pattern to an owning agent")
@@ -14,25 +15,17 @@ export function registerLock(program: Command): void {
     .allowExcessArguments(false)
     .action(
       (file: string | undefined, agentId: string | undefined, pattern: string | undefined) => {
-        if (!file || !agentId || !pattern) {
-          console.error(USAGE);
-          process.exit(2);
-        }
-        // Decided from the pattern alone, before the file is read, so it is the
-        // arguments' shape that is wrong (§9.2.5).
+        if (!file || !agentId || !pattern) exitWithUsage(USAGE);
         const problem = lockPatternProblem(pattern);
         if (problem !== undefined) {
           console.error(problem);
-          console.error(USAGE);
-          process.exit(2);
+          exitWithUsage(USAGE);
         }
-        try {
+        printOrExit(() => {
           lockDef(resolve(process.cwd(), file), agentId, pattern);
-          console.log(`locked ${pattern} for ${agentId}`);
-        } catch (e) {
-          console.error(String(e));
-          process.exit(1);
-        }
+          return `locked ${pattern} for ${agentId}`;
+        });
       },
     );
+  return USAGE;
 }

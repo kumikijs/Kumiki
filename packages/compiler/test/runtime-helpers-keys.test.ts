@@ -1,10 +1,3 @@
-// `_wk` and `_children` on their own, with no mount (runtime.md §10.3.10).
-//
-// Both ship as source text in `RUNTIME_HELPERS`, inlined at the top of every
-// compiled app, so they are evaluated here the same way. A mounted example
-// says whether a reorder kept the DOM; these say which key each node got, and
-// name the branch that went wrong when it did not.
-
 import { describe, expect, it } from "vitest";
 import { RUNTIME_HELPERS } from "../src/codegen/runtime-helpers.ts";
 

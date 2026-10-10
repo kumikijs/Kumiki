@@ -1,25 +1,11 @@
-// Implicit submission for the form submit gate (forms.md §5.2.2). Enter in a
-// text field makes the browser submit the form through its submit button — a
-// path this tier's `.browser.json` has no action for, and one happy-dom does
-// not implement. The gate has to hold it back like any other submit, and let
-// it through once the field shows a value its slot accepts.
-//
-// The program is example 135, the same one its `.scenario.json` and
-// `.browser.json` drive.
-
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runMultiOnPage, runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { ConstraintRefusal, SubmitRefusal } from "@kumikijs/runtime";
 import { expect, type Page, test } from "@playwright/test";
 import { performAction } from "../src/browser.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "135-form-submit-gate.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("135-form-submit-gate"), "utf8");
 
 const sent = (page: Page): Promise<string> =>
   page.evaluate(() =>
@@ -55,9 +41,6 @@ test("Enter in a field showing a refused value does not submit, and does once it
   await expect.poll(() => sent(page)).toBe(" <grace@example.com>");
 });
 
-// A `{submit}` step whose form held the submit back used to pass here as at
-// the scenario tier: `requestSubmit()` returned and nothing said the reducer
-// had not run. It is now refused, by the rule the scenario tier asks.
 test.describe("a {submit} step the form holds back is refused", () => {
   test("fails the step, naming the field that held it back", async ({ page }) => {
     const report = await runOnPage(page, source, {
@@ -115,8 +98,6 @@ app SubmitGate
     init   = []
 `;
 
-// Two fields that both fail, so the record crosses `page.evaluate` with more
-// than one slot in it.
 const twoFailing = program(
   `slot email : Text where email = ""
 slot code  : Text where nonempty = ""
@@ -136,11 +117,6 @@ test("a {submit} two fields hold back names both, in the order the form binds th
   );
 });
 
-// Co-mounted, each app's form is judged by its own app: the held-back one is
-// refused, and the neighbour's submit goes through. The held-back form is in
-// the first app, not the last, because `__kumikiApp` is the last one mounted:
-// each bundle keeps its own record, so asking that app alone about the first
-// app's submit would hear nothing, and pass.
 const holding = program(
   `slot email : Text where email = ""
 slot sends : Int = 0`,
@@ -170,8 +146,6 @@ test.describe("co-mounted apps", () => {
     expect(report.steps[1]?.actionError).toBeUndefined();
   });
 
-  // Every app this harness compiles carries the seam, so its absence is made
-  // by hand. The neighbour still has one; asking it instead would pass.
   test("an owner without the seam fails the step, whatever its neighbour carries", async ({
     page,
   }) => {
@@ -189,12 +163,6 @@ test.describe("co-mounted apps", () => {
   });
 });
 
-// `requestSubmit()` runs the browser's constraint validation before it fires
-// the submit event, and a control that fails it stops the submit with no event
-// at all: the form tile never sees it, and its record has nothing to say. That
-// used to read as a submit that went through. None of these slots has a
-// refinement, so the form tile would let each submit through — and does at the
-// scenario tier, which dispatches the event and skips constraint validation.
 const constrained = program(
   `slot name  : Text = ""
 slot mail  : Text = ""
@@ -257,9 +225,6 @@ test.describe("a {submit} the browser's constraint validation stops is refused",
     expect(report.ok, JSON.stringify(report.steps)).toBe(true);
   });
 
-  // Text that reads as no number. No step reaches it: `{fill}` refuses
-  // non-numeric text for a number field, and Chromium drops typed letters such
-  // as "abc" outright — but it keeps an "e", which spells no number on its own.
   test("a number field holding text that reads as no number", async ({ page }) => {
     const report = await runOnPage(page, constrained, {
       steps: [{ do: { fill: "#name", value: "Ada" } }],
@@ -278,8 +243,6 @@ test.describe("a {submit} the browser's constraint validation stops is refused",
     expect(await page.evaluate(() => window.__kumikiApp?.live?.sends)).toBe(0);
   });
 
-  // The two refusals do not mix: a submit that gets past constraint
-  // validation reaches the gate, which judges it as before.
   test("a submit past constraint validation is still judged by the gate", async ({ page }) => {
     await runOnPage(page, twoFailing, { steps: [{ expect: { state: { sends: 0 } } }] });
     const refused = await performAction(page, { submit: "#e" }).catch((e: unknown) => e);

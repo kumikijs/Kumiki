@@ -1,4 +1,4 @@
-# SSR hydration demo (issue#119, runtime.md §10.6.2)
+# SSR hydration demo
 # Exercises the SSR/hydration boundary:
 #  - `app.init` fires `loadUser` on the server — the result lands in `user`
 #    and becomes the bootstrap episode's slot-diff.
