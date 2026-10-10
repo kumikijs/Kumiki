@@ -11,7 +11,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
-import { jsOfExpr, reducerEmitJs, reducerNameArg, slotReadJs, tupleArm } from "./expr.ts";
+import { jsOfExpr, matchArmsJs, reducerEmitJs, reducerNameArg, slotReadJs } from "./expr.ts";
 import { indexSegmentJs, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
@@ -250,53 +250,30 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
   },`;
 }
 
-export function genStatement(s: Statement, ctx: EvalCtx): string {
+export function genStatement(s: Statement, ctx: EvalCtx, matchDepth = 0): string {
   if (s.kind === "ForStmt") {
     const iter = jsOfExpr(s.iter, ctx);
     const inner = childCtx(ctx);
     const bind = declareBind(inner, s.bind);
-    const body = s.body.map((b) => genStatement(b, inner)).join("\n  ");
+    const body = s.body.map((b) => genStatement(b, inner, matchDepth)).join("\n  ");
     return `for (const ${bind} of ((${iter}) || [])) {\n  ${body}\n}`;
   }
   if (s.kind === "IfStmt") {
     const cond = jsOfExpr(s.cond, ctx);
     const thenCtx = childCtx(ctx);
     const elseCtx = childCtx(ctx);
-    const thenBody = s.consequent.map((b) => genStatement(b, thenCtx)).join("\n  ");
-    const elseBody = s.alternate.map((b) => genStatement(b, elseCtx)).join("\n  ");
+    const thenBody = s.consequent.map((b) => genStatement(b, thenCtx, matchDepth)).join("\n  ");
+    const elseBody = s.alternate.map((b) => genStatement(b, elseCtx, matchDepth)).join("\n  ");
     return `if (${cond}) {\n  ${thenBody}\n} else {\n  ${elseBody}\n}`;
   }
   if (s.kind === "MatchStmt") {
-    const sc = jsOfExpr(s.scrutinee, ctx);
-    const arms = s.arms
-      .map((arm) => {
-        if (arm.pattern.kind === "PVariant") {
-          const inner = childCtx(ctx);
-          const binds = arm.pattern.binds
-            .map((b, i) =>
-              b !== "_" ? `const ${declareBind(inner, b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
-            )
-            .join(" ");
-          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds}\n  ${body}\n}`;
-        }
-        if (arm.pattern.kind === "PBind") {
-          const inner = childCtx(ctx);
-          const bind = declareBind(inner, arm.pattern.name);
-          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (true) { const ${bind} = _v;\n  ${body}\n}`;
-        }
-        if (arm.pattern.kind === "PTuple") {
-          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v");
-          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (${guard}) { ${binds}\n  ${body}\n}`;
-        }
-        const inner = childCtx(ctx);
-        const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-        return `if (true) {\n  ${body}\n}`;
-      })
-      .join(" else ");
-    return `{ const _v = ${sc};\n  ${arms}\n}`;
+    // A match nested in an arm labels a block inside this one, which may not reuse its label.
+    const label = `_m${matchDepth}`;
+    const arms = matchArmsJs(s.arms, ctx, "_v", {
+      run: (arm, inner) => arm.body.map((b) => genStatement(b, inner, matchDepth + 1)).join("\n  "),
+      label,
+    });
+    return `${label}: { const _v = ${jsOfExpr(s.scrutinee, ctx)};\n  ${arms}\n}`;
   }
   if (s.kind === "NoopStmt") {
     return `/* no-op */`;

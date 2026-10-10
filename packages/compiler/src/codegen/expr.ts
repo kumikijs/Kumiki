@@ -724,49 +724,67 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
 }
 
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
-  const sc = jsOfExpr(e.scrutinee, ctx);
-  const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
-  return `((_v) => { ${armsJs} else { return undefined; } })(${sc})`;
+  return matchValueJs(
+    jsOfExpr(e.scrutinee, ctx),
+    e.arms,
+    ctx,
+    (arm, inner) => jsOfExpr(arm.body, inner),
+    "undefined",
+  );
 }
 
-function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string {
-  if (p.kind === "PWildcard") {
-    return `if (true) { return ${jsOfExpr(body, ctx)}; }`;
-  }
-  if (p.kind === "PBind") {
-    const inner = addBind(ctx, p.name);
-    return `if (true) { const ${bindRef(inner, p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
-  }
-  if (p.kind === "PTuple") {
-    const { guard, binds, inner } = tupleArm(p, ctx, scVar);
-    return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
-  }
-  const tag = p.name;
-  const inner = childCtx(ctx);
-  const bindAssigns: string[] = [];
-  for (let i = 0; i < p.binds.length; i++) {
-    const name = p.binds[i]!;
-    if (name === "_") continue;
-    bindAssigns.push(`const ${declareBind(inner, name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
-  }
-  return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
+export function matchValueJs<A extends { pattern: Pattern }>(
+  scrutinee: string,
+  arms: readonly A[],
+  ctx: EvalCtx,
+  value: (arm: A, inner: EvalCtx) => string,
+  fallback: string,
+): string {
+  return `((_v) => { ${matchArmsJs(arms, ctx, "_v", { value })} return ${fallback}; })(${scrutinee})`;
 }
 
-export function tupleArm(
-  p: Pattern & { kind: "PTuple" },
+/** How an arm leaves the match once it is done, so the arms after it are never tried. */
+export type ArmBody<A> =
+  | { value: (arm: A, inner: EvalCtx) => string }
+  | { run: (arm: A, inner: EvalCtx) => string; label: string };
+
+// The arms sit side by side rather than each in the `else` of the one before it, so the
+// output nests no deeper for two thousand arms than for two.
+export function matchArmsJs<A extends { pattern: Pattern }>(
+  arms: readonly A[],
+  ctx: EvalCtx,
+  scVar: string,
+  body: ArmBody<A>,
+): string {
+  return arms
+    .map((arm) => {
+      const { guard, binds, inner } = patternArm(arm.pattern, ctx, scVar);
+      const then =
+        "value" in body
+          ? ` return ${body.value(arm, inner)}; }`
+          : `\n  ${body.run(arm, inner)}\n  break ${body.label};\n}`;
+      return `if (${guard}) {${binds === "" ? "" : ` ${binds}`}${then}`;
+    })
+    .join(" ");
+}
+
+function patternArm(
+  p: Pattern,
   ctx: EvalCtx,
   scVar: string,
 ): { guard: string; binds: string; inner: EvalCtx } {
   const inner = childCtx(ctx);
-  const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
+  const guards: string[] = [];
   const binds: string[] = [];
-  for (let i = 0; i < p.items.length; i++) {
-    walkPatternForTupleArm(p.items[i]!, `(${scVar})[${i}]`, inner, guards, binds);
-  }
-  return { guard: guards.join(" && "), binds: binds.join(" "), inner };
+  walkPattern(p, scVar, inner, guards, binds);
+  return {
+    guard: guards.length === 0 ? "true" : guards.join(" && "),
+    binds: binds.join(" "),
+    inner,
+  };
 }
 
-export function walkPatternForTupleArm(
+function walkPattern(
   p: Pattern,
   accessor: string,
   inner: EvalCtx,
@@ -792,7 +810,7 @@ export function walkPatternForTupleArm(
     case "PTuple":
       guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
       for (let i = 0; i < p.items.length; i++) {
-        walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
+        walkPattern(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
       }
       return;
     default: {

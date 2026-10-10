@@ -14,7 +14,7 @@ import {
   type GenCtx,
   makeEvalCtx,
 } from "./context.ts";
-import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
+import { jsOfExpr, matchValueJs, readingJs } from "./expr.ts";
 import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
@@ -130,36 +130,16 @@ export function tileExprJs(
       return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.body, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}) : null)`;
     case "TileIf":
       return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.consequent, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}) : (${tileExprJs(t.alternate, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}))`;
-    case "TileMatch": {
-      const sc = jsOfExpr(t.scrutinee, ctx);
-      const arms = t.arms
-        .map((arm) => {
-          if (arm.pattern.kind === "PVariant") {
-            const inner = childCtx(ctx);
-            const binds = arm.pattern.binds
-              .map((b, i) =>
-                b !== "_" ? `const ${declareBind(inner, b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
-              )
-              .join(" ");
-            return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
-          }
-          if (arm.pattern.kind === "PBind") {
-            const inner = childCtx(ctx);
-            const bind = declareBind(inner, arm.pattern.name);
-            return `if (true) { const ${bind} = _v; return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
-          }
-          if (arm.pattern.kind === "PWildcard") {
-            return `if (true) { return ${tileExprJs(arm.body, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
-          }
-          {
-            const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v");
-            return `if (${guard}) { ${binds} return ${tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers)}; }`;
-          }
-        })
-        .join(" else ");
+    case "TileMatch":
       gen.usedTiles.add("text");
-      return `((_v) => { ${arms} else { return { kind: "text", text: "" }; } })(${sc})`;
-    }
+      return matchValueJs(
+        jsOfExpr(t.scrutinee, ctx),
+        t.arms,
+        ctx,
+        (arm, inner) =>
+          tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers),
+        `{ kind: "text", text: "" }`,
+      );
     case "TileCall":
       return tileCallJs(
         t as TileExpr & { kind: "TileCall" },
