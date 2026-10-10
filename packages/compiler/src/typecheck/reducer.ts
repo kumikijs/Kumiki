@@ -10,7 +10,7 @@ import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "
 import { inferType, prim, typeName } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
+import { bindsRoute, collectTileBuiltinKinds, subscriptionIds } from "./tile-collect.ts";
 
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
@@ -85,15 +85,19 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
     const def = sym.tiles.get(r.on.selector.tile);
     if (def !== undefined) {
-      const decl = collectTileDeclaredIds(def);
-      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
-        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+      const wired = subscriptionIds(def, r.on.ev, sym);
+      if (wired.known && wired.ids.size > 0 && !wired.ids.has(r.on.selector.id)) {
+        const actual = [...wired.ids]
+          .sort()
+          .map((v) => `"${v}"`)
+          .join(" | ");
         errors.push({
           code: "E0212",
           kind: "selector-id-mismatch",
           message:
             `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
-            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+            `but every element of tile "${r.on.selector.tile}" that fires "${r.on.ev}" has id ${actual} ` +
+            `— this selector can never match`,
           pos: r.on.pos,
         });
       }

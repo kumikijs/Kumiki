@@ -10,9 +10,19 @@ export type Cycle = {
   readonly pos: Pos;
 };
 
-export function expansionTargets(body: TileExpr): readonly GraphEdge[] {
-  const out: GraphEdge[] = [];
-  walkTileBody(body, out);
+/**
+ * `root`: the node is one the body renders at its top, reached through `for` / `when` / `if` /
+ * `match` alone, so a call site of the tile merges its props onto it (`_attachProps`). `call`
+ * is absent for an identifier argument standing in for a tile.
+ */
+export type TileEdge = GraphEdge & {
+  readonly root: boolean;
+  readonly call?: TileExpr & { kind: "TileCall" };
+};
+
+export function expansionTargets(body: TileExpr): readonly TileEdge[] {
+  const out: TileEdge[] = [];
+  walkTileBody(body, out, true);
   return out;
 }
 
@@ -135,28 +145,28 @@ export function aliasTarget(
   return null;
 }
 
-function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
+function walkTileBody(t: TileExpr, out: TileEdge[], root: boolean): void {
   switch (t.kind) {
     case "TileFor":
     case "TileWhen":
-      walkTileBody(t.body, out);
+      walkTileBody(t.body, out, root);
       return;
     case "TileIf":
-      walkTileBody(t.consequent, out);
-      walkTileBody(t.alternate, out);
+      walkTileBody(t.consequent, out, root);
+      walkTileBody(t.alternate, out, root);
       return;
     case "TileMatch":
-      for (const arm of t.arms) walkTileBody(arm.body, out);
+      for (const arm of t.arms) walkTileBody(arm.body, out, root);
       return;
     case "TileCall": {
-      out.push({ to: t.name, pos: t.pos });
+      out.push({ to: t.name, pos: t.pos, root, call: t });
       for (const a of t.args) {
         const v = a.value;
         if (a.name !== undefined) continue;
-        if (isTileExpr(v)) walkTileBody(v, out);
+        if (isTileExpr(v)) walkTileBody(v, out, false);
         else if ((v as Expr).kind === "Ref") {
           const ref = v as Expr & { kind: "Ref" };
-          out.push({ to: ref.name, pos: ref.pos });
+          out.push({ to: ref.name, pos: ref.pos, root: false });
         }
       }
       return;
