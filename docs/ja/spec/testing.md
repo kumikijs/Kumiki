@@ -302,6 +302,17 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 
 `slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。
 
+`no-panics: true` は replay した reducer が panic したときに、`no-errors: true` は effect の `err` がどの `.err` reducer にも届かないときに（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）テストを失敗させる。どちらも、そのキーが `true` のときにだけ報告される。ランナーはこの順に、どちらも `slots-equal` より先に判定し、最初に失敗したものを報告する。panic した reducer は何も書かず何も emit せず、取りこぼされた `err` はどの reducer も走らせないので、そのどちらかが届くはずだった slot は元の値のままになる。先に比較すれば、slot の差分が原因の代わりにその症状を報告してしまう。
+
+```
+FAIL  bug-2026-05-21
+  expected: no panics
+  actual:   ep_0001: Cannot read properties of undefined (reading 'id')
+  diff at:  panics
+```
+
+どちらも失敗しなければ、食い違った slot がその slot で、期待値と実際値とともに報告される（[出力](#_8-7-1-output)）。
+
 ### 8.6.1 episode log の形式
 
 → [ランタイム](./runtime.md) で詳述。

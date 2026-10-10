@@ -267,20 +267,8 @@ export const _stdlibTest = {
       expectedSlots = expect.slotsEqual as Record<string, unknown>;
     }
 
-    if (expectedSlots) {
-      for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!valueEqual(app.live[k], v)) {
-          return {
-            name,
-            pass: false,
-            expected: _jsonStr(expectedSlots),
-            actual: _jsonStr(app.live),
-            diffAt: `slots.${k}`,
-            leaf: { expected: v, actual: app.live[k] },
-          };
-        }
-      }
-    }
+    // A panic or a dropped err leaves the slots it would have written at their old values, so
+    // compared first those slots would be reported in its place.
     if (expect.noPanics && panics.length > 0) {
       return {
         name,
@@ -298,6 +286,20 @@ export const _stdlibTest = {
         actual: unhandledErrors.join(", "),
         diffAt: "errors",
       };
+    }
+    if (expectedSlots) {
+      for (const [k, v] of Object.entries(expectedSlots)) {
+        if (!valueEqual(app.live[k], v)) {
+          return {
+            name,
+            pass: false,
+            expected: _jsonStr(expectedSlots),
+            actual: _jsonStr(app.live),
+            diffAt: `slots.${k}`,
+            leaf: { expected: v, actual: app.live[k] },
+          };
+        }
+      }
     }
     return { name, pass: true };
   },

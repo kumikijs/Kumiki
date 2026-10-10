@@ -343,6 +343,17 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 
 `slots-equal: from-log` compares the final slots with the values the log recorded; a record names the slots to compare and their expected values instead.
 
+`no-panics: true` fails the test when a replayed reducer panics, and `no-errors: true` when an effect's `err` reaches no `.err` reducer ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)); each is reported only when its key is `true`. The runner judges them in that order, both ahead of `slots-equal`, and reports the first that fails. A reducer that panicked writes nothing and emits nothing, and a dropped `err` runs no reducer, so the slots either would have reached keep their old values: compared first, a slot diff would report that symptom in place of its cause.
+
+```
+FAIL  bug-2026-05-21
+  expected: no panics
+  actual:   ep_0001: Cannot read properties of undefined (reading 'id')
+  diff at:  panics
+```
+
+When neither fails, a slot that diverges is reported at that slot, with its expected and actual values ([§8.7.1](#_8-7-1-output)).
+
 ### 8.6.1 The Format of the episode log
 
 → Detailed in [Runtime](./runtime.md).
