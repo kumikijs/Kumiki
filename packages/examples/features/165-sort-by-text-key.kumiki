@@ -1,11 +1,11 @@
-# Feature (stdlib.md §2.2.3): `sort-by(expr)` orders by any key `<` orders.
+# Feature: `sort-by(expr)` orders by any key `<` orders.
 #
 #   List(T).sort-by(expr) : List(T)   ; ascending by expr, stable
 #
-# The key is ordered the way `<` orders two values (language.md §1.9.4): a
-# number or a `Time` numerically, a `Text` as `<` compares two Texts. Records
-# with an equal key keep the order they had. A key with no order — a record, a
-# variant, a `Bool` — is an E0201 at check time.
+# The key is ordered the way `<` orders two values: a number or a `Time`
+# numerically, a `Text` as `<` compares two Texts. Records with an equal key
+# keep the order they had. A key with no order — a record, a variant, a `Bool` —
+# is an E0201 at check time.
 
 type User = {name: Text, age: Int}
 

@@ -1,19 +1,3 @@
-// Which top-level definitions does a definition reference, and exactly where?
-//
-// This is what the AI-editing verbs (`refs`, `view --with-deps`, `rename`,
-// `remove --cascade`) need and could not get before: they matched names as text
-// over the source, so a record field, a word in a comment, a string literal and
-// a loop variable all counted as references to a definition that happened to
-// share their spelling — and `rename` rewrote every one of them.
-//
-// The question here is deliberately narrower than the typechecker's. `typecheck`
-// asks "is this name legal in this position"; this asks "which definition does
-// this name denote, and at which source position". Sharing an implementation
-// would mean answering both at once, so the two walks stay separate — but the
-// resolution ORDER below (locals shadow definitions; a bare name in a handler
-// prop is a reducer) is the same order `typecheck` applies, and a divergence
-// would show up as `refs` disagreeing with a compile error.
-
 import type {
   AppDef,
   Def,
@@ -41,23 +25,12 @@ export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | 
 export type Reference = {
   layer: RefLayer;
   name: string;
-  /**
-   * Position of the identifier token itself, so a rewrite can be exact.
-   *
-   * Absent when the reference has no identifier of its own to point at — a
-   * test's `{slots: {count: 0}}` key, for instance, where the slot name is the
-   * key of a record. The edge is real (`refs` and `remove --cascade` must see
-   * it), but `rename` has nothing to rewrite and skips it rather than guessing.
-   */
   pos?: Pos;
 };
 
 /** Definition names by layer, for resolving a bare name to a definition. */
 export type DefIndex = Record<RefLayer, Set<string>>;
 
-// Exhaustive on purpose. With `Partial<…>`, a new `Def` kind would compile and
-// then vanish from the reference graph: `refs` would report it as unreferenced,
-// `remove` would delete it without warning, and `rename` would miss every use.
 const LAYER_OF_DEF: Record<Def["kind"], RefLayer | null> = {
   TypeDef: "type",
   SlotDef: "slot",
@@ -95,15 +68,6 @@ export function buildDefIndex(program: Program): DefIndex {
   return index;
 }
 
-/**
- * Every reference `def` makes to a top-level definition, in no particular
- * order and with duplicates preserved — `rename` needs one entry per
- * occurrence, and `refs` deduplicates for itself.
- *
- * Names that resolve to nothing (builtin tiles, stdlib functions, capability
- * names, variant constructors, local binds) are simply absent. That is the
- * point: over-inclusion is what made `remove --cascade` delete most of a file.
- */
 export function referencesIn(def: Def, index: DefIndex): Reference[] {
   const out: Reference[] = [];
   const w = new Walker(index, out);
@@ -174,15 +138,10 @@ class Walker {
         this.add("type", t.name, t.pos);
         return;
       case "TypeApp":
-        // `Map(K, V)` and friends are builtin generics; a user type used as a
-        // constructor lands here too, and `add` drops the ones that are not
-        // definitions.
         this.add("type", t.name, t.pos);
         for (const a of t.args) this.typeExpr(a);
         return;
       case "TypeRecord":
-        // Field NAMES are not references — this is the case that made `rename`
-        // rewrite a record schema. Only their types are walked.
         for (const f of t.fields) this.typeExpr(f.type);
         return;
       case "TypeUnion":
@@ -197,11 +156,6 @@ class Walker {
     }
   }
 
-  /**
-   * A bare identifier. Locals win over definitions — a `for x in …` binding
-   * that shares a slot's name is not a reference to that slot. Then slot, then
-   * fn: a name cannot occupy both without the typechecker rejecting it.
-   */
   private bareName(name: string, pos: Pos, locals: ReadonlySet<string>): void {
     if (locals.has(name)) return;
     if (name === "route" || name === "now" || name.startsWith("$")) return;
@@ -231,14 +185,11 @@ class Walker {
         this.expr(e.index, locals);
         return;
       case "Call":
-        // `run-reducer(name)` (§8.3) takes a reducer NAME, not a value.
+        // `run-reducer(name)` takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
           return;
         }
-        // `TodoId.fresh()` is qualified — only an unqualified callee can name a
-        // `fn` definition. (A lowercase `a.b(x)` never reaches here: the parser
-        // requires a capitalised qualifier, so it is a `MethodCall`.)
         if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
@@ -350,11 +301,6 @@ class Walker {
     }
   }
 
-  /**
-   * `emit confirm({onYes: r, onNo: r})` (lifecycle §7.6): those two fields name
-   * reducers, not values. Every other field, and every other effect, takes the
-   * ordinary path.
-   */
   private confirmAwareExpr(effect: string, arg: Expr, locals: ReadonlySet<string>): void {
     if (effect !== "confirm" || arg.kind !== "RecordLit") {
       this.expr(arg, locals);
@@ -377,10 +323,6 @@ class Walker {
       this.add("effect", r.on.effect, r.on.effectPos);
       for (const b of r.on.binds) if (b.name !== "_") locals.add(b.name);
     } else if (r.on.kind === "LifecycleEvent" && r.on.tileTarget) {
-      // `tile.mount(X)` folds the tile name into the event name, so the parser
-      // keeps the name and where `X` sat alongside it. Reporting the pattern's
-      // own position instead would break the contract on `Reference.pos` and
-      // make `rename` abort.
       this.add("tile", r.on.tileTarget.name, r.on.tileTarget.pos);
     }
     for (const s of r.do) this.statement(s, locals);
@@ -400,15 +342,7 @@ class Walker {
         this.add("tile", t.name, t.pos);
         for (const a of t.args) this.tileArg(a, locals);
         for (const p of t.props) {
-          // Three props hold a definition NAME rather than a value expression.
-          // Each mirrors a `typecheck` site that resolves the same way — see
-          // `undef-reducer` for the first two and `undef-motion` for the third.
           if (HANDLER_NAMES.has(p.name)) {
-            // A capitalised name here is a variant tag; `handlerReducerName`
-            // reads it as the reducer the checker resolved, so `rename` sees
-            // the same edge whichever way the name was spelled. A value that
-            // is no name at all (`{onClick: 1}`) is a diagnostic, and falls
-            // through to be walked as the expression it is.
             const reducer = handlerReducerName(p.value);
             if (reducer !== null) {
               this.add("reducer", reducer, p.value.pos);
@@ -416,7 +350,7 @@ class Walker {
             }
           }
           if (t.name === "link" && p.name === "prefetch") {
-            // §3.8: a bare ident or a string literal, both naming a reducer.
+            // A bare ident or a string literal, both naming a reducer.
             if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
             else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
             continue;
@@ -454,26 +388,6 @@ class Walker {
     }
   }
 
-  /**
-   * A tile argument is either a nested tile or a value expression, discriminated
-   * only by its `kind` — the field is the same either way.
-   *
-   * The handler name is asked about before the shape, matching the order
-   * `typecheck` uses, so this walk records the edge the checker resolved. It
-   * used to be the other way round, on the reasoning that the two could only
-   * ever disagree about a program that does not compile; a capitalised name in
-   * a handler argument parses as an argument-less tile call, so that walked
-   * `onClick=Bump` as a **tile** — `refs` reported a tile `Bump` that no
-   * definition declares, and `rename` on the reducer left the wiring behind.
-   * Since the checker resolves such a name to its reducer, the premise is gone
-   * as well as the conclusion: the shape-first order now disagrees about
-   * programs that compile.
-   *
-   * What survives from that reasoning is why being right here matters at all:
-   * `rename` and `remove --cascade` validate before they write, so they never
-   * act on the answer for a program that does not compile; `refs` has no such
-   * gate, and a site it did not list would be a site a reader thinks is free.
-   */
   private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
     if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
@@ -490,12 +404,6 @@ class Walker {
     this.expr(v, locals);
   }
 
-  /**
-   * A `test` names the reducer or tile it drives, and its `given` / `expect`
-   * blocks name slots, effects and tiles. None of that is type-checked, so a
-   * rename that misses it leaves a test that still compiles and still passes
-   * while asserting about a definition that no longer exists.
-   */
   test(t: TestDef): void {
     if (t.testKind === "reducer-test") this.add("reducer", t.target ?? "", t.targetPos);
     if (t.testKind === "tile-test") this.add("tile", t.target ?? "", t.targetPos);
@@ -510,15 +418,6 @@ class Walker {
     if (t.mocks) this.testRecord(t.mocks);
   }
 
-  /**
-   * A test's `given` / `expect` / `mocks` records are keyed BY definition name —
-   * `{slots: {count: 0}}`, `{effects: [persist(…)]}`, `{event: {target: Btn}}` —
-   * which is the opposite of an ordinary record literal, where the keys are
-   * field names and only the values are expressions. Keys have no position of
-   * their own in the AST, so they are reported as edges (which `refs` and
-   * `remove --cascade` need) without a position (so `rename` leaves them alone
-   * rather than rewriting the wrong span).
-   */
   private testRecord(e: Expr | undefined): void {
     if (!e) return;
     if (e.kind === "RecordLit") {
@@ -550,12 +449,6 @@ class Walker {
     this.expr(e, new Set());
   }
 
-  /**
-   * An edge with no source position: `refs` and `remove --cascade` see it,
-   * `rename` cannot act on it. Better than dropping the edge (which is what
-   * made a renamed slot leave a passing test asserting about a slot that no
-   * longer exists) and better than inventing a position.
-   */
   private addUnpositioned(layer: RefLayer, name: string): void {
     if (!this.index[layer].has(name)) return;
     this.out.push({ layer, name });
@@ -564,11 +457,6 @@ class Walker {
   app(a: AppDef): void {
     for (const r of a.routes) this.add("tile", r.tile, r.tilePos);
     for (const e of a.init) {
-      // An init entry's callee names an EFFECT, never a fn — so it must not go
-      // through the generic expression walk, which would resolve it as a fn as
-      // well. With a `fn` and an `effect` sharing a name, that produced two
-      // references at one position, and renaming the fn silently repointed
-      // `init` at an effect that no longer exists.
       if (e.kind === "Call" && !e.callee.includes(".")) {
         this.add("effect", e.callee, e.pos);
         for (const a2 of e.args) this.expr(a2, new Set());
@@ -576,11 +464,6 @@ class Walker {
       }
       this.expr(e, new Set());
     }
-    // `app.theme` names either a `theme` definition or the slot whose value
-    // selects one (spec §4.6) — the same two namespaces, resolved in the same
-    // order, that the typechecker accepts. Recording it as a theme
-    // unconditionally dropped the slot form from the graph entirely, so
-    // `rename` left the clause pointing at the old name.
     if (a.theme) {
       const layer = this.index.theme.has(a.theme.name) ? "theme" : "slot";
       this.add(layer, a.theme.name, a.theme.pos);
