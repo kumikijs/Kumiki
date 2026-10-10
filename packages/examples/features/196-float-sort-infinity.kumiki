@@ -1,10 +1,10 @@
-# Feature (stdlib.md §2.2.3 / §2.2.7): `sort` orders a `List(Float)` as
+# Feature (stdlib.md): `sort` orders a `List(Float)` as
 # numbers whatever values it holds.
 #
 #   List(T).sort : List(T)   ; T is Ord; ascending, as < orders it
 #
 # `1.0 / 0.0` is `Infinity`, `-1.0 / 0.0` is `-Infinity` and `(-1.0).sqrt` is
-# `NaN`, and each is a `Float` (§2.2.7), so a list holding one still sorts as
+# `NaN`, and each is a `Float`, so a list holding one still sorts as
 # numbers: `9` before `10`. An infinity sorts where `<` puts it, below or
 # above every finite value. `NaN`, which `<` orders against nothing, sorts
 # after every other value.
