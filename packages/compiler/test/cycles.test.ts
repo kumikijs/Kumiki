@@ -117,6 +117,55 @@ ${TAIL}`;
     expect(err?.message).toContain("leaf → other → leaf");
   });
 
+  it("follows the same loop written with lowercase names and no slots", () => {
+    // Each lowercase child is E0103 as well, with no slot of its name to read.
+    const loop = checkSource(`tile a = column(b)
+tile b = column(a)
+tile App = column(a)
+${TAIL}`).filter((e) => e.code === "E0005");
+    expect(loop.map((e) => [e.message, `${e.pos.line}:${e.pos.col}`])).toEqual([
+      [`Tile "a" expands into itself (a → b → a)`, "1:17"],
+    ]);
+  });
+
+  const valuePositions: [string, string][] = [
+    ["text's content", `column(text(leaf))`],
+    ["heading's content", `column(heading(leaf))`],
+    ["markdown's content", `column(markdown(leaf))`],
+    ["code's content", `column(code(leaf))`],
+    ["label's content", `column(label(leaf))`],
+    ["link's content", `column(link(leaf, to="/"))`],
+    ["editable's content", `column(editable(leaf))`],
+    ["a value builtin at the root", `text(leaf)`],
+    ["content under when", `column(when(true, text(leaf)))`],
+    ["content under if", `if true then text(leaf) else column(text("x"))`],
+    ["content under for", `for i in [1] text(leaf)`],
+    ["a user tile's input", `column(Card(leaf))`],
+  ];
+  for (const [what, body] of valuePositions) {
+    it(`does not follow a tile's name in ${what}`, () => {
+      expect(
+        codesOf(`slot leaf : Text = "hello"
+tile Card in=Text = text($1)
+tile leaf = ${body}
+tile App = column(leaf)
+${TAIL}`),
+      ).toEqual([]);
+    });
+  }
+
+  it("does not follow a user tile's input into a loop through the callee", () => {
+    const src = `slot leaf : Text = "hello"
+tile Card in=Text = column(text($1), leaf)
+tile leaf = column(Card(leaf))
+tile App = column(leaf)
+${TAIL}`;
+    const [err, ...rest] = checkSource(src);
+    expect(rest).toEqual([]);
+    expect(err?.code).toBe("E0005");
+    expect(err?.message).toBe(`Tile "Card" expands into itself (Card → leaf → Card)`);
+  });
+
   // Each of these is a construct codegen inlines, so each is an expansion edge.
   const nesting: [string, string][] = [
     ["a nested call", `tile A = column(row(B))`],
