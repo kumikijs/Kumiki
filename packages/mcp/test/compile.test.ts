@@ -5,6 +5,7 @@ import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
 import { describe, expect, it } from "vitest";
 import {
   COUNTER,
+  call,
   callOnce,
   callTool,
   FIX_A11Y,
@@ -14,6 +15,7 @@ import {
   FIX_WARNING_ONLY,
   flag,
   listTools,
+  type ToolResult,
   useWorkdir,
   withClient,
 } from "./helpers/client.ts";
@@ -158,9 +160,9 @@ describe("the diagnostic wire shape", () => {
     if (expected.kind !== "ok") throw new Error("the warning-only fixture does not compile");
     await withClient(async (client) => {
       const build = async (args: Record<string, unknown>) => {
-        const res = await client.callTool({ name: "kumiki_build", arguments: args });
-        expect(res.isError ?? false).toBe(false);
-        return (res.content as { text: string }[]).map((c) => c.text);
+        const res = await call(client, "kumiki_build", args);
+        expect(res.isError).toBe(false);
+        return res.items;
       };
       const summary = await build({ path: FIX_WARNING_ONLY });
       expect(summary).toHaveLength(2);
@@ -177,9 +179,118 @@ describe("the diagnostic wire shape", () => {
     });
   });
 
+  describe("the tools that compile before they run hand that compile's warnings back", () => {
+    const warningsOf = async (file: string): Promise<string> => {
+      const listed = (await callOnce("kumiki_check", { path: file })).body;
+      expect(pairs(JSON.parse(listed) as WireDiagnostic[])).toEqual([["W0212", "warning"]]);
+      return listed;
+    };
+
+    it("kumiki_smoke", { timeout: 30000 }, async () => {
+      const panics = join(workdir.path, "warned-panics.kumiki");
+      writeFileSync(
+        panics,
+        [
+          "slot count : Int = 0",
+          "reducer bump on=ui.focus(Card) do= count := count + 1",
+          'reducer boom on=ui.click(BoomBtn) do= panic("boom")',
+          'tile Card = box(heading("Count: " + count.show))',
+          'tile BoomBtn = button(text="go", onClick=boom)',
+          "tile App = column(Card, BoomBtn)",
+          "app WarnedPanics",
+          "    caps   = []",
+          '    routes = {"/" -> App, "/404" -> App}',
+          "    init   = []",
+          "",
+        ].join("\n"),
+      );
+      const passed = await callOnce("kumiki_smoke", { path: FIX_WARNING_ONLY });
+      expect(passed.isError).toBe(false);
+      expect(passed.items).toEqual([
+        expect.stringMatching(/^ok — mounted, rendered, \d+ interaction\(s\), no runtime errors$/),
+        await warningsOf(FIX_WARNING_ONLY),
+      ]);
+      const failedRun = await callOnce("kumiki_smoke", { path: panics });
+      expect(failedRun.isError).toBe(true);
+      expect(failedRun.items).toEqual([
+        expect.stringMatching(/^runtime smoke failed /),
+        await warningsOf(panics),
+      ]);
+      const clean = await callOnce("kumiki_smoke", { path: FIX_COUNTER_TESTS });
+      expect(clean.items).toEqual([expect.stringMatching(/^ok — mounted, rendered, /)]);
+    });
+
+    it("kumiki_run_scenario", { timeout: 30000 }, async () => {
+      const passing = { steps: [{ expect: { noErrors: true } }] };
+      const failing = { steps: [{ expect: { state: { count: 99 } } }] };
+      const passed = await callOnce("kumiki_run_scenario", {
+        path: FIX_WARNING_ONLY,
+        scenario: passing,
+      });
+      expect(passed.isError).toBe(false);
+      expect(passed.items).toEqual([
+        '[ok] step 0\n\nscenario passed\nfinal state: {"count":0}',
+        await warningsOf(FIX_WARNING_ONLY),
+      ]);
+      const failedRun = await callOnce("kumiki_run_scenario", {
+        path: FIX_WARNING_ONLY,
+        scenario: failing,
+      });
+      expect(failedRun.isError).toBe(true);
+      expect(failedRun.items).toEqual([
+        expect.stringContaining("\nscenario FAILED\n"),
+        await warningsOf(FIX_WARNING_ONLY),
+      ]);
+      const clean = await callOnce("kumiki_run_scenario", {
+        path: FIX_COUNTER_TESTS,
+        scenario: passing,
+      });
+      expect(clean.items).toEqual([expect.stringContaining("\nscenario passed\n")]);
+    });
+
+    it("kumiki_test", { timeout: 30000 }, async () => {
+      const withTest = (count: number): string => {
+        const file = join(workdir.path, `warned-test-${count}.kumiki`);
+        writeFileSync(
+          file,
+          [
+            readFileSync(FIX_WARNING_ONLY, "utf8").trimEnd(),
+            "test bump-works =",
+            "    reducer-test bump",
+            "        given  = {slots: {count: 0}, event: {type: ui.focus, target: Card}}",
+            `        expect = {slots: {count: ${count}}, effects: []}`,
+            "",
+          ].join("\n"),
+        );
+        return file;
+      };
+      const report = (res: ToolResult) =>
+        JSON.parse(res.items[0] ?? "") as { passed: number; failed: number };
+
+      const passing = withTest(1);
+      const passed = await callOnce("kumiki_test", { path: passing });
+      expect(passed.isError).toBe(false);
+      expect(report(passed)).toMatchObject({ passed: 1, failed: 0 });
+      expect(passed.items).toEqual([expect.any(String), await warningsOf(passing)]);
+
+      const failing = withTest(7);
+      const failedRun = await callOnce("kumiki_test", { path: failing });
+      expect(failedRun.isError).toBe(true);
+      expect(report(failedRun)).toMatchObject({ passed: 0, failed: 1 });
+      expect(failedRun.items).toEqual([expect.any(String), await warningsOf(failing)]);
+
+      const clean = await callOnce("kumiki_test", { path: FIX_COUNTER_TESTS });
+      expect(report(clean)).toMatchObject({ passed: 2, failed: 0 });
+      expect(clean.items).toHaveLength(1);
+    });
+  });
+
   it.each([
     "kumiki_check",
     "kumiki_build",
+    "kumiki_smoke",
+    "kumiki_run_scenario",
+    "kumiki_test",
     "kumiki_fix",
     "kumiki_auto_patch",
   ])("%s says what `severity` means in its description", async (name) => {
@@ -189,7 +300,10 @@ describe("the diagnostic wire shape", () => {
   });
 
   it.each([
-    ["kumiki_build", "a second content item holds them as a JSON list of diagnostics"],
+    ...["kumiki_build", "kumiki_smoke", "kumiki_run_scenario", "kumiki_test"].map((name) => [
+      name,
+      "a second content item holds them as a JSON list of diagnostics",
+    ]),
     ["kumiki_build", "the warnings, then the errors that failed it"],
     ["kumiki_auto_patch", "Every outcome carries `warnings`"],
   ])("%s says where it puts the warnings: %s", async (name, says) => {

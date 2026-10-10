@@ -381,6 +381,8 @@ compile failed (/path/to/app.kumiki):
 E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 
+A file that compiles with warnings runs its tests: each warning is printed to stderr in that same form, ahead of the report, and changes neither the report nor the exit code. `kumiki smoke` and `kumiki run` print the warnings of the compile they start with in the same way.
+
 ### 8.7.2 Fixing from a failing test
 
 `kumiki fix <file> --auto-patch <test-name>` runs the named test and **proposes a patch** from the failure; add `--apply` to write it once it is known to make the test pass without breaking another. It repairs only what it can prove deterministically:

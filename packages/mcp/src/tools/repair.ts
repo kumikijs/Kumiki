@@ -5,9 +5,11 @@ import {
   DIAGNOSTIC_SHAPE,
   failed,
   json,
+  RUN_WARNINGS,
   serialiseFixFromTest,
   text,
   toDiagnostics,
+  withWarnings,
 } from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
@@ -103,8 +105,7 @@ export function registerRepairTools(tool: RegisterTool): void {
     "kumiki_test",
     {
       title: "Run in-language tests",
-      description:
-        "Compile a Kumiki program with `test` definitions included, mount it in a headless DOM, run every `test`, and return a structured pass/fail report. Pass `filter` to restrict by exact name or a `prefix*` wildcard. This is the substrate for the fix loop: on failure, feed the failing test's name to `kumiki_auto_patch` to close the loop.",
+      description: `Compile a Kumiki program with \`test\` definitions included, mount it in a headless DOM, run every \`test\`, and return a structured pass/fail report. Pass \`filter\` to restrict by exact name or a \`prefix*\` wildcard. This is the substrate for the fix loop: on failure, feed the failing test's name to \`kumiki_auto_patch\` to close the loop. The report is the first content item, as JSON. ${RUN_WARNINGS} ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         path: z.string(),
         filter: z
@@ -124,7 +125,8 @@ export function registerRepairTools(tool: RegisterTool): void {
         results: report.results,
       });
       const matchedNothing = report.filter !== undefined && report.total === 0;
-      return report.failed > 0 || matchedNothing ? failed(body) : text(body);
+      const parts = withWarnings(body, report.warnings);
+      return report.failed > 0 || matchedNothing ? failed(...parts) : text(...parts);
     },
   );
 }

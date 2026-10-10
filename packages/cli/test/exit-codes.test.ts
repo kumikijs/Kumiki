@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { CHILD_TIMEOUT_MS, type CliResult, runCli, SPAWN } from "./helpers/cli.ts";
 import { seed, tempDir } from "./helpers/files.ts";
 
 const write = (name: string, source: string): string => seed(source, name);
@@ -423,5 +423,67 @@ test inc-adds-two =
     expect(stdout).toContain('refused fix for "inc-adds-two"');
     expect(readFileSync(file, "utf8")).toBe(src);
     expect(code).toBe(1);
+  });
+});
+
+describe("the warnings of the compile that smoke, run and test start with", () => {
+  const THREE_SPAWNS = { timeout: 3 * CHILD_TIMEOUT_MS + 10_000 };
+
+  const WARN_WITH_TEST = `${WARN_ONLY}test bump-works =
+    reducer-test bump
+        given  = {slots: {count: 0}, event: {type: ui.focus, target: Card}}
+        expect = {slots: {count: 1}, effects: []}
+`;
+
+  const warningsOf = (file: string): string => {
+    const { stderr, code } = runCli(["check", file]);
+    expect(stderr).toMatch(/^[^\n]*\bW0212 ui-event-tile-mismatch at \d+:\d+: [^\n]+\n$/);
+    expect(code).toBe(0);
+    return stderr;
+  };
+
+  const streams = ({ stdout, stderr, code }: CliResult) => ({ stdout, stderr, code });
+
+  it.each([
+    {
+      verb: "smoke",
+      args: (): string[] => [],
+      stdout: "ok — mounted, rendered, 0 interaction(s), no runtime errors\n",
+    },
+    {
+      verb: "run",
+      args: (): string[] => [
+        write("warned-run.json", JSON.stringify({ steps: [{ expect: { noErrors: true } }] })),
+      ],
+      stdout: "[ok] step 0\n\nscenario passed\n",
+    },
+  ])(
+    "$verb prints them on stderr and its output as for a clean file",
+    THREE_SPAWNS,
+    ({ verb, args, stdout }) => {
+      const file = write(`warned-${verb}.kumiki`, WARN_ONLY);
+      expect(streams(runCli([verb, file, ...args()]))).toEqual({
+        stdout,
+        stderr: warningsOf(file),
+        code: 0,
+      });
+      expect(streams(runCli([verb, write(`clean-${verb}.kumiki`, CLEAN), ...args()]))).toEqual({
+        stdout,
+        stderr: "",
+        code: 0,
+      });
+    },
+  );
+
+  it("test prints them on stderr and its report as for a clean file", THREE_SPAWNS, () => {
+    const file = write("warned-test.kumiki", WARN_WITH_TEST);
+    const warned = runCli(["test", file]);
+    expect(warned.stdout).toMatch(/^PASS {2}bump-works \(\d+ms\)\n\n1\/1 passed\n$/);
+    expect(warned.stderr).toBe(warningsOf(file));
+    expect(warned.code).toBe(0);
+    const clean = runCli(["test", write("clean-test.kumiki", WITH_TESTS)]);
+    expect(clean.stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)\n\n1\/1 passed\n$/);
+    expect(clean.stderr).toBe("");
+    expect(clean.code).toBe(0);
   });
 });

@@ -9,7 +9,16 @@ import {
   runCapabilities,
   sourceCapabilities,
 } from "../input.ts";
-import { DIAGNOSTIC_SHAPE, type Diagnostic, failed, json, text, toDiagnostics } from "../wire.ts";
+import {
+  DIAGNOSTIC_SHAPE,
+  type Diagnostic,
+  failed,
+  json,
+  RUN_WARNINGS,
+  text,
+  toDiagnostics,
+  withWarnings,
+} from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
 type Scenario = Parameters<typeof runScenarioSource>[1];
@@ -134,10 +143,7 @@ export function registerCompileTools(tool: RegisterTool): void {
       const head = input.includeJs
         ? result.js
         : `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`;
-      // A second item rather than a suffix: with `includeJs` the first item is
-      // the module itself, which a client writes out as it stands.
-      if (result.warnings.length === 0) return text(head);
-      return text(head, json(toDiagnostics(result.warnings)));
+      return text(...withWarnings(head, result.warnings));
     },
   );
 
@@ -145,8 +151,7 @@ export function registerCompileTools(tool: RegisterTool): void {
     "kumiki_smoke",
     {
       title: "Runtime smoke test",
-      description:
-        "Mount a Kumiki program in a headless DOM, exercise its UI, and report runtime failures that check/build cannot catch (throws, empty render, unhandled rejections). Pass `source` or `path`. Run this after check/build — a program can compile yet error or render nothing when actually used.",
+      description: `Mount a Kumiki program in a headless DOM, exercise its UI, and report runtime failures that check/build cannot catch (throws, empty render, unhandled rejections). Pass \`source\` or \`path\`. Run this after check/build — a program can compile yet error or render nothing when actually used. The first content item is the verdict. ${RUN_WARNINGS} ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -157,14 +162,20 @@ export function registerCompileTools(tool: RegisterTool): void {
       const report = await smokeSource(readSource(input), capsForInput(input));
       if (report.ok) {
         return text(
-          `ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`,
+          ...withWarnings(
+            `ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`,
+            report.warnings,
+          ),
         );
       }
       const lines = report.issues.map(
         (i) => `[${i.phase}] ${i.message}${i.trigger ? ` (on ${i.trigger})` : ""}`,
       );
       return failed(
-        `runtime smoke failed (mounted=${report.mounted}, rendered=${report.rendered}):\n${lines.join("\n")}`,
+        ...withWarnings(
+          `runtime smoke failed (mounted=${report.mounted}, rendered=${report.rendered}):\n${lines.join("\n")}`,
+          report.warnings,
+        ),
       );
     },
   );
@@ -173,7 +184,7 @@ export function registerCompileTools(tool: RegisterTool): void {
     "kumiki_run_scenario",
     {
       title: "Run a scenario",
-      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. A step whose action could not run — a selector matching nothing, a \`fill\` aimed at an element that holds no text, a control the platform refuses to drive (\`disabled\` refuses any verb that drives a control; \`readonly\` and an editable's \`contenteditable="false"\` refuse the typing alone, so \`fill\` only; \`hover\` is never refused), or a {submit} the form holds back because a bound field fails its validation — reports \`action failed:\` instead of an error, and fails: the action never ran, so that step's state is not a state the app reached through it, and \`errorIncludes\` cannot claim it. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based).\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], actionErrorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something; \`actionErrorIncludes\` asserts the step was REFUSED, for a control the platform will not drive or a {submit} the form held back because a bound field fails its validation; it matches the refusal alone, so a step that ran, or that failed for another reason such as a selector matching nothing, fails rather than claiming one).`,
+      description: `Drive a Kumiki app through a scenario and return a per-step trace (slot state, DOM text, errors, emitted effects) plus assertion results. A step whose action could not run — a selector matching nothing, a \`fill\` aimed at an element that holds no text, a control the platform refuses to drive (\`disabled\` refuses any verb that drives a control; \`readonly\` and an editable's \`contenteditable="false"\` refuse the typing alone, so \`fill\` only; \`hover\` is never refused), or a {submit} the form holds back because a bound field fails its validation — reports \`action failed:\` instead of an error, and fails: the action never ran, so that step's state is not a state the app reached through it, and \`errorIncludes\` cannot claim it. This is the substrate for an autonomous generate→run→observe→**fix** loop: write the user's requirements as scenario steps with \`expect\` assertions on state, run, read the trace, then close the loop without a human operating the app — on a failing test, call \`kumiki_auto_patch { apply: true, testName }\` (test-driven, deterministic literal repair); on a compile diagnostic, call \`kumiki_fix { apply: true }\` (rule-based). The trace is the first content item. ${RUN_WARNINGS} ${DIAGNOSTIC_SHAPE}\n\nScenario shape: { steps: [{ label?, do?, expect? }], effects?: { <name>: [{outcome, value}] } }. An action \`do\` is one of: ${SCENARIO_ACTIONS}. {focus} / {blur} / {key} / {hover} dispatch the real DOM event, so a scenario alone verifies the listener wiring a \`ui.<event>\` reducer depends on. An \`expect\` is { noErrors?, errorIncludes?: [..], actionErrorIncludes?: [..], state?: {slot: value}, domIncludes?: [..], domExcludes?: [..] } (state uses partial match; keys may be dotted paths; \`errorIncludes\` asserts an error WAS reported, for contracts whose point is that the runtime surfaces something; \`actionErrorIncludes\` asserts the step was REFUSED, for a control the platform will not drive or a {submit} the form held back because a bound field fails its validation; it matches the refusal alone, so a step that ran, or that failed for another reason such as a selector matching nothing, fails rather than claiming one).`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -211,7 +222,8 @@ export function registerCompileTools(tool: RegisterTool): void {
       const tail = report.ok ? "scenario passed" : "scenario FAILED";
       const finalState = report.steps.at(-1)?.state ?? {};
       const body = `${lines.join("\n")}\n\n${tail}\nfinal state: ${JSON.stringify(finalState)}`;
-      return report.ok ? text(body) : failed(body);
+      const parts = withWarnings(body, report.warnings);
+      return report.ok ? text(...parts) : failed(...parts);
     },
   );
 }
