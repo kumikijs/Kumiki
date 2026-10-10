@@ -1,5 +1,4 @@
-# Feature (stdlib.md §2.2.8 / §2.4.3): `Time.parse` refuses a date that
-# names no day.
+# Feature: `Time.parse` refuses a date that names no day.
 #
 #   Time.parse(text) : Option(Time)   ; None when the text names no instant
 #

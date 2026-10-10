@@ -1,29 +1,7 @@
-// A tree deeper than the call stack can walk used to surface as a bare
-// `RangeError: Maximum call stack size exceeded` — no position, no message,
-// nothing pointing at the source. The bound is a positioned `ParseError` now.
-//
-// The bound is on the tree, not on how the parser reached it. That distinction
-// is the whole subject here: a left-associative chain (`1 + 1 + 1 + …`,
-// `x.trim().trim()…`, a run of `not`, a type's `where`s, an assignment target's
-// `s.a[0]…` path) is parsed by a loop and costs the parser no stack, but still
-// builds one node per step, and every stage after the parse walks those nodes
-// by recursion. Bounding only what the parser recursed through would let such
-// a chain parse clean and overflow the stack downstream.
-//
-// Chains nested in one another add up for the same reason. The operand a chain
-// reads at one step ends up under every later step, so a chain inside it — a
-// `+` chain in parentheses, an index chain inside `[ ]`, the `where`s on a type
-// application's argument — is that many levels deeper than where it was read.
-// Charging each chain only its own steps would let them multiply.
-//
-// Every assertion therefore goes through `compile`, not `parse`. The thresholds
-// also differ per construct, so one row per construct is what makes a missed
-// entry point visible.
-
 import { compile, lex, ParseError, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-/** The bound recorded in language.md §1.2.3. */
+/** The parser's nesting limit. */
 const MAX_DEPTH = 256;
 
 const nest = (open: string, close: string, inner: string, depth: number) =>
@@ -39,15 +17,6 @@ const TAIL = `tile App = column(text("x"))
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-/**
- * Every construct that can contain itself, and every chain that builds one
- * node per operator without recursing.
- *
- * `effective` is where each first refuses. They are not all `MAX_DEPTH`: a
- * construct whose parse passes through more than one guarded entry point —
- * a tile call goes through `parseTileExpr` and `parseTileCall` — spends the
- * extra level on the way in, and the budget is over the resulting tree.
- */
 const FORMS: readonly { name: string; effective: number; at: (depth: number) => string }[] = [
   {
     name: "parenthesised expression",
@@ -75,8 +44,6 @@ const FORMS: readonly { name: string; effective: number; at: (depth: number) => 
     at: (d) => `tile T = ${nest("column(", ")", 'text("x")', d)}\n${TAIL}`,
   },
   {
-    // A tuple is the only pattern that contains a pattern — a variant's
-    // payloads are binds, so `Some(Some(y))` is not grammar at any depth.
     name: "tuple pattern",
     effective: 255,
     at: (d) =>
@@ -93,8 +60,6 @@ const FORMS: readonly { name: string; effective: number; at: (depth: number) => 
     at: (d) => `theme T = ${nest("{a: ", "}", "1", d)}\n${TAIL}`,
   },
   {
-    // Statement bodies nest through `parseStatement` → `parseStatementBody` →
-    // `parseStatement`, a path distinct from the expression-level `if`.
     name: "if statement",
     effective: 254,
     at: (d) =>
@@ -116,8 +81,6 @@ tile App = column(B)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
   },
-  // The chains. Each is parsed by a loop, so none of these cost the parser any
-  // stack — and each still builds one node per operator.
   {
     name: "binary operator chain",
     effective: 255,
@@ -134,15 +97,11 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     at: (d) => `slot v : Int = ${"-".repeat(d)}1\n${TAIL}`,
   },
   {
-    // One `TypeRefinement` per `where` over `Int`. `parseTypeUnionAtom` takes
-    // the first before the loop starts charging, so this chain is refused one
-    // step later than the expression chains: 255 `where`s are accepted, as deep
-    // a tree as the longest accepted type application, 255 nested `List(`s.
+    // The first `where` is read with the type's atom, before the chain starts charging.
     name: "where chain",
     effective: 256,
     at: (d) => `type T = Int${" where between(0, 10)".repeat(d)}\nslot v : T = 1\n${TAIL}`,
   },
-  // An assignment target is a path, one `LIndex` / `LField` per step.
   {
     name: "slot-assignment index path",
     effective: 255,
@@ -167,8 +126,6 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
   },
   {
-    // Both kinds of step in one path: one count covers them, so alternating
-    // them goes no further than either alone. Type-checks at every depth.
     name: "slot-assignment mixed path",
     effective: 255,
     at: (d) =>
@@ -180,8 +137,6 @@ tile App = column(B)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
   },
-  // A chain inside another construct starts from the level that construct is
-  // at, so it is refused that many steps sooner.
   {
     name: "where chain on a record field",
     effective: 255,
@@ -199,15 +154,8 @@ tile App = column(B)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
   },
-  // A chain inside an operand of another, the steps split between the two.
-  // The inner chain's levels and the outer chain's later steps are one count,
-  // so each row's limit is the single chain's, less whatever level the operand
-  // itself adds. One step under it, the tree is 255 levels deep; at it, 256.
   {
-    // `1 + (1 + … + 1) + 1 + …`. The parenthesised operand sits two levels
-    // under the outer chain — the `+`'s right operand, then the parentheses —
-    // where one step of the outer chain would have put it, so the pair goes
-    // one step less far than a single chain.
+    // The parenthesised operand sits two levels down: the `+`'s right operand, then the parentheses.
     name: "binary chain in a parenthesised operand of another",
     effective: 254,
     at: (d) => {
@@ -216,9 +164,6 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     },
   },
   {
-    // `[[[1]]][0][0][0]`: nesting with no chain in it counts the same way. The
-    // innermost list sits as many levels down as there are lists, and each
-    // `[0]` puts it one further.
     name: "index chain on a nested list literal",
     effective: 255,
     at: (d) => {
@@ -227,10 +172,7 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     },
   },
   {
-    // `(match q with | (x, (x, y)) -> 1) + 1 + 1`: a pattern is part of the
-    // operand it is written in, and is pushed down with it. The parentheses
-    // and the arm's pattern each take a level, so the pair goes two steps less
-    // far than one chain.
+    // The parentheses and the arm's pattern each take a level.
     name: "binary chain on a match with a nested tuple pattern",
     effective: 253,
     at: (d) => {
@@ -241,8 +183,7 @@ ${TAIL}`;
     },
   },
   {
-    // `xs[xs[0][0]…][0][0]…`. The index sits under the outer step's node, the
-    // level that step already counts, so the pair goes as far as one chain.
+    // The index sits under the outer step's node, a level that step already counts.
     name: "index chain in the index of another",
     effective: 255,
     at: (d) => {
@@ -266,8 +207,6 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     },
   },
   {
-    // `- - (- - 1)`: the outer run wraps the parenthesised operand, inner run
-    // and all, so the parentheses' level costs one step as in the `+` row.
     name: "prefix run in a parenthesised operand of another",
     effective: 254,
     at: (d) => {
@@ -276,8 +215,6 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     },
   },
   {
-    // `Id(Id(Text)) where …`, counted in applications and `where`s. As with
-    // the lists, the innermost argument sits a level under each application.
     name: "where chain on a nested type application",
     effective: 256,
     at: (d) => {
@@ -289,9 +226,7 @@ ${TAIL}`;
     },
   },
   {
-    // `Id(Text where … ) where …`, counted in `where`s. Each run's first
-    // `where` is folded onto the type it follows, and the application's
-    // argument sits a level under it, so the pair goes as far as one run.
+    // Each run's first `where` is folded onto the type it follows.
     name: "where chain on a type application whose argument has one",
     effective: 256,
     at: (d) => {
@@ -321,15 +256,11 @@ describe("the parser bounds how deep a tree a program may build", () => {
       const result = pipeline(form.at(form.effective));
       expect(result, `a deep ${form.name} was not refused`).toBeInstanceOf(ParseError);
       const { pos } = result as ParseError;
-      // A real token position — `1:1` is what a synthesised one looks like,
-      // and every one of these is deep inside a long line.
       expect(pos.line).toBeGreaterThanOrEqual(1);
       expect(pos.col).toBeGreaterThan(1);
     });
 
     it(`accepts a ${form.name} one level under its limit`, () => {
-      // Pinned exactly, so a limit that drifts — in either direction — fails
-      // one of this pair rather than passing both.
       expect(
         pipeline(form.at(form.effective - 1)),
         `a legal ${form.name} was refused`,
@@ -362,12 +293,6 @@ describe("a parse error is never a stack overflow", () => {
   });
 });
 
-// The programs below nest a chain inside an early operand of another, level
-// after level. Each chain alone is well inside the budget, and each level of
-// nesting costs only a level or two of the parser's own descent; counted as
-// one tree, each program goes over the budget inside the second chain from
-// the inside, at the step that takes the tree to level 256.
-
 const WHERE = " where nonempty";
 
 /** `Id(Id(…Id(Text) where…) where…) where…`, one entry of `wheres` per level, innermost first. */
@@ -397,11 +322,7 @@ const REDUCER = "reducer r on=ui.click(App) do= ";
 const after = (prefix: string): number => prefix.length + 1;
 
 const NESTED: readonly { name: string; source: string; line: number; col: number }[] = [
-  // With L levels, the innermost `Id(Text)` sits at level L (the outermost
-  // type is at 1) and its argument at L + 1; its 200 `where`s take the tree to
-  // L + 200, the first being folded onto the application as on any type. The
-  // run around it sits at level L - 1 with its operand already 201 levels
-  // down, so its n-th `where` puts the tree at L + 199 + n: 256 at n = 57 - L.
+  // The innermost run reaches level L + 200; the run around it puts the tree at L + 199 + n.
   ...[10, 20].map((levels) => ({
     name: `a type of ${levels} \`Id(…)\` levels with 200 \`where\`s each`,
     source: idProgram(Array.from({ length: levels }, () => 200)),
@@ -410,20 +331,14 @@ const NESTED: readonly { name: string; source: string; line: number; col: number
       `type T = ${"Id(".repeat(levels)}Text)${WHERE.repeat(200)})${WHERE.repeat(57 - levels - 1)} `,
     ),
   })),
-  // A reducer's right-hand side is read at level 2, and each level of nesting
-  // is two further: the `+`'s right operand, then the parentheses. The
-  // innermost chain, at level 16, reaches 16 + 200 = 216. The one around it,
-  // at level 14, holds that 202 levels down as its first step's operand, and
-  // its k-th step puts it at 14 + 201 + k: 256 at k = 41.
+  // Read at level 2, two levels per nesting: the second chain from the inside goes over at step 41.
   {
     name: "an assignment of 8 nested 200-term `+` chains",
     source: `slot x : Int = 0\n${REDUCER}x := ${plusNest(8, 200, "1")}\n${TAIL}`,
     line: 2,
     col: after(`${REDUCER}x := ${"1 + (".repeat(7)}${plusNest(1, 200, "1")})${" + 1".repeat(39)} `),
   },
-  // The same chains as a tile's text, which is read at level 3 — the tile's
-  // body, its call, the argument. The second chain from the inside sits at
-  // level 15, and its k-th step puts the tree at 15 + 201 + k: 256 at k = 40.
+  // A tile's text is read at level 3, one deeper than a reducer's right-hand side.
   {
     name: "a tile's text of 8 nested 200-term `+` chains",
     source: `tile Label = text(${plusNest(8, 200, '"a"')})\n${TAIL}`,
@@ -432,10 +347,7 @@ const NESTED: readonly { name: string; source: string; line: number; col: number
       `tile Label = text(${'"a" + ('.repeat(7)}${plusNest(1, 200, '"a"')})${' + "a"'.repeat(38)} `,
     ),
   },
-  // Each index is one level under the step it is read in. The innermost chain,
-  // at level 17, reaches 17 + 200 = 217; the one around it, at level 16, holds
-  // that 201 levels down as its first step's index, and its k-th step puts it
-  // at 16 + 200 + k: 256 at k = 40.
+  // Each index is one level under the step it is read in: the chain around the innermost goes over at step 40.
   {
     name: "an assignment of 16 nested 200-step index chains",
     source: `slot xs : List(Int) = [1]\nslot y : Int = 0\n${REDUCER}y := ${indexNest(16, 200)}\n${TAIL}`,
@@ -447,7 +359,6 @@ const NESTED: readonly { name: string; source: string; line: number; col: number
 describe("chains nested in one another spend one budget", () => {
   for (const c of NESTED) {
     it(`refuses ${c.name} at the step that goes over`, () => {
-      // A `RangeError` propagates out of `pipeline` and fails the test by itself.
       const result = pipeline(c.source);
       expect(result, `${c.name} was not refused`).toBeInstanceOf(ParseError);
       const e = result as ParseError;
@@ -456,8 +367,7 @@ describe("chains nested in one another spend one budget", () => {
     });
   }
 
-  // Such a type is 1 + Σ wheres levels deep: the outermost type at level 1,
-  // each application one further, and each `where` but a run's first one more.
+  // 1 + Σ wheres = 255 levels: each application adds one, and each `where` but a run's first.
   const UNDER = [...Array.from({ length: 9 }, () => 25), 29];
 
   it("compiles a 10-level `Id(…)` type that is 255 levels deep", () => {
