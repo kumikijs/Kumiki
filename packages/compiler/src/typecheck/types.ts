@@ -22,7 +22,7 @@ import {
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
-import { isReservedTypeName } from "../stdlib-types.ts";
+import { type ReservedTypeReason, reservedTypeReason } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
 
 export function resolveType(
@@ -300,14 +300,21 @@ function checkTypeArity(
 
 const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
+const RESERVED_TYPE_MEANING: Readonly<Record<ReservedTypeReason, string>> = {
+  primitive: "the primitive type",
+  constructor: "the built-in type constructor",
+  "runtime-supplied": "the standard library's",
+};
+
 export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
-  // The symbol table kept the standard library's entry, so the body is checked
-  // only for what it says on its own.
-  if (isReservedTypeName(def.name)) {
+  // The symbol table never took this declaration, so the body is checked only
+  // for what it says on its own.
+  const reason = reservedTypeReason(def.name);
+  if (reason !== undefined) {
     errors.push({
       code: "E0231",
       kind: "reserved-type-name",
-      message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+      message: `Type "${def.name}" collides with ${RESERVED_TYPE_MEANING[reason]} ${def.name}; uses of it never see this type`,
       pos: def.pos,
     });
   }

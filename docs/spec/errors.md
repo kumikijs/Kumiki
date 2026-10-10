@@ -178,7 +178,7 @@ Two definitions of the same layer share a name. Symbol collection keeps one entr
 
 Which declaration survives is not uniform, which is why the message does not say. Symbol collection keeps the **last**, so that is what the checker validated — but two `reducer`s of one name both reach the artifact and the runtime dispatches the **first**. The two halves of the toolchain disagreed about which definition existed.
 
-The namespace is per layer, and only within a layer: a `slot` and a `tile` sharing a name is legal — code generation resolves a bare identifier child to a tile before anything else. A `type` named like one of the standard library's domain types is not a second declaration of it either: a program's own `type Email = …` replaces the standard library's for that program, and one under a reserved name (`type Route = …`) is [E0231](#e0231-reserved-type-name). A second `app` is `E0004`, which predates this and keeps its own code.
+The namespace is per layer, and only within a layer: a `slot` and a `tile` sharing a name is legal — code generation resolves a bare identifier child to a tile before anything else. A `type` named like one of the standard library's domain types is not a second declaration of it either: a program's own `type Email = …` replaces the standard library's for that program, and one under a reserved name (`type Route = …`, `type Option = …`) is [E0231](#e0231-reserved-type-name). A second `app` is `E0004`, which predates this and keeps its own code.
 
 **Fix**: Remove one, or rename it. `kumiki rename` refuses to create a duplicate, and `kumiki add` rolls back on one.
 
@@ -220,7 +220,7 @@ type Shape   = Leaf | Branch(Shape, Shape)
 
 Each reaches a structural type before it reaches itself. Comparing two of them terminates because the relation is read co-inductively over the types *as written*, not because their values are finite — `Node` above has none at all, its `next` being neither optional nor a container, and is the spec's own lead example of a legal recursive type. `type A = Option(A)` and `type A = Alias(Option(A))` are legal for the same reason: the container is the type.
 
-A name that denotes no `type` definition ends the chain rather than closing it: a generic constructor (`List`, `Option`, `Map`) has no body to come back along, and an undeclared name is [E0117](#e0117-undef-type)'s to report rather than a second name for one mistake. A standard-library *domain* type is a definition like any other and is followed like one. A program that declares one it may declare (`type Email = Email`) has replaced it, and closes a loop through its own. A reserved one cannot be declared ([E0231](#e0231-reserved-type-name)), so in `type Route = Route` the body names the standard library's record and closes no loop. A parameter is read as the parameter and never as a global of the same spelling ([§1.3.6](./language.md#_1-3-6-invariants), inv. 5).
+A name that denotes no `type` definition ends the chain rather than closing it: a generic constructor (`List`, `Option`, `Map`) has no body to come back along — a program cannot give it one ([E0231](#e0231-reserved-type-name)), so in `type List(T) = List(T)` the body names the built-in constructor — and an undeclared name is [E0117](#e0117-undef-type)'s to report rather than a second name for one mistake. A standard-library *domain* type is a definition like any other and is followed like one. A program that declares one it may declare (`type Email = Email`) has replaced it, and closes a loop through its own. A reserved one cannot be declared ([E0231](#e0231-reserved-type-name)), so in `type Route = Route` the body names the standard library's record and closes no loop. A parameter is read as the parameter and never as a global of the same spelling ([§1.3.6](./language.md#_1-3-6-invariants), inv. 5).
 
 **Fix**: Give one name on the chain a body. A type that was meant to be recursive wants a record or a union at the point it names itself (`type A = {next: A}`); a type that was meant to be an alias wants the definition it was aliasing.
 
@@ -694,7 +694,7 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 
 ### E0210 `type-arity-mismatch`
 
-A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
+A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters, or a built-in constructor (`List`, `Option`, `Map`, …) is given a different number than it takes ([Standard Library §2.1.2](./stdlib.md#_2-1-2-generic-types); `Tuple` takes any). Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
 
@@ -957,11 +957,23 @@ With a `bind=`, the bound value alone decides whether a box is ticked or a radio
 
 ### E0231 `reserved-type-name`
 
-A `type` is declared under the name of a standard-library domain type whose values the runtime or the standard library supplies ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). Reported at the declaration, once per declaration.
+A `type` is declared under a name that already means a type in every program. Reported at the declaration, once per declaration. The reserved names are the checker's own tables, in three groups, and the message names the group:
 
+| Group | Names | What gives the name its meaning |
+|---|---|---|
+| primitive | the `primitive` names of [Language §1.3.1](./language.md#_1-3-1-syntax) (`Int`, `Text`, `File`, …) | the parser, which reads one as the primitive wherever a type is written |
+| built-in type constructor | the generic types of [Standard Library §2.1.2](./stdlib.md#_2-1-2-generic-types) (`Option`, `List`, `Map`, …) | the checker, which knows their values, members and arity without a definition |
+| runtime-supplied | the six domain types below ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) | the runtime or the standard library, which builds or reads their values |
+
+> `Type "<name>" collides with the primitive type <name>; uses of it never see this type`
+>
+> `Type "<name>" collides with the built-in type constructor <name>; uses of it never see this type`
+>
 > `Type "<name>" collides with the standard library's <name>; uses of it never see this type`
 
-| Name | What supplies or reads its values |
+A primitive or a constructor added to the language is reserved with it: there is no second list of these names to keep in step.
+
+| Runtime-supplied name | What supplies or reads its values |
 |---|---|
 | `PanicInfo` | the runtime: the record an `error-boundary` fallback's `$1` and an `app.error` reducer's `$event` are bound to |
 | `Route` | the runtime: the `route` slot it maintains |
@@ -970,15 +982,15 @@ A `type` is declared under the name of a standard-library domain type whose valu
 | `Duration` | the standard library: what `Duration.ms(…)` and its siblings build, and the toast effect's `duration` |
 | `FormValue` | the runtime: a `Multipart` body sends a `FileV` entry as a file |
 
-A program's own definition under one of these names would change what the checker reasons about and nothing the runtime supplies. With `type PanicInfo = Text`, a fallback declaring `in=PanicInfo` has its `$1` checked as a `Text` while the runtime binds the panic record: reading `$1.message`, as the fix for [E0220](#e0220-boundary-fallback-input) says to, is refused as a member `Text` does not have, and the `in=Text` fallback E0220 exists to catch passes under the name `PanicInfo`.
+A program's own definition under one of these names could only be half-applied. A primitive is read as itself wherever a type is written, so `type Int = Text` would reach no use at all, and `slot t : Int = "x"` is a `Text` against the primitive whatever the program declared. A constructor's values, members and arity are built in, so a definition under its name would answer some questions and not others: `type List(T) = {v: T}` would let `List(Int)` take both `{v: 1}` and `[1, 2]` while `.length` would be looked up on the record, and `type Option = Int` would make `Option(Int)` an arity error. A runtime-supplied name would change what the checker reasons about and nothing the runtime supplies: with `type PanicInfo = Text`, a fallback declaring `in=PanicInfo` has its `$1` checked as a `Text` while the runtime binds the panic record — reading `$1.message`, as the fix for [E0220](#e0220-boundary-fallback-input) says to, is refused as a member `Text` does not have, and the `in=Text` fallback E0220 exists to catch passes under the name `PanicInfo`.
 
-The declaration is refused and the name keeps the standard library's definition, so every use of it is checked against the value the runtime supplies. A report that follows from the program having meant its own type — an `E0201` on a value written for it — stands beside this one. This is [E0115](#e0115-reserved-slot-name)'s rule for the `route` slot, applied to type names ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
+The declaration is refused and the name keeps its built-in meaning, so every use of it is checked against the primitive, the built-in constructor, or the value the runtime supplies. A report that follows from the program having meant its own type stands beside this one: an `E0201` on a value written for it (`slot a : List(Int) = {v: 1}`), or an [E0210](#e0210-type-arity-mismatch) on a bare `Option` written as if it took no arguments. This is [E0115](#e0115-reserved-slot-name)'s rule for the `route` slot, applied to type names ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
 
 The other domain types — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of, and are not reserved: a program may declare its own (`type Email = {address: Text}`), and its uses of the name then mean that type.
 
-Only a declaration is refused. Writing a reserved name is how a program uses the standard library's type — an annotation, a tile's `in=`, a record field, an alias (`type Crash = PanicInfo`), a refinement over it (`type Short = Duration where between(0, 1000)`). A type parameter, a variant tag, a slot, a `fn` or a tile spelled the same way is in another namespace, and a type whose name merely starts or ends with one (`PanicInfoView`, `AppRoute`) is a name of its own.
+Only a declaration is refused. Writing a reserved name is how a program uses the type it names — an annotation, a tile's `in=`, a record field, an alias (`type Crash = PanicInfo`), a refinement over it (`type Short = Duration where between(0, 1000)`). A slot, a `fn` or a tile spelled the same way is in another namespace, as is a type parameter or a variant tag spelled like a constructor or a runtime-supplied name, and a type whose name merely starts or ends with one (`PanicInfoView`, `AppRoute`, `IntRange`, `TodoList`) is a name of its own.
 
-**Fix**: Rename the program's type — `type AppPanic = {…}` — along with every use that meant it.
+**Fix**: Rename the program's type — `type AppPanic = {…}`, `type Box(T) = {v: T}` — along with every use that meant it. A declaration that meant the built-in type itself is not needed: remove it.
 
 ## E03xx — Capabilities and Purity
 

@@ -1,6 +1,6 @@
 import type { Expr, FragmentShape, KeyKind, Pattern, Pos, TypeExpr } from "../ast.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
-import { PRIM_TYPES } from "../parser.ts";
+import { isPrimTypeName } from "../stdlib-types.ts";
 import {
   addBind,
   bindRef,
@@ -25,8 +25,8 @@ export function reducerNameArg(e: Expr | undefined): string {
 function decodedType(e: Expr | undefined): TypeExpr | undefined {
   if (e?.kind === "Variant") {
     if (e.payload.length === 0) {
-      return PRIM_TYPES.has(e.name)
-        ? { kind: "TypePrim", name: e.name as "Text", pos: e.pos }
+      return isPrimTypeName(e.name)
+        ? { kind: "TypePrim", name: e.name, pos: e.pos }
         : { kind: "TypeRef", name: e.name, pos: e.pos };
     }
     const args = e.payload.map(decodedType);

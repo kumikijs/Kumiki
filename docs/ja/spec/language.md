@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'File' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -285,7 +285,7 @@ type Shape = Leaf | Branch(Shape, Shape)
 いずれも不変条件 3 により、自分自身へ戻るより先に構造的な型へ到達する。2 つを比較したときに停止するのは、この関係が**書かれたとおりの型**に対して**余帰納的**に読まれるからである：比較の途中で同じ組へ再入したら「はい」と答える。これは、比較の有限な部分が下りの途中ですでに検査済みであることから健全である。停止性は値が有限であることには依存しない — 上の `Node` は `next` が optional でもコンテナでもないため値を 1 つも持たないが、それでも合法な型である。
 
 5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
-6. **値をランタイムまたは標準ライブラリが供給する型の名前は、プログラムが宣言するものではない。** `PanicInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）は、どのプログラムでも標準ライブラリの定義を意味する：`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて標準ライブラリの型のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`）。ほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
+6. **どのプログラムでもすでに型を意味している名前は、プログラムが宣言するものではない。** そうした名前は 3 つのグループからなる：プリミティブ（[§1.3.1](#_1-3-1-構文) の `primitive` の名前）、ビルトインの汎化型（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）、そして値をランタイムまたは標準ライブラリが供給する 6 つのドメイン型 — `PanicInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。`type Int = …`・`type Option = …`・`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて組み込みの意味のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`・`type Box(T) = …`）。グループは型検査器自身の表なので、言語にプリミティブや型構築子が加われば、それも同時に予約される。ほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
 
 ---
 
