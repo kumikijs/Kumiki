@@ -215,9 +215,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       const _el = ${elJs};
       const _r = App.reducers.find((r) => r.name === ${JSON.stringify(t.target)});
       if (!_r) throw new Error("reducer ${t.target} not found");
-      let _res = null, _panic = null;
-      try { _res = _r.apply(App.live, { $el: _el, $event: _el }); }
-      catch (e) { _panic = (e && e.message) ? e.message : String(e); }
+      ${underTestJs("_res", "_r.apply(App.live, { $el: _el, $event: _el })")}
       return _s.runReducerTest({ name: ${nameJs}, target: ${JSON.stringify(t.target)}, givenSlots: { ...App.live }, slotMetas: App.slots, result: _res, panic: _panic, expect: ${expectJs} });
     },
   },`;
@@ -243,11 +241,22 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     kind: "tile-test",
     run: () => {
       _s.resetLive(App.live, App.slots, ${slotsJs});
-      const _actual = App._tilesById[${JSON.stringify(t.target)}](${inJs});
+      const _in = ${inJs};
+      ${underTestJs("_actual", `App._tilesById[${JSON.stringify(t.target)}](_in)`)}
       const _expected = ${expectedJs};
-      return _s.runTileTest({ name: ${nameJs}, actual: _actual, expected: _expected });
+      return _s.runTileTest({ name: ${nameJs}, actual: _actual, panic: _panic, expected: _expected });
     },
   },`;
+}
+
+/**
+ * The test's own `given` and `expect` are evaluated outside this guard, so a
+ * panic there stays a throw in the test's body rather than its panic.
+ */
+function underTestJs(result: string, call: string): string {
+  return `let ${result} = null, _panic = null;
+      try { ${result} = ${call}; }
+      catch (e) { _panic = (e && e.message) ? e.message : String(e); }`;
 }
 
 function effectListJs(e: Expr, ctx: EvalCtx): string {

@@ -15,6 +15,7 @@ import {
   compareReducerExpect,
   type ReducerExpect,
   type TestResult,
+  unexpectedPanic,
 } from "./testkit/expect.ts";
 import {
   _hashStr,
@@ -301,8 +302,16 @@ export const _stdlibTest = {
     }
     return { name, pass: true };
   },
-  /** Structurally compare a rendered tile against the expected tile structure. */
-  runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {
+  /** A tile-test has no form that expects a panic, so a panic as its target renders is always unexpected. */
+  runTileTest(input: {
+    name: string;
+    actual: unknown;
+    panic: string | null;
+    expected: unknown;
+  }): TestResult {
+    if (input.panic !== null) {
+      return unexpectedPanic(input.name, serializeTileNode(input.expected), input.panic);
+    }
     const cmp = tileStructEqual(input.expected, input.actual);
     return {
       name: input.name,

@@ -91,13 +91,22 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 reducer テストは*実行中のアプリ*の挙動を表明するものなので、refinement が拒否したバッチはすべての slot を `given` の値のまま残し、effect も発行しない（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。拒否は `expect` ではなく `console.error` に報告される。このティアには `errorIncludes` に相当するものが無いため、`expect` ブロックだけでは「バッチが拒否された」と「reducer が何もしなかった」を区別できない。
 
-### 8.2.4 panic を期待
+### 8.2.4 panic を期待 {#_8-2-4-expecting-a-panic}
 
 ```kumiki fragment
 test addTodo-empty =
     reducer-test addTodo
         given = {slots: {todos: {}, draft: ""}, event: {type: ui.submit, target: NewTodoForm}}
         expect = {panic: "draft cannot be empty"}
+```
+
+panic を期待するテストは、reducer が `expect.panic` を含むメッセージで panic したときに通り、別のメッセージのとき、または panic しなかったときは `diff at: (panic)` で失敗する。テストが状態を期待しているところで reducer が panic すると、そのテストは**予期しない panic** として失敗し、状態があるはずの位置に panic のメッセージを示す——上のテストを `expect = {slots: {todos: {}, draft: ""}}` で書いた場合：
+
+```
+FAIL  addTodo-empty
+  expected: {"todos":{},"draft":""}
+  actual:   panic: "draft cannot be empty"
+  diff at:  (unexpected panic)
 ```
 
 ### 8.2.5 route slot {#_8-2-5-the-route-slot}
@@ -223,6 +232,27 @@ snapshot は深い構造比較。クラス名やスタイルは比較対象外�
 
 不一致はフィールドのパスと値の矢印（`image.src  "/a.png" -> "/b.png"`）で報告する。`expected:` / `actual:` の行は比較したフィールドだけを表示する。実際のノードには同じ位置の期待するノードが述べるフィールドを表示するので、実際のノードだけが持つ `placeholder` や `bind` は表示されない。
 
+描画中に panic する tile は、そのテストを**予期しない panic** として失敗させる。示す行は reducer-test が panic した reducer に示すものと同じで（[§8.2.4](#_8-2-4-expecting-a-panic)）、期待した値として snapshot を示す：
+
+```kumiki fragment
+slot items : List(Int) = []
+tile First = heading("First: " + items[0].show)
+
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+```
+
+```
+FAIL  first-shows
+  expected: heading("First: 1")
+  actual:   panic: "Index 0 is out of range for a List of length 0"
+  diff at:  (unexpected panic)
+```
+
+tile-test はこの panic を期待できない。`expect` は tile であり、panic を書くセクションが無いので、panic を期待できるのは reducer-test だけである。このように報告されるのはターゲットの描画で起きた panic だけである：テスト自身の `given` と `expect` は描画とは別に評価されるので、そのどちらかで起きた panic はテスト本体が投げたものであり、`error:` 行で報告される（[§8.7.1](#_8-7-1-output)）。
+
 ```
 tile-test ::= 'tile-test' identifier
               'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
@@ -333,7 +363,7 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-本体が例外を投げたテストは、そのテストだけの `FAIL` となり、投げた内容をその下の `error:` 行に示す。ファイル内の他のテストはそのまま実行され、結果を報告する。
+本体が例外を投げたテストは、そのテストだけの `FAIL` となり、投げた内容をその下の `error:` 行に示す。ファイル内の他のテストはそのまま実行され、結果を報告する。テスト対象の reducer や tile の panic はこの例外ではなく、テストの結果——期待したもの、または予期しないもの——である（[§8.2.4](#_8-2-4-expecting-a-panic)、[§8.4](#_8-4-tile-snapshot-tests)）。
 
 コンパイルできないファイルではテストはひとつも走らない。ランナーはファイルを解決済みの（絶対）パスで示し、各診断を `kumiki check` と同じく警告、エラーの順に同じ形 — `<code> <kind> at <line>:<col>: <message>` — で出力し、診断が `test` の中にあればその名前を添える：
 

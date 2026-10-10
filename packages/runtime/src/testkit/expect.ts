@@ -26,6 +26,15 @@ export function _jsonStr(v: unknown): string {
   }
 }
 
+function panicLine(panic: string): string {
+  return `panic: ${_jsonStr(panic)}`;
+}
+
+/** Where a test asked for a result, a panic in its code under test fails it the same way. */
+export function unexpectedPanic(name: string, expected: string, panic: string): TestResult {
+  return { name, pass: false, expected, actual: panicLine(panic), diffAt: "(unexpected panic)" };
+}
+
 export type ReducerExpect =
   | { kind: "panic"; message: string }
   | {
@@ -47,20 +56,12 @@ export function compareReducerExpect(
     return {
       name,
       pass,
-      expected: `panic: ${_jsonStr(expect.message)}`,
-      actual: panic === null ? "(no panic)" : `panic: ${_jsonStr(panic)}`,
+      expected: panicLine(expect.message),
+      actual: panic === null ? "(no panic)" : panicLine(panic),
       ...(pass ? {} : { diffAt: "(panic)" }),
     };
   }
-  if (panic !== null) {
-    return {
-      name,
-      pass: false,
-      expected: _jsonStr(expect.slots),
-      actual: `panic: ${_jsonStr(panic)}`,
-      diffAt: "(unexpected panic)",
-    };
-  }
+  if (panic !== null) return unexpectedPanic(name, _jsonStr(expect.slots), panic);
   if (unhandledErr !== null) {
     return {
       name,

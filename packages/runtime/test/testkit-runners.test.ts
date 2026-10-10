@@ -1,4 +1,4 @@
-import { _stdlib } from "@kumikijs/runtime";
+import { _stdlib, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 type ReducerTestInput = Parameters<typeof _stdlib.runReducerTest>[0];
@@ -150,6 +150,9 @@ describe("runReducerTest", () => {
 });
 
 describe("runTileTest", () => {
+  const tileTest = (over: Partial<Parameters<typeof _stdlib.runTileTest>[0]>) =>
+    _stdlib.runTileTest({ name: "t", actual: null, panic: null, expected: null, ...over });
+
   it("compares structure, ignoring handlers", () => {
     const actual = {
       kind: "column",
@@ -159,12 +162,11 @@ describe("runTileTest", () => {
       kind: "column",
       children: [{ kind: "button", text: "+1", props: {} }],
     };
-    expect(_stdlib.runTileTest({ name: "t", actual, expected: expectedTree }).pass).toBe(true);
+    expect(tileTest({ actual, expected: expectedTree }).pass).toBe(true);
   });
 
   it("exposes the leaf text values on a `.text` mismatch", () => {
-    const r = _stdlib.runTileTest({
-      name: "t",
+    const r = tileTest({
       actual: { kind: "heading", text: "Cont: 5" },
       expected: { kind: "heading", text: "Count: 5" },
     });
@@ -174,15 +176,32 @@ describe("runTileTest", () => {
   });
 
   it("names a root kind mismatch without a leading dot, and leaves `leaf` unset", () => {
-    const r = _stdlib.runTileTest({
-      name: "t",
-      actual: { kind: "row" },
-      expected: { kind: "column" },
-    });
+    const r = tileTest({ actual: { kind: "row" }, expected: { kind: "column" } });
     expect(r.pass).toBe(false);
     expect(r.diffAt?.startsWith(".")).toBe(false);
     expect(r.diffAt).toContain("kind");
     expect(r.leaf).toBeUndefined();
+  });
+
+  it("reports a tile that panicked as it rendered as an unexpected panic", () => {
+    const r = tileTest({
+      panic: "Index 0 is out of range for a List of length 0",
+      expected: { kind: "heading", text: "First: 1" },
+    });
+    expect(r).toEqual({
+      name: "t",
+      pass: false,
+      expected: 'heading("First: 1")',
+      actual: 'panic: "Index 0 is out of range for a List of length 0"',
+      diffAt: "(unexpected panic)",
+    });
+  });
+
+  it("reports an unexpected panic as a reducer-test does", () => {
+    const tile = tileTest({ panic: "boom", expected: { kind: "text", text: "x" } });
+    const reducer = reducerTest({ result: null, panic: "boom", expect: expected({ n: 1 }) });
+    const shape = (r: TestResult) => ({ pass: r.pass, actual: r.actual, diffAt: r.diffAt });
+    expect(shape(tile)).toEqual(shape(reducer));
   });
 });
 

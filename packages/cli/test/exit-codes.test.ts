@@ -50,8 +50,12 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
-/** `First` reads `items[0]` of an empty list, a panic as it renders, so that test's body throws. */
-const WITH_THROWING_TEST = `slot count : Int = 0
+/**
+ * In `first-shows` the list is empty, so `First` panics as it renders. In
+ * `first-given-throws` the test's own `given` reads past the end of a list, so
+ * the test's body throws before the render.
+ */
+const WITH_PANICKING_TESTS = `slot count : Int = 0
 slot items : List(Int) = []
 reducer inc on=ui.click(IncBtn) do= count := count + 1
 tile IncBtn = button(text="+1", onClick=inc)
@@ -64,6 +68,10 @@ app Demo
 test first-shows =
     tile-test First
         given  = {slots: {items: []}}
+        expect = heading("First: 1")
+test first-given-throws =
+    tile-test First
+        given  = {slots: {items: [1], count: [0][1]}}
         expect = heading("First: 1")
 test inc-works =
     reducer-test inc
@@ -228,14 +236,39 @@ describe("kumiki test", () => {
   });
 
   it("fails a test whose body throws on its own, and still runs the rest", SPAWN, () => {
-    // The throwing test comes first, so the passing one after it only reports
-    // if the run goes on past the throw.
-    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_THROWING_TEST)]);
+    // The throwing test comes ahead of the passing one, so that one only
+    // reports if the run goes on past the throw.
+    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_PANICKING_TESTS)]);
     expect(stdout).toMatch(
-      /^FAIL {2}first-shows \(\d+ms\)\n {2}error: {4}Index 0 is out of range for a List of length 0$/m,
+      /^FAIL {2}first-given-throws \(\d+ms\)\n {2}error: {4}Index 1 is out of range for a List of length 1$/m,
     );
     expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
-    expect(stdout).toContain("1/2 passed");
+    expect(stdout).toContain("1/3 passed");
+    expect(code).toBe(1);
+  });
+
+  it("reports a tile that panics as it renders as its test's unexpected panic", SPAWN, () => {
+    // The lines a reducer-test prints for a reducer that panics, with the
+    // snapshot as what was expected — and nothing under them, so the panic
+    // reads as the tile's and not as a throw in the test's body.
+    const { stdout, code } = runCli([
+      "test",
+      write("test-render-panic.kumiki", WITH_PANICKING_TESTS),
+    ]);
+    expect(stdout).toMatch(
+      new RegExp(
+        [
+          "^FAIL {2}first-shows \\(\\d+ms\\)",
+          ' {2}expected: heading\\("First: 1"\\)',
+          ' {2}actual: {3}panic: "Index 0 is out of range for a List of length 0"',
+          " {2}diff at: {2}\\(unexpected panic\\)",
+          "FAIL {2}first-given-throws ",
+        ].join("\n"),
+        "m",
+      ),
+    );
+    expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
+    expect(stdout).toContain("1/3 passed");
     expect(code).toBe(1);
   });
 });
