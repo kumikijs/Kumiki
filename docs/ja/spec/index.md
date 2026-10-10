@@ -60,7 +60,6 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0007](./errors.md#e0007-duplicate-definition) | `duplicate-definition` | all | コア |
 | [E0008](./errors.md#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) | `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant` | all | コア |
 | [E0009](./errors.md#e0009-type-cycle) | `type-cycle` | type | コア |
-| [E0010](./errors.md#e0010-redirect-cycle) | `redirect-cycle` | app | ルーティング |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | コア |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | コア |
 | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | コア |
@@ -84,7 +83,6 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | コア |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | コア |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | コア |
-| [E0125](./errors.md#e0125-redirect-unbound-param) | `redirect-unbound-param` | app | ルーティング |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | コア |
 | [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | コア |
 | [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | コア |
@@ -299,6 +297,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
-| `208-redirect-chain-params.kumiki` | reducer, tile, app | ルーティング | [§3.10](./routing.md#_3-10-redirects-static) |
+| `171-property-test-count.kumiki` | slot, reducer, tile | テスト | [§8.3.1](./testing.md#_8-3-1-構文) |
 <!-- examples:end -->
 :::

@@ -60,7 +60,6 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0007](./errors.md#e0007-duplicate-definition) | `duplicate-definition` | all | core |
 | [E0008](./errors.md#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) | `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant` | all | core |
 | [E0009](./errors.md#e0009-type-cycle) | `type-cycle` | type | core |
-| [E0010](./errors.md#e0010-redirect-cycle) | `redirect-cycle` | app | routing |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | core |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | core |
 | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | core |
@@ -84,7 +83,6 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | core |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | core |
-| [E0125](./errors.md#e0125-redirect-unbound-param) | `redirect-unbound-param` | app | routing |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | core |
 | [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | core |
 | [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | core |
@@ -299,6 +297,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
-| `208-redirect-chain-params.kumiki` | reducer, tile, app | routing | [§3.10](./routing.md#_3-10-redirects-static) |
+| `171-property-test-count.kumiki` | slot, reducer, tile | testing | [§8.3.1](./testing.md#_8-3-1-syntax) |
 <!-- examples:end -->
 :::
