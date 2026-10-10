@@ -1,4 +1,4 @@
-# Feature (routing.md §3.1.1): a `:name` segment reaches `route.params`
+# Feature (routing.md): a `:name` segment reaches `route.params`
 # percent-decoded, so `/items/a%2Fb` gives `id = "a/b"` and `/items/%E3%81%82`
 # gives `id = "あ"`. A segment that is not valid percent-encoding, such as the
 # stray `%` in `/items/100%` or escapes that do not spell UTF-8 (`%E3%81`),

@@ -1,8 +1,3 @@
-// language.md §1.6.5: within a `fn`, `$1`, `$2`, ... are the arguments in
-// order. So a positional is the parameter at its position, with that
-// parameter's declared type, and there is one per parameter: a positional
-// past the fn's arity names nothing.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
