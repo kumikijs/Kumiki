@@ -1,5 +1,4 @@
-# Feature (language.md §1.6.3): an index step into a Map at a key it does
-# not hold.
+# Feature: an index step into a Map at a key it does not hold.
 #
 # `m[k].f := v` is `m := m.update(k, $1.copy(f=v))`, and `update` writes
 # nothing when `k` is absent. So the write through a missing key leaves the
@@ -7,10 +6,9 @@
 # the declared type `Todo` does not describe. `m[k] := v` still inserts or
 # replaces the entry.
 #
-# The read `m[k]` at a key the Map does not hold is a panic (lifecycle.md
-# §7.2.2), as `xs[i]` past the end of a List is: the reducer's writes roll
-# back and `app.error` runs. `m.get(k)` is the read that answers `None`
-# there instead.
+# The read `m[k]` at a key the Map does not hold is a panic, as `xs[i]` past
+# the end of a List is: the reducer's writes roll back and `app.error` runs.
+# `m.get(k)` is the read that answers `None` there instead.
 #
 # The panicking read is armed by entering a route rather than by a button,
 # because `smoke` drives every button and fails on any reported panic.

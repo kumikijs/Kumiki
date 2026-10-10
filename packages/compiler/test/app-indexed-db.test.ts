@@ -1,9 +1,9 @@
-import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { lex } from "../src/lexer.ts";
 import { ParseError, parse } from "../src/parser.ts";
+import { compileOrFail } from "./helpers/module.ts";
 
-describe("parser: app.indexed-db (#79)", () => {
+describe("parser: app.indexed-db", () => {
   it("captures name / version / stores with optional indexes", () => {
     const src = `
       tile B = button(text="b")
@@ -75,7 +75,7 @@ describe("parser: app.indexed-db (#79)", () => {
   });
 });
 
-describe("codegen: app.indexed-db (#79)", () => {
+describe("codegen: app.indexed-db", () => {
   it("emits _idb literal and threads it to indexed-* handlers", () => {
     const src = `
       type Note = {id: Text, body: Text}
@@ -99,16 +99,14 @@ describe("codegen: app.indexed-db (#79)", () => {
           stores: [{name: "notes", key: "id", indexes: ["createdAt"]}]
         }
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain(
+    const js = compileOrFail(src);
+    expect(js).toContain(
       `const _idb = {"name":"notes-db","version":1,"stores":[{"name":"notes","key":"id","indexes":["createdAt"]}]};`,
     );
-    expect(result.js).toContain("indexedDb: _idb,");
-    expect(result.js).toMatch(/indexedRead\(\w+, _idb\)/);
-    expect(result.js).toMatch(/indexedWrite\(\w+, _idb\)/);
-    expect(result.js).toMatch(/indexedDelete\(\w+, _idb\)/);
+    expect(js).toContain("indexedDb: _idb,");
+    expect(js).toMatch(/indexedRead\(\w+, _idb\)/);
+    expect(js).toMatch(/indexedWrite\(\w+, _idb\)/);
+    expect(js).toMatch(/indexedDelete\(\w+, _idb\)/);
   });
 
   it("emits const _idb = undefined when app has no indexed-db block", () => {
@@ -117,9 +115,7 @@ describe("codegen: app.indexed-db (#79)", () => {
       tile Home = column(B)
       app App caps=[] routes={"/" -> Home, "/404" -> Home} init=[]
     `;
-    const result = compile(src, { runtimeSpecifier: "./runtime.js" });
-    expect(result.kind).toBe("ok");
-    if (result.kind !== "ok") return;
-    expect(result.js).toContain("const _idb = undefined;");
+    const js = compileOrFail(src);
+    expect(js).toContain("const _idb = undefined;");
   });
 });

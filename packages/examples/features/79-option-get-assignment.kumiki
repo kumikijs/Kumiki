@@ -1,6 +1,6 @@
-# Feature (language.md §1.6.3): assignment through `.get` edits the payload of
-# a `Some` and leaves the tag alone, and the same write against a `None` is a
-# no-op rather than a panic. Both spellings are here — the reducer assignment
+# Feature: assignment through `.get` edits the payload of a `Some` and leaves
+# the tag alone, and the same write against a `None` is a no-op rather than a
+# panic. Both spellings are here — the reducer assignment
 # (`draft.get.title := …`) and the `bind=` path, which writes back through the
 # same setter.
 #
