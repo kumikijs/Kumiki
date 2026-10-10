@@ -1,0 +1,23 @@
+{
+  "steps": [
+    {
+      "label": "the select starts on the slot's value",
+      "expect": { "noErrors": true, "domIncludes": ["picked: a"] }
+    },
+    {
+      "label": "the options the block supplies can be chosen",
+      "do": { "choose": "#fruit", "value": "Pear" },
+      "expect": { "noErrors": true, "state": { "pick": "p" }, "domIncludes": ["picked: p"] }
+    },
+    {
+      "label": "the note's open follows the slot its block reads",
+      "do": { "click": "#show" },
+      "expect": { "noErrors": true, "state": { "showing": true } }
+    },
+    {
+      "label": "and closes with it",
+      "do": { "click": "#hide" },
+      "expect": { "noErrors": true, "state": { "showing": false } }
+    }
+  ]
+}

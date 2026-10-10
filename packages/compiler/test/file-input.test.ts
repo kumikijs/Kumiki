@@ -1,6 +1,7 @@
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 describe('forms — input(type="file") bind=', () => {
   it("reports bind= on a file input (E0205)", () => {
@@ -102,6 +103,28 @@ describe("forms — accept/multiple gated to file inputs (E0206)", () => {
     expect(codes.length).toBe(2);
     expect(codes.some((e) => e.message.includes("accept"))).toBe(true);
     expect(codes.some((e) => e.message.includes("multiple"))).toBe(true);
+  });
+
+  const picker = (input: string): string[] =>
+    codesOf(
+      withApp(
+        `slot avatar : Option(File) = None\ntile Picker = ${input}\ntile App = column(Picker)`,
+      ),
+    );
+
+  it.each([
+    ['input(accept="image/*") {type: "file"}', []],
+    ['input(type="file") {multiple: true}', []],
+    ['input() {accept: "image/*", multiple: true}', ["E0206", "E0206"]],
+  ])("reads type, accept and multiple from the {…} block in %s", (input, codes) => {
+    expect(picker(input)).toEqual(codes);
+  });
+
+  it.each([
+    'input(type="file") {bind: avatar}',
+    'input(bind=avatar) {type: "file"}',
+  ])("reads bind and type from the {…} block in %s (E0205)", (input) => {
+    expect(picker(input)).toContain("E0205");
   });
 
   it("does not flag accept/multiple on a file input", () => {
