@@ -5,7 +5,7 @@ import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
 import type { Ctx, SymbolTable } from "./context.ts";
-import { binOpResult } from "./expr.ts";
+import { binOpResult, letInScope } from "./expr.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -306,6 +306,8 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "Unit":
       return prim("Unit", e.pos);
     case "Ref": {
+      // A bind with no type still shadows a slot of its name.
+      if (ctx.localBinds.has(e.name) && !ctx.localTypes.has(e.name)) return null;
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
       return sym.slots.get(e.name)?.type ?? null;
@@ -409,6 +411,8 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
         sym,
       );
     }
+    case "LetIn":
+      return inferType(e.body, sym, letInScope(e, sym, ctx));
     case "EmitExpr":
       return prim("EffectId", e.pos);
     case "Call": {

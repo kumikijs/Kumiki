@@ -845,6 +845,8 @@ unop        ::= '-' | '!'
 
 An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
+A `let x = v in body` evaluates to its body, read with `x` bound to `v`'s type, so the body is what lands where the expression is written: `fn label(n: Int) -> Text = let m = n + 1 in m` is [E0201](./errors.md#e0201-type-mismatch) at `m`, and `… in m.show` checks. Where nothing declares a type, the expression has its body's type, and a member read off it is that type's member: `(let b = box in b).size` on a record with a `size` field reads the field. `x` shadows a slot or binding of its name in the body even when `v`'s type cannot be decided; `x` is then undecidable, and nothing is reported against what reads it.
+
 ### 1.9.1 Prohibitions
 
 - **Lambda expressions prohibited**
