@@ -1,8 +1,8 @@
 import { unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
+import { firesUnheardIn, labelWrappedUnreached, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./against.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
@@ -100,18 +100,19 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
-    const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
+    const { ev, selector } = r.on;
+    const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const descendants = collectTileBuiltinKinds(selector.tile, sym);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
+        const reason = uiEventMismatchReason(ev, selector.tile, descendants);
         errors.push({
           code: "W0212",
           kind: "ui-event-tile-mismatch",
           severity: "warning",
           message:
-            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) ` +
-            `but tile "${r.on.selector.tile}" has no descendant that fires "${r.on.ev}" ` +
+            `Reducer "${r.name}" subscribes to ui.${ev}(${selector.tile}) but ${reason} ` +
             `(DOM-allowed: ${[...allowed].join(", ")}; observed in body: ${[...descendants].sort().join(", ")}). ` +
             `The handler is silently dropped.`,
           pos: r.on.pos,
@@ -124,6 +125,26 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+// A label-wrapped control's <input> and a kind whose renderer keeps the event
+// both do fire it, so "no descendant fires it" would be untrue for them.
+function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
+  const unreached = labelWrappedUnreached(ev, kinds);
+  const unheard = firesUnheardIn(ev, kinds);
+  const labelClause =
+    `a ${unreached.join(" / ")} listens on the <label> around its <input>, ` +
+    `and the "${ev}" that <input> fires does not bubble to the <label>`;
+  if (unheard.length === 0) {
+    if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
+    return `"${ev}" never reaches a listener in tile "${tile}": ${labelClause}`;
+  }
+  const clauses = unheard.map(
+    (g) =>
+      `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
+  );
+  if (unreached.length > 0) clauses.unshift(labelClause);
+  return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
 }
 
 function checkStmt(
