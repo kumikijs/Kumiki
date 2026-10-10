@@ -1,12 +1,3 @@
-// Runtime smoke test: mount a compiled app into a DOM, drive its interactive
-// elements, and surface failures that `check`/`build` cannot — runtime throws,
-// empty renders, and unhandled promise rejections.
-//
-// This catches the "it compiled but errors / renders nothing when you actually
-// use it" class of bug that previously required manual browser checking. It does
-// NOT verify behavioral correctness (a wrong-but-non-throwing result) — that is
-// the job of example-specific assertions.
-
 import { type ControlVerb, readControl, refusesControl } from "./control-check.ts";
 import type { AppShape, NeverEqualCause, ReconcileFallback, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
@@ -16,18 +7,11 @@ export type SmokePhase = "mount" | "initial-render" | "interaction" | "async";
 export type SmokeIssue = {
   phase: SmokePhase;
   message: string;
-  /** What triggered it, e.g. "click button[0] (\"Create issue\")". */
   trigger?: string | undefined;
 };
 
-/**
- * A reconcile diagnostic plus the same "when did this happen" context a
- * `SmokeIssue` carries. Without it a report says the runtime rebuilt a subtree
- * but not which interaction provoked it, which is the first thing anyone asks.
- */
 export type SmokeDiagnostic = {
   phase: SmokePhase;
-  /** What triggered it, e.g. "click button[0] (\"Create issue\")". */
   trigger?: string | undefined;
   diagnostic: RuntimeDiagnostic;
 };
@@ -38,15 +22,6 @@ export type SmokeReport = {
   rendered: boolean;
   interactions: number;
   issues: SmokeIssue[];
-  /**
-   * Reconcile observations collected while driving the app: subtrees the
-   * runtime rebuilt instead of reusing, reuse decisions that ignored a changed
-   * closure on a host tile, and host-tile props that can never compare equal
-   * however identical two renders are. These are performance and integration
-   * signals, not failures, so they do NOT affect `ok` — an app that rebuilds
-   * more than it needs to still works. Set `diagnosticsAsIssues` to treat them
-   * as failures instead.
-   */
   diagnostics: SmokeDiagnostic[];
 };
 
@@ -58,10 +33,7 @@ export type SmokeOptions = {
   /** Milliseconds to let async effects/timers settle after each step. Default: 30. */
   settleMs?: number;
   /**
-   * Also record each reconcile diagnostic as an issue, so any identity-losing
-   * rebuild fails the run. Off by default: an unkeyed sibling list whose length
-   * changes is ordinary, correct Kumiki, and failing on it would reject most
-   * apps. Turn it on for an app that has committed to keyed lists throughout.
+   * Also record each reconcile diagnostic as an issue, so any identity-losing rebuild fails the run.
    */
   diagnosticsAsIssues?: boolean;
 };
@@ -75,10 +47,6 @@ function signature(el: Element, index: number): string {
   return label ? `${tag}[${index}] ("${label}")` : `${tag}[${index}]`;
 }
 
-/**
- * Mount `app` into `root`, drive its UI, and report runtime failures.
- * Runs in any DOM environment (happy-dom for CI, a real browser for the playground).
- */
 export async function smoke(
   app: AppShape,
   root: HTMLElement,
@@ -148,10 +116,6 @@ export async function smoke(
 
     if (interact && mounted) {
       phase = "interaction";
-      // Re-query each round: most apps re-render on input, which replaces the
-      // element objects. A position+text signature lets us fire each *logical*
-      // element once (so a re-rendered same element is skipped, but new rows that
-      // appear after an action still get exercised) without looping forever.
       const fired = new Set<string>();
       for (let round = 0; round < maxInteractions; round++) {
         const next = pickNext(root, fired);
@@ -183,7 +147,7 @@ export async function smoke(
     try {
       dispose?.();
     } catch {
-      // ignore disposal errors
+      // The report is already built; a fault on the way out does not change it.
     }
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);
@@ -202,19 +166,11 @@ export async function smoke(
   }
 }
 
-/**
- * One-line rendering of a diagnostic promoted into `issues`. Exported for the
- * CLI so a diagnostic reads identically wherever it surfaces.
- */
 export function describeDiagnostic(d: RuntimeDiagnostic): string {
   const where = d.tile ? `${d.tile} (${d.tileKind})` : d.tileKind;
   if (d.kind === "never-equal-prop") {
     return `${where}'s ${d.field} ${describeNeverEqualCause(d.cause)} — this tile re-applies its props on every render`;
   }
-  // The two placement fallbacks rebuild nothing on their own: the keyed matcher
-  // stood down and the positional walk took over, so saying "rebuilt" would
-  // send the reader looking for churn that is not there. (A length change on
-  // the same parent still reports `child-count-change` separately.)
   if (d.reason === "wrapped-children" || d.reason === "unplaceable-insert") {
     return `reconcile could not key-match ${where}'s children: ${describeFallback(d)}`;
   }
@@ -230,8 +186,6 @@ function describeNeverEqualCause(cause: NeverEqualCause): string {
     case "nan":
       return "is NaN, which never compares equal to itself";
     default:
-      // Exhaustiveness, same as `describeFallback`: a new cause must be given
-      // wording here rather than degrade into a sentence that names none.
       return ((c: never) => String(c))(cause);
   }
 }
@@ -251,25 +205,10 @@ function describeFallback(f: ReconcileFallback): string {
     case "unplaceable-insert":
       return `unplaceable-insert (children[${f.index}], a ${f.childKind}, is new, and this parent's renderer does not place every child directly under its own element, so the keyed matcher could not mount it into the slot the renderer would have given it)`;
     default:
-      // Exhaustiveness: a new reason must be given wording here, not silently
-      // fall through to a message that names none of its evidence.
       return ((r: never) => String(r))(f);
   }
 }
 
-/**
- * Elements that are content on their own, with no text in them. Counting *any*
- * element instead would answer "rendered" for `tile App = column()`, which puts
- * one empty `<div>` under the root and shows the user a blank page — the exact
- * failure this tier is named for.
- *
- * Every entry is a selector some tile actually produces, and
- * `smoke-coverage.test.ts` mounts that tile for each one. A selector nothing
- * renders is worse than a missing one: it reads as coverage while matching
- * nothing, and the first version of this list carried seven of them while
- * missing `skeleton` — which made an app whose first paint is a placeholder
- * fail this tier.
- */
 export const SMOKE_CONTENT_SELECTORS = [
   "img",
   "svg",
@@ -281,8 +220,6 @@ export const SMOKE_CONTENT_SELECTORS = [
   "progress",
   "hr",
   "[contenteditable='true']",
-  // A spinner or a skeleton is a screen with nothing written on it yet, and an
-  // app whose first paint is one is rendering. Both announce themselves.
   "[role='status']",
   "[aria-busy='true']",
 ] as const;
@@ -294,15 +231,6 @@ function hasContent(root: HTMLElement): boolean {
   return root.querySelector(CONTENT_ELEMENTS) !== null;
 }
 
-/**
- * The next element to exercise: an unfired field or control, and only once
- * there are none left, an unfired `<form>`.
- *
- * The order is the point. `querySelectorAll` returns document order and a form
- * precedes its own fields, so taking the first match would submit every form
- * against the state the app mounted with — an empty draft against the
- * `nonempty` constraint the reducer is written to expect.
- */
 function pickNext(root: HTMLElement, fired: Set<string>): [HTMLElement, string] | null {
   const unfired = (els: HTMLElement[]): [HTMLElement, string] | undefined =>
     els
@@ -311,12 +239,6 @@ function pickNext(root: HTMLElement, fired: Set<string>): [HTMLElement, string] 
   return unfired(collectInteractive(root)) ?? unfired(collectForms(root)) ?? null;
 }
 
-/**
- * Forms are driven by dispatching `submit` on the form itself, which is what
- * the runtime listens for, because a `form` tile usually has no submit button
- * — `02-todomvc`'s is the shape the spec's own example uses — so there is
- * nothing to click.
- */
 function collectForms(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>("form"));
 }
@@ -325,35 +247,13 @@ function collectInteractive(root: HTMLElement): HTMLElement[] {
   return Array.from(
     root.querySelectorAll<HTMLElement>("button, input, textarea, select, [data-kumiki-bind]"),
   ).filter((el) => {
-    // File inputs cannot be exercised without a real `File` (the HTML spec
-    // forbids programmatic `.value` writes, and a synthetic empty `change`
-    // would mask reducer panics around `$event.files.head.get`). Skip them
-    // here so the smoke harness never reports a false PASS for the picker
-    // path; the dedicated tests/file-upload.test.ts covers the real-File
-    // round-trip.
     if (el.tagName.toLowerCase() === "input" && (el as HTMLInputElement).type === "file") {
       return false;
     }
-    // A control a user could not reach is skipped for the same reason, and by
-    // the rule the two scenario tiers ask (#369). Firing at one lies in both
-    // directions: a reducer behind an unreachable disabled button that throws
-    // is reported as a defect the app does not have, and a guard that stops
-    // working is invisible because this harness was firing regardless.
-    //
-    // A skip, not a report: `smoke` exercises whatever it finds rather than
-    // running a written script, so a control it cannot drive is not a mistake
-    // anyone made. That is the one thing it does differently from the tiers
-    // that are handed a scenario.
     return !refusesControl(smokeVerbFor(el), readControl(el));
   });
 }
 
-/**
- * The verb `fire` drives this element with, in the vocabulary the rule speaks.
- * Kept beside `actionFor` (which names the *event*, for the trace) rather than
- * derived from it: the two answer different questions, and a `select` is
- * `change` there and `choose` here.
- */
 function smokeVerbFor(el: HTMLElement): ControlVerb {
   const tag = el.tagName.toLowerCase();
   if (tag === "select") return "choose";
@@ -363,9 +263,6 @@ function smokeVerbFor(el: HTMLElement): ControlVerb {
     // `fire` clicks these rather than typing into them.
     return type === "checkbox" || type === "radio" ? "click" : "fill";
   }
-  // A button, and an `editable` under `[data-kumiki-bind]`, which `fire`
-  // clicks — so it asks for a gesture, and a read-only editable still takes
-  // one.
   return "click";
 }
 
@@ -399,9 +296,6 @@ function fire(el: HTMLElement): void {
     if (inp.type === "checkbox" || inp.type === "radio") {
       el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     } else {
-      // file inputs are filtered out by collectInteractive — see the comment
-      // there. Any input reaching here is text-like and tolerates a value
-      // write + input + change dispatch.
       inp.value = "smoke";
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));

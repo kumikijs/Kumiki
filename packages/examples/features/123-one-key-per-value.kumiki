@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.1 / §2.2.2): one key per value.
+# Feature: one key per value.
 #
 #   Set(T).add / remove / toggle / has
 #   Map(K, V).get / get-or / insert / remove / update, m[k], m[k] := v

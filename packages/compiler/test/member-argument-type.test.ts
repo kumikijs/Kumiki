@@ -1,21 +1,15 @@
-// A `Map` / `Set` / `List` member's argument whose parameter stdlib.md
-// §2.2.1–§2.2.3 types by the receiver — a key `K`, a value `V`, an element
-// `T`, or another container of the receiver's own type — is checked against
-// that type the way a slot write is (E0201 at the argument). The answer the
-// member gives claims the receiver's type, so an argument that is not of it
-// would put, say, a `Text` into a `List(Int)` slot.
+// The member's answer claims the receiver's type, so an argument not of it would put, say, a
+// `Text` into a `List(Int)` slot.
 
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 const app = (defs: string): string =>
-  `${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)\napp A\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []`;
+  withApp(`${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)`);
 
-/** Every diagnostic as `code line:col message`, in report order. */
 function diagnostics(defs: string): string[] {
-  return check(parse(lex(app(defs)))).map(
-    (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
-  );
+  return checkSource(app(defs)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 }
 
 const SLOTS = `type TodoId = nominal Text
@@ -30,7 +24,6 @@ slot s    : Set(Text)         = []
 slot b    : Bool              = false
 slot n    : Int               = 0`;
 
-/** One write in a reducer, on line 12 of the program. */
 const write = (stmt: string): string[] =>
   diagnostics(`${SLOTS}\nreducer go on=ui.click(Btn) do= ${stmt}`);
 

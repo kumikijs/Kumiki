@@ -1,6 +1,6 @@
 ---
 name: kumiki-iterate
-description: Build a working Kumiki app from requirements with NO human operating the app. Encodes the autonomous loop — generate → check → smoke → run scenario → read trace → diagnose → patch → repeat — using @kumiki/cli / @kumiki/mcp. Use when asked to build/extend a Kumiki feature or app and verify it actually works, not just compiles.
+description: Build a working Kumiki app from requirements with NO human operating the app. Encodes the autonomous loop — generate → check → smoke → run scenario → read trace → diagnose → patch → repeat — using @kumikijs/cli / @kumikijs/mcp. Use when asked to build/extend a Kumiki feature or app and verify it actually works, not just compiles.
 ---
 
 # Iterating on a Kumiki app without a human in the loop
@@ -95,7 +95,7 @@ are deterministic and hermetic.
 
 ## When a framework bug is the cause
 
-If the trace shows the runtime/codegen is wrong (not your Kumiki), fix it in
-`packages/`, add a minimal `packages/examples/features/*.kumiki` reproducer (CI smoke-tests
-it), and keep `pnpm exec turbo run test` green. That is how the repo answers bugs:
-with an example and a test.
+If the trace shows the runtime/codegen is wrong (not your Kumiki), add a minimal
+`packages/examples/features/*.kumiki` reproducer with the scenario that fails, fix it in
+`packages/`, and keep `pnpm exec turbo run typecheck test build && pnpm lint` green. That is how
+the repo answers bugs: with an example and a test.

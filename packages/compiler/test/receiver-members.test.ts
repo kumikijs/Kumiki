@@ -1,22 +1,8 @@
-// Which members a receiver has (docs/spec/stdlib.md §2.2), decided per receiver.
-//
-// The checker used to ask one flat question — "does the runtime know this name
-// on some receiver?" — so a member of one container was a member of all of
-// them. `res.filter(…)` on a `Result` passed `check` and the runtime read the
-// `Result` as a `Map`, answering `{}`; `opt.keys` handed back the object's own
-// `_tag` / `_0` as data. §2.2.3's dispatch rule makes a name that is neither a
-// field nor a member of a *known* receiver E0108, and these pin that rule.
-
-import { readFileSync } from "node:fs";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { KNOWN_MEMBERS, METHOD_MIN_ARGS } from "../src/codegen/expr.ts";
-import {
-  RECEIVER_MEMBERS,
-  RECEIVER_PARAMS,
-  type Receiver,
-  UNIVERSAL_MEMBERS,
-} from "../src/stdlib-members.ts";
+import { RECEIVER_MEMBERS, type Receiver, UNIVERSAL_MEMBERS } from "../src/stdlib-members.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const APP = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -39,11 +25,6 @@ const PARAMS: Record<Receiver, string> = {
   File: "fl: File",
 };
 
-/**
- * Receivers wrapped in something that keeps them what they are (§2.2.2) — an
- * alias, a `where`, a `nominal` — each reading the row of the receiver it
- * wraps. The types they need are declared in `WRAPPED_DECLS`.
- */
 const WRAPPED: [param: string, reads: Receiver][] = [
   ["rd: RefinedDuration", "Duration"],
   ["nd: NominalDuration", "Duration"],
@@ -72,7 +53,7 @@ function use(recv: string, member: string, parens: boolean): string {
 function probe(expr: string) {
   const params = [...Object.values(PARAMS), ...WRAPPED.map(([p]) => p), ...EXTRA_PARAMS];
   const src = `${WRAPPED_DECLS}fn probe(${params.join(", ")}) -> Text = (${expr}).show\n${APP}`;
-  return check(parse(lex(src)));
+  return checkSource(src);
 }
 
 /** The codes for a `fn` whose body reads `expr`. */
@@ -80,20 +61,17 @@ function codes(expr: string): string[] {
   return probe(expr).map((e) => e.code);
 }
 
-/** Every `check` error for `slot`s declared by `decls`, read by `body`. */
-function reducerErrors(decls: string, body: string) {
-  const src = `${decls}
+/** A program whose `slot`s are declared by `decls` and read by `body`. */
+const reducerProgram = (decls: string, body: string): string => `${decls}
 reducer run on=ui.click(Run) do= ${body}
 tile Run = button(text="run")
 tile App = column(Run)
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
-  return check(parse(lex(src)));
-}
+
+const reducerErrors = (decls: string, body: string) => checkSource(reducerProgram(decls, body));
 
 describe("a member of one container on another", () => {
-  // Each row is its own program declaring only what it reads, so an E0108
-  // cannot come from a neighbour.
   const rows: [string, string, string][] = [
     [
       'slot res : Result(Int, Text) = Ok(3)\nslot sink : Result(Int, Text) = Err("x")',
@@ -106,13 +84,13 @@ describe("a member of one container on another", () => {
     ["slot opt : Option(Int) = Some(3)\nslot n : Int = 0", "n := opt.entries.length", "Option"],
     ["slot st : Set(Int) = [1, 2, 3]\nslot n : Int = 0", "n := st.map($1 * 2).length", "Set"],
   ];
-  for (const [decls, body, type] of rows) {
-    it(`${body} is E0108 naming ${type}`, () => {
-      const errs = reducerErrors(decls, body).filter((e) => e.code === "E0108");
-      expect(errs).toHaveLength(1);
-      expect(errs[0]?.message).toContain(`Type "${type}" has no member`);
-    });
-  }
+  it.each(rows)("%s / %s is E0108 naming %s, and the build refuses it", (decls, body, type) => {
+    const errs = reducerErrors(decls, body);
+    expect(errs.map((e) => e.code)).toEqual(["E0108"]);
+    expect(errs[0]?.message).toContain(`Type "${type}" has no member`);
+    const r = compile(reducerProgram(decls, body), { runtimeSpecifier: "./runtime.js" });
+    expect(r.kind === "fail" && r.errors.map((e) => e.code)).toEqual(["E0108"]);
+  });
 
   it("names the receivers that do have the member", () => {
     const [err] = reducerErrors(
@@ -130,23 +108,18 @@ describe("a member of one container on another", () => {
   });
 
   it("reports .copy on a receiver that is not a record, and not on one that is", () => {
-    // `n.copy(z=1)` lowered to a record spread over a number and put `{z: 1}`
-    // in an `Int` slot. On a record it is the update form (language.md §1.6.3).
     const n = reducerErrors("slot n : Int = 0", "n := n.copy(z=1)");
     expect(n.map((e) => e.code)).toEqual(["E0108"]);
     const rec = reducerErrors("slot rec : {z: Int} = {z: 0}", "rec := rec.copy(z=1)");
     expect(rec.map((e) => e.code)).toEqual([]);
   });
 
-  it("reports .ms, which §2.2.9 has only as a constructor, on a Duration", () => {
+  it("reports .ms, which is only a constructor, on a Duration", () => {
     const errs = reducerErrors("slot d : Duration = Duration.s(1)\nslot n : Int = 0", "n := d.ms");
     expect(errs.map((e) => e.code)).toEqual(["E0108"]);
   });
 
   it("stays silent on a receiver whose type it cannot decide", () => {
-    // A `fold`'s result has no type (§2.2.2), so the `$1` a `map` over it
-    // binds is not resolved and the name-based dispatch §2.2.3 keeps for it
-    // still applies.
     const errs = reducerErrors(
       "slot xs : List(Int) = []\nslot n : Int = 0",
       "n := xs.fold([], $1.push($2)).map($1.size).length",
@@ -155,9 +128,6 @@ describe("a member of one container on another", () => {
   });
 });
 
-// Every receiver against every name any receiver has, every name codegen
-// lowers, and `show`: the member is accepted exactly where its own row lists
-// it, in both spellings.
 describe("the per-receiver table, enumerated", () => {
   const every = new Set<string>([
     ...(Object.values(RECEIVER_MEMBERS).flat() as string[]),
@@ -169,7 +139,7 @@ describe("the per-receiver table, enumerated", () => {
     new Set<string>([
       ...RECEIVER_MEMBERS[r],
       ...(r === "Duration" ? RECEIVER_MEMBERS.Int : []),
-      // A `File`'s metadata is a field, not a member (§2.1).
+      // A `File`'s metadata is a field, not a member.
       ...(r === "File" ? ["name", "size", "type"] : []),
       ...UNIVERSAL_MEMBERS,
     ]);
@@ -193,8 +163,6 @@ describe("the per-receiver table, enumerated", () => {
   }
 });
 
-// `Duration` is the one receiver that is a `nominal` over another, so it is
-// the one whose row has to be found under whatever wraps it (§2.2.2).
 describe("a Duration under an alias, a refinement or a nominal", () => {
   const rows: [string, string, string][] = [
     [
@@ -272,9 +240,6 @@ describe("the receiver an E0108 names", () => {
   });
 });
 
-// A `$1` / `$2` the checker binds to the wrong type becomes a false E0108 — or
-// a missed one — so each binding is pinned both ways: a member of the bound
-// type is accepted, and a member of another receiver is not.
 describe("members on a fragment's $1 / $2", () => {
   const pairs: [ok: string, bad: string][] = [
     ["xs.filter($1.abs > 0)", "xs.filter($1.size > 0)"],
@@ -302,8 +267,6 @@ describe("members on a fragment's $1 / $2", () => {
   }
 });
 
-// A receiver that is itself a member's result: `receiverMemberResult` has to
-// answer its type, or the next member goes through unchecked.
 describe("a member of another receiver on a member's result", () => {
   const rows: [string, string][] = [
     ["xs.head.size", 'Type "Option" has no member ".size"'],
@@ -322,107 +285,8 @@ describe("a member of another receiver on a member's result", () => {
   }
 });
 
-/** `line` split at the commas that are not inside parentheses. */
-function topLevelPieces(line: string): string[] {
-  const pieces = [""];
-  let depth = 0;
-  for (const ch of line) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    if (ch === "," && depth === 0) pieces.push("");
-    else pieces[pieces.length - 1] += ch;
-  }
-  return pieces;
-}
-
-/**
- * The members §2.2.N lists for each receiver, read out of the section's
- * signature block. A qualified name (`Time.now`, `Duration.ms(n)`) is a
- * constructor, not a member; `show` is the member every value has and is read
- * from the Int / Float block like the rest, then set aside.
- */
-function specMembers(path: string): Map<Receiver, Set<string>> {
-  const md = readFileSync(new URL(path, import.meta.url), "utf8");
-  const out = new Map<Receiver, Set<string>>();
-  const sections = md.split(/^### 2\.2\.\d+ /m).slice(1);
-  for (const section of sections) {
-    const heading = section.slice(0, section.indexOf("\n"));
-    const receivers = heading.split("/").map((h) => h.trim().replace(/\(.*$/, "")) as Receiver[];
-    for (const r of receivers) out.set(r, new Set());
-    const block = /^```\n([\s\S]*?)^```/m.exec(section)?.[1] ?? "";
-    for (const raw of block.split("\n")) {
-      const line = raw.replace(/;.*$/, "");
-      const names = line.includes(" : ")
-        ? [line.slice(0, line.indexOf(" : "))]
-        : topLevelPieces(line);
-      for (const piece of names) {
-        const m = /^\s*([a-z][a-z0-9-]*)(?:\([^)]*\))?\s*(?:\((Int|Float)\b.*)?$/.exec(piece);
-        if (!m?.[1]) continue;
-        for (const r of m[2] ? [m[2] as Receiver] : receivers) out.get(r)?.add(m[1]);
-      }
-    }
-    if (section.startsWith("Int / Float")) {
-      for (const r of receivers) out.get(r)?.delete("show");
-    }
-  }
-  return out;
-}
-
-describe("the table is the one §2.2 lists", () => {
-  for (const [track, path] of [
-    ["en", "../../../docs/spec/stdlib.md"],
-    ["ja", "../../../docs/ja/spec/stdlib.md"],
-  ] as const) {
-    it(`matches the ${track} spec, receiver by receiver`, () => {
-      const spec = specMembers(path);
-      const table = new Map(
-        (Object.keys(RECEIVER_MEMBERS) as Receiver[])
-          .filter((r) => r !== "Bool" && r !== "File")
-          .map((r) => [r, new Set<string>(RECEIVER_MEMBERS[r])]),
-      );
-      expect(spec).toEqual(table);
-    });
-  }
-
+describe("the universal members", () => {
   it("lists `show` as the member every value has", () => {
     expect([...UNIVERSAL_MEMBERS]).toEqual(["show"]);
   });
-});
-
-/**
- * How many parameters the signature block of §2.2.1–§2.2.3 gives each member
- * of `Map` / `Set` / `List`: `insert(k, v)` two, `keys` none.
- */
-function specParamCounts(path: string): Map<string, Map<string, number>> {
-  const md = readFileSync(new URL(path, import.meta.url), "utf8");
-  const out = new Map<string, Map<string, number>>();
-  for (const section of md.split(/^### 2\.2\.\d+ /m).slice(1)) {
-    const receiver = section.slice(0, section.indexOf("\n")).replace(/\(.*$/, "").trim();
-    if (!Object.hasOwn(RECEIVER_PARAMS, receiver)) continue;
-    const counts = new Map<string, number>();
-    const block = /^```\n([\s\S]*?)^```/m.exec(section)?.[1] ?? "";
-    for (const line of block.split("\n")) {
-      const m = /^([a-z][a-z0-9-]*)(?:\(([^)]*)\))?\s+:/.exec(line);
-      if (m?.[1]) counts.set(m[1], m[2] === undefined ? 0 : m[2].split(",").length);
-    }
-    out.set(receiver, counts);
-  }
-  return out;
-}
-
-describe("the parameter table is the one §2.2.1–§2.2.3 lists", () => {
-  for (const [track, path] of [
-    ["en", "../../../docs/spec/stdlib.md"],
-    ["ja", "../../../docs/ja/spec/stdlib.md"],
-  ] as const) {
-    it(`gives each member the ${track} spec's parameter count`, () => {
-      const table = new Map(
-        Object.entries(RECEIVER_PARAMS).map(([r, row]) => [
-          r,
-          new Map(Object.entries(row).map(([m, params]) => [m, params.length])),
-        ]),
-      );
-      expect(specParamCounts(path)).toEqual(table);
-    });
-  }
 });

@@ -1,8 +1,8 @@
-# Feature (stdlib.md §2.2): an argument has its parameter's type.
+# Feature (stdlib.md): an argument has its parameter's type.
 #
 #   xs.push(x)   m.insert(k, v)   s.add(x)   xs.concat(ys)
 #
-# In the signatures of §2.2.1–§2.2.3 a Map's key `K` and value `V`, and a
+# In the stdlib.md signatures a Map's key `K` and value `V`, and a
 # Set's or a List's element `T`, are the receiver's own type arguments, and
 # `merge` / `union` / `concat` take another container of the receiver's type.
 # An argument there is checked against that type the way a slot write is:
