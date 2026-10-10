@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "a read at a TodoId key answers the entry",
+      "do": { "click": "#read" },
+      "expect": {
+        "noErrors": true,
+        "state": { "shown": "hello" },
+        "domIncludes": ["shown: hello", "t1: hello"]
+      }
+    },
+    {
+      "label": "a write at a TodoId key replaces the entry",
+      "do": { "click": "#write" },
+      "expect": {
+        "noErrors": true,
+        "state": { "notes": { "t1": "edited" } },
+        "domIncludes": ["t1: edited"]
+      }
+    },
+    {
+      "label": "a write through the entry at a TodoId key edits its field",
+      "do": { "click": "#mark" },
+      "expect": {
+        "noErrors": true,
+        "state": { "todos": { "t1": { "title": "write docs", "done": true } } },
+        "domIncludes": ["done: true"]
+      }
+    },
+    {
+      "label": "a Text literal is a TodoId key",
+      "do": { "click": "#literal" },
+      "expect": {
+        "noErrors": true,
+        "state": { "notes": { "t1": "edited", "t2": "by a literal key" } }
+      }
+    },
+    {
+      "label": "a Text key reads and writes a Map(Text, Int)",
+      "do": { "click": "#count" },
+      "expect": {
+        "noErrors": true,
+        "state": { "counts": { "a": 1 } },
+        "domIncludes": ["a: 1"]
+      }
+    }
+  ]
+}

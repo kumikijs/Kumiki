@@ -242,6 +242,86 @@ describe("a List index is an Int", () => {
   });
 });
 
+describe("a Map index is its key type", () => {
+  const ids = `type TodoId = nominal Text
+type PostId = nominal Text
+type Todo = { done: Bool }
+slot notes : Map(TodoId, Text) = {}
+slot todos : Map(TodoId, Todo) = {}
+slot todo : TodoId = "t1"
+slot post : PostId = "p1"
+slot shown : Text = ""
+slot n : Int = 0`;
+
+  it.each([
+    ["a read", ``, `shown := notes[post]`, "Expected TodoId but got PostId"],
+    ["a write", ``, `notes[post] := "x"`, "Expected TodoId but got PostId"],
+    ["a write through the entry", ``, `todos[post].done := true`, "Expected TodoId but got PostId"],
+    [
+      "a read of a Text key",
+      `slot mt : Map(Text, Int) = {}`,
+      `n := mt[1]`,
+      "Expected Text but got Int",
+    ],
+    [
+      "a write of an Int key",
+      `slot mi : Map(Int, Text) = {}`,
+      `mi["a"] := "x"`,
+      "Expected Int but got Text",
+    ],
+    [
+      "a Map declared through an alias",
+      `type Notes = Map(TodoId, Text)\nslot al : Notes = {}`,
+      `al[post] := "x"`,
+      "Expected TodoId but got PostId",
+    ],
+    [
+      "the inner Map of a nested index",
+      `slot mm : Map(TodoId, Map(PostId, Int)) = {}`,
+      `n := mm[todo][todo]`,
+      "Expected PostId but got TodoId",
+    ],
+    [
+      "a nominal where one declared over it is the key",
+      `type Deep = nominal TodoId\nslot md : Map(Deep, Int) = {}`,
+      `n := md[todo]`,
+      "Expected Deep but got TodoId",
+    ],
+  ])("reports %s as E0201 naming the key type", (_what, decls, body, message) => {
+    const errs = checkSource(withBody(`${ids}\n${decls}`, body));
+    expect(errs.map((x) => x.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe(message);
+  });
+
+  it.each([
+    ["a key of the key type", ``, `shown := notes[todo]`],
+    ["a Text literal into a nominal over Text", ``, `notes["t2"] := "x"`],
+    ["a Text into a nominal over Text", `slot t : Text = ""`, `shown := notes[t]`],
+    ["a nominal into its base", `slot mt : Map(Text, Int) = {}`, `n := mt[todo]`],
+    [
+      "a nominal declared over the key type",
+      `type Deep = nominal TodoId\nslot deep : Deep = "d"`,
+      `todos[deep].done := true`,
+    ],
+    ["an Int into a Float key", `slot mf : Map(Float, Int) = {}`, `n := mf[1]`],
+    [
+      "a variant of a union key",
+      `type Status = Open | Closed\nslot ms : Map(Status, Int) = {}`,
+      `ms[Open] := 1`,
+    ],
+    [
+      "a record literal key",
+      `type Key = { a: Int }\nslot mr : Map(Key, Int) = {}`,
+      `n := mr[{a: 1}]`,
+    ],
+    ["a tuple literal key", `slot mp : Map(Tuple(Int, Text), Int) = {}`, `n := mp[(1, "a")]`],
+    ["an Option key", `slot mo : Map(Option(Int), Int) = {}`, `n := mo[Some(1)] + mo[None]`],
+    ["a key the checker cannot decide", ``, `notes[$el.key] := $el.text`],
+  ])("accepts %s", (_what, decls, body) => {
+    expect(codesOf(withBody(`${ids}\n${decls}`, body))).toEqual([]);
+  });
+});
+
 describe("the build agrees with check about a member write", () => {
   it("refuses to emit one", () => {
     const r = compile(withBody(`slot name : Text = "abc"`, `name.length := 9`), {

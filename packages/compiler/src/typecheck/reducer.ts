@@ -1,5 +1,5 @@
 import { unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
@@ -283,7 +283,7 @@ function checkIndexLvalue(
   ctx: Ctx,
 ): void {
   const base = unaliasType(lvalueType(lv.base, sym), sym);
-  checkListIndex(base, lv.index, sym, errors, ctx);
+  checkAgainst(lv.index, indexType(base, lv.index.pos), sym, errors, ctx);
   if (base?.kind !== "TypeApp" || base.name !== "Set") return;
   errors.push({
     code: "E0602",
@@ -293,15 +293,12 @@ function checkIndexLvalue(
   });
 }
 
-export function checkListIndex(
-  base: TypeExpr | null,
-  index: Expr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  if (base?.kind !== "TypeApp" || base.name !== "List") return;
-  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
+// The same on either side of `:=`, since the read and the write name the same place.
+export function indexType(base: TypeExpr | null, at: Pos): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return prim("Int", at);
+  if (base.name === "Map") return base.args[0] ?? null;
+  return null;
 }
 
 function checkMemberLvalue(
