@@ -1,4 +1,4 @@
-# Feature (language.md §1.9): a Map literal whose keys are `true` / `false`.
+# Feature (language.md): a Map literal whose keys are `true` / `false`.
 #
 #   slot labels : Map(Bool, Text) = {true: "on", false: "off"}
 #

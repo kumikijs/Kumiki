@@ -1,29 +1,11 @@
-// `null` is reserved, and a program may not use it (language.md §1.2.2,
-// §1.9.1): Kumiki has no null, and a value that may be absent is an `Option`.
-// The parser reads `null` wherever an expression goes, and the checker reports
-// it there as E0235 with that fix: one diagnostic, at the `null`, whatever the
-// expression around it. Where a record field name goes instead, `null` is a
-// parse error (`record-or-map-literal.test.ts`), as `true` is.
-
-import { check, codegen, lex, parse } from "@kumikijs/compiler";
+import { codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { checkSource, textAt } from "./helpers/diagnostics.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
-const app = (defs: string, caps = ""): string => `${defs}
-tile B = button(text="x")
-tile Home = column(B)
-app R
-    caps   = [${caps}]
-    routes = {"/" -> Home, "/404" -> Home}
-    init   = []`;
-
-/** Every diagnostic as `code kind` and the source text it points at, four characters of it. */
 function diagnose(defs: string, caps = ""): string[] {
-  const src = app(defs, caps);
-  const lines = src.split("\n");
-  return check(parse(lex(src))).map((e) => {
-    const at = (lines[e.pos.line - 1] ?? "").slice(e.pos.col - 1, e.pos.col + 3);
-    return `${e.code} ${e.kind} ${at}`;
-  });
+  const src = withButtonApp(defs, { caps });
+  return checkSource(src).map((e) => `${e.code} ${e.kind} ${textAt(src, e.pos).slice(0, 4)}`);
 }
 
 const LOAD = `effect load cap=storage.read in=Text out=Result(Text, Text) map-request={key: $1, decode: Decoder.Json(Text)}`;
@@ -56,7 +38,7 @@ describe("`null` where an expression goes is E0235 at the `null`, and nothing el
   });
 
   it("names the Option that stands for an absent value", () => {
-    const [e] = check(parse(lex(app("slot s : Option(Int) = null"))));
+    const [e] = checkSource(withButtonApp("slot s : Option(Int) = null"));
     expect(e).toMatchObject({
       code: "E0235",
       kind: "null-value",
@@ -68,11 +50,9 @@ describe("`null` where an expression goes is E0235 at the `null`, and nothing el
 });
 
 describe("`null` has no lowering", () => {
-  // Every `null` a program can write is E0235, so only `codegen()` called
-  // without `check()` meets one — and gets an error naming it rather than a
-  // JavaScript `null` that no Kumiki type holds.
+  // A JavaScript `null` would be a value no Kumiki type holds.
   it("so codegen without check refuses it at its position", () => {
-    const program = parse(lex(app("slot s : Option(Int) = null")));
+    const program = parse(lex(withButtonApp("slot s : Option(Int) = null")));
     expect(() => codegen(program, { runtimeSpecifier: "./runtime.js" })).toThrow(
       "`null` at 1:24 has no lowering — run `check` for the diagnostic",
     );
