@@ -1,11 +1,6 @@
-// `spliceLines` is how the write verbs put their lines into a file: it edits
-// the text in place instead of splitting it into lines and joining them back
-// with `\n`, which rewrote the end of every line in a CRLF file.
-//
-// The join is the oracle. On an LF text the splice must give its bytes for
-// every range the store can hand it — including the empty range a definition
-// sharing its first line with the next one gets — and on a CRLF text the same
-// lines, ended with CRLF.
+// The `\n` join the write verbs used before is the oracle. On an LF text the splice must give its
+// bytes for every range the store can hand it — including the empty range a definition sharing its
+// first line with the next one gets — and on a CRLF text the same lines, ended with CRLF.
 
 import { describe, expect, it } from "vitest";
 import { lineSpan, spliceLines } from "../src/store.ts";

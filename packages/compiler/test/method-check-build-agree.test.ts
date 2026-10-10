@@ -1,16 +1,3 @@
-// `check` and `build` must never disagree about a method call: whatever the
-// checker accepts, codegen lowers. A lowering that reads an argument the call
-// was not given throws a bare `TypeError` out of `compile()`, naming no file or
-// line.
-//
-// The argument counts are stated in codegen (`METHOD_MIN_ARGS`, next to the
-// lowering that reads them) and enforced by the checker, which also decides
-// `.get` / `.get-or` by receiver. So this walks every method codegen lowers
-// (`KNOWN_METHODS`), on a spread of receivers — the four `.get` has readings
-// on, an undecided one, and two it has none on — at every small count. A call
-// the checker rejects is fine; a call it accepts has to compile. Which of
-// `.get`'s calls it accepts is pinned in the two blocks after the walk.
-
 import { compile, KNOWN_METHODS } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -21,8 +8,6 @@ const RECEIVERS: ReadonlyArray<[label: string, decl: string, recv: string]> = [
   ["a Result", "slot v : Result(Int, Text) = Ok(1)", "v"],
   ["a Map", "slot v : Map(Text, Int) = {}", "v"],
   ["a List", "slot v : List(Int) = []", "v"],
-  // Two receivers `.get` has no reading on. The checker refuses `.get` on
-  // them as a member they lack, which the last block below pins.
   ["a Text", 'slot v : Text = ""', "v"],
   ["an Int", "slot v : Int = 0", "v"],
 ];
@@ -56,15 +41,10 @@ describe("every method call check accepts is one build compiles", () => {
       }
     }
     expect(crashed).toEqual([]);
-    // The walk reached codegen at all: a harness whose every program the
-    // checker rejects would pass the line above without lowering anything.
     expect(compiled).toBeGreaterThan(0);
   });
 });
 
-// The walk above passes whether or not a call reaches codegen, so it would
-// stay green if the checker began rejecting `.get`'s readings. Each reading
-// is pinned here as compiling on the receivers that have it.
 describe(".get compiles in the reading its receiver has", () => {
   it.each([
     ["the unwrap on an Option", "slot v : Option(Int) = Some(1)", "v.get()"],
@@ -78,10 +58,6 @@ describe(".get compiles in the reading its receiver has", () => {
   });
 });
 
-// And on the receivers it has no reading on, the walk's "does not crash" is
-// not the whole answer: every spelling of `.get` there — bare, and at every
-// count the walk tries — is refused as a member the receiver lacks, and as
-// nothing else.
 describe(".get is refused on the receivers that have no reading of it", () => {
   const spellings = [
     "v.get",

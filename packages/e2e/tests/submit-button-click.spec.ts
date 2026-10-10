@@ -1,21 +1,9 @@
-// A real click on a submit button that has a click reducer submits its form
-// (forms.md §5.2.2): a click reducer must not cancel the click, because
-// cancelling a submit button's click cancels its activation. This is the tier
-// where a cancelled activation is a real one.
-//
-// The program is example 136, the same one its `.scenario.json` drives.
-
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "136-submit-button-click.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("136-submit-button-click"), "utf8");
 
 const counts = (page: Page): Promise<{ clicks: unknown; submits: unknown }> =>
   page.evaluate(() => {
@@ -59,7 +47,5 @@ test("a button with no type is a submit button: its click reducer runs and it su
 test("Enter in the form's input submits it through the submit button", async ({ page }) => {
   await page.locator("#em").fill("ada@example.com");
   await page.locator("#em").press("Enter");
-  // Implicit submission fires a synthetic click on the default button, which
-  // is the submit button itself, so its click reducer runs too.
   expect(await counts(page)).toEqual({ clicks: 1, submits: 1 });
 });
