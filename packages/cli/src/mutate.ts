@@ -3,7 +3,17 @@ import type { RemovedNames } from "./mutate/verbs.ts";
 export { viewHash } from "./mutate/hash.ts";
 export { patchRevert, viewHistory } from "./mutate/history.ts";
 export { lockDef, unlockDef } from "./mutate/locks.ts";
-export { type DefSpec, newId, type OpLogEntry, readOpLog } from "./mutate/op-log.ts";
+export {
+  type DefSpec,
+  describeSkipped,
+  newId,
+  type OpLogEntry,
+  type OpLogOptions,
+  type OpLogRead,
+  readOpLog,
+  readOpLogResult,
+  type SkippedOpLogLine,
+} from "./mutate/op-log.ts";
 export {
   addDef,
   CASCADE_HELP,

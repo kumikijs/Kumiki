@@ -67,12 +67,32 @@ export function authorOf(): string {
   return process.env.KUMIKI_AUTHOR || "agent:local";
 }
 
-export function readOpLog(path: string): OpLogEntry[] {
-  return readOpLogFile(path).entries;
+/** A torn last line of the op log that a read skipped: the log, and the line's number from 1. */
+export type SkippedOpLogLine = { path: string; line: number };
+
+export type OpLogRead = { entries: OpLogEntry[]; skipped: SkippedOpLogLine | null };
+
+/**
+ * `onSkipped` is handed the torn last line a verb's read skipped, once per call and before the verb
+ * returns or throws, so the caller hears of it even when the verb then fails. The library prints
+ * nothing of it.
+ */
+export type OpLogOptions = { onSkipped?: (skipped: SkippedOpLogLine) => void };
+
+export function describeSkipped(skipped: SkippedOpLogLine): string {
+  return `${skipped.path}:${skipped.line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`;
 }
 
-type OpLogRead = {
-  entries: OpLogEntry[];
+export function readOpLogResult(path: string): OpLogRead {
+  const { entries, skipped } = readOpLogFile(path);
+  return { entries, skipped };
+}
+
+export function readOpLog(path: string): OpLogEntry[] {
+  return readOpLogResult(path).entries;
+}
+
+type OpLogFile = OpLogRead & {
   /** `null` when there is no log. */
   end: OpLogEnd | null;
 };
@@ -87,28 +107,23 @@ type OpLogEnd = {
   unterminated: boolean;
 };
 
-function readOpLogFile(path: string): OpLogRead {
+function readOpLogFile(path: string): OpLogFile {
   const p = opLogPath(path);
-  if (!fs.existsSync(p)) return { entries: [], end: null };
+  if (!fs.existsSync(p)) return { entries: [], skipped: null, end: null };
   // Sizes are counted in the bytes, not the decoded text: a byte that is not
   // valid UTF-8 decodes to U+FFFD, which takes three.
   const bytes = fs.readFileSync(p);
   const lines = bytes.toString("utf8").split(/\r?\n/);
   const entries: OpLogEntry[] = [];
-  let torn = false;
+  let skipped: SkippedOpLogLine | null = null;
   for (const [i, line] of lines.entries()) {
     if (!line.trim()) continue;
     let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch (e) {
-      // Warned at once, not by `process.emitWarning`, which waits a tick: a
-      // verb that then fails exits before the warning is printed.
       if (i === lines.length - 1) {
-        console.warn(
-          `warning: ${p}:${i + 1}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
-        );
-        torn = true;
+        skipped = { path: p, line: i + 1 };
         continue;
       }
       throw new Error(`${p}:${i + 1}: not valid JSON (${messageOf(e)})`);
@@ -121,11 +136,20 @@ function readOpLogFile(path: string): OpLogRead {
     if (problem !== undefined) throw new Error(`${p}:${i + 1}: ${problem}`);
     entries.push(op);
   }
+  const torn = skipped !== null;
   const size = torn ? bytes.lastIndexOf("\n") + 1 : bytes.length;
   return {
     entries,
+    skipped,
     end: { size, torn, unterminated: size > 0 && bytes[size - 1] !== 0x0a },
   };
+}
+
+/** Reads the op log for a verb, handing the line the read skipped to the verb's caller. */
+export function readOpLogFor(path: string, options: OpLogOptions): OpLogFile {
+  const log = readOpLogFile(path);
+  if (log.skipped !== null) options.onSkipped?.(log.skipped);
+  return log;
 }
 
 export function opShapeProblem(op: RawOp): string | undefined {
@@ -209,9 +233,9 @@ function depsFromBody(store: Store, body: string, selfName: string): string[] {
   return [...refs].sort();
 }
 
-export function logOp(path: string, op: RawOp): string {
+export function logOp(path: string, op: RawOp, options: OpLogOptions): string {
   const id = newId("op");
-  const log = readOpLogFile(path);
+  const log = readOpLogFor(path, options);
   const parent = log.entries.at(-1)?.["op-id"];
   const dependsOn = op.body !== undefined ? computeDependsOn(path, op.layer, op.name, op.body) : [];
   const entry: OpLogEntry = {

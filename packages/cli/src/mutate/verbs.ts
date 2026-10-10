@@ -14,7 +14,14 @@ import {
   withHeader,
 } from "./definition-text.ts";
 import { enforceLock } from "./locks.ts";
-import { type DefSpec, logOp, opLogPath, opShapeProblem, type RawOp } from "./op-log.ts";
+import {
+  type DefSpec,
+  logOp,
+  type OpLogOptions,
+  opLogPath,
+  opShapeProblem,
+  type RawOp,
+} from "./op-log.ts";
 
 export type RemovedNames = [requested: string, ...cascaded: string[]];
 
@@ -22,16 +29,30 @@ export type ReplaceResult = { opId: string; dropped: string[] };
 
 export type RemoveResult = { opId: string; removed: RemovedNames };
 
-export function addDef(path: string, layer: string, name: string, body: string): string {
-  return addDefs(path, [{ layer, name, body }]);
+export function addDef(
+  path: string,
+  layer: string,
+  name: string,
+  body: string,
+  options: OpLogOptions = {},
+): string {
+  return addDefs(path, [{ layer, name, body }], options);
 }
 
-export function addDefs(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
+export function addDefs(
+  path: string,
+  defs: readonly [DefSpec, ...DefSpec[]],
+  options: OpLogOptions = {},
+): string {
   enforceLock(path, `${defs[0].layer}.${defs[0].name}`);
-  return withWriteLock(path, () => addDefsLocked(path, defs));
+  return withWriteLock(path, () => addDefsLocked(path, defs, options));
 }
 
-function addDefsLocked(path: string, defs: readonly [DefSpec, ...DefSpec[]]): string {
+function addDefsLocked(
+  path: string,
+  defs: readonly [DefSpec, ...DefSpec[]],
+  options: OpLogOptions,
+): string {
   for (const d of defs) {
     if (!isDefinitionName(d.name)) {
       throw new Error(
@@ -48,16 +69,26 @@ function addDefsLocked(path: string, defs: readonly [DefSpec, ...DefSpec[]]): st
   const inserted = [main, ...rest].map((d) => assemble(d.layer, d.name, d.body)).join("\n\n");
   const next = src + joinLines(src, [src.endsWith("\n") ? `\n${inserted}\n` : `\n\n${inserted}\n`]);
   return commit(path, next, "add", () =>
-    logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) }),
+    logOp(path, { op: "add", ...main, ...(rest.length > 0 ? { with: rest } : {}) }, options),
   );
 }
 
-export function replaceDef(path: string, qname: string, body: string): ReplaceResult {
+export function replaceDef(
+  path: string,
+  qname: string,
+  body: string,
+  options: OpLogOptions = {},
+): ReplaceResult {
   enforceLock(path, qname);
-  return withWriteLock(path, () => replaceDefLocked(path, qname, body));
+  return withWriteLock(path, () => replaceDefLocked(path, qname, body, options));
 }
 
-function replaceDefLocked(path: string, qname: string, body: string): ReplaceResult {
+function replaceDefLocked(
+  path: string,
+  qname: string,
+  body: string,
+  options: OpLogOptions,
+): ReplaceResult {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -67,7 +98,11 @@ function replaceDefLocked(path: string, qname: string, body: string): ReplaceRes
   const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
   const next = spliceLines(store.source, entry.range.startLine, entry.range.endLine, inserted);
   const opId = commit(path, next, "replace", () =>
-    logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev }),
+    logOp(
+      path,
+      { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev },
+      options,
+    ),
   );
   const now = headerItems(load(path).byQName.get(qname)?.def);
   return { opId, dropped: headerItems(entry.def).filter((item) => !now.includes(item)) };
@@ -77,12 +112,22 @@ export const CASCADE_HELP =
   "also remove its dependents: every definition that references it, directly or transitively, which can include the app";
 
 /** Removes `qname`, plus everything that references it when `cascade`. */
-export function removeDef(path: string, qname: string, cascade: boolean): RemoveResult {
+export function removeDef(
+  path: string,
+  qname: string,
+  cascade: boolean,
+  options: OpLogOptions = {},
+): RemoveResult {
   enforceLock(path, qname);
-  return withWriteLock(path, () => removeDefLocked(path, qname, cascade));
+  return withWriteLock(path, () => removeDefLocked(path, qname, cascade, options));
 }
 
-function removeDefLocked(path: string, qname: string, cascade: boolean): RemoveResult {
+function removeDefLocked(
+  path: string,
+  qname: string,
+  cascade: boolean,
+  options: OpLogOptions,
+): RemoveResult {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -115,13 +160,18 @@ function removeDefLocked(path: string, qname: string, cascade: boolean): RemoveR
   }
   toRemove.delete(qname);
   const set: RemovedNames = [qname, ...[...toRemove].sort(compareQNames)];
-  return removeSetLocked(path, store, set, cascade);
+  return removeSetLocked(path, store, set, cascade, options);
 }
 
 /** Removes exactly `set`, rejecting it when anything outside it references a member. */
-export function removeSet(path: string, set: RemovedNames, cascade: boolean): RemoveResult {
+export function removeSet(
+  path: string,
+  set: RemovedNames,
+  cascade: boolean,
+  options: OpLogOptions = {},
+): RemoveResult {
   enforceLock(path, set[0]);
-  return withWriteLock(path, () => removeSetLocked(path, load(path), set, cascade));
+  return withWriteLock(path, () => removeSetLocked(path, load(path), set, cascade, options));
 }
 
 function removeSetLocked(
@@ -129,6 +179,7 @@ function removeSetLocked(
   store: Store,
   set: RemovedNames,
   cascade: boolean,
+  options: OpLogOptions,
 ): RemoveResult {
   enforceLock(path, set[0]);
   const missing = set.filter((q) => !store.byQName.has(q));
@@ -162,30 +213,46 @@ function removeSetLocked(
     next = spliceLines(next, e.range.startLine, e.range.endLine, []);
   }
   const opId = commit(path, next, "remove", () =>
-    logOp(path, {
-      op: "remove",
-      layer: main.layer,
-      name: main.name,
-      cascade,
-      ...(cascade ? { removed: set } : {}),
-      bodies: [main, ...rest],
-    }),
+    logOp(
+      path,
+      {
+        op: "remove",
+        layer: main.layer,
+        name: main.name,
+        cascade,
+        ...(cascade ? { removed: set } : {}),
+        bodies: [main, ...rest],
+      },
+      options,
+    ),
   );
   return { opId, removed: set };
 }
 
-export function renameDef(path: string, qname: string, newName: string): string {
+export function renameDef(
+  path: string,
+  qname: string,
+  newName: string,
+  options: OpLogOptions = {},
+): string {
   enforceLock(path, qname);
-  return withWriteLock(path, () => renameDefLocked(path, qname, newName));
+  return withWriteLock(path, () => renameDefLocked(path, qname, newName, options));
 }
 
-function renameDefLocked(path: string, qname: string, newName: string): string {
+function renameDefLocked(
+  path: string,
+  qname: string,
+  newName: string,
+  options: OpLogOptions,
+): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const old = entry.name;
-  if (old === newName) return logOp(path, { op: "rename", layer: entry.layer, name: old, newName });
+  if (old === newName) {
+    return logOp(path, { op: "rename", layer: entry.layer, name: old, newName }, options);
+  }
   if (store.byQName.has(`${entry.layer}.${newName}`)) {
     throw new Error(`Cannot rename ${qname}: ${entry.layer}.${newName} already exists`);
   }
@@ -206,16 +273,21 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
     next = spliceLines(next, line, line, lines.slice(line - 1, line));
   }
   return commit(path, next, "rename", () =>
-    logOp(path, { op: "rename", layer: entry.layer, name: old, newName }),
+    logOp(path, { op: "rename", layer: entry.layer, name: old, newName }, options),
   );
 }
 
-export function editDef(path: string, qname: string, patch: unknown): string {
+export function editDef(
+  path: string,
+  qname: string,
+  patch: unknown,
+  options: OpLogOptions = {},
+): string {
   enforceLock(path, qname);
-  return withWriteLock(path, () => editDefLocked(path, qname, patch));
+  return withWriteLock(path, () => editDefLocked(path, qname, patch, options));
 }
 
-function editDefLocked(path: string, qname: string, patch: unknown): string {
+function editDefLocked(path: string, qname: string, patch: unknown, options: OpLogOptions): string {
   enforceLock(path, qname);
   const store = load(path);
   const entry = store.byQName.get(qname);
@@ -232,14 +304,18 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
     const updatedStore = load(path);
     const updatedEntry = updatedStore.byQName.get(qname);
     const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
-    return logOp(path, {
-      op: "edit",
-      layer: entry.layer,
-      name: entry.name,
-      patch,
-      ...(newBody !== undefined ? { body: newBody } : {}),
-      prev,
-    });
+    return logOp(
+      path,
+      {
+        op: "edit",
+        layer: entry.layer,
+        name: entry.name,
+        patch,
+        ...(newBody !== undefined ? { body: newBody } : {}),
+        prev,
+      },
+      options,
+    );
   });
 }
 
@@ -289,11 +365,15 @@ function isPerLinePatch(p: unknown): p is Record<string, string> {
   return keys.length > 0 && keys.every((k) => k.startsWith("body:"));
 }
 
-export function patchApplyFile(path: string, opsFile: string): string[] {
-  return withWriteLock(path, () => patchApplyFileLocked(path, opsFile));
+export function patchApplyFile(
+  path: string,
+  opsFile: string,
+  options: OpLogOptions = {},
+): string[] {
+  return withWriteLock(path, () => patchApplyFileLocked(path, opsFile, options));
 }
 
-function patchApplyFileLocked(path: string, opsFile: string): string[] {
+function patchApplyFileLocked(path: string, opsFile: string, options: OpLogOptions): string[] {
   const original = readFileSync(path, "utf8");
   const originalLog = existsSync(opLogPath(path)) ? readFileSync(opLogPath(path), "utf8") : null;
   const lines = readFileSync(opsFile, "utf8")
@@ -302,9 +382,10 @@ function patchApplyFileLocked(path: string, opsFile: string): string[] {
     .filter(Boolean);
   const ids: string[] = [];
   try {
+    // Each op reads the log, but only the first can find a torn last line: logging the op cuts it off.
     for (const line of lines) {
       const op = JSON.parse(line) as RawOp;
-      ids.push(applyOne(path, op));
+      ids.push(applyOne(path, op, options));
     }
     return ids;
   } catch (e) {
@@ -323,28 +404,32 @@ function patchApplyFileLocked(path: string, opsFile: string): string[] {
   }
 }
 
-function applyOne(path: string, op: RawOp): string {
+function applyOne(path: string, op: RawOp, options: OpLogOptions): string {
   const problem = opShapeProblem(op);
   if (problem !== undefined) throw new Error(problem);
   switch (op.op) {
     case "add":
       if (op.body === undefined) throw new Error("add op missing body");
-      return addDefs(path, [{ layer: op.layer, name: op.name, body: op.body }, ...(op.with ?? [])]);
+      return addDefs(
+        path,
+        [{ layer: op.layer, name: op.name, body: op.body }, ...(op.with ?? [])],
+        options,
+      );
     case "replace":
       if (op.body === undefined) throw new Error("replace op missing body");
-      return replaceDef(path, `${op.layer}.${op.name}`, op.body).opId;
+      return replaceDef(path, `${op.layer}.${op.name}`, op.body, options).opId;
     case "edit":
       if (op.patch === undefined) throw new Error("edit op missing patch");
-      return editDef(path, `${op.layer}.${op.name}`, op.patch);
+      return editDef(path, `${op.layer}.${op.name}`, op.patch, options);
     case "rename":
       if (!op.newName) throw new Error("rename op missing newName");
-      return renameDef(path, `${op.layer}.${op.name}`, op.newName);
+      return renameDef(path, `${op.layer}.${op.name}`, op.newName, options);
     case "remove": {
       const main = `${op.layer}.${op.name}`;
-      if (op.removed === undefined) return removeDef(path, main, op.cascade ?? false).opId;
+      if (op.removed === undefined) return removeDef(path, main, op.cascade ?? false, options).opId;
       // `opShapeProblem` checked that the recorded set starts with `main`.
       const [, ...rest] = op.removed;
-      return removeSet(path, [main, ...rest], true).opId;
+      return removeSet(path, [main, ...rest], true, options).opId;
     }
     default:
       throw new Error(`unknown op kind "${op.op}"`);

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { describeEdit, editDef } from "../mutate.ts";
 import { readInputFile } from "./_shared/body-input.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { exitWithUsage, parseJsonOrExit, printOrExit, requireValue } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki edit <file> <qname> <patch-json>";
@@ -44,7 +45,7 @@ export function registerEdit(program: Command): string {
           describeEdit({
             op: "edit",
             qname,
-            opId: editDef(resolve(process.cwd(), file), qname, patch),
+            opId: editDef(resolve(process.cwd(), file), qname, patch, WARN_SKIPPED),
           }),
         );
       },

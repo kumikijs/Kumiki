@@ -58,6 +58,16 @@ export async function callTool(
   return (await call(client, name, args)).body;
 }
 
+/** Each text block of a tool's answer, in order. */
+export async function callBlocks(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string[]> {
+  const res = await client.callTool({ name, arguments: args });
+  return (res.content as TextContent[]).map((c) => c.text);
+}
+
 /** A one-shot call on a fresh server, for tests that only need the result. */
 export function callOnce(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   return withClient((client) => call(client, name, args));
