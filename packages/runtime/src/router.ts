@@ -5,6 +5,7 @@ import {
   NONE,
   overridableInvoke,
   type ParsedRoute,
+  type RedirectEntry,
   type Router,
   type RoutingImpl,
   someOf,
@@ -121,15 +122,58 @@ function parentBare(pattern: string): string | null {
   return pattern.endsWith("/*") ? pattern.slice(0, -2) || "/" : null;
 }
 
+/** A redirect does what a `navigate-replace` to its target would, so a redirected target is redirected again, and the caller replaces the URL once with where the chain lands. */
 function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
   if (!routes) return null;
-  const path = loc.pathname || "/";
+  return followRedirects(loc.pathname || "/", (path) => redirectStep(routes, path));
+}
+
+/** The limit browsers put on an HTTP redirect chain. */
+const MAX_REDIRECTS = 20;
+
+/** A chain that loops or runs past `MAX_REDIRECTS` is reported and applies no redirect, since it would never end. */
+export function followRedirects(
+  start: string,
+  step: (path: string) => string | null,
+): string | null {
+  const chain = [start];
+  for (let next = step(start); next !== null; next = step(next)) {
+    const looped = chain.includes(next);
+    chain.push(next);
+    if (looped || chain.length > MAX_REDIRECTS + 1) {
+      const what = looped ? "redirect loop" : `more than ${MAX_REDIRECTS} redirects`;
+      console.error(`[kumiki] ${what}: ${chain.join(" ->> ")} — stopped, no redirect applied`);
+      return null;
+    }
+  }
+  return chain.length > 1 ? (chain[chain.length - 1] ?? null) : null;
+}
+
+function redirectStep(routes: RouteList, path: string): string | null {
   const owner = firstMatch(routes, path);
-  if (!owner) return null;
-  if ("redirectTo" in owner) return owner.redirectTo;
-  if (!owner.subRoutes || owner.subRoutes.length === 0) return null;
-  const child = firstMatch(owner.subRoutes, path);
-  return child && "redirectTo" in child ? child.redirectTo : null;
+  const entry =
+    owner && !("redirectTo" in owner) && owner.subRoutes?.length
+      ? firstMatch(owner.subRoutes, path)
+      : owner;
+  return entry && "redirectTo" in entry ? landing(entry, path) : null;
+}
+
+/** A segment is carried as the path has it, so the target's own match decodes it once, as it would the same URL asked for directly. */
+function landing(r: RedirectEntry, path: string): string {
+  const segs = path.split("/").filter(Boolean);
+  const bound = new Map<string, string>();
+  for (const [i, p] of r.pattern.split("/").filter(Boolean).entries()) {
+    if (p === "*") {
+      bound.set(p, segs.slice(i).join("/"));
+      break;
+    }
+    if (p.startsWith(":")) bound.set(p, segs[i] ?? "");
+  }
+  const out = r.redirectTo.split("/").flatMap((s) => {
+    const v = bound.get(s);
+    return v === undefined ? [s] : v === "" ? [] : [v];
+  });
+  return out.join("/") || "/";
 }
 
 /** The entry of `list` that owns `path`: its first match in specificity order. */
