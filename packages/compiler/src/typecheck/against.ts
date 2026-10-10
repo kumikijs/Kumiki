@@ -1,5 +1,6 @@
 import {
   assignable,
+  isOpaque,
   recordFieldType,
   typeToString,
   unaliasType,
@@ -354,13 +355,26 @@ export function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
     if (lv.field === "get") return unwrappedType(base);
     return null;
   }
-  if (base.kind === "TypeApp") {
-    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
-    // a right-hand side to be checked against.
-    if (base.name === "List") return base.args[0] ?? null;
-    if (base.name === "Map") return base.args[1] ?? null;
+  const step = indexStep(base, sym);
+  return step.kind === "place" ? step.type : null;
+}
+
+// One answer for both questions the left of `:=` asks of an index step (can it be written
+// through, and what is the right-hand side checked against), so the two cannot disagree.
+export type IndexStep =
+  | { kind: "place"; type: TypeExpr | null }
+  | { kind: "no-place" }
+  | { kind: "undecidable" };
+
+export function indexStep(base: TypeExpr | null, sym: SymbolTable): IndexStep {
+  if (base === null || isOpaque(base, sym)) return { kind: "undecidable" };
+  if (base.kind === "TypeApp" && base.name === "List") {
+    return { kind: "place", type: base.args[0] ?? null };
   }
-  return null;
+  if (base.kind === "TypeApp" && base.name === "Map") {
+    return { kind: "place", type: base.args[1] ?? null };
+  }
+  return { kind: "no-place" };
 }
 
 export function checkEmitTarget(

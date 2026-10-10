@@ -1,0 +1,45 @@
+{
+  "steps": [
+    {
+      "label": "initial state",
+      "expect": {
+        "noErrors": true,
+        "state": { "rec": { "a": 1 } },
+        "domIncludes": ["a+1 = 2", "k = 0", "xs = 1,2,3", "maybe = 1", "n = 5, word = abc"]
+      }
+    },
+    {
+      "label": "a record is written through its field step, and the field stays an Int",
+      "do": { "click": "#field" },
+      "expect": { "noErrors": true, "state": { "rec": { "a": 2 } }, "domIncludes": ["a+1 = 3"] }
+    },
+    {
+      "label": "a Map index names the entry under its key",
+      "do": { "click": "#entry" },
+      "expect": { "noErrors": true, "state": { "counts": { "k": 7 } }, "domIncludes": ["k = 7"] }
+    },
+    {
+      "label": "a List index names the element at its position",
+      "do": { "click": "#element" },
+      "expect": { "noErrors": true, "state": { "xs": [9, 2, 3] }, "domIncludes": ["xs = 9,2,3"] }
+    },
+    {
+      "label": "an Option is written through .get",
+      "do": { "click": "#payload" },
+      "expect": {
+        "noErrors": true,
+        "state": { "maybe": { "_tag": "Some", "_0": 5 } },
+        "domIncludes": ["maybe = 5"]
+      }
+    },
+    {
+      "label": "an Int and a Text are replaced whole",
+      "do": { "click": "#whole" },
+      "expect": {
+        "noErrors": true,
+        "state": { "n": 7, "word": "z" },
+        "domIncludes": ["n = 7, word = z"]
+      }
+    }
+  ]
+}

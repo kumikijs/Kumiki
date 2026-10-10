@@ -1060,7 +1060,7 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 ### E0602 `unassignable-member`
 
-An lvalue step names no place in its receiver: a **stdlib member** where a field was expected, or an **index into a `Set`**. The lvalue step set is closed ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field, an index into a `Map` or a `List`, and `.get` on an `Option` / `Result` — so neither can be written through. A member segment would become a literal key and the write would replace the slot with a record: `name.length := 9` on a `Text` left the slot holding `{"length": 9}`.
+An lvalue step names no place in its receiver: a **stdlib member** where a field was expected, or an **index into a receiver that is neither a `Map` nor a `List`**. The lvalue step set is closed ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field, an index into a `Map` or a `List`, and `.get` on an `Option` / `Result` — so neither can be written through. A member segment would become a literal key and the write would replace the slot with a record: `name.length := 9` on a `Text` left the slot holding `{"length": 9}`.
 
 > `Cannot assign through ".<member>": it is a member of "<T>", not a field`
 
@@ -1070,9 +1070,15 @@ The name is dispatched, not reserved: a record that declares a field named `leng
 
 For a member, E0602 says the name **is** a member of this receiver, so it is only raised when that sentence is true. A name that is not a member here is [E0108](#e0108-undef-member) instead, on both sides of `:=` alike: one the receiver simply does not have (`name.frist`), and one that belongs to another receiver — `.abs` is a method of `Int` / `Float`, so on a `Text` it is undefined rather than unassignable. A receiver whose type cannot be decided — a union, an opaque type parameter — raises neither, exactly as on the read side: a false error on a dynamic receiver is worse than the silence.
 
-For an index, E0602 is raised when the receiver's type is known to be a `Set` — declared directly, through an alias or `nominal`, or reached through a field, a `List` element, a `Map` value or `.get`. An index names a place — an entry of a `Map`, a position of a `List` — and a Set has membership and no places, so `tags[x] := v` has nowhere to land:
+For an index, E0602 is raised when the receiver's type is known and is neither a `Map` nor a `List` — declared directly, through an alias or `nominal`, or reached through a field, a `List` element, a `Map` value or `.get`. An index names a place — an entry of a `Map`, a position of a `List` — and nothing else has one. A Set has membership and no places, so `tags[x] := v` has nowhere to land:
 
 > `Cannot assign through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
+
+Nor do a record, a scalar, an `Option`, a `Result`, a `Tuple` or a union, and the message names the receiver's type as the program writes it:
+
+> `Cannot assign through an index into "<T>": an index names a place only in a Map or a List`
+
+A union is judged here although a member on one is not: the member table has no row for a union, but whichever variant a union value holds, it is neither a `Map` nor a `List`. The error is at the step, with no type mismatch behind it: past a step that names no place the path has no type, so neither the steps after it nor the right-hand side is checked against one. Without this check the right-hand side would be checked against nothing: `r["a"] := "oops"` on `type R = {a: Int}` would pass `check` and store the Text in the Int field — while `r.a := "oops"` is [E0201](#e0201-type-mismatch) — and the same write on an `Int` or a `Text` would panic at run time. On a record, a key written as a literal that names one of its fields is answered with that field's step, `— write the field step ".a"`. A receiver whose type is not known — a type name written without arguments that resolves to nothing — raises nothing; the name is [E0117](#e0117-undef-type) where it is written.
 
 A **`bind=` target** is written through the same way — it is the place the control writes to ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)) — and its steps are a path's, written without parentheses. A step written as a call names the value the call answers, not a place, so it is E0602 at the call, on any receiver:
 
@@ -1080,7 +1086,7 @@ A **`bind=` target** is written through the same way — it is the place the con
 
 Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
 
-**Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+**Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For an index into anything else, write the step that names a place: a record's field as `r.a := v`, an `Option` / `Result` payload through `.get` (`o.get := v`), and any other value whole (`n := v`).
 
 ## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 

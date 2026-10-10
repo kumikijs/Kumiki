@@ -1,0 +1,62 @@
+# Feature: an index step names a place only in a Map or a List.
+#
+# `m[k] := v` writes the Map's entry under `k`, and `xs[i] := v` the List's
+# element at `i`. No other receiver has a place for an index to name, so an
+# index write into one is E0602 at check time rather than a write. A record
+# is written through a field step, an Option through `.get`, and a scalar —
+# an `Int`, a `Text`, the `Int` element of a `List(Int)` — is replaced whole.
+#
+# This app makes each of those writes the way that names a place. The
+# refusals are check-time, so they live in the compiler's tests, which put the
+# index spelling of each write back into this program.
+
+type Counter = { a: Int }
+
+slot rec    : Counter        = {a: 1}
+slot counts : Map(Text, Int) = {}
+slot xs     : List(Int)      = [1, 2, 3]
+slot maybe  : Option(Int)    = Some(1)
+slot n      : Int            = 5
+slot word   : Text           = "abc"
+
+reducer write-field on=ui.click(Field)
+    do= rec.a := 2
+
+reducer write-entry on=ui.click(Entry)
+    do= counts["k"] := 7
+
+reducer write-element on=ui.click(Element)
+    do= xs[0] := 9
+
+reducer write-payload on=ui.click(Payload)
+    do= maybe.get := 5
+
+reducer write-int on=ui.click(Whole)
+    do= n := 7
+
+reducer write-text on=ui.click(Whole)
+    do= word := "z"
+
+tile Field   = button(text="field")   {id: "field"}
+tile Entry   = button(text="entry")   {id: "entry"}
+tile Element = button(text="element") {id: "element"}
+tile Payload = button(text="payload") {id: "payload"}
+tile Whole   = button(text="whole")   {id: "whole"}
+
+tile App
+    = column(
+        Field,
+        Entry,
+        Element,
+        Payload,
+        Whole,
+        text("a+1 = " + (rec.a + 1).show),
+        text("k = " + counts.get-or("k", 0).show),
+        text("xs = " + xs.map($1.show).join(",")),
+        text("maybe = " + maybe.get-or(0).show),
+        text("n = " + n.show + ", word = " + word))
+
+app IndexWritePlaces
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

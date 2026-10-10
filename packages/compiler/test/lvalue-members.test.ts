@@ -1,6 +1,7 @@
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { defined } from "./helpers/defined.ts";
+import { checkSource, codesOf, textAt } from "./helpers/diagnostics.ts";
 import { compileOrFail, loweredOf } from "./helpers/module.ts";
 import { withApp } from "./helpers/programs.ts";
 
@@ -181,6 +182,66 @@ describe("an index step into a Set", () => {
     ["the payload of an Option", `slot maybe : Option(Set(Int)) = None`, `maybe.get[1] := 2`],
   ])("is E0602 where the Set is %s", (_how, decls, body) => {
     expect(codesOf(withBody(decls, body))).toEqual(["E0602"]);
+  });
+});
+
+describe("an index step into a receiver with no places", () => {
+  it.each([
+    ["an Int", `slot n : Int = 5`, `n[0] := 7`, "Int"],
+    ["a Text", `slot t : Text = "abc"`, `t[0] := "z"`, "Text"],
+    ["a Bool", `slot b : Bool = false`, `b[0] := true`, "Bool"],
+    ["an Option", `slot o : Option(Int) = Some(1)`, `o[0] := 5`, "Option(Int)"],
+    ["a Result", `slot res : Result(Int, Text) = Ok(1)`, `res[0] := 5`, "Result(Int, Text)"],
+    ["a Tuple", `slot p : Tuple(Int, Int) = (1, 2)`, `p[0] := 3`, "Tuple(Int, Int)"],
+    ["a union", `type Filter = All | Done\nslot f : Filter = All`, `f[0] := Done`, "Filter"],
+    ["a record", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r[0] := 2`, "R"],
+    ["an alias of Int", `type Count = Int\nslot c : Count = 0`, `c[0] := 1`, "Count"],
+    ["a List's Int element", `slot xs : List(Int) = [1, 2, 3]`, `xs[0][0] := 9`, "Int"],
+    ["a Map's Text value", `slot m : Map(Text, Text) = {}`, `m["k"][0] := "v"`, "Text"],
+    ["an Option's payload", `slot o : Option(Int) = Some(1)`, `o.get[0] := 5`, "Int"],
+  ])("is E0602 on %s, at the step and alone", (_what, decls, body, name) => {
+    const src = withBody(decls, body);
+    const errs = checkSource(src);
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.kind).toBe("unassignable-member");
+    expect(errs[0]?.message).toBe(
+      `Cannot assign through an index into "${name}": an index names a place only in a Map or a List`,
+    );
+    expect(textAt(src, defined(errs[0], "an E0602").pos)).toBe(body.slice(body.lastIndexOf("[")));
+  });
+
+  it("is E0602 on a record, and a key that names one of its fields gets that field's step", () => {
+    const decls = `type R = { a: Int }\nslot r : R = { a: 1 }`;
+    const errs = checkSource(withBody(decls, `r["a"] := "oops"`));
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.message).toBe(
+      `Cannot assign through an index into "R": an index names a place only in a Map or a List — write the field step ".a"`,
+    );
+    expect(codesOf(withBody(decls, `r.a := "oops"`))).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["a key that is no field of the record", `r["b"] := 2`],
+    ["a key that is not written as a literal", `r[k] := 2`],
+  ])("names no field step for %s", (_what, body) => {
+    const decls = `type R = { a: Int }\nslot r : R = { a: 1 }\nslot k : Text = "a"`;
+    const errs = checkSource(withBody(decls, body));
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.message).not.toContain("field step");
+  });
+
+  it("reports the first step that names no place, not every step after it", () => {
+    const body = `n[0][1] := 7`;
+    const src = withBody(`slot n : Int = 5`, body);
+    const errs = checkSource(src);
+    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
+    expect(errs[0]?.message).toContain('into "Int"');
+    expect(textAt(src, defined(errs[0], "an E0602").pos)).toBe(body.slice(body.indexOf("[")));
+  });
+
+  it("stays silent on a receiver whose type is not known", () => {
+    const errs = checkSource(withBody(`slot u : Mystery = 0`, `u[0] := 1`));
+    expect(errs.map((e) => e.code)).toEqual(["E0117"]);
   });
 });
 

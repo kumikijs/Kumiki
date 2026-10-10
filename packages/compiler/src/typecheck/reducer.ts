@@ -1,9 +1,9 @@
-import { unaliasType } from "../assignable.ts";
+import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
-import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./against.ts";
+import { checkAgainst, checkEmitTarget, indexStep, lvalueType, unwrappedType } from "./against.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
@@ -282,15 +282,27 @@ function checkIndexLvalue(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  const raw = lvalueType(lv.base, sym);
+  const base = unaliasType(raw, sym);
   checkListIndex(base, lv.index, sym, errors, ctx);
-  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
+  if (raw === null || base === null || indexStep(base, sym).kind !== "no-place") return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
-    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    message: noPlaceMessage(raw, base, lv.index, sym),
     pos: lv.pos,
   });
+}
+
+function noPlaceMessage(raw: TypeExpr, base: TypeExpr, index: Expr, sym: SymbolTable): string {
+  if (base.kind === "TypeApp" && base.name === "Set") {
+    return `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`;
+  }
+  const field =
+    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
+      ? ` — write the field step ".${index.value}"`
+      : "";
+  return `Cannot assign through an index into "${typeToString(raw)}": an index names a place only in a Map or a List${field}`;
 }
 
 export function checkListIndex(
