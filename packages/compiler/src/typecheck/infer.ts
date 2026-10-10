@@ -31,6 +31,15 @@ function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | nu
 
 export const prim = (name: PrimName, pos: Pos): TypeExpr => ({ kind: "TypePrim", name, pos });
 
+// An undecidable payload could be anything, so it fits.
+function userVariantHolds(tag: string, payloads: TypeExpr[], sym: SymbolTable): boolean {
+  return (sym.unionVariants.get(tag) ?? []).some(
+    (declared) =>
+      declared.length === payloads.length &&
+      declared.every((d, i) => assignable(payloads[i] ?? null, d, sym)),
+  );
+}
+
 export const container = (name: string, args: TypeExpr[], pos: Pos): TypeExpr => ({
   kind: "TypeApp",
   name,
@@ -383,9 +392,11 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return container("Map", [k ?? unknownType(e.pos), v ?? unknownType(e.pos)], e.pos);
     }
     case "Variant": {
-      const inner = e.payload[0]
-        ? (inferType(e.payload[0], sym, ctx) ?? unknownType(e.pos))
-        : unknownType(e.pos);
+      // A union may declare `Ok` or `None` too, so a built-in tag that a variant of the
+      // program's own could hold is undecidable from the expression alone, like any user tag.
+      const payloads = e.payload.map((p) => inferType(p, sym, ctx) ?? unknownType(e.pos));
+      if (userVariantHolds(e.name, payloads, sym)) return null;
+      const inner = payloads[0] ?? unknownType(e.pos);
       if (e.name === "Some") return container("Option", [inner], e.pos);
       if (e.name === "None") return container("Option", [unknownType(e.pos)], e.pos);
       if (e.name === "Ok") return container("Result", [inner, unknownType(e.pos)], e.pos);
