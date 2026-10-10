@@ -11,6 +11,8 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     setupFiles: ["./src/helpers/setup.ts"],
     server: { deps: { external: [/\/\.smoke-tmp\/[^/]+\/app\.mjs(?:\?|$)/] } },
+    // Non-zero and west of UTC, so a date-only string misread as UTC midnight shows up as the
+    // previous local day.
     env: { TZ: "America/Los_Angeles" },
   },
 });

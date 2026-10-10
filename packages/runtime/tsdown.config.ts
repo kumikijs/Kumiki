@@ -3,6 +3,8 @@ import { defineConfig } from "tsdown";
 import { publishedOutputOptions } from "../../tsdown.shared.ts";
 
 export default defineConfig([
+  // One unminified file: inlineRuntime strips its trailing export line and relies on the
+  // top-level names matching the export names.
   {
     entry: { index: "src/index.ts" },
     format: "esm",
@@ -10,6 +12,8 @@ export default defineConfig([
     fixedExtension: false,
     outputOptions: publishedOutputOptions,
   },
+  // Its own build, so index.js inlines the code it shares with text-distance instead of
+  // importing it from a shared chunk.
   {
     entry: { "text-distance": "src/text-distance.ts" },
     format: "esm",
@@ -69,8 +73,8 @@ export default defineConfig([
     fixedExtension: false,
     minify: true,
     clean: false,
-    // The CLI ships modules by entry name, so code an entry shares with another entry must
-    // merge into one of them rather than into an unnamed chunk.
+    // Lets an entry chunk export more than its own signature, so code another entry imports
+    // from it stays in that entry instead of moving to a chunk of its own.
     inputOptions: { preserveEntrySignatures: "allow-extension" },
     outputOptions: publishedOutputOptions,
   },

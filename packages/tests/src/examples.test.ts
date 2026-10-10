@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { readHttpFixture, useHttpFixture } from "@kumikijs/cli";
 import { A11Y_CODES, compile, type KumikiError } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveCapabilities } from "@kumikijs/compiler/node";
-import { allFiles, exampleLabel } from "@kumikijs/examples";
+import { allFiles, appFiles, exampleLabel, featureFiles } from "@kumikijs/examples";
 import { _stdlib, mount, smoke } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { withRoot } from "./helpers/dom.ts";
@@ -33,6 +33,8 @@ function expectCompiles(file: string): void {
   expect(fmtErrors(a11y)).toBe("");
 
   if (strict.kind === "ok") {
+    // A dropped value argument renders as "", which the DOM check below cannot tell apart.
+    expect(strict.js).not.toContain("_s.show(undefined)");
     const helpers = [...strict.js.matchAll(/_s\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1] as string);
     expect(helpers.filter((h) => !stdlibHelpers.has(h))).toEqual([]);
   }
@@ -67,6 +69,12 @@ async function expectSurvivesSmoke(file: string): Promise<void> {
     }
   });
 }
+
+// Floors at the current corpus size: an empty describe.each registers nothing and passes.
+it("finds the feature and app examples", () => {
+  expect(featureFiles().length).toBeGreaterThanOrEqual(100);
+  expect(appFiles().length).toBeGreaterThanOrEqual(10);
+});
 
 describe.each(allFiles().map((file) => ({ file, name: exampleLabel(file) })))("$name", ({
   file,

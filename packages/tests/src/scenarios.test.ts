@@ -23,6 +23,11 @@ describe.each(
   it("passes", () => expectPassesScenario(s));
 });
 
+// A floor at the current count: an empty describe.each registers nothing and passes.
+it("finds the scenarios", () => {
+  expect(scenarioCases().length).toBeGreaterThanOrEqual(80);
+});
+
 it("every app example ships a scenario", () => {
   const scenarioed = new Set(scenarioCases().map((s) => s.kumiki));
   expect(

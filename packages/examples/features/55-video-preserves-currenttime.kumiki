@@ -6,8 +6,8 @@
 #
 # Setup: `showControls` slot flips a caption tile in and out of the tree
 # alongside the video's `controls` attribute. Toggling it forces the video
-# tile through the patch path — pre-#190 this was a full teardown that
-# reset playback to 0.
+# tile through the patch path; a full teardown here would reset playback
+# to 0.
 
 slot showControls : Bool = false
 

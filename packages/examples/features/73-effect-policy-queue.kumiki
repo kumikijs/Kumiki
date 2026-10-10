@@ -1,15 +1,14 @@
 # Feature: `policy=queue` runs one invocation at a time, in the order emitted.
 #
-# The dispatcher had no `queue` branch, so it fell through to the default and
-# ran every emit in parallel — the one policy whose whole purpose is that it
-# does not. Three emits from a single reducer overlapped.
+# Three emits from a single reducer never overlap: each starts only after the
+# previous one has finished.
 #
 # `log` below is written by the `.ok` reducer, so the order it ends up in is
 # the order the invocations finished. The scenario shows the result — one
 # click, three effects, `log=abc` — but it cannot tell FIFO from parallel:
 # scenario-tier effects resolve from scripted results in order either way.
 # What overlap is impossible is measured in
-# packages/runtime/test/spec-divergences.test.ts, which counts invocations in
+# packages/runtime/test/effect-queue-policy.test.ts, which counts invocations in
 # flight against a provider that takes real time.
 
 slot log     : Text = ""

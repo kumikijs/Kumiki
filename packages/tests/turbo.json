@@ -3,10 +3,17 @@
   "extends": ["//"],
   "tasks": {
     "test": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build",
+        "@kumikijs/mcp#build",
+        "@kumikijs/syntax#build",
+        "@kumikijs/vite#build",
+        "kumiki#build"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/packages/examples/**",
+        "$TURBO_ROOT$/packages/benchmarks/**/*.kumiki",
         "$TURBO_ROOT$/packages/benchmarks/size-comparison/scenarios/**"
       ]
     }

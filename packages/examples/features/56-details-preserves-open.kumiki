@@ -1,8 +1,8 @@
 # Feature: a `<details>` disclosure whose summary / children props
 # change is patched in place. The user opens the disclosure; a reducer
 # then updates the summary text; the panel stays open (native browser
-# state on the DOM element itself, which pre-#190 was torn down alongside
-# the tile).
+# state on the DOM element itself, which a teardown of the tile would
+# lose).
 
 slot count : Int = 0
 

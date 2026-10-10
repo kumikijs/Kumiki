@@ -7,6 +7,7 @@ export default defineConfig({
   format: "esm",
   dts: true,
   fixedExtension: false,
+  // A directory copy lands inside `to`, giving dist/dev/*.ts, where src/dev.ts reads them.
   copy: [{ from: "src/dev/", to: "dist/" }],
   outputOptions: publishedOutputOptions,
 });
