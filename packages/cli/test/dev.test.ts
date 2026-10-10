@@ -1,16 +1,4 @@
-// Integration tests for `kumiki dev` (issue #118, spec §10.7).
-//
-// Starts the dev server on an ephemeral port via the programmatic
-// `startDevServer` API, then probes:
-//   - GET / returns the synthesized HTML with the dev panel container and
-//     the injected dev client script tag.
-//   - GET /@kumiki-dev/client.ts returns the substituted client source so
-//     the static `__KUMIKI_TARGET__` placeholder has been replaced with the
-//     absolute target path BEFORE serving (required for Vite's HMR matcher).
-//   - POST /__kumiki/episode with --episode-log appends one JSONL line per
-//     posted body, matching the `kumiki run --episode-log` format.
-
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -22,29 +10,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { connect } from "node:net";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { app } from "@kumikijs/examples";
 import { normalizePath, type ViteDevServer } from "vite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startDevServer } from "../src/dev.ts";
-import { CLI_ARGV } from "./helpers/cli.ts";
+import { CLI_ARGV, runCli } from "./helpers/cli.ts";
+import { tempDir } from "./helpers/files.ts";
 
-function runCli(args: string[]): { out: string; code: number } {
-  try {
-    const out = execFileSync(process.execPath, [...CLI_ARGV, ...args], {
-      stdio: "pipe",
-      encoding: "utf8",
-    });
-    return { out, code: 0 };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; status?: number };
-    return { out: `${err.stdout ?? ""}${err.stderr ?? ""}`, code: err.status ?? 1 };
-  }
-}
-
-const here = dirname(fileURLToPath(import.meta.url));
-const COUNTER = resolve(here, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER = app("01-counter");
 
 describe("kumiki dev", () => {
   let close: () => Promise<void>;
@@ -52,7 +27,7 @@ describe("kumiki dev", () => {
   let tmpRoot: string;
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "kumiki-dev-"));
+    tmpRoot = tempDir();
   });
 
   afterEach(async () => {
@@ -83,23 +58,13 @@ describe("kumiki dev", () => {
     expect(res.status).toBe(200);
     const code = await res.text();
     expect(code).not.toContain("__KUMIKI_TARGET__");
-    // After Vite's transform the static specifier becomes a /@fs/... or
-    // relative URL — the path's tail still matches the .kumiki basename.
     expect(code).toMatch(/app\.kumiki/);
-    // Substitution happens BEFORE Vite transforms — both the import and the
-    // hot.accept boundary share the same specifier shape; rely on the basename
-    // to confirm without coupling to Vite's URL-rewriting choices.
   });
 
-  // Spawns `kumiki check` through tsx *and* starts a dev server — well past
-  // Vitest's 5 s default whenever the machine is busy.
   it("reads a capability manifest at the project root, as check does", {
     timeout: 60_000,
   }, async () => {
-    // The dev server makes the .kumiki file's own directory Vite's root so the
-    // static `import App` resolves. The manifest search must not inherit that
-    // root: a file that `kumiki check` accepts has to compile here too.
-    const projectRoot = mkdtempSync(join(tmpdir(), "kumiki-dev-caps-"));
+    const projectRoot = tempDir();
     mkdirSync(join(projectRoot, "src"), { recursive: true });
     writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ name: "p" }));
     writeFileSync(
@@ -187,16 +152,36 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
     expect(res.status).toBe(400);
     const payload = (await res.json()) as { error: string };
     expect(payload.error).toMatch(/invalid episode JSON/);
-    // The corrupted body must NOT have polluted the JSONL — `kumiki replay`
-    // would choke on it. Either no file, or an empty one is acceptable.
     if (existsSync(logFile)) {
       expect(readFileSync(logFile, "utf8")).toBe("");
     }
   });
 
+  it("logs a client abort mid-body on /__kumiki/episode, writes nothing for it, and keeps serving", async () => {
+    const logFile = join(tmpRoot, "episodes.jsonl");
+    const server = await start({ episodeLog: logFile });
+    const logged = vi.spyOn(server.config.logger, "error");
+    const { hostname, port } = new URL(baseUrl);
+    const socket = connect(Number(port), hostname);
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      `POST /__kumiki/episode HTTP/1.1\r\nHost: ${hostname}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{"id":"ep_cut`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    socket.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(logged).toHaveBeenCalledWith("[kumiki dev] request stream error: aborted");
+
+    const res = await fetch(new URL("/__kumiki/episode", baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "ep_after" }),
+    });
+    expect(res.status).toBe(204);
+    expect(readFileSync(logFile, "utf8").trim().split("\n")).toEqual(['{"id":"ep_after"}']);
+  });
+
   it("returns 500 when --episode-log points at a path that cannot be written", async () => {
-    // Point at the tmp directory itself — appendFileSync to a directory
-    // errors with EISDIR on every platform we ship for.
     await start({ episodeLog: tmpRoot });
     const res = await fetch(new URL("/__kumiki/episode", baseUrl), {
       method: "POST",
@@ -209,9 +194,6 @@ app A caps=[telemetry.track] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("propagates --strict-a11y to the kumiki vite plugin so a11y violations fail compile", async () => {
-    // Write a throwaway .kumiki with an unlabeled button, point the dev server
-    // at it with --strict-a11y, request the file's URL, and expect a 500 with
-    // the E0701 code in the body.
     const dir = mkdtempSync(join(tmpRoot, "a11y-"));
     const file = join(dir, "bad.kumiki");
     writeFileSync(
@@ -227,9 +209,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       });
       baseUrl = url;
       close = () => server.close();
-      // Use Vite's `transformRequest` directly — fetching the file URL is
-      // brittle across Vite versions, but transformRequest deterministically
-      // exercises the plugin chain.
       await expect(server.transformRequest(file)).rejects.toThrow(/E0701/);
     } finally {
       try {
@@ -241,20 +220,16 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
-// The dev client mounts the compiled app with the runtime's `mount`, and the
-// runtime keeps module-level state, so the page works only if the client and
-// the app import the runtime through one URL. Each case below loads the page
-// the way a browser does — the client, the app module it imports, then the
-// runtime each of them imports — and checks which file that one URL serves.
+// The runtime keeps module-level state, so the page works only if the dev
+// client and the app import it through one URL.
 describe("the runtime kumiki dev serves", () => {
   const RUNTIME = "@kumikijs/runtime";
   const requireHere = createRequire(import.meta.url);
-  /** The copy @kumikijs/vite depends on — what it falls back to when the project has none. */
   const PLUGIN_RUNTIME = normalizePath(
     createRequire(requireHere.resolve("@kumikijs/vite")).resolve(RUNTIME),
   );
-  /** Where a project inside the workspace is written: the workspace links the runtime into this package. */
-  const WORKSPACE_TMP = resolve(here, "../test-tmp");
+  /** The workspace links the runtime into this package, so a project here resolves the link. */
+  const WORKSPACE_TMP = resolve(import.meta.dirname, "../test-tmp");
 
   const APP = `slot n : Int = 0
 reducer inc on=ui.click(B) do= n := n + 1
@@ -268,25 +243,24 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   });
 
-  /** A project directory under `parent` holding `app.kumiki`, removed after the test. */
-  function project(parent: string): string {
-    mkdirSync(parent, { recursive: true });
-    const dir = mkdtempSync(join(parent, "kumiki-dev-runtime-"));
+  function workspaceDir(): string {
+    mkdirSync(WORKSPACE_TMP, { recursive: true });
+    const dir = mkdtempSync(join(WORKSPACE_TMP, "kumiki-dev-runtime-"));
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  }
+
+  function project(where: "tmp" | "workspace" = "tmp"): string {
+    const dir = where === "tmp" ? tempDir() : workspaceDir();
     writeFileSync(join(dir, "app.kumiki"), APP);
     return dir;
   }
 
-  /** The file `@kumikijs/runtime` resolves to from `dir`, as the project's own import would. */
   function runtimeFrom(dir: string): string {
     return normalizePath(createRequire(join(dir, "package.json")).resolve(RUNTIME));
   }
 
-  /**
-   * Whether `dir` or a directory above it has a `node_modules/@kumikijs/runtime`.
-   * Asked of the directories, not of `require`: the test runner puts the
-   * workspace's store on `NODE_PATH`, which Vite's resolution does not read.
-   */
+  /** Asked of the directories, not of `require`: the runner's `NODE_PATH` is not read by Vite. */
   function runtimeAbove(dir: string): boolean {
     for (let d = dir; ; d = dirname(d)) {
       if (existsSync(join(d, "node_modules", RUNTIME))) return true;
@@ -294,7 +268,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     }
   }
 
-  /** Starts the dev server on `dir/app.kumiki`, returning it with everything Vite warned while starting. */
   async function serve(dir: string) {
     const warnings: string[] = [];
     const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
@@ -310,18 +283,13 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     return { ...started, warned: warnings.join("\n") };
   }
 
-  /** The specifier `code` imports `mount` from — the runtime import, whatever URL it was rewritten to. */
   function mountImport(code: string): string {
     const m = /import\s*\{[^}]*\bmount\b[^}]*\}\s*from\s*"([^"]+)"/.exec(code);
     if (!m?.[1]) throw new Error(`no import of mount in:\n${code}`);
     return m[1];
   }
 
-  /**
-   * Loads the page's modules over HTTP, failing on any that does not load, and
-   * reports the runtime URL the client and the app each import, the file that
-   * URL serves, and Vite's pre-bundle of the runtime if it made one.
-   */
+  /** Loads the page's modules over HTTP the way a browser does. */
   async function loadPage(server: ViteDevServer, url: string) {
     const get = async (path: string) => {
       const res = await fetch(new URL(path, url));
@@ -331,9 +299,9 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     const client = await get("/@kumiki-dev/client.ts");
     const appUrl = /import\s+\w+\s+from\s*"([^"]+\.kumiki[^"]*)"/.exec(client)?.[1];
     if (!appUrl) throw new Error(`the dev client imports no .kumiki module:\n${client}`);
-    const app = await get(appUrl);
+    const appCode = await get(appUrl);
     const clientRuntime = mountImport(client);
-    const appRuntime = mountImport(app);
+    const appRuntime = mountImport(appCode);
     await get(appRuntime);
     const env = server.environments.client;
     const served = (await env.moduleGraph.getModuleByUrl(appRuntime))?.file;
@@ -343,7 +311,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   }
 
   it("serves the plugin's runtime, without a warning, where the root cannot resolve one", async () => {
-    const dir = project(tmpdir());
+    const dir = project();
     expect(runtimeAbove(dir)).toBe(false);
 
     const { server, url, warned } = await serve(dir);
@@ -356,7 +324,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("pre-bundles the runtime the project installed, once, for the client and the app", async () => {
-    const dir = project(tmpdir());
+    const dir = project();
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", private: true }));
     const installed = join(dir, "node_modules", "@kumikijs", "runtime");
     mkdirSync(installed, { recursive: true });
@@ -379,7 +347,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   it("serves a runtime linked from the workspace from its source, once, for the client and the app", async () => {
     // A project inside the workspace resolves the runtime through the
     // workspace link, and Vite serves a linked package from its source.
-    const dir = project(WORKSPACE_TMP);
+    const dir = project("workspace");
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", private: true }));
     const linked = runtimeFrom(dir);
 
@@ -391,10 +359,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
-// CLI dispatch tests spawn `node --import tsx kumiki.ts ...` so the first run
-// pays the tsx cold-start cost. CI cold start once pushed the first
-// invocation past vitest's 5s default. Give the whole suite a 30s per-test
-// budget so cold-start drift doesn't flake builds.
 const DISPATCH_TIMEOUT_MS = 30_000;
 
 describe("kumiki dev — CLI dispatch argument parsing", () => {
@@ -448,10 +412,6 @@ describe("kumiki dev — CLI dispatch argument parsing", () => {
     DISPATCH_TIMEOUT_MS,
   );
 
-  // Every case above exits 2 in argument validation, before the action runs.
-  // This one reaches it: the action loads the server module with a dynamic
-  // `import()`, which in the published build resolves to a separate chunk, so
-  // only a start that gets as far as listening shows the specifier resolves.
   it(
     "starts the server when the arguments are valid",
     async () => {

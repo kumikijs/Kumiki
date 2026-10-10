@@ -1,18 +1,13 @@
-// `kumiki dev` — programmatic Vite dev server with HMR-preserving app.live,
-// runtime panic/error overlay, episode timeline panel, and slot/tile/effect
-// inspector (spec §10.7). Composes the @kumikijs/vite transform with an
-// internal plugin that serves a virtual entry HTML + client + panel and
-// exposes a /__kumiki/episode middleware for `--episode-log` JSONL append.
-
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { kumiki as kumikiVitePlugin } from "@kumikijs/vite";
 import type { Plugin, ViteDevServer } from "vite";
 import { createServer } from "vite";
+import { messageOf } from "./text.ts";
 
 export type DevCmdOptions = {
-  /** TCP port to bind. Defaults to 5173 to match the spec example. `0` picks an ephemeral port. */
+  /** TCP port to bind; defaults to Vite's 5173. `0` picks an ephemeral port. */
   port?: number;
   /** Absolute path to append every committed Episode to (one JSON per line, matching `kumiki run`). */
   episodeLog?: string;
@@ -24,33 +19,11 @@ const VIRTUAL_CLIENT_ID = "/@kumiki-dev/client.ts";
 const VIRTUAL_PANEL_ID = "/@kumiki-dev/panel.ts";
 const EPISODE_ENDPOINT = "/__kumiki/episode";
 
-/**
- * Programmatic entry — used by tests. Returns the running server plus the
- * resolved URL so the test can probe it without parsing stdout.
- *
- * Capability resolution lives in `@kumikijs/vite` (it searches for a
- * `kumiki.caps.json` from the target's own directory up to the project root,
- * as `kumiki check` does — deliberately not bounded by the root below), so the
- * dev server doesn't take a capabilities parameter: passing one would
- * duplicate the work the plugin already does.
- *
- * Runtime resolution lives there too: the plugin alone resolves
- * `@kumikijs/runtime`, for the dev client as for the compiled app, so the page
- * runs one copy — the project's own when the root resolves one, the plugin's
- * dependency otherwise. Vite serves that copy as it would in any project using
- * the plugin: the project's own is pre-bundled when installed and served from
- * source when linked, and the plugin's own is served as it is. Naming the
- * runtime to the dependency optimizer here would be a second answer to the
- * same question.
- */
 export async function startDevServer(
   kumikiPath: string,
   opts: DevCmdOptions = {},
 ): Promise<{ server: ViteDevServer; url: string }> {
   const targetAbs = resolvePath(process.cwd(), kumikiPath);
-  // The .kumiki file's directory is Vite's root so the static `import App`
-  // resolves through normal module resolution; node_modules above the file
-  // is reachable because we widen `server.fs.allow` below.
   const root = dirname(targetAbs);
   const port = opts.port ?? 5173;
 
@@ -61,9 +34,6 @@ export async function startDevServer(
       port,
       strictPort: port !== 0,
       fs: {
-        // The monorepo / project may import the runtime from a node_modules
-        // several levels up. Allowing everything above the .kumiki file is
-        // appropriate for a dev-only server.
         allow: [root, findMonorepoRoot(root)],
       },
     },
@@ -84,15 +54,11 @@ export async function startDevServer(
   await server.listen();
 
   const address = server.httpServer?.address();
-  const boundPort = address && typeof address === "object" ? address.port : (opts.port ?? port);
+  const boundPort = address && typeof address === "object" ? address.port : port;
   const url = `http://localhost:${boundPort}/`;
   return { server, url };
 }
 
-/**
- * CLI verb entry. Starts the dev server, prints its URL, and stays alive until
- * SIGINT closes it.
- */
 export async function devCmd(kumikiPath: string, opts: DevCmdOptions = {}): Promise<void> {
   const { server, url } = await startDevServer(kumikiPath, opts);
   console.log(`kumiki dev — ${url}`);
@@ -112,8 +78,6 @@ export async function devCmd(kumikiPath: string, opts: DevCmdOptions = {}): Prom
   });
 }
 
-// --- internal Vite plugin ----------------------------------------------------
-
 type InternalOptions = {
   targetAbs: string;
   episodeLog?: string;
@@ -121,16 +85,9 @@ type InternalOptions = {
 
 function kumikiDevPlugin(opts: InternalOptions): Plugin {
   const devSrcDir = dirname(fileURLToPath(import.meta.url));
-  // This module sits in src/ when run from source and in dist/ once built
-  // (dist/dev-*.js); tsdown copies src/dev/ to dist/dev/, so `<here>/dev/` holds
-  // the client and panel in both (see tsdown.config.ts).
   const clientTemplate = readFileSync(join(devSrcDir, "dev", "client.ts"), "utf8");
   const panelSource = readFileSync(join(devSrcDir, "dev", "panel.ts"), "utf8");
 
-  // The client.ts source has a `__KUMIKI_TARGET__` placeholder for the static
-  // `import App from ...` line. Substitute the absolute target path up front;
-  // it never changes for the lifetime of the server.
-  // Forward slashes for Vite's URL parser, even on Windows.
   const targetUrl = opts.targetAbs.replace(/\\/g, "/");
   const clientSource = clientTemplate.replaceAll("__KUMIKI_TARGET__", targetUrl);
 
@@ -139,9 +96,6 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
     enforce: "post",
 
     configureServer(server) {
-      // 1. Middleware that captures /__kumiki/episode POSTs and appends JSONL
-      //    when --episode-log is configured. Registered first so Vite's static
-      //    layer doesn't try to serve "episode" as a path.
       server.middlewares.use(EPISODE_ENDPOINT, (req, res) => {
         if (req.method !== "POST") {
           res.statusCode = 405;
@@ -155,8 +109,6 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
           res.setHeader("Content-Type", "application/json");
           res.end(JSON.stringify({ error: message }));
         };
-        // Without this, a client abort (page reload, browser close mid-flight)
-        // throws an unhandled 'error' event that crashes the Node process.
         req.on("error", (e) => fail(400, `request stream error: ${e.message}`));
         req.on("data", (c: Buffer) => chunks.push(c));
         req.on("end", () => {
@@ -166,21 +118,17 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
             res.end();
             return;
           }
-          // Validate as JSON BEFORE appending — a garbled POST would corrupt
-          // the JSONL file and break `kumiki replay --from-log` downstream.
           try {
             JSON.parse(body);
           } catch (e) {
-            fail(400, `invalid episode JSON: ${(e as Error).message}`);
+            fail(400, `invalid episode JSON: ${messageOf(e)}`);
             return;
           }
           if (opts.episodeLog) {
             try {
               appendFileSync(opts.episodeLog, `${body}\n`);
             } catch (e) {
-              // EACCES / ENOSPC / etc. — the user asked us to record episodes
-              // and we couldn't. Surface this loudly instead of swallowing.
-              fail(500, `failed to append episode log: ${(e as Error).message}`);
+              fail(500, `failed to append episode log: ${messageOf(e)}`);
               return;
             }
           }
@@ -189,8 +137,6 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
         });
       });
 
-      // 2. Index.html responder — runs LAST (the returned post-hook), so a
-      //    real index.html on disk and all virtual modules win over it.
       return () => {
         server.middlewares.use(async (req, res, next) => {
           if (req.method !== "GET") return next();
@@ -248,9 +194,6 @@ const INDEX_HTML = `<!doctype html>
 </html>
 `;
 
-// Walk parents until we find a pnpm-workspace.yaml / .git marker so node_modules
-// a few levels up is reachable under server.fs.allow. Falls back to the start
-// directory after a bounded number of steps to avoid an unbounded climb.
 function findMonorepoRoot(start: string): string {
   let dir = start;
   for (let i = 0; i < 12; i++) {
