@@ -66,11 +66,11 @@ describe("a value written as a child", () => {
     expect(diagnostics(home)).toEqual([E0128(home, "let", "card")]);
   });
 
-  it("is reported in any builtin that is not a value builtin", () => {
+  it("is reported in any builtin that renders its children", () => {
     const row = `row(text("a"), let x = 1 in Card({label: x.show}))`;
     expect(diagnostics(row)).toEqual([E0128(row, "let", "row")]);
-    const button = `column(button(42, text="go"))`;
-    expect(diagnostics(button)).toEqual([E0128(button, "42", "button")]);
+    const card = `column(card(text("a"), 42))`;
+    expect(diagnostics(card)).toEqual([E0128(card, "42", "card")]);
   });
 
   it("does not stop the rest of the check", () => {

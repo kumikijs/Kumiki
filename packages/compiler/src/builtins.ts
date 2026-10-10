@@ -62,8 +62,69 @@ export const BUILTIN_TILES = new Set<string>([
   "route-outlet",
 ]);
 
+// Every builtin is one of three kinds by what it does with a positional argument: a container
+// (here), a value builtin (`VALUE_BUILTIN_CONTENT`), or one that renders none
+// (`SHOWN_IN_PLACE_OF_POSITIONAL`).
+const CHILD_BUILTINS: ReadonlySet<string> = new Set([
+  "page",
+  "region",
+  "row",
+  "column",
+  "stack",
+  "overlay",
+  "grid",
+  "box",
+  "card",
+  "panel",
+  "scroll",
+  "form",
+  "fieldset",
+  "list",
+  "list-item",
+  "table",
+  "table-head",
+  "table-body",
+  "table-row",
+  "table-cell",
+  "modal",
+  "drawer",
+  "tooltip",
+  "popover",
+  "details",
+]);
+
+// Codegen lowers a builtin's positional arguments into its children exactly when this holds, so
+// what the checker accepts there is what renders.
 export function positionalIsTile(name: string): boolean {
-  return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
+  return CHILD_BUILTINS.has(name);
+}
+
+// The named arguments each builtin's lowering reads what it renders from, in place of a positional.
+const SHOWN_IN_PLACE_OF_POSITIONAL = {
+  divider: [],
+  video: ["src"],
+  button: ["text"],
+  input: ["bind", "value", "placeholder"],
+  textarea: ["bind", "value", "placeholder"],
+  check: ["bind", "value"],
+  radio: ["bind", "selected"],
+  select: ["options", "bind", "value", "placeholder"],
+  slider: ["bind"],
+  switch: ["bind", "value"],
+  error: ["field"],
+  toast: ["text"],
+  spinner: [],
+  progress: ["value", "max"],
+  skeleton: [],
+  "route-outlet": [],
+} as const satisfies Record<string, readonly string[]>;
+
+export function shownInPlaceOfPositional(name: string): readonly string[] | undefined {
+  const content = contentReading(name);
+  if (content) return content.positional ? undefined : content.named ? [content.named] : [];
+  return Object.hasOwn(SHOWN_IN_PLACE_OF_POSITIONAL, name)
+    ? SHOWN_IN_PLACE_OF_POSITIONAL[name as keyof typeof SHOWN_IN_PLACE_OF_POSITIONAL]
+    : undefined;
 }
 
 export type TileFamily =

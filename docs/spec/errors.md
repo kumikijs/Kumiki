@@ -531,7 +531,7 @@ The count is all the check compares. The `fn`'s parameter types are not checked 
 
 A value is written where a tile is expected. Two kinds of place expect one ([Language §1.7.1](./language.md#_1-7-1-syntax)):
 
-- A positional argument of a builtin that is not a value builtin — a builtin other than `text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image` and `icon`. Such a builtin renders a positional argument only when it is a tile: a `tile-expr` or the name of a tile the program defines. Containers (`column`, `row`, `card`, …) render it as a child; the others (`button`, `progress`, …) read no positional argument at all.
+- A positional argument of a builtin that renders its positional arguments as children: a container — `column`, `row`, `card`, … ([Language §1.7.1](./language.md#_1-7-1-syntax) lists them). Such a builtin renders a positional argument only when it is a tile: a `tile-expr` or the name of a tile the program defines. A value builtin reads its positional argument as a value, and every other builtin (`button`, `progress`, …) renders no positional argument, tile or value: one written there is [E0129](#e0129-unrendered-arg).
 - A whole `tile-expr`: a `when` / `if` / `for` / `match` arm, a tile's body, and a tile-test's `expect`. The parser reads a name written there as a tile call, so a value named there — a slot, a `fn` call, a loop variable, a `match` binding — is a call of a tile that does not exist.
 
 In either place, a name that is neither a tile nor a value is [E0105](#e0105-undef-tile) instead.
@@ -550,20 +550,24 @@ A value where a value belongs is not reported: a value builtin's content (`text(
 
 ### E0129 `unrendered-arg`
 
-A value builtin is written with an argument as content that it never renders. Each one reads its content from one place ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)): `text`, `heading`, `code` and `markdown` from their first positional argument; `link`, `label` and `editable` from their first positional argument, or `text=` when none is written; `image` and `icon` from `src=` and `name=`. What else is written as content goes nowhere:
+A builtin is written with an argument it never renders. A value builtin reads its content from one place ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)): `text`, `heading`, `code` and `markdown` from their first positional argument; `link`, `label` and `editable` from their first positional argument, or `text=` when none is written; `image` and `icon` from `src=` and `name=`. Every other builtin renders its positional arguments as children — the containers [Language §1.7.1](./language.md#_1-7-1-syntax) lists — or renders none of them. What else is written goes nowhere:
 
-- A positional argument past the one the builtin reads. `text("A", "B")` renders `A`; `B` is dropped. On `image` and `icon`, which read no positional argument, every one is dropped.
+- A positional argument past the one a value builtin reads. `text("A", "B")` renders `A`; `B` is dropped.
+- A positional argument, tile or value, on a builtin that renders none: `image`, `icon`, and every builtin that is neither a value builtin nor a container — `button`, `input`, `textarea`, `check`, `radio`, `select`, `slider`, `switch`, `video`, `toast`, `progress`, `spinner`, `skeleton`, `error`, `divider` and `route-outlet`. `button(Header, text="Go")` renders a button that says `Go` and no `Header`; `progress(text("a"))` renders a bar and no `a`.
 - `text=` on `text` / `heading` / `code` / `markdown` with no positional argument. `text=` is the label argument of `button`, `link`, `label` and `editable`, and a prop on the text builtins, so `heading(text=title)` renders an empty heading.
 - `text=` beside a positional argument on `link` / `label` / `editable`. These read `text=` only when no positional argument is written, so `label(text="A", "B")` renders `B`; `A` is dropped.
 
 > `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
-> `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
+> `` <builtin> renders no positional argument, so this one is never rendered. Write it as <args>, or show it beside the <builtin> ``
+> `` <builtin> renders no positional argument, so this one is never rendered. Show it beside the <builtin> ``
 > `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
 > `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
 
-Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional`, `text-prop` or `text-shadowed`, in the order above. `check`, `build` and `smoke` were all green on these: the argument parsed, type-checked and never reached the page. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
+On a builtin that renders no positional argument, `<args>` names what it shows in its place, from one table: `src=` on `image` and `video`; `name=` on `icon`; `text=` on `button` and `toast`; `bind=`, `value=` or `placeholder=` on `input` and `textarea`; `options=`, `bind=`, `value=` or `placeholder=` on `select`; `bind=` or `value=` on `check` and `switch`; `bind=` or `selected=` on `radio`; `bind=` on `slider`; `value=` or `max=` on `progress`; `field=` on `error`. `divider`, `spinner`, `skeleton` and `route-outlet` show nothing an argument gives them, and draw the third form. The argument is reported whole, and nothing inside it is checked — a tile, a `let`, a misspelt name — as for a value in a container ([E0128](#e0128-value-as-child)): a diagnostic in there shows once the argument is moved where it renders.
 
-**Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)` — and join values meant to show together (`text(a + " " + b)`). `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
+Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional` for the first three forms, then `text-prop` and `text-shadowed`. Nothing else reports these: the argument parses and builds, and never reaches the page, so a `smoke` run is green on it. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
+
+**Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)`, `button(text="Go")` — and join values meant to show together (`text(a + " " + b)`). A tile goes beside a builtin that renders none, in a container: `row(button(text="Go"), Header)`. `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
 
 ## E02xx — Types
 
