@@ -1,5 +1,5 @@
-# Feature (stdlib.md §2.4.1): `TypeName.fresh()` mints a UUIDv7, so the ids one
-# app mints sort, as `Text`, in the order they were minted.
+# Feature: `TypeName.fresh()` mints a UUIDv7, so the ids one app mints sort, as
+# `Text`, in the order they were minted.
 #
 #   TypeName.fresh() : T   ; a new ID for a nominal type (UUIDv7)
 #

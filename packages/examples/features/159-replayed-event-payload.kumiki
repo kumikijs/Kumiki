@@ -1,5 +1,5 @@
-# Feature (runtime.md §10.5.3): replaying an episode hands its entry reducer
-# the payload the live run handed it.
+# Feature: replaying an episode hands its entry reducer the payload the live run
+# handed it.
 #
 # The live runtime records `trigger.payload` as the reducer payload itself:
 # `{$el: …, $event: …}` for a UI event, `{$1: value}` for an effect result.
@@ -9,7 +9,7 @@
 # `ssr.hydrate` bootstrap episode, which has no trigger payload: its value is
 # the `effect-end` step recorded before the reducer.
 #
-# `packages/tests/replayed-event-payload.test.ts` records this app's episodes
+# `packages/tests/src/replayed-event-payload.test.ts` records this app's episodes
 # through the live runtime and SSR, replays them, and asserts the slots land
 # where they landed live.
 

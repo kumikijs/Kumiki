@@ -1,18 +1,7 @@
-// `<T>.fresh()` mints a UUIDv7 (stdlib.md §2.4.1, RFC 9562 §5.7): the first 48
-// bits are the Unix-millisecond clock, then the version `7`, a 12-bit counter,
-// the variant `10`, and 62 random bits. Ids one runtime mints sort, as text, in
-// the order they were minted: within one millisecond, and after the clock
-// steps back. `crypto.randomUUID` is not asked, because what it mints is a v4.
-//
-// The id has to pass the `uuid` refinement like any value written to a slot
-// refined by it, whatever the platform offers: `crypto.randomUUID` exists only
-// in a secure context, and `getRandomValues` may be missing too.
-
 import { withEnvRecord, withEnvReplay } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The `uuid` shape (compiler/src/refinements.ts) narrowed to version 7 and the
-// RFC 9562 variant.
+// The `uuid` refinement's shape, narrowed to version 7 and the RFC 9562 variant.
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** An instant whose 48-bit hex is `01a12088d200`. */
@@ -84,23 +73,20 @@ describe("<T>.fresh() mints a UUIDv7", () => {
     expect(randomUUID).not.toHaveBeenCalled();
   });
 
-  const withoutGetRandomValues: [string, unknown][] = [
+  it.each<[string, unknown]>([
     ["no crypto at all", undefined],
     ["a crypto with neither member", {}],
     ["a crypto with only randomUUID", { randomUUID: () => "00000000-0000-4000-8000-000000000000" }],
-  ];
-  for (const [platform, crypto] of withoutGetRandomValues) {
-    it(`falls back to Math.random on ${platform}`, async () => {
-      vi.stubGlobal("crypto", crypto);
-      const random = vi.spyOn(Math, "random");
-      const s = await freshStdlib();
-      const ids = Array.from({ length: 50 }, () => s.freshId());
-      for (const id of ids) expect(id).toMatch(UUID_V7);
-      expect(new Set(ids).size).toBe(50);
-      expectMintOrder(ids);
-      expect(random).toHaveBeenCalled();
-    });
-  }
+  ])("falls back to Math.random on %s", async (_, crypto) => {
+    vi.stubGlobal("crypto", crypto);
+    const random = vi.spyOn(Math, "random");
+    const s = await freshStdlib();
+    const ids = Array.from({ length: 50 }, () => s.freshId());
+    for (const id of ids) expect(id).toMatch(UUID_V7);
+    expect(new Set(ids).size).toBe(50);
+    expectMintOrder(ids);
+    expect(random).toHaveBeenCalled();
+  });
 });
 
 describe("ids one runtime mints sort in the order they were minted", () => {
