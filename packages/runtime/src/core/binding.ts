@@ -1,4 +1,4 @@
-import { _setPathHelper, type BindSegment } from "./path.ts";
+import { _setPathHelper, type BindSegment, bindPathStartsWith, type PathSegment } from "./path.ts";
 import { slotAccepts } from "./refinement.ts";
 import type { AppShape, BindReader } from "./types.ts";
 
@@ -51,6 +51,7 @@ export function refusedBindShown(
   slot: string,
   view: BindView | undefined,
   held?: unknown,
+  at: readonly PathSegment[] = [],
 ): Pick<RefusedBind, "value" | "unread"> | undefined {
   const byEl = refusedBinds.get(app);
   if (!byEl) return undefined;
@@ -69,11 +70,12 @@ export function refusedBindShown(
   let value = held;
   let unread: BindReader["as"] | undefined;
   for (const r of shown) {
-    const at = JSON.stringify(r.path);
-    if (laid.has(at)) continue;
-    laid.add(at);
+    const where = JSON.stringify(r.path);
+    if (laid.has(where)) continue;
+    laid.add(where);
     value = r.path.length > 0 ? _setPathHelper(value ?? {}, r.path, r.value) : r.value;
-    unread ??= r.unread;
+    // Text another field cannot read is that field's to say, not a sibling's.
+    if (bindPathStartsWith(r.path, at)) unread ??= r.unread;
   }
   return { value, unread };
 }
@@ -88,13 +90,14 @@ export function judgeShownField(
   app: AppShape,
   slot: string,
   view: BindView | undefined,
+  at: readonly PathSegment[] = [],
 ): ShownField {
   const meta = app.slots?.[slot];
   const held = app.live?.[slot] ?? meta?.value;
-  const refused = refusedBindShown(app, slot, view, held);
+  const refused = refusedBindShown(app, slot, view, held, at);
   if (refused?.unread) return { valid: false, unread: refused.unread };
   const value = refused ? refused.value : held;
-  return slotAccepts(meta, value) ? { valid: true } : { valid: false, value };
+  return slotAccepts(meta, value, at) ? { valid: true } : { valid: false, value };
 }
 
 const heldSubmits = new WeakMap<Event, readonly string[]>();

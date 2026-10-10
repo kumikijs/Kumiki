@@ -1,4 +1,4 @@
-import type { BindReader, TilePatchers, TileRenderers } from "./core.ts";
+import type { BindReader, PathSegment, TilePatchers, TileRenderers } from "./core.ts";
 import {
   currentTheme,
   ensureAnimationStyles,
@@ -8,12 +8,16 @@ import {
   judgeShownField,
 } from "./core.ts";
 
-function resolveFieldError(field: string): string {
+/**
+ * With a `path`, only a failure at or below it is the tile's, so a sibling that
+ * fails first does not take its message.
+ */
+function resolveFieldError(field: string, path: readonly PathSegment[] = []): string {
   const app = getRenderingApp();
   if (!app || !field) return "";
   const meta = app.slots?.[field];
   if (!meta) return "";
-  const shown = judgeShownField(app, field, getRenderingView());
+  const shown = judgeShownField(app, field, getRenderingView(), path);
   if (shown.valid) return "";
   const overrides = currentTheme()?.errors as Record<string, string> | undefined;
   // Text that does not read as the bound base at all is judged before any refinement.
@@ -22,7 +26,7 @@ function resolveFieldError(field: string): string {
     return overrides?.[key] ?? defaultFieldError(key, []);
   }
   const value = shown.value;
-  const failed = failedRefinement(value, meta);
+  const failed = failedRefinement(value, meta, path);
   const pred = failed.kind ?? "";
   const args = failed.args ?? [];
   return overrides?.[pred] ?? defaultFieldError(pred, args);
@@ -124,7 +128,7 @@ export const statusTiles: TileRenderers = {
     span.setAttribute("aria-live", "assertive");
     span.dataset.field = node.field;
     span.style.color = "#c00";
-    span.textContent = resolveFieldError(node.field);
+    span.textContent = resolveFieldError(node.field, node.path);
     return span;
   },
 };
@@ -172,7 +176,7 @@ export const statusPatchers: TilePatchers = {
   error(el, _oldNode, newNode) {
     const span = el as HTMLSpanElement;
     if (span.dataset.field !== newNode.field) span.dataset.field = newNode.field;
-    const nextText = resolveFieldError(newNode.field);
+    const nextText = resolveFieldError(newNode.field, newNode.path);
     if (span.textContent !== nextText) span.textContent = nextText;
   },
 };

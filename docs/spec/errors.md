@@ -909,6 +909,22 @@ The bound type is unaliased first, so `type Qty = Int where positive` and a `nom
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
 
+### E0230 `error-field-not-path`
+
+An `error(field=…)` names neither a slot nor a path into one ([Forms §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
+> `error(field=…) cannot show the failure of <what>: <why>. field= names a slot, or a path into one[ — write the slot's name without quotes: error(field=<slot>)] (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<method>(…)": a call is not a step of a path. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
+> `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
+> `error(field=…) cannot step through an index into "<T>": an index names a List element or a Map entry (see docs/spec/forms.md)`
+
+The tile renders the failure of a place: the slot its field's root names, at or below the path the field's steps take. The first form is a root that is no slot — a literal, a local name (a `for` variable, a tile's `$1`), a name the runtime provides such as `route`, a tile, or an expression that computes a value. The others are a step that is no step of a path: a member that derives a value (`.length`), a call, an index whose key is not a literal, or an index into a value that is neither a `List` nor a `Map`. None of them names a place a failure could be at, so the tile could never render a message, whatever the slot held. A text literal that spells a slot's name gets the fix, since that slot is the likely meaning.
+
+A computed index — `error(field=rows[i].email)` — is in the fourth form: a path names its element by a literal key ([#828](https://github.com/kumikijs/Kumiki/issues/828)). The other codes a field can carry are not reported again as E0230: a name that resolves to nothing is [E0103](#e0103-undef-ref-undef-slot), a field the record lacks [E0108](#e0108-undef-member), and a `List` index that is no `Int` [E0201](#e0201-type-mismatch).
+
+**Fix**: Name the slot, or the field of it whose message belongs here — `error(field=form)` for any failure in `form`, `error(field=form.email)` for the email's alone. Write a literal key for an element: `error(field=rows[0].email)`.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.

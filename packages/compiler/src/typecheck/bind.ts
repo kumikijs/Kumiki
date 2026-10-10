@@ -1,10 +1,12 @@
 import { assignable, typeToString, unaliasType } from "../assignable.ts";
-import { type Expr, isTileExpr, type TileExpr } from "../ast.ts";
+import { type Expr, isTileExpr, type Pos, type TileExpr } from "../ast.ts";
+import { errorField } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
-import { checkAgainst } from "./against.ts";
+import { checkAgainst, unwrappedType } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
+import { classifyMember, receiverName } from "./members.ts";
 
 const BIND_CONTROLS = new Set([
   "input",
@@ -160,4 +162,119 @@ export function checkInputBindType(
     message: `input(bind=…) with ${field} cannot bind a value of type ${typeName}: ${base === "Int" ? "an" : "a"} ${base} binds with ${kinds} ${see}`,
     pos: typeArg !== undefined && !isTileExpr(typeArg) ? typeArg.pos : bindArg.value.pos,
   });
+}
+
+/**
+ * Run after the field has been checked as a value, so a root that read already
+ * reported (E0103, E0127) and a field the record lacks (E0108) are not reported
+ * again.
+ */
+export function checkErrorField(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (t.name !== "error") return;
+  const arg = t.args.find((a) => a.name === "field");
+  if (!arg) return;
+  const see = "(see docs/spec/forms.md)";
+  if (isTileExpr(arg.value)) {
+    errors.push({
+      code: "E0230",
+      kind: "error-field-not-path",
+      message: `error(field=…) cannot show the failure of a tile: a tile is not a slot. field= names a slot, or a path into one ${see}`,
+      pos: arg.value.pos,
+    });
+    return;
+  }
+  const field = errorField(arg.value);
+  const { root } = field;
+  const notASlot = errorFieldRootProblem(root, sym, ctx);
+  if (notASlot && !errors.some((e) => e.pos === root.pos)) {
+    const fix = notASlot.fix ? ` — ${notASlot.fix}` : "";
+    errors.push({
+      code: "E0230",
+      kind: "error-field-not-path",
+      message: `error(field=…) cannot show the failure of ${notASlot.named}: ${notASlot.is}. field= names a slot, or a path into one${fix} ${see}`,
+      pos: root.pos,
+    });
+  }
+  const steps = `A path's steps are fields, ".get", and indices with a literal key ${see}`;
+  field.steps.forEach((step, i) => {
+    const refuse = (message: string, pos: Pos): void => {
+      errors.push({ code: "E0230", kind: "error-field-not-path", message, pos });
+    };
+    switch (step.kind) {
+      case "MethodCall":
+        refuse(
+          `error(field=…) cannot step through ".${step.method}(${step.args.length === 0 ? "" : "…"})": a call is not a step of a path. ${steps}`,
+          step.pos,
+        );
+        return;
+      case "Index": {
+        if (field.segments[i] === null) {
+          refuse(
+            `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${see}`,
+            step.index.pos,
+          );
+          return;
+        }
+        const raw = inferType(step.base, sym, ctx);
+        const base = unaliasType(raw, sym);
+        if (!raw || !base) return;
+        if (base.kind === "TypeApp" && (base.name === "List" || base.name === "Map")) return;
+        refuse(
+          `error(field=…) cannot step through an index into "${typeToString(raw)}": an index names a List element or a Map entry ${see}`,
+          step.pos,
+        );
+        return;
+      }
+      case "FieldAccess": {
+        const raw = inferType(step.base, sym, ctx);
+        const base = unaliasType(raw, sym);
+        if (!base || classifyMember(raw, step.field, sym) !== "member") return;
+        if (step.field === "get" && unwrappedType(base) !== null) return;
+        refuse(
+          `error(field=…) cannot step through ".${step.field}": it is a member of "${receiverName(raw, base, sym)}", not a field. ${steps}`,
+          step.pos,
+        );
+        return;
+      }
+    }
+  });
+}
+
+/** A local named like a slot hides the slot here, as it does for any read. */
+function errorFieldRootProblem(
+  root: Expr,
+  sym: SymbolTable,
+  ctx: Ctx,
+): { named: string; is: string; fix?: string } | null {
+  const literal = "a literal is a value, not a slot";
+  switch (root.kind) {
+    case "Ref":
+      if (ctx.localBinds.has(root.name)) {
+        return { named: `"${root.name}"`, is: "it is a local name, not a slot" };
+      }
+      return sym.slots.has(root.name) ? null : { named: `"${root.name}"`, is: "it is not a slot" };
+    case "Str": {
+      const named = `the text literal ${JSON.stringify(root.value)}`;
+      return sym.slots.has(root.value)
+        ? {
+            named,
+            is: literal,
+            fix: `write the slot's name without quotes: error(field=${root.value})`,
+          }
+        : { named, is: literal };
+    }
+    case "Num":
+    case "Bool":
+      return {
+        named: `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
+        is: literal,
+      };
+    default:
+      return { named: "this expression", is: "it computes a value, not a slot" };
+  }
 }
