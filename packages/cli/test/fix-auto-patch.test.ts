@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, TWO_SPAWNS } from "./helpers/cli.ts";
 import { seed } from "./helpers/files.ts";
 
 const APP = `app FixDemo
@@ -27,7 +27,7 @@ describe("kumiki fix --auto-patch", () => {
     expect(readFileSync(file, "utf8")).toBe(BEHAVIORAL);
   });
 
-  it("--apply patches the literal and the test then passes", SPAWN, () => {
+  it("--apply patches the literal and the test then passes", TWO_SPAWNS, () => {
     const file = seed(BEHAVIORAL);
     const { out, code } = runCli(["fix", file, "--auto-patch", "title-text", "--apply"]);
     expect(code).toBe(0);
@@ -40,7 +40,7 @@ describe("kumiki fix --auto-patch", () => {
     expect(verify.out).toContain("1/1 passed");
   });
 
-  it("repairs a compile error blocking the test, then runs it", SPAWN, () => {
+  it("repairs a compile error blocking the test, then runs it", TWO_SPAWNS, () => {
     const file = seed(`slot count : Int = 0
 reducer inc on=ui.click(IncBtn) do= conut := count + 1
 tile IncBtn = button(text="+1", onClick=inc)
