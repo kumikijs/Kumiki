@@ -1,4 +1,4 @@
-# Feature: §2.2.7 Int / Float arithmetic, and §2.4.4 `random()`.
+# Feature: Int / Float arithmetic, and `random()`.
 #
 # The spec used to document these as a `math.*` namespace. It could not exist:
 # a call qualifier is a capitalised name, so `math.abs(x)` is a reference to a

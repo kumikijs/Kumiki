@@ -1,4 +1,4 @@
-# Feature (testing.md §8.1.1): a slot value a test writes is a value of the
+# Feature (testing.md): a slot value a test writes is a value of the
 # slot's type. A `given.slots` seed, an `expect.slots` value and an
 # `episode-test`'s `slots-equal` value are each checked against the slot's
 # declared type, as the slot's own initializer is, in every test kind and in
@@ -9,12 +9,12 @@
 #
 # rather than a test that runs `"5" + 1` and agrees with the "51" it makes.
 #
-# `route` is the runtime's slot, of the standard `Route` (routing.md §3.2). A
+# `route` is the runtime's slot, of the standard `Route` (routing.md). A
 # seed names only the fields it needs, and each is a value of that field's
 # type: `hash: Some("top")`, where `hash: "top"` is
 # `Expected Option(Text) but got Text`.
 #
-# An `expect` wildcard (§8.2.2) stands for any value, so it has no type to
+# An `expect` wildcard stands for any value, so it has no type to
 # disagree with.
 
 slot count  : Int         = 0
