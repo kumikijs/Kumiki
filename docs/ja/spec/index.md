@@ -297,6 +297,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
-| `245-parse-spellings-agree.kumiki` | slot, tile | 標準ライブラリ | [§2.2.6](./stdlib.md#_2-2-6-text) |
+| `171-property-test-count.kumiki` | slot, reducer, tile | テスト | [§8.3.1](./testing.md#_8-3-1-構文) |
 <!-- examples:end -->
 :::
