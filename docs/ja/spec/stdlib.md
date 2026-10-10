@@ -60,6 +60,20 @@ let id = emit fetchQuote()
 
 ## 2.2 コレクションメソッド
 
+**引数はそのパラメータの型を持つ**。§2.2.1〜§2.2.3 のシグネチャでは、`K` と `V` は `Map(K, V)` のキーと値の型、`T` は `Set(T)` や `List(T)` の要素型である。これらの型のパラメータはその型の値を取り、`merge` / `union` / `intersect` / `diff` / `concat` の `other` はレシーバと同じ型の別のコンテナである：
+
+| レシーバ | パラメータ | メンバー |
+|---|---|---|
+| `Map(K, V)` | キー `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
+| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式 |
+| | `other`（`Map(K, V)`） | `merge` |
+| `Set(T)` | 要素 `T` | `has` / `add` / `remove` / `toggle` |
+| | `other`（`Set(T)`） | `union` / `intersect` / `diff` |
+| `List(T)` | 要素 `T` | `push` / `prepend` / `contains` |
+| | `other`（`List(T)`） | `concat` |
+
+引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：フラグメント、`List.get` の添字、`slice` / `chunk` の数値、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所 — `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — では、どの引数も照合されない。
+
 ### 2.2.1 Map(K, V)
 
 ```
@@ -119,7 +133,7 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置ならどこでもリストリテラルで書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。「宣言された位置」とはチェッカーが型に照らして読む位置すべてを指す——たとえば slot、レコードのフィールド、`fn` の引数や戻り値、reducer の書き込み、`let … in` の本体、`List(Set(T))` の要素や `Map(K, Set(T))` の値、そうしたコンテナに対する `List.contains` / `push` / `prepend` の引数や `Map.insert` / `update` の値、テストの slot の値・期待する effect の引数・モックの結果。`union` / `intersect` / `diff` の引数はレシーバと同じ型の `Set(T)` なので、そこに `List`、要素型の違う `Set`、`Option(Set(T))` を渡すと [E0201](./errors.md#e0201-type-mismatch)。
+**Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置ならどこでもリストリテラルで書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。「宣言された位置」とはチェッカーが型に照らして読む位置すべてを指す——たとえば slot、レコードのフィールド、`fn` の引数や戻り値、reducer の書き込み、`let … in` の本体、`List(Set(T))` の要素や `Map(K, Set(T))` の値、パラメータが `Set` 型である引数（[§2.2](#_2-2-コレクションメソッド)。`List(Set(T))` に対する `List.push` / `contains` の要素、Set を持つ `Map` に対する `Map.insert` のキーや値）、テストの slot の値・期待する effect の引数・モックの結果。`union` / `intersect` / `diff` の引数はレシーバと同じ型の `Set(T)` なので、そこに `List`、要素型の違う `Set`、`Option(Set(T))` を渡すと [E0201](./errors.md#e0201-type-mismatch)。
 
 チェッカーがレシーバの型を決められない位置では、どちらの規則も適用されない：`fold` のアキュムレータ `$1`——`nums.fold({}, $1.union([2]))`——には型がないので、引数は検査されず Set としても組み立てられず、配列のままである。`List(Set(T))` に対するフラグメントはそうした位置ではない：そこでの `$1` は `Set(T)` 型の要素であり（[§2.2.3](#_2-2-3-list-t)）、`groups.map($1.union([2]).to-list)` は引数を Set として組み立て、キーを `T` として読み戻す。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。要素は `add` と同じ方法でキー化されるので、レコードやバリアントのリテラルは同じ要素の `add` 連鎖とちょうど同じものを保持する。それらのキー化は以下の段落のとおりである。
 

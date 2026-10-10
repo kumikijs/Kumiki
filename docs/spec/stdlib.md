@@ -60,6 +60,20 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 
 ## 2.2 Collection Methods
 
+**An argument has its parameter's type.** In the signatures of §2.2.1–§2.2.3, `K` and `V` are a `Map(K, V)`'s key and value types and `T` is a `Set(T)`'s or a `List(T)`'s element type. A parameter of one of those types takes a value of it, and the `other` of `merge` / `union` / `intersect` / `diff` / `concat` is another container of the receiver's type:
+
+| Receiver | Parameter | Members |
+|---|---|---|
+| `Map(K, V)` | the key, `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
+| | the value, `V` | `insert`, and the expression of `update`, which answers the entry's new value |
+| | `other`, a `Map(K, V)` | `merge` |
+| `Set(T)` | the element, `T` | `has` / `add` / `remove` / `toggle` |
+| | `other`, a `Set(T)` | `union` / `intersect` / `diff` |
+| `List(T)` | the element, `T` | `push` / `prepend` / `contains` |
+| | `other`, a `List(T)` | `concat` |
+
+An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment, the index of `List.get`, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type — the accumulator `$1` of `fold`, a `fn` result with no `->` — no argument is checked.
+
 ### 2.2.1 Map(K, V)
 
 ```
@@ -119,7 +133,7 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, the argument of `List.contains` / `push` / `prepend` or the value of `Map.insert` / `update` on such a container, and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
+**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, an argument whose parameter is a `Set` type ([§2.2](#_2-2-collection-methods)) — the element of `List.push` / `contains` on a `List(Set(T))`, a key or value of `Map.insert` on a `Map` of Sets — and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
 
 Where the checker cannot decide the receiver's type, neither rule applies: the accumulator `$1` of `fold` — `nums.fold({}, $1.union([2]))` — has no type, so the argument is neither checked nor built as a Set, and stays an array. A fragment over a `List(Set(T))` is not such a place: there `$1` is the element, typed `Set(T)` ([§2.2.3](#_2-2-3-list-t)), so `groups.map($1.union([2]).to-list)` builds the argument as a Set and reads its keys back as `T`. That is a gap in what the checker resolves, not a rule a program may rely on. A member is keyed the way `add` keys it, so a literal of records or variants holds exactly what the `add` chain of the same members holds, keyed as the paragraphs below say.
 
