@@ -1,13 +1,13 @@
-# Feature (http.md §6.1.4 / §6.7.2): a decoded value that `Decoder.Json(T)`'s
-# `T` refuses is the read's `.err`, so a restore of data the type refuses is a
-# failure the program handles.
+# Feature: a decoded value that `Decoder.Json(T)`'s `T` refuses is the read's
+# `.err`, so a restore of data the type refuses is a failure the program
+# handles.
 #
 # `NoteId` is a uuid, and the storage below holds a note under "legacy-1" — as
 # an older build, a hand edit or a drifted server could leave it. The read used
 # to answer `.ok` with that map, `loaded` wrote it into `notes`, the reducer's
-# batch was refused whole (runtime.md §10.3.3), and `status` stayed "loading"
-# with nothing on the page able to get past it. Now `refused` runs, and the
-# app starts empty and usable.
+# batch was refused whole, and `status` stayed "loading" with nothing on the
+# page able to get past it. Now `refused` runs, and the app starts empty and
+# usable.
 #
 # `boot` writes the legacy map first, so `smoke` reads it back through the
 # real storage handler; the scenario scripts the two answers that gives.

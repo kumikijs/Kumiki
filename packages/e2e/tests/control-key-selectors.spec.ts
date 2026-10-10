@@ -1,29 +1,9 @@
-// Real key presses for the `ui.key` rows of the lift table (#456).
-//
-// The scenario tier's `key` action dispatches a `KeyboardEvent` at an element,
-// and this tier's `.browser.json` has no key action at all. Two claims in the
-// `key` row need a real key press to be checked:
-//
-// - a `link`'s `ui.key` reducer runs on Enter, and the browser then activates
-//   the link, so the router still navigates. The reducer runs first and does
-//   not stop the navigation.
-// - a `check`'s listener is on its `<label>`, and a key pressed in the focused
-//   checkbox reaches it by bubbling.
-//
-// The program is example 109, the same one its `.scenario.json` and
-// `.browser.json` drive.
-
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, type Page, test } from "@playwright/test";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(here, "..", "..", "examples", "features", "109-control-key-focus-blur-selectors.kumiki"),
-  "utf8",
-);
+const source = readFileSync(feature("109-control-key-focus-blur-selectors"), "utf8");
 
 const log = (page: Page): Promise<string> =>
   page.evaluate(() =>
@@ -41,9 +21,6 @@ test("Enter on a link runs its ui.key reducer, then the link still navigates", a
   await page.locator("#home").focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("the other page")).toBeVisible();
-  // `lf` from the focus, then `lk` from the key, before the navigation. What
-  // follows (a `lb` when the navigation removes the focused link) is browser
-  // behaviour this claim does not rest on, so it is left open.
   expect(await log(page)).toMatch(/^lf lk /);
 });
 

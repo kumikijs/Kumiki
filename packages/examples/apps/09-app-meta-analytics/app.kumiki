@@ -1,6 +1,6 @@
 # app.meta — head metadata (title/description/og-image/favicon) reflected at mount.
 # app.analytics — default sink for the analytics.send capability so the app can
-# emit measurement events without a host SDK wired in (#80, runtime.md §10.4.6).
+# emit measurement events without a host SDK wired in.
 
 slot clicks : Int = 0
 

@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { viewHash, viewHistory } from "../mutate.ts";
 import { load, viewDef, viewWithDeps } from "../store.ts";
 import { WARN_SKIPPED } from "./_shared/op-log.ts";
+import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]";
 
@@ -12,10 +13,6 @@ type ViewMode = "text" | "with-deps" | "hash" | "history";
 export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
   const path = resolve(process.cwd(), inputArg);
   if (mode === "history") {
-    // History lives in a sidecar op-log, so this is the one mode that never
-    // opens the .kumiki file — and it reported "(no history)" for a path that
-    // was never there. Existence is checked rather than parsed on purpose: the
-    // history of a file that no longer parses is exactly when it is wanted.
     if (!existsSync(path)) {
       console.error(`File "${path}" not found`);
       process.exit(1);
@@ -47,7 +44,7 @@ export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
   console.log(out);
 }
 
-export function registerView(program: Command): void {
+export function registerView(program: Command): string {
   program
     .command("view")
     .description("Print a definition (optionally with deps, hash, or history)")
@@ -63,10 +60,7 @@ export function registerView(program: Command): void {
         qname: string | undefined,
         options: { withDeps?: boolean; hash?: boolean; history?: boolean },
       ) => {
-        if (!input || !qname) {
-          console.error(USAGE);
-          process.exit(2);
-        }
+        if (!input || !qname) exitWithUsage(USAGE);
         const mode: ViewMode = options.history
           ? "history"
           : options.hash
@@ -77,4 +71,5 @@ export function registerView(program: Command): void {
         viewCmd(input, qname, mode);
       },
     );
+  return USAGE;
 }

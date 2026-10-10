@@ -1,4 +1,4 @@
-# Feature (forms.md §5.6): a `bind` into one field of a record slot is judged
+# Feature: a `bind` into one field of a record slot is judged
 # at that field. A sibling that fails its own refinement — here the pristine
 # `email: ""`, which a declared default is allowed to hold — does not refuse
 # the write, so the form fills in any order. A value the bound field's own
