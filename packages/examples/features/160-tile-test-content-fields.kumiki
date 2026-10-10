@@ -1,7 +1,7 @@
-# Feature (testing.md §8.4): a tile-test compares every content field its
-# expected node states — the fields a builtin lifts (`src`, `to`, `value`,
-# a toggle's checked state, `options`) and the named arguments it keeps in
-# props (`alt`, `disabled`, each `aria-*` attribute) — not only `text`.
+# Feature: a tile-test compares every content field its expected node states —
+# the fields a builtin lifts (`src`, `to`, `value`, a toggle's checked state,
+# `options`) and the named arguments it keeps in props (`alt`, `disabled`, each
+# `aria-*` attribute) — not only `text`.
 #
 # A snapshot that compared only `kind`, `text` and `children` passed every
 # test below with its subject written wrong: an image with the wrong `src` or
@@ -16,7 +16,7 @@
 # renders (as arguments in `Close`, in the `{…}` block in `CloseBlock`): each
 # attribute is a field of its own.
 #
-# `packages/tests/tile-test-content-fields.test.ts` runs these tests, then
+# `packages/tests/src/tile-test-content-fields.test.ts` runs these tests, then
 # writes each stated field wrong and asserts the test fails naming it.
 
 type Person = {id: Int, name: Text}

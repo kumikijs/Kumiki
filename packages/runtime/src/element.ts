@@ -1,19 +1,3 @@
-// Outbound ecosystem seam: wrap a compiled Kumiki app as a custom element so it
-// drops into any host page or framework (React/Vue/Svelte/plain HTML) as a
-// standard Web Component. The element owns the mount lifecycle and bridges the
-// host both ways:
-//   - inbound  (host → app): set slot values via attributes or imperative methods
-//   - outbound (app → host): custom-capability effects surface as host providers
-//                            (callbacks) and/or DOM CustomEvents
-//
-// It renders into the element's light DOM (not a shadow root) because the runtime
-// injects theme + motion styles into the document; a shadow root would not see
-// them. Style isolation via shadow DOM is a deliberate follow-on.
-//
-// A compiled app module is single-instance — its render closures bind to that
-// module's live state — so define one tag per imported app module. Multiple
-// independent instances require importing the app module more than once.
-
 import type { AppShape, CapabilityProvider, MountOptions } from "./index.ts";
 import { mount } from "./index.ts";
 
@@ -26,30 +10,10 @@ export type AttributeSlotBinding = {
 export type KumikiElementOptions = {
   /** Host implementations for custom capabilities (the inbound seam), forwarded to mount. */
   providers?: Record<string, CapabilityProvider>;
-  /**
-   * Custom-capability names to surface as DOM CustomEvents on the element. For
-   * each, emitting the effect dispatches `CustomEvent(cap, { detail: input })`
-   * (bubbling, composed) and resolves ok — so a host can bind via
-   * `addEventListener(cap, …)` / framework `@cap`. A `providers[cap]` entry
-   * takes precedence over the passthrough for the same capability.
-   */
   events?: string[];
   /** Observed attributes mapped to slots; updates flow in on connect and on change. */
   attributeSlots?: Record<string, AttributeSlotBinding>;
-  /**
-   * Render into an open shadow root for full style isolation: the app's
-   * theme/motion/state `<style>` nodes are injected into the shadow root (not the
-   * document head), so host-page CSS does not bleed in and Kumiki's CSS does not
-   * leak out. Default: false (light DOM — the runtime's document-level styles
-   * apply, matching a standalone Kumiki page).
-   */
   shadow?: boolean;
-  /**
-   * Routing source forwarded to mount (#36). An embedded element rarely owns the
-   * top-level URL, so a routed Kumiki app inside it should usually use
-   * `"memory"` (an in-memory path) rather than the default `"history"`, which
-   * reads/writes the host page's location/history.
-   */
   router?: "history" | "memory";
   /** Initial path for the memory router (default `"/"`). */
   initialPath?: string;
@@ -59,11 +23,6 @@ type AppWithSetSlot = AppShape & {
   _setSlot?: (name: string, value: unknown) => void;
 };
 
-/**
- * Register `app` as the custom element `tagName`. Idempotent: if the tag is
- * already defined this is a no-op (so re-imports / HMR don't throw). Requires a
- * DOM environment.
- */
 export function defineKumikiElement(
   tagName: string,
   app: AppShape | (() => AppShape),
@@ -76,18 +35,11 @@ export function defineKumikiElement(
   }
   if (customElements.get(tagName)) return;
 
-  // Pass the compiled module's `createApp` factory to give each element instance
-  // its own independent state; pass a single `AppShape` and every element of
-  // this tag is a view of ONE app — same slots, all of them live, initialized
-  // once (runtime.md §10.9.1). (A factory's closures bind to each call's own
-  // `live`.)
   const makeApp: () => AppShape = typeof app === "function" ? app : () => app;
 
   const attributeSlots = options.attributeSlots ?? {};
   const observed = Object.keys(attributeSlots);
 
-  // Event-passthrough providers fill in for any `events` capability; explicit
-  // host providers override them (host wins on conflict).
   const buildProviders = (el: HTMLElement): Record<string, CapabilityProvider> => {
     const merged: Record<string, CapabilityProvider> = {};
     for (const cap of options.events ?? []) {
@@ -99,8 +51,6 @@ export function defineKumikiElement(
     return Object.assign(merged, options.providers ?? {});
   };
 
-  // Defined lazily (inside the function) so merely importing this module never
-  // references `HTMLElement` — keeping non-DOM imports of the runtime safe.
   class KumikiAppElement extends HTMLElement {
     static get observedAttributes(): string[] {
       return observed;
