@@ -1,14 +1,8 @@
-// An `effect` declared under a standard effect's name (stdlib.md §2.6) is
-// E0234. The runtime registers each standard effect on `app.effects` under its
-// own name at mount, over the record codegen wrote there for the declaration —
-// its capability, its invoke and its policy — so an emit of the name runs the
-// built-in and the declaration never runs at all.
-
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { BUILTIN_EFFECTS } from "../src/capabilities.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
 
-/** The names stdlib.md §2.6 gives, written out rather than read off the table. */
+// Written out rather than read off the table, so the table is checked against the spec's list.
 const STANDARD = [
   "navigate",
   "navigate-replace",
@@ -19,7 +13,6 @@ const STANDARD = [
   "log",
 ];
 
-/** A program that declares `name` as its own HTTP effect, emits it and reads its result. */
 const declaring = (name: string) => `effect ${name} cap=http.get in=Text out=Result(Text, HttpError)
     map-request={url: "/api/" + $1, decode: Decoder.Text}
 slot got : Text = ""
@@ -30,7 +23,7 @@ app A caps=[http.get] routes={"/" -> B, "/404" -> B} init=[]
 `;
 
 const diagnostics = (src: string) =>
-  check(parse(lex(src))).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
 describe("an effect declared under a standard effect's name", () => {
   it("the list here is every standard effect the checker knows", () => {

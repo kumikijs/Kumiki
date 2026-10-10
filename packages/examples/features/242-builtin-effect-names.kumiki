@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.6): the standard effects keep their names.
+# Feature (stdlib.md): the standard effects keep their names.
 #
 # `log` and `toast` are the runtime's: the program emits them without declaring
 # them, and their `.ok` reducers count each one that ran. The request it makes

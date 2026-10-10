@@ -1,5 +1,5 @@
-# Feature (runtime.md §10.5.1 / §10.5.3): an episode records what the reducer
-# read from the environment, so replaying it is the same run again.
+# Feature: an episode records what the reducer read from the environment, so
+# replaying it is the same run again.
 #
 # `random()` and `now` answer from outside the program — no slot holds what
 # they are about to say. An episode that recorded only the slots the reducer
@@ -52,7 +52,7 @@ test roll-is-in-range =
 #
 # CI does not run this block — `kumiki test` is driven against `28-tests.kumiki`
 # only — so what actually guards the fixture is the same assertion in
-# `packages/tests/episode-replay-env.test.ts`. Edit one and the other fails.
+# `packages/tests/src/episode-replay-env.test.ts`. Edit one and the other fails.
 test replay-reproduces-the-read =
     episode-test
         load   = "87-replayed-environment-read.fixture.jsonl"

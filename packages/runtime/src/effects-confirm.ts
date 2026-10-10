@@ -1,8 +1,3 @@
-// The `confirm` built-in effect (lifecycle §7.6): renders a modal dialog with
-// Yes / No actions and dispatches the user-supplied reducer references. The
-// runtime also resolves any pending `route.leave` guard the confirm was
-// emitted from (routing §3.5.2): Yes commits the held transition, No reverts.
-
 import {
   type AppShape,
   type BuiltinEffects,
@@ -88,8 +83,6 @@ function renderConfirmModal(app: AppWithHooks, t: ConfirmInput): Promise<void> {
     const finish = (outcome: "yes" | "no"): void => {
       document.removeEventListener("keydown", onKey);
       overlay.remove();
-      // Order matters: run the user-supplied callback first so any cleanup
-      // (e.g. `dirty := false`) lands before route.enter sees the new route.
       const cb = outcome === "yes" ? t.onYes : t.onNo;
       if (cb) app._dispatch?.(cb, {});
       app._resolveLeave?.(outcome);

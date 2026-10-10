@@ -1,9 +1,3 @@
-// Capability model: the standard set (docs/spec/stdlib.md §2.5), the standard
-// effects gated on it (§2.6), and parsing for the `kumiki.caps.json` manifest
-// that registers project-specific capabilities.
-// Pure (no I/O) so it stays browser-safe; the file-resolving wrapper lives in
-// the node-only submodule (`@kumikijs/compiler/node`).
-
 import type { BuiltinEffectName } from "@kumikijs/runtime";
 import type { TypeExpr } from "./ast.ts";
 import { appType, primType, recordType, refType } from "./stdlib-types.ts";
@@ -44,16 +38,6 @@ const text = primType("Text");
 const textMap = appType("Map", text, text);
 const navigation: TypeExpr = recordType({ path: text, params: textMap, query: textMap });
 
-/**
- * The capabilities whose effects declare their failure as `Text`
- * (`out=Result(T, Text)`, docs/spec/http.md §6.7) — localStorage,
- * sessionStorage and IndexedDB. Their built-in handlers deliver that `Text` to
- * `.err`, so the checker binds `$e : Text` on one of them and reports an `out=`
- * that declares another `E` (E0306), and codegen reads every err value inside
- * one of their invokes — returned or thrown, from the `map-request`, a host
- * provider or the handler — as that `Text`, rather than leaving a throw to the
- * dispatcher, which cannot know the effect's `E`.
- */
 const TEXT_FAILURE_CAPABILITIES: ReadonlySet<string> = new Set([
   "storage.read",
   "storage.write",
@@ -69,42 +53,18 @@ export function failsWithText(cap: string): boolean {
   return TEXT_FAILURE_CAPABILITIES.has(cap);
 }
 
-/**
- * `confirm`'s `onYes` / `onNo` (stdlib.md §2.6.5, lifecycle.md §7.6): a
- * reducer's name, written bare, which the runtime dispatches by name. It is not
- * a type a program can write, so the checker matches this node itself rather
- * than the name, and a program's own `type ReducerRef` cannot stand in for it.
- */
 export const REDUCER_REF: TypeExpr = refType("ReducerRef");
 
 /** A standard effect: the capability it is gated on and the input it takes. */
 export type BuiltinEffect = {
   /** `null` for the one that needs none. */
   readonly cap: string | null;
-  /** Its `in=`, as stdlib.md §2.6 declares it. */
   readonly inType: TypeExpr;
-  /**
-   * Record fields a call may leave out beside the `Option(T)` ones, which may
-   * always be: `navigate`'s `params` and `query` default to `{}` (routing.md
-   * §3.7), and `confirm`'s `message` to none.
-   */
   readonly defaulted?: readonly string[];
 };
 
-/**
- * The effects the runtime registers itself (docs/spec/stdlib.md §2.6): what
- * each is gated on and what it takes, in one table. They are not `effect`
- * declarations, so nothing in a program says either. An entry cannot have one
- * without the other.
- *
- * Keyed by the runtime's `BuiltinEffectName` — the names its installers write
- * on `app.effects` at mount — so a name missing here, or one here the runtime
- * does not list, is a type error. The runtime writes each over whatever a
- * program compiled under its name, which is why an `effect` declared under one
- * of these keys is E0234.
- */
+// Keyed by the runtime's names, so a standard effect added on one side only is a type error.
 const BUILTIN_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: BuiltinEffect } = {
-  // `query` is routing.md §3.7's extension of the §2.6.1 `in=`.
   navigate: { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] },
   "navigate-replace": { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] },
   "navigate-back": { cap: "nav.back", inType: primType("Unit") },
@@ -115,23 +75,17 @@ const BUILTIN_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: BuiltinEffect }
   },
   confirm: {
     cap: "notification.show",
-    // `message` is lifecycle.md §7.6's; left out, the dialog shows the title.
+    // Left out, `message` shows the title.
     inType: recordType({ title: text, message: text, onYes: REDUCER_REF, onNo: REDUCER_REF }),
     defaulted: ["message"],
   },
   log: { cap: "log.write", inType: recordType({ level: text, message: text, data: textMap }) },
 };
 
-/** {@link BUILTIN_EFFECT_TABLE}, by name. */
 export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map(
   Object.entries(BUILTIN_EFFECT_TABLE),
 );
 
-/**
- * Whether a call to the standard effect `builtin` may leave `field` out of its
- * record argument: an `Option(T)` field always may, and so may the entry's
- * `defaulted` ones (stdlib.md §2.6).
- */
 export function builtinFieldOmittable(
   builtin: BuiltinEffect,
   field: { readonly name: string; readonly type: TypeExpr },
@@ -156,11 +110,6 @@ export type ManifestResult =
 /** A capability name must look like `group.action` (lowercase, dot-separated). */
 const CAP_NAME = /^[a-z][a-z0-9]*\.[a-z][a-z0-9-]*$/;
 
-/**
- * Validate a parsed `kumiki.caps.json` value. Accepts either bare strings or
- * `{ name, description? }` objects in the `capabilities` array. Pure — the
- * caller does the file read + JSON parse and reports the location.
- */
 export function parseCapabilityManifest(raw: unknown): ManifestResult {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { ok: false, error: "manifest must be a JSON object" };
