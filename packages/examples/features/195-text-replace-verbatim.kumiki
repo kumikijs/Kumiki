@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.2.6): `Text.replace(from, to)` replaces every
+# Feature (stdlib.md): `Text.replace(from, to)` replaces every
 # occurrence of `from`, matched as plain text, with `to` exactly as written.
 #
 # `to` has no substitution syntax. A `$` in it is text, whatever follows it

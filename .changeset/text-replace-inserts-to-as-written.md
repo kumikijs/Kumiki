@@ -25,6 +25,6 @@ once, in that order. Every occurrence of `from` is still replaced, and `from` is
 still matched as plain text; an empty `from` still matches before each character
 and at the end (`"abc".replace("", "-")` is `"-a-b-c-"`).
 
-stdlib.md §2.2.6 says so in both language tracks, and
+stdlib.md says so in both language tracks, and
 `packages/examples/features/195-text-replace-verbatim.kumiki` renders each
 pattern with a scenario that names the text it must show.

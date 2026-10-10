@@ -1,13 +1,11 @@
 // Keyed reorder cost.
 //
 // Measures how many mounted children the runtime MOVES to produce a new order.
-// Matching children by key (docs/spec/runtime.md §10.3.10) says which old
+// Matching children by key (docs/spec/runtime.md) says which old
 // element belongs to which new child; it does not by itself say how many of
-// them have to be touched. The reorder phase used to replay the whole target
-// sequence with `appendChild`, so every render reaching the keyed path detached
-// and re-attached every child — N moves for a list where nothing moved at all.
-// It now leaves the survivors whose old positions already ascend where they are
-// and inserts only the rest, so the count tracks what actually changed.
+// them have to be touched. The reorder phase leaves the survivors whose old
+// positions already ascend where they are and inserts only the rest, so the
+// count should track what actually changed, not the length of the list.
 //
 // `sweep` is that previous behaviour, kept as the column to read `moves`
 // against: it is the length of the new child list, which is what replaying the
@@ -97,7 +95,7 @@ const SCENARIOS = [
 ];
 
 /**
- * A keyed list under a plain container — the shape §10.3.10 asks for. The `for`
+ * A keyed list under a plain container — the shape keyed matching asks for. The `for`
  * gives every row the implicit `_s.show(r)` key, and `Rows` holds nothing but
  * the loop so the container is exactly the parent the keyed pass addresses.
  */
@@ -190,7 +188,7 @@ async function measure(size, scenario) {
 
   // A silent fallback out of the keyed path would produce a full table of
   // move counts for a run that never took the path being measured. `smoke` and
-  // `kumiki dev` read the same channel (§10.3.12).
+  // `kumiki dev` read the same channel.
   const fallbacks = [];
   const handle = mount(app, root, {
     onDiagnostic: (d) => {
@@ -201,7 +199,7 @@ async function measure(size, scenario) {
   const rerender = app._rerender;
   if (typeof rerender !== "function") throw new Error("app._rerender missing after mount");
 
-  // First fill crosses the empty boundary (§10.3.10), which re-enters the
+  // First fill crosses the empty boundary, which re-enters the
   // container's renderer rather than taking the keyed path. Do it before the
   // container is instrumented so it cannot be mistaken for a reorder.
   app.live.rows = base;

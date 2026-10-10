@@ -1,17 +1,8 @@
-// `Text.replace(from, to)` (stdlib.md §2.2.6): every occurrence of `from`,
-// matched as plain text, is replaced by `to` exactly as written.
-//
-// JavaScript's `replaceAll` reads a string replacement as a pattern — `$$` is
-// `$`, `$&` the match, `` $` `` and `$'` the text before and after it — and
-// Kumiki has no such syntax, so `to` must never reach it as one. These run the
-// lowered expression instead of reading the generated JS: what the module
-// computes is the claim, whichever way the lowering spells it.
+// These run the lowered expression rather than read the generated JS: what the module computes is
+// the claim, whichever way the lowering spells it.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { compile } from "@kumikijs/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
+import { loadApp, type ReducerShape } from "./helpers/module.ts";
 
 type Case = { recv: string; from: string; to: string; out: string };
 
@@ -43,12 +34,8 @@ function lit(s: string): string {
   return `"${s}"`;
 }
 
-/**
- * One reducer writes every case with all three operands literal, into slot
- * `w<i>`; another reads the receiver, `from` and `to` from slots, so `to`
- * reaches the lowering as a value no literal pins. The third draws `to` from
- * `random()`, which answers differently each time it is read.
- */
+// `fromSlots` hands `to` to the lowering as a value no literal pins, and `once` draws it from
+// `random()`, which answers differently each time it is read.
 const SOURCE = `slot src   : Text = ""
 slot pat   : Text = ""
 slot rep   : Text = ""
@@ -74,29 +61,14 @@ app A
     init   = []
 `;
 
-type AppShape = {
-  live: Record<string, unknown>;
-  reducers: {
-    name: string;
-    apply: (live: object, payload: object) => { slots: Record<string, unknown> };
-  }[];
-};
-
-const TMP_ROOT = resolve(__dirname, "test-tmp");
-mkdirSync(TMP_ROOT, { recursive: true });
+type AppShape = { live: Record<string, unknown>; reducers: ReducerShape[] };
 
 let app: AppShape;
 
 // Writing a module to disk and importing it costs a real module load, which
 // overruns the 5s default on a cold cache.
 beforeAll(async () => {
-  const result = compile(SOURCE, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-  if (result.kind !== "ok")
-    expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-  const file = join(mkdtempSync(join(TMP_ROOT, "text-replace-")), "app.mjs");
-  writeFileSync(file, result.js);
-  const mod: { default: AppShape } = await import(`${pathToFileURL(file).href}?t=${Date.now()}`);
-  app = mod.default;
+  app = await loadApp<AppShape>(SOURCE, "text-replace");
 }, 30_000);
 
 /** The slot writes of one run of reducer `name`, with the slots holding `live`. */

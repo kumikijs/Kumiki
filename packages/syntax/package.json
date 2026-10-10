@@ -1,6 +1,6 @@
 {
   "name": "@kumikijs/syntax",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Kumiki TextMate grammar — syntax highlighting for .kumiki files (Shiki, VitePress, VS Code).",
   "license": "Apache-2.0",
