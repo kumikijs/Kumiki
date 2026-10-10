@@ -1,23 +1,7 @@
-// A tree deeper than the call stack can walk used to surface as a bare
-// `RangeError: Maximum call stack size exceeded` — no position, no message,
-// nothing pointing at the source. The bound is a positioned `ParseError` now.
-//
-// The bound is on the tree, not on how the parser reached it. That distinction
-// is the whole subject here: a left-associative chain (`1 + 1 + 1 + …`,
-// `x.trim().trim()…`, a run of `not`, a type's `where`s, an assignment target's
-// `s.a[0]…` path) is parsed by a loop and costs the parser no stack, but still
-// builds one node per step, and every stage after the parse walks those nodes
-// by recursion. Bounding only what the parser recursed through would let such
-// a chain parse clean and overflow the stack downstream.
-//
-// Every assertion therefore goes through `compile`, not `parse`. The thresholds
-// also differ per construct, so one row per construct is what makes a missed
-// entry point visible.
-
 import { compile, lex, ParseError, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-/** The bound recorded in language.md §1.2.3. */
+/** The parser's nesting limit. */
 const MAX_DEPTH = 256;
 
 const nest = (open: string, close: string, inner: string, depth: number) =>
@@ -27,15 +11,6 @@ const TAIL = `tile App = column(text("x"))
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
 
-/**
- * Every construct that can contain itself, and every chain that builds one
- * node per operator without recursing.
- *
- * `effective` is where each first refuses. They are not all `MAX_DEPTH`: a
- * construct whose parse passes through more than one guarded entry point —
- * a tile call goes through `parseTileExpr` and `parseTileCall` — spends the
- * extra level on the way in, and the budget is over the resulting tree.
- */
 const FORMS: readonly { name: string; effective: number; at: (depth: number) => string }[] = [
   {
     name: "parenthesised expression",
@@ -63,8 +38,6 @@ const FORMS: readonly { name: string; effective: number; at: (depth: number) => 
     at: (d) => `tile T = ${nest("column(", ")", 'text("x")', d)}\n${TAIL}`,
   },
   {
-    // A tuple is the only pattern that contains a pattern — a variant's
-    // payloads are binds, so `Some(Some(y))` is not grammar at any depth.
     name: "tuple pattern",
     effective: 255,
     at: (d) =>
@@ -81,8 +54,6 @@ const FORMS: readonly { name: string; effective: number; at: (depth: number) => 
     at: (d) => `theme T = ${nest("{a: ", "}", "1", d)}\n${TAIL}`,
   },
   {
-    // Statement bodies nest through `parseStatement` → `parseStatementBody` →
-    // `parseStatement`, a path distinct from the expression-level `if`.
     name: "if statement",
     effective: 254,
     at: (d) =>
@@ -104,8 +75,6 @@ tile App = column(B)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
   },
-  // The chains. Each is parsed by a loop, so none of these cost the parser any
-  // stack — and each still builds one node per operator.
   {
     name: "binary operator chain",
     effective: 255,
@@ -122,15 +91,11 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     at: (d) => `slot v : Int = ${"-".repeat(d)}1\n${TAIL}`,
   },
   {
-    // One `TypeRefinement` per `where` over `Int`. `parseTypeUnionAtom` takes
-    // the first before the loop starts charging, so this chain is refused one
-    // step later than the expression chains: 255 `where`s are accepted, as deep
-    // a tree as the longest accepted type application, 255 nested `List(`s.
+    // The first `where` is read with the type's atom, before the chain starts charging.
     name: "where chain",
     effective: 256,
     at: (d) => `type T = Int${" where between(0, 10)".repeat(d)}\nslot v : T = 1\n${TAIL}`,
   },
-  // An assignment target is a path, one `LIndex` / `LField` per step.
   {
     name: "slot-assignment index path",
     effective: 255,
@@ -155,8 +120,6 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
   },
   {
-    // Both kinds of step in one path: one count covers them, so alternating
-    // them goes no further than either alone. Type-checks at every depth.
     name: "slot-assignment mixed path",
     effective: 255,
     at: (d) =>
@@ -168,8 +131,6 @@ tile App = column(B)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `,
   },
-  // A chain inside another construct starts from the level that construct is
-  // at, so it is refused that many steps sooner.
   {
     name: "where chain on a record field",
     effective: 255,
@@ -205,15 +166,11 @@ describe("the parser bounds how deep a tree a program may build", () => {
       const result = pipeline(form.at(form.effective));
       expect(result, `a deep ${form.name} was not refused`).toBeInstanceOf(ParseError);
       const { pos } = result as ParseError;
-      // A real token position — `1:1` is what a synthesised one looks like,
-      // and every one of these is deep inside a long line.
       expect(pos.line).toBeGreaterThanOrEqual(1);
       expect(pos.col).toBeGreaterThan(1);
     });
 
     it(`accepts a ${form.name} one level under its limit`, () => {
-      // Pinned exactly, so a limit that drifts — in either direction — fails
-      // one of this pair rather than passing both.
       expect(
         pipeline(form.at(form.effective - 1)),
         `a legal ${form.name} was refused`,
