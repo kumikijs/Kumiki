@@ -1,19 +1,15 @@
-// A `bind` its slot's refinement refuses leaves the slot on the last value it
-// accepted and the control on what was typed (spec/forms.md §5.1.2). The two
-// then disagree, and `error(field=…)` has to speak for what the field shows —
-// it used to read the slot, which still held the old, valid value, so the
-// field showed an address it was not holding and no message at all (#443).
-
 import type { AppShape, MountedApp, TileNode } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { noteBindWrite, refusedBindControls, refusedBindShown } from "../src/core.ts";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** `slot contact : Text where email`, an input bound to it, and its error tile. */
 function makeApp(): AppShape {
-  const app: AppShape = {
+  const app: AppShape = bareApp({
     slots: {
       contact: {
         value: "ada@example.com",
@@ -23,9 +19,6 @@ function makeApp(): AppShape {
       },
       saved: { value: 0 },
     },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "save",
@@ -45,13 +38,12 @@ function makeApp(): AppShape {
         { kind: "error", field: "contact" },
       ],
     }),
-  };
+  });
   return app;
 }
 
 function mountApp(): { app: MountedApp; input: HTMLInputElement; error: () => string } {
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  const root = freshRoot();
   const app = makeApp();
   mount(app, root);
   const input = root.querySelector("input") as HTMLInputElement;
@@ -96,14 +88,6 @@ describe("a bind its refinement refuses", () => {
     expect(error()).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// What each control "shows". A refused entry is only judged while its control
-// still shows what was refused, and each control reports that differently: an
-// `editable` has no `.value` and is read by its text, a `slider` is written
-// `Number(value)` but shows a string, and a `select` writes the option's value
-// while showing that option's key. A row that got its reading wrong would
-// either never show the message or never let go of it.
 
 type SlotMeta = NonNullable<AppShape["slots"]>[string];
 
@@ -202,11 +186,8 @@ function mountControl(c: ControlCase): {
   control: HTMLElement;
   error: () => string;
 } {
-  const app: AppShape = {
+  const app: AppShape = bareApp({
     slots: { f: c.meta, saved: { value: 0 } },
-    caps: [],
-    effects: {},
-    init: [],
     reducers: [
       {
         name: "save",
@@ -224,9 +205,8 @@ function mountControl(c: ControlCase): {
         kind: "column",
         children: [c.node(app.live?.f ?? c.meta.value), { kind: "error", field: "f" }],
       }) as TileNode,
-  };
-  const root = document.createElement("div");
-  document.body.appendChild(root);
+  });
+  const root = freshRoot();
   mount(app, root);
   const control = root.querySelector(`[data-kumiki-tile="${c.name}"]`) as HTMLElement;
   const error = () => (root.querySelector('[data-kumiki-tile="error"]')?.textContent ?? "").trim();
@@ -249,13 +229,6 @@ describe("a refused bind is judged by what its control shows", () => {
     });
   }
 });
-
-// A slot whose predicate is written inside its type — here a record field,
-// `pick : {email: Text where email}` — carries `refineFailure` and no `refine`
-// (language.md §1.3.3): every gate reads it through `slotAccepts`. A bind into
-// such a slot is refused and remembered like any other, so a `select` whose
-// options are records shows the refused one's message; a reading of `refine`
-// alone would take the write and leave the tile silent.
 
 describe("a refused bind into a slot gated by a predicate inside its type", () => {
   it("is refused, and its error tile names the field's predicate", () => {
@@ -298,12 +271,6 @@ describe("a refused bind into a slot gated by a predicate inside its type", () =
   });
 });
 
-// ---------------------------------------------------------------------------
-// One shape mounted twice is two views of one app (runtime.md §10.9.1). What a
-// user typed into one view's field belongs to that view: the other view's
-// field still shows the value the slot holds, so its error tile must not speak
-// for a value it is not showing.
-
 describe("a refused bind in one view of a shape", () => {
   it("is not reported by the error tile of another view", () => {
     const app = makeApp();
@@ -323,12 +290,6 @@ describe("a refused bind in one view of a shape", () => {
     expect(errorIn(hostB)).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// IME composition. Every intermediate value of a JP/CN/KR composition goes
-// through the bind, and a strict refinement refuses most of them; re-deriving
-// the message on each one would flash it while the user is still composing.
-// The message is settled once, when the composition ends.
 
 describe("a refused bind during an IME composition", () => {
   it("leaves the message as it was until compositionend", () => {
@@ -353,12 +314,6 @@ describe("a refused bind during an IME composition", () => {
     expect(error()).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// The memory of refused binds must not outlive what it is about. A control
-// that left the page, or no longer shows what was refused, is dropped — also
-// when nothing ever asks about its slot, and also when an earlier entry for
-// the same slot is still live.
 
 describe("the refused-bind memory", () => {
   const control = (value: string): HTMLInputElement => {
@@ -389,9 +344,6 @@ describe("the refused-bind memory", () => {
     expect(refusedBindControls(app)).toEqual([live]);
   });
 
-  // What a box shows is its tick. Its `.value` is the constant "on" whatever
-  // it shows, so judged by that a refused tick would never go stale and the
-  // `error(field=…)` beside it would never stop speaking.
   const boxes: [string, string][] = [
     ["check", "checkbox"],
     ["switch", "checkbox"],
@@ -411,12 +363,6 @@ describe("the refused-bind memory", () => {
     });
   }
 });
-
-// ---------------------------------------------------------------------------
-// Controls bound into parts of one slot (forms.md §5.6): what the slot shows is
-// its own value with every refused value laid over it at the path its control
-// writes. `refusedBindShown` is read directly here; the field-level cases that
-// go through the input tiles are in packages/tests/record-field-bind.test.ts.
 
 describe("refused values laid over a slot", () => {
   const control = (value: string): HTMLInputElement => {

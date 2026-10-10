@@ -1,4 +1,4 @@
-# Feature (stdlib.md §2.1.2): a tuple's length is part of its type.
+# Feature (stdlib.md): a tuple's length is part of its type.
 #
 # `Tuple(Int, Text)` and `Tuple(Int, Text, Int)` are two types, and neither is
 # accepted where the other is required: `triple := pair` is E0201
