@@ -1,10 +1,6 @@
-// The `toast` effect's banner, in Chromium. The runtime appends it to `<body>`,
-// outside the mount root, and keeps it in view with `position: fixed`; the
-// runtime's own tests fire the effect on a stub app and mount nothing, so a
+// The runtime's own tests fire the effect on a stub app and mount nothing, so a
 // banner that moved under the root, scrolled away with the page, or never left
-// would pass them. This fixture drives a real one through the scenario format,
-// whose `domIncludes` / `domExcludes` read the runtime's overlays at this tier
-// as at the scenario tier (testing.md §8.10).
+// would pass them.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

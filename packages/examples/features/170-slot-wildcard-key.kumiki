@@ -1,5 +1,4 @@
-# Feature (testing.md §8.2.2): `<slots.X>` as a Set member or a map key in a
-# reducer-test `expect`.
+# Feature: `<slots.X>` as a Set member or a map key in a reducer-test `expect`.
 #
 #   expect = {slots: {tags: ["z", <slots.pick>]}}
 #   expect = {slots: {counts: {"z": 2, <slots.pick>: 1}}}

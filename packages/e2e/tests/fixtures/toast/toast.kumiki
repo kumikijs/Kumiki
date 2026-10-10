@@ -1,7 +1,7 @@
-# The `toast` effect's banner in a real browser (stdlib.md §2.5, lifecycle.md
-# §7.7): an `info` toast goes after its kind's default of 3000ms, and an
-# `error` toast stays until it is dismissed. The page is twice the viewport's
-# height, so a banner that is not fixed to the viewport lands below the fold.
+# The `toast` effect's banner in a real browser: an `info` toast goes after its
+# kind's default of 3000ms, and an `error` toast stays until it is dismissed. The
+# page is twice the viewport's height, so a banner that is not fixed to the
+# viewport lands below the fold.
 
 reducer info  on=ui.click(InfoBtn)  do= emit toast({kind: "info", text: "Saved"})
 reducer error on=ui.click(ErrorBtn) do= emit toast({kind: "error", text: "Failed"})

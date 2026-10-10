@@ -1,8 +1,3 @@
-// Multi-mount browser tier: two compiled apps co-mounted on ONE page must not
-// cross-wire (issue: the runtime used a shared `__kumikiApp` global, so the
-// last mount captured the other app's events). The fixture drives real clicks
-// and fills scoped per root and asserts each app's state independently.
-
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,13 +22,7 @@ test("two apps co-mounted on one page stay isolated", async ({ page }) => {
       .map((s, i) => {
         const head = `step ${i}${s.label ? ` (${s.label})` : ""}${s.action ? `: ${s.action}` : ""}`;
         const lines = [head];
-        // Without this a step that failed only on `actionError` — the whole
-        // reason a fixture's selector drift fails here — prints its heading
-        // and nothing under it, on the tier where reproducing locally costs a
-        // Chromium install.
         if (s.actionError !== undefined) lines.push(`    action failed: ${s.actionError}`);
-        // And the other half of that channel — see the same line in
-        // `fixtures.spec.ts`.
         if (s.expectedActionError !== undefined) {
           lines.push(`    expected refusal: ${s.expectedActionError}`);
         }

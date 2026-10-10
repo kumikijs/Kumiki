@@ -1,4 +1,4 @@
-# Feature: a reducer batch commits all-or-nothing (spec/runtime.md §10.3.3).
+# Feature: a reducer batch commits all-or-nothing.
 #
 # `count` is capped at 3. `bump` writes three slots in one batch, and the
 # second statement reads `count` back — a reducer body sees the batch under

@@ -1,13 +1,3 @@
-// Scenario runner: drive a mounted Kumiki app through a sequence of actions and
-// capture a structured trace (state snapshot, DOM text, errors, emitted effects)
-// after each step, plus state/DOM assertions. This is the deterministic,
-// introspectable substrate that lets an agent run a generate → run → observe →
-// fix loop with NO human operating the app.
-//
-// Kumiki makes this clean: state is explicit (slots), events are named
-// (reducers), and effects are mocked at the capability boundary — so the oracle
-// is reliable app state, not scraped pixels, and runs are reproducible.
-
 import {
   type ControlVerb,
   controlFault,
@@ -20,247 +10,19 @@ import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
 import { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
+import { stateMismatches, textMismatches } from "./scenario/expect.ts";
+import {
+  type Action,
+  describeAction,
+  type Expect,
+  type ScenarioStep,
+  type StepOutcome,
+  unhandledAction,
+  validateScenario,
+} from "./scenario/vocabulary.ts";
 import { submitFault } from "./submit-check.ts";
 import { standInValue } from "./testkit.ts";
 
-/** One thing to do to the app. Exactly one field should be set. */
-export type Action =
-  | { dispatch: string; payload?: Record<string, unknown> }
-  | { clickText: string }
-  | { click: string }
-  | { focus: string }
-  | { blur: string }
-  /** Press a key on the element the selector matches — what a `ui.key` reducer listens for. */
-  | { key: string; value: string }
-  /** Enter the element the selector matches — what a `ui.hover` reducer listens for. */
-  | { hover: string }
-  | { fill: string; value: string }
-  | { choose: string; value: string }
-  | { navigate: string }
-  | { submit: string }
-  /** Settle for this many milliseconds — a debounce window, a retry backoff, a timer. */
-  | { wait: number };
-
-/** Assertions evaluated against the snapshot taken after a step. */
-export type Expect = {
-  /** No runtime errors since the previous step. */
-  noErrors?: boolean;
-  /**
-   * Substrings that must each appear in some error the *app* reported since the
-   * previous step. The counterpart to `noErrors`: a contract whose whole point
-   * is that the runtime *reports* something (a rejected reducer batch, a
-   * dropped effect error) is otherwise unassertable at this tier, and an
-   * example demonstrating one would have to settle for "no error was raised
-   * about it".
-   *
-   * A step whose action could not run is not one of those: it is a fault in the
-   * scenario, reported on `StepResult.actionError`, and deliberately out of
-   * reach here. Otherwise
-   * `{do: {key: "#typo", value: "Enter"}, expect: {errorIncludes: ["no element"]}}`
-   * passed, having pressed nothing — a fixture asserting that its own mistake
-   * happened.
-   */
-  errorIncludes?: string[];
-  /**
-   * Substrings that must each appear in this step's `actionError` — the channel
-   * an action that could not run reports on. The counterpart to `errorIncludes`
-   * for the other channel, and the reason it exists is the same: a refusal is
-   * often the behaviour a fixture means to assert. "The save button is disabled
-   * while the save is in flight, so clicking it does nothing" had no spelling
-   * before this — the step that drove the disabled control passed, and passed
-   * whether the guard held or the reducer simply did not exist. A `{submit}`
-   * whose form held the submit back is refused the same way (`submitFault`).
-   *
-   * A matched `actionError` moves to `expectedActionError` and stops failing
-   * the step, exactly as a matched error moves to `expectedErrors`. A step that
-   * asks for a refusal and is not refused fails: the assertion is about the
-   * platform turning the step away, so an action that ran does not satisfy it.
-   */
-  actionErrorIncludes?: string[];
-  /** Partial match against the slot state (slot name → expected value). */
-  state?: Record<string, unknown>;
-  /**
-   * Substrings that must appear in the rendered text: the mount root's, and
-   * that of every runtime overlay this run opened (`RUNTIME_OVERLAY_SELECTORS`
-   * — a toast banner, a confirm dialog), which render outside the root.
-   */
-  domIncludes?: string[];
-  /** Substrings that must NOT appear in the rendered text, read as `domIncludes` reads it. */
-  domExcludes?: string[];
-};
-
-export type ScenarioStep = { label?: string; do?: Action; expect?: Expect };
-
-/**
- * The closed sets this runner answers for. A scenario naming anything outside
- * them is rejected rather than skipped: `evaluateExpect` used to iterate the
- * keys it knew and ignore the rest, so a document whose every assertion was
- * browser-tier passed having checked nothing.
- *
- * The browser lists are named, not merely absent, so the failure says which
- * tier owns the key instead of calling a real assertion a typo. They mirror
- * `@kumikijs/e2e`'s `Expect` / `Action`; a key added there and not here reads
- * as "unknown", which is the safe direction.
- */
-export const HEADLESS_EXPECT_KEYS = [
-  "noErrors",
-  "errorIncludes",
-  "actionErrorIncludes",
-  "state",
-  "domIncludes",
-  "domExcludes",
-] as const satisfies readonly (keyof Expect)[];
-const BROWSER_EXPECT_KEYS = ["focused", "visible", "hidden", "animating", "elementState"] as const;
-
-export const HEADLESS_ACTION_KEYS = [
-  "dispatch",
-  "clickText",
-  "click",
-  "focus",
-  "blur",
-  "key",
-  "hover",
-  "fill",
-  "choose",
-  "navigate",
-  "submit",
-  "wait",
-] as const satisfies readonly ActionKind[];
-const BROWSER_ACTION_KEYS = ["setProperty"] as const;
-
-/**
- * The lists above are pinned to the types in both directions, at no runtime
- * cost. `satisfies` rejects a listed key the type no longer has; the two
- * assertions below reject a key the type has and the list forgot — which is
- * the direction that matters, because a forgotten key is silently skipped.
- */
-type ActionKind = Action extends infer A ? (A extends unknown ? keyof A : never) : never;
-type Covers<Whole extends Part, Part> = Whole;
-type _ExpectKeysCovered = Covers<keyof Expect, (typeof HEADLESS_EXPECT_KEYS)[number]>;
-/**
- * And `CONTROL_DEMANDS` is pinned the same way, in the direction that matters:
- * every action kind has a row saying what it asks of a control. Without this a
- * DOM-driving verb added to `Action` and forgotten there would ask nothing of
- * one — silently, which is the shape `control-check.ts` exists to remove.
- */
-type _ControlVerbsTotal = Covers<
-  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
-  ControlVerb
->;
-type _ActionKindsCovered = Covers<
-  Exclude<ActionKind, (typeof ACTION_MODIFIERS)[number]>,
-  (typeof HEADLESS_ACTION_KEYS)[number]
->;
-
-/** Fields that accompany an action kind rather than naming one. */
-const ACTION_MODIFIERS = ["payload", "value", "property"] as const;
-
-/** The whole document is a closed set too — see `validateScenario`. */
-const SCENARIO_KEYS = ["steps", "effects", "defaultEffect"] as const;
-
-const BROWSER_TIER = "a browser-tier assertion; run this fixture with @kumikijs/e2e";
-
-/**
- * A minute is longer than any window a step should need to observe, and short
- * enough that a fixture holding the suite open is a failure rather than a
- * mystery. The finiteness check is not pedantry: `setTimeout(Infinity)` does not
- * fit a 32-bit delay and clamps to 1ms, so "wait forever" would have run as "do
- * not wait" — and passed.
- */
-const MAX_WAIT_MS = 60_000;
-
-const isWaitable = (ms: unknown): boolean =>
-  typeof ms === "number" && Number.isFinite(ms) && ms >= 0 && ms <= MAX_WAIT_MS;
-
-/**
- * Every problem in a scenario document, described in the order they appear.
- * Empty for a document this runner can execute.
- */
-function validateScenario(scenario: Scenario): string[] {
-  const problems: string[] = [];
-  // The document first. A misspelled `steps` is the same failure as a
-  // misspelled `expect` key one level up — every assertion under it is skipped
-  // — and it used to reach the loop below and throw `steps is not iterable`
-  // after the mount, which is what validating first exists to prevent.
-  for (const key of Object.keys(scenario as Record<string, unknown>)) {
-    if ((SCENARIO_KEYS as readonly string[]).includes(key)) continue;
-    problems.push(`unknown scenario key "${key}" (${SCENARIO_KEYS.join(", ")})`);
-  }
-  if (!Array.isArray(scenario.steps)) {
-    problems.push('a scenario needs a "steps" array');
-    return problems;
-  }
-  // Running an empty document reported `ok: true` for a scenario that asserted
-  // nothing, which is the one answer this runner must never give.
-  if (scenario.steps.length === 0) {
-    problems.push("a scenario with no steps asserts nothing");
-  }
-  const steps = scenario.steps;
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (!step) continue;
-    const where = `steps[${i}]${step.label ? ` (${step.label})` : ""}`;
-    if (step.do !== undefined) problems.push(...validateAction(step.do, where));
-    if (step.expect !== undefined) problems.push(...validateExpect(step.expect, where));
-  }
-  return problems;
-}
-
-function validateAction(action: Action, where: string): string[] {
-  const keys = Object.keys(action as Record<string, unknown>);
-  const kinds = keys.filter((k) => !(ACTION_MODIFIERS as readonly string[]).includes(k));
-  const browser = kinds.filter((k) => (BROWSER_ACTION_KEYS as readonly string[]).includes(k));
-  if (browser.length > 0) {
-    return [`${where}: "${browser[0]}" is ${BROWSER_TIER}`];
-  }
-  const known = kinds.filter((k) => (HEADLESS_ACTION_KEYS as readonly string[]).includes(k));
-  const unknown = kinds.filter((k) => !(HEADLESS_ACTION_KEYS as readonly string[]).includes(k));
-  if (unknown.length > 0) {
-    return [`${where}: unknown action "${unknown[0]}" (${HEADLESS_ACTION_KEYS.join(", ")})`];
-  }
-  if (known.length === 0) {
-    return [`${where}: "do" names no action (${HEADLESS_ACTION_KEYS.join(", ")})`];
-  }
-  if (known.length > 1) {
-    return [`${where}: "do" names ${known.join(" and ")}; a step does exactly one thing`];
-  }
-  const kind = known[0];
-  const a = action as Record<string, unknown>;
-  if ((kind === "fill" || kind === "choose") && typeof a.value !== "string") {
-    return [`${where}: "${kind}" needs a string "value"`];
-  }
-  // `key` needs its own branch rather than joining the two above: `""` is
-  // meaningful for `fill` (clear the field) and `choose` (an option with an
-  // empty value), and is the one thing `key` cannot be. `KeyboardEventInit.key`
-  // defaults to `""`, and the listener never reads it, so a step pressing
-  // nothing would fire the reducer and pass.
-  if (kind === "key" && (typeof a.value !== "string" || a.value.length === 0)) {
-    return [`${where}: "key" needs a non-empty string "value" (the key to press)`];
-  }
-  if (kind === "wait" && !isWaitable(a.wait)) {
-    return [`${where}: "wait" needs a duration in milliseconds, 0 to ${MAX_WAIT_MS}`];
-  }
-  return [];
-}
-
-function validateExpect(expect: Expect, where: string): string[] {
-  const problems: string[] = [];
-  for (const key of Object.keys(expect as Record<string, unknown>)) {
-    if ((HEADLESS_EXPECT_KEYS as readonly string[]).includes(key)) continue;
-    if ((BROWSER_EXPECT_KEYS as readonly string[]).includes(key)) {
-      problems.push(`${where}: "${key}" is ${BROWSER_TIER}`);
-      continue;
-    }
-    problems.push(`${where}: unknown expect key "${key}" (${HEADLESS_EXPECT_KEYS.join(", ")})`);
-  }
-  return problems;
-}
-
-/**
- * A scripted effect outcome, returned in order each time the effect fires. An
- * `err` on a storage / session / indexed effect is read as the `Text` its
- * `out=` declares, as a provider's would be (testing.md §8.10).
- */
 export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
 
 export type Scenario = {
@@ -271,64 +33,14 @@ export type Scenario = {
   defaultEffect?: EffectScript;
 };
 
-export type StepResult = {
-  label?: string;
-  action?: string;
-  /**
-   * Whether this step passed: no unexpected error, no failed assertion, and an
-   * action that ran. A field rather than a predicate every consumer rebuilds —
-   * the run's `ok`, three reporters and the corpus gates all answer this same
-   * question, and each copy is a place a new channel can be forgotten (adding
-   * `actionError` did exactly that to two of them).
-   */
-  ok: boolean;
-  /**
-   * Errors reported during this step that no `errorIncludes` claimed. These are
-   * what fail the run — an error the step asked for moves to `expectedErrors`.
-   */
-  errors: string[];
-  /**
-   * Errors this step's `errorIncludes` matched. Kept in the trace (the run is
-   * about what the app did, and hiding a reported error would defeat that) but
-   * out of `errors`, so a scenario can assert a report without also asserting
-   * that the run failed.
-   */
+export type StepResult = StepOutcome & {
   expectedErrors: string[];
-  /**
-   * Why the step's action could not run — a selector matching nothing, a `fill`
-   * aimed at an element that holds no text, a `dispatch` naming a reducer the
-   * app does not have, or a control the platform refuses to drive (`disabled`,
-   * `readonly`). Absent in the healthy case, and a
-   * channel of its own rather than an entry in `errors`: nothing was observed
-   * about the app, so `noErrors` and `errorIncludes` must not see it. It fails
-   * the step all the same.
-   */
-  actionError?: string;
-  /**
-   * The action error this step's `actionErrorIncludes` matched. Kept in the
-   * trace and off `actionError`, so the step passes — the mirror of
-   * `expectedErrors`, and for the same reason: a refusal the platform makes is
-   * behaviour worth asserting, not a fault, and a fixture that asserts one must
-   * not also have to assert that its run failed.
-   */
-  expectedActionError?: string;
   emits: { effect: string; args: unknown[] }[];
-  state: Record<string, unknown>;
-  /** The text `domIncludes` / `domExcludes` read after this step, whitespace collapsed. */
   domText: string;
-  failures: string[];
-  /**
-   * Reconcile observations this step's re-render produced — a subtree the
-   * runtime rebuilt rather than reused, or a reuse that kept a changed closure.
-   * Never a failure (`ok` ignores it): the point is to attribute the churn to
-   * the action that caused it. Empty in the healthy case; always present, so a
-   * consumer can iterate it without a nil check (matching `errors` / `emits`
-   * rather than the presentational `label` / `action`).
-   */
   diagnostics: RuntimeDiagnostic[];
 };
 
-export type ScenarioReport = { ok: boolean; steps: StepResult[] };
+export type ScenarioReport<S = StepResult> = { ok: boolean; steps: S[] };
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -354,20 +66,13 @@ export async function runScenario(
   const settleMs = opts.settleMs ?? 25;
   const steps: StepResult[] = [];
 
-  // --- what a step reads ---
-  // The runtime appends its overlays to `document.body`, outside `root`, and a
-  // step reads them with the root — the ones this run opens, and no others:
-  // whatever an earlier run or test left in the document was there before this
-  // mount, and must not answer this run's assertions. The `finally` below
-  // removes the ones it opened.
+  // An overlay already in the document was left by an earlier run or test, and must not answer this run's assertions.
   const preexisting = new Set(Array.from(document.querySelectorAll(OVERLAYS)));
   const opened = (): Element[] =>
     Array.from(document.querySelectorAll(OVERLAYS)).filter((el) => !preexisting.has(el));
-  // Apart rather than run together, so a substring cannot match across the
-  // boundary between the root and an overlay.
+  // Apart, so a substring cannot match across the boundary between the root and an overlay.
   const rendered = (): string => [root, ...opened()].map((el) => el.textContent ?? "").join("\n");
 
-  // --- error capture ---
   let errorBuf: string[] = [];
   const onError = (ev: ErrorEvent): void => {
     errorBuf.push(ev.message || String(ev.error));
@@ -386,14 +91,11 @@ export async function runScenario(
   w.addEventListener?.("error", onError);
   w.addEventListener?.("unhandledrejection", onRejection);
 
-  // --- effect mocking: record emits, return scripted/synthetic results ---
   const emitBuf: { effect: string; args: unknown[] }[] = [];
   const scripts = scenario.effects ?? {};
   const cursors: Record<string, number> = {};
   const def = scenario.defaultEffect ?? { outcome: "ok" as const, value: null };
   for (const [name, eff] of Object.entries(app.effects)) {
-    // A scripted outcome takes the place of a provider's result (stdlib.md
-    // §2.5), so it is read as one, by the same rule a test mock is.
     const result = (s: EffectScript): EffectResult => ({
       kind: s.outcome,
       value: standInValue(eff, s.outcome, s.value),
@@ -413,19 +115,8 @@ export async function runScenario(
 
   const dispatchable = app as Dispatchable;
 
-  // Reconcile churn, buffered per step exactly like `errorBuf` / `emitBuf` so
-  // the trace attributes it to the action that triggered the re-render. The
-  // initial mount is a full render, so nothing lands here before the loop.
-  //
-  // Always installed, unlike a production mount: this runner exists to observe,
-  // and an agent reading the trace should not have to know to ask for the one
-  // signal that explains why a subtree churned.
   const diagBuf: RuntimeDiagnostic[] = [];
 
-  // Torn down in the `finally` below. Without it the mount outlives the run:
-  // every `timer` reducer keeps its interval and renders into a document the
-  // host may already have torn down, and the shape stays registered as mounted,
-  // so the next run becomes another view of this one instead of its own mount.
   let dispose: (() => void) | undefined;
 
   const mountOpts: {
@@ -439,9 +130,6 @@ export async function runScenario(
   if (opts.episodeLogger) mountOpts.episodeLogger = opts.episodeLogger;
 
   try {
-    // Before the mount, and all of them at once: a document this runner cannot
-    // execute is a mistake in the document, and running it half way would
-    // report a missing selector instead of the key that is wrong.
     const problems = validateScenario(scenario);
     if (problems.length > 0) {
       steps.push(mkStep("scenario document", undefined, [], [], app, rendered(), problems));
@@ -457,15 +145,6 @@ export async function runScenario(
     }
     await settle(settleMs);
 
-    // The first paint is a step like any other. Without this, everything
-    // reported between `mount` and the first scripted action was dropped on the
-    // next line's `errorBuf = []` — so an `app.init` effect that failed with no
-    // `.err` reducer, or a first render that panicked, was reported by the
-    // runtime and then thrown away, and the run said `ok: true`.
-    //
-    // Only when it has something to say: a step is pushed here in the failing
-    // case alone, so a passing report still has one entry per scripted step and
-    // a caller reading `steps[0]` sees what it always saw.
     if (errorBuf.length > 0) {
       steps.push(
         mkStep("mount", undefined, [...errorBuf], [...emitBuf], app, rendered(), [], [...diagBuf]),
@@ -477,34 +156,20 @@ export async function runScenario(
       emitBuf.length = 0;
       diagBuf.length = 0;
       const actionDesc = step.do ? describeAction(step.do) : undefined;
-      // Kept out of `errorBuf`, which is what the app reported. An action that
-      // could not run is the scenario's fault, and folding the two together let
-      // `errorIncludes` claim it — see `StepResult.actionError`.
       let fault: { message: string; refusal?: StepRefusal } | undefined;
       if (step.do) {
         try {
           performAction(step.do, root, dispatchable);
         } catch (e) {
-          // The refusal is carried, not flattened to its message: a substring
-          // match alone cannot tell it from a selector that matched nothing.
           fault =
             e instanceof StepRefusal ? { message: e.message, refusal: e } : { message: errStr(e) };
         }
-        // `wait` is the whole action: it adds its duration to the settle this
-        // step would have had anyway, so a debounce window or a retry backoff
-        // is one step rather than dozens of empty ones.
         await settle(settleMs + ("wait" in step.do ? step.do.wait : 0));
       }
       const expected = errorBuf.filter((e) =>
         (step.expect?.errorIncludes ?? []).some((s) => e.includes(s)),
       );
       const unexpected = errorBuf.filter((e) => !expected.includes(e));
-      // Judged by the shared rule, so this tier and the browser tier give the
-      // same answer about the same fault rather than two hand-written ones.
-      // Split before `mkStep`, which computes `ok` from `actionError` alone —
-      // the same shape `expectedErrors` has — and the verdict's own failures
-      // lead the list, since whether the action happened at all comes before
-      // anything observed after it.
       const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
       // Read once, so the assertions and the trace's `domText` see one text.
       const text = rendered();
@@ -531,12 +196,9 @@ export async function runScenario(
     try {
       dispose?.();
     } catch {
-      // The report is already built. A fault on the way out is worth less than
-      // the run it would replace, and the same choice `runSmoke` makes.
+      // The report is already built. A fault on the way out is worth less than the run it would replace, and the same choice `smoke` makes.
     }
-    // The root's DOM went with the mount; these were never under it. A toast
-    // still has its timer running and a confirm may be unanswered, and either
-    // would otherwise outlive the report, in a document the next run shares.
+    // A toast's timer may still be running and a confirm may be unanswered; neither may outlive the report in a shared document.
     for (const el of opened()) el.remove();
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);
@@ -578,42 +240,6 @@ function mkStep(
   return step;
 }
 
-/**
- * The two walks below are exhaustive by construction, which the type system
- * only half enforces on its own: `Covers<>` catches an `Action` member missing
- * from `HEADLESS_ACTION_KEYS`, so a new action cannot be silently unvalidated —
- * but a member with no branch here used to fall through to the `choose` tail
- * and fail as `no select matching selector undefined`, with everything green.
- */
-function unhandledAction(a: never): never {
-  throw new Error(`unhandled action: ${JSON.stringify(a)}`);
-}
-
-function describeAction(a: Action): string {
-  if ("dispatch" in a) return `dispatch ${a.dispatch}`;
-  if ("clickText" in a) return `clickText "${a.clickText}"`;
-  if ("click" in a) return `click ${a.click}`;
-  if ("focus" in a) return `focus ${a.focus}`;
-  if ("blur" in a) return `blur ${a.blur}`;
-  if ("key" in a) return `key ${a.key} "${a.value}"`;
-  if ("hover" in a) return `hover ${a.hover}`;
-  if ("fill" in a) return `fill ${a.fill}="${a.value}"`;
-  if ("choose" in a) return `choose ${a.choose}="${a.value}"`;
-  if ("submit" in a) return `submit ${a.submit}`;
-  if ("wait" in a) return `wait ${a.wait}ms`;
-  if ("navigate" in a) return `navigate ${a.navigate}`;
-  return unhandledAction(a);
-}
-
-/**
- * The seam named, or a fault. Both `_dispatch` and `_navigate` used to be
- * called through `?.`, so a shape mounted without one did nothing and reported
- * nothing — the same silence a selector matching nothing once had, when the
- * step that named it passed having done nothing, one layer further in.
- * `_submitHeldBy` is asked rather than driven, but a `{submit}` step with no
- * way to learn whether its form held the submit back would pass either way,
- * which is the same silence.
- */
 function requireSeam<K extends keyof typeof WITHOUT_SEAM>(
   app: Dispatchable,
   seam: K,
@@ -636,18 +262,6 @@ const WITHOUT_SEAM = {
 } as const satisfies Record<"_dispatch" | "_navigate" | "_submitHeldBy", string>;
 
 function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
-  /**
-   * What the platform would refuse, asked once per verb at the point the verb
-   * has its element — one rule for all of them rather than a branch inside
-   * `fill`, which is where the question was first noticed and would have been
-   * the narrow answer. Each verb resolves its own element (`click` falls back
-   * to the document, `clickText` searches by text, `choose` wants a <select>),
-   * so a single pre-pass would have to duplicate that resolution; this is the
-   * same rule, asked where the element is known.
-   *
-   * `controlFault` is what the browser tier asks too, off `readControl`, so the
-   * two tiers agree by construction rather than by two copies of the table.
-   */
   const refuse = (verb: ControlVerb, el: Element): void => {
     const fault = controlFault(verb, describeAction(a), readControl(el));
     if (fault) throw fault;
@@ -655,37 +269,17 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   // The waiting is the caller's: this step's settle is longer by `wait`.
   if ("wait" in a) return;
   if ("submit" in a) {
-    // Dispatched on the form itself, which is what the `form` tile listens for.
-    // A `form` tile usually has no submit button to click, and where it has
-    // one, whether a synthetic click submits is activation behaviour that
-    // differs per DOM — dispatching on the form means the same thing in all of
-    // them.
-    //
-    // The selector may also name something inside the form: a page with two
-    // forms on it has no way to tell them apart otherwise, since a `form` tile
-    // carries no id of its own unless its author gave it one, and its fields
-    // usually do.
     const el = root.querySelector<HTMLElement>(a.submit);
     const form = el?.closest("form");
     if (!form) throw new Error(`no form at or above selector ${a.submit}`);
     const heldBy = requireSeam(app, "_submitHeldBy", describeAction(a));
     const submitted = new Event("submit", { bubbles: true, cancelable: true });
     form.dispatchEvent(submitted);
-    // A held-back submit leaves nothing behind to assert on, so the form's own
-    // record of it is asked — through the seam the browser tier asks too, and
-    // judged by the same `submitFault`.
     const fault = submitFault(describeAction(a), heldBy(submitted));
     if (fault) throw fault;
     return;
   }
   if ("dispatch" in a) {
-    // Checked here rather than in the seam. `_dispatch` is production code —
-    // the confirm effect's callback reaches it, and so does every codegen'd
-    // handler — so making it throw would change what an app does to enforce a
-    // test-harness contract. A precondition reads the same `app.reducers` the
-    // seam searches, and throwing lands on `actionError` with no runtime change
-    // at all. `dispatchFault` is what the browser tier asks too, so the two
-    // agree by construction rather than by two hand-written copies of the rule.
     const dispatch = requireSeam(app, "_dispatch", describeAction(a));
     const payload = a.payload ?? {};
     const fault = dispatchFault(
@@ -698,9 +292,6 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("navigate" in a) {
-    // Only the missing seam: an unrouted path is not a fault here. It renders
-    // `/404`, which the next step's `domIncludes` can see — unlike a dispatch
-    // that went nowhere, which leaves nothing behind to assert on.
     requireSeam(app, "_navigate", describeAction(a))(a.navigate);
     return;
   }
@@ -709,16 +300,10 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     const target = els.find((e) => (e.textContent ?? "").includes(a.clickText));
     if (!target) throw new Error(`no clickable element with text "${a.clickText}"`);
     refuse("clickText", target);
-    // Cancelable, as a user's click is: a `preventDefault` that cancels a
-    // button's activation (a submit that never happens) is then visible here
-    // too, rather than a no-op this tier alone passes.
     target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     return;
   }
   if ("click" in a) {
-    // Some built-in effects (confirm modal, toast) render to <body>, not under
-    // the mount root. Fall back to a document-wide lookup so the scenario tier
-    // can drive those overlays.
     const el =
       root.querySelector<HTMLElement>(a.click) ?? document.querySelector<HTMLElement>(a.click);
     if (!el) throw new Error(`no element matching selector ${a.click}`);
@@ -727,15 +312,6 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("focus" in a) {
-    // Verify the DOM-wiring path: addEventListener("focus") →
-    // `installUiEventListeners` (core.ts, reached from the create path or from
-    // the first patch that fills the handler slot) → reducer. focus/blur do not
-    // bubble per DOM spec, but the runtime
-    // attaches the listener directly on the tile element so a non-bubbling
-    // dispatch reaches it. Scope the query to `root`: focus/blur targets render
-    // inside the mount tree (unlike confirm/toast overlays that justify `click`'s
-    // document fallback), and a document-wide lookup would silently hit a leaked
-    // element from a prior test.
     const el = root.querySelector<HTMLElement>(a.focus);
     if (!el) throw new Error(`no element matching selector ${a.focus}`);
     refuse("focus", el);
@@ -750,20 +326,6 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("key" in a) {
-    // `keydown` bubbles, and the language relies on it: `ui.key(Container)`
-    // reaches a container from a focusable descendant, which is what makes the
-    // selector useful on anything but the input itself. Dispatching without it
-    // would make this tier answer "the handler did not fire" for a program a
-    // browser runs correctly.
-    //
-    // The reducer's payload carries `key` and `code`. Only `key` is set here —
-    // a `code` is a physical key on a keyboard layout, which a scenario naming
-    // "Enter" has not told us. A reducer reading `$el.code` sees the empty
-    // string from this tier; the browser tier is where a real one comes from.
-    //
-    // Scoped to `root` like focus/blur: these targets render inside the mount
-    // tree, and a document-wide lookup could hit a leaked element from a prior
-    // test.
     const el = root.querySelector<HTMLElement>(a.key);
     if (!el) throw new Error(`no element matching selector ${a.key}`);
     refuse("key", el);
@@ -771,11 +333,6 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("hover" in a) {
-    // `mouseenter` does not bubble, by DOM spec — it is the non-bubbling
-    // counterpart of `mouseover`, and a browser fires a separate one on each
-    // ancestor rather than propagating a single event. So it is dispatched on
-    // the element, where the runtime puts its listener; making it bubble would
-    // not reproduce the browser's behaviour, it would invent a different one.
     const el = root.querySelector<HTMLElement>(a.hover);
     if (!el) throw new Error(`no element matching selector ${a.hover}`);
     el.dispatchEvent(new MouseEvent("mouseenter"));
@@ -784,27 +341,12 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
   if ("fill" in a) {
     const el = root.querySelector<HTMLElement>(a.fill);
     if (!el) throw new Error(`no input matching selector ${a.fill}`);
-    // Before either branch below: a disabled <input> and a disabled `editable`
-    // are the same refusal, and asking inside one of them is how the two kinds
-    // came to disagree in the first place.
     refuse("fill", el);
-    // An `editable` holds its text in `textContent`, which is what its
-    // renderer reads back — a `value` write leaves it untouched, so the
-    // `input` the step dispatches carries the text the control held before it.
-    // The attribute rather than `isContentEditable`: a disabled or readonly
-    // editable carries `contenteditable="false"`, and routing that one to the
-    // `value` branch would put the stale-text bug straight back — the `refuse`
-    // above turns that one away before it gets here. No `change` follows: the
-    // platform defines none for a contenteditable.
     if (el.getAttribute("contenteditable") !== null) {
       el.textContent = a.value;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       return;
     }
-    // Every other action throws on a target it cannot drive. Without this the
-    // cast below is a claim rather than a narrowing: a selector matching a
-    // `div` would take an expando `value`, dispatch two events nothing hears,
-    // and report the step green.
     if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
       throw new Error(
         `${a.fill} matched <${el.tagName.toLowerCase()}>, which holds no text to fill — ` +
@@ -833,18 +375,13 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
 
 function evaluateExpect(
   expect: Expect | undefined,
-  // One object rather than two adjacent `string[]`s: swapping them would still
-  // compile and would quietly invert what `noErrors` and `errorIncludes` mean.
+  // One object rather than two adjacent `string[]`s: swapping them would still compile and would quietly invert what `noErrors` and `errorIncludes` mean.
   reported: { all: string[]; unexpected: string[] },
   app: AppShape,
   text: string,
 ): string[] {
   if (!expect) return [];
   const failures: string[] = [];
-  // `noErrors` means "nothing the app reported that this step did not ask for",
-  // so it composes with `errorIncludes`: a step can require one report and
-  // forbid every other. An action that could not run is neither — it is on
-  // `actionError`, and fails the step whatever this block decides.
   if (expect.noErrors && reported.unexpected.length > 0) {
     failures.push(`expected no errors but got: ${reported.unexpected.join("; ")}`);
   }
@@ -857,24 +394,8 @@ function evaluateExpect(
       );
     }
   }
-  // `actionErrorIncludes` is judged by `judgeRefusal` in the step loop, not
-  // here: it reads the fault rather than the app, and both tiers must answer it
-  // the same way.
-  if (expect.state) {
-    const state = snapshotState(app);
-    for (const [key, want] of Object.entries(expect.state)) {
-      const got = readPath(state, key);
-      if (!matches(want, got)) {
-        failures.push(`state ${key}: expected ${j(want)}, got ${j(got)}`);
-      }
-    }
-  }
-  for (const s of expect.domIncludes ?? []) {
-    if (!text.includes(s)) failures.push(`DOM should include "${s}"`);
-  }
-  for (const s of expect.domExcludes ?? []) {
-    if (text.includes(s)) failures.push(`DOM should NOT include "${s}"`);
-  }
+  if (expect.state) failures.push(...stateMismatches(expect.state, snapshotState(app)));
+  failures.push(...textMismatches(expect, text, "DOM"));
   return failures;
 }
 
@@ -897,35 +418,6 @@ function sanitize(v: unknown): unknown {
     out[k] = sanitize(val);
   }
   return out;
-}
-
-function readPath(obj: Record<string, unknown>, path: string): unknown {
-  let cur: unknown = obj;
-  for (const seg of path.split(".")) {
-    if (cur === null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-/** Partial structural match: every key/element in `want` must be present in `got`. */
-function matches(want: unknown, got: unknown): boolean {
-  if (want === null || typeof want !== "object") return want === got;
-  if (Array.isArray(want)) {
-    if (!Array.isArray(got) || got.length !== want.length) return false;
-    return want.every((w, i) => matches(w, got[i]));
-  }
-  if (got === null || typeof got !== "object") return false;
-  const g = got as Record<string, unknown>;
-  return Object.entries(want as Record<string, unknown>).every(([k, w]) => matches(w, g[k]));
-}
-
-function j(v: unknown): string {
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
 }
 
 function errStr(e: unknown): string {

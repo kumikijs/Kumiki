@@ -1,10 +1,6 @@
-// `RUNTIME_OVERLAY_SELECTORS` names the DOM the runtime renders outside the
-// mount root, which a scenario's `domIncludes` / `domExcludes` read alongside
-// it at both tiers (testing.md §8.10). The effects write their markers
-// themselves, so each entry is checked against the element its effect actually
-// appends: a selector nothing renders would read as coverage while matching
-// nothing, and a marker renamed in an effect would drop that overlay from
-// every scenario without a word.
+// The effects write their markers themselves, so each entry is checked against
+// the element its effect actually appends: a marker renamed in an effect would
+// otherwise drop that overlay from every scenario without a word.
 
 import type { AppShape, BuiltinInstaller, CapabilityRegistry } from "@kumikijs/runtime";
 import { installConfirm, installToast, RUNTIME_OVERLAY_SELECTORS } from "@kumikijs/runtime";
