@@ -791,13 +791,14 @@ record リテラルが、宣言型の要求するフィールドを欠いてい�
 
 ### E0215 `unknown-record-field`
 
-record リテラル、または `.copy(f=v)` の record 更新が、宣言型に無いフィールドを名指している。
+record リテラル、または `.copy(f=v)` の record 更新が、宣言型に無いフィールドを名指している。あるいは effect の `map-request` が、その capability のリクエストに無いフィールドを書いている（[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）。
 
 > `Record type has no field "<name>"`
+> `The <cap> request has no field "<name>" — did you mean "<field>"? (accepted: <fields>)`
 
-どちらも素のオブジェクト spread へ落ちるため、宣言されていないフィールドは「誰も読まないプロパティ」になっていた — 拒否されるのではなく、値が静かに捨てられていた。
+record の 2 つの形はどちらも素のオブジェクト spread へ落ちるため、宣言されていないフィールドは「誰も読まないプロパティ」になる — 拒否されるのではなく、値が静かに捨てられる。リクエストは capability のハンドラに渡され、ハンドラは自分のフィールドだけを読むので、それ以外のフィールドも同じく捨てられる：`http.get` の `headrs: {"X": "1"}` は決して送られない header である。リクエストのメッセージはそのフィールドの位置に報告され、近いものがあればリクエストにある最も近いフィールドを名指し、すべてのフィールドを列挙する。
 
-**修正**：フィールド名を直すか、型に宣言する。
+**修正**：フィールド名を直すか、型に宣言する。`map-request` では、メッセージが列挙するフィールドを使う：メソッドは capability が決め、`timeout` と `credentials` は `app.http` で設定する。
 
 ### E0216 `unknown-variant`
 

@@ -190,11 +190,13 @@ effect e cap=storage.write in=Option(Ref) out=Result(Unit, Text)`,
     expect(after).toEqual({ other: "1", undefined: "kept" });
   });
 
+  // The request is the effect's input: a `map-request` that writes `k` is
+  // E0215, so it never reaches the handler.
   it("a remove whose key is missing removes nothing and fires .err", async () => {
     const app = await loadSource(
       oneEffect(
-        `effect e cap=storage.write in=Text out=Result(Unit, Text) map-request={k: $1}`,
-        `e("other")`,
+        `effect e cap=storage.write in={k: Text} out=Result(Unit, Text)`,
+        `e({k: "other"})`,
       ),
     );
     const [after] = await run(app, localStorage, [["Go", "shown: err"]]);

@@ -40,7 +40,7 @@ Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xx
 | `E0211` | a reducer's `ui.*` selector or `tile.mount` / `tile.unmount` names an undeclared tile | declare the tile or fix the name; try `kumiki_fix` |
 | `E0213` | wrong argument count: `fn` call, `emit`, user-tile call, or variant payload | pass the declared number |
 | `E0214` | a record literal is missing a declared field | supply it — Kumiki records have no optional fields |
-| `E0215` | a record literal / `.copy(f=v)` names a field the type does not have | fix the name, or declare it on the type |
+| `E0215` | a record literal / `.copy(f=v)` names a field the type does not have, or a `map-request` writes a field its capability's request does not have (http.md: `headrs` on `http.get`) | fix the name, or declare it on the type; in a `map-request`, use a field the message lists — `timeout` / `credentials` go in `app.http` |
 | `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
 | `E0217` | an `Int` literal past 2^53-1 would be rounded | use a value in range, or carry it as `Text` |
 | `E0218` | a `for` iterates a `Map` or a `Set` directly | iterate `m.keys` / `s.to-list`; `kumiki fix` appends it |

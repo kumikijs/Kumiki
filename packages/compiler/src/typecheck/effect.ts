@@ -1,6 +1,7 @@
+import { nearestName } from "@kumikijs/runtime/text-distance";
 import { typeToString, unaliasType } from "../assignable.ts";
-import type { EffectDef, TypeExpr } from "../ast.ts";
-import { failsWithText } from "../capabilities.ts";
+import type { EffectDef, Expr, Pos, TypeExpr } from "../ast.ts";
+import { failsWithText, requestFields } from "../capabilities.ts";
 import { type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { resolveType } from "./types.ts";
@@ -75,11 +76,58 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+  if (eff.mapRequest) {
+    checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+    const fields = requestFields(eff.cap);
+    if (fields) checkRequestFields(eff.mapRequest, eff.cap, fields, errors);
+  }
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey")
     checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+}
+
+/**
+ * Only a literal that lands in the request is checked; a request computed any other way (a `fn`
+ * call, a slot, `$1`) has its fields decided at run time.
+ */
+function checkRequestFields(
+  e: Expr,
+  cap: string,
+  fields: readonly string[],
+  errors: KumikiError[],
+): void {
+  const refuse = (name: string, pos: Pos): void => {
+    if (fields.includes(name)) return;
+    const nearest = nearestName(name, fields);
+    const hint = nearest === null ? "" : ` — did you mean "${nearest}"?`;
+    errors.push({
+      code: "E0215",
+      kind: "unknown-record-field",
+      message: `The ${cap} request has no field "${name}"${hint} (accepted: ${fields.join(", ")})`,
+      pos,
+    });
+  };
+  switch (e.kind) {
+    case "RecordLit":
+      for (const f of e.fields) refuse(f.name, f.pos);
+      return;
+    case "MapLit":
+      for (const ent of e.entries) if (ent.key.kind === "Str") refuse(ent.key.value, ent.key.pos);
+      return;
+    case "IfExpr":
+      checkRequestFields(e.consequent, cap, fields, errors);
+      checkRequestFields(e.alternate, cap, fields, errors);
+      return;
+    case "LetIn":
+      checkRequestFields(e.body, cap, fields, errors);
+      return;
+    case "MatchExpr":
+      for (const arm of e.arms) checkRequestFields(arm.body, cap, fields, errors);
+      return;
+    default:
+      return;
+  }
 }
 
 function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {

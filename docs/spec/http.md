@@ -69,7 +69,7 @@ Each variant is sent as what it names:
 
 A `body` that is not an `HttpBody` variant (a record, a list, a bare `Text`) is sent as JSON, as `Json` would send it: `body: $1` with a `Text` input sends `"x"`, not `x`. To send raw text, write `Text($1)`.
 
-`GET` and `HEAD` send no body, whatever `body` holds.
+`GET` and `HEAD` send no body, whatever `body` holds. `http.get`'s request has no `body` field, so a `map-request` that writes one is refused ([6.6.1](#_6-6-1-request-fields)).
 
 ### 6.1.4 The Decoder Type
 
@@ -318,6 +318,26 @@ effect loadUser cap=http.get
 ```
 
 `map-request` is a pure function (expression fragment) that transforms into the input of the built-in effect. This **concentrates in one place** the relationship between the high-level effect name and the actual HTTP request.
+
+### 6.6.1 Request fields
+
+What `map-request` builds is the request its capability's built-in handler reads, and the handler reads the fields below and nothing else. They are the records [6.1.2](#_6-1-2-standard-effect), [6.7.2](#_6-7-2-the-declarations-localstorage) and [6.7.4](#_6-7-4-sessionstorage-indexeddb) declare:
+
+| capability | request fields |
+|---|---|
+| `http.get` | `url`, `headers`, `query`, `decode` |
+| `http.post`, `http.put`, `http.patch`, `http.delete` | `url`, `headers`, `query`, `body`, `decode` |
+| `storage.read`, `session.read` | `key`, `decode` |
+| `storage.write`, `session.write` | `key`, `value` |
+| `indexed.read` | `store`, `key`, `decode`, `index`, `range` |
+| `indexed.write` | `store`, `key`, `value` |
+| `indexed.delete` | `store`, `key` |
+
+A field a `map-request` writes that its capability's row does not list is [E0215](./errors.md#e0215-unknown-record-field), reported at the field and naming the nearest field the row has: `headrs: {"X": "1"}` on `http.get` is a header that would never be sent. The method is the capability's, and `timeout` and `credentials` are `app.http`'s ([6.3.1](#_6-3-1-injecting-global-headers)), so none of the three is a request field. A host provider registered for one of these capabilities ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)) is handed the same request, so it is held to the same fields.
+
+A field is checked where a literal names it: the `map-request` record itself, or the record a branch of an `if`, an arm of a `match` or the body of a `let` yields there, at any depth. A map literal's `Text` keys count too, since it lowers to the same object. A request computed any other way — returned by a `fn`, read from a slot, or `$1` itself — has its fields decided at run time and is not checked.
+
+A capability with no row has no request schema, and its `map-request` builds whatever its host provider reads: a custom capability, and every other standard capability (`nav.*`, `log.write`, …), whose declared effects reach a provider and no built-in handler. `http.cancel` takes no `map-request` at all ([E0303](./errors.md#e0303-invalid-cancel-target)).
 
 ---
 
