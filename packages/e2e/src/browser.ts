@@ -4,6 +4,7 @@ import {
   type BrowserAction,
   type BrowserExpect,
   type ControlVerb,
+  chooseOption,
   constraintFault,
   controlFault,
   type DispatchTarget,
@@ -443,28 +444,38 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("setProperty" in a) {
-    await page.evaluate(
-      (arg: { sel: string; prop: string; val: unknown }) => {
-        const el = document.querySelector(arg.sel);
-        if (!el) return;
-        const segs = arg.prop.split(".");
-        let host: Record<string, unknown> = el as unknown as Record<string, unknown>;
-        for (let i = 0; i < segs.length - 1; i++) {
-          const nextRaw = host[segs[i] as string];
-          if (nextRaw == null || typeof nextRaw !== "object") return;
-          host = nextRaw as Record<string, unknown>;
-        }
-        host[segs[segs.length - 1] as string] = arg.val;
-      },
-      { sel: a.setProperty, prop: a.property, val: a.value },
-    );
+    // Through a locator, as every other verb finds its element: a render gets the same 3s to
+    // attach it, and a selector matching nothing fails the step in the same words.
+    await page
+      .locator(a.setProperty)
+      .first()
+      .evaluate(
+        (el: Element, arg: { prop: string; val: unknown }) => {
+          const segs = arg.prop.split(".");
+          let host: Record<string, unknown> = el as unknown as Record<string, unknown>;
+          for (let i = 0; i < segs.length - 1; i++) {
+            const nextRaw = host[segs[i] as string];
+            if (nextRaw == null || typeof nextRaw !== "object") return;
+            host = nextRaw as Record<string, unknown>;
+          }
+          host[segs[segs.length - 1] as string] = arg.val;
+        },
+        { prop: a.property, val: a.value },
+        { timeout: 3000 },
+      );
     return;
   }
   const loc = page.locator(a.choose).first();
   await refuse(loc, "choose", describeAction(a));
-  await loc
-    .selectOption({ label: a.value }, { timeout: 3000 })
-    .catch(() => loc.selectOption(a.value));
+  // The scenario tier's rule, asked in the page; Playwright gets the index, so a missing option
+  // fails in the same words at both tiers rather than in a timeout that never names the value.
+  const choice = await loc.evaluate(
+    chooseOption,
+    { selector: a.choose, value: a.value },
+    { timeout: 3000 },
+  );
+  if ("fault" in choice) throw new Error(choice.fault);
+  await loc.selectOption({ index: choice.index }, { timeout: 3000 });
 }
 
 async function evaluateExpect(

@@ -29,6 +29,7 @@ import { overlayPatchers, overlayTiles } from "./tiles-overlay.ts";
 import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
+export { type Choice, chooseOption } from "./choose-check.ts";
 export {
   CONTROL_DEMANDS,
   type ControlDemand,
