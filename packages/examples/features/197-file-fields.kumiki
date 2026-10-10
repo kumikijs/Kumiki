@@ -1,17 +1,17 @@
-# Feature (stdlib.md §2.1.3): a `File` is what a file input reports about each
+# Feature (stdlib.md): a `File` is what a file input reports about each
 # picked file, and a program reads three fields on it: `name : Text`,
 # `size : Int` and `type : Text` (the MIME type, `""` when the browser does not
 # know it). Any other field is E0108.
 #
 # The file's bytes are not a field: a browser reads them only asynchronously,
 # so the record the `change` event delivers cannot hold them. They reach a
-# server as a `FileV` part of a `Multipart` body (http.md §6.1.3, forms.md
-# §5.10), which is what `upload` sends.
+# server as a `FileV` part of a `Multipart` body (http.md, forms.md), which is
+# what `upload` sends.
 #
 # The scenario hands `pick` a file record through `{dispatch}`, since a
-# scenario cannot put a real file in the input. `packages/tests/file-fields.test.ts`
-# picks a real one, compares the record the runtime builds with the §2.1.3 row,
-# and reads the bytes back out of the request `upload` makes.
+# scenario cannot put a real file in the input. `packages/tests/src/file-fields.test.ts`
+# picks a real one, checks the record the runtime builds, and reads the bytes
+# back out of the request `upload` makes.
 
 slot picked : Option(File) = None
 slot sentTo : Text         = "-"

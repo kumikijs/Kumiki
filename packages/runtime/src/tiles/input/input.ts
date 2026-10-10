@@ -1,6 +1,3 @@
-// The `input` tile (#71): its own shipping unit, so an app that renders one
-// does not download the nine other input controls.
-
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
 import {
   applyControlState,
@@ -35,11 +32,6 @@ function withParse(h: InputHandlers, node: InputNode): InputHandlers {
   return h;
 }
 
-/**
- * Does `text` read as the same value the node shows? Asked of any field with a
- * reader — a number field bound to an `Int` / `Float`, a date or
- * datetime-local field bound to a `Time`.
- */
 function readsSame(node: InputNode, text: string): boolean {
   if (!node.parse) return false;
   const shown = node.parse.read(text);
@@ -59,9 +51,6 @@ export const inputTile: TileRenderer<"input"> = (node) => {
   if (node.accept) inp.accept = String(node.accept);
   if (node.multiple) inp.multiple = true;
   const isFile = inp.type === "file";
-  // File inputs reject programmatic `.value` assignment (security) and have no
-  // text representation worth pre-populating; the picked-file state lives in
-  // the slot, not in the DOM. bind= is undefined for files (spec §5.1.1 table).
   if (!isFile) {
     if (node.bind) bindDataset(inp, node.bind, node.bindPath);
     inp.value = node.value ?? "";
@@ -80,10 +69,6 @@ export const inputTile: TileRenderer<"input"> = (node) => {
     const state = INPUT_STATE.get(inp);
     if (!state?.onChange) return;
     if (inp.type === "file") {
-      // FileList → plain records the Kumiki layer can read: name / size /
-      // type are a `File`'s fields (stdlib §2.1.3); `_file` keeps the
-      // original DOM File, which `file-url()` hands to URL.createObjectURL and
-      // a `FileV` part of a `Multipart` body sends.
       const list = inp.files;
       const files: Array<{ name: string; size: number; type: string; _file: File }> = [];
       if (list) {
@@ -114,25 +99,6 @@ export const inputPatcher: TilePatcher<"input"> = (el, _oldNode, newNode) => {
   if (!isFile) {
     if (newNode.bind) bindDataset(inp, newNode.bind, newNode.bindPath);
     else clearBindDataset(inp);
-    // Write when the DOM diverges from what the tile intends. Typing "Bud"
-    // → bind writes slot="Bud" → rerender computes value=`_s.show(slot)`
-    // ="Bud"; the DOM already reads "Bud", so this skips the assignment and
-    // the caret stays put. A reducer that clears / rewrites the slot ("Buy
-    // milk" → "" on Enter) DOES diverge and must land — caret restoration
-    // is picked up by the outer `renderPass` snapshot layer, which captures
-    // selectionStart/End BEFORE this write.
-    //
-    // IME guard: skip the write while the user is composing (JP/CN/KR IME
-    // candidate window open). Overwriting `.value` mid-composition would
-    // dismiss the candidate window and destroy the in-flight glyph. When
-    // `compositionend` fires, the browser dispatches a normal `input` event
-    // that syncs the slot to the committed text, and the next render's
-    // divergence is genuine.
-    //
-    // A field with a reader (a bound `Int` / `Float` / `Time`) reads its text
-    // as a value, so text that reads as the value the slot now holds is
-    // already showing it: "2.50" is 2.5, and rewriting it to "2.5" mid-typing
-    // would move the caret out from under the user.
     const nextValue = newNode.value ?? "";
     if (inp.value !== nextValue && !IME_COMPOSING.has(inp) && !readsSame(newNode, inp.value)) {
       inp.value = nextValue;

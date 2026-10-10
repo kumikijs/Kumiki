@@ -1,5 +1,3 @@
-// Collection tile renderers (#71): list and table families.
-
 import {
   applyContainerProps,
   PatchRequiresRebuild,
@@ -63,12 +61,6 @@ export const collectionTiles: TileRenderers = {
 
 export const collectionPatchers: TilePatchers = {
   list(el, _oldNode, newNode) {
-    // `list` renders `<ol>` or `<ul>` based on `ordered`; a change flips the
-    // tag, and a same-kind patch cannot rewrite an element's tagName. Signal
-    // the reconcile to fall back to a same-kind rebuild via the controlled
-    // `PatchRequiresRebuild` sentinel — this stays out of the panic log (it
-    // is a normal outcome for a legitimate authored change), unlike a raw
-    // `throw` which the outer bailout would record as `location: "reconcile"`.
     const list = el as HTMLUListElement | HTMLOListElement;
     const wantTag = newNode.ordered ? "OL" : "UL";
     if (list.tagName !== wantTag) {
@@ -76,9 +68,7 @@ export const collectionPatchers: TilePatchers = {
     }
     applyContainerProps(list, newNode.props);
   },
-  "list-item"() {
-    // <li> has no own data props; children walk via the outer reconcile.
-  },
+  "list-item"() {},
   table() {},
   "table-head"() {},
   "table-body"() {},

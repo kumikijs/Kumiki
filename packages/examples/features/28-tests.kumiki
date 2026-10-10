@@ -18,7 +18,7 @@ reducer inc on=ui.click(IncBtn) do= count := count + 1
 reducer dec on=ui.click(DecBtn) do= count := count - 1
 
 # Generates a fresh id, so its slot result + emitted effect arg cannot be
-# predicted literally — `<any-id>` / `<slots.X>` wildcards (§8.2.2) match them.
+# predicted literally — `<any-id>` / `<slots.X>` wildcards match them.
 reducer addItem on=ui.submit(AddForm) do=
     let id = ItemId.fresh()
     items[id] := {id, label=draft}
@@ -59,7 +59,7 @@ test app-renders-count =
                         row(button(text="-1", onClick=dec), button(text="+1", onClick=inc)),
                         form(input()))
 
-# `given.in` is the tile's argument (§8.4), so it has to agree with what the
+# `given.in` is the tile's argument, so it has to agree with what the
 # target declares: `Greeting` declares `in=Text` and its test gives one, while
 # `App` declares no `in=` and the test above gives none. A wrong count is E0213
 # — the same code a tile call written with the wrong count gets — and a value
@@ -71,7 +71,7 @@ test greeting-renders-input =
         given  = {slots: {}, in: "Ada"}
         expect = heading("Hi, Ada")
 
-# Wildcards (§8.2.2): `<any-id>` matches the generated key + id, `<slots.items>`
+# Wildcards: `<any-id>` matches the generated key + id, `<slots.items>`
 # matches the slot value the effect was emitted with.
 test add-creates-item =
     reducer-test addItem
@@ -81,7 +81,7 @@ test add-creates-item =
             effects: [persist(<slots.items>)]
         }
 
-# §8.5 effect mock: mock persist's result to err, drive the `.err` reducer, and
+# Effect mock: mock persist's result to err, drive the `.err` reducer, and
 # assert the status it set. The mocked effect is consumed (not in expect.effects).
 test add-surfaces-persist-error =
     reducer-test addItem
@@ -92,7 +92,7 @@ test add-surfaces-persist-error =
         }
         expect = {slots: {status: "disk full"}, effects: []}
 
-# §8.3 property-test: for any starting count (custom generator `between`),
+# Property test: for any starting count (custom generator `between`),
 # inc-then-dec round-trips. `run-reducer` chains apply reducers to the state.
 test inc-dec-roundtrips =
     property-test

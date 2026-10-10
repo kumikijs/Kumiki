@@ -1,47 +1,18 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { codesOf, type Pointed, pointedErrorsOf } from "./helpers/diagnostics.ts";
+import { loadReducer } from "./helpers/module.ts";
+import { withButtonApp } from "./helpers/programs.ts";
 
-// A `fn` is not a value in Kumiki — there are no lambdas (language.md §1.9.1)
-// — but a `fn` name written without its parentheses was accepted wherever a
-// value goes. It lowered to the generated function itself, so
-// `emit load(label)` dispatched a *function* where the effect declares
-// `in=Text`: a storage key stringified to the function's source, an HTTP body
-// serialised to `undefined`, and every tier stayed silent.
-//
-// The one position that takes a fn name is the fragment argument of a
-// higher-order method — `items.map(double)`, §1.8.6 — which is a call the
-// method makes, not a value.
-
-type Diagnostic = { code: string; message: string; text: string };
-
-const diagnose = (src: string): Diagnostic[] =>
-  check(parse(lex(src)))
-    .filter((e) => e.severity !== "warning")
-    .map((e) => ({
-      code: e.code,
-      message: e.message,
-      text: (src.split("\n")[e.pos.line - 1] ?? "").slice(e.pos.col - 1),
-    }));
-
-const app = (defs: string, init = "", caps = ""): string => `${defs}
-tile B = button(text="x")
-tile Home = column(B)
-app R
-    caps   = [${caps}]
-    routes = {"/" -> Home, "/404" -> Home}
-    init   = [${init}]`;
+const app = (defs: string, init = "", caps = ""): string => withButtonApp(defs, { caps, init });
 
 const LOAD = `fn label() -> Text = "x"
 effect load cap=storage.read in=Text out=Result(Text, Text) map-request={key: $1, decode: Decoder.Json(Text)}`;
 
-const lines = (d: Diagnostic[]) => d.map((x) => `${x.code} ${x.message}`);
+const lines = (d: Pointed[]) => d.map((x) => `${x.code} ${x.message}`);
 
 describe("a fn name in a value position is E0127", () => {
   it("at an emit argument, which is the repro", () => {
-    const d = diagnose(
+    const d = pointedErrorsOf(
       app(`${LOAD}\nreducer go on=ui.click(B) do= emit load(label)`, "", "storage.read"),
     );
     expect(lines(d)).toEqual([
@@ -51,7 +22,7 @@ describe("a fn name in a value position is E0127", () => {
   });
 
   it("at an app.init argument", () => {
-    expect(lines(diagnose(app(LOAD, "load(label)", "storage.read")))).toEqual([
+    expect(lines(pointedErrorsOf(app(LOAD, "load(label)", "storage.read")))).toEqual([
       'E0127 "label" is a fn, and a fn is not a value — write the call: label()',
     ]);
   });
@@ -59,7 +30,7 @@ describe("a fn name in a value position is E0127", () => {
   it("names the parameters the call needs", () => {
     expect(
       lines(
-        diagnose(
+        pointedErrorsOf(
           app(`fn greet(first: Text, last: Text) -> Text = first + last
 slot s : Text = greet`),
         ),
@@ -71,13 +42,13 @@ slot s : Text = greet`),
 
   it("in a tile, an assignment, and an argument that is not a fragment", () => {
     expect(
-      lines(diagnose(app(`fn label() -> Text = "x"\ntile T = text(label)`))).map((l) =>
+      lines(pointedErrorsOf(app(`fn label() -> Text = "x"\ntile T = text(label)`))).map((l) =>
         l.slice(0, 5),
       ),
     ).toEqual(["E0127"]);
     expect(
       lines(
-        diagnose(
+        pointedErrorsOf(
           app(
             `fn label() -> Text = "x"\nslot s : Text = ""\nreducer r on=ui.click(B) do= s := label`,
           ),
@@ -87,7 +58,7 @@ slot s : Text = greet`),
     // `push` appends a value; its argument is not a fragment.
     expect(
       lines(
-        diagnose(
+        pointedErrorsOf(
           app(
             `fn label() -> Text = "x"\nslot xs : List(Text) = []\nreducer r on=ui.click(B) do= xs := xs.push(label)`,
           ),
@@ -98,9 +69,9 @@ slot s : Text = greet`),
 
   it("inside a fn body, where the name is another fn", () => {
     expect(
-      lines(diagnose(app(`fn label() -> Text = "x"\nfn twice() -> Text = label + label`))).map(
-        (l) => l.slice(0, 5),
-      ),
+      lines(
+        pointedErrorsOf(app(`fn label() -> Text = "x"\nfn twice() -> Text = label + label`)),
+      ).map((l) => l.slice(0, 5)),
     ).toEqual(["E0127", "E0127"]);
   });
 });
@@ -108,7 +79,7 @@ slot s : Text = greet`),
 describe("what stays a value or a call", () => {
   it("accepts the call", () => {
     expect(
-      diagnose(
+      pointedErrorsOf(
         app(
           `${LOAD}\nreducer go on=ui.click(B) do= emit load(label())`,
           "load(label())",
@@ -120,21 +91,23 @@ describe("what stays a value or a call", () => {
 
   it("lets a slot of the same name shadow the fn", () => {
     expect(
-      diagnose(app(`fn label() -> Text = "x"\nslot label : Text = "y"\ntile T = text(label)`)),
+      pointedErrorsOf(
+        app(`fn label() -> Text = "x"\nslot label : Text = "y"\ntile T = text(label)`),
+      ),
     ).toEqual([]);
   });
 
   it("lets a parameter or a let of the same name shadow the fn", () => {
-    expect(diagnose(app(`fn label() -> Text = "x"\nfn echo(label: Text) -> Text = label`))).toEqual(
-      [],
-    );
     expect(
-      diagnose(app(`fn label() -> Text = "x"\nslot s : Text = let label = "y" in label`)),
+      pointedErrorsOf(app(`fn label() -> Text = "x"\nfn echo(label: Text) -> Text = label`)),
+    ).toEqual([]);
+    expect(
+      pointedErrorsOf(app(`fn label() -> Text = "x"\nslot s : Text = let label = "y" in label`)),
     ).toEqual([]);
   });
 });
 
-describe("the fragment argument of a higher-order method takes a fn name (§1.8.6)", () => {
+describe("the fragment argument of a higher-order method takes a fn name", () => {
   const FNS = `fn double(n: Int) -> Int = n * 2
 fn positive(n: Int) -> Bool = n > 0
 fn add(acc: Int, n: Int) -> Int = acc + n
@@ -158,8 +131,8 @@ slot t : Text              = ""`;
 
   /** The E0213 lines for a reducer that does `body`. */
   const arity = (body: string) =>
-    lines(diagnose(app(`${FNS}\n${OTHERS}\nreducer r on=ui.click(B) do= ${body}`))).filter((l) =>
-      l.startsWith("E0213"),
+    lines(pointedErrorsOf(app(`${FNS}\n${OTHERS}\nreducer r on=ui.click(B) do= ${body}`))).filter(
+      (l) => l.startsWith("E0213"),
     );
 
   it("accepts it in each fragment position", () => {
@@ -174,7 +147,7 @@ slot t : Text              = ""`;
       "t := match r.map-err(loud) with | Ok(v) -> v.show | Err(e) -> e",
     ]) {
       expect(
-        diagnose(app(`${FNS}\n${OTHERS}\nreducer r on=ui.click(B) do= ${body}`)),
+        pointedErrorsOf(app(`${FNS}\n${OTHERS}\nreducer r on=ui.click(B) do= ${body}`)),
         body,
       ).toEqual([]);
     }
@@ -214,8 +187,6 @@ slot t : Text              = ""`;
   });
 
   it("binds a second positional only over a key/value pair", () => {
-    // A plain list's element and an Option's value are handed over as one
-    // value, so a second parameter would be handed nothing (stdlib.md §2.2.3).
     const only =
       "supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)";
     expect(arity("xs := xs.map(add)")).toEqual([
@@ -239,7 +210,7 @@ slot t : Text              = ""`;
     // `fold`'s first argument is the initial accumulator, not a fragment.
     expect(
       lines(
-        diagnose(
+        pointedErrorsOf(
           app(`${FNS}\nfn zero() -> Int = 0\nreducer r on=ui.click(B) do= n := xs.fold(zero, add)`),
         ),
       ).map((l) => l.slice(0, 5)),
@@ -252,7 +223,7 @@ describe("a shadowed fn name in a fragment position is the value", () => {
     // `positive` is the parameter here, a Bool; the fragment is that value.
     expect(
       lines(
-        diagnose(
+        pointedErrorsOf(
           app(`fn positive() -> Int = 1
 slot xs : List(Int) = [1]
 fn f(positive: Bool) -> List(Int) = xs.filter(positive)`),
@@ -268,33 +239,13 @@ fn f(positive: Bool) -> List(Int) = xs.filter(positive)`),
 fn scale(double: Int) -> List(Int) = [1, 2].map(double)
 slot result : List(Int) = []
 reducer subject on=ui.click(B) do= result := scale(5)`);
-    const result = compile(src, { runtimeSpecifier: "@kumikijs/runtime", exportApp: true });
-    if (result.kind !== "ok")
-      expect.fail(result.errors.map((e) => `${e.code} ${e.message}`).join("\n"));
-    const tmp = resolve(__dirname, "test-tmp");
-    mkdirSync(tmp, { recursive: true });
-    const file = join(mkdtempSync(join(tmp, "fn-name-")), "app.mjs");
-    writeFileSync(file, result.js);
-    const mod: {
-      createApp: () => {
-        reducers: {
-          name: string;
-          apply: (live: object, payload: object) => { slots: Record<string, unknown> };
-        }[];
-      };
-    } = await import(`${pathToFileURL(file).href}?t=${Date.now()}`);
-    const subject = mod.createApp().reducers.find((r) => r.name === "subject");
-    if (!subject) expect.fail("the compiled module has no reducer named subject");
+    const subject = await loadReducer(src, "subject");
     expect(subject.apply({ result: [] }, {}).slots.result).toEqual([5, 5]);
   });
 });
 
 describe("a fn named in a fragment runs where the method does", () => {
-  // The method applies it, so a slot initializer or an `app.init` argument
-  // that names it runs its body before the mount installs the route — the
-  // same as writing the call `here($1)`.
   const HERE = "fn here(n: Int) -> Text = route.path";
-  const codesOf = (src: string) => check(parse(lex(src))).map((e) => e.code);
   const program = (defs: string, init = "", caps = "") => `${HERE}
 ${defs}
 tile App = column(text("x"))
@@ -327,8 +278,6 @@ slot names : List(Text) = all()`),
   });
 
   it("is not the fn when a parameter of the same name shadows it", () => {
-    // Regression guard: `here` inside `pick` is the Int parameter, so the
-    // route-reading fn is never reached.
     expect(
       codesOf(
         program(`fn pick(here: Int) -> List(Int) = [1, 2].map(here)
