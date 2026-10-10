@@ -1,8 +1,7 @@
 # Feature: link prefetch — IntersectionObserver-driven preload of route data.
-# Spec: routing.md §3.8.
 #
 # `prefetch` names a reducer; `prefetch-args` becomes the `$route.params` of
-# that reducer (the same binding shape `route.enter` uses, per §3.8). The
+# that reducer (the same binding shape `route.enter` uses). The
 # runtime fires it exactly once per link `to`, on viewport entry — and on
 # headless DOMs that lack IntersectionObserver, on the next microtask, so
 # smoke and scenario runs observe the dispatch deterministically.

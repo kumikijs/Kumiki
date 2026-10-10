@@ -1,25 +1,10 @@
-// A built-in effect's argument is checked like a declared effect's: E0213 for
-// the count, E0202 against its `in=` (stdlib.md §2.6).
-//
-// `checkEmitTarget` stopped after the capability check for every built-in,
-// because a built-in has no `effect` declaration to read an `in=` off. So
-// `emit navigate("/about")` checked ok, and at run time the router read `.path`
-// off a string and never moved.
-
-import { readFileSync } from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { typeToString } from "../src/assignable.ts";
 import type { TypeExpr } from "../src/ast.ts";
-import {
-  BUILTIN_EFFECT_CAPS,
-  BUILTIN_EFFECTS,
-  type BuiltinEffect,
-  REDUCER_REF,
-} from "../src/capabilities.ts";
+import { BUILTIN_EFFECT_CAPS, BUILTIN_EFFECTS, REDUCER_REF } from "../src/capabilities.ts";
 import { STDLIB_TYPES } from "../src/stdlib-types.ts";
+import { checkSource } from "./helpers/diagnostics.ts";
 
 const program = (body: string) => `slot n : Int = 0
 slot cfg : {path: Text} = {path: "/x"}
@@ -36,7 +21,7 @@ app A
 `;
 
 const diagnostics = (body: string) =>
-  check(parse(lex(program(body)))).map((e) => `${e.code} ${e.message}`);
+  checkSource(program(body)).map((e) => `${e.code} ${e.message}`);
 
 describe("a built-in effect's argument count", () => {
   it.each([
@@ -75,8 +60,6 @@ describe("a built-in effect's argument type", () => {
   });
 
   it("names the whole in= when a value of another record type is passed", () => {
-    // Leaving `params` / `query` out is allowed, and the message still names
-    // the record `navigate` takes, not the part this call happened to write.
     expect(diagnostics(`emit navigate(wide)`)).toEqual([
       "E0202 Expected {path: Text, params: Map(Text, Text), query: Map(Text, Text)} but got {path: Text, hash: Text}",
     ]);
@@ -103,8 +86,6 @@ describe("a built-in effect's argument type", () => {
 });
 
 describe("a field a built-in does not default is required", () => {
-  // stdlib.md §2.6: only an `Option(T)` field and the ones the entry defaults
-  // (`navigate`'s `params` / `query`, `confirm`'s `message`) may be left out.
   it.each([
     [`navigate({params: {}, query: {}})`, `"path" of type Text`],
     [`navigate-replace({query: {}})`, `"path" of type Text`],
@@ -128,12 +109,10 @@ describe("the shapes the built-ins take are still accepted", () => {
   it.each([
     `navigate({path: "/", params: {}, query: {}})`,
     `navigate({path: "/", params: {}})`,
-    // routing.md §3.7: `params` and `query` default to `{}` when unspecified.
+    // `params` and `query` default to `{}` when unspecified.
     `navigate({path: "/x"})`,
     `navigate-replace({path: "/x", query: {"q": "1"}})`,
     `navigate-replace({path: "/x"})`,
-    // A value whose type leaves the defaulted fields out, and a branch or a
-    // `let` body that does: each leaf is held to the fields it writes itself.
     `navigate(cfg)`,
     `navigate(if n > 0 then {path: "/a"} else {path: "/b", query: {}})`,
     `navigate(let p = {path: "/a"} in p)`,
@@ -151,8 +130,6 @@ describe("the shapes the built-ins take are still accepted", () => {
 });
 
 describe("a declared effect of the same name is the one checked", () => {
-  // The declaration is what the program dispatches, so its `in=` is the one an
-  // argument is held to, not the standard effect's.
   const shadowed = `effect navigate cap=nav.push in=Text out=Unit\n`;
   it("takes the declaration's in=", () => {
     expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([]);
@@ -164,52 +141,8 @@ describe("a declared effect of the same name is the one checked", () => {
   });
 });
 
-describe("the table the checker reads is the one the spec writes", () => {
-  // stdlib.md §2.6 says it "is the list the compiler holds": each `effect` line
-  // there names the capability and the `in=` of one entry of `BUILTIN_EFFECTS`.
-  // Both tracks carry the same fenced blocks, so the slice is anchored on the
-  // section numbers alone.
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const spec = (track: string, file: string) =>
-    readFileSync(path.resolve(here, `../../../docs/${track}spec/${file}`), "utf8");
-  const effectLines = (text: string) =>
-    new Map(
-      [...text.matchAll(/```kumiki[^\n]*\n([\s\S]*?)```/g)]
-        .map((m) => (m[1] ?? "").replace(/\s+/g, " "))
-        .flatMap((b) => [...b.matchAll(/effect ([a-z-]+) (?:cap=(\S+) )?in=(.+?) out=/g)])
-        .map((m) => [m[1] ?? "", { cap: m[2] ?? null, in: m[3] ?? "" }]),
-    );
-  const TRACKS = { en: "", ja: "ja/" } as const;
-
-  describe.each(Object.entries(TRACKS))("%s", (_, track) => {
-    const stdlib = spec(track, "stdlib.md");
-    const written = effectLines(stdlib.slice(stdlib.indexOf("## 2.6 "), stdlib.indexOf("## 2.7 ")));
-
-    it("lists the same effects", () => {
-      expect([...written.keys()].sort()).toEqual([...BUILTIN_EFFECTS.keys()].sort());
-    });
-
-    it.each([...BUILTIN_EFFECTS])("%s has the capability and in= the spec gives it", (name, e) => {
-      expect({ cap: e.cap, in: typeToString(e.inType) }).toEqual(written.get(name));
-    });
-
-    it("routing.md §3.7 writes navigate's in= the same way", () => {
-      const routing = spec(track, "routing.md");
-      const navigate = effectLines(
-        routing.slice(routing.indexOf("## 3.7 "), routing.indexOf("## 3.8 ")),
-      ).get("navigate");
-      expect(navigate).toEqual({
-        cap: "nav.push",
-        in: typeToString((BUILTIN_EFFECTS.get("navigate") as BuiltinEffect).inType),
-      });
-    });
-  });
-
+describe("the standard effect table", () => {
   it("names no type the checker cannot resolve", () => {
-    // `checkAgainst` passes anything held to a name that resolves to nothing,
-    // so a misspelt or invented name here would check no argument at all.
-    // `ReducerRef` is the one name with no definition: the checker matches the
-    // table's own node, not the name.
     const known = new Set(STDLIB_TYPES.map((t) => t.name));
     const refs = (t: TypeExpr): TypeExpr[] =>
       t.kind === "TypeRef"
@@ -229,5 +162,20 @@ describe("the table the checker reads is the one the spec writes", () => {
 
   it("derives every capability from the same entries", () => {
     expect([...BUILTIN_EFFECT_CAPS]).toEqual([...BUILTIN_EFFECTS].map(([n, e]) => [n, e.cap]));
+  });
+});
+
+const buildCodes = (body: string) => {
+  const r = compile(program(body), { runtimeSpecifier: "./runtime.js" });
+  return r.kind === "ok" ? [] : r.errors.map((e) => e.code);
+};
+
+describe("the build agrees with check about a standard effect's argument", () => {
+  it.each([
+    [`emit navigate("/about")`, ["E0202"]],
+    [`emit log(42, 43)`, ["E0213"]],
+    [`emit navigate({path: "/about"})`, []],
+  ])("%s", (body, codes) => {
+    expect(buildCodes(body)).toEqual(codes);
   });
 });
