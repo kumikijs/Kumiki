@@ -1,0 +1,39 @@
+# Feature (stdlib.md, forms.md): the props the
+# input elements list reach the page.
+#
+# - `check`'s `label` is the text beside its box, as `radio`'s is.
+# - `fieldset`'s `legend` is a `<legend>` ahead of its fields, written as a
+#   prop or as a named argument; one read from a slot follows the slot.
+# - A radio's `group` is its `<input>`'s `name`, which is what makes the
+#   radios that share it one set; written as `name=`, it groups them the same.
+# - A `slider` without `bind` shows the one-way `value=` it is given, and
+#   moves when a reducer writes the slot behind it.
+
+slot agreed : Bool = false
+slot mode   : Text = "a"
+slot vol    : Int  = 10
+
+reducer toggle on=ui.click(AgreeCheck) do= agreed := not agreed
+reducer pickA  on=ui.change(RadioA)    do= mode := "a"
+reducer pickB  on=ui.change(RadioB)    do= mode := "b"
+reducer setVol on=ui.change(VolSlider) do= vol := $event.value
+reducer louder on=ui.click(LouderBtn)  do= vol := vol + 10
+
+tile AgreeCheck = check(value=agreed) {label: "I agree to the terms"}
+tile RadioA     = radio(name="mode", value="a", selected=(mode == "a")) {label: "Option A"}
+tile RadioB     = radio(name="mode", value="b", selected=(mode == "b")) {label: "Option B"}
+tile VolSlider  = slider(value=vol, min=0, max=100)
+tile LouderBtn  = button(text="Louder")
+
+tile App = column(
+    fieldset(AgreeCheck) {legend: "Terms"},
+    fieldset(legend="Mode: " + mode, RadioA, RadioB),
+    VolSlider,
+    LouderBtn,
+    text("agreed=" + agreed.show),
+    text("vol=" + vol.show))
+
+app InputPropsRendered
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -183,7 +183,7 @@ reducer clear on=ui.click(Btn) do= name := ""    # rejected — not allowed
 ### 10.3.4 Invariants of DOM Rendering
 
 - **null/undefined child nodes are skipped**. A false branch like `when(false, X)` passes `null` as a child, but `renderTile` ignores it and renders only the siblings
-- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll` / `fieldset`** are all `<div>`-based containers. `stack` is equivalent to `column` (vertical stack)
+- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll` / `fieldset`** are all `<div>`-based containers. `stack` is equivalent to `column` (vertical stack). A `fieldset` with a `legend` puts it ahead of its children as a `<legend>`
 - **`grid`** is `display: grid` + a `cols` prop yielding `grid-template-columns: repeat(N, 1fr)` (numeric) or a direct CSS value (string)
 - **`divider`** is a standalone `<hr>` element (no children)
 - **timer reducer** fires via `setInterval`, and stops via `clearInterval` on the app's `dispose`

@@ -382,12 +382,14 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `input` | テキスト入力 | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | 複数行入力 | `bind`, `rows`, `placeholder` |
 | `check` | チェックボックス | `value`, `onClick`, `onChange`, `label` |
-| `radio` | ラジオボタン | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | ラジオボタン | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | セレクト | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | スライダー | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | スライダー | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | トグル | `value`, `onClick`, `onChange` |
 
 `button` の `loading` はボタンを無効化し、`aria-busy` を付け、ラベルの手前にスピナーを置く（[フォーム §5.8](./forms.md#_5-8-ui-during-submission)）。`disabled` は単独で無効化する。`variant` は `data-kumiki-variant` 属性になる——`class` やテーマのスタイルシートが選択するためのフックである。Kumiki はどの variant 名にも見た目を同梱しない：「ghost」ボタンがどう見えるべきかはデザインの決定であり、ここで発明すればそれは言語機能になってしまう。
+
+`check` の `label` と `radio` の `label` はボックスの横に出るテキストで、両者を包む `<label>` の中、`<input>` の後ろの `<span>` になる。クライアントでもサーバーレンダリングでも同じで、ラベルが空なら何も出さない。`radio` の `group` はその `<input>` の `name` 属性であり、それを共有するラジオが 1 つの組になるのはこのためである（[フォーム §5.5.2](./forms.md#_5-5-2-radio)）。`slider` の `value` は[フォーム §5.3](./forms.md#_5-3-入力要素の共通-props) の一方向の値である：スライダーはそれを表示し、reducer が変えればそれに追従する。`bind` が併記されていればそちらが読まれる。
 
 ### 2.3.5 フォーム
 
@@ -397,6 +399,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `label` | ラベル | `for` |
 | `fieldset` | フィールド集合 | `legend` |
 | `error` | バリデーションエラー表示 | `field` |
+
+`fieldset` の `legend` はグループの見出しで、子の前に置かれる `<legend>` になる。クライアントでもサーバーレンダリングでも同じで、legend が空なら何も出さない。
 
 ### 2.3.6 リスト・表
 

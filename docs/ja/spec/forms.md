@@ -207,7 +207,7 @@ input/textarea も `bind=` で slot を更新するほか、`ui.change(InputTile
 
 ### 5.5.2 radio
 
-radio はグループ化のため `group` prop を持つ（CSS の `name` 属性に対応）：
+radio はグループ化のため `group` prop を持つ。これは radio の `<input>` の HTML `name` 属性であり、同じ `group` を共有するラジオが 1 つの組になって、一度に 1 つだけが選ばれる：
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -231,6 +231,8 @@ tile FilterRadioGroup = column(
 ```
 
 こちらが推奨。
+
+`group=` の代わりに `name=` と書いた radio も同じようにそれでグループ化される。両方あれば読まれるのは `group` である。
 
 ---
 
