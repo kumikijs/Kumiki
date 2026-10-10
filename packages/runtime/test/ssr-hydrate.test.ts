@@ -1,120 +1,32 @@
-// SSR hydration boundary (docs/spec/runtime.md §10.6.2) — exercises
-// `hydrate` end-to-end on a happy-dom DOM. Verifies that:
-//   - the bootstrap episode lands at `app.episodes()[0]` BEFORE app.start;
-//   - the snapshot.slots overlay reaches the live signal graph but volatile
-//     slots stay at their declared default;
-//   - the client never re-runs `app.init` (provider stays at 1 invocation);
-//   - localStorage mirror picks up the bootstrap on the same persist sweep;
-//   - a version-mismatched snapshot is dropped and a normal CSR boot runs.
-
-import type {
-  AppShape,
-  CapabilityProvider,
-  EffectSpec,
-  EpisodeLocalStorage,
-  TileNode,
-} from "@kumikijs/runtime";
+import type { AppShape, MountedApp } from "@kumikijs/runtime";
 import { createEpisodeLogger, hydrate, mount, renderToString } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { freshRoot } from "./helpers/dom.ts";
+import { memoryStorage } from "./helpers/episode-apps.ts";
+import { userApp, userProvider } from "./helpers/ssr-user-app.ts";
 
-type User = { id: string; name: string };
-
-function dispatchByName(app: AppShape, name: string, el: Record<string, unknown> = {}): void {
-  (app as AppShape & { _dispatch?: (n: string, el: Record<string, unknown>) => void })._dispatch?.(
-    name,
-    el,
-  );
-}
-
-function makeApp(httpProvider: CapabilityProvider): AppShape {
-  const loadUserEffect: EffectSpec = {
-    name: "loadUser",
-    cap: "http.get",
-    invoke: async (input, caps) => {
-      const provider = caps.provider("http.get");
-      if (!provider) return { kind: "err", value: "no provider" };
-      return await provider(input, caps);
+function makeApp(): AppShape {
+  return userApp([
+    {
+      name: "started",
+      event: { kind: "lifecycle", name: "app.start" },
+      apply: () => ({ slots: {}, emits: [] }),
     },
-  };
-
-  const app: AppShape = {
-    slots: {
-      user: { value: { id: "guest", name: "guest" } satisfies User },
-      count: { value: 0 },
-      draft: { value: "", volatile: true },
-    },
-    caps: ["http.get"],
-    effects: { loadUser: loadUserEffect },
-    init: [{ effect: "loadUser", args: [{ url: "/api/me" }] }],
-    reducers: [
-      {
-        name: "userLoaded",
-        event: { kind: "effect", effect: "loadUser", outcome: "ok" },
-        apply: (_live, payload) => ({
-          slots: { user: payload.$1 as User },
-          emits: [],
-        }),
-      },
-      {
-        // `app.start` lifecycle reducer — runs only on the client (the
-        // spec says SSR never fires it). We use it as a sentinel so tests
-        // can prove episode continuity (`ssr.hydrate` → `app.start` → …).
-        name: "started",
-        event: { kind: "lifecycle", name: "app.start" },
-        apply: () => ({ slots: {}, emits: [] }),
-      },
-      {
-        name: "inc",
-        selector: { tile: "IncBtn" },
-        event: { kind: "ui", ev: "click" },
-        apply: (live) => ({ slots: { count: (live.count as number) + 1 }, emits: [] }),
-      },
-    ],
-    root: (): TileNode => ({
-      kind: "column",
-      children: [
-        {
-          kind: "heading",
-          text: `Hi ${((app.live?.user as User) ?? { name: "?" }).name}`,
-        },
-        { kind: "text", text: `count: ${app.live?.count ?? 0}` },
-        {
-          kind: "button",
-          text: "+",
-          props: {
-            onClick: () => dispatchByName(app, "inc"),
-          },
-        },
-      ],
-    }),
-  };
-  // Marker used by httpProvider invocation counters in some tests — kept off
-  // the real shape via `as`.
-  (app as { _provider?: CapabilityProvider })._provider = httpProvider;
-  return app;
+  ]);
 }
 
-function mountTarget(): HTMLDivElement {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
-
-/**
- * Drops the map the SSR pass filled in, so the client starts from slot
- * defaults the way a fresh boot would. Behind a function because deleting the
- * property inline would narrow `app.live` to `undefined` for the rest of the
- * test, and every assertion after hydration is about what hydration put back.
- */
-function resetLive(app: AppShape): void {
+/** Render `app` on the server, then forget the state that pass left, as a fresh client would. */
+async function serverRendered(app: AppShape, provider = userProvider()) {
+  const rendered = await renderToString(app, { providers: { "http.get": provider } });
   delete app.live;
+  return rendered;
 }
 
-describe("hydrate §10.6.2", () => {
-  let target: HTMLDivElement;
+describe("hydrate", () => {
+  let target: HTMLElement;
 
   beforeEach(() => {
-    target = mountTarget();
+    target = freshRoot();
   });
 
   afterEach(() => {
@@ -122,113 +34,60 @@ describe("hydrate §10.6.2", () => {
   });
 
   it("places the SSR bootstrap as app.episodes()[0] and app.start as [1]", async () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    const rendered = await renderToString(app, { providers: { "http.get": provider } });
-
-    resetLive(app);
-    const logger = createEpisodeLogger();
-    const handle = hydrate(app, target, rendered, { episodeLogger: logger });
+    const app = makeApp();
+    const rendered = await serverRendered(app);
+    const handle = hydrate(app, target, rendered, { episodeLogger: createEpisodeLogger() });
 
     const eps = handle.episodes();
     expect(eps.length).toBeGreaterThanOrEqual(2);
     expect(eps[0]?.trigger.kind).toBe("ssr.hydrate");
     expect(eps[0]?.id).toBe(rendered.bootstrapEpisode.id);
     expect(eps[1]?.trigger).toMatchObject({ kind: "lifecycle", target: "app.start" });
-
     handle.dispose();
   });
 
   it("does not re-fire app.init effects during hydration", async () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    const rendered = await renderToString(app, { providers: { "http.get": provider } });
+    const provider = userProvider();
+    const app = makeApp();
+    const rendered = await serverRendered(app, provider);
     expect(provider).toHaveBeenCalledTimes(1);
 
-    resetLive(app);
     const handle = hydrate(app, target, rendered, { providers: { "http.get": provider } });
 
-    // Provider stays at 1 — hydration is forbidden from re-running app.init.
     expect(provider).toHaveBeenCalledTimes(1);
     handle.dispose();
   });
 
   it("overlays snapshot.slots onto app.live but keeps volatile slots at default", async () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    const rendered = await renderToString(app, { providers: { "http.get": provider } });
-
-    // Sanity: the SSR pass put a non-default `user` in the snapshot…
-    expect(rendered.snapshot.slots.user).toEqual({ id: "u_1", name: "Yui" });
-    // …and the volatile `draft` is absent.
+    const app = makeApp();
+    const rendered = await serverRendered(app);
     expect(rendered.snapshot.slots).not.toHaveProperty("draft");
 
-    resetLive(app);
     const handle = hydrate(app, target, rendered);
 
     expect(app.live?.user).toEqual({ id: "u_1", name: "Yui" });
-    // Volatile fell back to its declared default rather than being hydrated.
     expect(app.live?.draft).toBe("");
     handle.dispose();
   });
 
   it("keeps episode continuity across hydration → user click → ui.click episode", async () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    const rendered = await renderToString(app, { providers: { "http.get": provider } });
+    const app = makeApp();
+    const rendered = await serverRendered(app);
+    const handle = hydrate(app, target, rendered, { episodeLogger: createEpisodeLogger() });
 
-    resetLive(app);
-    const logger = createEpisodeLogger();
-    const handle = hydrate(app, target, rendered, { episodeLogger: logger });
+    (app as MountedApp)._dispatch("inc", {});
 
-    // Simulate a user click on the IncBtn — the runtime owns `_dispatch`
-    // after mount, so we bounce through it like the rendered button does.
-    dispatchByName(app, "inc");
-
-    const eps = handle.episodes();
-    const order = eps.map((e) => e.trigger.kind);
+    const order = handle.episodes().map((e) => e.trigger.kind);
     expect(order[0]).toBe("ssr.hydrate");
-    expect(order).toContain("ui.click");
-    // ui.click MUST come strictly after ssr.hydrate + app.start.
-    const hydrateIdx = order.indexOf("ssr.hydrate");
-    const clickIdx = order.indexOf("ui.click");
-    expect(clickIdx).toBeGreaterThan(hydrateIdx);
+    expect(order.indexOf("ui.click")).toBeGreaterThan(order.indexOf("ssr.hydrate"));
     expect(app.live?.count).toBe(1);
-
     handle.dispose();
   });
 
   it("persists the bootstrap episode through the localStorage mirror", async () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    const rendered = await renderToString(app, { providers: { "http.get": provider } });
-    resetLive(app);
-
-    const backing = new Map<string, string>();
-    const lsImpl: EpisodeLocalStorage = {
-      getItem: (k) => backing.get(k) ?? null,
-      setItem: (k, v) => {
-        backing.set(k, v);
-      },
-      removeItem: (k) => {
-        backing.delete(k);
-      },
-    };
+    const app = makeApp();
+    const rendered = await serverRendered(app);
+    const { impl: lsImpl, backing } = memoryStorage();
     const logger = createEpisodeLogger({
       localStorage: true,
       localStorageKey: "k.eps",
@@ -236,76 +95,47 @@ describe("hydrate §10.6.2", () => {
     });
     const handle = hydrate(app, target, rendered, { episodeLogger: logger });
 
-    const raw = backing.get("k.eps");
-    expect(raw).toBeDefined();
-    const parsed = JSON.parse(raw ?? "[]") as Array<{ trigger: { kind: string }; id: string }>;
-    expect(parsed.length).toBeGreaterThanOrEqual(1);
+    const parsed = JSON.parse(backing.get("k.eps") ?? "[]") as Array<{
+      trigger: { kind: string };
+      id: string;
+    }>;
     expect(parsed[0]?.trigger.kind).toBe("ssr.hydrate");
     expect(parsed[0]?.id).toBe(rendered.bootstrapEpisode.id);
     handle.dispose();
   });
 
   it("falls back to a cold CSR boot when snapshot.kumiki version mismatches", async () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    const rendered = await renderToString(app, { providers: { "http.get": provider } });
-    // Sabotage the snapshot version so hydrate() is forced to fall back.
+    const provider = userProvider();
+    const app = makeApp();
+    const rendered = await serverRendered(app, provider);
     const mismatched = {
       ...rendered,
       snapshot: { ...rendered.snapshot, kumiki: 2 as unknown as 1 },
     };
 
-    resetLive(app);
-    const logger = createEpisodeLogger();
     const handle = hydrate(app, target, mismatched, {
-      episodeLogger: logger,
+      episodeLogger: createEpisodeLogger(),
       providers: { "http.get": provider },
     });
 
-    const eps = handle.episodes();
-    // The first episode is NOT ssr.hydrate — the snapshot was dropped.
-    expect(eps[0]?.trigger.kind).not.toBe("ssr.hydrate");
-    // CSR ran app.init normally, so the provider fired a SECOND time
-    // (once for SSR, once for the fallback boot).
+    expect(handle.episodes()[0]?.trigger.kind).not.toBe("ssr.hydrate");
+    // Once for the server pass, once more for the client's own init.
     expect(provider).toHaveBeenCalledTimes(2);
     handle.dispose();
   });
 
   it("throws when `hydrate: true` is passed without a bootstrap episode", () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    expect(() =>
-      mount(app, target, {
-        // The shape that previously slipped through: hydrate flag on, but no
-        // bootstrap. Now a hard error so the silent state machine can't form.
-        hydrate: true,
-      }),
-    ).toThrow(/bootstrapEpisode/);
+    expect(() => mount(makeApp(), target, { hydrate: true })).toThrow(/bootstrapEpisode/);
   });
 
   it("replaces an SSR-prefilled DOM root instead of appending a second tree", async () => {
-    const provider = vi.fn<CapabilityProvider>(async () => ({
-      kind: "ok",
-      value: { id: "u_1", name: "Yui" },
-    }));
-    const app = makeApp(provider);
-    const rendered = await renderToString(app, { providers: { "http.get": provider } });
-
-    // Inject SSR HTML the way a real host would (a `target.innerHTML = html`
-    // happens before hydrate). Without the §10.6.2 replaceChildren guard,
-    // the runtime appends a SECOND root — leaving two sibling trees.
+    const app = makeApp();
+    const rendered = await serverRendered(app);
     target.innerHTML = rendered.html;
     expect(target.children.length).toBeGreaterThanOrEqual(1);
 
-    resetLive(app);
     const handle = hydrate(app, target, rendered);
-    // Exactly one root after hydration — the SSR tree was replaced wholesale.
+
     expect(target.children.length).toBe(1);
     handle.dispose();
   });

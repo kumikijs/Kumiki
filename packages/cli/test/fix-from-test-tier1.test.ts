@@ -1,33 +1,8 @@
-// `runFixFromTest`'s tier-1 pass repairs compile errors so the named test can
-// run. It composed the same plan `applyFixPlan` does and wrote it straight to
-// disk, so the one contract that path guarantees — "apply ⇒ the file is either
-// strictly cleaner or unchanged" — did not hold here: a repair that introduced
-// an error landed, and the error it created was reported to the author as
-// their own.
-
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fixCmd, fixFromTest, runFixFromTest } from "@kumikijs/cli";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { seedLines } from "./helpers/files.ts";
 
-let dir = "";
-const fixture = (prefix: string, lines: string[]): string => {
-  dir = mkdtempSync(join(tmpdir(), prefix));
-  const file = join(dir, "in.kumiki");
-  writeFileSync(file, `${lines.join("\n")}\n`);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
-
-/**
- * A close-name suggestion that repairs the error it was offered for and
- * introduces a type error in its place: `cnt` is undefined, `cn` is the
- * nearest declared name, and `cn` is a `Text` in an `Int` sum.
- */
 const REPAIR_INTRODUCES_AN_ERROR = [
   "slot n  : Int  = 0",
   'slot cn : Text = ""',
@@ -46,7 +21,7 @@ const REPAIR_INTRODUCES_AN_ERROR = [
 
 describe("tier-1 repair is gated the way every other write is", () => {
   it("rolls back a repair that introduces an error, and leaves the file alone", async () => {
-    const file = fixture("kumiki-tier1-gate-", REPAIR_INTRODUCES_AN_ERROR);
+    const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
     const before = readFileSync(file, "utf8");
 
     const outcome = await runFixFromTest(file, "bumps", true);
@@ -62,17 +37,11 @@ describe("tier-1 repair is gated the way every other write is", () => {
       // The errors reported are the author's own, not the ones the repair made.
       expect(outcome.compileErrors.map((e) => e.code)).toEqual(["E0103"]);
     }
-    // A refusal wrote nothing, so it reports no count at all — a planned count
-    // here would say a repair happened.
     expect(outcome).not.toHaveProperty("compileFixes");
   });
 
   it("prints the refusal in the same words `fix --apply` prints", async () => {
-    // Sharing `rollbackLine` is the point: a repair one verb declines and the
-    // other accepts is the disagreement this file exists to prevent. Compared
-    // between the two verbs rather than against a literal, so the assertion
-    // holds whatever the sentence is reworded to.
-    const file = fixture("kumiki-tier1-print-", REPAIR_INTRODUCES_AN_ERROR);
+    const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -97,7 +66,7 @@ describe("tier-1 repair is gated the way every other write is", () => {
   });
 
   it("still reports the planned count in a dry run, which is what it proposes", async () => {
-    const file = fixture("kumiki-tier1-dry-", REPAIR_INTRODUCES_AN_ERROR);
+    const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
     const before = readFileSync(file, "utf8");
 
     const outcome = await runFixFromTest(file, "bumps", false);
@@ -108,11 +77,7 @@ describe("tier-1 repair is gated the way every other write is", () => {
   });
 
   it("still reaches compile-remaining when the gate passes and errors are left", async () => {
-    // Two errors, one repairable: the `$route` read has a deterministic
-    // rewrite, the undeclared name in the second reducer resolves to nothing
-    // close enough to suggest. The write is a real repair, so it lands — and
-    // the file still cannot run its test.
-    const file = fixture("kumiki-tier1-remaining-", [
+    const file = seedLines([
       'slot seen : Text = ""',
       "reducer clicked on=ui.click(B) do= seen := $route.path",
       "reducer other   on=ui.click(B) do= seen := nowhere",

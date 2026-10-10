@@ -1,14 +1,3 @@
-// Inside a fragment argument — `xs.map(…)`, `m.filter(…)` — `$1` / `$2` are
-// bound to what the lowering hands the fragment, read off the receiver's type
-// (stdlib.md §2.2): the element of a `List` or `Option`, the two halves of a
-// `.entries` tuple, a Map's key and value, `fold`'s element. They used to be
-// bound with no type at all, so nothing read through them was decided — which
-// is how `rs.map($1.ids.to-list)` read a `Set(Int)`'s keys back as strings.
-//
-// Bound, they are checked like any other value. Where the lowering's reading
-// is not certain the name stays untyped, because a wrong guess reports a
-// working program.
-
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -42,8 +31,6 @@ function shapesOf(node: unknown, method: string): unknown[] {
 const LOUD = `fn loud(t: Text) -> Text = t + "!"`;
 
 describe("$1 is the element a List hands its fragment", () => {
-  // The lowering binds from the element type, not from the value's length, so
-  // an element that is a `List` is `$1` whole — two items or not.
   it("binds an element that is itself a List whole", () => {
     const defs = `${LOUD}\nslot xss : List(List(Int)) = []`;
     expect(diagnostics(defs, "xss.map(loud($1))", "List(Text)")).toEqual([
@@ -102,9 +89,6 @@ describe("$1 / $2 are a Map's key and value, and the halves of an entry", () => 
   });
 
   it("records Map.map's fragment as handed the key and the value", () => {
-    // Codegen binds from this decision; without it the fragment falls back to
-    // reading the value's length at run time, and a `fn` of two named there
-    // is refused.
     const ast = parse(
       lex(`slot m : Map(Int, Int) = {}
 slot res : Map(Int, Int) = {}
@@ -130,10 +114,6 @@ app A
 });
 
 describe("where the lowering's reading is not certain, nothing is bound", () => {
-  // What `.map` answers is decided by its fragment, which the checker does not
-  // infer, so a `fn` returning one has no result type and its elements are not
-  // known here. That is a gap in inference, not a rule: once the result is
-  // inferred this is the E0201 above, so only its absence today is pinned.
   it("a receiver whose type is not decided", () => {
     const defs = `${LOUD}\nfn anything(n: Int) = [n].map($1)`;
     expect(diagnostics(defs, "anything(1).map(loud($1))", "List(Text)")).not.toContain(

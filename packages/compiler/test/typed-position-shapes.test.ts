@@ -1,20 +1,5 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-
-// Three shapes of value whose type `checkAgainst` has to know before it can
-// hold them to a declared one:
-//
-// - a call to a `fn` declared without `->`, whose result is the type of its
-//   body (language.md §1.8.2, "inferred if omitted");
-// - `cfg["label"]`, a literal key into a record, which reads that field;
-// - `{}`, which is the empty Map, the empty Set and the empty record at once,
-//   so it has no one type of its own and the declared side decides.
-//
-// Each is run through every kind of position that has a declared type: a
-// slot's initial value, an assignment, a record field, a `fn` argument and
-// `app.http`'s `timeout` / `base-url`.
-
-type Diagnostic = { code: string; message: string; text: string };
+import { pointedErrorsOf } from "./helpers/diagnostics.ts";
 
 const SLOTS = `type Kind = Ka | Kb
 slot cfg : {ms: Int, label: Text} = {ms: 5, label: "x"}
@@ -31,23 +16,14 @@ app R
     routes = {"/" -> Home, "/404" -> Home}
     init   = []`;
 
-const diagnose = (src: string): Diagnostic[] =>
-  check(parse(lex(src)))
-    .filter((e) => e.severity !== "warning")
-    .map((e) => ({
-      code: e.code,
-      message: e.message,
-      // The text at the diagnostic's own position, so the position is read
-      // rather than counted.
-      text: (src.split("\n")[e.pos.line - 1] ?? "").slice(e.pos.col - 1),
-    }));
-
 const reported = (src: string): string[] =>
-  diagnose(src).map((d) => `${d.code} ${d.message} @ ${d.text}`);
+  pointedErrorsOf(src).map((d) => `${d.code} ${d.message} @ ${d.text}`);
 
 /** As `reported`, with the text cut to `value` when the diagnostic starts at it. */
 const reportedAt = (src: string, value: string): string[] =>
-  diagnose(src).map((d) => `${d.code} ${d.message} @ ${d.text.startsWith(value) ? value : d.text}`);
+  pointedErrorsOf(src).map(
+    (d) => `${d.code} ${d.message} @ ${d.text.startsWith(value) ? value : d.text}`,
+  );
 
 /** A value of `ty` that every position below starts from. */
 const ZERO: Record<string, string> = { Int: "0", Text: `""` };
@@ -162,7 +138,7 @@ describe("a call to a fn with no -> stays unchecked where its body's type cannot
   // Each of these is wrong where it lands and would be reported against a
   // declared result. Without one, the checker has no type to compare, and a
   // guess would report programs that run.
-  const notE0201 = (src: string) => diagnose(src).filter((d) => d.code === "E0201");
+  const notE0201 = (src: string) => pointedErrorsOf(src).filter((d) => d.code === "E0201");
 
   it("a fn that calls itself: E0006 reports the loop, and no type is read off it", () => {
     // `countdown(n - 1) - 1` is an Int whatever `countdown` answers, so the
@@ -170,7 +146,7 @@ describe("a call to a fn with no -> stays unchecked where its body's type cannot
     const src = program(
       `fn countdown(n: Int) = if n == 0 then 0 else countdown(n - 1) - 1\nslot probe : Text = countdown(3)`,
     );
-    expect(diagnose(src).map((d) => d.code)).toContain("E0006");
+    expect(pointedErrorsOf(src).map((d) => d.code)).toContain("E0006");
     expect(notE0201(src)).toEqual([]);
   });
 
@@ -178,7 +154,7 @@ describe("a call to a fn with no -> stays unchecked where its body's type cannot
     const defs = `fn ping(n: Int) = pong(n) - 1\nfn pong(n: Int) = ping(n) - 1`;
     for (const first of ["ping", "pong"]) {
       const src = program(`${defs}\nslot probe : Text = ${first}(1)`);
-      expect(diagnose(src).map((d) => d.code)).toContain("E0006");
+      expect(pointedErrorsOf(src).map((d) => d.code)).toContain("E0006");
       expect(notE0201(src)).toEqual([]);
     }
   });
@@ -207,7 +183,7 @@ describe("a record read through a literal key has that field's type", () => {
 
   it("a key that is not a literal names no one field, so nothing is checked against it", () => {
     const src = program(`slot probe : Int = 0\nreducer act on=ui.click(B) do= probe := cfg[key]`);
-    expect(diagnose(src).filter((d) => d.code === "E0201")).toEqual([]);
+    expect(pointedErrorsOf(src).filter((d) => d.code === "E0201")).toEqual([]);
   });
 });
 
@@ -277,8 +253,8 @@ reducer act on=ui.click(B) do= emit save({})`,
   it("is accepted against a type the checker cannot read, which it does not speak for", () => {
     // `Mapp` names no type: E0117 reports the name, and the value is not
     // blamed for a type that has no shape.
-    expect(diagnose(program(`slot probe : Mapp(Text, Int) = {}`)).map((d) => d.code)).toEqual([
-      "E0117",
-    ]);
+    expect(
+      pointedErrorsOf(program(`slot probe : Mapp(Text, Int) = {}`)).map((d) => d.code),
+    ).toEqual(["E0117"]);
   });
 });

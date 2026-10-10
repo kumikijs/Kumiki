@@ -17,8 +17,8 @@ type Node = {label: Text, depth: Int}
 # legal: the record is where the chain stops. Comparing two of them terminates
 # because the relation is read over the types as written, not because their
 # values are finite — `type Node = {value: Int, next: Node}` has none at all
-# and is legal too (language.md §1.3.6, inv. 4). This is the one of the four
-# shapes where the self-reference is kept rather than replaced.
+# and is legal too. This is the one of the four shapes where the self-reference
+# is kept rather than replaced.
 type Thread = {label: Text, replies: List(Thread)}
 
 # E0304: `slot total : Int = nodes.length` reads a slot. Derived values belong

@@ -1,4 +1,4 @@
-# Feature (language.md §1.8.2): a `fn` that leaves out `->` returns the type
+# Feature (language.md): a `fn` that leaves out `->` returns the type
 # of its body.
 #
 #   fn-def ::= 'fn' identifier '(' fn-param* ')' ('->' type-expr)? '=' expr
