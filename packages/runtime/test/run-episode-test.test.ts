@@ -1,20 +1,11 @@
-import type { AppShape, EpisodeLogEntry, EpisodeMockPolicy } from "@kumikijs/runtime";
+import type { EpisodeLogEntry, EpisodeMockPolicy } from "@kumikijs/runtime";
 import { _stdlibTest } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-
-/** An app whose `live` map is already populated, which is what replay needs. */
-type ReplayableApp = AppShape & { live: Record<string, unknown> };
+import { type ReplayableApp, replayableApp } from "./helpers/episode-apps.ts";
 
 function makeCounterApp(): ReplayableApp {
-  const slots = {
-    count: { value: 0 },
-  };
-  const app: ReplayableApp = {
-    live: {},
-    slots,
-    caps: [],
-    effects: {},
-    init: [],
+  return replayableApp({
+    slots: { count: { value: 0 } },
     reducers: [
       {
         name: "inc",
@@ -27,21 +18,12 @@ function makeCounterApp(): ReplayableApp {
         apply: (live) => ({ slots: { count: (live.count as number) - 1 }, emits: [] }),
       },
     ],
-    root: () => ({ kind: "text", text: "" }),
-  };
-  for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
-  return app;
+  });
 }
 
 function makeLoadUserApp(): ReplayableApp {
-  const slots = {
-    user: { value: null as unknown },
-    error: { value: null as unknown },
-  };
-  const app: ReplayableApp = {
-    live: {},
-    slots,
-    caps: [],
+  return replayableApp({
+    slots: { user: { value: null as unknown }, error: { value: null as unknown } },
     effects: {
       loadUser: {
         name: "loadUser",
@@ -49,7 +31,6 @@ function makeLoadUserApp(): ReplayableApp {
         invoke: async () => ({ kind: "ok", value: null }),
       },
     },
-    init: [],
     reducers: [
       {
         name: "start",
@@ -67,10 +48,7 @@ function makeLoadUserApp(): ReplayableApp {
         apply: (_live, payload) => ({ slots: { error: payload.$1 }, emits: [] }),
       },
     ],
-    root: () => ({ kind: "text", text: "" }),
-  };
-  for (const [k, m] of Object.entries(slots)) app.live[k] = m.value;
-  return app;
+  });
 }
 
 const incEpisode = (after: number): EpisodeLogEntry => ({
@@ -88,7 +66,7 @@ const incEpisode = (after: number): EpisodeLogEntry => ({
   ],
 });
 
-describe("_stdlibTest.runEpisodeTest (§8.6)", () => {
+describe("_stdlibTest.runEpisodeTest", () => {
   it("PASSES when replay reaches the same final slots as the log (slots-equal: from-log)", () => {
     const app = makeCounterApp();
     const episodes = [incEpisode(1), incEpisode(2), incEpisode(3)];
@@ -105,7 +83,6 @@ describe("_stdlibTest.runEpisodeTest (§8.6)", () => {
 
   it("FAILS when reducer logic now produces a different final slot value", () => {
     const app = makeCounterApp();
-    // Tamper: replace `inc` with a no-op so replay can't reach count=2.
     app.reducers[0]!.apply = (live) => ({ slots: { count: live.count as number }, emits: [] });
     const episodes = [incEpisode(1), incEpisode(2)];
     const result = _stdlibTest.runEpisodeTest({

@@ -1,8 +1,6 @@
 import { LexError, lex } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
-// Every token but `eof` carries a value, and `eof` is filtered out — so one
-// shape covers them all.
 const tokenSummary = (s: string) =>
   lex(s)
     .filter((t) => t.kind !== "eof")
@@ -76,7 +74,7 @@ describe("lexer", () => {
     expect(tokenSummary("a.b")).toEqual(["ident(a)", "op(.)", "ident(b)"]);
   });
 
-  it("emits `@` as a single-char op for theme-token references (style.md §4.3)", () => {
+  it("emits `@` as a single-char op for theme-token references", () => {
     expect(tokenSummary("@colors.surface")).toEqual([
       "op(@)",
       "ident(colors)",
