@@ -530,7 +530,7 @@ describe("planFixesExplained: skip-reason classification", () => {
   });
 });
 
-describe("planFixesExplained: a read after the scope that declared it ended (E0103)", () => {
+describe("planFixesExplained: a read outside the scope that declares the name (E0103)", () => {
   // `idx` is one edit from the slot `id`, so a rename would type-check and read `id`.
   const scoped = (body: string): string => `slot id    : Int = 0
 slot total : Int = 0
@@ -606,6 +606,50 @@ ${APP_A}`;
       patches: ['replace "cont" with "count" at 8:76'],
       skipped: [["E0103", "e0103-read-after-scope-ended"]],
     });
+  });
+
+  it.each([
+    ["a `let … in`", scoped("total := idx\n        id := let idx = 1 in idx")],
+    ["a `for` statement", scoped("total := idx\n        for idx in [1] { () }")],
+    ["an `if` branch", scoped("total := idx\n        if flag then { let idx = 1 } else { () }")],
+    [
+      "a match arm",
+      scoped(
+        "total := idx\n        match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }",
+      ),
+    ],
+    ["a tile's `for`", inApp("column(Btn, text(idx.show), for idx in [1] text(idx.show))")],
+    [
+      "a tile's `match` arm",
+      inApp(
+        'column(Btn, text(v.show), match Some(1) with | Some(v) -> text(v.show) | None -> text("none"))',
+      ),
+    ],
+  ])("proposes no rename for a name %s declares, read before it", (_form, source) => {
+    const { patches, skipped } = plan(source);
+    expect(patches).toEqual([]);
+    expect(skipped).toEqual([["E0103", "e0103-read-before-scope-begins"]]);
+  });
+
+  const misspeltBefore = scoped(
+    "total := idx\n        count := cont\n        for idx in [1] { () }",
+  );
+  const ONE_OF_EACH_BEFORE = {
+    patches: ['replace "cont" with "count" at 7:18'],
+    skipped: [["E0103", "e0103-read-before-scope-begins"]],
+  };
+
+  it("still renames a misspelling beside a read before the scope", () => {
+    expect(plan(misspeltBefore)).toMatchObject(ONE_OF_EACH_BEFORE);
+  });
+
+  it("tells a read before the scope apart by the diagnostic's field, not its message", () => {
+    const reworded = plan(misspeltBefore, (m) => m.replace(/ — .*/, ""));
+    expect(reworded.messages).toEqual([
+      'Reference to undefined name "idx"',
+      'Reference to undefined name "cont"',
+    ]);
+    expect(reworded).toMatchObject(ONE_OF_EACH_BEFORE);
   });
 });
 

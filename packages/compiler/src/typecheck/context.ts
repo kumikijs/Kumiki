@@ -10,6 +10,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "../ast.ts";
+import { type NestedScopes, nestedScopes } from "./nested-scopes.ts";
 
 export type KumikiError = {
   code: string;
@@ -19,14 +20,16 @@ export type KumikiError = {
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
   /** E0103 only: the scope that declared the name and ended before this read. */
-  endedScope?: EndedScope;
+  endedScope?: NestedScope;
+  /** E0103 only: the scope that declares the name later and begins after this read. */
+  laterScope?: NestedScope;
 };
 
 /**
  * A reducer's nested statement bodies (`if`, `for`, `match`), and the expressions that bind a name
  * for their own body: `let … in`, a tile's `for`, an arm of a `match` expression.
  */
-export type EndedScope = "if" | "for" | "match" | "let-in" | "for-expr" | "match-expr";
+export type NestedScope = "if" | "for" | "match" | "let-in" | "for-expr" | "match-expr";
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -58,8 +61,8 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
-  /** Names the ended scopes declared and the enclosing scope does not bind. */
-  endedScopes: Map<string, EndedScope>;
+  /** Built before the check, so a read before a scope is answered as surely as one after it. */
+  nestedScopes: NestedScopes;
   oneValueFragment?: { method: string; hides: boolean };
 };
 
@@ -74,19 +77,13 @@ export function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
 }
 
-/** End `inner`, a scope of the kind `kind` opened in `ctx`: its names go out of scope with it. */
-export function endScope(kind: EndedScope, inner: Ctx, ctx: Ctx): void {
-  for (const name of inner.localBinds) {
-    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, kind);
-  }
-}
-
-export function pureScope(binds: string[]): Ctx {
+/** `exprs` are the expressions checked in this scope, whose nested scopes it knows. */
+export function pureScope(binds: string[], ...exprs: (Expr | undefined)[]): Ctx {
   return {
     kind: "slot-init",
     localBinds: new Set(binds),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(...exprs),
     localTypes: new Map(),
   };
 }

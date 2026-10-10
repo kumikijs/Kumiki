@@ -1,6 +1,7 @@
 import { paramSubstitution, substituteType, typeToString, unaliasType } from "../assignable.ts";
-import type { MatchArm, Pattern, Pos, TypeExpr } from "../ast.ts";
+import type { MatchArm, Pattern, TypeExpr } from "../ast.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import { patternBinds } from "./nested-scopes.ts";
 
 export function armScope(
   arm: MatchArm,
@@ -15,28 +16,7 @@ export function armScope(
 
 export function checkPatternBindsAreDistinct(pat: Pattern, errors: KumikiError[]): void {
   const seen = new Set<string>();
-  const walk = (p: Pattern): void => {
-    switch (p.kind) {
-      case "PWildcard":
-        return;
-      case "PBind":
-        report(p.name, p.pos);
-        return;
-      case "PVariant":
-        for (const b of p.binds) report(b, p.pos);
-        return;
-      case "PTuple":
-        for (const it of p.items) walk(it);
-        return;
-      default: {
-        const exhaustive: never = p;
-        void exhaustive;
-        return;
-      }
-    }
-  };
-  const report = (name: string, pos: Pos): void => {
-    if (name === "_") return;
+  for (const { name, pos } of patternBinds(pat)) {
     if (seen.has(name)) {
       errors.push({
         code: "E0122",
@@ -47,11 +27,10 @@ export function checkPatternBindsAreDistinct(pat: Pattern, errors: KumikiError[]
           `values the pattern names would be unreadable. Rename one`,
         pos,
       });
-      return;
+      continue;
     }
     seen.add(name);
-  };
-  walk(pat);
+  }
 }
 
 export function checkPatternAgainstType(

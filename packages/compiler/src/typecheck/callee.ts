@@ -12,8 +12,9 @@ import {
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
-import type { Ctx, EndedScope, KumikiError, SymbolTable } from "./context.ts";
+import type { Ctx, KumikiError, NestedScope, SymbolTable } from "./context.ts";
 import { freshResultType, prim } from "./infer.ts";
+import type { ScopedDeclaration } from "./nested-scopes.ts";
 
 export function checkCallee(
   callee: string,
@@ -213,33 +214,57 @@ export function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
+const eitherSide = (repair: string): Record<"ended" | "later", string> => ({
+  ended: repair,
+  later: repair,
+});
+
 // A tile `for`'s variable and a `match` arm's pattern stand for one element, one case, so the read
-// moves in; a statement body's name can be declared before it, a `let … in` value bound higher.
-const ENDED_SCOPE_WORDS: Record<EndedScope, { scope: string; repair: string }> = {
+// moves in; a statement body's name can be declared outside it, a `let … in` value bound higher.
+const NESTED_SCOPE_WORDS: Record<
+  NestedScope,
+  { scope: string; repair: Record<"ended" | "later", string> }
+> = {
   if: {
     scope: 'an "if" branch',
-    repair: 'declare it before the "if", or move the read into the branch',
+    repair: {
+      ended: 'declare it before the "if", or move the read into the branch',
+      later: "declare it before this read, or move the read into the branch",
+    },
   },
   for: {
     scope: 'a "for" body',
-    repair: 'declare it before the "for", or move the read into the body',
+    repair: {
+      ended: 'declare it before the "for", or move the read into the body',
+      later: "declare it before this read, or move the read into the body",
+    },
   },
   match: {
     scope: "a match arm",
-    repair: 'declare it before the "match", or move the read into the arm',
+    repair: {
+      ended: 'declare it before the "match", or move the read into the arm',
+      later: "declare it before this read, or move the read into the arm",
+    },
   },
   "let-in": {
     scope: 'the body of a "let … in"',
-    repair: "move the read into that body, or bind it where both reads see it",
+    repair: eitherSide("move the read into that body, or bind it where both reads see it"),
   },
-  "for-expr": { scope: `a tile's "for" body`, repair: "move the read into the body" },
-  "match-expr": { scope: 'an arm of a "match" expression', repair: "move the read into the arm" },
+  "for-expr": { scope: `a tile's "for" body`, repair: eitherSide("move the read into the body") },
+  "match-expr": {
+    scope: 'an arm of a "match" expression',
+    repair: eitherSide("move the read into the arm"),
+  },
 };
 
-/** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
-export function endedScopeHint(kind: EndedScope): string {
-  const { scope, repair } = ENDED_SCOPE_WORDS[kind];
-  return ` — it is scoped to ${scope}, which ends with it: ${repair} (see docs/spec/language.md)`;
+/** Unlike `arithmeticHint`, kept when a close name is in scope: that the read is outside is known. */
+export function outOfScopeHint(side: "ended" | "later", declaration: ScopedDeclaration): string {
+  const { scope, repair } = NESTED_SCOPE_WORDS[declaration.kind];
+  const where =
+    side === "ended"
+      ? `it is scoped to ${scope}, which ends with it`
+      : `it is declared later, at ${declaration.at.line}:${declaration.at.col}, and scoped to ${scope}`;
+  return ` — ${where}: ${repair[side]} (see docs/spec/language.md)`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {

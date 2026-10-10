@@ -9,11 +9,10 @@ import {
   checkRecordUpdate,
   getOrResultType,
 } from "./against.ts";
-import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition } from "./callee.ts";
+import { arithmeticHint, checkCallee, outOfScopeHint, reportRunReducerPosition } from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
-  endScope,
   innerScope,
   type KumikiError,
   type SymbolTable,
@@ -38,6 +37,7 @@ import {
   keyKindOfReader,
   undefMemberError,
 } from "./members.ts";
+import { scopeOutside } from "./nested-scopes.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
 import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
@@ -148,14 +148,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      const endedScope = ctx.endedScopes.get(e.name);
-      if (endedScope !== undefined) {
+      const outside = scopeOutside(ctx.nestedScopes, e.name, e.pos);
+      if (outside !== undefined) {
+        const { side, declaration } = outside;
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `Reference to undefined name "${e.name}"${endedScopeHint(endedScope)}`,
+          message: `Reference to undefined name "${e.name}"${outOfScopeHint(side, declaration)}`,
           pos: e.pos,
-          endedScope,
+          ...(side === "ended"
+            ? { endedScope: declaration.kind }
+            : { laterScope: declaration.kind }),
         });
         return;
       }
@@ -349,7 +352,6 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkExpr(arm.body, sym, errors, inner);
-        endScope("match-expr", inner, ctx);
       }
       return;
     }
@@ -361,9 +363,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      const inner = letInScope(e, sym, ctx);
-      checkExpr(e.body, sym, errors, inner);
-      endScope("let-in", inner, ctx);
+      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
       return;
     }
     case "TokenRef":
