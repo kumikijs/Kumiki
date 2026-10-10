@@ -18,6 +18,8 @@ type KumikiError = {
 
 `code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
+As text, a diagnostic is one line that leads with its severity: `<severity> <code> <kind> at <line>:<col>: <message>`, as in `error E0103 undef-ref at 4:30: Reference to undefined name "totl"` or `warning W0212 ui-event-tile-mismatch at 2:17: …`. The word is the `severity` field, so a reader tells an advisory diagnostic from a failure without knowing what a code's first letter stands for. `kumiki check` prints each diagnostic this way, and `build`, `test`, `smoke`, `run`, `fix` and the MCP `kumiki_fix` dry run print diagnostics in the same form; the MCP tools that answer in JSON carry `severity` on each diagnostic instead.
+
 A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
 
 The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is assigned by the two tools named above.

@@ -90,7 +90,7 @@ test starts-at-41 =
     expect(checked.code).toBe(1);
     const lines = checked.stderr.trim().split("\n");
     expect(lines).toEqual([
-      "E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
+      "error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
     ]);
 
     const tested = runCli(["test", file]);
@@ -109,8 +109,8 @@ ${NOT_A_RECORD}`);
     expect(checked.code).toBe(1);
     const lines = checked.stderr.trim().split("\n");
     expect(lines).toEqual([
-      expect.stringMatching(/^W0212 /),
-      expect.stringMatching(/^E0713 test-shape-invalid at 11:26: /),
+      expect.stringMatching(/^warning W0212 /),
+      expect.stringMatching(/^error E0713 test-shape-invalid at 11:26: /),
     ]);
 
     const tested = runCli(["test", file]);
@@ -133,7 +133,7 @@ ${NOT_A_RECORD}`);
     );
     const tested = runCli(["test", file]);
     expect(tested.code).toBe(1);
-    expect(tested.stderr).toMatch(/E0103 \S+ at 4:27: /);
+    expect(tested.stderr).toMatch(/error E0103 \S+ at 4:27: /);
     expect(tested.stderr).not.toContain("in test");
   });
 });

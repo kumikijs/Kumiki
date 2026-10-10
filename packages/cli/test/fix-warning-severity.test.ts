@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { KumikiError } from "@kumikijs/compiler";
 import { describe, expect, it, vi } from "vitest";
-import { applyFixPlan, fixCmd, planFix, runFixFromTest } from "../src/fix.ts";
+import { applyFixPlan, fixCmd, fixFromTest, planFix, runFixFromTest } from "../src/fix.ts";
 import { seedLines } from "./helpers/files.ts";
 
 /** A `box` cannot fire `focus`, so subscribing to one is W0212 and nothing else. */
@@ -172,8 +172,33 @@ describe("the verdicts fix prints", () => {
     write([...WARNING, "tile App = column(Card, Missing)", ...APP]);
     const dry = printed(() => fixCmd(file, false));
     expect(dry.code).toBe(1);
-    expect(dry.err).toContain("E0105");
-    expect(dry.err).toContain("W0212");
+    expect(dry.err.split("\n")).toEqual([
+      'error E0105 undef-tile at 4:25: Reference to undefined tile "Missing"',
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:24: /),
+    ]);
+  });
+
+  it("names the severity of what blocks --auto-patch and of the warnings beside it", async () => {
+    write([
+      ...WARNING,
+      'tile Title = heading("Helo")',
+      "tile App = column(Card, Title, Missing)",
+      ...APP,
+      ...FAILING_TEST,
+    ]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const outcome = await fixFromTest(file, "t", false);
+      expect(outcome.status).toBe("no-patch");
+      expect(err.mock.calls.map((c) => String(c[0]))).toEqual([
+        '  error E0105 undef-tile at 5:32: Reference to undefined tile "Missing"',
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:24: /),
+      ]);
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+    }
   });
 
   it("says plain `no errors` when there is nothing at all", () => {

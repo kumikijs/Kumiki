@@ -1,4 +1,4 @@
-import { HEADLESS_ACTION_KEYS, runScenarioSource, smokeSource } from "@kumikijs/cli";
+import { HEADLESS_ACTION_KEYS, parseFailure, runScenarioSource, smokeSource } from "@kumikijs/cli";
 import { check, compile, type KumikiError, lex, parse } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import { z } from "zod";
@@ -46,15 +46,7 @@ function validate(
   try {
     reported = check(parse(lex(source)), { capabilities, ...opts });
   } catch (e) {
-    const pe = e as { message?: string; pos?: { line: number; col: number } };
-    reported = [
-      {
-        code: "E0000",
-        kind: "parse-error",
-        message: pe.message ?? String(e),
-        pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
-      },
-    ];
+    reported = [parseFailure(e)];
   }
   const diagnostics = toDiagnostics(reported);
   return {

@@ -1,4 +1,11 @@
-import { applyFixPlan, planFix, plural, runFixFromTest, runTests } from "@kumikijs/cli";
+import {
+  applyFixPlan,
+  formatDiagnostic,
+  planFix,
+  plural,
+  runFixFromTest,
+  runTests,
+} from "@kumikijs/cli";
 import { z } from "zod";
 import { absPath, capsForInput, pathCapabilities } from "../input.ts";
 import {
@@ -48,19 +55,14 @@ export function registerRepairTools(tool: RegisterTool): void {
         return r.remaining.length > 0 ? failed(body) : text(body);
       }
       const plan = planFix(abs, input.only, caps);
-      const advisory = plan.warnings.map((w) => `${w.code} ${w.message}`);
+      const advisory = plan.warnings.map(formatDiagnostic);
       if (plan.errors.length === 0) {
         if (plan.warnings.length === 0) return text("no errors");
         return text([`no errors (${plural(plan.warnings.length)})`, ...advisory].join("\n"));
       }
       if (plan.patches.length === 0) {
-        return failed(
-          [
-            "(no auto-patches available)",
-            ...plan.errors.map((e) => `${e.code} ${e.message}`),
-            ...advisory,
-          ].join("\n"),
-        );
+        const errors = plan.errors.map(formatDiagnostic);
+        return failed(["(no auto-patches available)", ...errors, ...advisory].join("\n"));
       }
       const proposals = plan.patches.map((p) => `${p.code}: ${p.description}`);
       const unrepaired = plan.skipped.map((s) => `${s.code}: ${s.message} (no auto-patch)`);

@@ -1,4 +1,5 @@
 import type { KumikiError } from "@kumikijs/compiler";
+import { formatDiagnostic } from "./diagnostic.ts";
 import { applyFixPlan, type FixApplyResult, planFix } from "./fix/compile.ts";
 import { type FixFromTestOutcome, runFixFromTest } from "./fix/from-test.ts";
 
@@ -26,7 +27,7 @@ function verdict(headline: string, warnings: KumikiError[]): string {
 
 /** The warnings themselves, under whatever verdict or diagnostic list precedes them. */
 function reportWarnings(warnings: KumikiError[]): void {
-  for (const w of warnings) console.error(`${w.code} ${w.message}`);
+  for (const w of warnings) console.error(formatDiagnostic(w));
 }
 
 export function rollbackLine(r: {
@@ -64,7 +65,7 @@ export function fixCmd(
     }
     if (patches.length === 0) {
       console.log("(no auto-patches available)");
-      for (const e of errors) console.error(`${e.code} ${e.message}`);
+      for (const e of errors) console.error(formatDiagnostic(e));
       reportWarnings(warnings);
       return 1;
     }
@@ -91,7 +92,7 @@ export function fixCmd(
       return 0;
     }
     console.log(rollbackLine(result));
-    for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+    for (const e of result.remaining) console.error(formatDiagnostic(e));
     reportWarnings(result.warnings);
     return 1;
   }
@@ -101,7 +102,7 @@ export function fixCmd(
     return 0;
   }
   console.log(`applied ${result.applied} fix(es) — ${result.remaining.length} error(s) remain`);
-  for (const e of result.remaining) console.error(`${e.code} ${e.message}`);
+  for (const e of result.remaining) console.error(formatDiagnostic(e));
   reportWarnings(result.warnings);
   return 1;
 }
@@ -147,7 +148,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
           `(no auto-patch available) — test "${testName}" is blocked by ${outcome.compileErrors.length} compile error(s):`,
         );
         if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
-        for (const e of outcome.compileErrors) console.error(`  ${e.code} ${e.message}`);
+        for (const e of outcome.compileErrors) console.error(`  ${formatDiagnostic(e)}`);
         return;
       }
       if (outcome.testRunError) {
@@ -178,7 +179,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
       console.log(
         `test "${testName}" is still blocked by ${outcome.compileErrors.length} compile error(s):`,
       );
-      for (const e of outcome.compileErrors) console.error(`  ${e.code} ${e.message}`);
+      for (const e of outcome.compileErrors) console.error(`  ${formatDiagnostic(e)}`);
       return;
     }
     case "compile-remaining": {
@@ -215,7 +216,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
       console.log(`  reason: ${outcome.blocked.reason}`);
       const b = outcome.blocked;
       if (b.reason === "introduced")
-        for (const e of b.introduced) console.error(`  ${e.code} ${e.message}`);
+        for (const e of b.introduced) console.error(`  ${formatDiagnostic(e)}`);
       else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
         console.error(`  ${b.message}`);
       else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);

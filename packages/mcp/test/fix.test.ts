@@ -2,7 +2,14 @@ import * as fs from "node:fs";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { callOnce, FIX_COUNTER_TYPO, flag, useWorkdir } from "./helpers/client.ts";
+import {
+  callOnce,
+  FIX_COUNTER_TYPO,
+  FIX_MIXED,
+  FIX_WARNING_ONLY,
+  flag,
+  useWorkdir,
+} from "./helpers/client.ts";
 
 // A plain-object namespace, so `vi.spyOn(fs, ...)` can replace an export.
 vi.mock("node:fs", async (importOriginal) => ({ ...(await importOriginal<typeof fs>()) }));
@@ -34,6 +41,36 @@ describe("kumiki_fix", () => {
     expect(res.body).toContain("E0103");
     expect(res.body).toContain("conut");
     expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it.each([
+    {
+      name: "a warning-only file",
+      path: FIX_WARNING_ONLY,
+      isError: false,
+      lines: [
+        "no errors (1 warning)",
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      ],
+    },
+    {
+      name: "an error it cannot repair beside a warning",
+      path: FIX_MIXED,
+      isError: true,
+      lines: [
+        "(no auto-patches available)",
+        'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      ],
+    },
+  ])("in dry-run on $name names each diagnostic's severity, as `kumiki check` prints it", async ({
+    path,
+    isError,
+    lines,
+  }) => {
+    const res = await callOnce("kumiki_fix", { path });
+    expect(res.isError).toBe(isError);
+    expect(res.body.split("\n")).toEqual(lines);
   });
 
   it("with apply:true writes the patch, returns before/after, and leaves the file clean", async () => {

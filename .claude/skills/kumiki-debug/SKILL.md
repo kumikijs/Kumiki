@@ -11,7 +11,7 @@ description: Diagnose and fix Kumiki compiler errors. Use when `kumiki check`/`b
 pnpm kumiki check <file>
 ```
 
-Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xxx) documented in `docs/spec/errors.md`. Read that entry first — it states the rule and the fix.
+Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic prints as one line that leads with its severity — `error E0103 undef-ref at 4:30: …` or `warning W0212 … at 2:17: …` — and has a stable `code` documented in `docs/spec/errors.md`. Read that entry first — it states the rule and the fix.
 
 ## Error code map (see docs/spec/errors.md for detail)
 
@@ -78,7 +78,7 @@ Or `kumiki_fix` via `@kumikijs/mcp`.
 
 ## Warnings (W-codes)
 
-`Wxxxx` diagnostics are non-fatal: `kumiki check` exits 0 and prints `ok (N warning(s))`. They still indicate real bugs: `W0212` and `W0213` flag a subscription or handler that never fires, so its reducer never runs. If `smoke` reports "interaction did nothing," scan the warning lines first.
+Warnings — the lines that start with `warning` — are non-fatal: `kumiki check` exits 0 and prints `ok (N warning(s))`. They still indicate real bugs: `W0212` and `W0213` flag a subscription or handler that never fires, so its reducer never runs. If `smoke` reports "interaction did nothing," scan the warning lines first.
 
 ## "It checks but misbehaves at runtime"
 

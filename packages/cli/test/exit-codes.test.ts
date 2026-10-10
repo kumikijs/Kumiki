@@ -164,6 +164,17 @@ test inc-works =
 });
 
 describe("kumiki check", () => {
+  it("names the severity of each diagnostic it prints, and exits 1 for the error", SPAWN, () => {
+    const src = WARN_ONLY.replace("column(Card)", "column(Card, text(totl.show))");
+    const { stdout, stderr, code } = runCli(["check", write("severity.kumiki", src)]);
+    expect(stderr.trimEnd().split("\n")).toEqual([
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+    ]);
+    expect(stdout).toBe("");
+    expect(code).toBe(1);
+  });
+
   it("unions the scope flags instead of keeping the first", SPAWN, () => {
     const src = `slot count : Int = "zero"
 tile App = column(heading("Count: " + cnt.show))

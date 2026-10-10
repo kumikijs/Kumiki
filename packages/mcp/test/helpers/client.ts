@@ -18,6 +18,7 @@ export const FIX_A11Y = fixture("a11y-missing-alt");
 export const FIX_REGRESSION = fixture("regression");
 export const FIX_FAILING_SINGLE = fixture("failing-single");
 export const FIX_WARNING_ONLY = fixture("warning-only");
+export const FIX_MIXED = fixture("mixed");
 export const FIX_SMOKE_PANICS = fixture("smoke-panics");
 export const COUNTER = app("01-counter");
 

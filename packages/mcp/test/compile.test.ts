@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -7,6 +7,7 @@ import {
   FIX_A11Y,
   FIX_COUNTER_TESTS,
   FIX_COUNTER_TYPO,
+  FIX_MIXED,
   FIX_SMOKE_PANICS,
   FIX_WARNING_ONLY,
   flag,
@@ -84,24 +85,6 @@ describe("the diagnostic wire shape", () => {
   const workdir = useWorkdir();
   type WireDiagnostic = { code: string; severity?: unknown };
   const pairs = (ds: WireDiagnostic[]) => ds.map((d) => [d.code, d.severity]);
-  const writeMixed = (): string => {
-    const file = join(workdir.path, "mixed.kumiki");
-    writeFileSync(
-      file,
-      [
-        "slot count : Int = 0",
-        "reducer bump on=ui.focus(Card) do= count := count + 1",
-        'tile Card = box(heading("Count: " + count.show))',
-        "tile App = column(Card, text(totl.show))",
-        "app Mixed",
-        "    caps   = []",
-        '    routes = {"/" -> App, "/404" -> App}',
-        "    init   = []",
-        "",
-      ].join("\n"),
-    );
-    return file;
-  };
 
   it("kumiki_check on a warning-only file says in its payload that nothing in it fails", async () => {
     const res = await callOnce("kumiki_check", { path: FIX_WARNING_ONLY });
@@ -112,7 +95,7 @@ describe("the diagnostic wire shape", () => {
   });
 
   it("tells a warning from an error in one file by `severity`", async () => {
-    const res = await callOnce("kumiki_check", { path: writeMixed() });
+    const res = await callOnce("kumiki_check", { path: FIX_MIXED });
     expect(res.isError).toBe(true);
     expect(pairs(JSON.parse(res.body) as WireDiagnostic[])).toEqual([
       ["W0212", "warning"],
@@ -121,7 +104,8 @@ describe("the diagnostic wire shape", () => {
   });
 
   it("gives every diagnostic a severity, whichever tool reports it", async () => {
-    const file = writeMixed();
+    const file = join(workdir.path, "mixed.kumiki");
+    copyFileSync(FIX_MIXED, file);
     await withClient(async (client) => {
       const built = await callTool(client, "kumiki_build", { path: file });
       const [head, ...json] = built.split("\n");
