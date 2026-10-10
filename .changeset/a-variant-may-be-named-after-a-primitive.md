@@ -13,7 +13,7 @@ $ kumiki check a.kumiki        # type SortBy = Name | Time | Size
 Error: Parse error at 1:22: Unsupported variant form
 ```
 
-The grammar (language.md §1.3.1) makes a variant any identifier, and the
+The grammar (language.md) makes a variant any identifier, and the
 primitive names are not reserved words, so `Name | Time | Size` declares a
 variant called `Time` exactly as `Name | Date | Size` declares one called
 `Date`. It now parses and checks, and the variant works everywhere a nullary

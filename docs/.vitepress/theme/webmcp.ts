@@ -1,11 +1,3 @@
-// WebMCP playground tools — registration lifecycle kept OUT of the Vue
-// component. `navigator.modelContext` is page-global and current Chrome does
-// not unregister tools when the AbortSignal passed to registerTool aborts, so
-// registering from onMounted made any SPA revisit of the playground page throw
-// InvalidStateError "Duplicate tool name". The host registers the tools at
-// most once per page load and routes execute() to whichever playground
-// instance is currently mounted.
-
 export interface PlaygroundApi {
   compileSource(source: string): unknown;
   listExamples(): string[];
@@ -100,13 +92,8 @@ export function createPlaygroundToolHost(): PlaygroundToolHost {
       for (const tool of tools) mc.registerTool(tool);
     },
     release(api) {
-      // A stale instance must never detach the active one — during an SPA page
-      // swap the new playground can bind before the old one's teardown runs.
       if (active !== api) return;
       active = null;
-      // Spec-compliant contexts let us unregister; there the tools disappear
-      // with the page and the next bind re-registers. Without it the tools
-      // stay registered (harmless: execute reports "not mounted").
       if (registered && context?.unregisterTool) {
         for (const tool of tools) context.unregisterTool(tool.name);
         registered = false;

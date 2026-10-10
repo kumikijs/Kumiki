@@ -1,4 +1,4 @@
-# Feature (style.md §4.6): `app.theme = themeName` names a slot, and changing
+# Feature: `app.theme = themeName` names a slot, and changing
 # the slot re-themes the whole page, including every tile whose own props did
 # not change. `Swatch` below is never touched by the toggle, yet its
 # background, colour and padding follow the active theme, and so does the

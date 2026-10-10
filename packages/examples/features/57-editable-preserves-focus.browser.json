@@ -27,7 +27,7 @@
       "expect": { "focused": "#editor" }
     },
     {
-      "label": "unrelated reducer fires via dispatch (not click → no button focus theft). The #190 patch preserves element identity, so both the seeded marker and text content survive; focus stays too",
+      "label": "unrelated reducer fires via dispatch (not click → no button focus theft). The in-place patch preserves element identity, so both the seeded marker and text content survive; focus stays too",
       "do": { "dispatch": "tick" },
       "expect": {
         "state": { "ticks": 1, "note": "hello" },

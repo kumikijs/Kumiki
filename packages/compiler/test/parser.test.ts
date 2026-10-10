@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { AppDef, ReducerDef, SlotDef, Statement, TileDef, TypeDef } from "@kumikijs/compiler";
 import { lex, parse } from "@kumikijs/compiler";
+import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { tileCall, uiEvent } from "./helpers/ast.ts";
 import { defined } from "./helpers/defined.ts";
 
-const COUNTER_PATH = resolve(__dirname, "../../examples/apps/01-counter/app.kumiki");
+const COUNTER_PATH = app("01-counter");
 
 describe("parser", () => {
   it("parses the counter example end-to-end", () => {
@@ -36,9 +36,6 @@ describe("parser", () => {
     const incOn = uiEvent(incReducer.on);
     expect(incOn.ev).toBe("click");
     expect(incOn.selector.tile).toBe("IncBtn");
-    // `inc` guards its own ceiling, so the body is one `if` whose consequent is
-    // the assignment (the count type is bounded, and a refused write discards
-    // the whole batch — spec/runtime.md §10.3.3).
     expect(incReducer.do).toHaveLength(1);
     const incGuard = incReducer.do[0] as Extract<Statement, { kind: "IfStmt" }>;
     expect(incGuard).toMatchObject({ kind: "IfStmt", cond: { kind: "BinOp", op: "<" } });
@@ -94,9 +91,6 @@ describe("parser", () => {
     const src = `reducer r on=ui.submit(LoginForm#new) do= x := 1`;
     const program = parse(lex(src));
     const r = program.defs[0] as ReducerDef;
-    // `tilePos` points at `LoginForm` itself, not at the `ui.submit(` before
-    // it — `rename` rewrites that span verbatim, so an off-by-one here is a
-    // corrupted file.
     expect(uiEvent(r.on).selector).toEqual({
       tile: "LoginForm",
       id: "new",
@@ -156,10 +150,6 @@ reducer stop on=ui.click(B) do= stop-timer(t)`;
     expect(stmt.name).toBe("t");
   });
 
-  // Closed-set lifecycle events (docs/spec/language.md §1.6.1, lifecycle.md
-  // §7.1). The parser must accept every legal name, encode `tile.mount(X)` /
-  // `route.error("/p")` with their argument so the runtime can match by
-  // identity, and reject unknown variants.
   it("parses the full app.* lifecycle event set", () => {
     const src = `slot s : Bool = false
 reducer aStop    on=app.stop     do= s := true
@@ -208,8 +198,6 @@ reducer onErr on=route.error("/p") do= s := true`;
     expect(r.on.name).toBe('route.error("/p")');
   });
 
-  // Issue #85: nested routes — `sub-routes = {...}` on a tile must be parsed
-  // into TileDef.subRoutes (previously the parser swallowed and discarded it).
   it("stores tile sub-routes on TileDef.subRoutes", () => {
     const src = `tile Layout
   sub-routes = {
@@ -234,15 +222,11 @@ reducer onErr on=route.error("/p") do= s := true`;
         tilePos: { line: 4, col: 28 },
         pathPos: { line: 4, col: 5 },
       },
-      // A `->>` redirect targets a path, not a tile, so there is nothing to
-      // point at and nothing for `rename` to rewrite — the pattern's own
-      // position is still carried, because a duplicate pattern is reported
-      // whether or not its target is a tile.
       { path: "/legacy", tile: ">>/settings", pathPos: { line: 5, col: 5 } },
     ]);
   });
 
-  it("parses `@colors.surface` inside a style block as a TokenRef expression (§4.3)", () => {
+  it("parses `@colors.surface` inside a style block as a TokenRef expression", () => {
     const src = `tile Card = box() {style: {background: @colors.surface}}`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
@@ -258,7 +242,7 @@ reducer onErr on=route.error("/p") do= s := true`;
     });
   });
 
-  it("parses nested token paths like `@typography.size.lg` (§4.3)", () => {
+  it("parses nested token paths like `@typography.size.lg`", () => {
     const src = `tile Card = box() {style: {font-size: @typography.size.lg}}`;
     const program = parse(lex(src));
     const tile = program.defs[0] as TileDef;
@@ -303,9 +287,7 @@ reducer bad on=route.bogus("/p") do= s := 1`),
     ).toThrow(/Unknown route lifecycle event/);
   });
 
-  // issue #91 — language.md §1.6.1 lists eight ui-kinds, but ui.key / ui.hover
-  // were never wired into the parser. These two cases lock the parser-side.
-  it("parses ui.key(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.key(Tile) event pattern", () => {
     const src = `slot k : Text = ""
 reducer onKey on=ui.key(Box) do= k := "hit"
 tile Box = input(bind=k)`;
@@ -316,7 +298,7 @@ tile Box = input(bind=k)`;
     expect(r.on.selector.tile).toBe("Box");
   });
 
-  it("parses ui.hover(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.hover(Tile) event pattern", () => {
     const src = `slot h : Bool = false
 reducer onHover on=ui.hover(Card) do= h := true
 tile Card = box() {}`;
@@ -327,10 +309,7 @@ tile Card = box() {}`;
     expect(r.on.selector.tile).toBe("Card");
   });
 
-  // issue #122 — §1.6.1 ui.focus / ui.blur were accepted by the parser
-  // alongside ui.key / ui.hover, but never lifted by codegen / runtime.
-  // These cases lock the parser-side so a regression on either kind fails fast.
-  it("parses ui.focus(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.focus(Tile) event pattern", () => {
     const src = `slot f : Text = ""
 reducer onFocus on=ui.focus(InputX) do= f := "focused"
 tile InputX = input(bind=f)`;
@@ -341,7 +320,7 @@ tile InputX = input(bind=f)`;
     expect(r.on.selector.tile).toBe("InputX");
   });
 
-  it("parses ui.blur(Tile) event pattern (§1.6.1)", () => {
+  it("parses ui.blur(Tile) event pattern", () => {
     const src = `slot b : Int = 0
 reducer onBlur on=ui.blur(InputX) do= b := b + 1
 tile InputX = input(bind=b)`;
@@ -352,10 +331,7 @@ tile InputX = input(bind=b)`;
     expect(r.on.selector.tile).toBe("InputX");
   });
 
-  // issue #91 — language.md §1.9 lists tuple patterns in the grammar.
-  // Tuple values are introduced by `List(T).zip(U)`, so a tuple pattern matches
-  // over a `Tuple(T, U)`-typed value (here, a fn parameter).
-  it("parses a tuple pattern `(x, y)` in a match arm (§1.9)", () => {
+  it("parses a tuple pattern `(x, y)` in a match arm", () => {
     const src = `type Light = Red | Green
 fn f(p: Tuple(Light, Light)) -> Text = match p with
   | (Red, Green) -> "rg"
@@ -375,8 +351,7 @@ fn f(p: Tuple(Light, Light)) -> Text = match p with
     expect(() => parse(lex(src))).toThrow(/Tuple pattern requires at least 2 items/);
   });
 
-  // issue #102 — http.cancel + EffectId.
-  it("parses `let id = emit X(...)` as a LetStmt with an EmitExpr rhs (#102)", () => {
+  it("parses `let id = emit X(...)` as a LetStmt with an EmitExpr rhs", () => {
     const src = `slot id : EffectId = EffectId.none
 effect fetchQuote cap=http.get in=Unit out=Result(Text, HttpError)
 reducer load on=ui.click(Btn) do= let h = emit fetchQuote()
@@ -398,7 +373,7 @@ app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]`;
     });
   });
 
-  it("parses `EffectId` as a primitive type and `EffectId.none` as a Call (#102)", () => {
+  it("parses `EffectId` as a primitive type and `EffectId.none` as a Call", () => {
     const src = `slot id : EffectId = EffectId.none
 tile App = text("x")
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
@@ -409,8 +384,6 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
   });
 });
 
-// §1.3.1: `union-type ::= variant ('|' variant)+`, and a `variant` is an
-// identifier with an optional payload — a primitive type's name included.
 describe("a union alternative", () => {
   const typeBody = (src: string) => (parse(lex(src)).defs[0] as TypeDef).body;
   const PRIMITIVES = ["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes", "File", "EffectId"];
