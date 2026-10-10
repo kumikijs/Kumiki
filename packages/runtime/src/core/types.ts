@@ -269,7 +269,7 @@ export type DiagnosticSite = {
   tileKind: string;
   /** Same identifier the episode log uses: bind path, else key, else kind. */
   id: string;
-  /** The authored tile this node came from, when it came from one. */
+  /** The authored tile this node came from, the outermost when it is the whole tree of several. */
   tile?: string | undefined;
 };
 

@@ -112,6 +112,8 @@ reducer trackPageView
 
 `error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、境界がどこに宣言されていても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が、fallback が消えたとき —— tile が panic せずに描画し直されたとき、あるいはその tile 自体が消えたとき —— に `tile.unmount(<fallback>)` が発火する。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。panic した tile は描画されたものではないので、fallback がその代わりに表示されている間はその tile 自身の `tile.mount` は発火せず、マウント済みの tile が panic し始めるとその `tile.unmount` が発火する。
 
+本体全体が別のユーザー tile である tile —— `tile Outer = Inner` —— は、両方の全体である 1 つのツリーを描画するので、両方が画面上にある。`tile.mount(Outer)` と `tile.mount(Inner)` がともに `Outer` から順に発火し、そのツリーが消えると両方の `tile.unmount` が同じ順で発火する。これは何段でも同じで（`tile A = B` と `tile B = C` なら `A`、`B`、`C` の順に発火する）、本体が、行や分岐で別のユーザー tile を呼ぶ `for`・`when`・`match` である場合も、外側の tile がどこで描画される場合 —— 呼び出し位置、ルートや `sub-routes` のターゲット、`error-boundary` の fallback —— も同じである。複数の場所に表示される tile は画面上の 1 つの tile であり、最初の 1 つが現れたときにマウントし、最後の 1 つが消えたときにアンマウントする。そのため単独でも表示されている `Inner` は、どちらかが残っている間はマウントされたままである。
+
 ---
 
 ## 7.2 エラー処理 {#_7-2-error-handling}
