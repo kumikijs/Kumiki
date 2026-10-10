@@ -1,8 +1,3 @@
-// Issue #71: per-app DCE — the runtime is split into feature modules so
-// `kumiki build` can ship only what an app uses. These tests pin the granular
-// module API (mountCore + explicit registries) and the back-compat contract of
-// the assembled `index.ts` entry (full mount / merged _stdlib / builtinEffects).
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AppShape, mountCore } from "../src/core.ts";
 import { httpFetch } from "../src/effects-http.ts";
@@ -29,26 +24,15 @@ import { collectionTiles } from "../src/tiles-collection.ts";
 import { inputTiles } from "../src/tiles-input.ts";
 import { layoutTiles } from "../src/tiles-layout.ts";
 import { textTiles } from "../src/tiles-text.ts";
+import { bareApp } from "./helpers/app.ts";
+import { freshRoot } from "./helpers/dom.ts";
 
-function appOf(partial: Partial<AppShape>): AppShape {
-  return {
-    slots: {},
-    caps: [],
-    reducers: [],
-    effects: {},
-    init: [],
-    routes: [],
-    themes: {},
-    themeName: null,
-    motions: {},
-    ...partial,
-  };
-}
+const appOf = (partial: Partial<AppShape>): AppShape =>
+  bareApp({ routes: [], themes: {}, themeName: null, motions: {}, ...partial });
 
 let target: HTMLElement;
 beforeEach(() => {
-  target = document.createElement("div");
-  document.body.appendChild(target);
+  target = freshRoot();
 });
 afterEach(() => {
   target.remove();
@@ -111,9 +95,8 @@ describe("mountCore with explicit tile registries", () => {
     const app = appOf({
       root: () => ({ kind: "column", children: [{ kind: "text", text: "hello" }] }),
     });
-    // text tiles deliberately NOT registered
     const handle = mountCore(app, target, { tiles: { ...layoutTiles } });
-    expect(target.textContent).toContain("hello"); // graceful: text content still shows
+    expect(target.textContent).toContain("hello");
     expect(errors).toHaveBeenCalledWith(expect.stringContaining("no renderer registered"));
     errors.mockRestore();
     handle.dispose();
@@ -188,7 +171,7 @@ describe("builtin effect modules", () => {
     expect(miss).toEqual({ kind: "ok", value: { _tag: "None" } });
   });
 
-  it("session effects round-trip through sessionStorage as Option values (#84)", async () => {
+  it("session effects round-trip through sessionStorage as Option values", async () => {
     const w = await sessionWrite({ key: "k84", value: { b: 2 } });
     expect(w.kind).toBe("ok");
     const r = await sessionRead({ key: "k84" });
@@ -210,7 +193,7 @@ describe("builtin effect modules", () => {
     });
   });
 
-  it("a read whose Decoder.Json check refuses the value is an err naming where (§6.7.2)", async () => {
+  it("a read whose Decoder.Json check refuses the value is an err naming where", async () => {
     // What codegen passes for `Decoder.Json(T)` when `T` carries a predicate.
     const check = (v: unknown) =>
       (v as { id?: unknown }).id === "ok"
@@ -274,7 +257,7 @@ describe("index.ts back-compat assembly", () => {
     expect(target.querySelector("table")).not.toBeNull();
     expect(target.textContent).toContain("cell");
     expect(target.textContent).toContain("in-modal");
-    expect(app.effects.navigate).toBeDefined(); // full mount wires routing by default
+    expect(app.effects.navigate).toBeDefined();
     expect(app.effects.toast).toBeDefined();
     handle.dispose();
   });
@@ -284,7 +267,6 @@ describe("index.ts back-compat assembly", () => {
     expect(_stdlib.runReducerTest).toBe(_stdlibTest.runReducerTest);
     expect(typeof _stdlib.runReducerTestFlow).toBe("function");
     expect(typeof _stdlib.wild).toBe("function");
-    // prod stdlib stays free of the test harness
     expect((_stdlibCore as Record<string, unknown>).runReducerTest).toBeUndefined();
   });
 

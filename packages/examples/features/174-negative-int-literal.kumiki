@@ -1,5 +1,4 @@
-# Feature (language.md §1.2, errors.md E0217): a negative Int literal is a
-# literal, and its sign is part of it.
+# Feature: a negative Int literal is a literal, and its sign is part of it.
 #
 # JavaScript represents every integer from -9007199254740991 through
 # 9007199254740991 exactly. A literal past either end is rounded on the way

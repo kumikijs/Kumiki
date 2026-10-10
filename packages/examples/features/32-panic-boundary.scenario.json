@@ -14,7 +14,7 @@
       "expect": {
         "noErrors": true,
         "state": { "reveal": true },
-        "domIncludes": ["recovered:"]
+        "domIncludes": ["recovered:", "get called on None"]
       }
     },
     {

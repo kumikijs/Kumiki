@@ -1,10 +1,3 @@
-// `forwardedHead` on its own, as a table over argument expressions.
-//
-// It takes the generics at an argument's head that hand a parameter straight
-// back, the step `unaliasType` takes, and nothing more: what it gives has to
-// normalise to what it was given, so a head it cannot see through is left as
-// written.
-
 import { describe, expect, it } from "vitest";
 import { forwardedHead, typeToString, unaliasType } from "../src/assignable.ts";
 import type { Program, TypeDef } from "../src/ast.ts";
