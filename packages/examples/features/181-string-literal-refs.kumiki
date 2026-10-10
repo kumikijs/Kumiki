@@ -1,8 +1,8 @@
-# Feature (ai-edit.md §9.2.2): a definition a prop names in a string literal
-# is referenced there, and `rename` rewrites the name between the quotes.
+# Feature: a definition a prop names in a string literal is referenced there,
+# and `rename` rewrites the name between the quotes.
 #
-#   {motion: "Spin"}         names the motion `Spin` (style.md §4.9.1)
-#   {prefetch: "loadTodo"}   names the reducer `loadTodo` (routing.md §3.8)
+#   {motion: "Spin"}         names the motion `Spin` (style.md)
+#   {prefetch: "loadTodo"}   names the reducer `loadTodo` (routing.md)
 #
 #   kumiki rename <file> motion.Spin Whirl          ->  {motion: "Whirl"}
 #   kumiki rename <file> reducer.loadTodo fetchTodo ->  {prefetch: "fetchTodo"}

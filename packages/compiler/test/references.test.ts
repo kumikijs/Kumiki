@@ -1,9 +1,3 @@
-// Direct tests for the reference walker. The CLI verbs exercise it indirectly,
-// but only through their own output — a walker that dropped shadowing, or a
-// whole layer, would still let every verb "work" while producing a program that
-// compiles and means something different. These assert the resolved edges
-// themselves, by layer and position.
-
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 
@@ -58,8 +52,6 @@ fn shout(label: Text) -> Text = label
       const src = `${decl}reducer r on=ui.click(B) do= for label in items { items := [label] }
 tile B = button(text="b")
 `;
-      // Both `label`s are the loop variable. Only `items` names a definition —
-      // once as the thing being iterated, once as the assignment target.
       expect(refsOf(src, "reducer.r")).toEqual([
         "tile.B@4:23",
         "slot.items@4:43",
@@ -111,8 +103,6 @@ tile B = button(text="b")
       expect(refsOf(src, "reducer.ask")).toEqual(["tile.B@3:25", "reducer.yes@3:79"]);
     });
 
-    // A name written as a string literal is reported at its first character,
-    // inside the quotes: col 25 is the opening quote, col 26 the `S`.
     it("resolves a motion prop, which is a string literal, at the name inside the quotes", () => {
       const src = `motion Spin = {from: {rotate: "0deg"}, to: {rotate: "360deg"}, duration: "1s"}
 tile S = box() {motion: "Spin"}
@@ -125,7 +115,6 @@ tile S = box() {motion: "Spin"}
 reducer load on=route.enter("/x") do= n := 1
 tile Home = link(to="/x") {text: "go", prefetch: "load"}
 `;
-      // col 50 is the opening quote, col 51 the `l`.
       expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:51"]);
     });
 
@@ -134,8 +123,6 @@ tile Home = link(to="/x") {text: "go", prefetch: "load"}
 tile Panel = card(text("p"))
 reducer on-panel on=tile.mount(Panel) do= n := 1
 `;
-      // Column 32 is `Panel`, not the `tile.` the pattern starts at — `rename`
-      // rewrites this position verbatim.
       expect(refsOf(src, "reducer.on-panel")).toEqual(["tile.Panel@3:32", "slot.n@3:43"]);
     });
 
@@ -150,8 +137,6 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = [load()]
 `;
-      // One reference at the init callee, and it is the effect. Resolving it as
-      // a fn too would let `rename fn.load` repoint init at a missing effect.
       expect(refsOf(src, "app.A")).toEqual(["tile.App@8:22", "tile.App@8:37", "effect.load@9:15"]);
     });
 
@@ -191,10 +176,6 @@ app A
     });
 
     it("names the slot the theme clause reads the name from", () => {
-      // `theme = <slot>` is the dynamic form (spec §4.6). Recording it as a
-      // theme unconditionally dropped the edge — `add` keeps only names its
-      // own layer holds — so `rename` left the clause pointing at the old
-      // name and the write was rolled back with no mention of `app.theme`.
       const src = app(
         "themeName",
         `slot themeName : Text = "Light"
@@ -234,10 +215,6 @@ test inc-increments =
     });
 
     it("names the slots its given/expect blocks key on, without a position", () => {
-      // A slot name in `{slots: {count: …}}` is a record KEY. The edge is real —
-      // `refs` and `remove --cascade` need it — but there is no identifier token
-      // for `rename` to rewrite, so it carries no position and `rename` refuses
-      // rather than leaving a test that asserts about a slot that moved.
       expect(refsOf(src, "test.inc-increments")).toContain("slot.count@-");
     });
   });

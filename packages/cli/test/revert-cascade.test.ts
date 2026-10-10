@@ -1,10 +1,5 @@
-// `patch revert` of a `remove --cascade` undoes the whole op: every definition
-// the cascade took comes back, in one op, or nothing is written. Reverting that
-// restore removes exactly the set it added, or nothing is written.
-
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   addDef,
   listDefs,
@@ -18,61 +13,16 @@ import {
   replaceDef,
   viewHistory,
 } from "@kumikijs/cli";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { seed as seedFile } from "./helpers/files.ts";
+import { logPath, rewriteLogEntry, snapshot } from "./helpers/op-log.ts";
 
-let dir = "";
-const seed = (source: string): string => {
-  dir = mkdtempSync(join(tmpdir(), "kumiki-revert-cascade-"));
-  const file = join(dir, "c.kumiki");
-  writeFileSync(file, source);
-  return file;
-};
-afterEach(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
-  dir = "";
-});
-
-const logPath = (file: string): string => `${file}.kumiki-ops.jsonl`;
+const seed = (source: string): string => seedFile(source, "c.kumiki");
 
 const qnames = (file: string): string[] =>
   listDefs(load(file))
     .map((d) => `${d.layer}.${d.name}`)
     .sort();
-
-/** The file and its op log, byte for byte — what "nothing was written" compares. */
-const snapshot = (file: string): { source: string; log: string } => ({
-  source: readFileSync(file, "utf8"),
-  log: readFileSync(logPath(file), "utf8"),
-});
-
-/** Rewrite one op-log entry in place, as an older version of the CLI would have logged it. */
-const rewriteLogEntry = (
-  file: string,
-  opId: string,
-  edit: (entry: Record<string, unknown>) => void,
-): void => {
-  const lines = readFileSync(logPath(file), "utf8").split("\n");
-  const out = lines.map((line) => {
-    if (!line.trim()) return line;
-    const entry = JSON.parse(line) as Record<string, unknown>;
-    if (entry["op-id"] !== opId) return line;
-    edit(entry);
-    return JSON.stringify(entry);
-  });
-  writeFileSync(logPath(file), out.join("\n"));
-};
-
-/** Run `fn` as another agent, so a lock held by `agent:other` binds whoever runs next. */
-const asAgent = (agent: string, fn: () => void): void => {
-  const prev = process.env.KUMIKI_AUTHOR;
-  process.env.KUMIKI_AUTHOR = agent;
-  try {
-    fn();
-  } finally {
-    if (prev === undefined) delete process.env.KUMIKI_AUTHOR;
-    else process.env.KUMIKI_AUTHOR = prev;
-  }
-};
 
 /** `slot.b` with two tiles hanging off it, every body in the op log. */
 const cascadeFixture = (): { file: string; removeId: string } => {
@@ -129,10 +79,6 @@ describe("patch revert of a cascade", () => {
   });
 
   it("restores the body a dependent had when it was removed, even after a rename", () => {
-    // `Show` reads `x`, which is renamed to `y`: the rename rewrites `Show` in
-    // the file but logs no new body for it. A new, unrelated `slot.x` then
-    // takes the old name, so the last body the log holds for `Show` would now
-    // read the wrong slot.
     const file = seed("slot a : Int = 0\n");
     addDef(file, "slot", "b", "Int = 1");
     addDef(file, "slot", "x", "Int = 2");
@@ -178,8 +124,6 @@ describe("patch revert of a cascade", () => {
   });
 
   it("writes nothing when the restore fails validation", () => {
-    // A new `tile.Show` took the name after the cascade; restoring the old
-    // one beside it is a duplicate definition.
     const { file, removeId } = cascadeFixture();
     addDef(file, "tile", "Show", 'text("new")');
     const before = snapshot(file);
@@ -221,12 +165,25 @@ describe("patch revert of a cascade", () => {
 
   it("refuses to revert the restore when a member is no longer in the file", () => {
     const { file, restoreId } = restoredFixture();
-    renameDef(file, "tile.Page", "Home");
+    const { opId: removedId } = removeDef(file, "tile.Page", false);
     const before = snapshot(file);
 
-    expect(() => patchRevert(file, restoreId)).toThrowError(/tile\.Page is no longer in the file/);
+    expect(() => patchRevert(file, restoreId)).toThrowError(
+      `patch revert: ${restoreId} added tile.Page, which is no longer in the file: ${removedId} removed tile.Page; nothing was written`,
+    );
 
     expect(snapshot(file)).toEqual(before);
+  });
+
+  it("reverting the restore removes a member renamed since under its new name", () => {
+    const { file, restoreId } = restoredFixture();
+    renameDef(file, "tile.Page", "Home");
+
+    const revertId = patchRevert(file, restoreId);
+
+    expect(qnames(file)).toEqual(["slot.a"]);
+    const op = readOpLog(file).find((e) => e["op-id"] === revertId)!;
+    expect(op.removed).toEqual(["slot.b", "tile.Home", "tile.Show"]);
   });
 
   it("refuses to revert the restore when a member is locked by another agent", () => {
@@ -240,10 +197,6 @@ describe("patch revert of a cascade", () => {
   });
 
   it("reads a prior body from a restore's `with` list", () => {
-    // `tile.Show` predates the log, so the only op that ever recorded its body
-    // is the restore, in `with`. Reverting a later replace that records no
-    // replaced body of its own, as one logged before `prev` was, must find it
-    // there.
     const file = seed("slot a : Int = 0\nslot b : Int = 1\ntile Show = text(b.show)\n");
     const { opId } = removeDef(file, "slot.b", true);
     patchRevert(file, opId);
@@ -269,8 +222,6 @@ describe("patch revert of a cascade", () => {
 
 describe("patch revert of a cascade logged by an older CLI", () => {
   it("falls back to the log's bodies, and writes nothing when one is missing", () => {
-    // Logged before `remove` recorded bodies: `tile.Show` predates the op log,
-    // so no op holds its body.
     const file = seed("slot a : Int = 0\nslot b : Int = 1\ntile Show = text(b.show)\n");
     addDef(file, "tile", "Page", "column(Show)");
     const { opId } = removeDef(file, "slot.b", true);
@@ -307,7 +258,7 @@ describe("patch apply of cascade ops", () => {
     // Put the file back as it was after the cascade, without reverting anything.
     writeFileSync(file, afterCascade.source);
     writeFileSync(logPath(file), afterCascade.log);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     writeFileSync(bundle, `${JSON.stringify(restore)}\n`);
 
     patchApplyFile(file, bundle);
@@ -323,7 +274,7 @@ describe("patch apply of cascade ops", () => {
     const removal = readOpLog(file).find((e) => e["op-id"] === revertId)!;
     writeFileSync(file, beforeRevert.source);
     writeFileSync(logPath(file), beforeRevert.log);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     writeFileSync(bundle, `${JSON.stringify(removal)}\n`);
 
     patchApplyFile(file, bundle);
@@ -335,7 +286,7 @@ describe("patch apply of cascade ops", () => {
     const file = seed("slot a : Int = 0\n");
     addDef(file, "slot", "b", "Int = 1");
     const before = snapshot(file);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     const op = {
       op: "add",
       layer: "slot",
@@ -354,7 +305,7 @@ describe("patch apply of cascade ops", () => {
     const file = seed("slot a : Int = 0\n");
     addDef(file, "slot", "b", "Int = 1");
     const before = snapshot(file);
-    const bundle = join(dir, "ops.jsonl");
+    const bundle = join(dirname(file), "ops.jsonl");
     const op = {
       op: "replace",
       layer: "slot",
