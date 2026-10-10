@@ -180,6 +180,72 @@ describe("httpFetch", () => {
   });
 });
 
+describe("httpFetch: what each decoder delivers", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** `日本語` is three characters and nine UTF-8 bytes, so a text and its bytes cannot be confused. */
+  const NIHONGO = "日本語";
+  const NIHONGO_UTF8 = [0xe6, 0x97, 0xa5, 0xe6, 0x9c, 0xac, 0xe8, 0xaa, 0x9e];
+
+  async function ok(decode: unknown, body: BodyInit | null): Promise<unknown> {
+    stubFetch(() => new Response(body, { status: 200 }));
+    const res = await httpFetch("GET", { url: "/r", decode });
+    expect(res.kind).toBe("ok");
+    return res.value;
+  }
+
+  it("`Decoder.Bytes` delivers the body's bytes, not its text", async () => {
+    const value = await ok("bytes", NIHONGO);
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(Array.from(value as Uint8Array)).toEqual(NIHONGO_UTF8);
+  });
+
+  // A body that is not UTF-8 at all: read as text, 0xff becomes U+FFFD, so
+  // bytes taken from the text would be different bytes.
+  it("`Decoder.Bytes` delivers the bytes as received, whatever they encode", async () => {
+    const value = await ok("bytes", new Uint8Array([0xff, 0x00, 0x80]));
+    expect(Array.from(value as Uint8Array)).toEqual([0xff, 0x00, 0x80]);
+  });
+
+  it("`Decoder.Text` delivers the body's text", async () => {
+    expect(await ok("text", NIHONGO)).toBe(NIHONGO);
+  });
+
+  it("`Decoder.None` delivers Unit without the body", async () => {
+    expect(await ok("none", NIHONGO)).toBeNull();
+  });
+
+  it("`Decoder.Json`, and a request with no decoder, deliver the parsed body", async () => {
+    expect(await ok("json", JSON.stringify({ n: NIHONGO }))).toEqual({ n: NIHONGO });
+    expect(await ok(undefined, JSON.stringify([1]))).toEqual([1]);
+  });
+
+  // `HttpError.body` is `Text` whatever the request asked to decode a 2xx as.
+  it("a non-2xx under `Decoder.Bytes` still carries the body's text", async () => {
+    stubFetch(() => new Response(NIHONGO, { status: 404, statusText: "Not Found" }));
+    const res = await httpFetch("GET", { url: "/r", decode: "bytes" });
+    expect(res).toEqual({
+      kind: "err",
+      value: { status: 404, message: "Not Found", body: NIHONGO },
+    });
+  });
+
+  // `map-request` builds an ordinary record, so `decode` can hold any value.
+  it("a decode that is no decoder fails the effect, before any request", async () => {
+    const { calls } = stubFetch(() => new Response(NIHONGO, { status: 200 }));
+    const res = await httpFetch("GET", { url: "/r", decode: "TEXT" });
+    expect(calls).toHaveLength(0);
+    expect(res).toEqual({
+      kind: "err",
+      value: { status: 0, message: expect.stringContaining('"TEXT"'), body: "" },
+    });
+  });
+});
+
 describe("httpFetch request body", () => {
   const originalFetch = globalThis.fetch;
 

@@ -129,6 +129,63 @@ describe("storageClear / sessionClear", () => {
   });
 });
 
+describe("storageRead / sessionRead: what each decoder delivers", () => {
+  const some = (value: unknown) => ({ kind: "ok", value: { _tag: "Some", _0: value } });
+
+  it("`Decoder.Text` delivers the stored text as it is", async () => {
+    localStorage.setItem("theme", "dark");
+    sessionStorage.setItem("theme", "dark");
+    expect(await storageRead({ key: "theme", decode: "text" })).toEqual(some("dark"));
+    expect(await sessionRead({ key: "theme", decode: "text" })).toEqual(some("dark"));
+  });
+
+  // A write stores its value as JSON, so `Decoder.Json` is what reads it back.
+  it("a Text a write stored is its JSON, which `Decoder.Text` delivers as written", async () => {
+    await storageWrite({ key: "theme", value: "dark" });
+    expect(await storageRead({ key: "theme", decode: "json" })).toEqual(some("dark"));
+    expect(await storageRead({ key: "theme", decode: "text" })).toEqual(some('"dark"'));
+  });
+
+  it("`Decoder.Bytes` delivers the stored text's UTF-8 bytes", async () => {
+    localStorage.setItem("name", "日本語");
+    const r = await storageRead({ key: "name", decode: "bytes" });
+    expect(r.kind).toBe("ok");
+    const bytes = (r.value as { _tag: string; _0: unknown })._0;
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(Array.from(bytes as Uint8Array)).toEqual([
+      0xe6, 0x97, 0xa5, 0xe6, 0x9c, 0xac, 0xe8, 0xaa, 0x9e,
+    ]);
+  });
+
+  it("`Decoder.None` answers whether the key is there, without reading it", async () => {
+    localStorage.setItem("theme", "dark");
+    expect(await storageRead({ key: "theme", decode: "none" })).toEqual(some(null));
+    expect(await storageRead({ key: "absent", decode: "none" })).toEqual({
+      kind: "ok",
+      value: { _tag: "None" },
+    });
+  });
+
+  it("`Decoder.Json`, and a read with no decoder, parse the stored text", async () => {
+    localStorage.setItem("todos", '[{"t":"日本語"}]');
+    expect(await storageRead({ key: "todos", decode: "json" })).toEqual(some([{ t: "日本語" }]));
+    expect(await storageRead({ key: "todos" })).toEqual(some([{ t: "日本語" }]));
+  });
+
+  it("a stored text that is not JSON is a decode failure under `Decoder.Json`", async () => {
+    localStorage.setItem("theme", "dark");
+    expect(message(await storageRead({ key: "theme", decode: "json" }))).toMatch(
+      /^decode failed: SyntaxError/,
+    );
+  });
+
+  it("a decode that is no decoder is an err naming it, whatever is stored", async () => {
+    localStorage.setItem("theme", "dark");
+    expect(message(await storageRead({ key: "theme", decode: "TEXT" }))).toContain('"TEXT"');
+    expect(message(await sessionRead({ key: "absent", decode: "TEXT" }))).toContain('"TEXT"');
+  });
+});
+
 describe("a handler resolves to its Text err; it never rejects", () => {
   it("when the storage getter itself throws, as in an opaque-origin sandbox", async () => {
     const names = ["localStorage", "sessionStorage"] as const;
