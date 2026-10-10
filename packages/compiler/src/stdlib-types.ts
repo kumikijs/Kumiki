@@ -109,9 +109,6 @@ export function isPrimTypeName(name: string): name is PrimName {
 }
 
 export function typeCandidates(userTypeNames: Iterable<string>): string[] {
-  // The program's own names come first so an equidistant tie resolves to one
-  // of them: `Filtre` is two edits from both the declared `Filter` and the
-  // built-in `File`, and the declared type is the one the author meant.
   return [
     ...userTypeNames,
     ...STDLIB_TYPES.map((t) => t.name),

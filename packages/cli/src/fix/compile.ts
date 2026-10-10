@@ -6,7 +6,7 @@ import {
   check,
   collectTimerNames,
   lex,
-  nearestName,
+  nearestNames,
   parse,
   servesNotFound,
   typeCandidates,
@@ -26,7 +26,10 @@ import {
 } from "./text-edit.ts";
 
 /** A planned repair without the diagnostic it answers, or the reason there is none. */
-type Planned = Omit<AutoPatch, "code" | "message"> | string;
+type Planned = Omit<AutoPatch, "code" | "message"> | string | Declined;
+
+/** A reason there is no repair, with the names it would have had to choose between. */
+type Declined = { reason: string; candidates: string[] };
 
 type Planner = (err: KumikiError, store: Store) => Planned;
 
@@ -61,6 +64,8 @@ type NameRepair = {
   quoted: 1 | 2;
   /** The names the misspelling may be close to; null when there are none to pick from. */
   pool: (store: Store, quoted: readonly string[]) => Iterable<string> | null;
+  /** The program's own names in a pool that holds built-in ones too, which outrank them at a tie. */
+  declared?: (store: Store) => Iterable<string>;
   emptyPool?: string;
   noSuggestion: string;
   /** Write at the name when it sits at the diagnostic's position, else on its line. */
@@ -76,8 +81,11 @@ function nameRepair(r: NameRepair): Planner {
     const missing = r.pick?.(quoted) ?? quoted[0]!;
     const pool = r.pool(store, quoted);
     if (pool === null) return `${r.prefix}${r.emptyPool}`;
-    const suggested = nearestName(missing, pool);
-    if (!suggested) return `${r.prefix}${r.noSuggestion}`;
+    const near = nearestNames(missing, pool, r.declared?.(store));
+    // Writing the first of a tie would let the order of the program's definitions pick the name.
+    if (near.length > 1) return { reason: "close-names-tied", candidates: near };
+    const suggested = near[0];
+    if (suggested === undefined) return `${r.prefix}${r.noSuggestion}`;
     const anchor: PatchAnchor = r.anchored
       ? nameAnchor(store, err.pos, missing)
       : { kind: "span", pos: err.pos };
@@ -147,6 +155,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       prefix: "e0116-",
       quoted: 1,
       pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
+      declared: (store) => namesIn(store, "fn"),
       noSuggestion: "no-close-callee",
       anchored: false,
     }),
@@ -157,6 +166,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       prefix: "e0117-",
       quoted: 1,
       pool: (store) => typeCandidates(namesIn(store, "type")),
+      declared: (store) => namesIn(store, "type"),
       noSuggestion: "no-close-type",
       anchored: false,
     }),
@@ -167,6 +177,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       prefix: "e0104-",
       quoted: 1,
       pool: (store) => namesIn(store, "effect").concat([...BUILTIN_EFFECT_CAPS.keys()]),
+      declared: (store) => namesIn(store, "effect"),
       noSuggestion: "no-close-effect",
       anchored: false,
     }),
@@ -278,6 +289,10 @@ export function planFixesExplained(
     if (typeof planned === "string") {
       skipped.push({ code: err.code, reason: planned, message: err.message });
       debugSkip(`planFixes:${err.code}`, planned, err.message);
+    } else if ("reason" in planned) {
+      const { reason, candidates } = planned;
+      skipped.push({ code: err.code, reason, message: err.message, candidates });
+      debugSkip(`planFixes:${err.code}`, reason, `${err.message} (${candidates.join(", ")})`);
     } else {
       patches.push({ code: err.code, message: err.message, ...planned });
     }

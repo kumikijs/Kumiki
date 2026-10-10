@@ -17,6 +17,8 @@ export type SkipReason = {
   code: string;
   reason: string;
   message: string;
+  /** The tied names of a `close-names-tied` skip, sorted. */
+  candidates?: string[];
 };
 
 export type PatchOrReason = { patch: AutoPatch } | { patch: null; reason: string };
