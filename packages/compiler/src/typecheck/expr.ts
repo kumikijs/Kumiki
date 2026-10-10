@@ -268,6 +268,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             checkExpr(a, sym, errors, ctx);
             const declared = memberArgType(recvType, e.method, i, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
+            // Any other count is checkGetArity's E0213, with no argument read as the index.
+            if (e.method === "get" && e.args.length === 1) {
+              checkListIndex(unaliasType(recvType, sym), a, sym, errors, ctx);
+            }
             continue;
           }
           if (isFragmentFnName(a, sym, ctx)) {

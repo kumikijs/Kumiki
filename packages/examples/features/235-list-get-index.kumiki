@@ -1,0 +1,33 @@
+# Feature: `xs.get(i)` reads the element at position `i` as an `Option(T)` —
+# `Some` of the element, or `None` where `i` names no element, past the end or
+# below zero.
+#
+# The index is a position, so it is an `Int` — the same index `xs[i]` takes,
+# held to the same check. `xs.get("0")` or `xs.get(0.5)` is E0201 at the index
+# (`Expected Int but got Text` / `… Float`); an `Int` expression of any shape is
+# an index, as `i` and `i + 1` are here.
+#
+# The elements are `Text`, so the index and the element are two different types
+# and neither can be read as the other: the buttons move the `Int` slot `i`, and
+# the two reads follow it off both ends of the list, where they answer `None`.
+
+slot letters : List(Text) = ["a", "b", "c"]
+slot i       : Int        = 0
+
+reducer next on=ui.click(Next) do= i := i + 1
+reducer prev on=ui.click(Prev) do= i := i - 1
+
+tile Next = button(text="next") {id: "next"}
+tile Prev = button(text="prev") {id: "prev"}
+
+tile App
+    = column(
+        row(Prev, Next) {gap: "sm"},
+        text("at " + i.show + ": " + letters.get(i).get-or("none")),
+        text("after it: " + letters.get(i + 1).get-or("none")))
+      {pad: "lg", gap: "md"}
+
+app ListGetIndex
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

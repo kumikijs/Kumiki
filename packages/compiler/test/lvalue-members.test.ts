@@ -242,6 +242,107 @@ describe("a List index is an Int", () => {
   });
 });
 
+describe("the index of List.get is an Int", () => {
+  const list = `slot xs : List(Int) = [1, 2, 3]\nslot got : Option(Int) = None`;
+
+  it("reports a Text index in a tile, at the index", () => {
+    const src = withApp(
+      `slot xs : List(Int) = [1, 2, 3]\ntile App = column(text("g: " + xs.get("0").get-or(-1).show))`,
+    );
+    expect(
+      checkSource(src).map((x) => `${x.code} ${x.pos.line}:${x.pos.col} ${x.message}`),
+    ).toEqual(["E0201 2:39 Expected Int but got Text"]);
+  });
+
+  it.each([
+    ["Text", `slot k : Text = "0"`],
+    ["Float", `slot k : Float = 0.5`],
+  ])("reports a %s index as E0201", (name, decl) => {
+    const errs = checkSource(withBody(`${list}\n${decl}`, `got := xs.get(k)`));
+    expect(errs.map((x) => x.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe(`Expected Int but got ${name}`);
+  });
+
+  it("reports a fractional literal", () => {
+    const errs = checkSource(withBody(list, `got := xs.get(0.5)`));
+    expect(errs.map((x) => `${x.code} ${x.message}`)).toEqual(["E0201 Expected Int but got Float"]);
+  });
+
+  it("holds a List(Float) to an Int index, not to its element type", () => {
+    const floats = `slot fs : List(Float) = [1.5, 2.5]\nslot f : Option(Float) = None`;
+    expect(codesOf(withBody(floats, `f := fs.get(0)`))).toEqual([]);
+    expect(codesOf(withBody(floats, `f := fs.get(1.5)`))).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["an alias", `type Nums = List(Int)\nslot ns : Nums = []`, `got := ns.get("0")`],
+    ["a nominal type", `type Nums = nominal List(Int)\nslot ns : Nums = []`, `got := ns.get("0")`],
+    [
+      "a record field",
+      `type Doc = { ns: List(Int) }\nslot doc : Doc = { ns: [] }`,
+      `got := doc.ns.get("0")`,
+    ],
+    ["a fn's declared result", `fn nums() -> List(Int) = [1]`, `got := nums().get("0")`],
+    [
+      "an element of a List",
+      `slot xss : List(List(Int)) = [[1]]`,
+      `got := xss.get(0).get-or([]).get("0")`,
+    ],
+  ])("reports the index of a List reached through %s", (_how, decls, body) => {
+    expect(codesOf(withBody(`${list}\n${decls}`, body))).toEqual(["E0201"]);
+  });
+
+  it("reports the outer index of a nested read, and not the inner one", () => {
+    const decls = `${list}\nslot xss : List(List(Int)) = [[1]]`;
+    const errs = checkSource(withBody(decls, `got := xss.get("0").get-or([]).get(0)`));
+    expect(errs.map((x) => `${x.code} ${x.pos.col} ${x.message}`)).toEqual([
+      "E0201 24 Expected Int but got Text",
+    ]);
+  });
+
+  it.each([
+    ["a literal", ``, `got := xs.get(0)`],
+    ["a negative literal", ``, `got := xs.get(-1)`],
+    ["an Int slot", `slot k : Int = 0`, `got := xs.get(k)`],
+    ["arithmetic on an Int", `slot k : Int = 0`, `got := xs.get(k + 1)`],
+    ["an Int member", `slot name : Text = "ab"`, `got := xs.get(name.length)`],
+    [
+      "a refinement of Int",
+      `type Idx = Int where between(0, 2)\nslot k : Idx = 0`,
+      `got := xs.get(k)`,
+    ],
+    ["an Int fragment's element", ``, `got := xs.map(xs.get($1)).head.get-or(None)`],
+    ["a nested read", `slot xss : List(List(Int)) = [[1]]`, `got := xss.get(0).get-or([]).get(0)`],
+  ])("accepts %s", (_how, decl, body) => {
+    expect(codesOf(withBody(`${list}\n${decl}`, body))).toEqual([]);
+  });
+
+  it("reads no argument as the index of a call with the wrong count", () => {
+    expect(codesOf(withBody(list, `got := xs.get("0", 1)`))).toEqual(["E0213"]);
+  });
+
+  it("leaves a Map's key to the Map", () => {
+    const decls = `${list}\nslot m : Map(Text, Int) = {}`;
+    expect(codesOf(withBody(decls, `got := m.get("a")`))).toEqual([]);
+  });
+
+  it.each([
+    ["Text", `slot k : Text = "0"`],
+    ["Float", `slot k : Float = 0.5`],
+    ["Option(Int)", `slot k : Option(Int) = None`],
+    ["Int", `slot k : Int = 0`],
+    ["a nominal Int", `type Idx = nominal Int\nslot k : Idx = 0`],
+    ["a refinement of Int", `type Idx = Int where between(0, 2)\nslot k : Idx = 0`],
+  ])("reads xs[k] and xs.get(k) alike where k is %s", (_name, decl) => {
+    const decls = `${list}\nslot picked : Int = 0\n${decl}`;
+    const viaRead = codesOf(withBody(decls, `picked := xs[k]`));
+    const viaWrite = codesOf(withBody(decls, `xs[k] := 7`));
+    const viaGet = codesOf(withBody(decls, `got := xs.get(k)`));
+    expect(viaGet).toEqual(viaRead);
+    expect(viaGet).toEqual(viaWrite);
+  });
+});
+
 describe("the build agrees with check about a member write", () => {
   it("refuses to emit one", () => {
     const r = compile(withBody(`slot name : Text = "abc"`, `name.length := 9`), {
