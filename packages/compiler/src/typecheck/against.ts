@@ -9,7 +9,7 @@ import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS, builtinFieldOmittable, REDUCER_REF } from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
-import { inferType, isKnown, isPrimNamed } from "./infer.ts";
+import { container, inferType, isKnown, isPrimNamed } from "./infer.ts";
 import { armScope } from "./patterns.ts";
 
 export function checkAgainst(
@@ -44,7 +44,13 @@ export function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && d.name === "Tuple" && e.kind === "TupleLit") {
-    if (e.items.length !== d.args.length) {
+    // Every item left undecided, so only the length can disagree, by the relation's own rule.
+    const shape = container(
+      "Tuple",
+      e.items.map((it) => unknownType(it.pos)),
+      e.pos,
+    );
+    if (!assignable(shape, declared, sym)) {
       pushMismatch(
         errors,
         code,

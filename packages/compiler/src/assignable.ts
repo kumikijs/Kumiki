@@ -244,6 +244,8 @@ function relate(
 
     case "TypeApp": {
       if (a.kind !== "TypeApp" || a.name !== d.name) return false;
+      // `Tuple` has no fixed arity: its length is part of the type.
+      if (d.name === "Tuple" && a.args.length !== d.args.length) return false;
       return d.args.every((darg, i) => {
         const aarg = a.args[i];
         return aarg === undefined || relate(aarg, darg, env, seen);

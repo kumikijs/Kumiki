@@ -1,0 +1,27 @@
+{
+  "steps": [
+    {
+      "label": "read takes the initial triple apart",
+      "do": { "click": "#read" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["res: 0z third=9"],
+        "state": { "res": "0z third=9" }
+      }
+    },
+    {
+      "label": "widen builds a triple from the pair",
+      "do": { "click": "#widen" },
+      "expect": { "noErrors": true, "state": { "triple": [1, "a", 7] } }
+    },
+    {
+      "label": "the built triple meets the three-item arm",
+      "do": { "click": "#read" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["res: 1a third=7"],
+        "state": { "res": "1a third=7" }
+      }
+    }
+  ]
+}
