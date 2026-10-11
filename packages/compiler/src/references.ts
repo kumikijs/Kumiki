@@ -17,7 +17,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { typeMemberQualifier } from "./builtin-calls.ts";
+import { decodedType, typeMemberQualifier } from "./builtin-calls.ts";
 import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
@@ -193,6 +193,13 @@ class Walker {
         // `run-reducer(name)` takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
+          return;
+        }
+        // Codegen decodes by this argument, so its names are types, though it parses as a value.
+        if (e.callee === "Decoder.Json") {
+          const t = decodedType(e.args[0]);
+          if (t) this.typeExpr(t);
+          else for (const a of e.args) this.expr(a, locals);
           return;
         }
         const qualifier = typeMemberQualifier(e.callee, e.args.length);

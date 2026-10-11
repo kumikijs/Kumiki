@@ -61,20 +61,48 @@ tile B = button(text="b")
       ]);
     });
 
-    it("names no type for a namespace's own member, even one a type shares the name of", () => {
-      const src = `type Duration = nominal Text
-slot wait : Int = 0
+    describe("with a program's own `type Duration`, a call on the namespace", () => {
+      it.each([
+        { call: "Duration.ms(5)", why: "a built-in call names no type", edges: [] },
+        // E0116, so this fixture does not check, but it is the case that fails if the namespace
+        // exclusion is dropped: `fresh` is a type member on any other qualifier.
+        { call: "Duration.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
+        {
+          call: "Duration.show(raw)",
+          why: "show given its argument",
+          edges: ["type.Duration@4:12"],
+        },
+        {
+          call: "Duration.parse(raw)",
+          why: "parse given its argument",
+          edges: ["type.Duration@4:12"],
+        },
+      ])("$call: $why", ({ call, edges }) => {
+        const src = `type Duration = nominal Text
 slot raw : Text = ""
 reducer r on=ui.click(B) do=
-    wait := Duration.ms(5)
-    raw := Duration.fresh()
-    raw := Duration.show(raw)
+    raw := ${call}
 tile B = button(text="b")
 `;
-      expect(refsOf(src, "reducer.r").filter((r) => r.startsWith("type."))).toEqual([
-        "type.Duration@7:12",
-      ]);
+        expect(refsOf(src, "reducer.r").filter((r) => r.startsWith("type."))).toEqual(edges);
+      });
     });
+  });
+
+  it("names the types a Decoder.Json argument spells, at each name", () => {
+    // The argument parses as a value, but codegen decodes by it as a type.
+    const src = `type ItemId = nominal Text where uuid
+type Item = {id: ItemId, label: Text}
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Map(ItemId, Item)), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json(Map(ItemId, Item))}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.ItemId@7:57",
+      "type.Item@7:65",
+    ]);
   });
 
   describe("a local binding shadows a definition of the same name", () => {
