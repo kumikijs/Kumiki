@@ -331,7 +331,8 @@ function walkStatement(s: Statement, f: Finder): void {
 function literalKey(e: Expr): { compare: string; shown: string } | null {
   if (e.kind === "Str") return { compare: `s:${e.value}`, shown: e.value };
   const n = numberLiteral(e);
-  return n === null ? null : { compare: `n:${n}`, shown: String(n) };
+  if (n !== null) return { compare: `n:${n.value}`, shown: String(n.value) };
+  return null;
 }
 
 function walkExpr(e: Expr | undefined, f: Finder): void {

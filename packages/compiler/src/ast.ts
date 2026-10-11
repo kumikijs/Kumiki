@@ -45,7 +45,7 @@ export type TestDef = {
   forAll?: { name: string; type: TypeExpr; pos: Pos }[];
   /** `property-test` only: the boolean `invariant` expression checked per case. */
   invariant?: Expr;
-  /** `property-test` only: trial count (default 100). */
+  /** `property-test` only: trial count, a whole number, 1 or more (default 100). */
   count?: number;
   /** `property-test` only: shrink on failure (default true). */
   shrink?: boolean;
@@ -222,15 +222,22 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
   return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
-/** `-1` parses as a negation of a literal, which is still a literal. */
-export function numberLiteral(e: Expr): number | null {
-  if (e.kind === "Num") return e.value;
-  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") return -e.rhs.value;
-  return null;
-}
-
 export function assertNever(node: never): void {
   void node;
+}
+
+/**
+ * The sign is part of a number literal (language.md), but the lexer emits it as
+ * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
+ * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
+ * Parentheses leave no node, so `-(1)` is the literal `-1`.
+ */
+export function numberLiteral(e: Expr): { value: number; raw: string } | null {
+  if (e.kind === "Num") return { value: e.value, raw: e.raw ?? String(e.value) };
+  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
+    return { value: -e.rhs.value, raw: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+  }
+  return null;
 }
 
 export type Refinement = {

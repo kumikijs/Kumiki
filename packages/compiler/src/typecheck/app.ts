@@ -118,8 +118,8 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
 
 /** The runtime arms each request's abort with the timeout, and a delay of 0 or less fires it at once. */
 const positiveMs: LiteralDomain = (e) => {
-  const ms = numberLiteral(e);
-  return ms === null || ms > 0
+  const ms = numberLiteral(e)?.value;
+  return ms === undefined || ms > 0
     ? null
     : `timeout ${ms} is not a positive number of milliseconds; every request is aborted before it can answer`;
 };
