@@ -108,7 +108,7 @@ fresh  self  now  null
 - **Macros prohibited**
 
 ::: details What the 256-level limit is measured against
-A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
+A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`, the `where`s written on one type expression, the `.field` / `[index]` steps of an assignment target). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
 :::
 
 ---
@@ -1036,6 +1036,9 @@ reducer r on=ui.change(input[type=file]) do= ...   # write it by tile name
 
 # ❌ literal match pattern
 match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (Prohibitions)
+
+# ❌ a match with no arms
+tile Width = match size with                          # every match takes one `| pattern -> …` arm or more, in every position: a parse error at the `match`
 
 # ❌ $1 in a tile with no in=
 tile Row = card(text(issues[$1].title))               # E0103: declare `tile Row in=IssueId = …` (Positional Binding / Examples)
