@@ -1,7 +1,6 @@
-import type { Expr, FragmentShape, KeyKind, Pattern, Pos, TypeExpr } from "../ast.ts";
-import { callsBuiltin, RUN_REDUCER } from "../builtin-calls.ts";
+import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
+import { callsBuiltin, decodedType, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
-import { PRIM_TYPES } from "../parser.ts";
 import {
   addBind,
   bindRef,
@@ -21,27 +20,6 @@ export function reducerNameArg(e: Expr | undefined): string {
   if (e?.kind === "Ref") return e.name;
   if (e?.kind === "Variant") return e.name;
   return "";
-}
-
-function decodedType(e: Expr | undefined): TypeExpr | undefined {
-  if (e?.kind === "Variant") {
-    if (e.payload.length === 0) {
-      return PRIM_TYPES.has(e.name)
-        ? { kind: "TypePrim", name: e.name as "Text", pos: e.pos }
-        : { kind: "TypeRef", name: e.name, pos: e.pos };
-    }
-    const args = e.payload.map(decodedType);
-    if (!args.every((a): a is TypeExpr => a !== undefined)) return undefined;
-    return { kind: "TypeApp", name: e.name, args, pos: e.pos };
-  }
-  if (e?.kind === "RecordLit") {
-    const fields = e.fields.map((f) => ({ name: f.name, type: decodedType(f.value), pos: f.pos }));
-    if (!fields.every((f): f is { name: string; type: TypeExpr; pos: Pos } => !!f.type)) {
-      return undefined;
-    }
-    return { kind: "TypeRecord", fields, pos: e.pos };
-  }
-  return undefined;
 }
 
 function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
