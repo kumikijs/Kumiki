@@ -84,6 +84,19 @@ not seeded no slot, or asserted none. `slots-equal` alone also takes the bare
 name `from-log` (the log's own final values) in place of a record; it is a name
 like any other at every other position.
 
+The reference graph reads a test body the same way, section by section
+([AI Editing §9.2](./ai-edit.md#_9-2-the-kumiki-cli)): each name resolved above
+is a reference from the test, so `kumiki refs` lists the test under it, and
+nothing under a key that names no section of the test's kind is one. A section
+name is a section only at the top of the `given` or `expect` it belongs to —
+under `slots`, `mocks` or `effects` is a slot like any other — and a `for-all`
+name is the generated value wherever the test reads it, never the `fn` or slot
+of the same name. `kumiki rename` rewrites a name the test wrote as an
+identifier: a call, an `expect.effects` entry, a `<slots.X>`, an event
+`target`. A name written as a record key — a `slots` / `slots-equal` key, a
+`mocks` key — has no position of its own, so `rename` refuses that name rather
+than leave the test naming a definition that no longer exists.
+
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
 nothing left the test running against the slot's default — **passing**, while
@@ -181,11 +194,13 @@ property-test ::= 'property-test'
                   'for-all'    '=' record-lit       ; variables to generate
                   'given'      '=' '{' (property-given (',' property-given)*)? '}'
                   'invariant'  '=' expr
-                  ('count'     '=' int)?            ; number of trials (default 100)
+                  ('count'     '=' int)?            ; number of trials, 1 or more (default 100)
                   ('shrink'    '=' bool)?           ; minimize on failure (default true)
 
 property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
+
+`count` is a whole number, 1 or more. A property that runs no case asserts nothing, and it must not report success any more than a scenario without `steps` may ([§8.10](#_8-10-the-three-layers-of-tooling-verification)), so `count = 0` is a parse error rather than a test that passes having checked nothing. Neither `0.5` nor `-3` is a number of cases either; each is the same parse error, at the literal: `property-test "<name>" count must be a whole number, 1 or more (got 0.5)`.
 
 `run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
 

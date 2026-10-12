@@ -53,6 +53,8 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 いくつかの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になり、`given` / `expect` / `mocks`（や `given` の `mocks` / `event`）がレコードでなければ空のレコードとして読まれ、書いたはずのセットアップ・主張・台本が起きない。一段下の slot → 値のセクション——`given` の `slots`、`reducer-test` の `expect` の `slots`、`episode-test` の `expect` の `slots-equal`——も同じくレコードであり、そうでなければどの slot も設定せず、どの slot も主張しなかった。`slots-equal` だけはレコードの代わりに裸の名前 `from-log`（ログ自身の最終値）も取る。それ以外のどの位置でも、`from-log` は他と同じただの名前である。
 
+参照グラフもテスト本体を同じように、セクションごとに読む（[AI 編集 §9.2](./ai-edit.md#_9-2-kumiki-cli)）。上で解決される名前はどれもテストからの参照であり、`kumiki refs` はその名前のもとにテストを挙げる。テスト種別のどのセクションも名指さないキーの下には、参照は 1 つも無い。セクション名がセクションであるのは、それが属する `given` / `expect` の最上位だけである——`slots` の下の `mocks` や `effects` は他と同じ slot である。`for-all` の名前は、テストがそれを読むどこでも生成された値であり、同名の `fn` や slot ではない。`kumiki rename` が書き換えるのは、テストが識別子として書いた名前——呼び出し、`expect.effects` の要素、`<slots.X>`、event の `target`——である。レコードのキーとして書いた名前——`slots` / `slots-equal` のキー、`mocks` のキー——は自分の位置を持たないので、`rename` はその名前を拒否し、もう存在しない定義をテストが名指したまま残すことはしない。
+
 これらが解決されるまで、テスト本体の名前は何を書いても受理され、lowering は読めないものを捨てていた：何も名指さない slot キーはテストを slot の既定値のまま走らせる——**成功**しながら、自分が用意していない前提を主張していた。`invariant` の中の未定義呼び出しはさらに悪い。property ランナーが trial の例外を捕まえて invariant の反証として描画するため、出力は無実のコードを犯人に仕立てていた。
 
 ## 8.2 Reducer テスト
@@ -144,11 +146,13 @@ property-test ::= 'property-test'
                   'for-all'    '=' record-lit       ; 生成する変数
                   'given'      '=' '{' (property-given (',' property-given)*)? '}'
                   'invariant'  '=' expr
-                  ('count'     '=' int)?            ; 試行回数（デフォルト 100）
+                  ('count'     '=' int)?            ; 試行回数、1 以上（デフォルト 100）
                   ('shrink'    '=' bool)?           ; 失敗時の最小化（デフォルト true）
 
 property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 ```
+
+`count` は 1 以上の整数である。ケースを 1 つも走らせない property は何も assert しておらず、`steps` のないシナリオと同じく成功を返してはならない（[§8.10](#_8-10-the-three-layers-of-tooling-verification)）。そのため `count = 0` は、何も検査しないまま通るテストではなく parse error になる。`0.5` や `-3` もケースの個数ではなく、いずれもリテラルの位置で同じ parse error になる：`property-test "<name>" count must be a whole number, 1 or more (got 0.5)`。
 
 `run-reducer(name)` は reducer が残す状態 `{slots: {…}}` を返し、その `slots` はプログラムが宣言した slot（とランタイムの `route`）で型付けされる。これを通した読み取りは slot そのものの読み取りと同じように検査される: `Set(Int)` に対する `run-reducer(add).slots.tags.to-list` はキーが数値として読み戻される `List(Int)` であり（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、プログラムが宣言していない slot 名は、property を反例として失敗させる `undefined` ではなく [E0108](./errors.md#e0108-undef-member) になる。
 
