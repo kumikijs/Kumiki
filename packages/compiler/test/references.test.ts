@@ -43,6 +43,68 @@ slot label : Text = ""
     expect(refsOf(src, "type.Item")).toEqual(["type.ItemId@2:18"]);
   });
 
+  describe("a qualified call", () => {
+    it("names the type a type-member call is qualified by, at the qualifier", () => {
+      const src = `type ItemId = nominal Text where uuid
+slot last : Option(ItemId) = None
+slot shown : Text = ""
+reducer add on=ui.click(B) do=
+    let id = ItemId.fresh()
+    shown := ItemId.show(id) + Int.show(1)
+    last := ItemId.parse(shown)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.add").filter((r) => r.startsWith("type."))).toEqual([
+        "type.ItemId@5:14",
+        "type.ItemId@6:14",
+        "type.ItemId@7:13",
+      ]);
+    });
+
+    describe("with a program's own `type Duration`, a call on the namespace", () => {
+      it.each([
+        { call: "Duration.ms(5)", why: "a built-in call names no type", edges: [] },
+        // E0116, so this fixture does not check, but it is the case that fails if the namespace
+        // exclusion is dropped: `fresh` is a type member on any other qualifier.
+        { call: "Duration.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
+        {
+          call: "Duration.show(raw)",
+          why: "show given its argument",
+          edges: ["type.Duration@4:12"],
+        },
+        {
+          call: "Duration.parse(raw)",
+          why: "parse given its argument",
+          edges: ["type.Duration@4:12"],
+        },
+      ])("$call: $why", ({ call, edges }) => {
+        const src = `type Duration = nominal Text
+slot raw : Text = ""
+reducer r on=ui.click(B) do=
+    raw := ${call}
+tile B = button(text="b")
+`;
+        expect(refsOf(src, "reducer.r").filter((r) => r.startsWith("type."))).toEqual(edges);
+      });
+    });
+  });
+
+  it("names the types a Decoder.Json argument spells, at each name", () => {
+    // The argument parses as a value, but codegen decodes by it as a type.
+    const src = `type ItemId = nominal Text where uuid
+type Item = {id: ItemId, label: Text}
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Map(ItemId, Item)), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json(Map(ItemId, Item))}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.ItemId@7:57",
+      "type.Item@7:65",
+    ]);
+  });
+
   describe("a local binding shadows a definition of the same name", () => {
     const decl = `slot label : Text = ""
 slot items : List(Text) = []
