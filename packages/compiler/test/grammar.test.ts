@@ -378,6 +378,13 @@ app T caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     expect(outcome(src)[0]).toContain("THROW");
   });
 
+  it("has no match with no arms", () => {
+    const src = `slot size : Tuple(Int, Int) = (3, 4)
+tile Width = match size with
+app T caps=[] routes={"/" -> Width, "/404" -> Width} init=[]`;
+    expect(outcome(src)).toEqual(["THROW Parse error at 2:14: match requires at least one arm"]);
+  });
+
   it("takes only key: value pairs in a props block, never a tile", () => {
     const props = `tile App = link(to="/x") {text("Home")}
 app T caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
