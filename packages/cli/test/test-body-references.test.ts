@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { findReferences, load, renameDef, testFile } from "@kumikijs/cli";
-import { check, lex, parse } from "@kumikijs/compiler";
 import { feature } from "@kumikijs/examples";
 import { beforeEach, describe, expect, it } from "vitest";
+import { errorsOf } from "./helpers/diagnostics.ts";
 import { seedCopy } from "./helpers/files.ts";
 
 const EXAMPLE = feature("173-test-body-references");
@@ -12,11 +12,6 @@ const TEST = "add-shouts-and-persists";
 function testDef(source: string): string {
   return source.slice(source.indexOf(`test ${TEST} =`));
 }
-
-const errorsOf = (source: string): string[] =>
-  check(parse(lex(source)))
-    .filter((e) => e.severity !== "warning")
-    .map((e) => `${e.code} ${e.message}`);
 
 /** The 1-based line of the one line of `source` that contains `text`. */
 function lineOf(source: string, text: string): number {
