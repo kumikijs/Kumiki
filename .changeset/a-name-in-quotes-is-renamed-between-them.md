@@ -1,5 +1,6 @@
 ---
 "@kumikijs/compiler": patch
+"@kumikijs/cli": patch
 ---
 
 `rename` rewrites a name a prop holds in quotes, and keeps the quotes
@@ -22,3 +23,8 @@ Both references now sit one column past the quote, where the name starts.
 `rename motion.Spin Whirl` writes `{motion: "Whirl"}`,
 `rename reducer.loadTodo fetchTodo` writes `prefetch: "fetchTodo"`, and both
 exit 0 with a file that still checks.
+
+The content hash (`view --hash`, and the `depends-on` digests the op log
+records) reads a quoted reference at the same column, so a rename still leaves
+the hash of the renamed definition and of every definition naming it as it
+was, and `prefetch: "loadTodo"` hashes as `prefetch: loadTodo` does.

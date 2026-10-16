@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
+import { allFiles } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { codesOf } from "./helpers/diagnostics.ts";
 
@@ -503,5 +506,26 @@ test t =
         expect(refsOf(src, "test.t")).toEqual(["reducer.go@7:18", "tile.B@8:51", "slot.nav@-"]);
       });
     });
+  });
+});
+
+describe("a reference's position", () => {
+  // `rename` rewrites the text at each position and the content hash labels the token there, so
+  // both rely on the source spelling the name exactly where its reference says.
+  it("is where the source spells the name, in every example", () => {
+    const misplaced: string[] = [];
+    for (const file of allFiles()) {
+      const source = readFileSync(file, "utf8");
+      const lines = source.split("\n");
+      const program = parse(lex(source));
+      const index = buildDefIndex(program);
+      for (const r of program.defs.flatMap((d) => referencesIn(d, index))) {
+        if (!r.pos) continue;
+        const at = lines[r.pos.line - 1]?.slice(r.pos.col - 1, r.pos.col - 1 + r.name.length);
+        if (at !== r.name)
+          misplaced.push(`${basename(file)} ${fmt(r)} reads ${JSON.stringify(at)}`);
+      }
+    }
+    expect(misplaced).toEqual([]);
   });
 });
