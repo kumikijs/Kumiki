@@ -1,6 +1,6 @@
 # Feature: a negative keyframe value. `translate-x`, `translate-y` and
 # `rotate` are plain numbers, and the sign is part of a number literal, so a
-# motion can start left of or above where the tile rests, or turn
+# motion can start left of or above where the tile rests, or start turned
 # counter-clockwise:
 #
 #   from: {translate-x: -24}   ->  transform: translateX(-24px)
@@ -17,7 +17,7 @@ motion SlideFromLeft = {
     easing:    "ease-out"
 }
 
-# A quarter turn counter-clockwise back to upright.
+# Starts a quarter turn counter-clockwise of upright and turns back.
 motion TurnBack = {
     keyframes: {from: {rotate: -90}, to: {rotate: 0}},
     duration:  400

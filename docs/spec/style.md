@@ -418,7 +418,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
   | `scale` | number | size |
   | `rotate` | deg (number) | rotation |
 
-  Each value is a number literal, so it may carry a sign ([§1.2](./language.md#_1-2-lexical)): `translate-x: -24` starts 24px left of where the tile rests, and `rotate: -90` a quarter turn counter-clockwise.
+  A `translate-x`, `translate-y`, `scale` or `rotate` value is a number literal, so it may carry a sign ([§1.2](./language.md#_1-2-lexical)): `from: {translate-x: -24}` starts 24px left of where the tile rests, and `from: {rotate: -90}` starts a quarter turn counter-clockwise of upright.
 
   Multiple transform properties on one stop compose into a single `transform` in a **fixed order** — `translate-x`, `translate-y`, `scale`, `rotate` — regardless of the order you write them (CSS `transform` is not commutative, so the order is fixed for determinism). An unknown property is a compile error (**E0401**); malformed keyframes (no `from`/`to`) are **E0403**.
 - The timing fields are optional (defaults `duration:"normal"`, `easing:"ease"`, `iteration:1`, `direction:"normal"`); a value outside its closed set is **E0402**.

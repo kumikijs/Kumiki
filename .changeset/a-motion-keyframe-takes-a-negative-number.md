@@ -21,7 +21,8 @@ The lexer emits a `-` as its own operator, and the record reader behind `theme`
 and `motion` bodies took only a bare number token, so `translate-x: -24` and
 `rotate: -90` could not be written. The only other spelling, `"-24"`, is refused
 by the motion checker as not a number (E0401). A slide in from the left or the
-top, or a counter-clockwise turn, had no spelling at all.
+top had no spelling at all, and a turn that starts counter-clockwise of upright
+had to be written as `rotate: 270` to `360`.
 
 The language spec makes the sign part of a number literal, and the record reader now
 puts it back through the same rule the retry and duration positions use. Now:

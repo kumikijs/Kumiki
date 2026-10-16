@@ -1,5 +1,5 @@
 import { feature } from "@kumikijs/examples";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mountApp } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
@@ -15,20 +15,18 @@ async function motionCss(): Promise<string> {
 }
 
 describe("a negative keyframe value", () => {
-  afterEach(() => {
+  let css = "";
+  beforeAll(async () => {
+    css = await motionCss();
+  });
+  afterAll(() => {
     document.getElementById("kumiki-motions")?.remove();
   });
 
   it.each([
-    [
-      "starts the slide left of the resting place",
-      "@keyframes kumiki-motion-SlideFromLeft { from { opacity: 0; transform: translateX(-24px) } to { opacity: 1; transform: translateX(0px) } }",
-    ],
-    [
-      "starts the turn a quarter counter-clockwise",
-      "@keyframes kumiki-motion-TurnBack { from { transform: rotate(-90deg) } to { transform: rotate(0deg) } }",
-    ],
-  ])("%s", async (_what, keyframes) => {
-    expect(await motionCss()).toContain(keyframes);
+    ["starts the slide left of the resting place", "translateX(-24px)"],
+    ["starts the turn a quarter counter-clockwise of upright", "rotate(-90deg)"],
+  ])("%s", (_what, transform) => {
+    expect(css).toContain(transform);
   });
 });

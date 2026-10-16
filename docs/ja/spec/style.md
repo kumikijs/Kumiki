@@ -418,7 +418,7 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
   | `scale` | 数値 | 大きさ |
   | `rotate` | deg（数値） | 回転 |
 
-  各値は数値リテラルなので符号を持てる（[§1.2](./language.md#_1-2-字句)）：`translate-x: -24` はタイルの静止位置より 24px 左から、`rotate: -90` は反時計回りに 1/4 回転した位置から始まる。
+  `translate-x`・`translate-y`・`scale`・`rotate` の値は数値リテラルなので符号を持てる（[§1.2](./language.md#_1-2-字句)）：`from: {translate-x: -24}` はタイルの静止位置より 24px 左から、`from: {rotate: -90}` は反時計回りに 1/4 回転した位置から始まる。
 
   1 ストップ上の複数 transform プロパティは、記述順によらず**固定順** — `translate-x` → `translate-y` → `scale` → `rotate` — で単一の `transform` に合成される（CSS `transform` は非可換なので、決定論のため順序を固定している）。未知プロパティはコンパイルエラー（**E0401**）、不正な keyframes（`from`/`to` 無し）は **E0403**。
 - タイミングフィールドは任意（既定 `duration:"normal"`、`easing:"ease"`、`iteration:1`、`direction:"normal"`）。閉じた集合外の値は **E0402**。
