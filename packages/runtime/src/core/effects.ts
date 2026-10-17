@@ -1,3 +1,4 @@
+import type { EmitRefusal } from "./panic.ts";
 import type {
   AppShape,
   CapabilityProvider,
@@ -57,7 +58,7 @@ export function makeEffectDispatcher(
     key: unknown,
     token: string,
   ) => void,
-  onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
+  onRefusal: (effect: string, why: EmitRefusal, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   onPolicyCancel?: (token: string, effectName: string) => void,
@@ -92,7 +93,7 @@ export function makeEffectDispatcher(
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
       try {
-        onCapabilityRefusal(eff.name, eff.cap, presetToken);
+        onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
       } finally {
         if (presetToken) onPolicyCancel?.(presetToken, eff.name);
       }
@@ -115,7 +116,12 @@ export function makeEffectDispatcher(
   return {
     dispatch(emit: EmitSpec): void {
       const eff = app.effects[emit.effect];
-      if (!eff) return;
+      if (!eff) {
+        // No token: a policy is a property of an effect, so with none to read one off nothing
+        // defers this, and the episode that owns the emit is the one in focus.
+        onRefusal(emit.effect, { category: "effect" });
+        return;
+      }
       if (eff.cap === "http.cancel") {
         const target = String(emit.args[0] ?? "");
         if (target.length > 0) {

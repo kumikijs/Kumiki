@@ -690,13 +690,21 @@ subtree が再レンダされた**こと自体**は既に `signal-update.binds-u
 
 reducer から emit された effect を実行する責務。
 
-### 10.4.1 受付
+### 10.4.1 受付 {#_10-4-1-acceptance}
 
 reducer が完了すると、emit された effect 集合がディスパッチャに渡される：
 
 ```
 [{name: "persist", args: {...}, key: <derived>, policy: "debounce:300"}, ...]
 ```
+
+名前が `app.effects` のキーに無い emit はどの effect も名指していないので、何も実行されない。これは拒否された capability（[§10.4.2](#_10-4-2-capability-check)）と同じように報告される — 両パスで `console.error` に同じ `[kumiki] panic in effect "<name>": …` の行で、その emit を所有する episode があればそこに `panic` step として、live パスでは `app.error` にも — `category: "effect"` で、`location` は emit が持つ名前を、`message` は `app.effects` がそれを宣言していないことを述べる。throw は発生していないので `stack` も `cause` も持たない。同じバッチの他の emit は通常どおり dispatch される。
+
+この emit については、どちらのパスでも `effect-start` を記録せず、したがって `effect-cancel` も記録しない。policy（[§10.4.3](#_10-4-3-policy-処理)）は effect の性質であり、effect が無ければ emit を遅らせるものも無い。emit は dispatcher に届いたその場で報告され、それを所有する episode はその時点で開いているもの — 発火元の episode、または effect の結果が `.ok` / `.err` reducer のために開き直したもの — である。`app.init` からの emit は拒否された capability と同じ扱いになる：live パスでは episode が無く（`episode-id: None`）、サーバ側では bootstrap episode に記録される。
+
+標準 effect（[stdlib.md §2.6](./stdlib.md#_2-6-標準-effect)）は、live パスでは `app.effects` のキーである。mount は何かを dispatch する前に、そのビルドが含むものをそこに登録する。サーバパスはどれも登録せず、どれも実行しない：そこでの標準 effect の emit は報告なしに飛ばされる — それはそのパスが実行しない effect を名指しているのであって、どの effect も名指していないのではない。
+
+コンパイラはどの effect も名指さない emit を拒否する（[E0104](./errors.md#e0104-undef-effect-init-not-effect-call)）ので、`.kumiki` ソースからビルドしたプログラムはここに到達しない。到達しうるのは、ホストが組み立てた `AppShape` と、codegen 後に書き換えられた `effects` マップである。
 
 ### 10.4.2 capability check
 

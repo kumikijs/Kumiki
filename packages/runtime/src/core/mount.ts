@@ -14,11 +14,12 @@ import { collectMountedTiles, installLifecycleListeners } from "./lifecycle.ts";
 import { ensureMotionStyles, setSettling } from "./motion.ts";
 import { createNavigation } from "./navigation.ts";
 import {
+  type EmitRefusal,
   type PanicRecord,
   panicInfo,
   renderPanicFallback,
-  reportCapabilityRefusal,
   reportPanic,
+  reportRefusedEmit,
   reportUnhandledEffectError,
   userPanicInfo,
 } from "./panic.ts";
@@ -141,7 +142,7 @@ export function mountCore(
     (effect, outcome, value, key, token) => {
       handleEffectResult(effect, outcome, value, key, token);
     },
-    handleCapabilityRefusal,
+    handleRefusedEmit,
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
     episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
     episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
@@ -378,8 +379,8 @@ export function mountCore(
     }
   }
 
-  function handleCapabilityRefusal(effect: string, cap: string, token?: string): void {
-    const rec = reportCapabilityRefusal(effect, cap);
+  function handleRefusedEmit(effect: string, why: EmitRefusal, token?: string): void {
+    const rec = reportRefusedEmit(effect, why);
     fireAppError(rec, rec.location, {}, token);
   }
 
