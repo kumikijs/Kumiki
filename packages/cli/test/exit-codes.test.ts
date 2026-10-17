@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
@@ -336,7 +336,49 @@ describe("kumiki run", () => {
   });
 });
 
-describe("the verbs the table documents but this change does not touch", () => {
+describe("kumiki lock / unlock", () => {
+  function lockedByA(file: string): string {
+    const locks = `${file}.kumiki-locks.json`;
+    const entries = [{ agent: "agent:a", patterns: ["slot.*"] }];
+    writeFileSync(locks, `${JSON.stringify({ entries }, null, 2)}\n`);
+    return locks;
+  }
+
+  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
+    const file = write("lock.kumiki", CLEAN);
+    const locks = lockedByA(file);
+    const granted = readFileSync(locks, "utf8");
+
+    const { stderr, code } = runCli(["lock", file, "agent:b", "slot.count"]);
+    expect(stderr).toContain('"slot.*", held by agent:a');
+    expect(code).toBe(1);
+    expect(readFileSync(locks, "utf8")).toBe(granted);
+
+    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
+  });
+
+  it("lock exits 2 for a pattern that names no glob, before reading anything", SPAWN, () => {
+    const file = write("lock-no-glob.kumiki", CLEAN);
+    const { stderr, code } = runCli(["lock", file, "agent:a", " , "]);
+    expect(stderr).toContain('lock pattern " , " names no glob');
+    expect(stderr).toContain("Usage: kumiki lock");
+    expect(code).toBe(2);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
+  });
+
+  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
+    const file = write("unlock.kumiki", CLEAN);
+    const none = runCli(["unlock", file, "agent:x"]);
+    expect(none.stderr).toContain("agent:x holds no lock");
+    expect(none.code).toBe(1);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
+
+    lockedByA(file);
+    expect(runCli(["unlock", file, "agent:a"]).code).toBe(0);
+  });
+});
+
+describe("the verbs that fail on what the program does when it runs", () => {
   const PANICS = `slot count : Int = 0
 reducer boom on=ui.click(BoomBtn) do= panic("boom")
 tile BoomBtn = button(text="go", onClick=boom)

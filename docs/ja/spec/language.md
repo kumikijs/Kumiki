@@ -108,7 +108,7 @@ fresh  self  now  null
 - **マクロ禁止**
 
 ::: details 256 段は何に対する上限か
-自分自身を含みうる構文——括弧式・リスト・レコード・`if`・文ブロック・tile 呼び出し・タプルパターン・型適用・theme レコード——はこれ以上深く入れ子にできず、左結合の連鎖（`1 + 1 + 1 + …`、`x.trim().trim()…`、`not` や `-` の連続）もこれを超えるノードを作れない。上限が掛かるのは**出来上がった木**であって、パーサがそこへどう到達したかではない。パース以降の全段階はその木を再帰で辿るため、ループで解析された連鎖であっても下流でスタックを使い切るからである。
+自分自身を含みうる構文——括弧式・リスト・レコード・`if`・文ブロック・tile 呼び出し・タプルパターン・型適用・theme レコード——はこれ以上深く入れ子にできず、左結合の連鎖（`1 + 1 + 1 + …`、`x.trim().trim()…`、`not` や `-` の連続、1 つの型式に連ねた `where`、代入先 path の `.field` / `[index]` のステップ）もこれを超えるノードを作れない。上限が掛かるのは**出来上がった木**であって、パーサがそこへどう到達したかではない。パース以降の全段階はその木を再帰で辿るため、ループで解析された連鎖であっても下流でスタックを使い切るからである。
 :::
 
 ---
@@ -814,7 +814,8 @@ expr        ::= literal
 
 call        ::= qname '(' (expr (',' expr)*)? ')'
 record-lit  ::= '{' (field-init (',' field-init)*)? '}'
-field-init  ::= identifier '=' expr | identifier
+field-init  ::= field-name ('=' | ':') expr | field-name
+field-name  ::= identifier | reserved-word     ; §1.2.2 のうち true / false / now 以外
 collection-lit ::= '[' (expr (',' expr)*)? ']'
                  | '{' (entry (',' entry)*)? '}'
 entry       ::= expr ':' expr
@@ -830,6 +831,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
               | '&' | '|'
 unop        ::= '-' | '!'
 ```
+
+**`{ … }` リテラルは、最初のキーがフィールド名ならレコード、そうでなければ Map である。** フィールド名は識別子か予約語なので `{type: ui.click, target: Go}` や `{for: "name"}` はレコードだが、単独で値になる予約語 `true`・`false`・`now` はフィールド名ではない。これらはキーである。`{true: "on", false: "off"}` は `Map(Bool, Text)` で、`{(true): "on", false: "off"}` が書くのと同じ Map になり、`{now: "start"}` は `Map(Time, Text)` になる。それ以外の最初のキー — 文字列、数値、`Some(1)`、括弧で囲んだ名前 `(k)` — もリテラルを Map にする。リテラル全体の読み方は最初のキーが決める。`{a: 1, true: 2}` は `true` の位置で構文エラーになる。`true` は値であり、レコードのフィールド名ではないからである。`{true}` や `{true = 1}` も同じ構文エラーになる。Map のキーには `:` が続くので、`,`・`=`・`}` が続く `true` はフィールド名の位置にある。
 
 `if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
 
@@ -1012,6 +1015,9 @@ fn current() = todos                          # fn 引数で受け取れ
 
 # ❌ CSS 属性セレクタ
 reducer r on=ui.change(input[type=file]) do= ...   # tile 名で書け
+
+# ❌ arm のない match
+tile Width = match size with                  # どの位置の match も `| pattern -> …` の arm を 1 つ以上とる：`match` の位置でパースエラー
 ```
 
 ---
