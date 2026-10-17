@@ -16,7 +16,9 @@ import type {
   TypeDef,
   TypeExpr,
 } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
+import { assertNever, isTileExpr } from "./ast.ts";
+import { decodedType, typeMemberQualifier } from "./builtin-calls.ts";
+import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -70,7 +72,7 @@ export function buildDefIndex(program: Program): DefIndex {
 
 export function referencesIn(def: Def, index: DefIndex): Reference[] {
   const out: Reference[] = [];
-  const w = new Walker(index, out);
+  const w = new Walker(index, out, def.kind === "TestDef");
   switch (def.kind) {
     case "TypeDef":
       w.typeExpr((def as TypeDef).body);
@@ -123,6 +125,9 @@ class Walker {
   constructor(
     private readonly index: DefIndex,
     private readonly out: Reference[],
+    // Outside a test body a `<slots.X>` is E0109 and reads nothing, so an edge there would be a
+    // read that does not happen, which E0304 would report a second time.
+    private readonly wildcardsNameSlots: boolean,
   ) {}
 
   private add(layer: RefLayer, name: string, pos: Pos | undefined): void {
@@ -184,15 +189,25 @@ class Walker {
         this.expr(e.base, locals);
         this.expr(e.index, locals);
         return;
-      case "Call":
+      case "Call": {
         // `run-reducer(name)` takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
           return;
         }
-        if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
+        // Codegen decodes by this argument, so its names are types, though it parses as a value.
+        if (e.callee === "Decoder.Json") {
+          const t = decodedType(e.args[0]);
+          if (t) this.typeExpr(t);
+          else for (const a of e.args) this.expr(a, locals);
+          return;
+        }
+        const qualifier = typeMemberQualifier(e.callee, e.args.length);
+        if (qualifier !== undefined) this.add("type", qualifier, e.pos);
+        else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
+      }
       case "MethodCall":
         this.expr(e.receiver, locals);
         if (e.method === "run-reducer") {
@@ -241,6 +256,11 @@ class Walker {
         return;
       case "Variant":
         for (const p of e.payload) this.expr(p, locals);
+        return;
+      case "Wildcard":
+        // The name is spelled as a slot's, never a bare one, so no local can
+        // shadow it.
+        if (e.wild === "slot" && this.wildcardsNameSlots) this.add("slot", e.slot, e.slotPos);
         return;
       default:
         return;
@@ -407,46 +427,89 @@ class Walker {
   test(t: TestDef): void {
     if (t.testKind === "reducer-test") this.add("reducer", t.target ?? "", t.targetPos);
     if (t.testKind === "tile-test") this.add("tile", t.target ?? "", t.targetPos);
-    this.testRecord(t.given);
-    if (t.expect) {
-      if (isTileExpr(t.expect)) this.tileExpr(t.expect, new Set());
-      else this.testRecord(t.expect);
-    }
     for (const v of t.forAll ?? []) this.typeExpr(v.type);
     const generated = new Set((t.forAll ?? []).map((v: { name: string }) => v.name));
+    for (const { section, value } of testSections(t, t.testKind, "given")) {
+      switch (section) {
+        case "slots":
+          this.slotValues(value, generated);
+          break;
+        case "event": {
+          const { tile, payload } = eventParts(value);
+          if (tile) this.add("tile", tile.name, tile.pos);
+          for (const f of payload) this.expr(f.value, generated);
+          break;
+        }
+        case "mocks":
+          this.mocks(value, generated);
+          break;
+        case "in":
+          this.expr(value, generated);
+          break;
+        default:
+          assertNever(section);
+      }
+    }
+    // A tile-test's `expect` is a tile expression, with no sections.
+    if (t.expect && isTileExpr(t.expect)) this.tileExpr(t.expect, new Set());
+    for (const { section, value } of testSections(t, t.testKind, "expect")) {
+      switch (section) {
+        case "slots":
+        case "slots-equal":
+          this.slotValues(value, generated);
+          break;
+        case "effects":
+          this.expectedEffects(value, generated);
+          break;
+        case "panic":
+        case "no-panics":
+        case "no-errors":
+          this.expr(value, generated);
+          break;
+        default:
+          assertNever(section);
+      }
+    }
     if (t.invariant) this.expr(t.invariant, generated);
-    if (t.mocks) this.testRecord(t.mocks);
+    if (t.mocks) this.mocks(t.mocks, generated);
   }
 
-  private testRecord(e: Expr | undefined): void {
-    if (!e) return;
-    if (e.kind === "RecordLit") {
-      for (const f of e.fields) {
-        if (f.name === "slots" && f.value.kind === "RecordLit") {
-          for (const slot of f.value.fields) this.addUnpositioned("slot", slot.name);
-        }
-        if (f.name === "mocks" && f.value.kind === "RecordLit") {
-          for (const eff of f.value.fields) this.addUnpositioned("effect", eff.name);
-        }
-        if (f.name === "target") {
-          // A tile name is capitalised, so it parses as a `Variant`, not a `Ref`.
-          if (f.value.kind === "Variant") this.add("tile", f.value.name, f.value.pos);
-          else if (f.value.kind === "Ref") this.add("tile", f.value.name, f.value.pos);
-        }
-        this.testRecord(f.value);
+  private slotValues(rec: Expr, locals: ReadonlySet<string>): void {
+    for (const f of recordFieldsOf(rec)) {
+      this.addUnpositioned("slot", f.name);
+      this.expr(f.value, locals);
+    }
+  }
+
+  private expectedEffects(list: Expr, locals: ReadonlySet<string>): void {
+    if (list.kind !== "ListLit") return;
+    for (const entry of list.items) {
+      if (entry.kind === "Call") {
+        this.add("effect", entry.callee, entry.pos);
+        for (const a of entry.args) this.expr(a, locals);
+      } else if (entry.kind === "Ref") {
+        this.add("effect", entry.name, entry.pos);
       }
-      return;
     }
-    if (e.kind === "ListLit" || e.kind === "TupleLit") {
-      for (const i of e.items) this.testRecord(i);
-      return;
+  }
+
+  private mocks(rec: Expr, locals: ReadonlySet<string>): void {
+    for (const m of recordFieldsOf(rec)) {
+      this.addUnpositioned("effect", m.name);
+      this.mockScript(m.value, locals);
     }
-    if (e.kind === "Call" && !e.callee.includes(".")) {
-      this.addUnpositioned("effect", e.callee);
-      for (const a of e.args) this.testRecord(a);
-      return;
+  }
+
+  // `ok` / `err` / `delay` are the mock's own vocabulary, never a fn of the same name.
+  private mockScript(v: Expr, locals: ReadonlySet<string>): void {
+    if (v.kind !== "Call") return;
+    if (v.callee === "ok" || v.callee === "err") {
+      for (const a of v.args) this.expr(a, locals);
+    } else if (v.callee === "delay") {
+      const [ms, outcome] = v.args;
+      this.expr(ms, locals);
+      if (outcome) this.mockScript(outcome, locals);
     }
-    this.expr(e, new Set());
   }
 
   private addUnpositioned(layer: RefLayer, name: string): void {
