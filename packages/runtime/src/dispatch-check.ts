@@ -1,4 +1,4 @@
-import { nearestName } from "./text-distance.ts";
+import { nearestNames } from "./text-distance.ts";
 
 /** A reducer as a `{dispatch}` step sees it: its name, and the id it is scoped to. */
 export type DispatchTarget = {
@@ -14,11 +14,12 @@ export function dispatchFault(
 ): string | undefined {
   const target = targets.find((t) => t.name === written);
   if (!target) {
-    const near = nearestName(
+    const near = nearestNames(
       written,
       targets.map((t) => t.name),
     );
-    const hint = near === null ? "" : ` — did you mean "${near}"?`;
+    // A tie names every reducer in it, so declaration order does not answer what distance does not.
+    const hint = near.length === 0 ? "" : ` — did you mean ${orList(near)}?`;
     return `no reducer named "${written}"${hint}`;
   }
   if (target.id !== null && payload.id !== target.id) {
@@ -28,4 +29,11 @@ export function dispatchFault(
     );
   }
   return undefined;
+}
+
+/** `"a"`, `"a" or "b"`, `"a", "b" or "c"`. */
+function orList(names: readonly string[]): string {
+  const quoted = names.map((n) => `"${n}"`);
+  const last = quoted.pop() ?? "";
+  return quoted.length === 0 ? last : `${quoted.join(", ")} or ${last}`;
 }
