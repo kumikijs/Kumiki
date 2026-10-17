@@ -158,7 +158,7 @@ A tile expands into itself, directly or through other tiles ([Tile Layer Invaria
 
 > `Tile "<name>" expands into itself (<A> → <B> → <A>)`
 
-The edges are the ones code generation follows: nested tile calls, an identifier argument standing in for a tile, the branches of `for` / `when` / `if` / `match`, and the tile's own `error-boundary` — the boundary's body is inlined into the `catch` at every call site of the tile that declares it, so a boundary that leads back closes a loop like any other child. `sub-routes` is not an edge: a sub-route is selected by the router through `route-outlet` and is never inlined.
+The edges are the ones code generation follows: nested tile calls, a tile's name written as a positional argument where a tile belongs (`column(leaf)` — the positions [E0128](#e0128-value-as-child) reads), the branches of `for` / `when` / `if` / `match`, and the tile's own `error-boundary` — the boundary's body is inlined into the `catch` at every call site of the tile that declares it, so a boundary that leads back closes a loop like any other child. `sub-routes` is not an edge: a sub-route is selected by the router through `route-outlet` and is never inlined. Nor is a value position: a value builtin's content (`text(leaf)`) and a user tile's input (`Card(leaf)`) are values, so a name written there is read as the value it names — a slot may share its name with a tile ([E0007](#e0007-duplicate-definition)) — and nothing is inlined. `tile leaf = column(text(leaf))` shows the slot `leaf`, and does not expand into itself.
 
 **Fix**: Break the loop. Repetition belongs in `for` over a collection, and an alternative rendering in `when` / `match` — neither of which needs a tile to contain itself.
 

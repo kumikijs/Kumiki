@@ -1,0 +1,11 @@
+{
+  "steps": [
+    {
+      "label": "the tile named leaf renders, showing the slot named leaf as text and as Card's input",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["hello", "card: hello"]
+      }
+    }
+  ]
+}
