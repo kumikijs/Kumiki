@@ -6,6 +6,7 @@ import {
   unknownType,
 } from "../assignable.ts";
 import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
+import { numberLiteral } from "../ast.ts";
 import { BUILTIN_EFFECTS, builtinFieldOmittable, REDUCER_REF } from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
@@ -94,17 +95,18 @@ export function checkAgainst(
     }
     return;
   }
+  const literal = numberLiteral(e);
   if (
-    e.kind === "Num" &&
+    literal !== null &&
     d.kind === "TypePrim" &&
     d.name === "Int" &&
-    Number.isInteger(e.value) &&
-    !Number.isSafeInteger(e.value)
+    Number.isInteger(literal.value) &&
+    !Number.isSafeInteger(literal.value)
   ) {
     errors.push({
       code: "E0217",
       kind: "int-literal-precision",
-      message: `Int literal ${e.raw ?? e.value} is not exactly representable and was rounded to ${e.value}`,
+      message: `Int literal ${literal.raw} is not exactly representable and was rounded to ${literal.value}`,
       pos: e.pos,
     });
     return;
