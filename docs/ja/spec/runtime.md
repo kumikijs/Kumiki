@@ -728,6 +728,8 @@ step が付く episode は、いま開いている episode ではなく、その
 
 `retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで再試行。指数バックオフは jitter ±20% を加える。
 
+試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する（[http.md §6.5](./http.md#_6-5-リトライ)）。
+
 ### 10.4.5 結果の配送
 
 effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` イベントとしてランタイムに通知。マッチする reducer が実行される。

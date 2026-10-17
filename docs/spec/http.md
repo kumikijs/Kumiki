@@ -296,6 +296,8 @@ effect loadCritical cap=http.get
 
 Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON or whose value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
 
+A request cancelled while it waits between attempts — by `http.cancel` ([6.4](#_6-4-cancellation)), or by a newer emit under `policy=latest` / `policy=latest-per-key` — stops waiting at once. Its `.err` fires right away with the `aborted` `HttpError` of [6.4.1](#_6-4-1-behavior), before any request emitted later can deliver its own result, and no further attempt is made; a `policy=queue` chain goes on to its next entry without waiting out the interval. On a capability that fails with `Text` ([6.7](#_6-7-storage-effects)), that err is the `Text` `"aborted"`. A request that is not cancelled waits out every interval in full.
+
 ---
 
 ## 6.6 High-Level Wrappers
