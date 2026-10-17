@@ -260,7 +260,10 @@ reducer cancelSearch
 
 `emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
 
-id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+`emit` が返す id は、その `emit` が開始したリクエストを指す。それ以外に何を指すかは effect の policy で決まる：
+
+- **`policy=latest` と `policy=latest-per-key(<expr>)`** は key ごとに 1 つのリクエストを実行し、id はその key のもの `<effect-name>:<key>` である。`latest` では `<key>` は `_`。`latest-per-key` ではその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、id は `emit` が開始したリクエストを指す。同じ key の後続の emit はそのリクエストを abort し、自分のリクエストを同じ id で実行するので、どちらの id で cancel しても実行中のほうが abort される。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+- **それ以外の policy** — 指定なし、`queue`、`debounce`、`throttle`、`once` — では、`emit` 1 回が 1 つのリクエストであり、他のどの emit も返さない固有の id を持つ。同じ effect の 2 回の emit は、1 つの reducer 本体からでも 2 つからでも 2 つの id を返し、一方を cancel しても他方は実行を続ける。id は `<effect-name>#` に、`<T>.fresh()` と同じ生成器（[stdlib §2.4.1](./stdlib.md#_2-4-1-id-生成)）による新しい ID を続けたもので、同じ方法で記録される（[runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）ため、replay した reducer 本体は記録時と同じ id を返す。policy が捨てた emit はリクエストを開始せず、その id は何も指さない：タイマー発火前に後続の emit に置き換えられた `debounce` の emit、ウィンドウ内の `throttle` の emit、既に見た入力に対する `once` の emit がそれにあたる。
 
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
@@ -268,7 +271,9 @@ id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest
 
 - 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
 - キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
-- 同 effect に対する `debounce` タイマーは cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
+- cancel が作用するのは、その id が指す 1 つのリクエストだけである。同じ effect の他の進行中リクエストは実行を続け、それぞれの `.ok` / `.err` を届ける。
+- `queue` では、cancel はその id が指すエントリにだけ作用する。まだ待機中のエントリはキューから取り除かれ、そのリクエストは発行されず `.err` も起動しない。実行中のエントリは他の進行中リクエストと同じく abort され、キューは次のエントリへ進む。他のエントリはすべて本来どおり実行される。
+- `debounce` タイマーを待っている emit の id で cancel すると、そのタイマーはクリアされ、まだ発行されていない待機中リクエストは発生せず `.err` も起動しない。
 - `throttle` のウィンドウマーカーは **そのまま維持される**。元の effect はすでに launch 済み（cancel はその進行中リクエストを abort）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
 
 ---

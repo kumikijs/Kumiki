@@ -188,7 +188,7 @@ export type ReducerSpec = {
   };
 };
 
-export type EmitSpec = { effect: string; args: unknown[]; key?: string };
+export type EmitSpec = { effect: string; args: unknown[]; key?: string; id?: string };
 
 export type EffectSpec = {
   name: string;
