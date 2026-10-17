@@ -323,11 +323,15 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0113 `sub-routes-without-outlet`
 
-`sub-routes` を宣言した tile の body に `route-outlet` 呼び出しが存在しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
+`sub-routes` を宣言した tile が、その body にも、body が展開するどの tile にも `route-outlet` を描画しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
 
-> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+> `Tile "<name>" declares sub-routes but renders no "route-outlet", in its body or in any tile the body expands into — the matched child would have nowhere to render`
 
-**修正**：子を表示したい場所に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
+outlet は tile 自身の body に書かれている必要はない。ランタイムは tile が描画する木の中で最初に見つかった `route-outlet` を埋め（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、コード生成はその木を、body が展開するすべての tile をインライン展開して組み立てる。たどる辺は [E0005](#e0005-tile-cycle) が body からたどるものと同じである：入れ子の tile 呼び出し、tile を表す識別子引数、`for` / `when` / `if` / `match` の各分岐。したがってレイアウト用の補助 tile に置いた outlet も、何段下であっても数える。自身も `sub-routes` を宣言している tile の outlet も同じである：ここにインライン展開されればこの tile の木の一部であり、この tile の子を映す——その tile 自身の `sub-routes` が使われるのは、それがルートのターゲットになっている場所である。分岐の中の outlet は、インラインで書いた場合と同じく数える。分岐が描画されないときは、捨てた子をランタイムが報告する。
+
+数えない場所が 2 つある。どちらもランタイムが埋める木の中に無いからである：名前付き引数として書いた tile（何もそれを描画しない）と、その tile 自身の `error-boundary` のフォールバック（ランタイムは境界の内側で outlet を埋めるが、それはフォールバックが置き換える側の木である）。
+
+**修正**：子を表示したい場所——tile の body か、それが描画する tile の中——に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
 ### E0114 `sub-routes-without-wildcard-parent`
 
