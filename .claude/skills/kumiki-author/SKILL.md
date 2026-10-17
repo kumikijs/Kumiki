@@ -27,7 +27,7 @@ app MyApp
     theme  = DefaultTheme
 ```
 
-`routes` must include a `/404` entry (error E0001). Use `->>` for redirects: `"/old" ->> "/"`.
+`routes` must include a `/404` entry (error E0001). Use `->>` for redirects: `"/old" ->> "/"`. A target names what its source binds — `"/old/:id" ->> "/items/:id"`, `"/docs/*" ->> "/help/*"` (anything else is E0125) — and a target that is redirected in turn is followed to the page it reaches.
 
 ## Workflow (always verify)
 

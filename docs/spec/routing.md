@@ -34,7 +34,7 @@ app TodoApp
 1. More specific routes take precedence (static > parameter > wildcard)
 2. At equal specificity, **definition order** wins (so behavior does not change under parallel development)
 
-Specificity is compared segment by segment from the left: at the first segment where two patterns differ in kind, the static one beats the parameter, and the parameter beats the wildcard. `"/todos/new"` therefore takes `/todos/new` even when `"/todos/:id"` is written above it, and `"/todos/:id"` takes `/todos/42` ahead of an earlier `"/todos/*"`. Redirect entries ([§3.10](#_3-10-redirects-static)) are ranked in the same table as the routes that render: the first entry in this order that matches the path owns it, so `"/todos/new" -> NewTodo` renders even when `"/todos/*" ->> "/"` is written above it. The same order picks the entry inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), redirects included. Server rendering (`renderToString`) picks the rendered route by this order only when it is handed the routing module; without it, the path is compared to the declared patterns verbatim. It never follows a `->>`.
+Specificity is compared segment by segment from the left: at the first segment where two patterns differ in kind, the static one beats the parameter, and the parameter beats the wildcard. `"/todos/new"` therefore takes `/todos/new` even when `"/todos/:id"` is written above it, and `"/todos/:id"` takes `/todos/42` ahead of an earlier `"/todos/*"`. Redirect entries ([§3.10](#_3-10-redirects-static)) are ranked in the same table as the routes that render: the first entry in this order that matches the path owns it, so `"/todos/new" -> NewTodo` renders even when `"/todos/*" ->> "/"` is written above it. The same order picks the entry inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), redirects included. Server rendering (`renderToString`) picks the rendered route by this order only when it is handed the routing module; without it, the path is compared to the declared patterns verbatim. Either way, the redirects that apply are resolved before the route is picked ([Runtime §10.6.1](./runtime.md#_10-6-1-ssr)).
 
 ### 3.1.3 `/404` Is Reserved
 
@@ -327,6 +327,20 @@ app App
 ```
 
 `->>` is a **static redirect**. The moment it matches, it performs the equivalent of `navigate-replace`. It applies only when it is the entry that owns the path under [§3.1.2](#_3-1-2-match-order): a more specific rendering route declared anywhere in the table wins over it.
+
+The target is written in terms of what the source binds:
+
+- A **parameter** of the source is put into the target by name: `"/old/:id" ->> "/items/:id"` sends `/old/42` to `/items/42`, where `route.params.id` is `"42"`. The segment is carried as the URL has it, so `/old/a%20b` lands on `/items/a%20b` and `id` is `"a b"`, as if that URL had been asked for directly.
+- A **wildcard** source binds the rest of the path, and a `*` segment in the target puts it back: `"/docs/*" ->> "/help/*"` sends `/docs/a/b` to `/help/a/b`, and `/docs` itself to `/help`. A target with no `*` drops the rest: `"/docs/*" ->> "/help"` sends every path under `/docs` to `/help`.
+- A `:name` or `*` in the target that the source does not bind is [E0125](./errors.md#e0125-redirect-unbound-param), reported at the entry. Nothing else in the target is touched.
+- The target replaces the whole URL. A query or a hash on the requested URL is not carried over, as a `navigate-replace` to the target would not carry it.
+
+A target that is itself redirected is redirected again, as a `navigate-replace` to it would be: the runtime follows the chain until it reaches a path no redirect owns, and replaces the URL **once**, with that path. With `"/v1" ->> "/v2"` and `"/v2" ->> "/"`, a request for `/v1` lands on `/`, and history holds `/` where `/v1` was asked for, so `navigate-back` returns to the page before it. The same holds for a redirect inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), for a chain that passes between the app's `routes` and a `sub-routes` map, for the path the app mounts at, and for server rendering ([Runtime §10.6.1](./runtime.md#_10-6-1-ssr)).
+
+A chain that never reaches a page — one that comes back to a path it has already visited, or one that keeps reaching new ones (`"/g/*" ->> "/g/x/*"`) — is caught:
+
+- When it is a cycle of redirects each written for a static path and naming a static path, in one route map (the app's `routes`, or one tile's `sub-routes`), check reports it as [E0010](./errors.md#e0010-redirect-cycle): `"/a" ->> "/b"` with `"/b" ->> "/a"`.
+- Any other is stopped at run time — a loop through a parameter or a wildcard (`"/p/:x" ->> "/q/:x"` with `"/q/:x" ->> "/p/:x"`), one that crosses between route maps, or one that never repeats a path. The runtime gives up when a path comes back, or when a chain would take a 21st redirect, reports it on `console.error` (`[kumiki] redirect loop: /p/1 ->> /q/1 ->> /p/1 — stopped, no redirect applied`, or `[kumiki] more than 20 redirects: …` with the 22 paths), and applies no redirect: the requested path stays in the URL and renders as if no redirect matched it — the `/404` tile, unless a route that renders matches it.
 
 ---
 
