@@ -66,6 +66,11 @@ export function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName
   return u?.kind === "TypePrim" && u.name === name;
 }
 
+/** An effect declared `in=Unit`, through any alias, is emitted with no argument. */
+export function declaresNoInput(inType: TypeExpr, sym: SymbolTable): boolean {
+  return isPrimNamed(inType, sym, "Unit");
+}
+
 const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["show", "Text"],
   ["to-int", "Int"],

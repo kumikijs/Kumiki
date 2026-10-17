@@ -3,6 +3,7 @@ import type { EffectDef, TypeExpr } from "../ast.ts";
 import { failsWithText } from "../capabilities.ts";
 import { type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
+import { declaresNoInput } from "./infer.ts";
 import { resolveType } from "./types.ts";
 
 export function effectPayloadType(
@@ -75,11 +76,16 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+  const input = [{ name: "$1", type: effectInputType(eff, sym) }];
+  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(input));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
-  if (eff.policy?.kind === "PolLatestKey")
-    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+  if (eff.policy?.kind === "PolLatestKey") checkExpr(eff.policy.key, sym, errors, pureScope(input));
+}
+
+// An effect emitted with no argument has no `$1` value for a type to describe.
+function effectInputType(eff: EffectDef, sym: SymbolTable): TypeExpr | null {
+  return declaresNoInput(eff.inType, sym) ? null : eff.inType;
 }
 
 function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
