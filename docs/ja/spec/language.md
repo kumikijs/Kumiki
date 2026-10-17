@@ -639,6 +639,9 @@ pattern      ::= identifier
                | '_'
 ```
 
+**名前付き引数と `{ … }` — 1 つの prop**:
+- 同じ名前の名前付き引数と `{ … }` の項目は、どちらで書いても**1 つの prop** である：`modal(text("x"), open=false)` と `modal(text("x")) {open: false}` は同じに描画される。これはどの builtin でも、その builtin が読むどの prop でも成り立つ —— 種類が自分で取るもの（`modal` の `open`、`select` の `options` と `bind`、`list` の `ordered`、`button` の `type` など）も、[標準ライブラリ §2.3.10](./stdlib.md#_2-3-10-props-の共通仕様) の共通 prop と同じである —— そして `kumiki check` も描画と同じ読み方で prop を読む。1 つの呼び出しが両方を書いたときに読まれるのはブロックの値である。builtin の内容は prop ではなく、次に述べるとおり `( … )` から読まれる。tile-test の `expect` ツリーではブロックはそもそも比較されない（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）。
+
 **builtin の内容 — 位置引数**:
 - テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
 - `button` のラベルは名前付き引数 `text=` である。`link` と `label` はどちらでも取る：最初の位置引数（`link("Home", to="/x")`、`label("Name")`）、それが無ければ `text=`（`link(to="/x", text="Home")`）。したがって `editable` と同じく、位置引数と並べた `text=` は読まれない。（`link` は旧来の `{text: "…"}` prop 形式も受け付け、いずれも同じノードにコンパイルされる。）builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、位置引数の無いテキスト系 builtin の `text=`、または `link` / `label` / `editable` で位置引数と並べた `text=` —— [E0129](./errors.md#e0129-unrendered-arg) になる：`text=` は `button` / `link` / `label` / `editable` のラベル引数であり、テキスト系 builtin では prop である。

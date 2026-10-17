@@ -6,6 +6,7 @@ import {
   type TileDef,
   type TileExpr,
   type TypeExpr,
+  writtenProp,
 } from "../ast.ts";
 import { BUILTIN_TILES, contentReading, positionalIsTile } from "../builtins.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
@@ -348,12 +349,10 @@ function checkTileCall(
   checkToggleBind(t, sym, errors, ctx);
   checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
-    const bindArg = t.args.find((a) => a.name === "bind");
-    const typeArg = t.args.find((a) => a.name === "type");
-    const typeVal = typeArg?.value as Expr | undefined;
+    const bindVal = writtenProp(t, "bind")?.value;
+    const typeVal = writtenProp(t, "type")?.value;
     const isFileType = typeVal?.kind === "Str" && typeVal.value === "file";
-    if (bindArg && isFileType) {
-      const bindVal = bindArg.value as Expr;
+    if (bindVal && isFileType) {
       const slotName = bindVal.kind === "Ref" ? bindVal.name : "<expr>";
       errors.push({
         code: "E0205",
@@ -369,14 +368,14 @@ function checkTileCall(
         typeVal === undefined
           ? `no type, defaults to "text"`
           : `type="${(typeVal as Expr & { kind: "Str" }).value}"`;
-      for (const arg of t.args) {
-        if (arg.name !== "accept" && arg.name !== "multiple") continue;
-        const argVal = arg.value as Expr;
+      for (const name of ["accept", "multiple"]) {
+        const written = writtenProp(t, name);
+        if (!written) continue;
         errors.push({
           code: "E0206",
           kind: "file-only-prop",
-          message: `input prop "${arg.name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`,
-          pos: argVal.pos,
+          message: `input prop "${name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`,
+          pos: written.value.pos,
         });
       }
     }

@@ -1,16 +1,13 @@
-import type { Expr, TileExpr } from "../ast.ts";
+import { type Expr, type TileExpr, writtenProp } from "../ast.ts";
 import { contentArg } from "../builtins.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
-import { writtenValue } from "./tile-collect.ts";
 
 const BUTTON_TYPES = new Set(["submit", "button", "reset"]);
 
 export function checkButtonType(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
   if (t.name !== "button") return;
-  const arg = t.args.find((a) => a.name === "type");
-  if (!arg) return;
-  const v = arg.value as Expr;
-  if (v.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
+  const v = writtenProp(t, "type")?.value;
+  if (v?.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
   errors.push({
     code: "E0201",
     kind: "type-mismatch",
@@ -46,7 +43,7 @@ export function checkA11y(
   errors: KumikiError[],
 ): void {
   if (t.name === "label") {
-    const forProp = writtenValue(t, "for");
+    const forProp = writtenProp(t, "for")?.value;
     if (forProp?.kind === "Str" && !sym.elementIds.has(forProp.value)) {
       errors.push({
         code: "E0705",

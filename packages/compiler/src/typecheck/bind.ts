@@ -1,5 +1,5 @@
 import { assignable, typeToString, unaliasType } from "../assignable.ts";
-import { type Expr, isTileExpr, type TileExpr } from "../ast.ts";
+import { type TileExpr, writtenProp } from "../ast.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
@@ -21,8 +21,7 @@ export function checkBindTargetSteps(
   t: TileExpr & { kind: "TileCall" },
   errors: KumikiError[],
 ): void {
-  const bind = t.args.find((a) => a.name === "bind");
-  let cur = bind?.value as Expr | undefined;
+  let cur = writtenProp(t, "bind")?.value;
   while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
     if (cur.kind === "MethodCall") {
       const hint =
@@ -61,7 +60,7 @@ export function checkBindStrictProp(
 
 const TOGGLE_BIND_CONTROLS = new Set(["check", "switch", "radio"]);
 
-/** The argument each toggle reads for its selection when it has no `bind=`. */
+/** The prop each toggle reads for its selection when it has no `bind`. */
 const TOGGLE_UNBOUND_SELECTION: Readonly<Record<string, string>> = {
   check: "value",
   switch: "value",
@@ -75,35 +74,33 @@ export function checkToggleBind(
   ctx: Ctx,
 ): void {
   if (!TOGGLE_BIND_CONTROLS.has(t.name)) return;
-  const bindArg = t.args.find((a) => a.name === "bind");
-  if (!bindArg || isTileExpr(bindArg.value)) return;
-  const bindExpr = bindArg.value;
+  const bind = writtenProp(t, "bind");
+  if (!bind) return;
+  const bindExpr = bind.value;
   const unread = TOGGLE_UNBOUND_SELECTION[t.name];
-  for (const arg of t.args) {
-    if (arg.name !== unread) continue;
+  const unreadProp = unread === undefined ? undefined : writtenProp(t, unread);
+  if (unreadProp) {
     errors.push({
       code: "W0216",
       kind: "selection-beside-bind",
       severity: "warning",
       message: `"${unread}" on ${t.name}() is not read beside bind= — the bound value decides whether it is ${t.name === "radio" ? "chosen" : "ticked"}. Remove it (see docs/spec/forms.md)`,
-      pos: arg.namePos ?? (arg.value as Expr).pos,
+      pos: unreadProp.namePos,
     });
   }
-  const valueArg = t.name === "radio" ? t.args.find((a) => a.name === "value") : undefined;
-  if (t.name === "radio" && !valueArg) {
+  const value = t.name === "radio" ? writtenProp(t, "value") : undefined;
+  if (t.name === "radio" && !value) {
     errors.push({
       code: "E0225",
       kind: "radio-bind-without-value",
       message: `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md)`,
-      pos: bindArg.namePos ?? bindExpr.pos,
+      pos: bind.namePos,
     });
   }
   const bound = inferType(bindExpr, sym, ctx);
   if (bound === null) return;
   if (t.name === "radio") {
-    if (valueArg && !isTileExpr(valueArg.value)) {
-      checkAgainst(valueArg.value, bound, sym, errors, ctx);
-    }
+    if (value) checkAgainst(value.value, bound, sym, errors, ctx);
     return;
   }
   if (assignable(bound, prim("Bool", bindExpr.pos), sym)) return;
@@ -122,17 +119,12 @@ export function checkInputBindType(
   ctx: Ctx,
 ): void {
   if (t.name !== "input") return;
-  const bindArg = t.args.find((a) => a.name === "bind");
-  if (!bindArg || isTileExpr(bindArg.value)) return;
-  const typeArg = t.args.find((a) => a.name === "type")?.value;
-  const literal =
-    typeArg === undefined
-      ? "text"
-      : !isTileExpr(typeArg) && typeArg.kind === "Str"
-        ? typeArg.value
-        : null;
+  const bind = writtenProp(t, "bind")?.value;
+  if (!bind) return;
+  const typeExpr = writtenProp(t, "type")?.value;
+  const literal = typeExpr === undefined ? "text" : typeExpr.kind === "Str" ? typeExpr.value : null;
   if (literal === "file") return;
-  const bound = inferType(bindArg.value, sym, ctx);
+  const bound = inferType(bind, sym, ctx);
   const u = unaliasType(bound, sym);
   if (!u || u.kind === "TypeRef") return;
   const base = u.kind === "TypePrim" ? inputBindBase(u.name) : null;
@@ -148,16 +140,16 @@ export function checkInputBindType(
       code: "E0226",
       kind: "input-bind-type",
       message: `input(bind=…) cannot bind a value of type ${typeName}: an input binds a Text, Int, Float or Time${payload} ${see}`,
-      pos: bindArg.value.pos,
+      pos: bind.pos,
     });
     return;
   }
-  const field = typeArg === undefined ? `no type= (a "text" field)` : `type="${literal}"`;
+  const field = typeExpr === undefined ? `no type= (a "text" field)` : `type="${literal}"`;
   const kinds = INPUT_BIND_TYPES[base].map((v) => `type="${v}"`).join(" / ");
   errors.push({
     code: "E0226",
     kind: "input-bind-type",
     message: `input(bind=…) with ${field} cannot bind a value of type ${typeName}: ${base === "Int" ? "an" : "a"} ${base} binds with ${kinds} ${see}`,
-    pos: typeArg !== undefined && !isTileExpr(typeArg) ? typeArg.pos : bindArg.value.pos,
+    pos: typeExpr !== undefined ? typeExpr.pos : bind.pos,
   });
 }
