@@ -1,0 +1,27 @@
+# Feature (stdlib.md): `Text.replace(from, to)` replaces every
+# occurrence of `from`, matched as plain text, with `to` exactly as written.
+#
+# `to` has no substitution syntax. A `$` in it is text, whatever follows it
+# (`$$`, `$&`, `` $` ``, `$'`), so a price, a currency template or text held in
+# a slot comes out as it went in.
+
+slot price : Text = "$$5"
+
+tile App
+    = column(
+        heading("text replace"),
+        text("literal=" + "cost: X".replace("X", "$$5")),
+        # The same `to`, read from a slot rather than written in place.
+        text("from-slot=" + "cost: X".replace("X", price)),
+        text("match=" + "a-b".replace("-", "$&$&")),
+        text("before=" + "one two".replace(" ", "$`")),
+        text("after=" + "one two".replace(" ", "$'")),
+        # Every occurrence of `from` is replaced, and a `.` in it is a `.`.
+        text("every=" + "a-b-c".replace("-", "+")),
+        text("plain=" + "a.b.c".replace(".", "/")))
+      {pad: "lg", gap: "md"}
+
+app TextReplaceVerbatim
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

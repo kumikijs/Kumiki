@@ -233,6 +233,8 @@ parse-int                   : Option(Int)
 parse-float                 : Option(Float)
 ```
 
+`replace(from, to)` は、プレーンテキストとして照合した `from` の出現箇所をすべて、書かれたとおりの `to` に置き換える：`"a-b-c".replace("-", "+")` は `"a+b+c"`、`"a.b.c".replace(".", "/")` は `"a/b/c"` である。`to` に置換構文はない。`to` の中の `$` は後に何が続いてもテキストであり、`"cost: X".replace("X", "$$5")` は `"cost: $$5"`、`"a-b".replace("-", "$&")` は `"a$&b"` になる。`to` がリテラルでも slot から読んだ値でも同じである。
+
 ### 2.2.7 Int / Float
 
 ```

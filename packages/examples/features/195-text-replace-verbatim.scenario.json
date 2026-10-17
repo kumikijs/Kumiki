@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "label": "`to` is inserted as written at every occurrence of `from`",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "literal=cost: $$5",
+          "from-slot=cost: $$5",
+          "match=a$&$&b",
+          "before=one$`two",
+          "after=one$'two",
+          "every=a+b+c",
+          "plain=a/b/c"
+        ]
+      }
+    }
+  ]
+}
