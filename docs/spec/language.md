@@ -84,7 +84,7 @@ A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line.
 **Notes on bool operators**:
 - Short-circuit AND: `&&` (recommended) or `&` (alias, internally identical)
 - Short-circuit OR : `||` (recommended) or `|` (alias, but with a heuristic to avoid collision with match arms)
-- When writing `|` as bool OR, if the following token is the combination "**`Variant`/`_` + `->`**" (i.e. the start of a match arm), the parser prefers to treat it as an arm separator. If any other expression follows, it is interpreted as bool OR. As a safe measure, use `||` when in doubt.
+- When writing `|` as bool OR, if what follows it is "**pattern + `->`**" — `_`, a variant or binding name, `Variant(binds)`, or a tuple, then `->` (i.e. the start of a match arm) — the parser treats it as an arm separator: no expression continues with `->`, so only an arm can begin there. If any other expression follows, it is interpreted as bool OR, so `a | b`, `a | b.c` and `a | f(x)` are bool ORs. As a safe measure, use `||` when in doubt.
 
 ### 1.2.2 Reserved Words
 
@@ -856,7 +856,7 @@ An `if` and a `match` evaluate to one of their branches, so **every branch has t
 - **`null` / `undefined` prohibited**
 - **`while` loops prohibited**
 - **Assignment expressions prohibited** (`:=` is a statement and cannot be used within an expression)
-- **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
+- **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, a binding name, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
 
 ```kumiki snippet
 # ❌ literal patterns — not supported
@@ -1036,7 +1036,7 @@ fn current() = todos                          # receive it via a fn argument
 reducer r on=ui.change(input[type=file]) do= ...   # write it by tile name
 
 # ❌ literal match pattern
-match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (Prohibitions)
+match status with | "open" -> ... | "closed" -> ...   # a pattern is a variant, Variant(binds), a tuple, a binding name or _; use if/else or a union (Prohibitions)
 
 # ❌ a match with no arms
 tile Width = match size with                          # every match takes one `| pattern -> …` arm or more, in every position: a parse error at the `match`
