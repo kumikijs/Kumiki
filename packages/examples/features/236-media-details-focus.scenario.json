@@ -1,0 +1,92 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired, and the video has no controls",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "controls": false,
+          "log": ""
+        },
+        "domIncludes": ["log: "]
+      }
+    },
+    {
+      "label": "the toggle turns the video's controls on",
+      "do": {
+        "click": "#toggle"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "controls": true,
+          "log": ""
+        }
+      }
+    },
+    {
+      "label": "focusing the video runs its ui.focus reducer",
+      "do": {
+        "focus": "#clip"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "cf "
+        }
+      }
+    },
+    {
+      "label": "a key on it runs its ui.key reducer",
+      "do": {
+        "key": "#clip",
+        "value": " "
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "cf ck "
+        }
+      }
+    },
+    {
+      "label": "leaving it runs its ui.blur reducer",
+      "do": {
+        "blur": "#clip"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "cf ck cb "
+        }
+      }
+    },
+    {
+      "label": "a key on the summary reaches the onKeyDown written on the details, and not ui.key(Faq)",
+      "do": {
+        "key": "#faq summary",
+        "value": "ArrowDown"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "cf ck cb fk "
+        }
+      }
+    },
+    {
+      "label": "a key in the panel's input runs ui.key(Faq) once, then bubbles to the details' onKeyDown",
+      "do": {
+        "key": "#answer",
+        "value": "a"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "cf ck cb fk ft fk "
+        },
+        "domIncludes": ["log: cf ck cb fk ft fk "]
+      }
+    }
+  ]
+}

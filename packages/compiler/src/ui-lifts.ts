@@ -17,12 +17,28 @@ const FOCUSABLE_ROOT = [
   "slider",
   "editable",
   "link",
+  "video",
 ] as const;
 
-const LABEL_WRAPPED_CONTROL = ["check", "radio", "switch"] as const;
+// The runtime's listeners sit on `wrapper`, not on the `focused` element. A
+// wrapper that `holdsChildren` would hear a bubbling event from those too: a
+// `details` panel's controls carry the lifted `key` listener already, so one
+// on the `<details>` would run the reducer twice per key.
+const WRAPPED_CONTROL = {
+  check: { wrapper: "label", focused: "input", holdsChildren: false },
+  radio: { wrapper: "label", focused: "input", holdsChildren: false },
+  switch: { wrapper: "label", focused: "input", holdsChildren: false },
+  details: { wrapper: "details", focused: "summary", holdsChildren: true },
+} as const satisfies Record<string, { wrapper: string; focused: string; holdsChildren: boolean }>;
+
+type WrappedKind = keyof typeof WRAPPED_CONTROL;
+
+function isWrapped(kind: string): kind is WrappedKind {
+  return Object.hasOwn(WRAPPED_CONTROL, kind);
+}
 
 // The events the runtime listens for on the element a renderer returned, and
-// whether each bubbles from a label-wrapped control's <input> to its <label>.
+// whether each bubbles from a wrapped control's focused element to its wrapper.
 const ROOT_LISTENED_BUBBLES = { key: true, focus: false, blur: false } as const;
 
 type RootListened = keyof typeof ROOT_LISTENED_BUBBLES;
@@ -31,18 +47,39 @@ function isRootListened(ev: UiEventKind): ev is RootListened {
   return Object.hasOwn(ROOT_LISTENED_BUBBLES, ev);
 }
 
-function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
-  const reached: readonly string[] = ROOT_LISTENED_BUBBLES[ev]
-    ? [...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]
-    : FOCUSABLE_ROOT;
-  return new Set(reached);
+function wrapperHears(ev: RootListened, kind: WrappedKind): boolean {
+  return ROOT_LISTENED_BUBBLES[ev] && !WRAPPED_CONTROL[kind].holdsChildren;
 }
 
-const LABEL_WRAPPED: ReadonlySet<string> = new Set(LABEL_WRAPPED_CONTROL);
+function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
+  const wrapped = Object.keys(WRAPPED_CONTROL).filter((k) => isWrapped(k) && wrapperHears(ev, k));
+  return new Set([...FOCUSABLE_ROOT, ...wrapped]);
+}
 
-export function labelWrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): string[] {
-  if (!isRootListened(ev) || ROOT_LISTENED_BUBBLES[ev]) return [];
-  return [...kinds].filter((k) => LABEL_WRAPPED.has(k)).sort();
+export type WrappedUnreached = {
+  readonly kinds: string[];
+  readonly wrapper: string;
+  readonly focused: string;
+  readonly bubbles: boolean;
+};
+
+export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): WrappedUnreached[] {
+  if (!isRootListened(ev)) return [];
+  const groups = new Map<string, WrappedUnreached>();
+  for (const kind of [...kinds].sort()) {
+    if (!isWrapped(kind) || wrapperHears(ev, kind)) continue;
+    const { wrapper, focused } = WRAPPED_CONTROL[kind];
+    const at = `${wrapper} ${focused}`;
+    const group = groups.get(at) ?? {
+      kinds: [],
+      wrapper,
+      focused,
+      bubbles: ROOT_LISTENED_BUBBLES[ev],
+    };
+    group.kinds.push(kind);
+    groups.set(at, group);
+  }
+  return [...groups.values()];
 }
 
 export const UI_LIFTS: ReadonlyArray<UiLift> = [

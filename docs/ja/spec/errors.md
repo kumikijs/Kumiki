@@ -711,9 +711,13 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` が�
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-`<ev>` が `focus` か `blur` で、body に `check` / `radio` / `switch` がある場合、その control の `<input>` はイベントを発火するので、メッセージは代わりに成り立つ理由を述べる（下の `key` / `focus` / `blur` についての注記を参照）。`<kinds>` は body にある label 包みの kind を ` / ` でつないだもの:
+`<ev>` が `focus` か `blur` で、body に `check` / `radio` / `switch` / `details` がある場合、その kind の中で focus を受ける要素 — control の `<input>`、details の `<summary>` — はイベントを発火するので、メッセージは代わりに成り立つ理由を述べる（下の `key` / `focus` / `blur` についての注記を参照）。`<kinds>` は body にある kind のうち同じ包みを持つものを ` / ` でつないだもの。節が名指すのは、`check` / `radio` / `switch` なら `<label>` とその `<input>`、`details` なら `<details>` とその `<summary>` である。両方を含む body ではそれぞれに 1 つずつ節があり、`; ` でつなぐ:
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": a <kinds> listens on the <label> around its <input>, and the "<ev>" that <input> fires does not bubble to the <label> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+`<ev>` が `key` で body に `details` がある場合、その `<summary>` が発火する `keydown` は `<details>` までバブルする。それをリスナから遠ざけているのは、`<details>` が併せて持つパネルである（同じ注記を参照）:
+
+> `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since one there would also hear every "key" from the tiles inside it (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
 kind の要素が `<ev>` を発火するのに、そのレンダラがハンドラを呼ばずに別のことに使う場合 — 要素の性質ではなく runtime の方針である — メッセージはレンダラが代わりにすること（`<instead>`）と、呼ばないハンドラを述べる。この欠落は、`click` の `link`（レンダラがナビゲーションのために取っておく。下の `link` についての注記を参照）と、`input` の 5 つである。後者の要素はいずれも `input` を発火する：`slider` はレンダラが bind の書き込みのためだけに listen し、`check` / `radio` / `switch` / `select` はレンダラが代わりに `change` を listen する。`click` では、ほかの kind に対する既定の文言もまだ正しくない：どの要素も `click` を発火し、`text` や `box` でそれが reducer に届かないのは、`onClick` を呼ぶレンダラがないためである — [#823](https://github.com/kumikijs/Kumiki/issues/823)。レンダラが同じことをする kind は ` / ` で、異なるものの節は `; ` でつなぐ:
 
@@ -727,9 +731,9 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
-| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `check`, `radio`, `switch` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
+| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `check`, `radio`, `switch` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
 | `hover`  | 任意の tile |
 
 **修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。
@@ -740,7 +744,11 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` — は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。メッセージもそう述べる：`<input>` はイベントを発火するが、リスナのある `<label>` へはバブルしない。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されない — [#821](https://github.com/kumikijs/Kumiki/issues/821)。逆は主張しない：`video`（`controls` 付きで描画された `<video>`）と `details`（返される `<details>` の中で `<summary>` が focus を受ける、`check` と同じ形）にもこれらのイベントは届くと考えられるが、まだ載っていない — [#525](https://github.com/kumikijs/Kumiki/issues/525)。また、行に載っている kind でも個々のインスタンスが発火できないことはある。`disabled` な control は focusable ではなく、それはコンパイル時の表には見えない。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。メッセージもそう述べる：`<input>` はイベントを発火するが、リスナのある `<label>` へはバブルしない。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されない — [#821](https://github.com/kumikijs/Kumiki/issues/821)。
+
+`details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取る。そこに書いた `onFocus=` / `onBlur=` は、#821 が check について記録しているのと同じ理由で実行されない。
+
+`video` が何を受け取るかは Chromium で計測した。`controls` があれば Tab は `<video>` に止まり、`focus` / `blur` は focus がそれ全体に入るとき・出るときに発火する。自身の再生・音量・全画面ボタンの間を移動しても、どちらも発火しない。`<video>` 自体が focus を持つ間に押したキーは `ui.key` の reducer に届き（そのあと Space で再生・一時停止する）、それらのボタンの 1 つが focus を持つ間に押したキーは届かない。`controls` が無ければ focusable ではない：Tab は素通りし、`.focus()` やクリックでも focus は移らないので、3 つのどれも発火しない。`video` が `controls` を持つかはインスタンスの性質で、コンパイル時の表には見えないため、行はどちらの場合も `video` を載せる。`disabled` な control も同様で、その kind は載っているが focusable ではない。
 
 ### E0213 `call-arity-mismatch`
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 describe("undefined tile in ui.* selector (E0211)", () => {
   it("reports a reducer that targets an undeclared tile", () => {
@@ -287,7 +287,7 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         `Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": ` +
           `a check listens on the <label> around its <input>, and the "focus" that <input> fires ` +
           `does not bubble to the <label> ` +
-          `(DOM-allowed: input, textarea, button, select, slider, editable, link; observed in body: check). ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video; observed in body: check). ` +
           `The handler is silently dropped.`,
       );
     });
@@ -329,7 +329,7 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         "focus",
         'tile D = box(text("hi"))',
         `Reducer "r" subscribes to ui.focus(D) but tile "D" has no descendant that fires "focus" ` +
-          `(DOM-allowed: input, textarea, button, select, slider, editable, link; observed in body: box, text). ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video; observed in body: box, text). ` +
           `The handler is silently dropped.`,
       ],
       [
@@ -341,6 +341,77 @@ describe("W0212 gives the reason that holds when the element fires the event", (
       ],
     ])("keeps 'no descendant fires it' for %s", (_, ev, tiles, message) => {
       expect(w0212(ev, tiles)).toBe(message);
+    });
+  });
+
+  describe("on a details, says what keeps the event from a listener", () => {
+    const FAQ = 'tile D = details(summary="Question", text("answer"))';
+
+    it("names the <summary>, the event and the <details> for ui.focus", () => {
+      expect(w0212("focus", FAQ)).toBe(
+        `Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": ` +
+          `a details listens on the <details> around its <summary>, and the "focus" that <summary> fires ` +
+          `does not bubble to the <details> ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video; observed in body: details, text). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it("gives the same reason for ui.blur", () => {
+      const message = w0212("blur", FAQ);
+      expect(message).toContain(
+        `a details listens on the <details> around its <summary>, and the "blur" that <summary> fires does not bubble to the <details>`,
+      );
+      expect(message).not.toContain("has no descendant");
+    });
+
+    it("says a key listener on the <details> would hear its panel too, for ui.key", () => {
+      expect(w0212("key", FAQ)).toBe(
+        `Reducer "r" subscribes to ui.key(D) but "key" never reaches a listener in tile "D": ` +
+          `a details takes no "key" listener on the <details> around its <summary>, ` +
+          `since one there would also hear every "key" from the tiles inside it ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video, check, radio, switch; ` +
+          `observed in body: details, text). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it("gives it when the details is reached through a container and another tile", () => {
+      const message = w0212(
+        "focus",
+        'tile Inner = details(summary="Question", text("answer"))\ntile D = box(Inner)',
+      );
+      expect(message).toContain(`a details listens on the <details> around its <summary>`);
+      expect(message).toContain("observed in body: box, details, text");
+    });
+
+    it("gives the label's reason and the summary's, one clause each, for a body holding both", () => {
+      expect(
+        w0212("blur", 'tile D = row(check(value=done), details(summary="Q", text("a")))'),
+      ).toContain(
+        `"blur" never reaches a listener in tile "D": ` +
+          `a check listens on the <label> around its <input>, and the "blur" that <input> fires does not bubble to the <label>; ` +
+          `a details listens on the <details> around its <summary>, and the "blur" that <summary> fires does not bubble to the <details> (`,
+      );
+    });
+  });
+
+  describe("on a video, reports none of key / focus / blur", () => {
+    it.each(
+      [
+        ["with controls", 'video(src="/a.mp4", controls=true)'],
+        ["whose controls a slot decides", 'video(src="/a.mp4", controls=done)'],
+      ].flatMap(([what, clip]) => ["key", "focus", "blur"].map((ev) => ({ what, clip, ev }))),
+    )("says nothing about ui.$ev on a video $what", ({ clip, ev }) => {
+      const src = `
+        slot done : Bool = false
+        slot hits : Int = 0
+        reducer r on=ui.${ev}(V) do= hits := hits + 1
+        tile V = ${clip}
+        tile App = column(V, text(hits.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(codesOf(src)).toEqual([]);
     });
   });
 
