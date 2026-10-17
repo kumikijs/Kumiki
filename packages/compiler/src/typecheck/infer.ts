@@ -66,6 +66,17 @@ export function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName
   return u?.kind === "TypePrim" && u.name === name;
 }
 
+/** Through an alias or a `nominal` too: one answer for both halves of E0204, the operators and rendering. */
+export function isEffectId(t: TypeExpr | null, sym: SymbolTable): boolean {
+  return isPrimNamed(t, sym, "EffectId");
+}
+
+/** The member a qualified call names (`show` in `Int.show(v)`), by the spelling rule codegen and `builtinArity` apply. */
+export function qualifiedMember(callee: string): string | null {
+  const dot = callee.indexOf(".");
+  return dot > 0 && isQualifierName(callee.slice(0, dot)) ? callee.slice(dot + 1) : null;
+}
+
 const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
   ["show", "Text"],
   ["to-int", "Int"],
@@ -417,8 +428,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (fixed) return prim(fixed, e.pos);
       const dot = e.callee.indexOf(".");
       const qualifier = dot > 0 ? e.callee.slice(0, dot) : null;
-      const member =
-        qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
+      const member = qualifiedMember(e.callee);
       if (member === "show") return prim("Text", e.pos);
       if (qualifier !== null && member === "parse") {
         const named = qualifierType(qualifier, e.pos, sym);

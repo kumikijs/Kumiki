@@ -1,0 +1,28 @@
+{
+  "effects": { "search": [{ "outcome": "ok", "value": "3 results" }] },
+  "steps": [
+    {
+      "label": "no handle is held before the first search",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["no search to cancel", "cancellable: false", "result: nothing yet"]
+      }
+    },
+    {
+      "label": "the search's handle is kept, and the page shows what comparing it answers",
+      "do": { "click": "#search" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["a search to cancel", "cancellable: true", "result: 3 results"]
+      }
+    },
+    {
+      "label": "cancel hands the handle to http.cancel and puts the sentinel back",
+      "do": { "click": "#cancel" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["no search to cancel", "cancellable: false", "result: 3 results"]
+      }
+    }
+  ]
+}

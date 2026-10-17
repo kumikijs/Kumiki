@@ -598,12 +598,19 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 
 ### E0204 `effect-id-misuse`
 
-`EffectId` 型の値が定義されていない操作に使われている。`EffectId` で定義された操作は等価比較（`==` / `!=`）、`EffectId` 型 slot への代入、`in` 型が `EffectId` の effect への引数渡しのみ。算術・順序比較・`text(...)` での描画は拒否する — `EffectId` は不透明型なのでランタイムが表現を変えてもアプリが壊れないようにするため。
+`EffectId` 型の値が定義されていない操作に使われている。`EffectId` で定義された操作は等価比較（`==` / `!=`）、`EffectId` 型 slot への代入、`in` 型が `EffectId` の effect への引数渡しのみ。算術・順序比較・テキストとしての描画は拒否する — `EffectId` は不透明型なのでランタイムが表現を変えてもアプリが壊れないようにするため。
+
+ハンドルは、値がテキストになるあらゆる場所で描画される：`text(...)` や、内容を描画する他の builtin —— `heading`・`markdown`・`code`・`label`・`link`・`editable`、そして内容が `src=` / `name=` である `image` / `icon`（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— の内容として、テンプレートを含む `fmt(...)` の引数として、そして `.show` を通して。`show` は他のすべての値が持つメンバーであり（[標準ライブラリ §2.2.7](./stdlib.md#_2-2-7-int-float)）、`EffectId` に対してはどの書き方でもこのエラーになる —— `h.show`、`h.show()`、そして修飾子は捨てられるので `T` が何であれ `T.show(h)`（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）。値の型はエイリアスや `nominal` を通して読まれるので、`type Handle = EffectId` は演算子と描画のどちらについてもハンドルである。ハンドルを含む和は演算子の位置で 1 回だけ報告される：その結果は `Text` か数であって、ハンドルではない。
+
+ハンドルを保持するだけでハンドルそのものではない値は、中まで読まれない。`Option(EffectId)` はタグ（`Some` か `None`）を描画し、record はフィールドを描画しない。ただし `List(EffectId)` をそのまま描画したり `.join(…)` で連結したりすると各ハンドルが表示され、報告もされない。これは規則ではなく既知のギャップである。
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
-> `text(...) cannot render EffectId — it is an opaque handle`
+> `<builtin>(...) cannot render EffectId — it is an opaque handle`
+> `.show cannot render EffectId — it is an opaque handle`
 
-**修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。
+`<builtin>` はハンドルを描画する呼び出しを書かれたとおりに示す：`text`、`heading`、…、または `fmt`。
+
+**修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。ハンドルを保持しているかどうかを表示するには、比較の答えを描画する —— `text(if h == EffectId.none then "idle" else "loading")`、または `(h != EffectId.none).show`。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。
 
 ### E0205 `bind-on-file-input`
 
