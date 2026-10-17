@@ -71,7 +71,11 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
   scroll: { cases: [["scroll", { kind: "scroll", children: [CHILD], props: CONTAINER_PROPS }]] },
   panel: { cases: [["panel", { kind: "panel", children: [CHILD], props: CONTAINER_PROPS }]] },
   fieldset: {
-    cases: [["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }]],
+    cases: [
+      ["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }],
+      ["fieldset (legend)", { kind: "fieldset", children: [CHILD], props: { legend: "Billing" } }],
+      ["fieldset (empty legend)", { kind: "fieldset", children: [CHILD], props: { legend: "" } }],
+    ],
   },
   region: { cases: [["region", { kind: "region", children: [CHILD], props: CONTAINER_PROPS }]] },
   grid: {
@@ -206,6 +210,8 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
       ["check", { kind: "check", checked: true }],
       ["check (id, control state)", { kind: "check", checked: false, props: { id: "c" } }],
       ["check (bind)", { kind: "check", checked: true, bind: "agreed" }],
+      ["check (label)", { kind: "check", checked: true, props: { label: "I agree" } }],
+      ["check (empty label)", { kind: "check", checked: false, props: { label: "" } }],
     ],
   },
   switch: {

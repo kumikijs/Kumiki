@@ -207,7 +207,7 @@ In addition to updating a slot via `bind=`, input/textarea can also fire via the
 
 ### 5.5.2 radio
 
-radio has a `group` prop for grouping (corresponding to CSS's `name` attribute):
+radio has a `group` prop for grouping. It is the HTML `name` attribute of the radio's `<input>`, so the radios that share a `group` are one set, of which one is chosen at a time:
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -231,6 +231,8 @@ tile FilterRadioGroup = column(
 ```
 
 This is the recommended approach.
+
+A radio written with `name=` instead of `group=` is grouped by it the same way; with both, `group` is the one read.
 
 ---
 
