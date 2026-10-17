@@ -12,6 +12,11 @@ export function emptyRoute(): ParsedRoute {
   return { path: "/", pattern: "/", params: {}, query: {}, hash: NONE };
 }
 
+/** The patterns a route lifecycle reducer can name while `route` is shown, outermost first. */
+export function routeChain(route: ParsedRoute): string[] {
+  return route.childPattern === undefined ? [route.pattern] : [route.pattern, route.childPattern];
+}
+
 function injectRouteOutlet(node: TileNode, child: TileNode): boolean {
   if (!node || typeof node !== "object") return false;
   if ((node as { kind?: string }).kind === "route-outlet") {

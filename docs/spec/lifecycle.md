@@ -160,7 +160,7 @@ type PanicInfo = {
 
 `cause` is the **nearest** `Error.cause` message when the throw carried one, and `None` otherwise. A cause whose message is empty is `None` too: through `.get-or`, a `Some("")` would put a blank where a reason should be, which reads as a reason that is blank rather than as no reason. The chain behind it, and the stack with it, stay in the episode log — `episode-id` is how to reach them.
 
-Every field is supplied on every path a panic reaches a program: an `app.error` reducer, a `route.error` reducer, and an `error-boundary` fallback are handed the same record, built once — `route.error` carries the matched `pattern` on top of it, and nothing else differs. `episode-id` is `None` wherever there is no open episode to name, which on the boundary path includes a render that no dispatch is inside, and on the server includes every render: `renderToString` commits its bootstrap episode before it renders. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime emits `reducer "foo"` / `render`.
+Every field is supplied on every path a panic reaches a program: an `app.error` reducer, a `route.error` reducer, and an `error-boundary` fallback are handed the same record, built once — `route.error` carries on top of it the `pattern` the reducer names ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), and nothing else differs. `episode-id` is `None` wherever there is no open episode to name, which on the boundary path includes a render that no dispatch is inside, and on the server includes every render: `renderToString` commits its bootstrap episode before it renders. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime emits `reducer "foo"` / `render`.
 
 The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
 
@@ -255,7 +255,7 @@ reducer onRouteErr
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
 
-A render that panics with no boundary to catch it fires the matching `route.error` reducers once. Their writes do not start a render of their own — the page they would render is the one that just panicked — so after they return the runtime renders once more, and that render is where their writes, a navigation included, take effect. If it panics too, the built-in panic display is shown and `route.error` is not fired again for it.
+A render that panics with no boundary to catch it fires the `route.error` reducers once — those on every pattern the route being shown is matched under, the parent's before its sub-route's ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Their writes do not start a render of their own — the page they would render is the one that just panicked — so after they return the runtime renders once more, and that render is where their writes, a navigation included, take effect. If it panics too, the built-in panic display is shown and `route.error` is not fired again for it.
 
 ---
 

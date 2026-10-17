@@ -17,10 +17,10 @@ export function createNavigation(deps: {
   slots: Record<string, unknown>;
   routing: RoutingImpl | undefined;
   router: Router | null;
-  fireLifecycle: (name: string, payload: Record<string, unknown>) => void;
+  fireRouteEvent: (kind: "enter" | "leave", route: ParsedRoute) => void;
   render: () => void;
 }): Navigation {
-  const { app, slots, routing, router, fireLifecycle, render } = deps;
+  const { app, slots, routing, router, fireRouteEvent, render } = deps;
   let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
   let leaving = false;
   let leaveAskedConfirm = false;
@@ -30,7 +30,7 @@ export function createNavigation(deps: {
 
   const enter = (route: ParsedRoute): void => {
     slots.route = route;
-    fireLifecycle(`route.enter(${JSON.stringify(route.pattern)})`, { $route: route });
+    fireRouteEvent("enter", route);
     applyScrollFor(route);
     render();
   };
@@ -51,7 +51,7 @@ export function createNavigation(deps: {
       leaving = true;
       leaveAskedConfirm = false;
       try {
-        fireLifecycle(`route.leave(${JSON.stringify(oldRoute.pattern)})`, { $route: oldRoute });
+        fireRouteEvent("leave", oldRoute);
       } finally {
         leaving = false;
       }

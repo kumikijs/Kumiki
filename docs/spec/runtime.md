@@ -963,7 +963,7 @@ Hydration runs in a strict, synchronous order. If any step throws, the client di
 2. **Slot overlay.** Write each entry of `snapshot.slots` into `app.live` BEFORE wiring routing, effects, or `app.start`. Volatile slots stay at their declared default — they were never in the snapshot.
 3. **Bootstrap ingest.** Inject `snapshot.bootstrap` into the episode logger via the dedicated `ingestBootstrap` path. This is the only legal way for a client to surface an `ssr.hydrate` episode; `beginTrigger` is forbidden for that kind. After this step, `app.episodes()[0]` is the SSR causal chain.
 4. **Event handler attach.** Attach the runtime's event delegation to the SSR HTML so user input starts dispatching client-side reducers.
-5. **`app.start` fires.** The lifecycle reducer fires normally (it never ran on the server). `app.init` does NOT re-fire — the snapshot already carries its results. `route.enter` for the current pattern fires after `app.start`, exactly as in a CSR boot.
+5. **`app.start` fires.** The lifecycle reducer fires normally (it never ran on the server). `app.init` does NOT re-fire — the snapshot already carries its results. `route.enter` for every pattern the current route is matched under ([Routing §3.4](./routing.md#_3-4-route-lifecycle)) fires after `app.start`, exactly as in a CSR boot.
 
 The observed order on the client is therefore `app.episodes() = [bootstrap, app.start episode, route.enter episode?, user-driven episodes...]`. The hydration boundary preserves episode continuity — no `ssr.hydrate`-to-`app.start` gap and no duplicate init effects.
 
