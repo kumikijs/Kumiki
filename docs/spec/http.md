@@ -182,7 +182,7 @@ app App
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
 | `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
-| `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
+| `timeout` | Default timeout, a positive number of milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
 | `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
@@ -220,16 +220,21 @@ field unless a bullet below says otherwise:
 - `timeout` takes anything assignable to `Int`, read as milliseconds. A
   `Duration` is one (it is milliseconds at run time), and so is a user
   `nominal Int`; a `Float` is not. A `Text` would reach `setTimeout` as `NaN`
-  and abort every request before it can answer.
+  and abort every request before it can answer. The milliseconds are positive:
+  every literal that reaches the field must be greater than `0`, since
+  `setTimeout` fires the abort at once for `0` or less, with the same effect.
 - `credentials` takes anything assignable to `Text`, and every literal that
-  reaches the field — the field's own value, or a literal branch of an `if` —
-  must be one of the three Fetch modes, since a browser refuses a request whose
-  init names any other.
+  reaches the field must be one of the three Fetch modes, since a browser
+  refuses a request whose init names any other.
 
-What is compared is the type, and for `credentials` the literals: a value
-computed any other way — a slot, a call, a concatenation — is decided at run
-time, so one of the right type is accepted whatever it will hold. `timeout: 0`
-and a negative `Int` are an `Int`, and are accepted too.
+What is compared is the type, and for `timeout` and `credentials` the literals
+too. A literal reaches the field as the field's own value, or as what a branch
+of an `if`, an arm of a `match` or the body of a `let … in` yields, at any
+depth, and is reported where it is written; `-1`, a number with a minus before
+it, is a literal. Its type is compared first, so `timeout: -5.5` is reported as
+a `Float`. A value computed any other way — a slot, a call such as
+`Duration.ms(0)`, a concatenation — is decided at run time, so one of the right
+type is accepted whatever it will hold.
 
 ### 6.3.2 Global Handling of 401
 
