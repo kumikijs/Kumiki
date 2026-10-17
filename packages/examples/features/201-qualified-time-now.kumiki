@@ -1,0 +1,41 @@
+# Feature (stdlib.md): `Time.now` is `now`.
+#
+#   Time.now : Time   ; the current time — the builtin `now`, qualified
+#
+# The qualified spelling names the same builtin as the keyword: a `Time`, read
+# from the clock where it is evaluated, and the same environment read — a
+# reducer that reads it records a `now` entry in its episode, and a replay
+# hands that answer back (runtime.md). `Time.now()` is the same call
+# with its parentheses written.
+#
+# The three spellings below are one builtin. Each slot is read from the clock
+# when the app is built, and again, in the order written, on the click — so
+# the instants are in order, and `format` renders a real year from them.
+
+slot opened  : Time = Time.now
+slot stamped : Time = Time.now
+slot called  : Time = Time.now()
+slot bare    : Time = now
+slot stamps  : Int  = 0
+
+reducer stamp on=ui.click(Stamp)
+    do= stamped := Time.now
+        called  := Time.now()
+        bare    := now
+        stamps  := stamps + 1
+
+fn year(t: Time) -> Int = Int.parse(t.format("yyyy")).get-or(0)
+fn in-order(a: Time, b: Time, c: Time, d: Time) -> Bool = a <= b && b <= c && c <= d
+
+tile Stamp = button(text="stamp", id="stamp")
+
+tile App = column(
+  Stamp,
+  text("after 2000: " + (year(opened) >= 2000 && year(stamped) >= 2000).show),
+  text("in order: " + in-order(opened, stamped, called, bare).show),
+  text("stamps: " + stamps.show))
+
+app QualifiedTimeNow
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "the slot initialised with Time.now holds the current time",
+      "expect": {
+        "noErrors": true,
+        "state": { "stamps": 0 },
+        "domIncludes": ["after 2000: true", "in order: true", "stamps: 0"]
+      }
+    },
+    {
+      "label": "Time.now, Time.now() and now read the clock in the order they are written",
+      "do": { "click": "#stamp" },
+      "expect": {
+        "noErrors": true,
+        "state": { "stamps": 1 },
+        "domIncludes": ["after 2000: true", "in order: true", "stamps: 1"]
+      }
+    }
+  ]
+}
