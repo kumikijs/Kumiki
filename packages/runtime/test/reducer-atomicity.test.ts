@@ -367,17 +367,17 @@ describe("every tier applies the same rule", () => {
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 
-  it("refuses the batch in a property-test's run-reducer step", () => {
+  it("refuses the batch in a property-test's run-reducer step, failing the trial", () => {
     const app = {
       live: { count: 0, log: "" } as Record<string, unknown>,
       slots: makeApp().slots,
       reducers: [overflow("bump")],
       effects: {},
     };
-    const after = _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {});
-
-    expect(after.slots).toEqual({ count: 0, log: "" });
-    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
+    expect(() => _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {})).toThrow(
+      'reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))',
+    );
+    expect(errors.some((e) => e.includes("was rejected"))).toBe(false);
   });
 });
 
