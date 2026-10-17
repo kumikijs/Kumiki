@@ -143,7 +143,7 @@ prepend(x)                  : List(T)
 concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
-sort                        : List(T)          ; T は Ord
+sort                        : List(T)          ; T は Ord、昇順（< の順）
 sort-by(expr)               : List(T)          ; expr の昇順（< の順）、安定
 unique                      : List(T)
 map(expr)                   : List(T')
@@ -182,7 +182,9 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 
 - **`Text` の順序は UTF-16 コード単位の順**で、ロケールの照合順ではない：`"Z" < "a"`、`"B" < "a"` であり、かなや漢字は辞書（読み）順ではなくコードポイント順に並ぶ。
 - **キーは実行時の値として並べる。** 数値や `Time` と宣言されたフィールドでも、値が `Text` として届いたもの（たとえば宣言された型へ変換されない HTTP の JSON 本文）は `Text` として並ぶ：`"10"` が `"9"` より前になる。
-- **並べる値のないキー（欠落、または `NaN`）は他のすべてのキーの後ろに並び**、互いの順を保つ。そうなりうるのは checker が型を決められなかったキーだけである。すべてのキーと「等しい」と比べると、1 つあるだけで残りが並ばなくなるため。
+- **並べる値のないキー（欠落、または `NaN`）は他のすべてのキーの後ろに並び**、互いの順を保つ。`Float` のキーは [§2.2.7](#_2-2-7-int-float) が `NaN` を生むところで `NaN` になり、欠落しうるのは checker が型を決められなかったキーだけである。すべてのキーと「等しい」と比べると、1 つあるだけで残りが並ばなくなるため。
+
+**`sort` は要素そのものを同じ順で並べる**：`List(Int)` / `List(Float)` / `List(Time)` は数値として、`List(Text)` は UTF-16 コード単位の順に並べる。したがって `[3, 1, 2, 10].sort` は `[1, 2, 3, 10]`、`["9", "10"].sort` は `["10", "9"]` である。[§2.2.7](#_2-2-7-int-float) が定義域の外で `Float` に与える値もほかと同じ数値である：`-Infinity` はすべての有限値の前に、`Infinity` は後ろに並ぶので、`[10.0, 9.0, 1.5, 1.0 / 0.0].sort` は `[1.5, 9.0, 10.0, Infinity]` である。`<` がどの値とも順序づけない `NaN` は、`Infinity` も含めて他のすべての要素の後ろに並ぶ。`sort-by` で `NaN` のキーが並ぶのと同じ位置である：`[(-1.0).sqrt, 2.0, 1.0].sort` は `[1.0, 2.0, NaN]`。
 
 ### 2.2.4 Option(T)
 
@@ -246,7 +248,7 @@ show, to-float (Int), to-int (Float, 切り捨て)
 
 Kumiki の算術はこれで全部である。`math` 名前空間は存在しない：修飾子は大文字始まりの名前なので、`math.abs(x)` は `math` という名前への参照になり [E0103](./errors.md#e0103-undef-ref-undef-slot) を報告する。
 
-定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
+定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。これらはほかと同じ `Float` の値である：`sort` は `-Infinity` をすべての有限値の前に、`Infinity` を後ろに、`NaN` を他のすべての要素の後ろに並べる（[§2.2.3](#_2-2-3-list-t)）。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
 
 `x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。
 

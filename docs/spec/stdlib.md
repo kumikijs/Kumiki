@@ -143,7 +143,7 @@ prepend(x)                  : List(T)
 concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
-sort                        : List(T)          ; T is Ord
+sort                        : List(T)          ; T is Ord; ascending, as < orders it
 sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
 unique                      : List(T)
 map(expr)                   : List(T')
@@ -182,7 +182,9 @@ fn norm() -> List(Todo) = todos.reverse       # same as above
 
 - **`Text` order is UTF-16 code-unit order**, not a locale's collation: `"Z" < "a"`, `"B" < "a"`, and kana and kanji sort by code point rather than in dictionary (reading) order.
 - **A key is ordered as the value it is at runtime.** A field declared numeric or `Time` whose value arrives as `Text` — for example from an HTTP JSON body, which is not converted to the declared types — is ordered as `Text`: `"10"` before `"9"`.
-- **A key with no value to order — absent, or `NaN` — sorts after every other key**, keeping its order. Only a key the checker could not type can be one; compared as "equal" to every key, a single one would otherwise stop the rest from sorting.
+- **A key with no value to order — absent, or `NaN` — sorts after every other key**, keeping its order. A `Float` key is `NaN` wherever [§2.2.7](#_2-2-7-int-float) makes it one, and only a key the checker could not type can be absent; compared as "equal" to every key, a single one would otherwise stop the rest from sorting.
+
+**`sort` orders the elements themselves the same way**: a `List(Int)`, `List(Float)` or `List(Time)` numerically, and a `List(Text)` in UTF-16 code-unit order, so `[3, 1, 2, 10].sort` is `[1, 2, 3, 10]` and `["9", "10"].sort` is `["10", "9"]`. The values [§2.2.7](#_2-2-7-int-float) gives a `Float` outside a function's domain are numbers like any other: `-Infinity` sorts before every finite value and `Infinity` after, so `[10.0, 9.0, 1.5, 1.0 / 0.0].sort` is `[1.5, 9.0, 10.0, Infinity]`. `NaN`, which `<` orders against nothing, sorts after every other element, `Infinity` included, as a `NaN` key does in `sort-by`: `[(-1.0).sqrt, 2.0, 1.0].sort` is `[1.0, 2.0, NaN]`.
 
 ### 2.2.4 Option(T)
 
@@ -246,7 +248,7 @@ show, to-float (Int), to-int (Float, truncated)
 
 These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier is a capitalised name, so `math.abs(x)` is a reference to a name called `math` and reports [E0103](./errors.md#e0103-undef-ref-undef-slot).
 
-An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
+An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. They are `Float` values like any other: `sort` puts `-Infinity` before every finite value, `Infinity` after, and `NaN` after every other element ([§2.2.3](#_2-2-3-list-t)). Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
 `x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
 
