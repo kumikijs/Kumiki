@@ -129,6 +129,8 @@ to-list                     : List(T)
 
 何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` / `Map.map` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
 
+**どの `Text` も普通のキーである**。JavaScript のオブジェクトのメンバーと同じ綴りのキー — `constructor` / `toString` / `valueOf` / `hasOwnProperty` / `__proto__` — も、ほかのキーと同じく書き込まれてはじめて保持される：空の `Map(Text, Int)` では `has("constructor")` は `false`、`get("constructor")` は `None`、`get-or("constructor", 0)` は `0` であり、空の `Set(Text)` への `toggle("toString")` はそれを加える。書き込まれたそのエントリはどのメンバーからも読み戻せ、別のキーの `remove`、`intersect`、`diff`、`filter`、`map` はほかのエントリと同じくそれを残す。
+
 ### 2.2.3 List(T)
 
 ```

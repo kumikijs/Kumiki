@@ -87,6 +87,64 @@ describe("one key per value", () => {
   });
 });
 
+// Results are read with Object.keys / Object.entries, which list own keys only, so an own
+// "__proto__" entry is told apart from the inherited accessor.
+describe.each([
+  "constructor",
+  "toString",
+  "valueOf",
+  "hasOwnProperty",
+  "__proto__",
+])("a key spelled %j, like an Object.prototype member", (k) => {
+  const s = _stdlibCore;
+
+  it("is not held by an empty Map or Set", () => {
+    expect(s.setHas({}, k)).toBe(false);
+    expect(s.mapGet({}, k)).toBeUndefined();
+    expect(s.mapGetOr({}, k, 0)).toBe(0);
+    expect(Object.entries(s.mapUpdate({}, k, (v) => `${String(v)}!`))).toEqual([]);
+    expect(() => s.index({}, k)).toThrow(KumikiPanic);
+    expect(Object.keys(s.setToggle({}, k))).toEqual([k]);
+    expect(Object.keys(s.setIntersect(s.setAdd({}, k), {}))).toEqual([]);
+    expect(Object.keys(s.setDiff(s.setAdd({}, k), {}))).toEqual([k]);
+    expect(Object.keys(s.diff(s.setAdd({}, k), {}) as object)).toEqual([k]);
+  });
+
+  it("reads back once written, and stays when another key is taken out", () => {
+    const m = s.mapInsert(s.mapInsert({}, k, 1), "a", 2);
+    expect(s.setHas(m, k)).toBe(true);
+    expect(s.mapGet(m, k)).toBe(1);
+    expect(s.mapGetOr(m, k, 0)).toBe(1);
+    expect(s.index(m, k)).toBe(1);
+    expect(Object.entries(s.mapUpdate(m, k, (v) => (v as number) + 1))).toEqual([
+      [k, 2],
+      ["a", 2],
+    ]);
+    expect(Object.entries(s.mapRemove(m, "a"))).toEqual([[k, 1]]);
+    expect(Object.entries(s.mapRemove(m, k))).toEqual([["a", 2]]);
+
+    const set = s.setAdd(s.setAdd({}, k), "a");
+    expect(Object.keys(s.setToggle(set, "a"))).toEqual([k]);
+    expect(Object.keys(s.setToggle(set, k))).toEqual(["a"]);
+    expect(Object.keys(s.setIntersect(set, set))).toEqual([k, "a"]);
+    expect(Object.keys(s.setDiff(set, s.setAdd({}, "a")))).toEqual([k]);
+    expect(Object.keys(s.setUnion({}, set))).toEqual([k, "a"]);
+  });
+
+  it("is kept by Map.filter and Map.map", () => {
+    const m = s.mapInsert(s.mapInsert({}, k, 1), "a", 2);
+    expect(Object.entries(s.filter(m, () => true) as object)).toEqual([
+      [k, 1],
+      ["a", 2],
+    ]);
+    const plusOne = (pair: unknown) => (pair as [string, number])[1] + 1;
+    expect(Object.entries(s.mapOver(m, plusOne) as object)).toEqual([
+      [k, 2],
+      ["a", 3],
+    ]);
+  });
+});
+
 describe("an index read", () => {
   it("reads the element of a List at the index", () => {
     expect(_stdlibCore.index([10, 20, 30], 1)).toBe(20);

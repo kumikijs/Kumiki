@@ -1,0 +1,55 @@
+{
+  "steps": [
+    {
+      "label": "an empty Map and Set hold no key that names an object member",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "has-ctor: false",
+          "get-ctor: false",
+          "get-or-valueOf: 0",
+          "tags: 0 valueOf=false",
+          "ctor-intersect: 0",
+          "ctor-diff: 1"
+        ]
+      }
+    },
+    {
+      "label": "a \"__proto__\" entry is kept when another key is taken out, and by filter and map",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "pinned-remove: true",
+          "pinned-intersect: 2",
+          "pinned-diff: true",
+          "notes-remove: 7",
+          "notes-filter: 7",
+          "notes-map: 8"
+        ]
+      }
+    },
+    {
+      "label": "a word counter counts every word from 0, and update writes nothing at an absent key",
+      "do": { "click": "#tally" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["counts: 1,1,1,1", "count-keys: 4"],
+        "state": { "counts": { "a": 1, "constructor": 1, "toString": 1 } }
+      }
+    },
+    {
+      "label": "toggle on an empty Set adds the element",
+      "do": { "click": "#tag" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["tags: 2 valueOf=false"],
+        "state": { "tags": { "toString": true } }
+      }
+    },
+    {
+      "label": "an index read reads a \"__proto__\" entry back",
+      "do": { "click": "#read" },
+      "expect": { "noErrors": true, "domIncludes": ["read: 7"], "state": { "read": 7 } }
+    }
+  ]
+}
