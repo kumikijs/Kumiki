@@ -14,7 +14,9 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   if (name === "key") return true;
   if (tile === "link" && (name === "prefetch" || name === "prefetch-args")) return true;
   if (forEl && name === "style") return true;
-  if (forEl && name === "bind") return true;
+  // A read of an `error` tile's `field` can panic (`.get` on a `None`, an index
+  // past a List's end) where the tile itself renders nothing.
+  if (forEl && (name === "bind" || (tile === "error" && name === "field"))) return true;
   return false;
 }
 

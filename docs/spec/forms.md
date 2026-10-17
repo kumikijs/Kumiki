@@ -300,6 +300,19 @@ error(field=email)
 
 A type carrying several predicates ([§1.3.1](./language.md#_1-3-1-syntax)) renders the message of the **first one the current value fails**, in the order §1.3.1 gives them. On `slot draft : Text where nonempty where len-lt(7) = ""` a pristine field reads "Required", not a bound the empty value is well inside.
 
+`field=` names a slot, or a **path** into one: the slot's name followed by steps, each a record field (`form.email`), `.get` into an `Option`'s or a `Result`'s payload (`draft.get.title`), or an index with a literal key into a `List` (`rows[0]`) or a `Map` (`book["b"]`).
+
+```kumiki snippet
+input(bind=form.email, type="email")
+error(field=form.email)
+input(bind=form.age, type="number")
+error(field=form.age)
+```
+
+With a path, the tile renders only a failure at or below it. The slot is judged at the path the way a `bind` to that path is ([§5.6](#_5-6-validation-strategy)) — the predicates along it and every one below where it ends — so a sibling's failure is not the tile's. On a record whose `email` and `age` both fail, `error(field=form.email)` renders the email's message and `error(field=form.age)` the age's, wherever each field sits in the record. Text a bound `input` cannot read is a failure at the path the input binds: `"1.5"` in the age field is "Must be a whole number" under `error(field=form.age)`, and nothing under `error(field=form.email)`. A bare slot keeps the whole of it: `error(field=form)` renders the first failure anywhere in `form`. A path that reaches no value — `.get` on a `None` or an `Err`, an index past the end of the `List`, a key the `Map` lacks — has nothing there to fail, and renders nothing.
+
+The path is checked against the slot's type: a field the record lacks is [E0108](./errors.md#e0108-undef-member), and a `List` index that is no `Int` is [E0201](./errors.md#e0201-type-mismatch). Anything else names no place in a slot, so there is no failure the tile could render, and is [E0230](./errors.md#e0230-error-field-not-path): a literal (`field="email"`), a local name such as a `for` variable or a tile's `$1`, a member that derives a value (`.length`), a call, any other expression, or an index into something other than a `List` or a `Map`. An index whose key is computed (`error(field=rows[i].email)`) is E0230 as well: a path names its element or entry by a literal key ([#828](https://github.com/kumikijs/Kumiki/issues/828)).
+
 ### 5.7.2 Standard Messages
 
 | Predicate | Default |

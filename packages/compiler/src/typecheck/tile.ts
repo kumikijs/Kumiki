@@ -14,6 +14,7 @@ import { checkAgainst } from "./against.ts";
 import {
   checkBindStrictProp,
   checkBindTargetSteps,
+  checkErrorField,
   checkInputBindType,
   checkToggleBind,
 } from "./bind.ts";
@@ -444,6 +445,7 @@ function checkTileCall(
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
+  checkErrorField(t, sym, errors, ctx);
 }
 
 function checkHandlerBinding(
