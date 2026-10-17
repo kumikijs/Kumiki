@@ -1,5 +1,5 @@
 import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
-import { decodedType } from "../builtin-calls.ts";
+import { callsBuiltin, decodedType, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
@@ -63,6 +63,10 @@ function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   const refine = refinementJs({ kind: "TypeRef", name: qualifier, pos }, ctx.gen);
   if (refine === undefined) return read;
   return `((_o) => (_o._tag === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
+}
+
+function fnCallJs(callee: string, args: Expr[], ctx: EvalCtx): string {
+  return `${jsBinding(callee)}(${args.map((a) => jsOfExpr(a, ctx)).join(", ")})`;
 }
 
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
@@ -143,7 +147,10 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "Call": {
       const cn = e.callee;
-      if (cn === "run-reducer") {
+      if (!callsBuiltin(cn, (name) => ctx.gen.fns.some((f) => f.name === name))) {
+        return fnCallJs(cn, e.args, ctx);
+      }
+      if (cn === RUN_REDUCER) {
         return `_s.runReducerStep(App, _init, ${JSON.stringify(reducerNameArg(e.args[0]))}, _event)`;
       }
       if (cn === "now") return `_s.now()`;
@@ -183,8 +190,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "prefers-dark") return `_s.prefersDark()`;
       if (cn === "random") return "_s.random()";
       if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, e.pos, ctx)})`;
-      const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
-      return `${jsBinding(cn)}(${args})`;
+      return fnCallJs(cn, e.args, ctx);
     }
     case "MethodCall": {
       return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind, e.fragmentShape);
