@@ -1,5 +1,5 @@
 import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
@@ -290,7 +290,7 @@ function checkIndexLvalue(
   ctx: Ctx,
 ): void {
   const raw = lvalueType(lv.base, sym);
-  checkListIndex(unaliasType(raw, sym), lv.index, sym, errors, ctx);
+  checkAgainst(lv.index, indexType(unaliasType(raw, sym), lv.index.pos), sym, errors, ctx);
   const step = indexStep(raw, sym);
   if (step.kind !== "no-place") return;
   errors.push({
@@ -299,6 +299,14 @@ function checkIndexLvalue(
     message: noPlaceMessage(step, lv.index),
     pos: lv.pos,
   });
+}
+
+// The same on either side of `:=`, since the read and the write name the same place.
+export function indexType(base: TypeExpr | null, at: Pos): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return prim("Int", at);
+  if (base.name === "Map") return base.args[0] ?? null;
+  return null;
 }
 
 function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
@@ -312,17 +320,6 @@ function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): st
       ? ` — write the field step ".${index.value}"`
       : "";
   return `${into}: an index names a place only in a Map or a List${field}`;
-}
-
-export function checkListIndex(
-  base: TypeExpr | null,
-  index: Expr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  if (base?.kind !== "TypeApp" || base.name !== "List") return;
-  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
 }
 
 function checkMemberLvalue(

@@ -1,0 +1,64 @@
+# Feature (language.md): the index of a `Map(K, V)` is a `K`.
+#
+# An index step into a Map names the entry at the key, so the key has the
+# Map's key type, on both sides of `:=`: the read `m[k]`, the write
+# `m[k] := v` and the write through an entry `m[k].f := v`. It is the rule a
+# List index follows, where the position is an `Int`.
+#
+# A key is accepted the way a value is where its type is declared. Two
+# nominal types over one base do not accept each other, so on
+# `notes : Map(TodoId, Text)` the key `post : PostId` is E0201
+# `Expected TodoId but got PostId` in each of the three forms, and on
+# `counts : Map(Text, Int)` the key `1` is `Expected Text but got Int`. A
+# value with no nominal name of its own meets the nominal declared over it,
+# so the literal "t2" is a `TodoId` key, as it is a `TodoId` slot's value.
+
+type TodoId = nominal Text
+type PostId = nominal Text
+type Todo   = { title: Text, done: Bool }
+
+slot notes  : Map(TodoId, Text) = {"t1": "hello"}
+slot todos  : Map(TodoId, Todo) = {"t1": {title: "write docs", done: false}}
+slot counts : Map(Text, Int)    = {"a": 0}
+slot todo   : TodoId            = "t1"
+slot post   : PostId            = "p1"
+slot shown  : Text              = "-"
+
+reducer read on=ui.click(Read)
+    do= shown := notes[todo]
+
+reducer write on=ui.click(Write)
+    do= notes[todo] := "edited"
+
+reducer mark on=ui.click(Mark)
+    do= todos[todo].done := true
+
+reducer literal on=ui.click(Literal)
+    do= notes["t2"] := "by a literal key"
+
+reducer count on=ui.click(Count)
+    do= counts["a"] := counts["a"] + 1
+
+tile Read    = button(text="read")    {id: "read"}
+tile Write   = button(text="write")   {id: "write"}
+tile Mark    = button(text="mark")    {id: "mark"}
+tile Literal = button(text="literal") {id: "literal"}
+tile Count   = button(text="count")   {id: "count"}
+
+tile App
+    = column(
+        Read,
+        Write,
+        Mark,
+        Literal,
+        Count,
+        text("shown: " + shown),
+        text("t1: " + notes[todo]),
+        text("done: " + todos[todo].done.show),
+        text("a: " + counts["a"].show),
+        text("post: " + post))
+
+app MapIndexKeyType
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

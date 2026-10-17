@@ -51,6 +51,16 @@ reducer go on=ui.click(Btn) do= w := w.union(["a"])`);
       "return _s.setOf([x])",
     ],
     [
+      "the index of a Map read",
+      'slot m : Map(Set(Int), Text) = {}\nslot t : Text = ""\nreducer go on=ui.click(Btn) do= t := m[[1]]',
+      ", _s.setOf([1]));",
+    ],
+    [
+      "the index of a Map write",
+      'slot m : Map(Set(Int), Text) = {}\nreducer go on=ui.click(Btn) do= m[[1]] := "a"',
+      "[{ at: _s.setOf([1]) }]",
+    ],
+    [
       "the argument of List.contains",
       "slot ls : List(Set(Int)) = []\nslot b : Bool = false\nreducer go on=ui.click(Btn) do= b := ls.contains([1])",
       "_s.contains(",
