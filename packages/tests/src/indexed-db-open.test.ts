@@ -1,18 +1,20 @@
 import { feature } from "@kumikijs/examples";
-import { afterEach, describe, expect, it } from "vitest";
-import { clickContaining, mountApp, tick, waitUntil } from "./helpers/dom.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { clickContaining, mountApp, waitUntil } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
 const EXAMPLE = feature("185-indexed-db-open-retry");
 
-type Opening = "success" | "blocked" | "error";
+type Opening = "success" | "blocked" | "error" | "version-error";
 
 const BLOCKED_MS = 50;
 
 const NOTES = new Map<string, unknown>([["a", { id: "a", body: "hi" }]]);
 
-function fire(target: object, handler: unknown, type: string): void {
-  if (typeof handler === "function") handler.call(target, new Event(type));
+function fire(target: object, handler: unknown, type: string | Event): void {
+  if (typeof handler === "function") {
+    handler.call(target, typeof type === "string" ? new Event(type) : type);
+  }
 }
 
 function requestOf(result: unknown): object {
@@ -52,8 +54,8 @@ class Connection extends EventTarget {
 
 type Double = { opens: number; connections: Connection[] };
 
-// Each `open()` answers with the next entry of `script`, the last one repeating; every open asks
-// for an upgrade, as the example's version 2 does against a version-1 database.
+// Each `open()` answers with the next entry of `script`, the last one repeating. Every open asks
+// for an upgrade, because `blocked` only comes with an upgrade request.
 function installIndexedDb(script: Opening[]): Double {
   const double: Double = { opens: 0, connections: [] };
   const factory = {
@@ -84,8 +86,18 @@ function installIndexedDb(script: Opening[]): Double {
         if (how === "error") {
           req.error = new DOMException("the open failed", "UnknownError");
           fire(req, req.onerror, "error");
+        } else if (how === "version-error") {
+          req.error = new DOMException(
+            "The requested version (2) is less than the existing version (3).",
+            "VersionError",
+          );
+          fire(req, req.onerror, "error");
         } else if (how === "blocked") {
-          fire(req, req.onblocked, "blocked");
+          fire(
+            req,
+            req.onblocked,
+            Object.assign(new Event("blocked"), { oldVersion: 1, newVersion: 2 }),
+          );
           setTimeout(succeed, BLOCKED_MS);
         } else {
           succeed();
@@ -119,20 +131,26 @@ async function withExample(body: (root: HTMLElement) => Promise<void>): Promise<
   }
 }
 
-describe("an indexed-* effect opens app.indexed-db as part of its own call", () => {
+describe("an indexed-* effect's open outcome is not kept for the page", () => {
   const original = (globalThis as { indexedDB?: unknown }).indexedDB;
   afterEach(() => {
     (globalThis as { indexedDB?: unknown }).indexedDB = original;
+    vi.restoreAllMocks();
   });
 
   it("an open that reports blocked waits for its success, and the next load reuses it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const idb = installIndexedDb(["blocked"]);
     await withExample(async (root) => {
       expect(await load(root)).toBe("loaded hi");
-      await tick(200);
       expect(await load(root)).toBe("loaded hi");
     });
     expect(idb.opens).toBe(1);
+    expect(warn.mock.calls).toEqual([
+      [
+        'kumiki: app.indexed-db "notes" upgrade 1 -> 2 is blocked by other open connections; indexed-* effects wait until they close',
+      ],
+    ]);
   });
 
   it("an open that fails is that load's err, and the next load opens again", async () => {
@@ -155,6 +173,19 @@ describe("an indexed-* effect opens app.indexed-db as part of its own call", () 
     });
     expect(idb.opens).toBe(2);
     expect(idb.connections.map((c) => c.closed)).toEqual([true, false]);
+  });
+
+  it("after another tab's upgrade, the reopen at the page's version is a VersionError on every load", async () => {
+    const idb = installIndexedDb(["success", "version-error"]);
+    const refused =
+      "err: VersionError: The requested version (2) is less than the existing version (3).";
+    await withExample(async (root) => {
+      expect(await load(root)).toBe("loaded hi");
+      idb.connections[0]?.versionChange();
+      expect(await load(root)).toBe(refused);
+      expect(await load(root)).toBe(refused);
+    });
+    expect(idb.opens).toBe(3);
   });
 
   it("a connection the browser closes is not kept, and the next load opens again", async () => {

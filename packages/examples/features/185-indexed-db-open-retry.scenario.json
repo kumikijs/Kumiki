@@ -1,7 +1,7 @@
 {
   "steps": [
     {
-      "label": "nothing is opened until a load runs",
+      "label": "no load runs at mount: status is idle",
       "expect": { "noErrors": true, "domIncludes": ["status: idle"] }
     },
     {

@@ -2,7 +2,7 @@
 "@kumikijs/runtime": patch
 ---
 
-An IndexedDB open that is blocked or fails is one effect's outcome, not the page's
+An `indexed-*` effect no longer fails with `IndexedDB open blocked` while another tab holds the database, and a failed open no longer fails every later effect until reload
 
 The runtime opened `app.indexed-db` once and kept the result for the life of
 the page, whatever it was. Two things made that result a failure that never
@@ -26,11 +26,8 @@ The runtime also left its own connection open on `versionchange`, so an older
 tab of the same app is exactly what blocked a newer tab's upgrade after a bump
 of `app.indexed-db.version`.
 
-Now the open waits through `blocked` for `success` or `error`; an open that
-fails is the `.err` of the effects waiting on it and is not kept, so the next
-effect opens again; and on `versionchange` the runtime closes its connection,
-so it does not block the other tab's upgrade, and its next effect opens again.
-A connection the browser closes on its own is dropped the same way:
+Now the open waits through `blocked` for `success` or `error`, and later
+effects share it:
 
 ```
 click 1         : loaded hi
@@ -38,4 +35,18 @@ click 2 (+200ms): loaded hi
 indexedDB.open calls: 1
 ```
 
-`docs/spec/http.md` states this lifecycle; example 185 shows it.
+Nothing times that wait out. While it lasts, the effects waiting on the open
+stay in flight, and the runtime logs a `kumiki:` console warning naming the
+database and both versions. An open that fails is the `.err` of the effects
+waiting on it and is not kept, so the next effect opens again.
+
+On `versionchange` the runtime now closes its connection, so it no longer
+blocks the other tab's upgrade. The page's next effect reopens with the
+page's own `version`. When the other tab's version is newer, as after a
+deploy, the upgraded database refuses that reopen, and every `indexed-*`
+effect on the old page is `.err` (`VersionError: …`) until it reloads. Before,
+the old page kept working and held the new page's upgrade back. A connection
+the browser closes on its own (site data cleared, eviction) is not kept
+either, and the next effect opens again.
+
+`docs/spec/http.md` states this lifecycle.
