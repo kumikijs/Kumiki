@@ -221,6 +221,29 @@ function loadScenario(path: string): Scenario {
   return doc as Scenario;
 }
 
+// The in-memory store keeps only the most recent N, so the file is appended as
+// each episode commits. A failed write is held for `rethrow`: the hook runs inside
+// the runtime's commit, where a throw would read as an error of the app.
+function fileEpisodeLogger(path: string): { logger: EpisodeLogger; rethrow: () => void } {
+  let failure: { error: unknown } | null = null;
+  const logger = createEpisodeLogger({
+    onEpisode: (ep) => {
+      if (failure) return;
+      try {
+        appendFileSync(path, `${JSON.stringify(ep)}\n`);
+      } catch (error) {
+        failure = { error };
+      }
+    },
+  });
+  return {
+    logger,
+    rethrow: () => {
+      if (failure) throw failure.error;
+    },
+  };
+}
+
 /** CLI entry: run a scenario JSON file against a .kumiki file; print the trace. */
 export async function runCmd(
   kumikiPath: string,
@@ -230,9 +253,9 @@ export async function runCmd(
 ): Promise<void> {
   const scenario = loadScenario(scenarioPath);
   const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
-  const episodeLogger = logFile ? createEpisodeLogger() : null;
+  const log = logFile ? fileEpisodeLogger(logFile) : null;
   const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
-    episodeLogger,
+    episodeLogger: log?.logger ?? null,
     sourcePath: kumikiPath,
   });
   for (let i = 0; i < report.steps.length; i++) {
@@ -250,11 +273,7 @@ export async function runCmd(
     for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
-  if (episodeLogger && logFile) {
-    for (const ep of episodeLogger.list()) {
-      appendFileSync(logFile, `${JSON.stringify(ep)}\n`);
-    }
-  }
+  log?.rethrow();
   if (!report.ok) process.exit(1);
 }
 

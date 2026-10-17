@@ -19,11 +19,15 @@ export const SPAWN = { timeout: CHILD_TIMEOUT_MS + 10_000 };
 
 export type CliResult = { stdout: string; stderr: string; out: string; code: number };
 
-export function runCli(args: readonly string[], options: { input?: string } = {}): CliResult {
+export function runCli(
+  args: readonly string[],
+  options: { input?: string; env?: Record<string, string> } = {},
+): CliResult {
   const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
     encoding: "utf8",
     input: options.input,
     timeout: CHILD_TIMEOUT_MS,
+    env: options.env ? { ...process.env, ...options.env } : undefined,
   });
   // A child that never started or was killed has no status; reporting it as a failure exit would satisfy `code: 1` assertions without the CLI having run.
   if (res.error) throw res.error;
