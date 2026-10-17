@@ -1,0 +1,94 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ""
+        },
+        "domIncludes": ["log: "]
+      }
+    },
+    {
+      "label": "ticking the check runs its ui.change reducer, after the bind is written",
+      "do": {
+        "click": "#agree input"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "agreed": true,
+          "log": "ac "
+        },
+        "domIncludes": ["log: ac "]
+      }
+    },
+    {
+      "label": "a key in the checkbox bubbles to the label and runs its ui.key reducer",
+      "do": {
+        "key": "#agree input",
+        "value": " "
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "ac ak "
+        }
+      }
+    },
+    {
+      "label": "a switch takes ui.change the same way",
+      "do": {
+        "click": "#lit input"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "lit": true,
+          "log": "ac ak wc "
+        }
+      }
+    },
+    {
+      "label": "and a radio",
+      "do": {
+        "click": "#big input"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "size": {
+            "_tag": "Large"
+          },
+          "log": "ac ak wc rc "
+        }
+      }
+    },
+    {
+      "label": "an input takes focus itself, so its ui.focus reducer runs",
+      "do": {
+        "focus": "#note"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "ac ak wc rc nf "
+        }
+      }
+    },
+    {
+      "label": "and its ui.blur reducer",
+      "do": {
+        "blur": "#note"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "ac ak wc rc nf nb "
+        },
+        "domIncludes": ["log: ac ak wc rc nf nb "]
+      }
+    }
+  ]
+}
