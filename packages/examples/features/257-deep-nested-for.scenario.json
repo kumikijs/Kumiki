@@ -1,0 +1,29 @@
+{
+  "steps": [
+    {
+      "label": "both 28-deep nests render a node per outer and inner element",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["a/1", "a/2", "b/1", "b/2", "a.1", "a.2", "b.1", "b.2"]
+      }
+    },
+    {
+      "label": "reversing the outermost list re-renders both nests without error",
+      "do": { "click": "#flip-outer" },
+      "expect": {
+        "noErrors": true,
+        "state": { "outer": ["b", "a"] },
+        "domIncludes": ["a/1", "a/2", "b/1", "b/2", "a.1", "a.2", "b.1", "b.2"]
+      }
+    },
+    {
+      "label": "reversing the innermost list re-renders both nests without error",
+      "do": { "click": "#flip-inner" },
+      "expect": {
+        "noErrors": true,
+        "state": { "inner": ["2", "1"] },
+        "domIncludes": ["a/1", "a/2", "b/1", "b/2", "a.1", "a.2", "b.1", "b.2"]
+      }
+    }
+  ]
+}

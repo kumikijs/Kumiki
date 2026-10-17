@@ -426,6 +426,10 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    renders a list per outer iteration, so each of its nodes is then keyed as a
    list under the outer key, the way item 3 keys a list-bodied call: siblings
    from different outer iterations that share an inner key stay distinct.
+   Each level of the nest adds one element to the array item 3 describes: in
+   `for a in as for b in bs for c in cs text(c)`, each `text` is keyed by the
+   JSON array of three keys, those of the `a`, the `b` and the `c` iteration it
+   sits in, and a nest of any depth is keyed the same way.
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.
@@ -434,8 +438,16 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    node would collapse them onto a single identity. Each node takes the pair
    of the call site's key and its own key — the one its own `for` gave it,
    however deeply that `for` nests — or, when it has none, its position in
-   the flattened list, encoded as the JSON array `[callKey, nodeKey]`, so the
-   nodes stay distinct and two pairs never spell the same string. A reorder of
+   the flattened list, encoded as the JSON array `[callKey, nodeKey]`. A
+   node's own key that is itself such an array — the JSON text of an array of
+   two or more elements, spelled exactly as `JSON.stringify` writes it, which
+   is the key a node of a list one level down was given — contributes its
+   elements rather than itself: `[callKey, …nodeKey]`. So a key holds one
+   element per level of nesting, and its length grows linearly with the
+   depth. Whether a key is such an array is read from the string alone, so an
+   explicit `{key: …}` spelled that way is read as one too. The nodes stay
+   distinct and two pairs never spell the same string: a pair extended this
+   way has three or more elements, and one that is not has two. A reorder of
    the outer list moves each node's element; a reorder inside the list moves
    them by their own keys. The list's nodes are children of the container the
    call sits in, however deeply the `for`s that produced them nest.
