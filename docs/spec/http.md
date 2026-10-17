@@ -188,6 +188,16 @@ app App
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
 | `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
 
+`base-url` and a request's `url` ([§6.1.2](#_6-1-2-standard-effect)) make the URL that is fetched:
+
+- An **absolute** url is fetched as written, whatever the base. A url is absolute when it starts with a scheme — a letter, then letters, digits, `+`, `-` or `.`, then `:` (`https:`, `mailto:`) — or with `//` (protocol-relative). A first segment holding a `:` reads as a scheme, so a path like `users:search` is written `/users:search`.
+- Any other url is **relative**, and is joined to the base with exactly one `/` between them, whether the base ends in `/` and whether the url starts with one: under `https://api.example.com` and under `https://api.example.com/`, both `/items/1` and `items/1` fetch `https://api.example.com/items/1`.
+- A base that carries a path is a **prefix**: `https://api.example.com/v1` with `/users` fetches `https://api.example.com/v1/users`. The url is not resolved against the base the way a browser resolves a link (`new URL("/users", base)`), which would drop `/v1`; a request for another path on the host writes its whole URL. A base that is only a path is joined the same way: `/api` with `users` fetches `/api/users`.
+- An empty url, or one that starts with `?` or `#`, is appended to the base as written: `https://api.example.com/items` with `?page=2` fetches `https://api.example.com/items?page=2`.
+- With no `base-url`, or an empty one, every url is fetched as written.
+
+`query` is appended to the joined URL ([§6.1.2](#_6-1-2-standard-effect)).
+
 Every field that takes a value takes an **expression**, and may read a slot. All
 four are evaluated **when a request is made**, not when the app is built: a
 reducer that writes the slot changes what the next request is made with, and

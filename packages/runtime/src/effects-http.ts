@@ -29,7 +29,7 @@ export async function httpFetch(
     key?: string;
     value?: unknown;
   };
-  const baseUrl = httpCfg?.baseUrl ?? "";
+  const baseUrl = baseBefore(x.url ?? "", httpCfg?.baseUrl ?? "");
   const url = withQuery(baseUrl + (x.url ?? ""), x.query);
   const headers: Record<string, string> = {};
   const globalHeaders = httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {};
@@ -179,6 +179,17 @@ function setHeader(headers: Record<string, string>, name: string, value?: string
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+const ABSOLUTE_URL = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
+
+// The base is a prefix, not a URL to resolve against: `new URL("/users", base)`
+// would drop the base's own path.
+function baseBefore(url: string, base: string): string {
+  if (!base || ABSOLUTE_URL.test(url)) return "";
+  if (url === "" || url.startsWith("?") || url.startsWith("#")) return base;
+  const trimmed = base.replace(/\/+$/, "");
+  return url.startsWith("/") ? trimmed : `${trimmed}/`;
 }
 
 function withQuery(url: string, query: Record<string, string> | undefined): string {
