@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "label": "mounting Account runs each tile's reducer once, Profile's first",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["seen: Profile Settings"],
+        "state": { "seen": "Profile Settings " }
+      }
+    }
+  ]
+}

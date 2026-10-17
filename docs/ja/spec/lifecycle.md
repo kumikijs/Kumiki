@@ -108,7 +108,25 @@ reducer trackPageView
     do= emit track({event: "settings_view", props: {}})
 ```
 
-複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
+複数の tile を対象にしたい場合は、tile ごとに reducer を 1 つずつ、それぞれ別の名前で宣言する。reducer の名前は一度しか宣言できない：同じ名前の 2 つ目の `reducer` は、トリガが何であれ [E0007](./errors.md#e0007-duplicate-definition) になる。
+
+```kumiki
+slot seen : Text = ""
+
+tile Profile  = text("Profile")
+tile Settings = text("Settings")
+tile Account  = page(Profile, Settings, text(seen))
+
+reducer seeProfile  on=tile.mount(Profile)  do= seen := seen + "Profile "
+reducer seeSettings on=tile.mount(Settings) do= seen := seen + "Settings "
+
+app Accounts
+    caps   = []
+    routes = {"/" -> Account, "/404" -> Account}
+    init   = []
+```
+
+各 reducer は自分の tile がマウントされたときに発火する：`Account` を描画すると `seeProfile`、続いて `seeSettings` がそれぞれ 1 回ずつ実行される。同じ描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer は tile が描画ツリーに現れる順に発火する。1 つの tile に対する複数の reducer は 1 つのイベントへの複数の subscription であり、定義順で発火する（[§1.6.1](./language.md#_1-6-1-構文)）。
 
 ---
 
