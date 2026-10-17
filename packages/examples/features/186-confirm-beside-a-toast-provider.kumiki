@@ -9,15 +9,18 @@
 #
 # A move the guard holds lasts until its dialog is answered or another
 # navigation arrives. The later navigation replaces it: the held move is
-# dropped, its dialog closes unanswered (neither `discard` nor `keep` runs),
-# and the new navigation leaves the page still shown, so the guard asks again,
-# this time about the new destination.
+# dropped and its dialog closes unanswered (neither `discard` nor `keep` runs).
+# To another page, the guard asks again, this time about the new destination.
+# Back to the editor itself, as browser Back does while the dialog is open,
+# only withdraws the move: the editor was never left, so `route.enter("/edit")`
+# does not run again and the edits stay.
 
 slot dirty  : Bool = false
 slot saves  : Int  = 0
 slot kept   : Int  = 0
 slot homes  : Int  = 0
 slot abouts : Int  = 0
+slot opens  : Int  = 0
 
 reducer edit on=ui.input(Draft) do= dirty := true
 reducer save on=ui.click(SaveBtn)
@@ -37,6 +40,7 @@ reducer keep    on=ui.click(_) do= kept := kept + 1
 
 reducer enterHome  on=route.enter("/")      do= homes := homes + 1
 reducer enterAbout on=route.enter("/about") do= abouts := abouts + 1
+reducer enterEdit  on=route.enter("/edit")  do= opens := opens + 1
 
 tile Draft    = textarea(placeholder="Draft", onInput=edit)
 tile SaveBtn  = button(text="Save", onClick=save)
@@ -45,6 +49,7 @@ tile About    = page(heading("About page"), link(to="/edit") {text: "Edit"})
 tile Editor   = page(heading("Editor"),
                      text("dirty: " + dirty.show),
                      text("saves: " + saves.show),
+                     text("opens: " + opens.show),
                      Draft,
                      SaveBtn,
                      link(to="/") {text: "Home"},

@@ -6,7 +6,11 @@
     },
     {
       "do": { "clickText": "Edit" },
-      "expect": { "noErrors": true, "domIncludes": ["Editor", "dirty: false"] }
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Editor", "dirty: false"],
+        "state": { "opens": 1 }
+      }
     },
     {
       "do": { "fill": "textarea", "value": "first draft" },
@@ -36,12 +40,26 @@
       }
     },
     {
-      "label": "Yes settles the move that replaced it: About, not Home",
+      "label": "Escape answers No to the dialog that replaced it; the dropped one answers nothing",
+      "do": { "key": "textarea", "value": "Escape" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Editor", "opens: 1"],
+        "state": { "dirty": true, "kept": 1, "homes": 1, "abouts": 0, "opens": 1 }
+      }
+    },
+    {
+      "label": "the edits are still guarded",
+      "do": { "clickText": "About" },
+      "expect": { "noErrors": true, "domIncludes": ["Editor"], "state": { "abouts": 0 } }
+    },
+    {
+      "label": "Yes settles the move: About, not Home",
       "do": { "click": "[data-kumiki-confirm] button[data-kumiki-confirm-action='yes']" },
       "expect": {
         "noErrors": true,
         "domIncludes": ["About page"],
-        "state": { "dirty": false, "kept": 0, "homes": 1, "abouts": 1 }
+        "state": { "dirty": false, "kept": 1, "homes": 1, "abouts": 1 }
       }
     }
   ]

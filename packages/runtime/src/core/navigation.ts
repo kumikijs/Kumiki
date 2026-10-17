@@ -1,11 +1,12 @@
 import type { AppShape, HoldLeave, ParsedRoute, RouteEntry, Router, RoutingImpl } from "./types.ts";
 
-type HeldMove = { oldRoute: ParsedRoute; newRoute: ParsedRoute; close?: () => void };
+/** A move a leave guard's `confirm` holds, and how to close every dialog its guards opened. */
+type HeldMove = { oldRoute: ParsedRoute; newRoute: ParsedRoute; closes: (() => void)[] };
 
 export type Navigation = {
   navigate(path: string, replace: boolean): void;
   back(): void;
-  /** The hook a `confirm` modal opening while a `route.leave` handler holds a move calls. */
+  /** Called by every `confirm` modal as it opens; see `HoldLeave`. */
   holdLeave: HoldLeave;
   /** Called for every emitted effect, so a `confirm` raised while leaving holds the navigation. */
   noteEmit(effect: string): void;
@@ -25,6 +26,8 @@ export function createNavigation(deps: {
   const { app, slots, routing, router, fireLifecycle, render } = deps;
   let pendingLeave: HeldMove | null = null;
   let leaving: HeldMove | null = null;
+  // Bumped by every sync, so one that a leave guard's own navigation overtook stops there.
+  let generation = 0;
   const scrollSaved = new Map<string, { x: number; y: number }>();
   let lastNavSource: "push" | "replace" | "pop" = "push";
   let unsubscribe: (() => void) | undefined;
@@ -36,30 +39,44 @@ export function createNavigation(deps: {
     render();
   };
 
+  const closeAll = (move: HeldMove | null): void => {
+    for (const close of move?.closes ?? []) close();
+  };
+
   function syncRouteFromLocation(): void {
     if (!routing || !router) return;
-    // A navigation while a move is held replaces it. The held move never
-    // committed, so this one leaves the route still shown, guards and all.
+    const gen = ++generation;
+    // A navigation while a move is held replaces it. The held move never committed, so this one
+    // starts from the route still shown.
     const dropped = pendingLeave;
     pendingLeave = null;
-    dropped?.close?.();
+    closeAll(dropped);
     const redirectTo = routing.findRedirect(app.routes, router.read());
     if (redirectTo !== null) router.replace(redirectTo);
     const oldRoute = slots.route as ParsedRoute;
     const newRoute = routing.parseLocation(app.routes, router.read());
+    // Back to the location still shown only withdraws the held move: nothing was left, so
+    // nothing is entered.
+    if (dropped && oldRoute && routing.href(newRoute) === routing.href(oldRoute)) {
+      slots.route = newRoute;
+      render();
+      return;
+    }
     if (oldRoute && typeof window !== "undefined") {
       const x = typeof window.scrollX === "number" ? window.scrollX : 0;
       const y = typeof window.scrollY === "number" ? window.scrollY : 0;
       scrollSaved.set(oldRoute.path, { x, y });
     }
     if (oldRoute && oldRoute.path !== newRoute.path) {
-      const move: HeldMove = { oldRoute, newRoute };
+      const move: HeldMove = { oldRoute, newRoute, closes: [] };
       leaving = move;
       try {
         fireLifecycle(`route.leave(${JSON.stringify(oldRoute.pattern)})`, { $route: oldRoute });
       } finally {
         leaving = null;
       }
+      // A guard's own navigation ran its sync inside the one above, and that one has the last word.
+      if (gen !== generation) return;
       if (pendingLeave === move) {
         render();
         return;
@@ -84,6 +101,8 @@ export function createNavigation(deps: {
   function resolveLeave(p: HeldMove, outcome: "yes" | "no"): void {
     if (pendingLeave !== p) return;
     pendingLeave = null;
+    // One answer settles the move, so the other guards' dialogs close unanswered.
+    closeAll(p);
     if (outcome === "yes") {
       enter(p.newRoute);
       return;
@@ -112,12 +131,12 @@ export function createNavigation(deps: {
     back() {
       router?.back();
     },
-    // Only the first modal opened for a held move settles it, so a `confirm`
-    // another reducer opens meanwhile cannot answer the guard's question.
+    // A modal opens inside the dispatch that emitted its `confirm`, so one opening while the
+    // guards run is a guard's own, and a `confirm` another reducer opens later cannot settle it.
     holdLeave(close) {
-      const move = pendingLeave;
-      if (!move || move.close) return undefined;
-      move.close = close;
+      const move = leaving;
+      if (!move || pendingLeave !== move) return undefined;
+      move.closes.push(close);
       return (outcome) => resolveLeave(move, outcome);
     },
     noteEmit(effect) {
@@ -143,6 +162,10 @@ export function createNavigation(deps: {
     },
     dispose() {
       unsubscribe?.();
+      // A dialog left open would outlive the app, and its answer would still move the router.
+      const held = pendingLeave;
+      pendingLeave = null;
+      closeAll(held);
     },
   };
 }
