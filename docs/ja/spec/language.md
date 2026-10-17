@@ -650,10 +650,12 @@ pattern      ::= identifier
 - 親 tile が `column(A, when(c, B), C)` の場合、`c=false` なら `[A, C]` がレンダリングされる
 - ランタイムは null/undefined 子を skip するため、`when` で「空欄」を生む安全な手段
 
-**`match` の値文脈 vs tile 文脈**:
-- `text/heading/markdown/label/link/image/icon` builtin の **位置引数内** での `match` は値式（`MatchExpr`）として扱われる。各 arm は値（Text, Int, etc.）を返す
-- それ以外の tile 引数内（`column`, `row`, `card` 等）の `match` は tile 式（`TileMatch`）として扱われる。各 arm は tile を返す
+**`if` と `match` の値文脈 vs tile 文脈**:
+- tile 引数が tile になるのは、**値 builtin 以外の builtin の位置引数**（`column`, `row`, `card`, `box` 等）だけである —— tile が描画される唯一の位置。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
+- それ以外の tile 引数はすべて値である —— `tile-arg ::= (identifier '=')? expr` のとおり：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり —— `Say(label("x"))` は `fn` `label` の戻り値を渡す —— 大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：tile を取る builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
+- 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
 - 例: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
 
 ### 1.7.2 不変条件
@@ -676,7 +678,7 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
 
-名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。大文字始まりの名前は、tile を取る builtin（`box` / `button` / `input` / `modal` / `form`）の名前付き引数では *tile call* に、それ以外——props ブロック、`link` のような値引数 builtin の名前付き引数、user tile の名前付き引数——では variant タグになる。
+名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。大文字始まりの名前は、tile を取る builtin（値 builtin 以外のすべて：`box` / `button` / `check` / `radio` / `column` 等）の名前付き引数では *tile call* に、それ以外——props ブロック、`link` のような値引数 builtin の名前付き引数、user tile の名前付き引数——では variant タグになる。
 
 これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
 

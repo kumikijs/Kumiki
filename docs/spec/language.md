@@ -657,10 +657,12 @@ pattern      ::= identifier
 - If the parent tile is `column(A, when(c, B), C)`, then with `c=false`, `[A, C]` is rendered
 - Because the runtime skips null/undefined children, `when` is a safe way to produce a "blank"
 
-**Value context vs tile context for `match`**:
-- A `match` **within the positional arguments** of the `text/heading/markdown/label/link/image/icon` builtins is treated as a value expression (`MatchExpr`). Each arm returns a value (Text, Int, etc.)
-- A `match` within any other tile argument (`column`, `row`, `card`, etc.) is treated as a tile expression (`TileMatch`). Each arm returns a tile
+**Value context vs tile context for `if` and `match`**:
+- A tile argument is a tile only as a **positional argument of a builtin other than the value builtins** (`column`, `row`, `card`, `box`, …) — the one place a tile renders. There, `if` and `match` are tile expressions (`TileIf` / `TileMatch`) whose arms return tiles, a builtin's name followed by `(` or `{` is a call to that builtin, and a capitalised name is a user tile.
+- Every other tile argument is a value, as `tile-arg ::= (identifier '=')? expr` says: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call — `Say(label("x"))` passes what the `fn` `label` returns — and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin that takes tiles is a tile call.
+- `when` and `for` have no value form, so they are tiles wherever they are written.
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
+- Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
 - Example: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
 
 ### 1.7.2 Invariants
@@ -683,7 +685,7 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 With `onClick=saveTodo`, the reducer `saveTodo` is called on click. `{todoId: $1}` is delivered to the reducer as `$el.todoId`.
 
-The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name is a *tile call* when it is a named argument of a builtin that takes tiles (`box`, `button`, `input`, `modal`, `form`), and a variant tag everywhere else: in a props block, as a named argument of a value-arg builtin such as `link`, and as a named argument of a user tile.
+The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name is a *tile call* when it is a named argument of a builtin that takes tiles (every builtin but the value builtins: `box`, `button`, `check`, `radio`, `column`, …), and a variant tag everywhere else: in a props block, as a named argument of a value-arg builtin such as `link`, and as a named argument of a user tile.
 
 Because those shapes carry no arguments, the bare name and the argument-less call are one and the same after parsing — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are the same node, and all three bind the reducer. A value that carries arguments is not a name and is [E0201](./errors.md#e0201-type-mismatch).
 

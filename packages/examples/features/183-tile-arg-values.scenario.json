@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "idle: each argument renders the value its expression gives",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["n=1", "next: busy", "ok!", "saved: 0 undone: 0", "waiting"]
+      }
+    },
+    {
+      "label": "Save is enabled while idle",
+      "do": { "click": "#save" },
+      "expect": { "noErrors": true, "domIncludes": ["saved: 1 undone: 0"] }
+    },
+    {
+      "label": "Undo is disabled while idle: Idle == phase is true",
+      "do": { "click": "#undo" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<button> is disabled"],
+        "state": { "undone": 0 }
+      }
+    },
+    {
+      "label": "busy: the input arguments pick their other branch",
+      "do": { "click": "#toggle" },
+      "expect": {
+        "noErrors": true,
+        "state": { "phase": { "_tag": "Busy" } },
+        "domIncludes": ["n=100", "next: idle", "working"]
+      }
+    },
+    {
+      "label": "Save is disabled while busy: the if gives true",
+      "do": { "click": "#save" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["<button> is disabled"],
+        "state": { "saved": 1 }
+      }
+    },
+    {
+      "label": "Undo is enabled while busy",
+      "do": { "click": "#undo" },
+      "expect": { "noErrors": true, "domIncludes": ["saved: 1 undone: 1"] }
+    }
+  ]
+}
