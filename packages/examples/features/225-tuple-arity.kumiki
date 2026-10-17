@@ -1,0 +1,34 @@
+# Feature (stdlib.md): a tuple's length is part of its type.
+#
+# `Tuple(Int, Text)` and `Tuple(Int, Text, Int)` are two types, and neither is
+# accepted where the other is required: `triple := pair` is E0201
+# `Expected Tuple(Int, Text, Int) but got Tuple(Int, Text)`, and so is the
+# same pair in a fn argument or nested in a List, Map, Option or record.
+#
+# A pair widens to a triple by building the triple: `widen` takes the pair
+# apart and writes all three items. What it returns is a three-item value, so
+# the `(n, label, third)` arm in `read` matches it.
+
+slot pair   : Tuple(Int, Text)      = (1, "a")
+slot triple : Tuple(Int, Text, Int) = (0, "z", 9)
+slot res    : Text                  = "none"
+
+fn widen(p: Tuple(Int, Text), third: Int) -> Tuple(Int, Text, Int)
+   = match p with
+       | (n, label) -> (n, label, third)
+
+reducer grow on=ui.click(Grow)
+    do= triple := widen(pair, 7)
+
+reducer read on=ui.click(Read)
+    do= res := match triple with
+        | (n, label, third) -> n.show + label + " third=" + third.show
+
+tile Grow = button(text="widen") {id: "widen"}
+tile Read = button(text="read")  {id: "read"}
+tile App  = column(Grow, Read, text("res: " + res))
+
+app TupleArity
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

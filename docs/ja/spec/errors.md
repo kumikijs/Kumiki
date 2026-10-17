@@ -539,6 +539,7 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 値が、その位置の要求する型を持っていない。
 
 > `Expected <declared> but got <actual>`
+> `Expected <declared> but got a tuple of <n> item(s)`
 > `Operator "<op>" expects a number but got <type>`
 > `Operator "<op>" expects Bool but got <type>`
 > `Operator "<op>" cannot compare <type> with <type>`
@@ -567,6 +568,8 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 `.get-or` のフォールバックはレシーバではなく**呼び出しが返す型**と照合する：空のケースで呼び出しが返す値そのものだから、結果型を担うのはフォールバックである。その結果型はレシーバの型引数から出る — `Option(T)` と `Result(T, E)` は `T`、`Map(K, V)` は `V` — ものであり、だからこそ `Option(S)` の slot に対する `opt := opt.get-or(None)` は 2 回報告される：フォールバックが `S` でないこと、そして `S` は `Option(S)` ではないこと。2 つの読みのどちらを取るかは引数の個数が決める（[Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)）。したがってレシーバに合わない個数の呼び出しは**ここでは**解決せず、照合する相手も持たない。ただし下げは行われる — 与えられたレシーバに対し、個数が名指す方の読みで — ので、これは沈黙ではなくそれ自体が欠陥である。
 
 代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿り、`where` の refinement は透過する：この検査が refinement を評価することはない。`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` はこのエラーではなく、値が範囲内かどうかはバリデーションが決める（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）。
+
+`Tuple` の長さは型の一部である（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）：`Tuple(Int, Text)` と `Tuple(Int, Text, Int)` は、型の最上位でも `List` / `Map` / `Option` / レコードの内側でも、どちらの向きにも互いを拒否する。タプルパターンは自身と同じ長さの値にしか一致しないので、3 要素の位置に置かれたペアは 3 要素のアームをすべて素通りしてしまう。長さの異なるタプルリテラルはリテラルの位置で 1 回だけ — `Expected Tuple(Int, Text, Int) but got a tuple of 2 item(s)` — 報告され、長さが合うものは要素ごとに検査される。
 
 `()` も他の値と同じく扱われる。`()` は `Unit` の唯一の値であり（[stdlib §2.1](./stdlib.md#_2-1-ビルトイン型)）、`Unit` が宣言された位置では受け入れられ、それ以外の宣言型に対してはこのエラーになる（`emit` の引数では E0202 を報告し、`in=Unit` の effect への `emit e(())` はその effect が引数を取らないので E0213 になる）。`tile Card in={label: Text}` に対する `Card(())` は `()` の位置で `Expected {label: Text} but got Unit` を報告する：`()` は実行時に `null` であり、`$1.label` を読むタイルはそれを使えない。
 
