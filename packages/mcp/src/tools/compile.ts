@@ -1,5 +1,5 @@
 import { HEADLESS_ACTION_KEYS, runScenarioSource, smokeSource } from "@kumikijs/cli";
-import { check, compile, lex, parse } from "@kumikijs/compiler";
+import { check, compile, type KumikiError, lex, parse } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import { z } from "zod";
 import {
@@ -9,7 +9,7 @@ import {
   runCapabilities,
   sourceCapabilities,
 } from "../input.ts";
-import { type Diagnostic, failed, json, text, toDiagnostics } from "../wire.ts";
+import { DIAGNOSTIC_SHAPE, type Diagnostic, failed, json, text, toDiagnostics } from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
 type Scenario = Parameters<typeof runScenarioSource>[1];
@@ -42,30 +42,28 @@ function validate(
   capabilities: string[],
   opts: StrictCheckOpts,
 ): { ok: boolean; failing: boolean; diagnostics: Diagnostic[] } {
+  let reported: KumikiError[];
   try {
-    const errors = check(parse(lex(source)), { capabilities, ...opts });
-    return {
-      ok: errors.length === 0,
-      // `kumiki check` exits 0 on warnings alone; this mirrors it.
-      failing: errors.some((e) => e.severity !== "warning"),
-      diagnostics: toDiagnostics(errors),
-    };
+    reported = check(parse(lex(source)), { capabilities, ...opts });
   } catch (e) {
     const pe = e as { message?: string; pos?: { line: number; col: number } };
-    return {
-      ok: false,
-      failing: true,
-      diagnostics: [
-        {
-          code: "E0000",
-          kind: "parse-error",
-          message: pe.message ?? String(e),
-          line: pe.pos?.line ?? 0,
-          col: pe.pos?.col ?? 0,
-        },
-      ],
-    };
+    reported = [
+      {
+        code: "E0000",
+        kind: "parse-error",
+        message: pe.message ?? String(e),
+        pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+      },
+    ];
   }
+  const diagnostics = toDiagnostics(reported);
+  return {
+    ok: diagnostics.length === 0,
+    // `kumiki check` exits 0 on warnings alone; this mirrors it, read off the
+    // payload so `isError` and the payload cannot disagree.
+    failing: diagnostics.some((d) => d.severity === "error"),
+    diagnostics,
+  };
 }
 
 export function registerCompileTools(tool: RegisterTool): void {
@@ -73,8 +71,7 @@ export function registerCompileTools(tool: RegisterTool): void {
     "kumiki_check",
     {
       title: "Check Kumiki source",
-      description:
-        "Parse and typecheck a Kumiki program. Pass `source` (text) or `path` (file). Returns ok or a list of diagnostics with codes (see docs/spec/errors.md). The `strict*` toggles surface diagnostics that are hidden by default: `strictA11y` (E0701..E0703), `strictIcons` (E0704), `strictSelectorId` (E0212). With `path` + `strictIcons`, @kumikijs/icons is resolved to widen the icon-name domain; when the package isn't installed, only theme.icons is used.",
+      description: `Parse and typecheck a Kumiki program. Pass \`source\` (text) or \`path\` (file). Returns ok, or a JSON list of diagnostics (codes: docs/spec/errors.md) that is flagged \`isError\` only when one of them has \`severity\` \`"error"\`. ${DIAGNOSTIC_SHAPE} The \`strict*\` toggles surface diagnostics that are hidden by default: \`strictA11y\` (E0701..E0703), \`strictIcons\` (E0704), \`strictSelectorId\` (E0212). With \`path\` + \`strictIcons\`, @kumikijs/icons is resolved to widen the icon-name domain; when the package isn't installed, only theme.icons is used.`,
       inputSchema: {
         source: z.string().optional().describe("Full Kumiki source text"),
         path: z.string().optional().describe("Path to a .kumiki file (relative to cwd)"),
@@ -114,8 +111,7 @@ export function registerCompileTools(tool: RegisterTool): void {
     "kumiki_build",
     {
       title: "Build Kumiki source",
-      description:
-        "Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass `source` or `path`. Returns the generated JS, or diagnostics on failure.",
+      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. Returns the generated JS, or \`build failed:\` followed by a JSON list of the diagnostics that failed it. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),

@@ -64,5 +64,7 @@ export {
   check,
   type KumikiError,
   ROUTE_SLOT_FIELDS,
+  type Severity,
   servesNotFound,
+  severityOf,
 } from "./typecheck.ts";

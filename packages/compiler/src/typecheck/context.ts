@@ -11,14 +11,20 @@ import type {
   TypeExpr,
 } from "../ast.ts";
 
+export type Severity = "error" | "warning";
+
 export type KumikiError = {
   code: string;
   kind: string;
   message: string;
   pos: Pos;
-  severity?: "error" | "warning";
+  severity?: Severity;
   unrendered?: "positional" | "text-prop" | "text-shadowed";
 };
+
+export function severityOf(d: Pick<KumikiError, "severity">): Severity {
+  return d.severity ?? "error";
+}
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;

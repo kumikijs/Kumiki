@@ -77,14 +77,17 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
     ]);
     const original = readFileSync(file, "utf8");
     const res = await callOnce("kumiki_auto_patch", { path: file, testName: "bumps", apply: true });
+    type Wire = { code: string; severity: string };
     const parsed = outcome(res) as Outcome & {
-      compileErrors?: { code: string }[];
-      blocked?: { reason: string; introduced?: { code: string }[] };
+      compileErrors?: Wire[];
+      blocked?: { reason: string; introduced?: Wire[] };
     };
     expect(parsed.status).toBe("compile-blocked");
     expect(parsed.blocked?.reason).toBe("introduced");
-    expect(parsed.blocked?.introduced?.map((d) => d.code)).toEqual(["E0201"]);
-    expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+    expect(parsed.blocked?.introduced?.map((d) => [d.code, d.severity])).toEqual([
+      ["E0201", "error"],
+    ]);
+    expect(parsed.compileErrors?.map((d) => [d.code, d.severity])).toEqual([["E0103", "error"]]);
     expect(parsed.compileFixes).toBeUndefined();
     expect(readFileSync(file, "utf8")).toBe(original);
   });
@@ -126,6 +129,7 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
           message: 'app.routes must include a "/404" entry',
           line: 2,
           col: 1,
+          severity: "error",
         },
       ],
       blocked: { reason: "parse-error", message },
@@ -217,8 +221,13 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       "kind",
       "line",
       "message",
+      "severity",
     ]);
-    expect(parsed.blocked.introduced[0]).toMatchObject({ code: "E0804", line: 1 });
+    expect(parsed.blocked.introduced[0]).toMatchObject({
+      code: "E0804",
+      line: 1,
+      severity: "error",
+    });
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
