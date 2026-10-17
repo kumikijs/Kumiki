@@ -4,7 +4,7 @@ import { app } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { compileOrFail, importModule, loweredOf } from "./helpers/module.ts";
+import { compileOrFail, importModule, LOADABLE, loweredOf } from "./helpers/module.ts";
 import { withRoot } from "./helpers/programs.ts";
 
 const COUNTER_PATH = app("01-counter");
@@ -19,6 +19,43 @@ describe("codegen", () => {
     expect(js).toContain('_h("inc")');
     expect(js).toContain("App._dispatch(n, el)");
     expect(js).toContain("globalThis.__kumikiApp = App;");
+  });
+
+  describe("the test globals", () => {
+    const NO_TESTS = `
+      slot n : Int = 0
+      reducer inc on=ui.click(B) do= n := n + 1
+      tile B = button(text="+", onClick=inc)
+      tile App = column(B, text(n.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    type Host = { __kumikiTests?: unknown; __kumikiCoverage?: unknown };
+
+    it("are set to the program's own, empty, when tests are included", async () => {
+      const js = compileOrFail(NO_TESTS, { ...LOADABLE, includeTests: true });
+      const host = globalThis as Host;
+      host.__kumikiTests = ["from an earlier program"];
+      host.__kumikiCoverage = "from an earlier program";
+      try {
+        const mod = await importModule<{ default: { _tests?: unknown } }>(js, "codegen");
+        expect(host.__kumikiTests).toEqual([]);
+        expect(host.__kumikiTests).toBe(mod.default._tests);
+        expect(host.__kumikiCoverage).toEqual({
+          reducers: { total: ["inc"], used: [] },
+          tiles: { total: ["B", "App"], used: [] },
+          effects: { total: [], used: [] },
+        });
+      } finally {
+        delete host.__kumikiTests;
+        delete host.__kumikiCoverage;
+      }
+    });
+
+    it("are not emitted when tests are not included", () => {
+      expect(compileOrFail(NO_TESTS)).not.toMatch(
+        /__kumikiTests|__kumikiCoverage|App\._tests|App\._coverage/,
+      );
+    });
   });
 
   it("compiles a program that uses .concat", () => {
