@@ -366,6 +366,11 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
   sees the reducer body's writes up to that statement and none after it
   ([http.md §6.4](./http.md#_6-4-cancellation))
+- An effect may not take the name of a [standard effect](./stdlib.md#_2-6-standard-effects)
+  (`navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`,
+  `confirm`, `log`): the runtime registers each of those under its own name at
+  mount, so a declaration under one would never run
+  ([E0234](./errors.md#e0234-reserved-effect-name))
 
 ### 1.5.3 Examples
 

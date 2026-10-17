@@ -643,7 +643,9 @@ The `in=` written with each is held the same way a declared effect's is: an `emi
 
 What an argument leaves out is read where it is written: each branch of an `if` or `match` and the body of a `let` leave out their own fields, and a value whose record type leaves a defaulted field out (`slot target : {path: Text}`, `emit navigate(target)`) passes as the literal would. The argument is held the same way in every position an effect call is written — an `emit`, an `app.init` entry and an `expect.effects` argument ([Testing §8.2](./testing.md#_8-2-reducer-tests)).
 
-These omissions belong to the standard effects alone. A declared effect's `in=` record is held to every field, `Option(T)` ones included, as any record literal is; and a declaration of the same name as a standard effect is the effect a program dispatches, so its `in=` is the one checked.
+These omissions belong to the standard effects alone. A declared effect's `in=` record is held to every field, `Option(T)` ones included, as any record literal is.
+
+The names below are the runtime's. It registers each standard effect under its own name when the app mounts, over anything a program compiled under that name, so a program may not declare an `effect` under one ([E0234](./errors.md#e0234-reserved-effect-name)). An effect of the program's own takes another name, and the standard effect is emitted under its own.
 
 → For the detailed specification, see [HTTP / Storage](./http.md).
 

@@ -1,4 +1,9 @@
-import { type AppShape, type BuiltinInstaller, overridableInvoke } from "./core.ts";
+import {
+  type AppShape,
+  type BuiltinEffects,
+  type BuiltinInstaller,
+  overridableInvoke,
+} from "./core.ts";
 
 type ConfirmInput = {
   title?: string;
@@ -13,7 +18,8 @@ type AppWithHooks = AppShape & {
 };
 
 export const installConfirm: BuiltinInstaller = (app) => {
-  app.effects.confirm = {
+  const effects: BuiltinEffects = app.effects;
+  effects.confirm = {
     name: "confirm",
     cap: "notification.show",
     invoke: overridableInvoke("notification.show", async (input) => {

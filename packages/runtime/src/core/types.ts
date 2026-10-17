@@ -273,6 +273,19 @@ export type DiagnosticSite = {
   tile?: string | undefined;
 };
 
+// The compiler's `BUILTIN_EFFECTS` is keyed by these names, so it refuses an `effect` declared
+// under one (E0234): the installer writes over that declaration at mount.
+export type BuiltinEffectName =
+  | "navigate"
+  | "navigate-replace"
+  | "navigate-back"
+  | "scroll-to"
+  | "toast"
+  | "confirm"
+  | "log";
+
+export type BuiltinEffects = { [N in BuiltinEffectName]?: EffectSpec & { name: N } };
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -288,7 +301,7 @@ export type RoutingImpl = {
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** The URL a parsed route was read from: its path, query and hash. */
   href(route: ParsedRoute): string;
-  /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
+  /** Register navigate / navigate-replace / navigate-back / scroll-to on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
 

@@ -281,6 +281,8 @@ reducer doDelete on=ui.click(_) do= ...     # Note: in practice it's cleaner to 
 reducer noop     on=ui.click(_) do= ()
 ```
 
+`confirm` is a [standard effect](./stdlib.md#_2-6-standard-effects): the `effect` line is its signature, and a program emits it without declaring it ([E0234](./errors.md#e0234-reserved-effect-name)).
+
 In the runtime implementation, this is rendered as a **modal dialog tile** (not the native `confirm`). This keeps the UI style consistent and makes testing easier.
 
 ---
@@ -296,6 +298,8 @@ reducer notifySave
     on=persist.ok(_, _)
     do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.s(3))})
 ```
+
+`toast` is a standard effect as well: the `effect` line is its signature, and a program emits it without declaring it.
 
 `kind` is one of `info` / `success` / `warn` / `error`, and reaches the DOM as `data-level` — the runtime attaches no appearance to it. If `duration` is unspecified, the default per kind applies (info 3s, success 3s, warn 5s, error 0 = stays until dismissed); `Some(Duration.ms(0))` asks for the same thing explicitly.
 
