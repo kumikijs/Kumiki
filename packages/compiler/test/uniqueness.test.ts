@@ -264,6 +264,20 @@ ${APP}${TAIL}`,
       "E0008",
     );
     expect(codesOf(`slot s : Map(Int, Int) = {-1: 1, -1: 2}\n${APP}${TAIL}`)).toContain("E0008");
+    expect(codesOf(`slot s : Map(Bool, Int) = {true: 1, "true": 2}\n${APP}${TAIL}`)).not.toContain(
+      "E0008",
+    );
+  });
+
+  it.each([
+    ["{true: 1, true: 2}", "1:37", "true"],
+    ["{(true): 1, true: 2}", "1:39", "true"],
+    ["{false: 1, (false): 2}", "1:39", "false"],
+  ])("reports the Bool key written twice in %s, parenthesised or not", (literal, at, key) => {
+    const found = checkSource(`slot s : Map(Bool, Int) = ${literal}\n${APP}${TAIL}`);
+    expect(found.map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`)).toEqual([
+      `E0008 ${at} Map key "${key}" is written more than once`,
+    ]);
   });
 
   it("says nothing about two computed keys", () => {
