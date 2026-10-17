@@ -22,7 +22,7 @@ import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
 import { collectTileBuiltinKinds } from "./tile-collect.ts";
-import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
+import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
 export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -409,6 +409,7 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
@@ -442,6 +443,7 @@ function checkTileCall(
       }
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }
 }

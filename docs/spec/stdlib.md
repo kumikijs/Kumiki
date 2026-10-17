@@ -464,6 +464,32 @@ A kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size` pi
 
 Both rendering paths write them: what a mounted element carries, a served page carries. The exception is the class-backed layers (`transition`, the `hover:` / `focus:` / `active:` blocks, `motion`), which are injected CSS and exist only after hydration.
 
+### 2.3.11 Prop Types
+
+Each prop below takes a value of the type the table gives it, and a value that cannot have that type is [E0201](./errors.md#e0201-type-mismatch), reported at the value, whether the prop is written as a named argument or in the `{…}` block: a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)). No text is read as the value it spells — `"false"` is not a `Bool`, and `"2"` is not a number — and an option is read by its `label` and `value` alone, so a value of another type renders something else rather than failing: `open="false"` is a non-empty text and renders the modal open, `disabled="true"` is not `true` and leaves the button enabled, and `level="2"` is no number and renders an `<h1>`.
+
+| prop | Type | Elements |
+|---|---|---|
+| `disabled`, `readonly`, `required`, `auto-focus` | `Bool` | `button`, `input`, `textarea`, `check`, `radio`, `select`, `slider`, `switch`, `editable` |
+| `placeholder`, `auto-complete` | `Text` | `button`, `input`, `textarea`, `check`, `radio`, `select`, `slider`, `switch`, `editable` |
+| `loading` | `Bool` | `button` |
+| `multiple` | `Bool` | `input` |
+| `value` | `Bool` | `check`, `switch` |
+| `selected` | `Bool` | `radio` |
+| `options` | `List({label, value})` | `select` |
+| `value`, `min`, `max`, `step` | `Float` | `slider` |
+| `auto-complete`, `novalidate` | `Bool` | `form` |
+| `level` | `Float` | `heading` |
+| `external` | `Bool` | `link` |
+| `controls`, `autoplay` | `Bool` | `video` |
+| `ordered` | `Bool` | `list` |
+| `open` | `Bool` | `modal`, `drawer`, `popover`, `details` |
+| `value`, `max` | `Float` | `progress` |
+
+The first two rows are the props [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements) gives every input element, and the `form` row is [Forms §5.2.1](./forms.md#_5-2-1-form-props). `value` on `check` / `switch` and `selected` on `radio` are the selection of a control written without `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)). A `Float` prop takes an `Int` too, as every `Float` position does ([E0201](./errors.md#e0201-type-mismatch)). `List({label, value})` is a `List` of records that each carry a `label`, the text the option shows, and a `value`, what choosing it writes; a record may carry other fields as well, which are not read. So `options=["apple", "pear"]` is refused at each entry, and so is an entry with no `value`.
+
+A prop the table does not list is not checked against a type: `title`, `text` and `summary` show any value as `show` does, and an attribute such as `rows` or `colspan` takes its value's text.
+
 ---
 
 ## 2.4 Built-in Functions
