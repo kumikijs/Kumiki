@@ -263,6 +263,8 @@ tile 参照、またはルート定義のターゲットが未定義の tile を
 > `Route "<path>" targets undefined tile "<name>"`
 > `Tile-test target "<name>" is a built-in tile — a tile-test can only name a tile the program defines`
 
+tile が期待される位置 —— コンテナの子、`when` / `if` / `for` / `match` の腕、tile 本体、tile-test の `expect` —— では、値を名指す名前（slot、`fn`、ループ変数、`match` の束縛）は [E0128](#e0128-value-as-child) であり、その修正は値を表示することである。そこでの E0105 は tile でも値でもない名前で、綴り違いの tile（`when(c, Hedaer)`）などがこれに当たり、`kumiki fix` が近い名前を提案するのはこちらである。
+
 **`tile-test` のターゲット**には、存在すること以上が求められる：プログラムが定義した tile でなければならない。他の場所では組み込み tile も普通の tile と同じだが、生成されるテストはターゲットを `App._tilesById` 経由で適用し、これはユーザ定義の tile だけから作られる——したがって `tile-test text` は、何を与えられようと動きようのない唯一の名指しだった。`check` は通り、モジュールは `App._tilesById.text is not a function` で死ぬ。これを捕まえるものは無いので、同じファイルの他のテストも結果ごと失われていた。
 
 ### E0107 `undef-motion`
@@ -505,15 +507,24 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 ### E0128 `value-as-child`
 
-値 builtin でない builtin —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon` 以外 —— の位置引数に値が書かれている。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr`（[言語 §1.7.1](./language.md#_1-7-1-構文)）か、プログラムが定義する tile の名前。コンテナ（`column`・`row`・`card` など）はそれを子として描画し、それ以外（`button`・`progress` など）は位置引数をまったく読まない。
+tile が期待される位置に値が書かれている。tile を期待する位置は 2 種類ある（[言語 §1.7.1](./language.md#_1-7-1-構文)）：
+
+- 値 builtin でない builtin —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon` 以外 —— の位置引数。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr` か、プログラムが定義する tile の名前。コンテナ（`column`・`row`・`card` など）はそれを子として描画し、それ以外（`button`・`progress` など）は位置引数をまったく読まない。
+- `tile-expr` 全体：`when` / `if` / `for` / `match` の腕、tile 本体、tile-test の `expect`。パーサはそこに書かれた名前を tile 呼び出しとして読むので、そこで名指した値 —— slot、`fn` 呼び出し、ループ変数、`match` の束縛 —— は存在しない tile の呼び出しになる。
+
+どちらの位置でも、tile でも値でもない名前は代わりに [E0105](#e0105-undef-tile) になる。
 
 > ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
+> ``A value is not a tile: <place> has to be a tile. Show the value with a tile — `text(…)` ``
+> `` `<name>` is a builtin tile named without its call: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Call it — `<name>()` ``
 
-codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
+1 つ目は位置引数にある値。2 つ目は `tile-expr` 全体の位置にある値で、`<place>` がその位置を名指す：``a `when` arm``、``an `if` arm``、``a `for` arm``、``a `match` arm``、`a tile's body`、`` a tile-test's `expect` ``。3 つ目は、組み込み tile の名前を呼び出さずに位置引数に書いたもの：`column(divider)` は `divider` を名指すだけで何も描画せず、`column(divider())` なら描画する。腕や本体ではパーサが同じ名前を呼び出しとして読むので、`when(c, divider)` は divider を描画し、報告されない。スコープ内の値と同じ名前 —— `spinner` という名のループ変数など —— はその値であり、1 つ目の形になる。コンテナの中の小文字の呼び出しは式なので、何を呼んでいても値である：`column(greting())` は 1 つ目の形になり、`when(c, greting())` は E0105 になる。
 
-値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。
+codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
 
-**修正**：値を tile で表示する —— `column(text(n.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。
+値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
+
+**修正**：値を tile で表示する —— `column(text(n.show))`、`when(c, text(total.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。名指した組み込み tile は呼び出しを書く —— `column(divider())`。
 
 ### E0129 `unrendered-arg`
 
