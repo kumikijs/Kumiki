@@ -53,7 +53,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
+| `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)) |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error`, of `route.error(<pattern>)` (which adds `pattern`), and of an `error-boundary` tile's `in=` |
 
 ---

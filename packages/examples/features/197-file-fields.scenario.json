@@ -1,0 +1,33 @@
+{
+  "effects": {
+    "uploadFile": [{ "outcome": "ok", "value": { "url": "/files/notes.txt" } }]
+  },
+  "steps": [
+    {
+      "label": "nothing is picked, so there is nothing to upload",
+      "expect": { "noErrors": true, "domIncludes": ["picked: no file", "sent to: -"] }
+    },
+    {
+      "label": "Upload with no file picked sends nothing",
+      "do": { "click": "#upload" },
+      "expect": { "noErrors": true, "state": { "sentTo": "-" } }
+    },
+    {
+      "label": "a picked file's name, type and size are read off the record",
+      "do": {
+        "dispatch": "pick",
+        "payload": { "files": [{ "name": "notes.txt", "size": 5, "type": "text/plain" }] }
+      },
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": { "_tag": "Some", "_0": { "name": "notes.txt", "size": 5 } } },
+        "domIncludes": ["picked: notes.txt (text/plain, 5 bytes)"]
+      }
+    },
+    {
+      "label": "Upload hands the picked file to uploadFile, whose answer is shown",
+      "do": { "click": "#upload" },
+      "expect": { "noErrors": true, "domIncludes": ["sent to: /files/notes.txt"] }
+    }
+  ]
+}
