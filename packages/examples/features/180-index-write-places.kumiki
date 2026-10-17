@@ -7,8 +7,8 @@
 # an `Int`, a `Text`, the `Int` element of a `List(Int)` — is replaced whole.
 #
 # This app makes each of those writes the way that names a place. The
-# refusals are check-time, so they live in the compiler's tests, which put the
-# index spelling of each write back into this program.
+# refusals are check-time, so they live in the compiler's tests rather than
+# in a program that runs.
 
 type Counter = { a: Int }
 
