@@ -344,6 +344,26 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         "E0005",
       ]);
     });
+
+    // Whichever tile is asked about first is the one the walk enters the loop by.
+    it("the tiles on a loop, whichever is asked about first", () => {
+      const loop = 'tile A = row(B)\ntile B = column(C)\ntile C = box(A, text("c"))';
+      for (const order of [
+        ["A", "B", "C"],
+        ["B", "C", "A"],
+        ["C", "A", "B"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(loop, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", "W0213", "E0005"]);
+        for (const d of found.slice(0, 3)) {
+          expect(d.message, calls).toContain("observed in body: box, column, row, text");
+        }
+      }
+    });
   });
 });
 
