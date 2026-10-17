@@ -335,7 +335,7 @@ effect storage-read   cap=storage.read
                       out=Result(Option(Decoded), Text)
 
 effect storage-write  cap=storage.write
-                      in={key: Text, value: JsonValue}
+                      in={key: Text, value: T}
                       out=Result(Unit, Text)
 
 effect storage-remove cap=storage.write
@@ -349,9 +349,11 @@ effect storage-clear  cap=storage.write
 
 クリアは宣言で決まる。`map-request` を持たず `in=Unit`（直接、または別名を通して）と宣言した effect がストレージを空にする。空になるのはこのアプリが書いたキーだけでなく、**オリジン全体**の localStorage である。それ以外の `storage.write` は書き込みか削除で、リクエスト（effect の入力、または `map-request` が組み立てたもの）で区別される。`key` を持ち `value` フィールドを持たないレコードはそのキーを削除し（以後の `storage-read` は `Ok(None)` を返す）、`value` フィールドを持つレコードはそれを書き込む。値そのものは問わない。`None`・`[]`・レコードはいずれも書き込まれる。
 
-このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、JSON で表せない `value` がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
+このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、フィールドはあるが値を持たない `value`（`undefined`）がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
 
-保存された値は常に JSON として parse される。read の `Decoder.Json(T)` が parse した値を拒否した場合（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）、read は `decode failed:` で始まる `Text` を値とする `.err` になる。parse できない値と同じ扱いである。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
+**保存形。** JSON が保持できる値は、その JSON テキストとして保存される。`{n: 1}` は `{"n":1}` として保存される。どこかに `Bytes`、有限でない数（`NaN`・`Infinity`・`-Infinity`）または負のゼロを含む値は **タグ付き形式** で保存される。`~` の後に値の JSON が続き、その中で `Bytes` はそれぞれ `{"$bytes": "<その base64>"}`、そうした数はそれぞれ `{"$float": "NaN"}`（または `"Infinity"`・`"-Infinity"`・`"-0"`）と書かれ、値の中のオブジェクトのキー（タグ自身のキーを除く）のうち `$` で始まるもの（`Map(Text, V)` のキーや `Set(Text)` の要素はそうなり得る）は先頭に `$` をもう1つ付けて書かれる。エスケープされたそのキーは `$$` で始まるので、タグ付き形式で `$` 1つで始まるキーを持つオブジェクトはタグだけである。たとえば `{data: Bytes.from-text("hi"), ratio: 1.0 / 0.0}` は `~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}` として保存され、`storage-read` は同じ2バイトと `Infinity` を返す。`~` で始まる JSON テキストは無いので、read は最初の1文字で2つの形式を見分け、JSON として保存されたエントリは、どのビルドが書いたものでも、その JSON のとおりに読み戻される。保存された `{"$bytes":"aGk="}` は書き込まれたときの1エントリの `Map(Text, Text)` であり、`Bytes` ではない。
+
+read は保存されたテキストをその形式に従ってデコードする。タグ付き形式では、`$` 1つで始まるキーを持つオブジェクトはタグそのものでなければならない。パディング付きの標準 base64 を持つ `{"$bytes": …}` か、`"NaN"`・`"Infinity"`・`"-Infinity"`・`"-0"` のいずれかを持つ `{"$float": …}` で、ほかのキーは持たない。JSON でない保存テキストや、タグの位置にそれ以外のものがあるタグ付きテキストはデコードできず、read はキーとストレージを示す `decode failed:` で始まる `Text` を値とする `.err` になる。read の `Decoder.Json(T)` がデコードした値を拒否した場合（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）も、read は `decode failed:` で始まる `Text` を値とする `.err` になる。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
 
 **err 値は宣言どおりの `Text`。** storage / session / indexed の effect が失敗すると、失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら上記の呼び出しとキーを示すメッセージ、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、またはその capability に登録されたホストの provider が例外を投げた場合も同じ `Text` が渡る。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。
 
@@ -388,7 +390,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` も同じ形。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。
+`session-*` も同じ形で、保存形も同じ（[6.7.2](#_6-7-2-宣言-localstorage)）。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。`indexed-*` にタグ付き形式は無い。IndexedDB は `indexed-write` が書くレコードの構造化複製を保持するので、書いたレコードの中の `Bytes`・有限でない数・負のゼロは `indexed-read` からそのまま返る。レコードでない `value` にはストアのキーを置く場所が無く、書いたとおりには返らない。
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read
@@ -396,7 +398,7 @@ effect indexed-read cap=indexed.read
                     out=Result(Option(Decoded), Text)
 
 effect indexed-write cap=indexed.write
-                     in={store: Text, key: Text, value: JsonValue}
+                     in={store: Text, key: Text, value: T}
                      out=Result(Unit, Text)
 
 effect indexed-query cap=indexed.read
