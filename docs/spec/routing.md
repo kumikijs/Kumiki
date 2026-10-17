@@ -289,7 +289,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`.
+`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer.
 
 ---
 

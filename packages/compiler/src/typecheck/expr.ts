@@ -201,8 +201,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      checkIndexStep(base, e.index, "read", e.pos, sym, errors, ctx);
+      checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.pos, sym, errors, ctx);
       return;
     }
     case "Call":

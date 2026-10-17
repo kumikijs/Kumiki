@@ -1,11 +1,13 @@
 import {
   assignable,
+  isKnownTypeName,
   recordFieldType,
   typeToString,
   unaliasType,
   unknownType,
 } from "../assignable.ts";
 import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
+import { numberLiteral } from "../ast.ts";
 import { BUILTIN_EFFECTS, builtinFieldOmittable, REDUCER_REF } from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
@@ -94,17 +96,18 @@ export function checkAgainst(
     }
     return;
   }
+  const literal = numberLiteral(e);
   if (
-    e.kind === "Num" &&
+    literal !== null &&
     d.kind === "TypePrim" &&
     d.name === "Int" &&
-    Number.isInteger(e.value) &&
-    !Number.isSafeInteger(e.value)
+    Number.isInteger(literal.value) &&
+    !Number.isSafeInteger(literal.value)
   ) {
     errors.push({
       code: "E0217",
       kind: "int-literal-precision",
-      message: `Int literal ${e.raw ?? e.value} is not exactly representable and was rounded to ${e.value}`,
+      message: `Int literal ${literal.raw} is not exactly representable and was rounded to ${literal.value}`,
       pos: e.pos,
     });
     return;
@@ -347,25 +350,37 @@ export function getOrResultType(recv: TypeExpr | null, argCount: number): TypeEx
 
 export function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
   if (lv.kind === "LSlot") return sym.slots.get(lv.name)?.type ?? null;
-  const base = unaliasType(lvalueType(lv.base, sym), sym);
-  if (!base) return null;
-  if (lv.kind === "LField") {
-    if (base.kind === "TypeRecord") return recordFieldType(base, lv.field);
-    if (lv.field === "get") return unwrappedType(base);
-    return null;
+  const raw = lvalueType(lv.base, sym);
+  if (lv.kind === "LIndex") {
+    const step = indexStep(raw, sym);
+    return step.kind === "place" ? step.type : null;
   }
-  return indexedType(base);
+  const base = unaliasType(raw, sym);
+  if (!base) return null;
+  if (base.kind === "TypeRecord") return recordFieldType(base, lv.field);
+  if (lv.field === "get") return unwrappedType(base);
+  return null;
 }
 
-/**
- * A `Set` index names nothing, so it has no type on either side of `:=`: a
- * position that takes the read would otherwise report the one mistake twice.
- */
-export function indexedType(base: TypeExpr | null): TypeExpr | null {
-  if (base?.kind !== "TypeApp") return null;
-  if (base.name === "List") return base.args[0] ?? null;
-  if (base.name === "Map") return base.args[1] ?? null;
-  return null;
+// One answer for both questions the left of `:=` asks of an index step (can it be written
+// through, and what is the right-hand side checked against). It takes the receiver's type as
+// written and unaliases it here, so every caller asks about the same type.
+export type IndexStep =
+  | { kind: "place"; type: TypeExpr }
+  | { kind: "no-place"; raw: TypeExpr; base: TypeExpr }
+  | { kind: "undecidable" };
+
+export function indexStep(raw: TypeExpr | null, sym: SymbolTable): IndexStep {
+  const base = unaliasType(raw, sym);
+  if (raw === null || base === null || base.kind === "TypeRef") return { kind: "undecidable" };
+  // An applied name that resolves to nothing is E0117 where it is written; what it would have
+  // named may well be a Map.
+  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return { kind: "undecidable" };
+  if (base.kind === "TypeApp" && (base.name === "List" || base.name === "Map")) {
+    const type = base.args[base.name === "List" ? 0 : 1];
+    return type ? { kind: "place", type } : { kind: "undecidable" };
+  }
+  return { kind: "no-place", raw, base };
 }
 
 export function checkEmitTarget(

@@ -1,9 +1,16 @@
-import { unaliasType } from "../assignable.ts";
+import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
-import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./against.ts";
+import {
+  checkAgainst,
+  checkEmitTarget,
+  type IndexStep,
+  indexStep,
+  lvalueType,
+  unwrappedType,
+} from "./against.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
@@ -264,8 +271,7 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   if (lv.kind === "LSlot") return;
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
-    const base = unaliasType(lvalueType(lv.base, sym), sym);
-    checkIndexStep(base, lv.index, "write", lv.pos, sym, errors, ctx);
+    checkIndexStep(lvalueType(lv.base, sym), lv.index, "write", lv.pos, sym, errors, ctx);
   } else {
     const raw = lvalueType(lv.base, sym);
     const base = unaliasType(raw, sym);
@@ -277,9 +283,9 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   checkLvalue(lv.base, sym, errors, ctx);
 }
 
-/** An index step on either side of `:=`; `base` is the receiver's type, already unaliased. */
+/** An index step on either side of `:=`; `raw` is the receiver's type as written. */
 export function checkIndexStep(
-  base: TypeExpr | null,
+  raw: TypeExpr | null,
   index: Expr,
   side: "read" | "write",
   pos: Pos,
@@ -287,24 +293,39 @@ export function checkIndexStep(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  checkListIndex(base, index, sym, errors, ctx);
+  checkListIndex(unaliasType(raw, sym), index, sym, errors, ctx);
+  if (side === "write") {
+    const step = indexStep(raw, sym);
+    if (step.kind !== "no-place") return;
+    errors.push({
+      code: "E0602",
+      kind: "unassignable-member",
+      message: noPlaceMessage(step, index),
+      pos,
+    });
+    return;
+  }
+  const base = unaliasType(raw, sym);
   if (base?.kind !== "TypeApp" || base.name !== "Set") return;
-  const set = typeName(base, sym);
-  errors.push(
-    side === "write"
-      ? {
-          code: "E0602",
-          kind: "unassignable-member",
-          message: `Cannot assign through an index into "${set}": a Set has members, not places — use .add / .remove / .toggle`,
-          pos,
-        }
-      : {
-          code: "E0232",
-          kind: "index-into-set",
-          message: `Cannot read through an index into "${set}": a Set has members, not places — use .has`,
-          pos,
-        },
-  );
+  errors.push({
+    code: "E0232",
+    kind: "index-into-set",
+    message: `Cannot read through an index into "${typeName(base, sym)}": a Set has members, not places — use .has`,
+    pos,
+  });
+}
+
+function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
+  const { raw, base } = step;
+  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
+  if (base.kind === "TypeApp" && base.name === "Set") {
+    return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
+  }
+  const field =
+    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
+      ? ` — write the field step ".${index.value}"`
+      : "";
+  return `${into}: an index names a place only in a Map or a List${field}`;
 }
 
 export function checkListIndex(
