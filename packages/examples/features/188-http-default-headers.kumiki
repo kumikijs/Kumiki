@@ -4,16 +4,17 @@
 # name and exactly one value is sent.
 #
 #   load    GET    Decoder.Json(Item)               Accept: application/json
-#   rename  PATCH  a record body, and its own       Accept: application/json
-#                  "content-type"                   Content-Type: application/merge-patch+json
+#   rename  PATCH  Decoder.Json(Item), a record     Accept: application/json
+#                  body, and its own "content-type" Content-Type: application/merge-patch+json
 #   feed    GET    Decoder.Json(Item), and its own  Accept: application/vnd.shop+json
 #                  "ACCEPT"
 #   readme  GET    Decoder.Text                     no Accept
 #
-# `app.http.headers` sits between the two: over the defaults, under an
-# effect's own `headers`. `packages/tests/src/http-default-headers.test.ts` reads
-# the headers that reached `fetch` through the real handler; `smoke` makes each
-# request against `188-http-default-headers.http.json`.
+# This app sets no `app.http.headers`; they sit over the defaults and under an
+# effect's own `headers`, which `packages/tests/src/http-default-headers.test.ts`
+# pins with programs of its own. That test also reads the headers this file's
+# requests reach `fetch` with; `smoke` makes each request against
+# `188-http-default-headers.http.json`.
 
 type Item = {name: Text}
 

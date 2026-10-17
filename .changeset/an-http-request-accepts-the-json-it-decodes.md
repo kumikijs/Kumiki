@@ -2,7 +2,7 @@
 "@kumikijs/runtime": patch
 ---
 
-Send `Accept: application/json` when a request decodes JSON
+An HTTP request that decodes JSON sends `Accept: application/json`, unless the program sets its own
 
 http.md §6.1.5 lists `Accept: application/json` among the headers an HTTP
 effect gets when its decoder is Json, but the built-in handler never sent it: a
@@ -10,8 +10,8 @@ effect gets when its decoder is Json, but the built-in handler never sent it: a
 so a server that negotiates on it could answer with something else.
 
 Now the handler builds a request's headers through one merge: its own defaults
-(`Accept: application/json` for a Json decoder, and the Content-Type the body
-is sent as), then `app.http.headers`, then the effect's own `headers`, each name
+(`Accept: application/json` for a Json decoder, and the Content-Type of a Json
+or Form body, or of a body that is not an HttpBody variant), then `app.http.headers`, then the effect's own `headers`, each name
 matched in any letter case. A program's `accept` or `ACCEPT` replaces the
 default, and each header reaches `fetch` with exactly one value.
 `Decoder.Text`, `Decoder.Bytes` and `Decoder.None` send no `Accept`.

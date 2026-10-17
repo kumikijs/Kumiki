@@ -47,8 +47,10 @@ export async function httpFetch(
     httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {},
     x.headers ?? {},
   ];
+  // A value the types rule out but a lax decoder let through as `undefined` sets nothing, so it
+  // never removes a lower layer's header.
   for (const layer of layers) {
-    for (const [k, v] of Object.entries(layer)) setHeader(headers, k, v);
+    for (const [k, v] of Object.entries(layer)) if (v !== undefined) setHeader(headers, k, v);
   }
   // A `FormData` body's Content-Type must carry the boundary only fetch knows.
   if (encoded.body instanceof FormData) setHeader(headers, "Content-Type");

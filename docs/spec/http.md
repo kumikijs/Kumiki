@@ -95,7 +95,7 @@ All HTTP effects automatically apply the following:
 
 The runtime sets no `User-Agent`, since a browser does not reliably let a script set it.
 
-User-specified headers take precedence: `app.http.headers` over the defaults above, and the effect's own `headers` over `app.http.headers`. A header name is compared case-insensitively at every step, so an effect's `content-type` replaces a global `Content-Type` or the default one, and each header is sent with exactly one value.
+User-specified headers take precedence: `app.http.headers` over the defaults above, and the effect's own `headers` over `app.http.headers`. A header name is compared case-insensitively at every step, so an effect's `content-type` replaces both a global `Content-Type` and the default one, and each header is sent with exactly one value.
 
 The one exception is `Multipart`: a `Content-Type` the program sets on it is dropped, because the header must carry the boundary that only fetch knows. `multipart/form-data` without that boundary cannot be parsed by the server.
 

@@ -1,13 +1,7 @@
 import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it } from "vitest";
-import { click, mountApp, waitUntil } from "./helpers/dom.ts";
-import {
-  type FetchCall,
-  type FetchDouble,
-  headerValues,
-  stubFetch,
-} from "./helpers/http-double.ts";
+import { describe, expect, it } from "vitest";
+import { type FetchCall, headerValues, sentRequest } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("188-http-default-headers");
@@ -36,27 +30,8 @@ ${http ? `    http = ${http}\n` : ""}`;
 }
 
 describe("the headers an HTTP request carries", () => {
-  let double: FetchDouble | undefined;
-
-  afterEach(() => {
-    double?.restore();
-    double = undefined;
-  });
-
-  async function sent(app: AppShape, button: string): Promise<FetchCall> {
-    double = stubFetch(() => new Response('{"name":"lamp"}'));
-    const calls = double.calls;
-    const { root, handle } = mountApp(app);
-    try {
-      click(root, button);
-      await waitUntil(() => calls.length > 0);
-    } finally {
-      handle.dispose();
-      root.remove();
-    }
-    expect(calls).toHaveLength(1);
-    return calls[0] as FetchCall;
-  }
+  const sent = (app: AppShape, button: string): Promise<FetchCall> =>
+    sentRequest(app, button, () => new Response('{"name":"lamp"}'));
 
   const values = (c: FetchCall, name: string): string[] => headerValues(c.init.headers, name);
 
