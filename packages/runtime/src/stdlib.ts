@@ -355,6 +355,11 @@ export const _stdlibCore = {
       const obj = v as { _tag: string };
       return obj._tag;
     }
+    if (v instanceof Uint8Array) {
+      let bin = "";
+      for (const byte of v) bin += String.fromCharCode(byte);
+      return btoa(bin);
+    }
     return String(v);
   },
   fmt(template: unknown, ...args: unknown[]): string {

@@ -324,6 +324,8 @@ Bytes.from-base64(text)     : Bytes        ; standard base64 decode
 Bytes.from-bytes(list)      : Bytes        ; from List(Int) (each value masked to its low 8 bits)
 ```
 
+`b.show`, the `show` every value has ([§2.2.7](#_2-2-7-int-float)), is the bytes in **standard base64** with `=` padding: the text `Bytes.from-base64` decodes. So `Bytes.from-base64(b.show) == b` for every `Bytes`, including bytes that are not UTF-8 and the empty `Bytes`. `Bytes.from-text("hi").show` is `"aGk="`, `Bytes.from-bytes([255, 0, 128]).show` is `"/wCA"`, and an empty `Bytes` shows as `""`. Everything that renders a value through `show` renders a `Bytes` this way: `Bytes.show(b)`, `+` with a `Text` side and `fmt` ([§2.4.5](#_2-4-5-string-formatting)), and a tile's text. `Bytes.parse` is not the inverse of `show`: it reads its text as UTF-8 ([§2.4.3](#_2-4-3-type-conversion)), so a shown `Bytes` is read back with `Bytes.from-base64`.
+
 ---
 
 ## 2.3 Tile Primitive Elements
@@ -508,6 +510,8 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 
 The readings are exact, like `Bool`'s: `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`, not `Some(12)` and `Some(16)`. Trim the text first when blanks are expected.
 
+For `Bytes`, `parse` is not the inverse of `show`. `b.show` is base64 ([§2.2.10](#_2-2-10-bytes)) and `Bytes.parse` reads UTF-8, so `Bytes.parse(b.show)` is `Some` of the bytes of that base64 text, not `Some(b)`. The inverse of a `Bytes`'s `show` is `Bytes.from-base64`: `Bytes.from-base64(b.show)` is `b`.
+
 The value read is then held to every `where` refinement `T` carries ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), and a value that fails one is `None`: with `type Cents = nominal Int where positive`, `Cents.parse("-5")` is `None`. So `parse` never produces a value its own type refuses — an `Option(Cents)` never passes through a slot-write guard, so the parse is the only place that check can happen.
 
 The argument is a `Text`; anything else is [E0201](./errors.md#e0201-type-mismatch).
@@ -530,7 +534,7 @@ The rest of the arithmetic is [§2.2.7](#_2-2-7-int-float), as methods on the nu
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
-A **placeholder** is `{`, one or more decimal digits, `}`. Each one is replaced by the argument at that index — `{0}` is the first argument after the template — rendered the way `+` renders it (the `show` equivalent named below: a variant is its tag, a nullish is the empty string, anything else is its text form), so `fmt("{0}-{1}", "a", "b")` is `"a-b"`. An index may repeat, and the indices may appear in any order: `fmt("{1} {0} {1}", "a", "b")` is `"b a b"`. Substitution is a single left-to-right pass over the template: a `{0}` that appears *inside* a substituted value is text, not a placeholder to fill again.
+A **placeholder** is `{`, one or more decimal digits, `}`. Each one is replaced by the argument at that index — `{0}` is the first argument after the template — rendered the way `+` renders it (the `show` equivalent named below: a variant is its tag, a nullish is the empty string, a `Bytes` is its base64 ([§2.2.10](#_2-2-10-bytes)), anything else is its text form), so `fmt("{0}-{1}", "a", "b")` is `"a-b"`. An index may repeat, and the indices may appear in any order: `fmt("{1} {0} {1}", "a", "b")` is `"b a b"`. Substitution is a single left-to-right pass over the template: a `{0}` that appears *inside* a substituted value is text, not a placeholder to fill again.
 
 The digits are read as one decimal index, so a leading zero is significant only as a digit: `{01}` is index 1.
 
