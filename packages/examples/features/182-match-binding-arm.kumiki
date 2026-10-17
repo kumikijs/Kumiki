@@ -1,20 +1,21 @@
-# Feature: a binding name is a pattern, so `| other -> …`
-# is an arm after another arm just as it is first, and names whatever the arms
-# above it did not take. Each place a `match` is written takes one: a `fn`
-# body, a value a reducer assigns, a reducer statement, a value builtin's
-# content, and a tile.
+# Feature: a binding name is a pattern, so `| other -> …` is an arm after
+# another arm, and names whatever the arms above it did not take. Each place a
+# `match` is written takes one: a `fn` body, a value a reducer assigns, a
+# reducer statement, a value builtin's content, and a tile.
 #
-# After an arm body, a `|` is a bool OR unless a pattern and `->` follow it.
-# `->` is not an operator, so `| other ->` can only be the next arm, while
-# `night | rain` in `judge` below, with no `->` after it, is still an or.
+# After a value arm body, a `|` is a bool OR unless a pattern and `->` follow
+# it. No expression continues with `->`, so `| other ->` can only be the next
+# arm, while `night | rain` in `judge` below, with no `->` after it, is still a
+# bool OR.
 
 type Color = Red | Green | Blue
 
 slot color  : Color = Blue
-slot night  : Bool  = true
-slot rain   : Bool  = false
+slot night  : Bool  = false
+slot rain   : Bool  = true
 slot points : Int   = 0
 slot alarm  : Bool  = false
+slot seen   : Text  = ""
 
 fn score(c: Color) -> Int = match c with | Red -> 1 | other -> 2
 
@@ -24,7 +25,7 @@ reducer judge on=ui.click(Judge)
     do= points := match color with | Red -> 10 | other -> score(other)
         match color with
         | Red   -> alarm := night | rain
-        | other -> alarm := false
+        | other -> seen := other.show
 
 tile Paint = button(text="paint red") {id: "paint"}
 tile Judge = button(text="judge")     {id: "judge"}
@@ -40,7 +41,8 @@ tile App
         Swatch,
         text(match color with | Red -> "label: stop" | other -> "label: " + other.show),
         text("points: " + points.show),
-        text("alarm: " + alarm.show))
+        text("alarm: " + alarm.show),
+        text("seen: " + seen))
       {pad: "lg", gap: "md"}
 
 app MatchBindingArm

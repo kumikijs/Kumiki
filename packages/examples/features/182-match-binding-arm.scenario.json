@@ -4,16 +4,16 @@
       "label": "Blue is no arm's variant, so the binding arm takes it and names it",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["swatch: Blue", "label: Blue", "points: 0", "alarm: false"]
+        "domIncludes": ["swatch: Blue", "label: Blue", "points: 0", "alarm: false", "seen: "]
       }
     },
     {
-      "label": "the reducer's value and statement matches take the binding arm too",
+      "label": "the reducer's value and statement matches take the binding arm too, and read it",
       "do": { "click": "#judge" },
       "expect": {
         "noErrors": true,
-        "state": { "points": 2, "alarm": false },
-        "domIncludes": ["points: 2", "alarm: false"]
+        "state": { "points": 2, "alarm": false, "seen": "Blue" },
+        "domIncludes": ["points: 2", "alarm: false", "seen: Blue"]
       }
     },
     {
@@ -26,11 +26,11 @@
       }
     },
     {
-      "label": "the Red arm's night | rain is an or, ended by the arm after it",
+      "label": "the Red arm's night | rain is a bool OR that rain decides, ended by the arm after it",
       "do": { "click": "#judge" },
       "expect": {
         "noErrors": true,
-        "state": { "points": 10, "alarm": true },
+        "state": { "points": 10, "alarm": true, "seen": "Blue" },
         "domIncludes": ["points: 10", "alarm: true"]
       }
     }

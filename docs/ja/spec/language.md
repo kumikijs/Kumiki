@@ -84,7 +84,7 @@ comment     ::= '#' until-eol                    ; 1 行コメントのみ
 **Bool 演算子の注意**:
 - 短絡 AND: `&&`（推奨）または `&`（alias、内部的に同一）
 - 短絡 OR : `||`（推奨）または `|`（alias、ただし match arm との衝突を避けるヒューリスティック付き）
-- `|` を bool OR として書く場合、後続が「**pattern + `->`**」（`_`、variant 名または束縛名、`Variant(binds)`、tuple のいずれかに `->` が続くもの。つまり match arm 開始）なら parser は arm separator として扱う。`->` は演算子ではないので、そこから始まりうるのは arm だけである。それ以外の expression が続く場合は bool OR として解釈するので、`a | b`、`a | b.c`、`a | f(x)` はいずれも OR になる。安全策として迷ったら `||` を使うこと
+- `|` を bool OR として書く場合、後続が「**pattern + `->`**」（`_`、variant 名または束縛名、`Variant(binds)`、tuple のいずれかに `->` が続くもの。つまり match arm 開始）なら parser は arm separator として扱う。`->` で続く式は無いので、そこから始まりうるのは arm だけである。それ以外の expression が続く場合は bool OR として解釈するので、`a | b`、`a | b.c`、`a | f(x)` はいずれも OR になる。安全策として迷ったら `||` を使うこと
 
 ### 1.2.2 予約語
 

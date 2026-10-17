@@ -58,10 +58,11 @@ export class ExpressionParser extends TypeParser {
     return lhs;
   }
 
-  // `->` is not an operator, so a pattern followed by one can only be the next arm, a binding
-  // name as much as a variant.
+  // No expression continues with `->`, so a name, a name with `(…)`, or a `(…)` followed by `->`
+  // can only start the next arm, whatever the name's case.
   protected looksLikeMatchArm(): boolean {
     const next = this.peek(1);
+    // `_` never starts an expression, so `| _` is an arm even before its `->` is seen.
     if (next.kind === "ident" && next.value === "_") return true;
     if (next.kind === "ident") {
       const after = this.peek(2);

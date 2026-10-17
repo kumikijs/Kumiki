@@ -84,7 +84,7 @@ A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line.
 **Notes on bool operators**:
 - Short-circuit AND: `&&` (recommended) or `&` (alias, internally identical)
 - Short-circuit OR : `||` (recommended) or `|` (alias, but with a heuristic to avoid collision with match arms)
-- When writing `|` as bool OR, if what follows it is "**pattern + `->`**" — `_`, a variant or binding name, `Variant(binds)`, or a tuple, then `->` (i.e. the start of a match arm) — the parser treats it as an arm separator: `->` is not an operator, so an arm is the only thing that can begin there. If any other expression follows, it is interpreted as bool OR, so `a | b`, `a | b.c` and `a | f(x)` are ors. As a safe measure, use `||` when in doubt.
+- When writing `|` as bool OR, if what follows it is "**pattern + `->`**" — `_`, a variant or binding name, `Variant(binds)`, or a tuple, then `->` (i.e. the start of a match arm) — the parser treats it as an arm separator: no expression continues with `->`, so only an arm can begin there. If any other expression follows, it is interpreted as bool OR, so `a | b`, `a | b.c` and `a | f(x)` are bool ORs. As a safe measure, use `||` when in doubt.
 
 ### 1.2.2 Reserved Words
 
@@ -1035,7 +1035,7 @@ fn current() = todos                          # receive it via a fn argument
 reducer r on=ui.change(input[type=file]) do= ...   # write it by tile name
 
 # ❌ literal match pattern
-match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (Prohibitions)
+match status with | "open" -> ... | "closed" -> ...   # a pattern is a variant, Variant(binds), a tuple, a binding name or _; use if/else or a union (Prohibitions)
 
 # ❌ a match with no arms
 tile Width = match size with                          # every match takes one `| pattern -> …` arm or more, in every position: a parse error at the `match`

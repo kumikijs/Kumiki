@@ -15,7 +15,7 @@ $ kumiki check bind-arm.kumiki      # fn score(x: Color) -> Int = match x with |
 Error: Parse error at 4:61: Expected a definition keyword
 ```
 
-`->` is not an operator, so a pattern followed by `->` after a `|` can only be
+No expression continues with `->`, so a pattern followed by `->` after a `|` can only be
 the next arm, and the parser now reads a binding name there the way it already
 read a variant. A `|` with no `->` after what follows it is still an OR, so
 `a | b`, `a | b.c` and `a | f(x)` are unchanged:

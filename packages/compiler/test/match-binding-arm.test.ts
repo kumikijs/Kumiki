@@ -1,67 +1,21 @@
-import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { withRoot } from "./helpers/programs.ts";
+import { loadReducer } from "./helpers/module.ts";
 
-const parsed = (defs: string) =>
-  parse(
-    lex(
-      withRoot(
-        "Go",
-        `type Color = Red | Green | Blue
-slot c : Color = Blue
-slot a : Bool = false
-slot b : Bool = true
+// Example 182 runs a `fn` body's binding arm; this runs the arm before it too.
+const scoring = (color: string): string => `type Color = Red | Green | Blue
+slot n : Int = 0
+fn score(x: Color) -> Int = match x with | Red -> 1 | other -> 2
+reducer subject on=ui.click(Go) do= n := score(${color})
 tile Go = button(text="go")
-${defs}`,
-      ),
-    ),
-  ).defs;
+app A caps=[] routes={"/" -> Go, "/404" -> Go} init=[]
+`;
 
-describe("a | that no pattern and -> follow stays bool OR", () => {
-  const rhs: [string, Record<string, unknown>][] = [
-    ["b", { kind: "Ref", name: "b" }],
-    ["b.c", { kind: "FieldAccess", base: { kind: "Ref", name: "b" }, field: "c" }],
-    ["f(x)", { kind: "Call", callee: "f", args: [{ kind: "Ref", name: "x" }] }],
-  ];
-  const or = (shape: Record<string, unknown>) => ({
-    kind: "BinOp",
-    op: "|",
-    lhs: { kind: "Ref", name: "a" },
-    rhs: shape,
-  });
-
-  it.each(rhs)("in a value match's arm body: a | %s", (written, shape) => {
-    const defs = parsed(
-      `fn g(x: Color) -> Bool = match x with | Red -> a | ${written} | other -> b`,
-    );
-    expect(defs.find((d) => d.kind === "FnDef")).toMatchObject({
-      body: {
-        kind: "MatchExpr",
-        arms: [
-          { pattern: { kind: "PVariant", name: "Red" }, body: or(shape) },
-          { pattern: { kind: "PBind", name: "other" }, body: { kind: "Ref", name: "b" } },
-        ],
-      },
-    });
-  });
-
-  it.each(rhs)("in a statement match's arm body: a | %s", (written, shape) => {
-    const defs = parsed(
-      `reducer r on=ui.click(Go) do= match c with | Red -> a := a | ${written} | other -> a := b`,
-    );
-    expect(defs.find((d) => d.kind === "ReducerDef" && d.name === "r")).toMatchObject({
-      do: [
-        {
-          kind: "MatchStmt",
-          arms: [
-            { pattern: { kind: "PVariant", name: "Red" }, body: [{ rhs: or(shape) }] },
-            {
-              pattern: { kind: "PBind", name: "other" },
-              body: [{ rhs: { kind: "Ref", name: "b" } }],
-            },
-          ],
-        },
-      ],
-    });
+describe("a fn body's match with a binding arm after another arm", () => {
+  it.each([
+    ["Red", 1],
+    ["Green", 2],
+  ])("takes %s to the arm that names it first", async (color, n) => {
+    const reducer = await loadReducer(scoring(color), "subject");
+    expect(reducer.apply({}, {}).slots.n).toBe(n);
   });
 });
