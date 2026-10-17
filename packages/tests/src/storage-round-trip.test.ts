@@ -2,24 +2,15 @@ import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { click, mountApp, waitUntil } from "./helpers/dom.ts";
+import { clickThrough } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("187-stored-bytes-and-infinity");
 
-/** Mount `app`, click each step's button until the page shows its text, and return the page's text. */
+/** Click through `steps` on `app`, and return the page's text after the last one. */
 async function run(app: AppShape, steps: [button: string, until: string][]): Promise<string> {
-  const { root, handle } = mountApp(app);
-  try {
-    for (const [button, until] of steps) {
-      click(root, button);
-      await waitUntil(() => (root.textContent ?? "").includes(until));
-    }
-    return root.textContent ?? "";
-  } finally {
-    handle.dispose();
-    root.remove();
-  }
+  const pages = await clickThrough(app, steps, (root) => root.textContent ?? "");
+  return pages.at(-1) ?? "";
 }
 
 const SAVE_THEN_LOAD: [string, string][] = [

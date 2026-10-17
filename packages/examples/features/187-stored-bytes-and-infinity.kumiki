@@ -12,11 +12,13 @@
 # A value JSON can hold is stored as its plain JSON text instead.
 #
 # There is no `.err` reducer below on purpose: `smoke` clicks Save, then Load,
-# against the real localStorage, and an unhandled `err` is an error it
-# reports. A scenario's scripted results are JSON, which cannot carry these
-# two values, so the scenario scripts a read that finds nothing;
-# packages/tests/src/storage-round-trip.test.ts runs the round trip through the
-# real handler and checks what it reads back.
+# through the real handler over happy-dom's localStorage, and an unhandled
+# `err` is an error it reports. `187-stored-bytes-and-infinity.browser.json`
+# makes the same two clicks on Chromium's localStorage, `btoa` and `atob`, and
+# expects the line Load shows. A scenario's scripted results are JSON, which
+# cannot carry these two values, so the scenario scripts a read that finds
+# nothing; packages/tests/src/storage-round-trip.test.ts runs the round trip
+# through the real handler and checks what it reads back.
 
 type Blob = {data: Bytes, ratio: Float}
 

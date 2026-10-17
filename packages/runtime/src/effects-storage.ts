@@ -8,15 +8,38 @@ type Backend = "localStorage" | "sessionStorage";
 // wrote it, never reads as tagged.
 const TAGGED = "~";
 
+// The numbers JSON has no form for, each by the one spelling its `$float` tag takes.
+const FLOATS = new Map([
+  ["NaN", Number.NaN],
+  ["Infinity", Number.POSITIVE_INFINITY],
+  ["-Infinity", Number.NEGATIVE_INFINITY],
+  ["-0", -0],
+]);
+
+// Standard base64, padded, as `btoa` writes it.
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function isUntagged(v: unknown): boolean {
+  return typeof v === "number" && (!Number.isFinite(v) || Object.is(v, -0));
+}
+
 function tagOf(v: unknown): unknown {
   if (v instanceof Uint8Array) {
     return { $bytes: btoa(Array.from(v, (b) => String.fromCharCode(b)).join("")) };
   }
-  if (typeof v === "number" && !Number.isFinite(v)) return { $float: String(v) };
+  if (isUntagged(v)) return { $float: Object.is(v, -0) ? "-0" : String(v) };
   return v;
 }
 
-// A Map's `Text` key may start with `$`; escaped to `$$`, it cannot be taken for a tag.
+/** Whether `v` holds, anywhere in it, a value JSON has no form for. */
+function needsTags(v: unknown): boolean {
+  if (v instanceof Uint8Array || isUntagged(v)) return true;
+  if (v === null || typeof v !== "object") return false;
+  return (Array.isArray(v) ? v : Object.values(v)).some(needsTags);
+}
+
+// An object key may start with `$` (a Map or Set of Text); one more `$` in front keeps it from
+// reading as a tag.
 function shiftKeys(v: unknown, shift: 1 | -1): unknown {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
   const entries = Object.entries(v);
@@ -26,29 +49,31 @@ function shiftKeys(v: unknown, shift: 1 | -1): unknown {
 }
 
 function encodeStored(value: unknown): string | undefined {
-  let tagged = false;
-  let escaped = false;
-  const text = JSON.stringify(value, (_key, v: unknown) => {
-    const tag = tagOf(v);
-    if (tag !== v) {
-      tagged = true;
-      return tag;
-    }
-    const shifted = shiftKeys(v, 1);
-    escaped ||= shifted !== v;
-    return shifted;
-  });
-  if (tagged) return TAGGED + text;
-  return escaped ? JSON.stringify(value) : text;
+  if (!needsTags(value)) return JSON.stringify(value);
+  return (
+    TAGGED +
+    JSON.stringify(value, (_key, v: unknown) => {
+      const tag = tagOf(v);
+      return tag !== v ? tag : shiftKeys(v, 1);
+    })
+  );
 }
 
+// In the tagged form a key that starts with one `$` belongs to a tag, and a tag is exactly
+// `{"$bytes": <base64>}` or `{"$float": <one of FLOATS>}`; anything else is not a stored value.
 function untag(_key: string, v: unknown): unknown {
-  if (v !== null && typeof v === "object" && Object.keys(v).length === 1) {
-    const { $bytes, $float } = v as { $bytes?: unknown; $float?: unknown };
-    if (typeof $bytes === "string") return Uint8Array.from(atob($bytes), (c) => c.charCodeAt(0));
-    if (typeof $float === "string") return Number($float);
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
+  const keys = Object.keys(v);
+  const tag = keys.find((k) => k.startsWith("$") && !k.startsWith("$$"));
+  if (tag === undefined) return shiftKeys(v, -1);
+  const x = (v as Record<string, unknown>)[tag];
+  if (keys.length === 1 && tag === "$bytes" && typeof x === "string" && BASE64.test(x)) {
+    return Uint8Array.from(atob(x), (c) => c.charCodeAt(0));
   }
-  return shiftKeys(v, -1);
+  if (keys.length === 1 && tag === "$float" && typeof x === "string" && FLOATS.has(x)) {
+    return FLOATS.get(x);
+  }
+  throw new Error(`${JSON.stringify(v)} is not a tag`);
 }
 
 function decodeStored(raw: string): unknown {
@@ -60,7 +85,15 @@ async function readFrom(backend: Backend, input: unknown): Promise<EffectResult>
     const { key, decode } = input as { key: string; decode?: Decode };
     const raw = globalThis[backend].getItem(key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
-    const value = decodeStored(raw);
+    let value: unknown;
+    try {
+      value = decodeStored(raw);
+    } catch (e) {
+      const at = JSON.stringify(key);
+      return failed(
+        `decode failed: the text under ${at} in ${backend} is not a stored value (${String(e)})`,
+      );
+    }
     const refused = decodeRefusal(decode, value);
     if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
