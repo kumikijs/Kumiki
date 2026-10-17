@@ -14,7 +14,7 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Bool` | boolean | `true`, `false` |
 | `Unit` | single value | `()` |
 | `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see [§2.2.10](#_2-2-10-bytes)) |
-| `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse(text)` |
+| `Time` | milliseconds since the Unix epoch | no literal; `now` or `Time.parse(text)` |
 | `EffectId` | opaque handle returned by `emit` (see [§2.1.1.1](#_2-1-1-1-effectid)) | no literal; `EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
@@ -49,7 +49,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
-| `Duration` | `nominal Int` (nanoseconds) |
+| `Duration` | `nominal Int` (milliseconds) |
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
@@ -306,6 +306,8 @@ to-ms                       : Int
 ```
 
 Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition.
+
+That is the unit a program sees as well: `now` and `Time.parse` answer milliseconds since the Unix epoch, `to-ms` hands the number back as it is, and two instants one second apart `diff` to `Duration.s(1)`, whose `to-ms` is `1000`.
 
 Every constructor takes its magnitude, and dropping the parentheses does not make one a value: `Duration.h` is read as a call given no argument, which is the same [E0213](./errors.md#e0213-call-arity-mismatch) as `Duration.h()`. `Bytes.*` below is read the same way. Before that, the bare spelling was a field read that evaluated to nothing at all — and a duration of nothing is a duration of zero, which nothing reported.
 
