@@ -3,10 +3,8 @@ import type { Expr, Pos } from "../ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
-  isQualifierName,
-  QUALIFIED_BUILTIN_CALLS,
-  QUALIFIED_CALL_NAMESPACES,
-  TYPE_MEMBER_CALLS,
+  isMissingNamespaceMember,
+  typeMemberQualifier,
   UNIMPLEMENTED_CALLS,
 } from "../builtin-calls.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
@@ -35,12 +33,7 @@ export function checkCallee(
     return;
   }
   const dot = callee.indexOf(".");
-  if (
-    dot > 0 &&
-    argCount === 0 &&
-    QUALIFIED_CALL_NAMESPACES.has(callee.slice(0, dot)) &&
-    !QUALIFIED_BUILTIN_CALLS.has(callee)
-  ) {
+  if (isMissingNamespaceMember(callee, argCount)) {
     errors.push({
       code: "E0116",
       kind: "undef-call",
@@ -49,13 +42,10 @@ export function checkCallee(
     });
     return;
   }
-  if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
-    const qualifier = callee.slice(0, dot);
-    if (
-      isQualifierName(qualifier) &&
-      !isKnownTypeName(qualifier, sym) &&
-      !isPrimTypeName(qualifier)
-    ) {
+  const qualifier = typeMemberQualifier(callee, argCount);
+  if (qualifier !== undefined) {
+    const member = callee.slice(dot + 1);
+    if (!isKnownTypeName(qualifier, sym) && !isPrimTypeName(qualifier)) {
       errors.push({
         code: "E0117",
         kind: "undef-type",
@@ -64,16 +54,12 @@ export function checkCallee(
       });
       return;
     }
-    const typeArity =
-      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
-        ? constructorArity(qualifier, sym)
-        : 0;
+    const typeArity = isKnownTypeName(qualifier, sym) ? constructorArity(qualifier, sym) : 0;
     if (typeArity !== 0) {
       const wanted =
         typeArity === null
           ? "type arguments"
           : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
-      const member = callee.slice(dot + 1);
       const readable =
         member === "parse"
           ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
@@ -88,11 +74,7 @@ export function checkCallee(
       });
       return;
     }
-    if (
-      callee.slice(dot + 1) === "parse" &&
-      isQualifierName(qualifier) &&
-      parseQualifier(qualifier, sym).kind === "none"
-    ) {
+    if (member === "parse" && parseQualifier(qualifier, sym).kind === "none") {
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
@@ -102,8 +84,7 @@ export function checkCallee(
       return;
     }
     if (
-      callee.slice(dot + 1) === "fresh" &&
-      isQualifierName(qualifier) &&
+      member === "fresh" &&
       qualifierType(qualifier, pos, sym) !== null &&
       freshResultType(qualifier, pos, sym) === null
     ) {
