@@ -10,6 +10,7 @@ import {
   tileIdOf,
 } from "./ssr-render/html.ts";
 import { overlayLayerStyle } from "./ssr-render/style.ts";
+import { valueKey } from "./tiles/input/_shared.ts";
 import { headingTag } from "./tiles/text/heading.ts";
 
 /** The spinner a loading button carries, as the renderer builds it. */
@@ -163,13 +164,14 @@ export function renderTileToString(node: TileNode): string {
     }
     case "select": {
       const bind = bindAttr(node);
+      // A variant or record option is never the very object the slot holds, so
+      // only the structural key the mounted `<select>` uses can match them.
+      const currentKey = valueKey(node.value);
       const opts = (node.options ?? [])
-        .map(
-          (o) =>
-            `<option value="${escapeAttr(String(o.value))}"${
-              o.value === node.value ? " selected" : ""
-            }>${escapeText(String(o.label))}</option>`,
-        )
+        .map((o) => {
+          const k = valueKey(o.value);
+          return `<option value="${escapeAttr(k)}"${k === currentKey ? " selected" : ""}>${escapeText(String(o.label))}</option>`;
+        })
         .join("");
       return el(
         node,

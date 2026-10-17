@@ -30,6 +30,29 @@ describe("the server pass on its own", () => {
     );
     expect(chosen.map((o) => o.textContent)).toEqual(["B"]);
 
+    const selectedLabels = (node: TileNode): (string | null)[] =>
+      Array.from(serverElement(node).querySelectorAll("option"))
+        .filter((o) => o.hasAttribute("selected"))
+        .map((o) => o.textContent);
+    const statuses = [
+      { label: "A", value: { _tag: "Some", _0: { _tag: "A" } } },
+      { label: "B", value: { _tag: "Some", _0: { _tag: "B" } } },
+    ];
+    expect(
+      selectedLabels({
+        kind: "select",
+        value: { _tag: "Some", _0: { _tag: "B" } },
+        options: statuses,
+      }),
+    ).toEqual(["B"]);
+    const boxes = [
+      { label: "1x1", value: { w: 1, h: 1 } },
+      { label: "2x3", value: { w: 2, h: 3 } },
+    ];
+    expect(selectedLabels({ kind: "select", value: { w: 2, h: 3 }, options: boxes })).toEqual([
+      "2x3",
+    ]);
+
     expect(serverElement({ kind: "textarea", value: "note" }).textContent).toBe("note");
 
     const slider = serverElement({ kind: "slider", value: 5, min: 0, max: 10, step: 2 });

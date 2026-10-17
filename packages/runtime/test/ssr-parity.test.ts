@@ -261,6 +261,19 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
           options: [{ label: "A", value: "a" }],
         },
       ],
+      [
+        "select (variant and record values)",
+        {
+          kind: "select",
+          value: { _tag: "Some", _0: { _tag: "B" } },
+          options: [
+            { label: "None", value: { _tag: "None" } },
+            { label: "A", value: { _tag: "Some", _0: { _tag: "A" } } },
+            { label: "B", value: { _tag: "Some", _0: { _tag: "B" } } },
+            { label: "Box", value: { w: 2, h: 3 } },
+          ],
+        },
+      ],
     ],
   },
   slider: {
