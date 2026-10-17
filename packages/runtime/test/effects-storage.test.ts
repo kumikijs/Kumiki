@@ -103,7 +103,6 @@ describe.each(HANDLERS)("%s: a written value reads back as the value it was", (_
   it.each<[string, unknown]>([
     ["a Bytes", new Uint8Array([104, 105])],
     ["an empty Bytes", new Uint8Array()],
-    ["a 1 MiB Bytes", Uint8Array.from({ length: 1 << 20 }, (_, i) => i % 251)],
     ["Infinity", Number.POSITIVE_INFINITY],
     ["-Infinity", Number.NEGATIVE_INFINITY],
     ["NaN", Number.NaN],
@@ -123,6 +122,16 @@ describe.each(HANDLERS)("%s: a written value reads back as the value it was", (_
       kind: "ok",
       value: { _tag: "Some", _0: value },
     });
+  });
+
+  // A wrong read puts a million-key object here, and a diff of that never finishes, so this
+  // row compares the bytes without one.
+  it("a 1 MiB Bytes", async () => {
+    const value = Uint8Array.from({ length: 1 << 20 }, (_, i) => i % 251);
+    expect(await write({ key: "v", value })).toEqual({ kind: "ok", value: null });
+    const got = ((await read({ key: "v" })).value as { _0?: unknown })._0;
+    const same = got instanceof Uint8Array && got.length === value.length;
+    expect(same && got.every((b, i) => b === value[i])).toBe(true);
   });
 });
 
