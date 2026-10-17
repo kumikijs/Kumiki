@@ -711,21 +711,29 @@ A reducer names a tile that has not been declared, in either of the two triggers
 
 ### E0212 `selector-id-mismatch` (opt-in via `--strict-selector-id`)
 
-A reducer's `ui.<ev>(Tile#id)` selector names an id that the target tile's literal `{id: "..."}` prop cannot produce. E0211 catches typos in the tile name; this catches typos in the `#id` fragment — e.g. `on=ui.submit(NewForm#nw)` against `tile NewForm = form(...) {id: "new"}`. The runtime `_dispatch` filter (spec [§1.6.2](./language.md#_1-6-2-selectors)) silently skips the mismatch, so without this check the reducer never fires and the developer sees no error. Opt in with `kumiki check --strict-selector-id` or `compile({ strictSelectorId: true })`.
+A reducer's `ui.<ev>(Tile#id)` selector names an id that no element the subscription is wired onto carries. E0211 catches typos in the tile name; this catches typos in the `#id` fragment — e.g. `on=ui.submit(NewForm#nw)` against `tile NewForm = form(...) {id: "new"}`. The runtime `_dispatch` filter (spec [§1.6.2](./language.md#_1-6-2-selectors)) silently skips the mismatch, so without this check the reducer never fires and the developer sees no error. Opt in with `kumiki check --strict-selector-id` or `compile({ strictSelectorId: true })`.
 
-> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but tile "<Tile>" is declared with id "<actual>" — this selector can never match`
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but every element of tile "<Tile>" that fires "<ev>" has id "<a>" | "<b>" — this selector can never match`
 
-The checker descends into all four control-flow bodies (`for` / `when` / `if` / `match`): `for` / `when` pass through to their single body, `if`'s two branches merge, and every `match` arm contributes to the observed id set. `tile T = if c then button(...) {id: "a"} else button(...) {id: "b"}` produces `"a" | "b"`; a selector `T#c` under `--strict-selector-id` fires E0212. Referenced user tiles are NOT descended — a `Ref` to another tile leaves the id set unknown, so a future per-instance id-override syntax at the use site isn't foreclosed at compile time.
+The id set is the ids of the elements the subscription is wired onto, since `#id` is compared with the element that dispatched ([§1.6.2](./language.md#_1-6-2-selectors)):
+
+- **Every element under the tile whose kind fires `<ev>`**, at any depth — the kinds [W0212](#w0212-ui-event-tile-mismatch-warning) lists, found by the walk it uses: through child tiles named by reference, every branch of `for` / `when` / `if` / `match`, and the `error-boundary` fallback of a tile called inside the body, which renders in that tile's place. A container's own id is in the set only for an event the container fires: against `tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}`, `ui.click(Toolbar#toolbar)` is E0212 (the set is `"save"`), and `ui.hover(Toolbar#toolbar)` is not, because `hover` is wired onto the row too. The tile's own fallback is not in the set: it replaces the tree the tile rendered, from outside the tile.
+- **Either spelling of the id**: `{id: "x"}` and `id="x"` are one prop ([§1.7.1](./language.md#_1-7-1-syntax)). When a tile writes both, the props block is the one dispatched.
+- **As each call site leaves it**: the props written on a user-tile call site are merged onto the elements the tile renders at its root, so `Btn(id="b")` and `Btn {id: "b"}` give that element the id `"b"`, whatever `Btn` declares.
+
+`tile T = if c then button(...) {id: "a"} else button(...) {id: "b"}` produces `"a" | "b"`; a selector `T#c` under `--strict-selector-id` fires E0212.
 
 **When E0212 stays silent (runtime filter is authoritative)**:
 
-- The tile has no `{id}` prop at all.
-- The tile's `{id}` value is a non-literal expression (a `Ref`, method call, etc.) — its runtime value is not known at check time.
+- An element the subscription is wired onto has no id.
+- Its id is a non-literal expression (a `Ref`, method call, etc.) — its runtime value is not known at check time.
+- It is at the root of a user-tile call site that writes a prop other than an event handler, `key` or a literal `id` — what that call site leaves the element dispatching is not followed.
+- No element of the tile fires `<ev>` — [W0212](#w0212-ui-event-tile-mismatch-warning) reports that one.
 - The selector has no `#id` portion.
 - The selector uses the `_` wildcard.
 - The target tile is undeclared (E0211 already fires; E0212 is suppressed to surface a single root cause).
 
-**Fix**: Correct the `#id` in the selector to match the tile's declared `{id}`, or correct the tile's `{id}` literal.
+**Fix**: Correct the `#id` in the selector to the id of the element meant to fire the reducer, or correct that element's id. On a container, that is the id of the descendant that fires the event, not the container's own.
 
 ### W0212 `ui-event-tile-mismatch` (warning)
 
@@ -748,7 +756,7 @@ The allowed root builtins per event are (current toolchain coverage: every kind 
 
 **Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
 
-The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
+The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). The `error-boundary` fallback of a tile called inside the body is walked as well: it renders in that tile's place, and the subscription is wired onto it like the rest of the tree. The tile's own fallback is not, since it replaces the tile's tree from outside the tile. A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
 
 **Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround. That reservation is about `click` only: an `<a href>` is focusable and in the tab order, so `link` is listed under `key`, `focus` and `blur`. A keydown on a link runs its `ui.key` reducer **before** the browser acts on the key; on Enter the browser then activates the link and the router navigates as it always does. The reducer sees the key and cannot cancel the navigation.
 

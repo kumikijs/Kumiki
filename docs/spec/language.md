@@ -473,6 +473,8 @@ The `{id}` prop is also rendered as the element's native HTML `id` attribute. Mu
 
 **A selector on a container reaches the descendants that fire the event.** Most container kinds fire nothing themselves — a `box` has no `keydown`, no `focus` and no `submit` of its own — so `ui.<ev>(<Container>)` is wired onto every descendant whose kind is in the allowed set for `<ev>` ([§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) lists them). `ui.hover` is the unrestricted case: it is wired onto the container *and* onto each descendant, because `mouseenter` does not bubble.
 
+**`#id` on a container names the descendant that fires.** The id is compared with the element that dispatched, so it is a descendant's id — written either way, `id="save"` or `{id: "save"}` — and the container's own id only for an event the container fires itself. With `tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}`, `ui.click(Toolbar#save)` fires for the Save button, and `ui.click(Toolbar#toolbar)` never fires, because a `row` dispatches no click; under `--strict-selector-id` that selector is [E0212](./errors.md#e0212-selector-id-mismatch-opt-in-via-strict-selector-id).
+
 **How the descendant is written makes no difference.** A body that names a child tile is walked exactly as an inline one, to any depth, so these two are one program:
 
 ```kumiki snippet
