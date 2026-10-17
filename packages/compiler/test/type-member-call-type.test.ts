@@ -185,6 +185,10 @@ slot t : Option(Tally) = Tally.parse("4")`),
       diagnostics(`type Foo = Bar\nslot o : Option(Int) = None
 reducer r on=ui.click(B) do= o := Foo.parse("1")`),
     ).toEqual(['E0117 Reference to undefined type "Bar"']);
+    expect(
+      diagnostics(`type Foo = Bar(Int)\nslot o : Option(Int) = None
+reducer r on=ui.click(B) do= o := Foo.parse("1")`),
+    ).toEqual(['E0117 Reference to undefined type "Bar"']);
     const cyclic = diagnostics(`type P = Q\ntype Q = P\nslot o : Option(Int) = None
 reducer r on=ui.click(B) do= o := P.parse("1")`);
     expect(cyclic.some((d) => d.startsWith("E0009"))).toBe(true);
