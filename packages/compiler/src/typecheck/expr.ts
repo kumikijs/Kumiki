@@ -1,6 +1,7 @@
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { FRAGMENT_ARGUMENTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { receiverParams } from "../stdlib-members.ts";
 import {
   checkAgainst,
   checkEmitTarget,
@@ -266,7 +267,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         for (const [i, a] of e.args.entries()) {
           if (fragment?.index !== i) {
             checkExpr(a, sym, errors, ctx);
-            const declared = memberArgType(recvType, e.method, i, sym);
+            const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
@@ -293,7 +294,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
           }
-          const declared = memberArgType(recvType, e.method, i, sym);
+          const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
           if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
         }
       }
@@ -577,29 +578,31 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
   return inner;
 }
 
+// A call given fewer arguments than the signature takes has none read against it: which argument
+// it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
   index: number,
+  argCount: number,
   sym: SymbolTable,
 ): TypeExpr | null {
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
-  const [a, b] = t.args;
-  switch (t.name) {
-    case "List":
-      return index === 0 && LIST_ELEMENT_ARGS.has(member) ? (a ?? null) : null;
-    case "Map":
-      return index === 1 && MAP_VALUE_ARGS.has(member) ? (b ?? null) : null;
-    case "Set":
-      return index === 0 && SET_OPERANDS.has(member) ? recv : null;
-    default:
+  const params = receiverParams(t.name, member);
+  if (params === undefined || argCount < params.length) return null;
+  const param = params[index] ?? null;
+  switch (param) {
+    case null:
       return null;
+    case "K":
+    case "T":
+      return t.args[0] ?? null;
+    case "V":
+      return t.args[1] ?? null;
+    case "Map(K, V)":
+    case "Set(T)":
+    case "List(T)":
+      return recv;
   }
 }
-
-const LIST_ELEMENT_ARGS: ReadonlySet<string> = new Set(["contains", "push", "prepend"]);
-
-const MAP_VALUE_ARGS: ReadonlySet<string> = new Set(["insert", "update"]);
-
-const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);
