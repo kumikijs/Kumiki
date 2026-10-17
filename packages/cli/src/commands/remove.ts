@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { CASCADE_HELP, describeEdit, removeDef } from "../mutate.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki remove <file> <qname> [--cascade]";
@@ -16,8 +16,9 @@ export function registerRemove(program: Command): string {
     .action(
       (file: string | undefined, qname: string | undefined, options: { cascade?: boolean }) => {
         if (!file || !qname) exitWithUsage(USAGE);
+        const path = sourceFileArg(file);
         printOrExit(() => {
-          const result = removeDef(resolve(process.cwd(), file), qname, Boolean(options.cascade));
+          const result = removeDef(path, qname, Boolean(options.cascade));
           return describeEdit({ op: "remove", qname, ...result });
         });
       },

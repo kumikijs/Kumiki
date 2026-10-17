@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { requireSourceFile } from "@kumikijs/cli";
 import { resolveCapabilities } from "@kumikijs/compiler/node";
 import { z } from "zod";
 
@@ -7,18 +8,14 @@ export function absPath(path: string): string {
   return resolve(process.cwd(), path);
 }
 
-export function requireSourceFile(path: string): string {
-  const abs = absPath(path);
-  if (!existsSync(abs)) throw new Error(`File "${abs}" not found`);
-  return abs;
-}
+export { requireSourceFile };
 
 export function readSource(input: {
   source?: string | undefined;
   path?: string | undefined;
 }): string {
   if (typeof input.source === "string") return input.source;
-  if (input.path) return readFileSync(absPath(input.path), "utf8");
+  if (input.path) return readFileSync(requireSourceFile(input.path), "utf8");
   throw new Error("provide either `source` or `path`");
 }
 

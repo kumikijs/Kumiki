@@ -1,8 +1,8 @@
-import { resolve } from "node:path";
 import { Argument, type Command } from "commander";
 import { addDef, describeEdit } from "../mutate.ts";
 import { LAYERS } from "../store.ts";
 import { bodyFileOption, resolveBody } from "./_shared/body-input.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki add <file> <layer> <name> <body>";
@@ -30,8 +30,9 @@ export function registerAdd(program: Command): string {
       ) => {
         if (!file || !layer || !name) exitWithUsage(USAGE);
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
+        const path = sourceFileArg(file);
         printOrExit(() => {
-          const opId = addDef(resolve(process.cwd(), file), layer, name, body);
+          const opId = addDef(path, layer, name, body);
           return describeEdit({ op: "add", qname: `${layer}.${name}`, opId });
         });
       },

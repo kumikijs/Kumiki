@@ -1,5 +1,12 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { findReferences, joinLines, load, type Store, spliceLines } from "../store.ts";
+import {
+  findReferences,
+  joinLines,
+  load,
+  requireSourceFile,
+  type Store,
+  spliceLines,
+} from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import { commit, compareQNames } from "./commit.ts";
@@ -23,6 +30,7 @@ export type ReplaceResult = { opId: string; dropped: string[] };
 export type RemoveResult = { opId: string; removed: RemovedNames };
 
 export function addDef(path: string, layer: string, name: string, body: string): string {
+  requireSourceFile(path);
   return addDefs(path, [{ layer, name, body }]);
 }
 
@@ -53,6 +61,7 @@ function addDefsLocked(path: string, defs: readonly [DefSpec, ...DefSpec[]]): st
 }
 
 export function replaceDef(path: string, qname: string, body: string): ReplaceResult {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => replaceDefLocked(path, qname, body));
 }
@@ -78,6 +87,7 @@ export const CASCADE_HELP =
 
 /** Removes `qname`, plus everything that references it when `cascade`. */
 export function removeDef(path: string, qname: string, cascade: boolean): RemoveResult {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => removeDefLocked(path, qname, cascade));
 }
@@ -175,6 +185,7 @@ function removeSetLocked(
 }
 
 export function renameDef(path: string, qname: string, newName: string): string {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => renameDefLocked(path, qname, newName));
 }
@@ -211,6 +222,7 @@ function renameDefLocked(path: string, qname: string, newName: string): string {
 }
 
 export function editDef(path: string, qname: string, patch: unknown): string {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => editDefLocked(path, qname, patch));
 }
@@ -290,6 +302,7 @@ function isPerLinePatch(p: unknown): p is Record<string, string> {
 }
 
 export function patchApplyFile(path: string, opsFile: string): string[] {
+  requireSourceFile(path);
   return withWriteLock(path, () => patchApplyFileLocked(path, opsFile));
 }
 

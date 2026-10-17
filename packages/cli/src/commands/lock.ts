@@ -1,6 +1,6 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { lockDef, lockPatternProblem } from "../mutate.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki lock <file> <agent-id> <pattern>";
@@ -21,8 +21,9 @@ export function registerLock(program: Command): string {
           console.error(problem);
           exitWithUsage(USAGE);
         }
+        const path = sourceFileArg(file);
         printOrExit(() => {
-          lockDef(resolve(process.cwd(), file), agentId, pattern);
+          lockDef(path, agentId, pattern);
           return `locked ${pattern} for ${agentId}`;
         });
       },

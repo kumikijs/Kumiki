@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { fixCmd, fixFromTest } from "../fix.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE =
@@ -24,7 +24,7 @@ export function registerFix(program: Command): string {
       ) => {
         if (!file) exitWithUsage(USAGE);
         const apply = Boolean(options.apply);
-        const fixPath = resolve(process.cwd(), file);
+        const fixPath = sourceFileArg(file);
         if (options.autoPatch !== undefined) {
           const outcome = await fixFromTest(
             fixPath,

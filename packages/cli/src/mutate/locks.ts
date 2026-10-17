@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { requireSourceFile } from "../store.ts";
 import { escapeRegExp } from "../text.ts";
 import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import { authorOf } from "./op-log.ts";
@@ -122,6 +123,7 @@ function lockConflict(
 export function lockDef(path: string, agentId: string, pattern: string): void {
   const problem = lockPatternProblem(pattern);
   if (problem !== undefined) throw new Error(problem);
+  requireSourceFile(path);
   withWriteLock(path, () => {
     const locks = readLocks(path);
     const patterns = splitPatterns(pattern);
@@ -138,6 +140,7 @@ export function lockDef(path: string, agentId: string, pattern: string): void {
 }
 
 export function unlockDef(path: string, agentId: string): void {
+  requireSourceFile(path);
   withWriteLock(path, () => {
     const locks = readLocks(path);
     if (!locks.entries.some((e) => e.agent === agentId)) {

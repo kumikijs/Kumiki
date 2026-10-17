@@ -1,4 +1,4 @@
-import { loadSource } from "../store.ts";
+import { loadSource, requireSourceFile } from "../store.ts";
 import { escapeRegExp } from "../text.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { assemble, bodyOf, nameSites, respell, splitQname } from "./definition-text.ts";
@@ -6,6 +6,7 @@ import { type DefSpec, type OpLogEntry, readOpLog } from "./op-log.ts";
 import { addDefs, removeDef, removeSet, renameDef, replaceDef } from "./verbs.ts";
 
 export function patchRevert(path: string, opId: string): string {
+  requireSourceFile(path);
   return withWriteLock(path, () => patchRevertLocked(path, opId));
 }
 

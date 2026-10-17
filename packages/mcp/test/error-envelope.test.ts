@@ -20,7 +20,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
 describe("failure reporting", () => {
   const workdir = useWorkdir();
 
-  it("every tool that opens a file reports a missing one in the JSON error envelope", async () => {
+  it("every tool that opens a file reports a missing one in the JSON error envelope, naming it", async () => {
     await withClient(async (client) => {
       const { tools } = await client.listTools();
       const withPath = tools.filter(
@@ -31,15 +31,18 @@ describe("failure reporting", () => {
         expect.arrayContaining(["kumiki_check", "kumiki_fix", "kumiki_auto_patch"]),
       );
       expect(withPath.length).toBeGreaterThan(14);
+      const missing = join(workdir.path, "does-not-exist.kumiki");
       for (const t of withPath) {
         const res = await call(client, t.name, {
-          path: join(workdir.path, "does-not-exist.kumiki"),
+          path: missing,
           ...(ARGS[t.name] ?? {}),
         });
         expect(res.isError, `${t.name} reported a missing file as success`).toBe(true);
         const parsed = JSON.parse(res.body) as { error?: { kind: string; message: string } };
-        expect(parsed.error?.kind, `${t.name} used a different envelope`).toBe("error");
-        expect(typeof parsed.error?.message).toBe("string");
+        expect(parsed.error, t.name).toEqual({
+          kind: "error",
+          message: `File "${missing}" not found`,
+        });
       }
     });
   });
