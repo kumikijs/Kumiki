@@ -1,0 +1,58 @@
+# Feature (stdlib.md): a `Time` is read from text by one grammar,
+# ISO 8601's calendar date with an optional time and zone, wherever the text
+# comes from.
+#
+#   Time.parse(text) : Option(Time)   ; ISO8601
+#
+# Text outside that grammar names no instant, whatever the platform's own
+# parser makes of it: V8 reads "1", "hello 12", "March 7" and "Tue 5" as days
+# in 2001, and here each of them is `None`. ISO 8601 with `Z`, with an offset,
+# with no zone (the local clock) and date-only is the instant it names, so
+# `utc` and `offset` hold the same one.
+#
+# `stamps` is filled from a JSON payload whose `at` fields are text, which
+# `Decoder.Json` does not convert. `format` reads each one by the same grammar:
+# "1" is no instant there either, rather than a millisecond after the epoch.
+
+type Stamp = {label: Text, at: Time}
+
+slot digit   : Option(Time) = None
+slot words   : Option(Time) = None
+slot month   : Option(Time) = None
+slot weekday : Option(Time) = None
+slot utc     : Option(Time) = None
+slot offset  : Option(Time) = None
+slot local   : Text         = ""
+slot day     : Text         = ""
+slot stamps  : List(Stamp)  = []
+
+effect loadStamps cap=http.get
+                  in=Unit
+                  out=Result(List(Stamp), HttpError)
+                  map-request={url: "/api/stamps", decode: Decoder.Json(List(Stamp))}
+
+fn shown(o: Option(Time)) -> Text = match o with | Some(t) -> t.format("yyyy-MM-dd HH:mm") | None -> "none"
+
+reducer boot on=app.start
+    do= emit loadStamps()
+        digit   := Time.parse("1")
+        words   := Time.parse("hello 12")
+        month   := Time.parse("March 7")
+        weekday := Time.parse("Tue 5")
+        utc     := Time.parse("2026-03-07T10:00:00Z")
+        offset  := Time.parse("2026-03-07T19:00:00+09:00")
+        local   := shown(Time.parse("2026-03-07T10:00"))
+        day     := shown(Time.parse("2026-03-07"))
+
+reducer loaded on=loadStamps.ok($s, _) do= stamps := $s
+
+tile App = column(
+  text("1: " + shown(digit)),
+  text("local: " + local),
+  text("day: " + day),
+  column(for s in stamps text(s.label + ": " + s.at.format("yyyy-MM-dd HH:mm")) {key: s.label}))
+
+app TimeFromText
+  caps   = [http.get]
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

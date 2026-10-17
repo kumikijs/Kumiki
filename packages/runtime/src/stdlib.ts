@@ -78,13 +78,11 @@ export function valueEqual(a: unknown, b: unknown): boolean {
 }
 
 function instantOf(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return Number.NaN;
   // Trimmed here, not in `Time.parse`: the reading refuses padded text, but a
   // `Time` that arrived as padded text still renders as the instant it names.
-  const raw = String(value ?? "").trim();
-  if (raw === "") return Number.NaN;
-  const n = Number(raw);
-  if (Number.isFinite(n)) return n;
-  const parsed = _stdlibCore.parseTime(raw);
+  const parsed = _stdlibCore.parseTime(value.trim());
   return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
 }
 
