@@ -1,5 +1,10 @@
-import type { EpisodeLogEntry, EpisodeMockPolicy } from "@kumikijs/runtime";
-import { _stdlibTest } from "@kumikijs/runtime";
+import type {
+  EpisodeLogEntry,
+  EpisodeMockPolicy,
+  ReplayEvent,
+  TestResult,
+} from "@kumikijs/runtime";
+import { _stdlibTest, dispatchFault, replayEpisodes } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { type ReplayableApp, replayableApp } from "./helpers/episode-apps.ts";
 
@@ -170,5 +175,121 @@ describe("_stdlibTest.runEpisodeTest", () => {
     });
     expect(result.pass).toBe(true);
     expect(app.live?.user).toBe(null);
+  });
+});
+
+describe("an episode whose entry reducer is not in the program", () => {
+  function renamedApp(to: string): ReplayableApp {
+    const app = makeCounterApp();
+    app.reducers = app.reducers.filter((r) => r.name === "inc").map((r) => ({ ...r, name: to }));
+    return app;
+  }
+
+  const crashedEpisode: EpisodeLogEntry = {
+    id: "ep_crash",
+    trigger: { kind: "ui.click", target: "IncBtn" },
+    status: "panic",
+    steps: [{ kind: "panic", name: "inc", message: "boom", category: "reducer" }],
+  };
+
+  function episodeTest(
+    app: ReplayableApp,
+    episodes: EpisodeLogEntry[],
+    ex: Parameters<typeof _stdlibTest.runEpisodeTest>[0]["expect"],
+  ): TestResult {
+    return _stdlibTest.runEpisodeTest({ name: "renamed", app, episodes, mocks: {}, expect: ex });
+  }
+
+  const failed = (actual: string): TestResult => ({
+    name: "renamed",
+    pass: false,
+    expected: "every episode replayed",
+    actual,
+    diffAt: "episodes",
+  });
+
+  it.each([
+    ["no-panics + no-errors", { noPanics: true, noErrors: true }],
+    ["nothing", {}],
+    ["slots-equal the unchanged slots", { slotsEqual: { count: 0 } }],
+    ["slots-equal: from-log", { slotsEqual: "from-log" as const, noPanics: true }],
+  ])("fails an episode-test naming the reducer, whatever expect names (%s)", (_, ex) => {
+    const result = episodeTest(renamedApp("bump"), [incEpisode(1)], ex);
+    expect(result).toEqual(failed('ep_1: no reducer named "inc"'));
+  });
+
+  it("fails an episode-test for an episode whose recorded panic names the reducer", () => {
+    const result = episodeTest(renamedApp("bump"), [crashedEpisode], { noPanics: true });
+    expect(result).toEqual(failed('ep_crash: no reducer named "inc"'));
+  });
+
+  it("names each such episode, and still replays the others", () => {
+    const app = renamedApp("bump");
+    const bumped: EpisodeLogEntry = {
+      ...incEpisode(1),
+      id: "ep_bump",
+      steps: [{ kind: "reducer", name: "bump", "slot-diffs": [], emits: [] }],
+    };
+    const result = episodeTest(app, [incEpisode(1), bumped, crashedEpisode], {});
+    expect(result).toEqual(
+      failed('ep_1: no reducer named "inc"; ep_crash: no reducer named "inc"'),
+    );
+    expect(app.live.count).toBe(1);
+  });
+
+  it("reports the episode on its start event and in the replay report", () => {
+    const app = renamedApp("bump");
+    const starts: ReplayEvent[] = [];
+    const report = replayEpisodes({
+      app,
+      episodes: [incEpisode(1)],
+      mocks: {},
+      observer: (ev) => {
+        if (ev.kind === "episode-start") starts.push(ev);
+        return "continue";
+      },
+    });
+    const missing = { reducer: "inc", message: 'no reducer named "inc"' };
+    expect(starts).toEqual([
+      {
+        kind: "episode-start",
+        episodeId: "ep_1",
+        trigger: incEpisode(1).trigger,
+        entryReducerMissing: missing,
+      },
+    ]);
+    expect(report.entryReducersMissing).toEqual([{ episodeId: "ep_1", ...missing }]);
+    expect(report.finalSlots).toEqual({ count: 0 });
+  });
+
+  it("says it in the words a `{dispatch}` step naming no reducer does", () => {
+    const report = replayEpisodes({
+      app: renamedApp("incr"),
+      episodes: [incEpisode(1)],
+      mocks: {},
+      observer: () => "continue",
+    });
+    const message = dispatchFault("inc", {}, [{ name: "incr", id: null }]);
+    expect(message).toBe('no reducer named "inc" — did you mean "incr"?');
+    expect(report.entryReducersMissing).toEqual([{ episodeId: "ep_1", reducer: "inc", message }]);
+  });
+
+  it("replays an episode with no entry reducer at all as clean", () => {
+    // An `ssr.hydrate` bootstrap whose `app.init` result no reducer handles.
+    const bootstrap: EpisodeLogEntry = {
+      id: "ep_boot",
+      trigger: { kind: "ssr.hydrate", target: "/" },
+      status: "completed",
+      steps: [
+        { kind: "effect-start", name: "ping", args: null },
+        { kind: "effect-end", name: "ping", result: "ok", value: null },
+      ],
+    };
+    const app = renamedApp("bump");
+    expect(episodeTest(app, [bootstrap], { noPanics: true, noErrors: true })).toEqual({
+      name: "renamed",
+      pass: true,
+    });
+    expect(app.live.count).toBe(0);
   });
 });

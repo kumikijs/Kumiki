@@ -241,14 +241,33 @@ export const _stdlibTest = {
 
     const panics: { episodeId: string; message: string }[] = [];
     const unhandledErrors: string[] = [];
+    const notReplayed: string[] = [];
     const stepCounter = { n: 0 };
-    const observer: ReplayObserver = () => "continue";
+    const observer: ReplayObserver = (ev) => {
+      if (ev.kind === "episode-start" && ev.entryReducerMissing !== undefined) {
+        notReplayed.push(`${ev.episodeId}: ${ev.entryReducerMissing.message}`);
+      }
+      return "continue";
+    };
     const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
 
     for (const ep of episodes) {
       const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
       for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
       for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
+    }
+
+    // Ahead of every `expect`: an episode that was not replayed moved no slot and raised
+    // nothing, so each expectation would be judged on its absence, and a slot mismatch
+    // would name the symptom rather than the missing reducer.
+    if (notReplayed.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "every episode replayed",
+        actual: notReplayed.join("; "),
+        diffAt: "episodes",
+      };
     }
 
     let expectedSlots: Record<string, unknown> | null = null;

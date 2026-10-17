@@ -116,7 +116,7 @@ Per verb, `1` means:
 | `list` | the file does not exist, or the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
 | `lock` / `unlock` | another agent holds a pattern overlapping one `lock` asks for, or the agent `unlock` names holds no lock to release ([§9.8.3](#_9-8-3-task-boundaries)) |
-| `replay` | the log is unreadable, the named episode is not in it, or a replayed episode panicked |
+| `replay` | the log is unreadable, the named episode is not in it, a replayed episode panicked, or an episode's entry reducer is not in the program, so it was not replayed ([§10.5.3](./runtime.md#_10-5-3-replay)) |
 | `dev` | the server could not start. Once it is serving it runs until interrupted, and so reports nothing |
 
 A warning never changes an exit code. That is what separates the two tiers: an `error` is a claim the program is wrong, a `warning` is a claim it is suspicious, and only the first one is allowed to stop a pipeline.

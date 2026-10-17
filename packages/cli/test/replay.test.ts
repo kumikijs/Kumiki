@@ -1,9 +1,11 @@
-import { dirname, resolve } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ReplayEvent } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { formatEvent } from "../src/replay.ts";
 import { runCli, SPAWN } from "./helpers/cli.ts";
+import { tempDir } from "./helpers/files.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
@@ -152,6 +154,29 @@ describe("kumiki replay", () => {
     const { out, code } = replayCounter(...args);
     expect(code).toBe(exit);
     expect(out).toMatch(message);
+  });
+
+  it("names an episode whose entry reducer is not in the program, and exits 1", SPAWN, () => {
+    const dir = tempDir();
+    const program = join(dir, "renamed.kumiki");
+    writeFileSync(program, readFileSync(COUNTER, "utf8").replace(/\binc\b/g, "bump"));
+    const episode = (id: string, reducer: string): string =>
+      JSON.stringify({
+        id,
+        trigger: { kind: "ui.click", target: "IncBtn" },
+        steps: [{ kind: "reducer", name: reducer, "slot-diffs": [], emits: [] }],
+        status: "completed",
+      });
+    const log = join(dir, "renamed.log.jsonl");
+    writeFileSync(log, `${episode("ep_inc", "inc")}\n${episode("ep_bump", "bump")}\n`);
+    const { out, code } = runCli(["replay", program, "--from-log", log]);
+    expect(out).toContain(
+      'episode ep_inc — ui.click on IncBtn  (not replayed: no reducer named "inc")',
+    );
+    expect(out).toContain("[reducer] bump  count: 0 -> 1");
+    expect(out).toContain("1 episode(s) replayed");
+    expect(out).toContain('not replayed: ep_inc: no reducer named "inc"');
+    expect(code).toBe(1);
   });
 
   it("missing --from-log shows usage and exits 2", SPAWN, () => {
