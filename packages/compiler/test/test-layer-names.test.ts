@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
 import { EXPECT, GIVEN, property, reducerTest, withTest } from "./helpers/test-layer.ts";
 
 describe("a call in a test body resolves like a call anywhere else", () => {
@@ -134,6 +134,110 @@ describe("a slot key names a slot", () => {
 
   it("reports a route seed that is not a record", () => {
     expect(codesOf(reducerTest(`{slots: {route: "/x"}}`, EXPECT))).toEqual(["E0201"]);
+  });
+});
+
+describe("a slot value is a value of the slot's type", () => {
+  const mismatch = (message: string, text: string) => ({ code: "E0201", message, text });
+
+  it("reports a Text written for an Int, in `given.slots` and in `expect.slots`", () => {
+    const src = reducerTest(
+      `{slots: {count: "5"}, event: {type: ui.click, target: B}}`,
+      `{slots: {count: "51"}, effects: []}`,
+    );
+    expect(pointedErrorsOf(src)).toEqual([
+      mismatch("Expected Int but got Text", `"5"}, event: {type: ui.click, target: B}}`),
+      mismatch("Expected Int but got Text", `"51"}, effects: []}`),
+    ]);
+  });
+
+  it("accepts the values the slot takes", () => {
+    const src = reducerTest(
+      `{slots: {count: 5}, event: {type: ui.click, target: B}}`,
+      `{slots: {count: 6}, effects: []}`,
+    );
+    expect(pointedErrorsOf(src)).toEqual([]);
+  });
+
+  it("reports one in the multi-step form, which seeds and compares the same slots", () => {
+    const src = withTest(`    reducer-test save
+        given  = {slots: {count: "1"}, event: {type: ui.click, target: S},
+                  mocks: {persist: err("disk full")}}
+        expect = {slots: {label: 404}, effects: []}`);
+    expect(pointedErrorsOf(src)).toEqual([
+      mismatch("Expected Int but got Text", `"1"}, event: {type: ui.click, target: S},`),
+      mismatch("Expected Text but got Int", "404}, effects: []}"),
+    ]);
+  });
+
+  it("reports one in an episode-test's `slots-equal` record", () => {
+    const src = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {count: "3"}, no-panics: true}`);
+    expect(pointedErrorsOf(src)).toEqual([
+      mismatch("Expected Int but got Text", `"3"}, no-panics: true}`),
+    ]);
+  });
+
+  it("reports one in a tile-test's and a property-test's `given.slots`", () => {
+    const tile = withTest(`    tile-test B
+        given  = {slots: {count: "5"}}
+        expect = button(text="+", onClick=inc)`);
+    expect(pointedErrorsOf(tile)).toEqual([mismatch("Expected Int but got Text", `"5"}}`)]);
+    expect(pointedErrorsOf(property("{s: Text}", "{slots: {count: s}}", "s == s"))).toEqual([
+      mismatch("Expected Int but got Text", "s}}"),
+    ]);
+    expect(
+      pointedErrorsOf(property("{n: Int}", "{slots: {count: n + 1, label: n.show}}", "n == n")),
+    ).toEqual([]);
+  });
+
+  it("accepts a wildcard in `expect.slots`, which stands for any value", () => {
+    const src = reducerTest(GIVEN, `{slots: {count: <slots.count>, label: <any-id>}, effects: []}`);
+    expect(pointedErrorsOf(src)).toEqual([]);
+  });
+
+  it("reports a route field whose value is not of that field's type", () => {
+    const src = reducerTest(`{slots: {route: {path: 5, params: {"id": 7}, hash: "top"}}}`, EXPECT);
+    expect(pointedErrorsOf(src)).toEqual([
+      mismatch("Expected Text but got Int", `5, params: {"id": 7}, hash: "top"}}}`),
+      mismatch("Expected Text but got Int", `7}, hash: "top"}}}`),
+      mismatch("Expected Option(Text) but got Text", `"top"}}}`),
+    ]);
+  });
+
+  it("reports one in `expect.slots`, in `slots-equal` and from a `for-all` name", () => {
+    expect(pointedErrorsOf(reducerTest(GIVEN, `{slots: {route: {path: 7}}, effects: []}`))).toEqual(
+      [mismatch("Expected Text but got Int", "7}}, effects: []}")],
+    );
+    const episode = withTest(`    episode-test
+        load   = "nope.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {route: {hash: "top"}}}`);
+    expect(pointedErrorsOf(episode)).toEqual([
+      mismatch("Expected Option(Text) but got Text", `"top"}}}`),
+    ]);
+    expect(pointedErrorsOf(property("{n: Int}", "{slots: {route: {path: n}}}", "n == n"))).toEqual([
+      mismatch("Expected Text but got Int", "n}}}"),
+    ]);
+  });
+
+  it("accepts a route seed of the route's own types, whole or in part", () => {
+    const whole = `{path: "/p/7", pattern: "/p/:id", params: {"id": "7"}, query: {}, hash: Some("top")}`;
+    expect(pointedErrorsOf(reducerTest(`{slots: {route: ${whole}}}`, EXPECT))).toEqual([]);
+    expect(pointedErrorsOf(reducerTest(`{slots: {route: {hash: None}}}`, EXPECT))).toEqual([]);
+    expect(pointedErrorsOf(property("{p: Text}", "{slots: {route: {path: p}}}", "p == p"))).toEqual(
+      [],
+    );
+    expect(
+      pointedErrorsOf(reducerTest(GIVEN, `{slots: {route: {path: <any-id>}}, effects: []}`)),
+    ).toEqual([]);
+  });
+
+  it("reads the route's type from the runtime, which a program's own `Route` does not change", () => {
+    const src = `type Route = {path: Int}\n${reducerTest(`{slots: {route: {path: "/x"}}}`, EXPECT)}`;
+    expect(pointedErrorsOf(src)).toEqual([]);
   });
 });
 

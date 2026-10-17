@@ -12,7 +12,9 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
   args,
   pos: NO_POS,
 });
-const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
+type RecordType = Extract<TypeExpr, { kind: "TypeRecord" }>;
+
+const record = (fields: Record<string, TypeExpr>): RecordType => ({
   kind: "TypeRecord",
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
@@ -34,6 +36,14 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
   pos: NO_POS,
 });
 
+export const ROUTE_TYPE: RecordType = record({
+  path: prim("Text"),
+  pattern: prim("Text"),
+  params: app("Map", prim("Text"), prim("Text")),
+  query: app("Map", prim("Text"), prim("Text")),
+  hash: app("Option", prim("Text")),
+});
+
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
@@ -48,16 +58,7 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
-  def(
-    "Route",
-    record({
-      path: prim("Text"),
-      pattern: prim("Text"),
-      params: app("Map", prim("Text"), prim("Text")),
-      query: app("Map", prim("Text"), prim("Text")),
-      hash: app("Option", prim("Text")),
-    }),
-  ),
+  def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
   def(
     "PanicInfo",
