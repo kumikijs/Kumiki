@@ -2,14 +2,17 @@ import { generateDts, lex, parse } from "@kumikijs/compiler";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { writeTmpFile } from "./helpers/module.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 vi.setConfig({ testTimeout: 30_000 });
+
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 const dtsOf = (src: string): string => generateDts(parse(lex(src)));
 
 /** Type-check one generated module in isolation; returns formatted diagnostics. */
 function tscDiagnostics(source: string): string[] {
-  const file = writeTmpFile("dts", "gen.ts", source);
+  const file = writeTmpFile("dts", "gen.ts", source, TMP_ROOT);
   const program = ts.createProgram([file], {
     noEmit: true,
     strict: true,
