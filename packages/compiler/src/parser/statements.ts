@@ -270,19 +270,17 @@ export class StatementParser extends ExpressionParser {
   }
 
   protected parseLvalue(): Lvalue {
+    const chain = this.startChain();
     const tok = this.eat("ident");
     let lv: Lvalue = { kind: "LSlot", name: tok.value, pos: tok.pos };
-    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         this.next();
         const f = this.eat("ident");
         lv = { kind: "LField", base: lv, field: f.value, pos: f.pos };
       } else if (this.matchOp("[")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         const t = this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -291,6 +289,7 @@ export class StatementParser extends ExpressionParser {
         break;
       }
     }
+    this.endChain(chain);
     return lv;
   }
 }
