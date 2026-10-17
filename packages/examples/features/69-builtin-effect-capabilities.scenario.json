@@ -4,14 +4,15 @@
       "label": "nothing has been navigated to or notified yet",
       "expect": {
         "noErrors": true,
-        "state": { "arrivals": 0, "notices": 0 },
-        "domIncludes": ["Home", "arrivals: 0", "notices: 0"]
+        "state": { "arrivals": 0 },
+        "domIncludes": ["Home", "arrivals: 0"],
+        "domExcludes": ["notified"]
       }
     },
     {
-      "label": "toast runs because notification.show is declared",
+      "label": "toast runs because notification.show is declared, and shows its text",
       "do": { "clickText": "Notify" },
-      "expect": { "noErrors": true, "state": { "notices": 1 } }
+      "expect": { "noErrors": true, "domIncludes": ["notified"] }
     },
     {
       "label": "navigate moves the route, and its .ok reaches a reducer",
