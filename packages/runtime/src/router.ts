@@ -41,6 +41,21 @@ export function splitPath(p: string): LocationLike {
   return { pathname: rest || "/", search, hash };
 }
 
+/** A router location has no origin of its own, and `.invalid` (RFC 2606) is one no real target can name. */
+const BASE_ORIGIN = "http://router.invalid";
+
+/** A target that names an origin of its own (`https://…`, `mailto:`) is left as written: resolving it would drop that origin. */
+function resolveTarget(to: string, at: LocationLike): string {
+  if (to[0] === "/") return to;
+  try {
+    const url = new URL(to, BASE_ORIGIN + at.pathname + at.search + at.hash);
+    if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
+  } catch {
+    // Not a URL even against `at` (`http://[`).
+  }
+  return to;
+}
+
 function memoryRouter(initialPath = "/"): Router {
   const stack: string[] = [initialPath || "/"];
   const listeners = new Set<() => void>();
@@ -259,17 +274,42 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
   };
 }
 
+function href({ path, query, hash }: ParsedRoute): string {
+  const search = new URLSearchParams(query).toString();
+  return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
+}
+
+/** The element is looked up by the hash as written and then percent-decoded, as a browser finds a fragment's target. */
+function jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined {
+  if (to.hash._tag !== "Some") return undefined;
+  if (href({ ...from, hash: NONE }) !== href({ ...to, hash: NONE })) return undefined;
+  const id = to.hash._0;
+  return () => {
+    const scope = root.getRootNode() as Partial<Pick<Document, "getElementById">>;
+    let el = scope.getElementById?.(id);
+    try {
+      el ??= scope.getElementById?.(decodeURIComponent(id));
+    } catch {
+      // A malformed escape (`#100%`): the hash as written was the only name.
+    }
+    el?.scrollIntoView();
+  };
+}
+
 /** The routing module surface consumed by `mountCore` (see core `RoutingImpl`). */
 export const routing: RoutingImpl = {
   createRouter(mode, initialPath) {
-    return mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    const router = mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    const resolving =
+      (go: (path: string) => void) =>
+      (path: string): void =>
+        go(resolveTarget(path, router.read()));
+    return { ...router, push: resolving(router.push), replace: resolving(router.replace) };
   },
   parseLocation,
   matchPattern,
   findRedirect,
-  href({ path, query, hash }) {
-    const search = new URLSearchParams(query).toString();
-    return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
-  },
+  href,
+  jump,
   installNavEffects,
 };

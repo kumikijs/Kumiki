@@ -288,6 +288,8 @@ export type RoutingImpl = {
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** The URL a parsed route was read from: its path, query and hash. */
   href(route: ParsedRoute): string;
+  /** For an in-page jump, what brings the hash's element into view once the page has rendered; `undefined` for any other move. */
+  jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };

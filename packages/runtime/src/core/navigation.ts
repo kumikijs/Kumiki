@@ -17,10 +17,12 @@ export function createNavigation(deps: {
   slots: Record<string, unknown>;
   routing: RoutingImpl | undefined;
   router: Router | null;
+  /** Where an in-page jump looks up the element its hash names. */
+  root: Node;
   fireLifecycle: (name: string, payload: Record<string, unknown>) => void;
   render: () => void;
 }): Navigation {
-  const { app, slots, routing, router, fireLifecycle, render } = deps;
+  const { app, slots, routing, router, root, fireLifecycle, render } = deps;
   let pendingLeave: { oldRoute: ParsedRoute; newRoute: ParsedRoute } | null = null;
   let leaving = false;
   let leaveAskedConfirm = false;
@@ -28,11 +30,15 @@ export function createNavigation(deps: {
   let lastNavSource: "push" | "replace" | "pop" = "push";
   let unsubscribe: (() => void) | undefined;
 
-  const enter = (route: ParsedRoute): void => {
+  /** An in-page jump runs no `route.enter` and no scroll to the top; it calls `jump` once the page is painted. */
+  const enter = (route: ParsedRoute, jump?: () => void): void => {
     slots.route = route;
-    fireLifecycle(`route.enter(${JSON.stringify(route.pattern)})`, { $route: route });
-    applyScrollFor(route);
+    if (!jump) {
+      fireLifecycle(`route.enter(${JSON.stringify(route.pattern)})`, { $route: route });
+      applyScrollFor(route);
+    }
     render();
+    jump?.();
   };
 
   function syncRouteFromLocation(): void {
@@ -61,7 +67,7 @@ export function createNavigation(deps: {
         return;
       }
     }
-    enter(newRoute);
+    enter(newRoute, routing.jump(oldRoute, newRoute, root));
   }
 
   function findRouteEntry(route: ParsedRoute): RouteEntry | undefined {
