@@ -4,6 +4,7 @@ import {
   boundaryTarget,
   expansionTargets,
   findCycles,
+  forwardedParams,
   type GraphEdge,
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
@@ -230,10 +231,11 @@ function checkCycles(
 
   const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
   const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const forwarded = forwardedParams(typeOf, "through");
   const typeEdges = (name: string): readonly GraphEdge[] => {
     const def = typeOf(name);
     if (!def) return [];
-    const target = aliasTarget(def, typeOf);
+    const target = aliasTarget(def, typeOf, forwarded);
     return target && sym.types.has(target.to) ? [target] : [];
   };
   for (const cycle of findCycles(

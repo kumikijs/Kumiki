@@ -1,7 +1,7 @@
 import type { AppShape, SlotMeta } from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
+import { refinementsOf } from "../src/assignable.ts";
 import type { TypeDef } from "../src/ast.ts";
-import { refinementsOf } from "../src/codegen/emit-type.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { defined } from "./helpers/defined.ts";
