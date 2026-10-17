@@ -1,5 +1,5 @@
 import type { AppShape, ReducerSpec } from "@kumikijs/runtime";
-import { _stdlib, renderToString } from "@kumikijs/runtime";
+import { _stdlib, emptyRoute, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bareApp, mountApp } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
@@ -374,9 +374,9 @@ describe("every tier applies the same rule", () => {
       reducers: [overflow("bump")],
       effects: {},
     };
-    const after = _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {});
+    const after = _stdlib.runReducerStep(app, { slots: { count: 2 } }, "bump", {});
 
-    expect(after.slots).toEqual({ count: 0, log: "" });
+    expect(after.slots).toEqual({ count: 2, mirror: 0, log: "", trace: "", route: emptyRoute() });
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 });

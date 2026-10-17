@@ -36,6 +36,27 @@ import {
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
+type ReducerEmit = { effect: string; args: unknown[] };
+
+// Shared by `reducer-test` and `run-reducer`, so the two tiers answer the same state for the
+// same reducer, a slot the test neither seeds nor writes included.
+function settleBatch(
+  reducer: string,
+  before: Record<string, unknown>,
+  result:
+    | { slots?: Record<string, unknown>; emits?: ReducerEmit[]; rejected?: RefinementRejection[] }
+    | null
+    | undefined,
+  slotMetas: Record<string, SlotMetaLike>,
+): { slots: Record<string, unknown>; emits: ReducerEmit[] } {
+  const rejected = batchRejections(result, slotMetas);
+  if (rejected.length > 0) {
+    reportRejectedBatch(reducer, rejected);
+    return { slots: { ...before }, emits: [] };
+  }
+  return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
+}
+
 export const _stdlibTest = {
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
@@ -63,19 +84,11 @@ export const _stdlibTest = {
     name: string,
     event: Record<string, unknown>,
   ): { slots: Record<string, unknown> } {
-    const slots = state?.slots ?? {};
-    this.resetLive(app.live, app.slots, slots);
+    this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
-    const rejected = batchRejections(res, app.slots);
-    if (rejected.length > 0) {
-      reportRejectedBatch(name, rejected);
-      return { slots: { ...slots } };
-    }
-    const next: Record<string, unknown> = { ...slots };
-    for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
-    return { slots: next };
+    return { slots: settleBatch(name, app.live, res, app.slots).slots };
   },
   runPropertyTest(input: {
     name: string;
@@ -150,13 +163,8 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
-    const rejected = batchRejections(result, slotMetas);
-    if (rejected.length > 0) {
-      reportRejectedBatch(target, rejected);
-      return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
-    }
-    const finalSlots = { ...givenSlots, ...(result?.slots ?? {}) };
-    return compareReducerExpect(name, finalSlots, result?.emits ?? [], panic, expect);
+    const after = settleBatch(target, givenSlots, result, slotMetas);
+    return compareReducerExpect(name, after.slots, after.emits, panic, expect);
   },
   runReducerTestFlow(input: {
     name: string;
