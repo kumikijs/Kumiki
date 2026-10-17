@@ -226,6 +226,20 @@ export function assertNever(node: never): void {
   void node;
 }
 
+/**
+ * The sign is part of a number literal (language.md), but the lexer emits it as
+ * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
+ * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
+ * Parentheses leave no node, so `-(1)` is the literal `-1`.
+ */
+export function numberLiteral(e: Expr): { value: number; raw: string } | null {
+  if (e.kind === "Num") return { value: e.value, raw: e.raw ?? String(e.value) };
+  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
+    return { value: -e.rhs.value, raw: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+  }
+  return null;
+}
+
 export type Refinement = {
   kind: "Refinement";
   pred: string;
@@ -347,7 +361,7 @@ export type Expr =
     }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   | { kind: "Wildcard"; wild: "any-id"; pos: Pos }
-  | { kind: "Wildcard"; wild: "slot"; slot: string; pos: Pos }
+  | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
