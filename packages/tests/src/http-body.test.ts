@@ -1,12 +1,12 @@
 import { app, feature } from "@kumikijs/examples";
 import type { AppShape, CapabilityRegistry } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { clickContaining, mountApp, tick } from "./helpers/dom.ts";
 import {
   type FetchCall,
   type FetchDouble,
   headerValues,
   readHeader,
+  sentRequest,
   stubFetch,
 } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
@@ -46,20 +46,8 @@ describe("an HTTP request body is sent as its HttpBody variant names", () => {
     double = undefined;
   });
 
-  /** Mount `app`, click `button`, and return the one request it made. */
-  async function sent(app: AppShape, button: string): Promise<FetchCall> {
-    double = stubFetch(() => new Response("ok"));
-    const { root, handle } = mountApp(app);
-    try {
-      clickContaining(root, button);
-      await tick(30);
-      handle.dispose();
-    } finally {
-      root.remove();
-    }
-    expect(double.calls).toHaveLength(1);
-    return double.calls[0] as FetchCall;
-  }
+  const sent = (app: AppShape, button: string): Promise<FetchCall> =>
+    sentRequest(app, button, () => new Response("ok"));
 
   const contentType = (c: FetchCall): string | null => readHeader(c.init.headers, "Content-Type");
 
