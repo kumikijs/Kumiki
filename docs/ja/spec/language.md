@@ -676,6 +676,8 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
 
+user tile の呼び出し側に書いたデータ prop も、同じノードに 1 つずつマージされる：そのノードの同名の prop を置き換え、呼び出し側が書かなかった prop — `aria-*` 属性は 1 つずつ別の prop として数える — は、描画される要素でも `$el` でも tile が書いたまま残る。したがって `tile Ghost = button(text="Ghost", id="three")` に対して `Ghost {variant: "ghost"}` は id `three` を保ち、`ui.click(Ghost#three)`（[§1.6.2](#_1-6-2-セレクタ)）はそのボタンで発火する。一方 `Ghost {id: "x"}` と `Ghost(id="x")` はその id を `x` に置き換える。
+
 名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。大文字始まりの名前は、tile を取る builtin（`box` / `button` / `input` / `modal` / `form`）の名前付き引数では *tile call* に、それ以外——props ブロック、`link` のような値引数 builtin の名前付き引数、user tile の名前付き引数——では variant タグになる。
 
 これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
