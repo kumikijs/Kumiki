@@ -3,7 +3,7 @@ import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
-import { getOrResultType, unwrappedType } from "./against.ts";
+import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import type { Ctx, SymbolTable } from "./context.ts";
 import { binOpResult } from "./expr.ts";
 import { memberReceivers } from "./members.ts";
@@ -326,12 +326,8 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return fixed ? prim(fixed, e.pos) : null;
     }
     case "Index": {
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      if (base?.kind === "TypeApp") {
-        if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
-        if (base.name === "Map") return base.args[1] ?? null;
-      }
-      return null;
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      return step.kind === "place" ? step.type : null;
     }
     case "MethodCall": {
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
