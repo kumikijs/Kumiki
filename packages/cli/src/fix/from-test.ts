@@ -5,13 +5,13 @@ import type { TestResult } from "@kumikijs/runtime";
 import { runTestsSource, testFile } from "../smoke.ts";
 import { load } from "../store.ts";
 import { messageOf } from "../text.ts";
-import { atomicWriteFileSync } from "../write-lock.ts";
 import {
   advisory,
   applyFixPlan,
   type FixApplyResult,
   planFixesExplained,
   repairable,
+  writeFix,
 } from "./compile.ts";
 import type { AutoPatch, SkipReason } from "./patch.ts";
 import { planTestPatchExplained, testBodyLineRanges } from "./test-patch.ts";
@@ -90,7 +90,10 @@ type FixFromTestStatus =
     };
 
 export type TestPatchBlock =
-  | Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "parse-error" | "introduced" }>
+  | Extract<
+      NonNullable<FixApplyResult["blocked"]>,
+      { reason: "parse-error" | "introduced" | "locked" }
+    >
   | { reason: "test-runner-threw"; message: string }
   | { reason: "named-test-missing" }
   | { reason: "still-fails"; failingTest: TestResult }
@@ -216,17 +219,23 @@ export async function runFixFromTest(
   }
   const patched = patch.apply(curSource);
   const refused = await gateTestPatch(patched, testName, before, path, capabilities);
-  if (refused !== null) {
-    return stamp({ ok: false, status: "test-blocked", patch, blocked: refused, ...fixedCount });
+  // Written by the compile tier's writer, so the ownership lock refuses it as it does a repair.
+  const unwritten = refused === null ? writeFix(path, curSource, patched) : { blocked: refused };
+  if (unwritten !== undefined && "blocked" in unwritten) {
+    return stamp({
+      ok: false,
+      status: "test-blocked",
+      patch,
+      blocked: unwritten.blocked,
+      ...fixedCount,
+    });
   }
-  try {
-    atomicWriteFileSync(path, patched);
-  } catch (e) {
+  if (unwritten !== undefined) {
     return stamp({
       ok: false,
       status: "write-failed",
       phase: "test",
-      writeError: messageOf(e),
+      writeError: unwritten.writeError,
       patch,
       ...fixedCount,
     });
@@ -241,7 +250,7 @@ async function gateTestPatch(
   before: readonly TestResult[],
   path: string,
   capabilities: string[],
-): Promise<TestPatchBlock | null> {
+): Promise<Exclude<TestPatchBlock, { reason: "locked" }> | null> {
   let parsed: ReturnType<typeof parse>;
   try {
     parsed = parse(lex(patched));
