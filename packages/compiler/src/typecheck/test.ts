@@ -183,6 +183,7 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   });
 }

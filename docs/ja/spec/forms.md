@@ -21,6 +21,22 @@ tile Compose = column(
 - ユーザー入力で slot が更新 → tile が再描画
 - 型と refinement は **入力ごとに検査**される
 
+`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのフィールドパスである — `bind=form.email`、あるいは `Option` / `Result` のペイロードを通る `bind=draft.get.title`（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。その根は、ターゲットを書いた位置で slot でなければならない。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
+
+したがって、リストの行はループ変数を通して bind しない。行は `value=` で値を表示し、props にキーを持たせ、行のイベントに対する reducer がそのキーでリストに書き込む：
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+
+tile TodoText in=Text = input(value=todos[$1].text) {todoId: $1}
+tile Todos = column(for k in todos.keys TodoText(k) {key: k})
+
+reducer editTodo
+    on=ui.input(TodoText)
+    do= todos[$el.todoId].text := $event.value
+```
+
 ### 5.1.1 `bind` の対応要素 {#_5-1-1-elements-that-support-bind}
 
 | 要素 | 受け取れる型 |
@@ -114,7 +130,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 | prop | 型 | 意味 |
 |---|---|---|
-| `bind` | slot name | 双方向束縛 |
+| `bind` | slot、またはその中へのフィールドパス（[§5.1](#_5-1-個別入力の双方向束縛)） | 双方向束縛 |
 | `value` | expr | 単方向値（`bind` の代わりに、reducer で更新） |
 | `onChange` | reducer name | 値変更時に呼ばれる reducer |
 | `onInput` | reducer name | input イベントで呼ばれる（onChange より高頻度） |
