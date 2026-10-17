@@ -45,7 +45,7 @@ let id = emit fetchQuote()
 | 型 | 定義 |
 |---|---|
 | `HttpStatus` | `nominal Int where between(0, 599)` — レスポンスのステータス。レスポンスそのものが無かったリクエスト（中断・キャンセル・タイムアウト・ネットワーク障害: [HTTP §6.4.1](./http.md#_6-4-1-挙動)）では `0`。「`0` または `100`〜`599`」を表す述語は無いため、refinement 層で書ける最も狭い範囲をとる |
-| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` |
+| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` — `body` は届いたレスポンスの本文テキストの `Some`（空の本文なら `Some("")`）。レスポンスが届かなかったとき、または本文を読めなかったときは `None`（[HTTP §6.4.1](./http.md#_6-4-1-挙動)） |
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
