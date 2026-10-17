@@ -52,6 +52,34 @@ export function failsWithText(cap: string): boolean {
   return TEXT_FAILURE_CAPABILITIES.has(cap);
 }
 
+const HTTP_READ = ["url", "headers", "query", "decode"];
+const HTTP_SEND = ["url", "headers", "query", "body", "decode"];
+
+/**
+ * The fields each capability's built-in handler reads, as http.md publishes them. A field outside
+ * the set is a value no handler reads. A capability not listed has no request schema: a custom one,
+ * a standard one whose effects reach only a host provider, and `http.cancel`, which takes no
+ * `map-request` at all.
+ */
+export const REQUEST_FIELDS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["http.get", HTTP_READ],
+  ["http.post", HTTP_SEND],
+  ["http.put", HTTP_SEND],
+  ["http.patch", HTTP_SEND],
+  ["http.delete", HTTP_SEND],
+  ["storage.read", ["key", "decode"]],
+  ["storage.write", ["key", "value"]],
+  ["session.read", ["key", "decode"]],
+  ["session.write", ["key", "value"]],
+  ["indexed.read", ["store", "key", "decode", "index", "range"]],
+  ["indexed.write", ["store", "key", "value"]],
+  ["indexed.delete", ["store", "key"]],
+]);
+
+export function requestFields(cap: string): readonly string[] | undefined {
+  return REQUEST_FIELDS.get(cap);
+}
+
 export const REDUCER_REF: TypeExpr = refType("ReducerRef");
 
 /** A standard effect: the capability it is gated on and the input it takes. */

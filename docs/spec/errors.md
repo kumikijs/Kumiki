@@ -813,13 +813,14 @@ One diagnostic is reported per missing field, at the literal.
 
 ### E0215 `unknown-record-field`
 
-A record literal, or a `.copy(f=v)` record update, names a field the declared type does not have.
+A record literal, or a `.copy(f=v)` record update, names a field the declared type does not have; or an effect's `map-request` writes a field the request of its capability does not have ([HTTP §6.6.1](./http.md#_6-6-1-request-fields)).
 
 > `Record type has no field "<name>"`
+> `The <cap> request has no field "<name>" — did you mean "<field>"? (accepted: <fields>)`
 
-Both lower to a plain object spread, so an undeclared field became a property that nothing ever reads — the value was silently dropped rather than rejected.
+Both record forms lower to a plain object spread, so an undeclared field would be a property that nothing ever reads — the value silently dropped rather than rejected. A request is handed to the capability's handler, which reads its own fields and nothing else, so a field outside them is dropped the same way: `headrs: {"X": "1"}` on `http.get` is a header that is never sent. The request's message is reported at the field, names the nearest field the request has when one is close, and lists them all.
 
-**Fix**: Correct the field name, or declare it on the type.
+**Fix**: Correct the field name, or declare it on the type. In a `map-request`, use a field the message lists: the method is the capability's, and `timeout` and `credentials` are set in `app.http`.
 
 ### E0216 `unknown-variant`
 

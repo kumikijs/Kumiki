@@ -69,7 +69,7 @@ type HttpBody = Json(JsonValue)
 
 HttpBody の variant でない `body`（レコード・リスト・素の `Text`）は、`Json` と同じく JSON で送られる。`Text` を入力に取る `body: $1` は `x` ではなく `"x"` を送る。生のテキストを送るには `Text($1)` と書く。
 
-`GET` と `HEAD` は `body` が何であっても本文を送らない。
+`GET` と `HEAD` は `body` が何であっても本文を送らない。`http.get` のリクエストには `body` フィールドが無いので、それを書く `map-request` は拒否される（[6.6.1](#_6-6-1-request-fields)）。
 
 ### 6.1.4 Decoder 型
 
@@ -312,6 +312,26 @@ effect loadUser cap=http.get
 ```
 
 `map-request` はビルトイン effect の入力に変換する純粋関数（式断片）。これにより、高レベル effect 名と実 HTTP リクエストの関係が **1 箇所に集中**する。
+
+### 6.6.1 リクエストのフィールド {#_6-6-1-request-fields}
+
+`map-request` が組み立てるのは、その capability の組み込みハンドラが読むリクエストであり、ハンドラは下表のフィールドだけを読む。これらは [6.1.2](#_6-1-2-standard-effect)・[6.7.2](#_6-7-2-宣言-localstorage)・[6.7.4](#_6-7-4-sessionstorage-indexeddb) が宣言するレコードである：
+
+| capability | リクエストのフィールド |
+|---|---|
+| `http.get` | `url`, `headers`, `query`, `decode` |
+| `http.post`, `http.put`, `http.patch`, `http.delete` | `url`, `headers`, `query`, `body`, `decode` |
+| `storage.read`, `session.read` | `key`, `decode` |
+| `storage.write`, `session.write` | `key`, `value` |
+| `indexed.read` | `store`, `key`, `decode`, `index`, `range` |
+| `indexed.write` | `store`, `key`, `value` |
+| `indexed.delete` | `store`, `key` |
+
+`map-request` が書いたフィールドのうち、その capability の行に無いものは [E0215](./errors.md#e0215-unknown-record-field) になり、そのフィールドの位置に、行にある最も近いフィールドの名前を添えて報告される：`http.get` の `headrs: {"X": "1"}` は決して送られない header である。メソッドは capability が決め、`timeout` と `credentials` は `app.http` のもの（[6.3.1](#_6-3-1-injecting-global-headers)）なので、3 つともリクエストのフィールドではない。これらの capability に登録したホスト provider（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）も同じリクエストを受け取るので、同じフィールドに従う。
+
+フィールドが検査されるのは、リテラルがそれを名指す位置である：`map-request` のレコードそのもの、または `if` の分岐・`match` の腕・`let` の本体がそこに返すレコード（入れ子の深さは問わない）。テキストをキーに持つ map リテラルも同じオブジェクトになるので、その `Text` のキーも検査される。それ以外の方法で計算されるリクエスト — `fn` が返すもの、slot から読むもの、`$1` そのもの — はフィールドが実行時に決まるので検査されない。
+
+行の無い capability にはリクエストのスキーマが無く、その `map-request` はホスト provider が読むものを何でも組み立ててよい：カスタム capability と、それ以外の標準 capability（`nav.*`・`log.write` など）がこれに当たり、その宣言した effect は provider に届き、組み込みハンドラには届かない。`http.cancel` は `map-request` そのものを取らない（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
 ---
 
