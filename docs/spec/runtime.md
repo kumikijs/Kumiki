@@ -993,6 +993,8 @@ Features:
 - episode timeline panel (visualizes recent episodes)
 - inspector (slot values, tile tree, dependency graph)
 
+The dev server compiles through the Vite plugin (§10.8.1) and leaves `@kumikijs/runtime` to the plugin's resolution: the dev client and the compiled app both import it through the plugin, so the page runs one copy — the project's own when the `.kumiki` file's directory resolves the package, the plugin's own dependency otherwise. The dev server adds nothing about the runtime to Vite's dependency pre-bundling, so Vite treats it as in any project using the plugin: the project's own copy is pre-bundled when it is installed under `node_modules` and served from its source when it is linked (a workspace package), and the plugin's own copy is served as it is — the published runtime's entry is one self-contained module.
+
 ---
 
 ## 10.8 Build

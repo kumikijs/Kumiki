@@ -1,13 +1,10 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { kumiki as kumikiVitePlugin } from "@kumikijs/vite";
 import type { Plugin, ViteDevServer } from "vite";
 import { createServer } from "vite";
 import { messageOf } from "./text.ts";
-
-const require = createRequire(import.meta.url);
 
 export type DevCmdOptions = {
   /** TCP port to bind; defaults to Vite's 5173. `0` picks an ephemeral port. */
@@ -52,7 +49,6 @@ export async function startDevServer(
     ],
     // Suppress Vite's own banner — devCmd prints its own.
     logLevel: "warn",
-    optimizeDeps: { include: ["@kumikijs/runtime"] },
   });
 
   await server.listen();
@@ -91,8 +87,6 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
   const devSrcDir = dirname(fileURLToPath(import.meta.url));
   const clientTemplate = readFileSync(join(devSrcDir, "dev", "client.ts"), "utf8");
   const panelSource = readFileSync(join(devSrcDir, "dev", "panel.ts"), "utf8");
-
-  const runtimeAbs = require.resolve("@kumikijs/runtime");
 
   const targetUrl = opts.targetAbs.replace(/\\/g, "/");
   const clientSource = clientTemplate.replaceAll("__KUMIKI_TARGET__", targetUrl);
@@ -160,14 +154,11 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
       };
     },
 
-    resolveId(id, importer) {
+    // The client's bare `@kumikijs/runtime` import is not answered here: a
+    // virtual importer has no directory, so Vite resolves it from the root,
+    // and @kumikijs/vite answers it exactly as it answers the compiled app's.
+    resolveId(id) {
       if (id === VIRTUAL_CLIENT_ID || id === VIRTUAL_PANEL_ID) return id;
-      if (
-        id === "@kumikijs/runtime" &&
-        (importer === VIRTUAL_CLIENT_ID || importer === VIRTUAL_PANEL_ID)
-      ) {
-        return runtimeAbs;
-      }
       return null;
     },
 
