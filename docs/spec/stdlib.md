@@ -233,6 +233,8 @@ parse-int                   : Option(Int)
 parse-float                 : Option(Float)
 ```
 
+`text.parse-int` reads `text` as [`Int.parse(text)`](#_2-4-3-type-conversion) does, and `text.parse-float` as `Float.parse(text)` does. It is one reading, so the two spellings never make different values of the same text. Only decimal text is read, and only the whole of it: `"3.7".parse-int`, `"1e3".parse-int`, `"0x10".parse-int` and `" 12 ".parse-int` are all `None`, while `"3.7".parse-float` is `Some(3.7)` and `"1e3".parse-float` is `Some(1000)`. A fraction is not truncated into an `Int` — when truncating is what is meant, write `text.parse-float.map($1.to-int)` — and blanks are not read past: `text.trim.parse-int` reads text that may carry them.
+
 ### 2.2.7 Int / Float
 
 ```
@@ -499,14 +501,14 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 
 | Base | `Some` of | `None` when the text |
 |---|---|---|
-| `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty |
+| `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty — or spells a number too large to be finite |
 | `Float` | the number it spells: an optional `+` / `-`, decimal digits, an optional `.` and digits, an optional `e` / `E` exponent | is anything else — `.5`, `1.`, `0x10`, `Infinity`, surrounding blanks, empty — or spells a number too large to be finite |
 | `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | is not `YYYY-MM-DD` with an optional ISO 8601 time and zone, or names a date off the calendar (`2026-02-30`) — `2026/02/30`, `+002026-08-14`, surrounding blanks, empty |
 | `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
 | `Text` | the text itself | is empty |
 | `Bytes` | its UTF-8 bytes, as `Bytes.from-text` builds them | is empty |
 
-The readings are exact, like `Bool`'s: `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`, not `Some(12)` and `Some(16)`. Trim the text first when blanks are expected.
+The readings are exact, like `Bool`'s: `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`, not `Some(12)` and `Some(16)`. Trim the text first when blanks are expected. The `Int` and `Float` readings are also the ones `text.parse-int` and `text.parse-float` ([§2.2.6](#_2-2-6-text)) read, and the ones an `input` bound to an `Int` or a `Float` reads its text by ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)).
 
 The value read is then held to every `where` refinement `T` carries ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), and a value that fails one is `None`: with `type Cents = nominal Int where positive`, `Cents.parse("-5")` is `None`. So `parse` never produces a value its own type refuses — an `Option(Cents)` never passes through a slot-write guard, so the parse is the only place that check can happen.
 

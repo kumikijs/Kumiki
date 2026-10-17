@@ -98,6 +98,16 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
+const INT_TEXT = /^[+-]?[0-9]+$/;
+const FLOAT_TEXT = /^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/;
+
+/** `Number` alone also reads blanks, `0x` / `0b` prefixes and `Infinity`, so the form gates it. */
+function readNumber(text: unknown, form: RegExp): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+  if (typeof text !== "string" || !form.test(text)) return _stdlibCore.None;
+  const n = Number(text);
+  return Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+}
+
 type PlatformCrypto = {
   randomUUID?: () => string;
   getRandomValues?: (bytes: Uint8Array) => Uint8Array;
@@ -574,15 +584,13 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  parseIntOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n)
-      ? _stdlibCore.Some(Math.trunc(n))
-      : _stdlibCore.None;
+  // The one definition of each reading: `T.parse`, `.parse-int` / `.parse-float` and a bound
+  // input's reader all lower to these calls.
+  parseIntOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, INT_TEXT);
   },
-  parseFloatOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+  parseFloatOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, FLOAT_TEXT);
   },
   fileUrl(file: unknown): string {
     if (!file || typeof file !== "object") return "";
