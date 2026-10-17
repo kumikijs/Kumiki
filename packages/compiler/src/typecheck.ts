@@ -7,7 +7,7 @@ import {
   type GraphEdge,
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { STDLIB_TYPES } from "./stdlib-types.ts";
+import { isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
@@ -101,7 +101,7 @@ function checkAll(
   for (const def of program.defs) {
     switch (def.kind) {
       case "TypeDef":
-        sym.types.set(def.name, def);
+        if (!isReservedTypeName(def.name)) sym.types.set(def.name, def);
         break;
       case "SlotDef":
         sym.slots.set(def.name, def);

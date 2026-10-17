@@ -192,14 +192,19 @@ describe("a Duration under an alias, a refinement or a nominal", () => {
     });
   }
 
-  it("is a program's own `type Duration` when one is declared, which may lack .to-ms", () => {
-    const errs = reducerErrors(
-      "type Duration = Int\nslot d : Duration = 0\nslot n : Int = 0",
-      "n := d.to-ms",
-    );
+  it("is not a plain `Int`, which has no .to-ms", () => {
+    const errs = reducerErrors("slot d : Int = 0\nslot n : Int = 0", "n := d.to-ms");
     expect(errs.map((e) => e.message)).toEqual([
       'Type "Int" has no member ".to-ms" — it is a member of Time / Duration',
     ]);
+  });
+
+  it("is the standard library's under a program's own `type Duration`, which is E0231", () => {
+    const errs = reducerErrors(
+      "type Duration = Int\nslot d : Duration = Duration.ms(5)\nslot n : Int = 0",
+      "n := d.to-ms",
+    );
+    expect(errs.map((e) => e.code)).toEqual(["E0231"]);
   });
 });
 

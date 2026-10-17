@@ -63,7 +63,7 @@ app M caps=[] routes={"/" -> Panel, "/404" -> Panel} init=[]
 slot route : Route = Route.empty       # ランタイムが管理
 ```
 
-`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)：
+`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)が提供し、プログラムは名指すだけで宣言はしない（[E0231](./errors.md#e0231-reserved-type-name)）：
 
 ```kumiki fragment
 type Route = {

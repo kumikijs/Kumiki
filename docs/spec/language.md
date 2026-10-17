@@ -228,8 +228,8 @@ type Email     = nominal Text where email
 type Url       = nominal Text where url
 type Percent   = nominal Float where between(0.0, 100.0)
 type User      = {id: UserId, name: Text where nonempty, email: Email}
-type HttpError = {status: Int where between(400, 599), message: Text}
-type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
+type ApiError  = {status: Int where between(400, 599), message: Text}
+type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(ApiError)
 ```
 
 ### 1.3.5 Type Canonicalization
@@ -285,6 +285,7 @@ type Shape = Leaf | Branch(Shape, Shape)
 Each reaches a structural type before it reaches itself, by invariant 3. Comparing two of them terminates because the relation is read **co-inductively** over the types *as written*: re-entering a pair already being compared answers yes, which is sound because the finite part of the comparison has been checked on the way down. Termination does not depend on the values being finite — `Node` above has none, its `next` being neither optional nor a container — and it is still a legal type.
 
 5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
+6. **A type name whose values the runtime or the standard library supplies is not the program's to declare.** `PanicInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) mean the standard library's definition in every program: `type PanicInfo = …` is [E0231](./errors.md#e0231-reserved-type-name), every use of the name keeps the standard library's type, and a program's own type takes a name of its own (`type AppPanic = …`). The other domain types — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of. A program may declare its own under one of those names, and its uses then mean the program's type.
 
 ---
 
