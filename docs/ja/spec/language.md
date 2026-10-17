@@ -162,6 +162,8 @@ Result(T, E)      ; Ok(T) | Err(E)
 Tuple(T1, ..., Tn)
 ```
 
+プログラム自身の union は、variant に `Some`・`None`・`Ok`・`Err` と名付けてよい。variant 名は識別子であり（[§1.3.1](#_1-3-1-構文)）、この 4 つはどれも予約語ではない（[§1.2.2](#_1-2-2-予約語)）ので、`type Health = Ok | Degraded | Down` も他と変わらない union である。型が宣言されている場所——slot、record のフィールド、引数——では、値がどのタグかはその型が決める。何も型を宣言しない場所——`let`、リストリテラルの要素——では、この 4 つは `Option` や `Result` のタグとして読まれる。ただし、プログラム自身の variant がその値を保持できる場合——同じ名前で payload の数が同じであり、書かれた payload をそれぞれの型が受け入れる variant がある場合——は別で、式だけでは値がどの型かは決まらず、ユーザー union のタグがどれもそうであるように、値が着地する場所が決める。したがって `let next = Ok` のあとに `health := next` と書けば、`health := Ok` とまったく同じく `Health` の `Ok` が書き込まれる。`Health` の `Ok` は何も持たないので、同じプログラムの `let r = Ok(1)` は `Result` である。`type Outcome = Ok(Int) | Fail` と並んでいれば、`let r = Ok(1)` は `Outcome` の slot にも `Result(Int, Text)` の slot にも着地できる。
+
 ### 1.3.3 登録済み refinement 述語
 
 ```
