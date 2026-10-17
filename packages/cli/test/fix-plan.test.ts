@@ -74,6 +74,17 @@ ${APP_A}`);
     expect(skipped.find((sk) => sk.code === "E0218")?.reason).toBe("e0218-target-not-a-plain-name");
   });
 
+  it("declines a target no accessor repairs, such as an Option (E0218)", () => {
+    const store = storeOf(`slot loaded : Option(List(Text)) = Some(["a"])
+tile App = column(for x in loaded text(x))
+${APP_A}`);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.code)).not.toContain("E0218");
+    expect(skipped.filter((sk) => sk.code === "E0218").map((sk) => sk.reason)).toEqual([
+      "e0218-no-accessor",
+    ]);
+  });
+
   it("makes a text builtin's text= its positional content (E0129)", () => {
     const file = seed(`slot title : Text = "Hi"
 tile App = column(heading(level=2, text=title), text("A", "B"))

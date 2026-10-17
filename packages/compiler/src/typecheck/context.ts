@@ -18,6 +18,8 @@ export type KumikiError = {
   pos: Pos;
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
+  /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
+  accessor?: "keys" | "to-list";
 };
 
 export type SymbolTable = {
