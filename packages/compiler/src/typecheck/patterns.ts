@@ -1,5 +1,5 @@
 import { paramSubstitution, substituteType, typeToString, unaliasType } from "../assignable.ts";
-import type { MatchArm, Pattern, Pos, TypeExpr } from "../ast.ts";
+import type { Expr, MatchArm, Pattern, Pos, TypeExpr } from "../ast.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 
 export function armScope(
@@ -190,20 +190,36 @@ function lookupVariantPayloads(
   tag: string,
   scrut: TypeExpr | null,
   sym: SymbolTable,
-): TypeExpr[] | "unknown-tag" | "not-a-union" | null {
+): readonly TypeExpr[] | "unknown-tag" | "not-a-union" | null {
+  const variants = variantsOf(scrut, sym);
+  if (variants === null || variants === "not-a-union") return variants;
+  return variants.find((v) => v.name === tag)?.payloads ?? "unknown-tag";
+}
+
+type VariantShape = { readonly name: string; readonly payloads: readonly TypeExpr[] };
+
+/** In declaration order; `null` when the type is undecidable. */
+function variantsOf(
+  scrut: TypeExpr | null,
+  sym: SymbolTable,
+): readonly VariantShape[] | "not-a-union" | null {
   const t = peelTo(scrut, sym, isVariantCarrier);
   if (!t) return null;
-  if (t.kind === "TypeUnion")
-    return t.variants.find((x) => x.name === tag)?.payloads ?? "unknown-tag";
+  if (t.kind === "TypeUnion") return t.variants;
   if (t.kind !== "TypeApp") return "not-a-union";
   if (t.name === "Option") {
-    if (tag === "Some") return t.args[0] ? [t.args[0]] : [];
-    return tag === "None" ? [] : "unknown-tag";
+    const inner = t.args[0];
+    return [
+      { name: "Some", payloads: inner ? [inner] : [] },
+      { name: "None", payloads: [] },
+    ];
   }
   if (t.name === "Result") {
-    if (tag !== "Ok" && tag !== "Err") return "unknown-tag";
-    const payload = t.args[tag === "Ok" ? 0 : 1];
-    return payload ? [payload] : [];
+    const [okT, errT] = t.args;
+    return [
+      { name: "Ok", payloads: okT ? [okT] : [] },
+      { name: "Err", payloads: errT ? [errT] : [] },
+    ];
   }
   return "not-a-union";
 }
@@ -219,4 +235,103 @@ function resolveToTuple(
   const t = peelTo(scrut, sym, isTuple);
   if (!t) return null;
   return isTuple(t) ? t : "not-a-tuple";
+}
+
+/** Only once every arm's pattern fits: a pattern that does not is E0207 / E0208 / E0209 already, and coverage counted against it would repeat that. */
+export function checkMatchCovers(
+  e: Expr & { kind: "MatchExpr" },
+  scrutType: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (scrutType === null) return;
+  const uncovered = uncoveredRows(
+    e.arms.map((arm) => [arm.pattern]),
+    [scrutType],
+    sym,
+  );
+  if (uncovered === null || uncovered.length === 0) return;
+  errors.push({
+    code: "E0227",
+    kind: "non-exhaustive-match",
+    message:
+      `This match on "${typeToString(scrutType)}" has no arm for ` +
+      `${uncovered.map((w) => w.join(", ")).join(", ")}, and a match used as a value has to ` +
+      "evaluate to one of its arms. Add the missing arms, or end with `_ -> …`",
+    pos: e.pos,
+  });
+}
+
+const isIrrefutable = (p: Pattern): boolean => p.kind === "PWildcard" || p.kind === "PBind";
+
+/**
+ * The values no row matches, one pattern per column of `types`; `[]` when the rows cover every
+ * value, `null` when a type leaves that undecided. A variant pattern's payloads are binds, so a
+ * variant arm covers its whole variant, and with no literal patterns a type that is neither a
+ * union nor a tuple is matched only by `_` or a name. An undecidable type answers `null` unless
+ * its `_`-or-name rows cover the rest on their own, since nothing says which values a variant or
+ * tuple pattern of an unknown type leaves out.
+ */
+function uncoveredRows(
+  rows: readonly (readonly Pattern[])[],
+  types: readonly (TypeExpr | null)[],
+  sym: SymbolTable,
+): string[][] | null {
+  if (rows.some((row) => row.every(isIrrefutable))) return [];
+  if (rows.length === 0) return [types.map(() => "_")];
+  const [first = null, ...rest] = types;
+  const head = unaliasType(first, sym);
+  const narrow = (open: (p: Pattern) => readonly Pattern[] | null): Pattern[][] =>
+    rows.flatMap((row) => {
+      const [p, ...tail] = row;
+      const opened = p === undefined ? null : open(p);
+      return opened === null ? [] : [[...opened, ...tail]];
+    });
+
+  const variants = variantsOf(head, sym);
+  if (variants !== null && variants !== "not-a-union") {
+    const out: string[][] = [];
+    for (const v of variants) {
+      const sub = uncoveredRows(
+        narrow((p) =>
+          isIrrefutable(p) || (p.kind === "PVariant" && p.name === v.name) ? [] : null,
+        ),
+        rest,
+        sym,
+      );
+      if (sub === null) return null;
+      const shown =
+        v.payloads.length === 0 ? v.name : `${v.name}(${v.payloads.map(() => "_").join(", ")})`;
+      for (const w of sub) out.push([shown, ...w]);
+    }
+    return out;
+  }
+
+  const tuple = resolveToTuple(head, sym);
+  if (tuple !== null && tuple !== "not-a-tuple") {
+    const n = tuple.args.length;
+    const sub = uncoveredRows(
+      narrow((p) => {
+        if (isIrrefutable(p)) {
+          return tuple.args.map((): Pattern => ({ kind: "PWildcard", pos: p.pos }));
+        }
+        return p.kind === "PTuple" && p.items.length === n ? p.items : null;
+      }),
+      [...tuple.args, ...rest],
+      sym,
+    );
+    if (sub === null) return null;
+    return sub.map((w) => [`(${w.slice(0, n).join(", ")})`, ...w.slice(n)]);
+  }
+
+  const sub = uncoveredRows(
+    narrow((p) => (isIrrefutable(p) ? [] : null)),
+    rest,
+    sym,
+  );
+  if (sub === null || sub.length === 0) return sub;
+  if (variants === null && rows.some((row) => row[0] !== undefined && !isIrrefutable(row[0]))) {
+    return null;
+  }
+  return sub.map((w) => ["_", ...w]);
 }

@@ -1012,7 +1012,7 @@ again.env.live;                                 // その一覧では答えら�
 | 機能 | 保証 |
 |---|---|
 | `Map`, `Set`, `List` | 純粋（in-place mutation なし） |
-| `Option`, `Result` | パターンマッチ網羅検査 |
+| `Option`, `Result` | 値としての `match` の網羅検査（[E0227](./errors.md#e0227-non-exhaustive-match)）。どの arm にも一致しない値は panic になる |
 | `now`, `random()` | 式が書ける場所ならどこでも呼べる。**reducer 本体の中で**読んだ値は、その episode の step に `env-reads` として記録される（[§10.5.1](#_10-5-1-structure-of-an-episode)）ため、replay は新しい値を引かずに同じ値を再現する。それ以外の場所（tile の式、描画）での読みは記録されず、それらを replay するものも無い |
 | `*.fresh()` | UUIDv7 を生成。`now` / `random()` と同じ reducer 本体スコープで `env-reads` として記録されるため、replay した episode は実行が実際に刻んだ ID を刻む |
 | `panic(message)` | episode を `panic` 状態にして slot をロールバック |
