@@ -3,6 +3,7 @@ import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
+import { ROUTE_TYPE } from "../stdlib-types.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
 import type { Ctx, SymbolTable } from "./context.ts";
 import { binOpResult } from "./expr.ts";
@@ -294,6 +295,16 @@ function unlisted(_member: never): null {
   return null;
 }
 
+// A bind of either name is the program's own, typed or not, and a `$route` nothing binds has
+// no value to type (E0119). Taken from the standard library's definition rather than looked
+// up by name, because the runtime builds the value whatever a program's own `type Route` says.
+function routeType(name: string, ctx: Ctx): TypeExpr | null {
+  if (ctx.localBinds.has(name)) return null;
+  if (name === "route") return ROUTE_TYPE;
+  if (name === "$route" && ctx.routeBind === "bound") return ROUTE_TYPE;
+  return null;
+}
+
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
@@ -308,7 +319,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
-      return sym.slots.get(e.name)?.type ?? null;
+      // The slot table first: a program's own `slot route` is E0115, and its
+      // reads keep the slot's type rather than drawing a second report.
+      return sym.slots.get(e.name)?.type ?? routeType(e.name, ctx) ?? null;
     }
     case "FieldAccess": {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);

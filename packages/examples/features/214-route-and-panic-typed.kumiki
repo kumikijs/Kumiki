@@ -1,0 +1,77 @@
+# Feature: the route the runtime maintains, and the panic it hands a reducer,
+# are typed values (routing.md, lifecycle.md, stdlib.md).
+#
+# `route` — and `$route` in a route.enter / route.leave / route.error reducer —
+# is the standard `Route`. `$event` in an `app.error` reducer is the standard
+# `PanicInfo`, and in a `route.error(<pattern>)` reducer the same with the
+# matched `pattern` on top. Their fields are read the way a slot's are, so
+# none of these compile:
+#
+#   depth := route.path                    # E0201 Expected Int but got Text
+#   text(route.parms.get-or("id", "?"))    # E0108 — the field is `params`
+#   lastMessage := $event.mesage           # E0108 — the field is `message`
+#   caughtAt := $event.pattern             # E0108 in app.error: only a
+#                                          # route.error reducer is handed one
+#
+# A program's own `type Route` or `type PanicInfo` does not change them: the
+# runtime builds these values from the standard library's types either way.
+#
+# Both panics are armed by entering a route rather than by a button: `smoke`
+# drives every button and fails on anything that reaches the error channel,
+# and it never navigates.
+
+slot depth        : Int          = 0
+slot entered      : Text         = "-"
+slot lastMessage  : Text         = "none"
+slot lastCategory : Text         = "none"
+slot caughtAt     : Text         = "none"
+slot armed        : Bool         = true
+slot secret       : Option(Text) = None
+
+reducer measure on=ui.click(Measure) do= depth := route.path.length
+
+reducer enterItem
+    on=route.enter("/items/:id")
+    do= entered := $route.params.get-or("id", "?") + " via " + $route.pattern
+
+# `secret` is None, so `.get` panics: the dispatch rolls back and `app.error`
+# is handed the panic.
+reducer breakOnEnter on=route.enter("/boom") do= lastMessage := secret.get
+
+reducer onPanic
+    on=app.error
+    do= lastMessage  := $event.message
+        lastCategory := $event.category
+
+# A render panic under `/broken` reaches this reducer, which disarms the read
+# so the page renders again.
+reducer onBroken
+    on=route.error("/broken")
+    do= caughtAt := $event.pattern + " (" + $event.category + ")"
+        armed    := false
+
+tile Measure = button(text="measure") {id: "measure"}
+
+tile Status
+    = column(
+        text("path: " + route.path),
+        text("id: " + route.params.get-or("id", "-")),
+        text("depth: " + depth.show),
+        text("entered: " + entered),
+        text("last: " + lastMessage + " / " + lastCategory),
+        text("caught: " + caughtAt),
+        Measure)
+      {pad: "lg", gap: "md"}
+
+tile Broken = column(when(armed, text("secret: " + secret.get)), Status)
+
+app RouteAndPanicTyped
+    caps   = []
+    routes = {
+        "/"          -> Status,
+        "/items/:id" -> Status,
+        "/boom"      -> Status,
+        "/broken"    -> Broken,
+        "/404"       -> Status
+    }
+    init   = []

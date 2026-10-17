@@ -2,6 +2,7 @@ import { unaliasType } from "../assignable.ts";
 import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
+import { PANIC_INFO_TYPE, ROUTE_ERROR_EVENT_TYPE } from "../stdlib-types.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./against.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
@@ -120,10 +121,19 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   ctx.localBinds.add("$el");
-  ctx.localBinds.add("$event");
+  bindLocal(ctx, "$event", eventPayloadType(r.on));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+// Taken from the standard library's definition rather than looked up by name, because the
+// runtime builds the value whatever a program's own `type PanicInfo` says.
+function eventPayloadType(on: ReducerDef["on"]): TypeExpr | null {
+  if (on.kind !== "LifecycleEvent") return null;
+  if (on.name === "app.error") return PANIC_INFO_TYPE;
+  if (on.name.startsWith("route.error(")) return ROUTE_ERROR_EVENT_TYPE;
+  return null;
 }
 
 function checkStmt(

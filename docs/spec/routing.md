@@ -83,6 +83,8 @@ tile TodoDetail = column(
                     ...)
 ```
 
+The slot has this type wherever it is read — a tile, a reducer, a `fn`, a test — and so does [`$route`](#_3-4-route-lifecycle) where a trigger binds one. A field the type does not have, such as `route.parms`, is [E0108](./errors.md#e0108-undef-member), and `depth := route.path` into an `Int` slot is [E0201](./errors.md#e0201-type-mismatch). It is the standard library's `Route` whatever the program declares: the runtime builds this value either way, so a program's own `type Route` names a type of its own and does not change what `route` is.
+
 ---
 
 ## 3.3 Route Transitions
