@@ -1,5 +1,8 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { FRAGMENT_ARGUMENTS } from "../src/codegen/expr.ts";
+import { summariesOf } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 const diagnostics = (defs: string, rhs: string, resType: string, init = "[]") =>
   check(
@@ -50,12 +53,16 @@ describe("$1 is the element a List hands its fragment", () => {
     expect(diagnostics(defs, "xs.map(loud($1))", "List(Text)")).toEqual([]);
   });
 
-  it("binds the element to $2 of fold, and leaves the accumulator open", () => {
+  it("binds the element to $2 of fold, and the accumulator to the init's type", () => {
     const defs = `${LOUD}\nslot xs : List(Int) = [1, 2]`;
     expect(diagnostics(defs, `xs.fold("", loud($2))`, "Text", '""')).toEqual([
       "E0201 Expected Text but got Int",
     ]);
     expect(diagnostics(defs, "xs.fold(0, $1 + $2)", "Int", "0")).toEqual([]);
+    expect(diagnostics(defs, `xs.fold("", loud($1))`, "Text", '""')).toEqual([]);
+    expect(diagnostics(defs, "xs.fold(0, loud($1))", "Text", '""')).toEqual([
+      "E0201 Expected Text but got Int",
+    ]);
   });
 });
 
@@ -106,10 +113,165 @@ app A
   });
 });
 
+describe("a fn named as the fragment is checked as the call it stands for", () => {
+  const both = (defs: string, call: (f: string) => string, fn: string, args: string) => ({
+    bare: (res: string, init = "[]") => diagnostics(defs, call(fn), res, init),
+    inline: (res: string, init = "[]") => diagnostics(defs, call(`${fn}(${args})`), res, init),
+  });
+
+  it("reports a List element the fn's parameter does not take", () => {
+    const defs = `${LOUD}\nslot xs : List(Int) = [1, 2]`;
+    const map = both(defs, (f) => `xs.map(${f})`, "loud", "$1");
+    expect(map.inline("List(Text)")).toEqual(["E0201 Expected Text but got Int"]);
+    expect(map.bare("List(Text)")).toEqual(map.inline("List(Text)"));
+  });
+
+  it("accepts a fn over a Map's key and value types, and reports one over another key type", () => {
+    const keep = (k: string) =>
+      both(
+        `fn keep(k: ${k}, v: Int) -> Bool = v > 0\nslot m : Map(Text, Int) = {}`,
+        (f) => `m.filter(${f})`,
+        "keep",
+        "$1, $2",
+      );
+    expect(keep("Text").bare("Map(Text, Int)", "{}")).toEqual([]);
+    expect(keep("Text").inline("Map(Text, Int)", "{}")).toEqual([]);
+    expect(keep("Int").inline("Map(Text, Int)", "{}")).toEqual(["E0201 Expected Int but got Text"]);
+    expect(keep("Int").bare("Map(Text, Int)", "{}")).toEqual(
+      keep("Int").inline("Map(Text, Int)", "{}"),
+    );
+  });
+
+  it("checks fold's first parameter against the init's type and its second against the element", () => {
+    const step = (acc: string, x: string, init = "0") =>
+      both(
+        `fn step(acc: ${acc}, x: ${x}) -> Int = 0\nslot xs : List(Int) = [1, 2]`,
+        (f) => `xs.fold(${init}, ${f})`,
+        "step",
+        "$1, $2",
+      );
+    expect(step("Int", "Int").bare("Int", "0")).toEqual([]);
+    expect(step("Int", "Int").inline("Int", "0")).toEqual([]);
+    for (const [acc, x, init] of [
+      ["Text", "Int", "0"],
+      ["Int", "Text", "0"],
+      ["Int", "Int", '""'],
+    ] as const) {
+      const fold = step(acc, x, init);
+      expect(fold.inline("Int", "0"), `${acc}, ${x} from ${init}`).toEqual([
+        init === '""' ? "E0201 Expected Int but got Text" : "E0201 Expected Text but got Int",
+      ]);
+      expect(fold.bare("Int", "0"), `${acc}, ${x} from ${init}`).toEqual(fold.inline("Int", "0"));
+    }
+  });
+
+  it("checks the value Map.update hands its fn, and the value the fn answers", () => {
+    const update = both(
+      `${LOUD}\nslot m : Map(Text, Int) = {}`,
+      (f) => `m.update("a", ${f})`,
+      "loud",
+      "$1",
+    );
+    expect(update.inline("Map(Text, Int)", "{}")).toEqual([
+      "E0201 Expected Text but got Int",
+      "E0201 Expected Int but got Text",
+    ]);
+    expect(update.bare("Map(Text, Int)", "{}")).toEqual(update.inline("Map(Text, Int)", "{}"));
+  });
+
+  it("checks a Result's error under map-err and its value under flat-map", () => {
+    const defs = `fn errI(e: Int) -> Int = e
+fn next(t: Text) -> Result(Int, Text) = Ok(t.length)
+slot r : Result(Int, Text) = Ok(1)`;
+    const mapErr = both(defs, (f) => `r.map-err(${f})`, "errI", "$1");
+    expect(mapErr.inline("Result(Int, Int)", "Ok(1)")).toEqual(["E0201 Expected Int but got Text"]);
+    expect(mapErr.bare("Result(Int, Int)", "Ok(1)")).toEqual(
+      mapErr.inline("Result(Int, Int)", "Ok(1)"),
+    );
+    const flat = both(defs, (f) => `r.flat-map(${f})`, "next", "$1");
+    expect(flat.inline("Result(Int, Text)", "Ok(1)")).toEqual(["E0201 Expected Text but got Int"]);
+    expect(flat.bare("Result(Int, Text)", "Ok(1)")).toEqual(
+      flat.inline("Result(Int, Text)", "Ok(1)"),
+    );
+  });
+
+  it("binds every positional FRAGMENT_ARGUMENTS lists, in both spellings", () => {
+    // A parameter no positional has (`Bool`), over receivers whose type
+    // arguments differ, so each mismatch names the type its positional is. A
+    // row for a receiver that lacks the method would show up as E0108 here.
+    const receivers: Record<string, { type: string; is: Record<string, string> }> = {
+      List: { type: "List(Int)", is: { T: "Int", Acc: "Int" } },
+      Option: { type: "Option(Int)", is: { T: "Int" } },
+      Result: { type: "Result(Int, Text)", is: { T: "Int", E: "Text" } },
+      Map: { type: "Map(Text, Int)", is: { K: "Text", V: "Int" } },
+    };
+    const rows: string[] = [];
+    for (const [method, fragment] of FRAGMENT_ARGUMENTS) {
+      for (const [receiver, positionals] of Object.entries(fragment.on)) {
+        const r = receivers[receiver];
+        if (!r || !positionals) throw new Error(`no probe receiver for ${receiver}`);
+        rows.push(`${receiver}.${method}`);
+        const params = positionals.map((_, i) => `p${i + 1}: Bool`).join(", ");
+        const args = positionals.map((_, i) => `$${i + 1}`).join(", ");
+        // The argument ahead of the fragment: `fold`'s init, `update`'s key.
+        const lead = ["", method === "fold" ? "0, " : '"k", '][fragment.index];
+        const errors = (f: string) =>
+          summariesOf(
+            withApp(`fn probe(${params}) = true
+fn run(c: ${r.type}) = c.${method}(${lead}${f})
+tile App = text("x")`),
+          );
+        const want = positionals.map((p) => `E0201 Expected Bool but got ${r.is[p]}`);
+        expect(errors(`probe(${args})`), `${receiver}.${method}(probe(${args}))`).toEqual(want);
+        expect(errors("probe"), `${receiver}.${method}(probe)`).toEqual(want);
+      }
+    }
+    // Every fragment method, on each receiver language.md lists it for. A
+    // `Set`'s `filter` has none.
+    expect(rows.sort()).toEqual([
+      "List.filter",
+      "List.find",
+      "List.fold",
+      "List.map",
+      "List.sort-by",
+      "Map.filter",
+      "Map.map",
+      "Map.update",
+      "Option.filter",
+      "Option.flat-map",
+      "Option.map",
+      "Result.flat-map",
+      "Result.map",
+      "Result.map-err",
+    ]);
+  });
+});
+
 describe("where the lowering's reading is not certain, nothing is bound", () => {
   it("a receiver whose type is not decided", () => {
     const defs = `${LOUD}\nfn anything(n: Int) = [n]`;
     expect(diagnostics(defs, "anything(1).map(loud($1))", "List(Text)")).not.toContain(
+      "E0201 Expected Text but got Int",
+    );
+    expect(diagnostics(defs, "anything(1).map(loud)", "List(Text)")).not.toContain(
+      "E0201 Expected Text but got Int",
+    );
+  });
+
+  it("an accumulator whose init is `{}`, which is the empty Map and the empty Set alike", () => {
+    // Typed as either, the init would refuse a fn written for the other.
+    for (const acc of ["Map(Text, Int)", "Set(Int)"]) {
+      const defs = `fn step(acc: ${acc}, x: Int) -> ${acc} = acc\nslot xs : List(Int) = [1, 2]`;
+      expect(diagnostics(defs, "xs.fold({}, step)", acc, "{}"), acc).toEqual([]);
+      expect(diagnostics(defs, "xs.fold({}, step($1, $2))", acc, "{}"), acc).toEqual([]);
+    }
+  });
+
+  it("a Set's filter, which stdlib.md gives no binding", () => {
+    // `_s.filter` hands a Set's predicate each member as an `[element, true]`
+    // entry, its key unrestored, so `$1` is not decided to be the element.
+    const defs = `${LOUD}\nslot s : Set(Int) = []`;
+    expect(diagnostics(defs, "s.filter(loud)", "Set(Int)")).not.toContain(
       "E0201 Expected Text but got Int",
     );
   });

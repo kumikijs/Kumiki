@@ -1,6 +1,6 @@
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
-import { FRAGMENT_ARGUMENTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { FRAGMENT_ARGUMENTS, fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import {
   checkAgainst,
   checkEmitTarget,
@@ -261,7 +261,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (kind) e.keyKind = kind;
         const fragment = FRAGMENT_ARGUMENTS.get(e.method);
         const shape =
-          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e, sym, ctx) : undefined;
         if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
         for (const [i, a] of e.args.entries()) {
           if (fragment?.index !== i) {
@@ -270,16 +270,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
+          // A bare `fn` name is checked as the call the lowering makes of it.
+          let body: Expr = a;
           if (isFragmentFnName(a, sym, ctx)) {
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
             if (lacksMember) continue;
-            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
-            if (fits && e.method === "sort-by" && i === 0) {
-              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+            if (!checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors)) {
+              continue;
             }
-            continue;
+            body = fragmentCall(a.name, sym.fns.get(a.name)?.params.length ?? 0, a.pos);
           }
-          const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
+          const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
           if (shape === "value") {
@@ -289,12 +290,12 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           } else if (fragment.binds === 2) {
             bindLocal(inner, "$2", p2);
           }
-          checkExpr(a, sym, errors, inner);
+          checkExpr(body, sym, errors, inner);
           if (e.method === "sort-by" && i === 0) {
-            checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
+            checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
           const declared = memberArgType(recvType, e.method, i, sym);
-          if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
+          if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
       if (e.method === "get-or") {
