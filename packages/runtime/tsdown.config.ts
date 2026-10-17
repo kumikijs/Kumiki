@@ -12,10 +12,10 @@ export default defineConfig([
     fixedExtension: false,
     outputOptions: publishedOutputOptions,
   },
-  // Its own build, so index.js inlines the code it shares with text-distance instead of
+  // Its own build, so index.js inlines the code it shares with these subpaths instead of
   // importing it from a shared chunk.
   {
-    entry: { "text-distance": "src/text-distance.ts" },
+    entry: { "text-distance": "src/text-distance.ts", "positive-int": "src/positive-int.ts" },
     format: "esm",
     dts: true,
     fixedExtension: false,

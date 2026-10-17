@@ -1,5 +1,5 @@
+import { isPositiveInt } from "@kumikijs/runtime/positive-int";
 import type { MotionDef, ThemeValue } from "../ast.ts";
-import { isPositiveInt } from "../positive-int.ts";
 import type { KumikiError } from "./context.ts";
 
 const MOTION_KEYFRAME_PROPS = new Set(["opacity", "translate-x", "translate-y", "scale", "rotate"]);
