@@ -413,7 +413,6 @@ export type MountedApp = AppShape & {
   _submitHeldBy: (e: Event) => readonly string[] | undefined;
   /** Prefetch dedupe set, created on the first link prefetch. */
   _prefetched?: Set<string>;
-  _episodeId?: () => string | undefined;
   live: Record<string, unknown>;
 };
 
