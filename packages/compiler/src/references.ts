@@ -18,6 +18,7 @@ import type {
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
 import { decodedType, typeMemberQualifier } from "./builtin-calls.ts";
+import { tileNamedAt } from "./builtins.ts";
 import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
@@ -369,7 +370,7 @@ class Walker {
     switch (t.kind) {
       case "TileCall":
         this.add("tile", t.name, t.pos);
-        for (const a of t.args) this.tileArg(a, locals);
+        for (const a of t.args) this.tileArg(t.name, a, locals);
         for (const p of t.props) {
           if (HANDLER_NAMES.has(p.name)) {
             const reducer = handlerReducerName(p.value);
@@ -417,7 +418,7 @@ class Walker {
     }
   }
 
-  private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
+  private tileArg(callee: string, a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
     if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
       const reducer = handlerReducerName(v);
@@ -428,6 +429,11 @@ class Walker {
     }
     if (isTileExpr(v)) {
       this.tileExpr(v, locals);
+      return;
+    }
+    const tile = tileNamedAt(callee, a, (name) => this.index.tile.has(name));
+    if (tile) {
+      this.add("tile", tile.name, tile.pos);
       return;
     }
     this.expr(v, locals);
