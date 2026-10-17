@@ -7,6 +7,19 @@ import { APP_A, seed, storeOf } from "./helpers/files.ts";
 
 const APP_ONE_LINE = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
+// `request` as an effect's `map-request` and `value` bound by a `let`: positions
+// no declared type judges, so a capitalised name there resolves as itself alone.
+const unjudged = (request: string, value: string): string => `type Status = Idle | Busy
+slot s : Status = Idle
+fn idel(x: Int) -> Int = x
+effect load cap=http.get in=Unit out=Result(Text, HttpError) map-request=${request}
+reducer go on=ui.click(B) do= let next = ${value}
+    s := next
+    emit load()
+tile B = button(text="b")
+tile App = column(B, text(s.show))
+${APP_A.replace("caps   = []", "caps   = [http.get]")}`;
+
 function planOf(file: string) {
   const store = load(file);
   return planFixes(store, check(store.program));
@@ -55,6 +68,20 @@ tile App = column(B, text(a.show), text(t))
 ${APP_A}`,
       description: 'replace "Int.pasre" with "Int.parse" at 3:35',
       fixed: "a := Int.parse(t).get-or(0)",
+    },
+    {
+      // `Idel` is one edit from the fn `idel` and two from the tag `Idle`, but a
+      // capitalised name is a constructor, so only a tag resolves it.
+      repair: "repairs a tag no type declares from the tags, not the callees (E0116)",
+      source: unjudged('{url: "/x", decode: Decoder.Text}', "Idel"),
+      description: 'replace "Idel" with "Idle" at 5:42',
+      fixed: "let next = Idle",
+    },
+    {
+      repair: "repairs a qualifier that names nothing from the qualifiers (E0116)",
+      source: unjudged('{url: "/x", decode: Decodr.None}', "Idle"),
+      description: 'replace "Decodr" with "Decoder" at 4:94',
+      fixed: "decode: Decoder.None",
     },
   ])("$repair", ({ source, description, fixed }) => {
     const file = seed(source);
@@ -411,9 +438,9 @@ ${APP_A}`);
 });
 
 describe("planFixesExplained: skip-reason classification", () => {
-  const synth = (code: string, message: string) => ({
+  const synth = (code: string, message: string, kind = "type-error") => ({
     code,
-    kind: "type-error" as const,
+    kind,
     message,
     pos: { line: 1, col: 1 },
   });
@@ -468,6 +495,20 @@ describe("planFixesExplained: skip-reason classification", () => {
       "E0116",
       'Call to undefined function "doubel-value"',
     ],
+    [
+      "e0116-no-close-variant",
+      LONE_TILE,
+      "E0116",
+      'Reference to undefined variant "ZZZZZZZZZZ"',
+      "undef-variant",
+    ],
+    [
+      "e0116-no-close-qualifier",
+      LONE_TILE,
+      "E0116",
+      'Reference to undefined qualifier "ZZZZZZZZZZ" in "ZZZZZZZZZZ.show"',
+      "undef-qualifier",
+    ],
     ["e0117-quoted-name-extract-failed", LONE_TILE, "E0117", "some undefined type"],
     [
       "e0117-no-close-type",
@@ -514,8 +555,8 @@ describe("planFixesExplained: skip-reason classification", () => {
       'Effect "e" requires capability "log.write" which is not declared',
     ],
     ["no-repair-branch", LONE_TILE, "E0999", "some future diagnostic"],
-  ])("%s: %s / %s %s", (reason, source, code, message) => {
-    const { patches, skipped } = planFixesExplained(storeOf(source), [synth(code, message)]);
+  ])("%s: %s / %s %s", (reason, source, code, message, kind?: string) => {
+    const { patches, skipped } = planFixesExplained(storeOf(source), [synth(code, message, kind)]);
     expect(patches).toEqual([]);
     expect(skipped).toEqual([expect.objectContaining({ code, reason })]);
   });
