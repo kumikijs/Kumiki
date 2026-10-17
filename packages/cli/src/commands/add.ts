@@ -3,6 +3,7 @@ import { Argument, type Command } from "commander";
 import { addDef, describeEdit } from "../mutate.ts";
 import { LAYERS } from "../store.ts";
 import { bodyFileOption, resolveBody } from "./_shared/body-input.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki add <file> <layer> <name> <body>";
@@ -31,7 +32,7 @@ export function registerAdd(program: Command): string {
         if (!file || !layer || !name) exitWithUsage(USAGE);
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         printOrExit(() => {
-          const opId = addDef(resolve(process.cwd(), file), layer, name, body);
+          const opId = addDef(resolve(process.cwd(), file), layer, name, body, WARN_SKIPPED);
           return describeEdit({ op: "add", qname: `${layer}.${name}`, opId });
         });
       },

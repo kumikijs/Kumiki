@@ -29,8 +29,7 @@ still fails the verb, but the error now names the log and the line
 JSON such as `null`), and a write op is rejected with the file put back, as
 before. A last entry with no newline after it no longer has the next entry
 appended onto the same line. The MCP tools go through the same reader, so
-`kumiki_history` and the edit tools behave the same way; the warning goes to
-the server's stderr.
+`kumiki_history` and the edit tools behave the same way.
 
 A write op cuts the torn line off before it appends its own line. If that
 append fails, the file is put back and the rejection says the line was cut off:

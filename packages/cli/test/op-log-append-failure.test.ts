@@ -87,11 +87,9 @@ beforeEach(() => {
   reset();
   file = seed("slot a : Int = 0\n", "c.kumiki");
   log = logPath(file);
-  vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 afterEach(() => {
   reset();
-  vi.restoreAllMocks();
 });
 
 /** What the call threw. */
