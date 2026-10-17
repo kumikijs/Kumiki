@@ -513,6 +513,8 @@ editor := editor.map($1.copy(body="Body"))
 - **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
 - **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
 
+A **record** read through an index whose key is a literal — `cfg["label"]` — is the field the key names, and has that field's type, as `cfg.label` does. A key computed at runtime names no one field, so the checker gives that read no type.
+
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
 A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached.
@@ -733,6 +735,8 @@ fn-def      ::= 'fn' identifier
 
 fn-param    ::= identifier ':' type-expr
 ```
+
+**A `fn` that leaves out `->` returns the type of its body**, read with each parameter at its declared type. A call to it is checked wherever it lands, as a call to a `fn` declaring that type is: with `fn greeting() = "hello"`, `slot n : Int = greeting()` is [E0201](./errors.md#e0201-type-mismatch), and a member read off the call answers from that type. Two kinds of body give no type, and calls to their `fn` are checked against nothing: one whose own type the checker cannot decide — a `.map` or `.fold` result, an empty `{}` — and one that reaches its own `fn` again, directly or through other `fn`s ([E0006](./errors.md#e0006-fn-cycle)), which leaves every `fn` on that loop without a type.
 
 ### 1.8.3 Invariants
 
