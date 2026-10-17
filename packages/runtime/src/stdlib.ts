@@ -98,19 +98,33 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
-type PlatformCrypto = {
-  randomUUID?: () => string;
-  getRandomValues?: (bytes: Uint8Array) => Uint8Array;
-};
+type PlatformCrypto = { getRandomValues?: (bytes: Uint8Array) => Uint8Array };
 
-function uuidV4(c: PlatformCrypto | undefined): string {
-  const bytes = new Uint8Array(16);
-  if (c?.getRandomValues) c.getRandomValues(bytes);
-  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+/** The millisecond and counter of the last id `uuidV7` minted: the floor the next sorts above. */
+let lastMs = 0;
+let counter = 0;
+
+/**
+ * A UUIDv7 (RFC 9562): each id sorts, as text, after the one before it. A new millisecond seeds
+ * the counter with 11 random bits, its top bit clear so there is room to count up; the same
+ * millisecond, or a clock that stepped back, takes the next count, and a counter that runs out
+ * moves the millisecond on instead of wrapping. `crypto.randomUUID` is not asked, since it mints
+ * a v4. The `Math.random` fallback is acceptable because a fresh id only has to be distinct,
+ * never unguessable.
+ */
+function uuidV7(c: PlatformCrypto | undefined): string {
+  const b = new Uint8Array(10);
+  if (c?.getRandomValues) c.getRandomValues(b);
+  else for (let i = 0; i < 10; i++) b[i] = Math.floor(Math.random() * 256);
+  const now = Date.now();
+  if (now > lastMs || ++counter > 0xfff) {
+    lastMs = Math.max(now, lastMs + 1);
+    counter = (((b[8] as number) & 7) << 8) | (b[9] as number);
+  }
+  b[0] = ((b[0] as number) & 0x3f) | 0x80;
+  const ms = lastMs.toString(16).padStart(12, "0");
+  const rand = Array.from(b.subarray(0, 8), (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${ms.slice(0, 8)}-${ms.slice(8)}-${(0x7000 | counter).toString(16)}-${rand.slice(0, 4)}-${rand.slice(4)}`;
 }
 
 export const _stdlibCore = {
@@ -367,11 +381,7 @@ export const _stdlibCore = {
     return valueEqual(a, b);
   },
   freshId(): string {
-    return readEnv("fresh-id", () => {
-      const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
-      if (c?.randomUUID) return c.randomUUID();
-      return uuidV4(c);
-    });
+    return readEnv("fresh-id", () => uuidV7((globalThis as { crypto?: PlatformCrypto }).crypto));
   },
   now(): number {
     return readEnv("now", () => Date.now());
