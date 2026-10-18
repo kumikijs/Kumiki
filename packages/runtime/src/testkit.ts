@@ -1,5 +1,6 @@
 import {
   batchRejections,
+  type EmitSpec,
   type ReducerSpec,
   type RefinementRejection,
   reportRejectedBatch,
@@ -36,19 +37,14 @@ import {
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
-type ReducerEmit = { effect: string; args: unknown[] };
-
-// Shared by `reducer-test` and `run-reducer`, so the two tiers answer the same state for the
-// same reducer, a slot the test neither seeds nor writes included.
+// `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
+// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree.
 function settleBatch(
   reducer: string,
   before: Record<string, unknown>,
-  result:
-    | { slots?: Record<string, unknown>; emits?: ReducerEmit[]; rejected?: RefinementRejection[] }
-    | null
-    | undefined,
+  result: Partial<ReturnType<ReducerSpec["apply"]>> | null | undefined,
   slotMetas: Record<string, SlotMetaLike>,
-): { slots: Record<string, unknown>; emits: ReducerEmit[] } {
+): { slots: Record<string, unknown>; emits: EmitSpec[] } {
   const rejected = batchRejections(result, slotMetas);
   if (rejected.length > 0) {
     reportRejectedBatch(reducer, rejected);

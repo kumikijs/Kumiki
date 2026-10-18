@@ -367,17 +367,44 @@ describe("every tier applies the same rule", () => {
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 
+  it("refuses the batch in a reducer-test, and drops its emits", () => {
+    const result = _stdlib.runReducerTest({
+      name: "t",
+      target: "bump",
+      givenSlots: { count: 0, log: "" },
+      slotMetas: makeApp().slots,
+      result: { slots: { count: 4, log: "written" }, emits: [{ effect: "persist", args: [] }] },
+      panic: null,
+      expect: { kind: "state", slots: { count: 0, log: "" }, effects: [] },
+    });
+
+    expect(result.pass).toBe(true);
+    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
+  });
+
   it("refuses the batch in a property-test's run-reducer step", () => {
+    const copy: ReducerSpec = {
+      name: "copy",
+      event: { kind: "ui", ev: "click" },
+      apply: (live) => ({ slots: { mirror: live.count }, emits: [] }),
+    };
     const app = {
       live: { count: 0, log: "" } as Record<string, unknown>,
       slots: makeApp().slots,
-      reducers: [overflow("bump")],
+      reducers: [overflow("bump"), copy],
       effects: {},
     };
     const after = _stdlib.runReducerStep(app, { slots: { count: 2 } }, "bump", {});
+    const rejected = { count: 2, mirror: 0, log: "", trace: "", route: emptyRoute() };
 
-    expect(after.slots).toEqual({ count: 2, mirror: 0, log: "", trace: "", route: emptyRoute() });
+    expect(after.slots).toEqual(rejected);
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
+
+    // Chained on: an answer that shared `live` would be wiped by this step's `resetLive`.
+    const next = _stdlib.runReducerStep(app, after, "copy", {});
+
+    expect(next.slots).toEqual({ ...rejected, mirror: 2 });
+    expect(after.slots).toEqual(rejected);
   });
 });
 

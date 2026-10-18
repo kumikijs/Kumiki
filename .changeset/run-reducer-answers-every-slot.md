@@ -2,7 +2,7 @@
 "@kumikijs/runtime": patch
 ---
 
-`run-reducer(name)` in a property-test answers every slot, not only the ones the test gives
+`run-reducer(name)` in a property-test answers every slot, not only the ones the test gives or the reducer writes
 
 The state `run-reducer` answered was built from `given.slots` plus the reducer's
 writes, so a slot the test neither gave nor the reducer wrote read `undefined`
@@ -28,5 +28,4 @@ too, and so did a step whose batch a refinement rejected.
 declared defaults and the seeded `route`, then `given.slots` — with the
 reducer's writes over it, or that table unchanged when the batch is rejected.
 `reducer-test` and `run-reducer` share that rule, so the two tiers answer the
-same state for the same reducer. testing.md §8.3.2 states it; example 193
-shows it.
+same state for the same reducer. testing.md states it.

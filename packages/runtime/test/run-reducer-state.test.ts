@@ -17,16 +17,34 @@ function makeApp() {
 }
 
 describe("the state run-reducer answers", () => {
-  it("holds every slot: the defaults, then the given ones, then the writes", () => {
-    const after = _stdlib.runReducerStep(makeApp(), { slots: { count: 3 } }, "inc", {});
+  it.each([
+    {
+      when: "the test gives a slot the reducer writes",
+      given: { slots: { count: 3 } },
+      answer: { count: 4, label: "x", route: emptyRoute() },
+    },
+    {
+      when: "the test gives no slots",
+      given: undefined,
+      answer: { count: 1, label: "x", route: emptyRoute() },
+    },
+    {
+      when: "the test gives a slot the reducer does not write",
+      given: { slots: { label: "y" } },
+      answer: { count: 1, label: "y", route: emptyRoute() },
+    },
+    {
+      when: "the test gives part of the route",
+      given: { slots: { route: { path: "/p" } } },
+      answer: { count: 1, label: "x", route: { ...emptyRoute(), path: "/p" } },
+    },
+  ])("holds every slot, the defaults then the given ones then the writes, when $when", ({
+    given,
+    answer,
+  }) => {
+    const after = _stdlib.runReducerStep(makeApp(), given, "inc", {});
 
-    expect(after.slots).toEqual({ count: 4, label: "x", route: emptyRoute() });
-  });
-
-  it("starts from the defaults when the test gives no slots", () => {
-    const after = _stdlib.runReducerStep(makeApp(), undefined, "inc", {});
-
-    expect(after.slots).toEqual({ count: 1, label: "x", route: emptyRoute() });
+    expect(after.slots).toEqual(answer);
   });
 
   it("hands the whole table to every chained step", () => {
