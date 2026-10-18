@@ -773,7 +773,7 @@ The one emit with no episode to name is one from `app.init`, dispatched before t
 
 When `retry=...` is specified, retry on an `Err` result that is a 5xx/network error, waiting the intervals the policy names ([http.md §6.5](./http.md#_6-5-retry)).
 
-A request cancelled during the wait between attempts ends the wait at once and makes no further attempt; its `.err` fires right away. Unmounting the app ends the wait too ([http.md §6.5](./http.md#_6-5-retry)).
+A request cancelled during the wait between attempts ends the wait at once and makes no further attempt; its `.err` fires right away. Unmounting the app ends the wait too, as it ends every effect the app launched ([§10.4.7](#_10-4-7-dispose)).
 
 ### 10.4.5 Delivery of Results
 
@@ -796,6 +796,12 @@ On effect completion, the result is notified to the runtime as an `<effect-name>
 | `media.*` | MediaDevices API |
 | `geo.*` | Geolocation API |
 | `socket.*` | WebSocket |
+
+### 10.4.7 Dispose
+
+Disposing the app, which is disposing its last view ([§10.9](#_10-9-runtime-api-for-embedding)), ends every effect the dispatcher still holds. A `debounce` timer that has not fired and a `queue` entry that has not started never launch. An effect already launched is aborted through its signal, whether its invoke is still running or it is waiting between `retry=` attempts ([§10.4.4](#_10-4-4-retry)); so is one that a cancel already aborted but whose result has not come back. Each of these records an `effect-cancel` step (`targetId = <effect-name>`) on the episode that claimed its `effect-start`, and that episode commits with `status="completed"` and no `effect-end` before `dispose` returns.
+
+After that, nothing the app launched delivers a result. An invoke that answers once the app is disposed, including one that ignored its abort, reaches no `.ok` / `.err` reducer, records no step, and is not reported as an unhandled error. So when `dispose` returns, the episode of every effect the app launched has committed, each one ending where the app left it: a replay that takes each result from the log ([§10.5.3](#_10-5-3-replay)) finds none for a cancelled effect, and does not deliver one the app never received.
 
 ---
 
@@ -886,7 +892,7 @@ Example:
 - The most recent M in localStorage (default 20, size limit 5MB)
 - During development, write to a file with `--episode-log /path/to/log.jsonl` (`kumiki run` also takes the path from `KUMIKI_EPISODE_LOG`)
 
-The file `kumiki run` writes is a separate store, not a copy of the in-memory one. It holds every episode the run commits, one JSON object per line, and N does not bound it. The run appends to the file rather than truncating it, so a file that starts empty begins with the run's first episode, which is where replay from slot defaults ([§10.5.3](#_10-5-3-replay)) starts, even for a run that commits more than N. An episode that commits after the scenario has finished, such as one whose effect's invoke runs on past the app's dispose instead of stopping at its abort, is not written ([#942](https://github.com/kumikijs/Kumiki/issues/942)). An effect still waiting in a `retry=` backoff is not one: disposing the app ends that wait ([http.md §6.5](./http.md#_6-5-retry)), so its episode commits before the run returns and is written.
+The file `kumiki run` writes is a separate store, not a copy of the in-memory one. It holds every episode the run commits, one JSON object per line, and N does not bound it. The run appends to the file rather than truncating it, so a file that starts empty begins with the run's first episode, which is where replay from slot defaults ([§10.5.3](#_10-5-3-replay)) starts, even for a run that commits more than N. When the scenario ends, the run disposes the app, which cancels every effect still running or waiting in a `retry=` backoff ([§10.4.7](#_10-4-7-dispose)). Their episodes commit before the run returns, each ending in an `effect-cancel`, so the file holds them too; whatever those effects answer afterwards is not recorded at all.
 
 The bootstrap episode (`trigger.kind = "ssr.hydrate"`) is stored on the same path as any other episode: appended to the in-memory ring and (when localStorage mirroring is enabled) persisted on the same eviction policy. No special pinning — once enough later episodes accrue, the bootstrap eventually falls off the tail like any FIFO entry. Hydration runs `persistLocalStorage()` as part of the ingest so the mirror reflects the bootstrap immediately (an AC for [§10.6.2](#_10-6-2-hydration) verification).
 
