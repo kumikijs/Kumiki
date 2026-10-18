@@ -165,7 +165,7 @@ reducer added
 
 ### 6.3.1 グローバル header の注入 {#_6-3-1-injecting-global-headers}
 
-`app.http` で全 HTTP effect に自動付与する header を宣言できる：
+`app.http` で全 HTTP effect（`base-url` があるときはその origin へのもの — 後述）に自動付与する header を宣言できる：
 
 ```kumiki fragment
 app App
@@ -184,12 +184,25 @@ app App
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
 | `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
-| `headers` | 全リクエストに付与 — リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
+| `headers` | 全リクエストに付与（`base-url` があるときはその origin へのリクエストだけ — 後述）— リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
 | `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
-| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
+| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)。`base-url` があるときはその origin へのリクエストだけ — 後述）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
 | `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
 | `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
+
+取得する URL は `base-url` とリクエストの `url`（[§6.1.2](#_6-1-2-standard-effect)）から次のように決まる：
+
+- `base-url` がないとき、または空のときは、すべての url を書かれたとおりに取得する。
+- `?` か `#` を含むベースには、url が何であっても、url を書かれたとおりに後ろに付ける：`https://api.example.com/search?q=` と `term` は `https://api.example.com/search?q=term` を、`https://proxy.example.com/?url=` と `https://target/x` は `https://proxy.example.com/?url=https://target/x` を取得する。
+- それ以外のベースの下では、**絶対** url は書かれたとおりに取得する。url が絶対であるのは、スキーム — ASCII 英字 1 字で始まり、ASCII 英数字・`+`・`-`・`.` が 0 字以上続き、`:` で終わるもの（`https:`・`data:`）— で始まるとき、または `//` で始まる（プロトコル相対）ときである。最初のセグメントが `:` までこの形をしている url は絶対として読まれるので、`users:search` のようなパスは `/users:search` と書く。`1a:b` や `a_b:c` はこの形ではないので相対である。
+- それ以外の url は**相対**である。空であるか `?` か `#` で始まる場合（後述）を除き、ベースとの間に `/` をちょうど 1 つ挟んで連結する。ベースが `/` で終わるか、url が `/` で始まるかは問わない：`https://api.example.com` の下でも `https://api.example.com/` の下でも、`/items/1` と `items/1` はどちらも `https://api.example.com/items/1` を取得する。
+- パスを持つベースは**接頭辞**である：`https://api.example.com/v1` と `/users` は `https://api.example.com/v1/users` を取得する。ブラウザがリンクを解決するように url をベースに対して解決する（`new URL("/users", base)`）のではない。そうすると `/v1` が落ちる。ホスト上の別のパスへのリクエストは URL 全体を書く。パスだけのベースも同じように連結する：`/api` と `users` は `/api/users` を取得する。
+- 空の url、または `?` か `#` で始まる url は、書かれたとおりにベースの後ろに付ける：`https://api.example.com/items` と `?page=2` は `https://api.example.com/items?page=2` を取得する。
+
+`query` はこうして決まる URL に付け加える（[§6.1.2](#_6-1-2-standard-effect)）。
+
+`base-url` があるとき、`headers` と `credentials` は、ベースの origin — スキーム・ホスト・ポート — へのリクエストにだけ付く：ベースに連結した url と、その origin 上の絶対 url である。それ以外の origin へのリクエストにはグローバルなヘッダーが付かず、`credentials` は既定値（[§6.9](#_6-9-default-settings)）になるので、`headers` の中のトークンがベースの origin の外へ出ることはない。そのようなリクエストは、必要なものを自身の `headers` に書く。パスだけのベースと相対 url はページの origin 上にあり、URL として読めないベースには、リクエストが乗る origin がない。`base-url` がないときは、どちらもすべてのリクエストに付く。
 
 値を取るフィールドはすべて**式**であり、slot を読んでよい。4 つとも評価されるのは
 アプリの構築時ではなく**リクエストを行う時**である：slot を書く reducer は次の
@@ -263,7 +276,12 @@ reducer cancelSearch
 
 `emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
 
-id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+`emit` が返す id は、その `emit` が開始するリクエストを指し、policy がその emit を捨てた場合は、それを吸収したリクエストを指す。それ以外に何を指すかは effect の policy で決まる：
+
+- **`policy=latest` と `policy=latest-per-key(<expr>)`** は key ごとに 1 つのリクエストを実行し、id はその key のもの `<effect-name>:<key>` である。`latest` では `<key>` は `_`。`latest-per-key` ではその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、id は `emit` が開始したリクエストを指す。同じ key の後続の emit はそのリクエストを abort し、自分のリクエストを同じ id で実行するので、どちらの id で cancel しても実行中のほうが abort される。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+- **それ以外の policy** — 指定なし、`queue`、`debounce`、`throttle`、`once` — では、`emit` 1 回が 1 つのリクエストであり、他のどの emit も返さない固有の id を持つ。同じ effect の 2 回の emit は、1 つの reducer 本体からでも 2 つからでも 2 つの id を返し、一方が開始したリクエストを cancel しても、他方のリクエストはそのままである。id は `<effect-name>#` に、`<T>.fresh()` と同じ生成器（[stdlib §2.4.1](./stdlib.md#_2-4-1-id-生成)）による新しい ID を続けたもので、専用の `effect-id` の読みとして記録される（[runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）ため、replay した reducer 本体は記録時と同じ id を返す。
+
+policy が**捨てた** emit はリクエストを開始せず、その id はそれを吸収したリクエストを指す：`throttle` ではウィンドウ内の emit がウィンドウを開いたリクエストを、`once` では既に見た入力に対する emit がその入力で開始したリクエストを、`debounce` ではタイマー発火前に後続の emit に置き換えられた emit が、その後続の emit の指すものを指す。したがって `lastId := emit work(x)` の後の `emit cancel(lastId)` は、`lastId` がどの emit から来たものであれ、policy が残したリクエストに届く。そのリクエストが完了した後は、完了した id と同じく、捨てられた id も何も指さない。
 
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
@@ -271,8 +289,10 @@ id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest
 
 - 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
 - キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
-- 同 effect に対する `debounce` タイマーは cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
-- `throttle` のウィンドウマーカーは **そのまま維持される**。元の effect はすでに launch 済み（cancel はその進行中リクエストを abort）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
+- cancel が作用するのは、その id が指す 1 つのリクエストだけである。同じ effect の他の進行中リクエストは実行を続け、それぞれの `.ok` / `.err` を届ける。
+- `queue` では、cancel はその id が指すエントリにだけ作用する。まだ待機中のエントリはキューから取り除かれ、そのリクエストは発行されず `.err` も起動しない。実行中のエントリは他の進行中リクエストと同じく abort され、キューは次のエントリへ進む。他のエントリはすべて本来どおり実行される。
+- `debounce` タイマーを待っている emit、またはそれが置き換えた emit の id で cancel すると、そのタイマーはクリアされ、まだ発行されていない待機中リクエストは発生せず `.err` も起動しない。タイマーがすでに発火したリクエストはそれ自体が 1 つのリクエストであり、タイマーを待っている後続の emit の id で cancel しても実行を続ける。
+- `throttle` のウィンドウマーカーは **そのまま維持される**。ウィンドウを開いたリクエストはすでに launch 済み（その id、またはウィンドウが捨てた emit の id で cancel すると、その進行中リクエストが abort される）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
 
 ---
 

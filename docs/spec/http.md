@@ -165,7 +165,7 @@ reducer added
 
 ### 6.3.1 Injecting Global Headers
 
-In `app.http` you can declare headers that are automatically applied to all HTTP effects:
+In `app.http` you can declare headers that are automatically applied to all HTTP effects (under a `base-url`, to those on its origin — see below):
 
 ```kumiki fragment
 app App
@@ -184,12 +184,25 @@ app App
 | http field | Meaning | Evaluated |
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
-| `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
+| `headers` | Applied to every request (under a `base-url`, only to its origin — below) — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
 | `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
-| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
+| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings); under a `base-url`, only to its origin — below) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
 | `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
+
+`base-url` and a request's `url` ([§6.1.2](#_6-1-2-standard-effect)) make the URL that is fetched:
+
+- With no `base-url`, or an empty one, every url is fetched as written.
+- A base that carries a `?` or a `#` has the url appended to it as written, whatever the url: `https://api.example.com/search?q=` with `term` fetches `https://api.example.com/search?q=term`, and `https://proxy.example.com/?url=` with `https://target/x` fetches `https://proxy.example.com/?url=https://target/x`.
+- Under any other base, an **absolute** url is fetched as written. A url is absolute when it starts with a scheme — an ASCII letter, then zero or more ASCII letters, digits, `+`, `-` or `.`, then `:` (`https:`, `data:`) — or with `//` (protocol-relative). A first segment of that shape up to its `:` reads as a scheme, so a path like `users:search` is written `/users:search`; `1a:b` and `a_b:c` are not of that shape, and are relative.
+- Any other url is **relative**. Unless it is empty or starts with `?` or `#` (below), it is joined to the base with exactly one `/` between them, whether the base ends in `/` and whether the url starts with one: under `https://api.example.com` and under `https://api.example.com/`, both `/items/1` and `items/1` fetch `https://api.example.com/items/1`.
+- A base that carries a path is a **prefix**: `https://api.example.com/v1` with `/users` fetches `https://api.example.com/v1/users`. The url is not resolved against the base the way a browser resolves a link (`new URL("/users", base)`), which would drop `/v1`; a request for another path on the host writes its whole URL. A base that is only a path is joined the same way: `/api` with `users` fetches `/api/users`.
+- An empty url, or one that starts with `?` or `#`, is appended to the base as written: `https://api.example.com/items` with `?page=2` fetches `https://api.example.com/items?page=2`.
+
+`query` is appended to the URL this gives ([§6.1.2](#_6-1-2-standard-effect)).
+
+With a `base-url`, `headers` and `credentials` go only with a request to the base's origin — its scheme, host and port: a url joined to the base, or an absolute url on that origin. A request to any other origin carries no global header and the default `credentials` ([§6.9](#_6-9-default-settings)), so a token in `headers` never leaves the base's origin; such a request names what it needs in its own `headers`. A path-only base and a relative url are on the page's origin, and a base that cannot be read as a URL has no origin a request is on. With no `base-url`, both go with every request.
 
 Every field that takes a value takes an **expression**, and may read a slot. All
 four are evaluated **when a request is made**, not when the app is built: a
@@ -269,7 +282,12 @@ reducer cancelSearch
 
 `emit` used as an expression returns the dispatched effect's `EffectId` (see [stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid)). The `EffectId.none` sentinel makes `emit cancel(EffectId.none)` a safe no-op.
 
-The id is `<effect-name>:<key>`. `<key>` is `_` unless the effect declares `policy=latest-per-key(<expr>)`, and then it is that expression, **evaluated once, where the `emit` runs**: a slot it reads has the value the reducer body has written up to that statement, and a write later in the same body is not seen. The dispatcher runs the request under that same key, so the id an `emit` yields names the request it started even when the body goes on to write the slot the key reads. An `app.init` entry is emitted outside any reducer body; its key is evaluated when it is dispatched, against the slots' values at that moment.
+The id an `emit` yields names the request that emit starts or, when the policy drops the emit, the request that absorbed it. What else it names depends on the effect's policy:
+
+- **`policy=latest` and `policy=latest-per-key(<expr>)`** run one request per key, and the id is that key's: `<effect-name>:<key>`. `<key>` is `_` under `latest`. Under `latest-per-key` it is that expression, **evaluated once, where the `emit` runs**: a slot it reads has the value the reducer body has written up to that statement, and a write later in the same body is not seen. The dispatcher runs the request under that same key, so the id names the request the `emit` started even when the body goes on to write the slot the key reads. A later emit under the same key aborts that request and runs its own under the same id, so a cancel through either id aborts the one that is running. An `app.init` entry is emitted outside any reducer body; its key is evaluated when it is dispatched, against the slots' values at that moment.
+- **Every other policy** — none, `queue`, `debounce`, `throttle`, `once` — makes each `emit` a request of its own, with an id of its own that no other emit yields: two emits of one effect, from one reducer body or from two, yield two ids, and cancelling the request one of them starts leaves the other's as it is. The id is `<effect-name>#` followed by a new id from the generator `<T>.fresh()` draws from ([stdlib §2.4.1](./stdlib.md#_2-4-1-id-generation)), recorded as an `effect-id` read of its own ([runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), so a replayed reducer body yields the id the recorded one did.
+
+An emit the policy **drops** starts no request, and its id names the request that absorbed it: under `throttle`, an emit inside the window names the request that opened the window; under `once`, an emit of an input already seen names the request that input launched; under `debounce`, an emit that a later one replaced before the timer fired names what the later one names. So `lastId := emit work(x)` followed by `emit cancel(lastId)` reaches the request the policy kept, whichever emit `lastId` came from. Once that request settles, a dropped id names nothing, as a settled one does.
 
 An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other shape is rejected at compile time ([E0303](./errors.md#e0303-invalid-cancel-target)).
 
@@ -277,8 +295,10 @@ An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other s
 
 - A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation).
 - The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: ""}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
-- A `debounce` timer scheduled for the same effect is cleared by cancel, so a pending-but-not-yet-issued request never lands.
-- A `throttle` window marker is **left intact** by cancel — the original effect has already launched (cancel aborts that in-flight request), and clearing the marker would let an immediate next emit slip past the rate limit before the window closes.
+- A cancel acts on the one request its id names. Any other request of the same effect that is in flight keeps running and delivers its own `.ok` / `.err`.
+- Under `queue`, a cancel affects only the entry its id names. An entry still waiting is removed from the queue: its request is never made and no `.err` fires. An entry that is running is aborted like any in-flight request, and the queue goes on with the next entry. Every other entry runs as it would have.
+- A cancel with the id of an emit still waiting on its `debounce` timer, or of an emit that one replaced, clears that timer, so the pending-but-not-yet-issued request never lands and no `.err` fires. A request the timer has already fired is a request of its own: a cancel through the id of a later emit, still waiting on the timer, leaves it running.
+- A `throttle` window marker is **left intact** by cancel — the request that opened the window has already launched (a cancel through its id, or through the id of an emit the window dropped, aborts that in-flight request), and clearing the marker would let an immediate next emit slip past the rate limit before the window closes.
 
 ---
 
