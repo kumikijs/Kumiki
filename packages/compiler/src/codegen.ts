@@ -33,8 +33,9 @@ export type CodegenOptions = {
   runtimeSpecifier: string;
   /**
    * Emit the in-language `test` definitions and publish them, with their static
-   * coverage, as `__kumikiTests` / `__kumikiCoverage` — an empty list for a
-   * program without tests. Off for production builds.
+   * coverage, as `__kumikiTests` / `__kumikiCoverage`. For a program without tests,
+   * `__kumikiTests` is `[]` and `__kumikiCoverage` lists its definitions with none
+   * used. Off for production builds.
    */
   includeTests?: boolean;
   exportApp?: boolean;
@@ -238,8 +239,9 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("const App = createApp();");
   lines.push("globalThis.__kumikiApp = App;");
 
-  // Published even when empty: a runner that loads one program after another in a
-  // process reads these globals, and would otherwise report the previous program's tests.
+  // Published even for a program without tests: a runner that loads one program after
+  // another in a process reads these globals, and would otherwise report the previous
+  // program's tests.
   if (opts.includeTests) {
     lines.push("");
     lines.push("globalThis.__kumikiTests = App._tests;");
