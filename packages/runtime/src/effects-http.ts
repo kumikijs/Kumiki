@@ -1,5 +1,5 @@
 import type { EffectResult } from "./core.ts";
-import { type Decode, decodeOf, decodeRead } from "./effects-decode.ts";
+import { type Decode, decodeOf, decodeRead, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
   baseUrl?: string;
@@ -37,30 +37,34 @@ export async function httpFetch(
   } catch (e) {
     return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
   }
-  const headers: Record<string, string> = {};
-  const globalHeaders = httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {};
-  for (const [k, v] of Object.entries(globalHeaders)) setHeader(headers, k, v);
-  for (const [k, v] of Object.entries(x.headers ?? {})) setHeader(headers, k, v);
-  const init: RequestInit = {
-    method,
-    headers,
-    credentials: httpCfg?.credentials ?? DEFAULT_CREDENTIALS,
-  };
+  let encoded: Encoded = {};
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
-    let encoded: Encoded;
     try {
       encoded = encodeBody(x.body);
     } catch (e) {
       // A body that cannot be sent as written fails the effect, before any request.
       return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
     }
-    const { body, contentType } = encoded;
-    if (body !== undefined) init.body = body;
-    if (body instanceof FormData) setHeader(headers, "Content-Type");
-    else if (contentType && headerKey(headers, "Content-Type") === undefined) {
-      headers["Content-Type"] = contentType;
-    }
   }
+  const headers: Record<string, string> = {};
+  const layers = [
+    defaultHeaders(decode, encoded.contentType),
+    httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {},
+    x.headers ?? {},
+  ];
+  // A value the types rule out but a lax decoder let through as `undefined` sets nothing, so it
+  // never removes a lower layer's header.
+  for (const layer of layers) {
+    for (const [k, v] of Object.entries(layer)) if (v !== undefined) setHeader(headers, k, v);
+  }
+  // A `FormData` body's Content-Type must carry the boundary only fetch knows.
+  if (encoded.body instanceof FormData) setHeader(headers, "Content-Type");
+  const init: RequestInit = {
+    method,
+    headers,
+    credentials: httpCfg?.credentials ?? DEFAULT_CREDENTIALS,
+  };
+  if (encoded.body !== undefined) init.body = encoded.body;
 
   const timeoutMs = httpCfg?.timeout ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
@@ -121,6 +125,14 @@ export async function httpFetch(
 
 type Tagged = { _tag: string; _0?: unknown };
 type Encoded = { body?: BodyInit; contentType?: string };
+
+// No `User-Agent`: a browser does not reliably let a script set it.
+function defaultHeaders(decode: Decode, contentType?: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (decodesJson(decode)) headers.Accept = "application/json";
+  if (contentType) headers["Content-Type"] = contentType;
+  return headers;
+}
 
 function encodeBody(body: unknown): Encoded {
   const t = body as Tagged | null;
