@@ -77,9 +77,9 @@ export function valueEqual(a: unknown, b: unknown): boolean {
   return ak.every((k) => Object.hasOwn(bo, k) && valueEqual(ao[k], bo[k]));
 }
 
-// Asks `<` rather than subtracting: two `Text`s subtract to `NaN`, which a sort reads as
-// "equal". An absent or `NaN` value sorts last; "equal" to every value, a single one would
-// stop the rest from sorting.
+// Asks `<` rather than subtracting: two `Text`s subtract to a number or to `NaN`, neither of
+// which is their code-unit order. An absent or `NaN` value sorts last; "equal" to every value,
+// a single one would stop the rest from sorting.
 function ascending(a: unknown, b: unknown): number {
   const na = a == null || Number.isNaN(a);
   const nb = b == null || Number.isNaN(b);
@@ -306,16 +306,23 @@ export const _stdlibCore = {
     return _stdlibCore.None;
   },
   listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
-    return [...(xs ?? [])].sort((a, b) => ascending(keyOf(a), keyOf(b)));
+    // Sorts each element boxed with its key: `Array.prototype.sort` moves an `undefined`
+    // element to the end without asking the comparator, past a later `null` or `NaN`, where an
+    // absent value keeps the order it had among them.
+    return (xs ?? [])
+      .map((x) => ({ x, key: keyOf(x) }))
+      .sort((a, b) => ascending(a.key, b.key))
+      .map((e) => e.x);
   },
   listSort(xs: unknown[] | undefined | null): unknown[] {
-    const arr = [...(xs ?? [])];
-    if (arr.every((x) => typeof x === "number")) return arr.sort(ascending);
-    return arr.sort((a, b) => {
-      const sa = String(a);
-      const sb = String(b);
-      return sa < sb ? -1 : sa > sb ? 1 : 0;
-    });
+    const arr = xs ?? [];
+    // Judged by each present element's runtime type: all numbers or all `Text`, the elements are
+    // ordered as `sort-by` orders the same values as keys. A list mixing the two is ordered by
+    // each element's text instead, since `<` between a number and a `Text` is no order: `10`
+    // and `"a"` compare equal while `10` and `"9"` compare as numbers.
+    const only = (type: "number" | "string") => arr.every((x) => x == null || typeof x === type);
+    if (only("number") || only("string")) return _stdlibCore.listSortBy(arr, (x) => x);
+    return _stdlibCore.listSortBy(arr, (x) => (x == null ? x : String(x)));
   },
   /** List(T).fold(init, expr): left fold with $1=acc, $2=elem. */
   listFold<T, A>(xs: T[], init: A, fn: (acc: A, x: T) => A): A {
