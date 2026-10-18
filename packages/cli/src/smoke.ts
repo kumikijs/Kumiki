@@ -221,14 +221,26 @@ function loadScenario(path: string): Scenario {
   return doc as Scenario;
 }
 
-// The in-memory store keeps only the most recent N, so the file is appended as
-// each episode commits. A failed write is held for `rethrow`: the hook runs inside
-// the runtime's commit, where a throw would read as an error of the app.
-function fileEpisodeLogger(path: string): { logger: EpisodeLogger; rethrow: () => void } {
+function episodeLogError(path: string, error: unknown): Error {
+  return new Error(`could not write episode log ${path}: ${messageOf(error)}`, { cause: error });
+}
+
+/**
+ * The in-memory store keeps only the most recent N, so the file is appended as each episode
+ * commits. A failed write is held, not thrown: the hook runs inside the runtime's commit, where
+ * a throw would read as an error of the app. Nothing is appended after it, so the file has no
+ * gap. `close` stops the writing, so an episode that commits once the run is over (an effect
+ * its dispose did not cancel) is not written, and gives back the held failure.
+ */
+export function fileEpisodeLogger(path: string): {
+  logger: EpisodeLogger;
+  close: () => Error | null;
+} {
   let failure: { error: unknown } | null = null;
+  let closed = false;
   const logger = createEpisodeLogger({
     onEpisode: (ep) => {
-      if (failure) return;
+      if (closed || failure) return;
       try {
         appendFileSync(path, `${JSON.stringify(ep)}\n`);
       } catch (error) {
@@ -238,8 +250,9 @@ function fileEpisodeLogger(path: string): { logger: EpisodeLogger; rethrow: () =
   });
   return {
     logger,
-    rethrow: () => {
-      if (failure) throw failure.error;
+    close: () => {
+      closed = true;
+      return failure ? episodeLogError(path, failure.error) : null;
     },
   };
 }
@@ -253,11 +266,21 @@ export async function runCmd(
 ): Promise<void> {
   const scenario = loadScenario(scenarioPath);
   const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
+  if (logFile) {
+    // Tried before the scenario runs, or a run that commits no episode never touches the
+    // path. Appending nothing keeps what the file already holds.
+    try {
+      appendFileSync(logFile, "");
+    } catch (e) {
+      throw episodeLogError(logFile, e);
+    }
+  }
   const log = logFile ? fileEpisodeLogger(logFile) : null;
   const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
     episodeLogger: log?.logger ?? null,
     sourcePath: kumikiPath,
   });
+  const logFailure = log?.close() ?? null;
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];
     if (!s) continue;
@@ -273,7 +296,7 @@ export async function runCmd(
     for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
-  log?.rethrow();
+  if (logFailure) throw logFailure;
   if (!report.ok) process.exit(1);
 }
 

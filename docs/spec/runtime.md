@@ -884,7 +884,7 @@ Example:
 - The most recent M in localStorage (default 20, size limit 5MB)
 - During development, write to a file with `--episode-log /path/to/log.jsonl` (`kumiki run` also takes the path from `KUMIKI_EPISODE_LOG`)
 
-The file is a separate store, not a copy of the in-memory one. It holds every episode the run commits, one JSON object per line, and N does not bound it: a run that commits more than N episodes still writes its first episode, which is where replay from slot defaults ([§10.5.3](#_10-5-3-replay)) starts.
+The file `kumiki run` writes is a separate store, not a copy of the in-memory one. It holds every episode the run commits, one JSON object per line, and N does not bound it. The run appends to the file rather than truncating it, so a file that starts empty begins with the run's first episode, which is where replay from slot defaults ([§10.5.3](#_10-5-3-replay)) starts, even for a run that commits more than N. An episode that commits after the scenario has finished, such as one whose effect was still waiting in a `retry=` backoff when the app was disposed, is not written ([#942](https://github.com/kumikijs/Kumiki/issues/942)).
 
 The bootstrap episode (`trigger.kind = "ssr.hydrate"`) is stored on the same path as any other episode: appended to the in-memory ring and (when localStorage mirroring is enabled) persisted on the same eviction policy. No special pinning — once enough later episodes accrue, the bootstrap eventually falls off the tail like any FIFO entry. Hydration runs `persistLocalStorage()` as part of the ingest so the mirror reflects the bootstrap immediately (an AC for [§10.6.2](#_10-6-2-hydration) verification).
 

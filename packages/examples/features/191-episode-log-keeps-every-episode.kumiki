@@ -12,9 +12,9 @@
 # N-1 -> N. Replay starts from slot defaults, and it reaches the state the run
 # ended in only because the first line is the run's first episode.
 #
-# The scenario clicks three times. `packages/cli/test/run-episode-log.test.ts`
-# drives this app for 105 clicks, past the in-memory store's 100, under both
-# `--episode-log` and `KUMIKI_EPISODE_LOG`.
+# The scenario clicks 105 times, past the in-memory store's 100, so the two
+# commands above write 105 lines and replay to count=105. An integration test
+# in `packages/cli` runs it under both `--episode-log` and `KUMIKI_EPISODE_LOG`.
 
 slot count : Int = 0
 
