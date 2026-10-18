@@ -58,12 +58,13 @@ export class ExpressionParser extends TypeParser {
     return lhs;
   }
 
-  /** Heuristic: after `|`, does it look like the start of a match arm? */
+  // No expression continues with `->`, so a name, a name with `(…)`, or a `(…)` followed by `->`
+  // can only start the next arm, whatever the name's case.
   protected looksLikeMatchArm(): boolean {
     const next = this.peek(1);
-    // `| _ ->` is a wildcard match arm
+    // `_` never starts an expression, so `| _` is an arm even before its `->` is seen.
     if (next.kind === "ident" && next.value === "_") return true;
-    if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
+    if (next.kind === "ident") {
       const after = this.peek(2);
       if (after.kind === "op" && after.value === "->") return true;
       if (after.kind === "op" && after.value === "(") return this.arrowClosesParens(3);
