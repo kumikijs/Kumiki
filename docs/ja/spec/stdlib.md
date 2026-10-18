@@ -25,6 +25,8 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 let id = emit fetchQuote()
 ```
 
+同じ effect の 2 回の emit は異なる 2 つの id を返し、一方が開始したリクエストを cancel しても、他方のリクエストはそのままである。policy が捨てた emit の id は、それを吸収したリクエストを指す。例外は key ごとに 1 つのリクエストを実行する `policy=latest` / `policy=latest-per-key(...)` で、ある key の emit はすべてその key の id を返し、その id はその key で現在実行中のリクエストを指す（[HTTP §6.4](./http.md#_6-4-cancellation)）。
+
 `EffectId` 上で定義されている操作は等価比較（`==` / `!=`）と `EffectId` 型 slot への代入のみ。算術・順序比較・`text(...)` での描画はコンパイル時に拒否される（[E0204](./errors.md#e0204-effect-id-misuse)）。
 
 `EffectId.none` はセンチネル値（空ハンドル）。`EffectId` 型 slot の安全な初期値で、`emit cancel(...)` に渡しても実行時エラーではなく no-op になる。slot を実 `EffectId` で上書きしたあとは、その slot を `cap=http.cancel` の effect に渡すことで対応 effect をキャンセルできる（[HTTP §6.4](./http.md#_6-4-cancellation) 参照）。
@@ -599,6 +601,8 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 これは **capability 境界の登録、すなわち宣言的マニフェストであって、新しい構文や任意コードではない** — Kumiki の非ゴール「マクロ/DSL 拡張をしない」と整合する。動く例：[27-custom-capability](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki)（+ その `kumiki.caps.json`）。
 
+**標準 capability の上書き。** ホストの provider は*標準* capability（`http.*`、`storage.*`、`nav.*`、`notification.show`、`log.write` など）にも登録でき、capability に結び付いた effect は、標準のものも宣言されたものも、`confirm` を除いてすべて組み込み実装より先に `caps.provider(cap)` を参照する。これによりホストは Kumiki のソースを変えずに、HTTP トランスポートの差し替え、認証ヘッダの注入、フレームワークのルーターの接続、トースト UI の置き換えができる。`confirm` は常にランタイム自身のダイアログを描画する（[§2.6.5](#_2-6-5-confirm)）。その答えは `onYes` または `onNo` の reducer を dispatch することで、leave ガードの下ではさらにガードが保留している遷移を確定することで届けられるが（[ルーティング §3.5.2](./routing.md#_3-5-2-leave-ガード)）、`EffectResult`（`{kind:"ok"|"err", value}`）を返す provider にはそのどちらもできない。したがって `notification.show` の provider が置き換えるのは `toast` だけである。provider は effect のリクエスト（`map-request` 適用済み）を受け取り、登録が無ければ組み込みの動作がそのまま走る。
+
 **標準 capability の provider が返す err 値。** storage / session / indexed capability の provider は、組み込みハンドラと同じく、それらの effect が宣言する `Text` を err 値として返す。それ以外の err 値を返した場合も例外を投げた場合も、両者に共通の読み方で `Text` として配送される：`Error` は `Name: message`、`Text` の `message` フィールドを持つレコードはそのフィールド、それ以外はその JSON テキスト（`undefined` のように JSON が無いときは `String` 形）になる。`{kind, value}` でない結果は、provider が返したものを示す err になる。
 
 **`.err` reducer が受け取る値。** storage / session / indexed の effect は、`out=Result(T, Text)` が宣言する `Text`、つまり失敗のメッセージで失敗する（[ストレージ Effect](./http.md#_6-7-storage-effects)）。HTTP effect は `out=` が宣言する `HttpError` レコードで失敗する（[HTTP 共通](./http.md#_6-1-http-共通)）。カスタム capability の err 値はその provider が返すものであり、provider が未登録なら `{message: "Capability <name> has no provider"}` になる。HTTP やカスタムの effect で invoke が例外を投げた場合（`map-request` が panic した、provider が throw した）は、投げられた値のテキストを持つ `{message: Text}` として配送される。
@@ -653,7 +657,7 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 
 ケイパビリティを要求しない唯一の標準 effect。ユーザーが既に見ているページのビューポートを動かすだけで、その外側には何も届かないからである。→ [ルーティング §3.9](./routing.md#_3-9-スクロール復元)。
 
-### 2.6.5 確認ダイアログ
+### 2.6.5 確認ダイアログ {#_2-6-5-confirm}
 
 ```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit
@@ -661,7 +665,7 @@ effect confirm     cap=notification.show  in={title: Text, message: Text, onYes:
 
 `ReducerRef` は reducer の名前をそのまま書いたもの（`onYes: doDelete`）で、ランタイムが名前で dispatch する。プログラムが書ける型ではなく、この `in=` にだけ現れる。reducer の名前でない裸の名前は [E0103](./errors.md#e0103-undef-ref-undef-slot)、それ以外の値は [E0202](./errors.md#e0202-emit-arg-type-mismatch) である。
 
-ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)。
+ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。ダイアログは常にランタイム自身のものである。`notification.show` のホスト provider が置き換えるのはトーストであり、`confirm` には届かない（[§2.5](#_2-5-standard-capabilities)）。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)。
 
 ---
 

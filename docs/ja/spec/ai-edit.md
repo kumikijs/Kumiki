@@ -39,6 +39,8 @@ kumiki list <layer>                 # レイヤ内の全定義名
 kumiki list                         # 全定義名（layer prefix 付き）
 ```
 
+参照元とは、checker または lowering がその名前をこの定義として読む位置でこの定義を指す定義であり、型メンバ呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。lowering がデコードの型として読む `Decoder.Json(T)` の引数も同じで、`Decoder.Json(Map(ItemId, Item))` の `ItemId` と `Item` は参照である。`ItemId.fresh()` で id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。`Decoder`・`EffectId`・`Duration`・`Bytes` では、引数を与えた `parse` / `show` だけが型メンバ呼び出しである：プログラムが自前の `type Duration` を宣言していれば `Duration.show(d)` はその参照元だが、名前空間の組み込み呼び出し（`Duration.ms(5)`・`EffectId.none`）は型を指さず、`Duration.fresh()` は E0116 である（[E0117](./errors.md#e0117-undef-type)）。
+
 ### 9.2.2 書き込み系 {#_9-2-2-write-commands}
 
 ```bash
@@ -57,6 +59,8 @@ kumiki patch revert <op-id>                 # 特定 op を取り消し
 複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
 `add` の `<layer>` は `kumiki list` が受け付けるラベルのいずれか（`type`・`slot`・`effect`・`reducer`・`tile`・`fn`・`app`・`theme`・`motion`・`test`）で、それ以外の語に対して `kumiki add` はファイルを読む前に `2` で終了する。`<name>` は識別子 1 つであり、`add` はそれ以外を拒否する。body は定義から `<layer> <name>` とその後の区切りを除いたもので、`slot count : Int = 0` なら `Int = 0`、`tile Greeting = heading("Hi")` なら `heading("Hi")` である。tile の節（`in=`・`error-boundary=`・`scroll-restoration=`・`sub-routes=`）と type のパラメータは名前と `=` の間に置かれるので、それらを持つ body はそれらで始まり `=` も含む。`in=Text = heading($1)` は `tile Greet in=Text = heading($1)` を書き、`(T) = {v: T}` は `type Box(T) = {v: T}` を書く。節やパラメータで始まらない `replace` の body は、定義が持つものを残す。`tile Greeting error-boundary=Oops = …` に対して body `heading("Hello")` は `tile Greeting error-boundary=Oops = heading("Hello")` を書く。変えるには残すものを body に書き、すべて外すには body を `=` から始める。`replace` は `replaced` の行の後に、定義から無くなった節やパラメータごとに 1 行（`  dropped error-boundary`、`  dropped parameter T`）を出力する。検証を通る書き込みで、それらが気づかれずに失われることはない。
+
+`rename` は定義自身の名前と、それへの参照をすべて書き換える。文字列リテラルで定義を指す prop は 2 つあり、その名前も参照である：tile の `motion: "Spin"`（[§4.9.1](./style.md#_4-9-1-the-motion-definition)）と link の `prefetch: "loadTodo"`（[§3.8](./routing.md#_3-8-prefetch)）。そこでは引用符の間の文字列が書き換わり、引用符はそのまま残るので、`kumiki rename motion.Spin Whirl` は `{motion: "Spin"}` を `{motion: "Whirl"}` にする。たまたま同じ綴りの、コメント中の語や他の文字列リテラルには触れない。
 
 書き込み系 op はファイルの再パース・再型検査で検証され、`severity: "error"` の診断が 1 つでも出ればロールバックする。ただし例外が 1 つある。プログラムは定義を 1 つずつ積み上げて構築されるため `app` が入るまでは app 不在の状態が続く。したがって **`E0003 missing-app` は書き込み op をロールバックさせない**。完成したアプリケーションかどうかは `kumiki check` が報告するものであり、編集途中のグラフが既に満たしているべき条件ではない。
 
@@ -113,7 +117,7 @@ verb ごとに、`1` が意味するのは以下である。
 | `view` / `refs` | ファイル、またはその中の完全名が存在しない。`view --history` が要求するのはファイルだけである — 削除された定義にも履歴はあり、まさにそのときに参照されるからである。op ログが、途切れた最後の行以外に op でない行を含む場合も `1` で終了する（§9.2.2） |
 | `list` | ファイルが存在しない、またはフィルタがどの種類の定義も指していない。実在するがその下に定義が無い場合は何も出力せず `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | 書き込みが拒否されロールバックされた |
-| `lock` / `unlock` | ロックを他のエージェントが保持している、または解放すべきロックが無い |
+| `lock` / `unlock` | `lock` が求めたパターンと重なるパターンを他のエージェントが保持している、または `unlock` が名指したエージェントが解放すべきロックを保持していない（[§9.8.3](#_9-8-3-task-boundaries)） |
 | `replay` | ログが読めない、指定した episode がログに無い、または再生した episode が panic した |
 | `dev` | サーバを起動できなかった。起動後は中断されるまで動き続けるので何も報告しない |
 
@@ -375,10 +379,12 @@ agent-3: slot.route,  reducer.route-*
 これは規約だが、Kumiki コンパイラに **ownership lock**（オプション）を追加できる：
 
 ```bash
-kumiki lock agent-1 'slot.todos*,reducer.todo-*'
+kumiki lock app.kumiki agent-1 'slot.todos*,reducer.todo-*'
 ```
 
 同名空間に他エージェントが op を出すと reject される。
+
+パターンは、修飾名に対するグロブをカンマで区切って並べたものである。各グロブの前後の空白は無視され、空のグロブは取り除かれる。パターンは少なくとも 1 つのグロブを名指す：1 つも名指さないパターン（`','` など）は、ファイルを読む前に引数の形が誤っているものとして拒否され、コマンドは exit `2` となる（§9.2.5）。グロブの中で `*` はドットも含め任意の文字の並びを表し、それ以外の文字はその文字自身を表す。`lock` は、グロブのどれかが他のエージェントの保持するパターンと重なる場合、つまりドットをちょうど 1 つ持つ名前（すべての修飾名がこの形をしている）で両方にマッチしうるものがある場合を除いて、グロブをそのエージェントに与える。修飾名では、そのドットはレイヤと名前の間にあるものである。したがって、どの修飾名にもマッチしないグロブが拒否されることもある（`slot.count?` は `slot.*` と重なる）。そのようなグロブは何もロックしないので、失われるものはない。`slot.count` と `slot.*` は重なり、`slot.a*` と `slot.*b` も、どちらも他方を含んではいないが、ともに `slot.ab` にマッチするので重なる。`slot.a*` と `*.inc` は重ならない。両方にマッチするのは `slot.a.inc` のように 2 つ目のドットを持つ名前だけだからである。重なるパターンを与えると、両方にマッチする名前について各エージェントが相手のロックに拒否され、誰もそれを編集できなくなる。重なりがあれば要求全体が拒否される：コマンドは exit `1` となり、ロックファイルは変更されず、メッセージは重なったパターンとそれを保持するエージェントを名指しし、要求のどれも与えられなかったこと、そして保持者が先に `unlock` するか、重ならないグロブを求める必要があることを告げる。比較されるのは他のエージェントのパターンだけである：エージェント自身が保持するパターンと重なることを理由にグロブが拒否されることはない。`unlock` はエージェントが保持するすべてのパターンを解放する。何も保持していないエージェントに対しては exit `1` となり、ロックファイルは作成も書き換えもされず、メッセージはロックを保持しているエージェントを名指しする（1 つも無ければそう告げる）。
 
 ロックは verb が名指しした定義だけでなく、**op が触れるすべての定義**に対して検査される。何に触れたかは verb からではなくソースから読み取る：op が書き込もうとするソースが検証を通った後、前後の定義を修飾名で突き合わせ、追加された定義・削除された定義・本文が変わった定義をすべて検査する。これには `remove --cascade` が取り除く各依存元、`rename` が作る新しい名前と本文を書き換える各定義、そして `replace`・`add`・`edit` の本文が一緒に持ち込む定義（`slot.count` の `replace` で、本文が `slot todosX : Int = 0` という行まで続けば `slot.todosX` が作られる）が含まれる。そのうち 1 つでもロックされていれば op 全体が書き込み前に reject される：ファイルはバイト単位で変わらず、op は記録されず、exit `1` となり、メッセージは修飾名順で最初にロックされていた定義とその所有者を名指しする。名指しされた定義は、何かを書き込む前にも検査される。`patch apply`・`patch revert`・MCP ツールも同じ mutator を通るので、同じ検査を受ける。
 

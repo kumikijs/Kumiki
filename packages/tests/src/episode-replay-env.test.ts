@@ -1,53 +1,19 @@
 import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
-import type { AppShape, EpisodeLogEntry, EpisodeStep } from "@kumikijs/runtime";
-import { createEpisodeLogger, replayEpisodes, runScenario } from "@kumikijs/runtime";
+import type { EpisodeLogEntry } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { withRoot } from "./helpers/dom.ts";
+import { afterValues, recordOne, reducerStep, replayEpisode } from "./helpers/episodes.ts";
 import { loadApp } from "./helpers/load.ts";
-import { failureDetail } from "./helpers/scenario.ts";
 
 const EXAMPLE = feature("87-replayed-environment-read");
 const FIXTURE = EXAMPLE.replace(/\.kumiki$/, ".fixture.jsonl");
 
-type ReducerStep = Extract<EpisodeStep, { kind: "reducer" }>;
-
-function reducerStep(ep: EpisodeLogEntry): ReducerStep {
-  const step = ep.steps.find((s) => s.kind === "reducer");
-  if (!step) throw new Error("episode has no reducer step");
-  return step as ReducerStep;
-}
-
-/** The slot values the recorded reducer produced — what a replay must land on. */
-function afterValues(ep: EpisodeLogEntry): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const d of reducerStep(ep)["slot-diffs"] ?? []) out[d.name] = d.after;
-  return out;
-}
+const load = () => loadApp(EXAMPLE);
 
 /** Drive one click through the live runtime and return the episode it wrote. */
-async function recordOneClick(): Promise<EpisodeLogEntry> {
-  const app = await loadApp(EXAMPLE);
-  const logger = createEpisodeLogger({ memoryMax: 10 });
-  const report = await withRoot((root) =>
-    runScenario(app, root, { steps: [{ do: { clickText: "stamp" } }] }, { episodeLogger: logger }),
-  );
-  expect(report.ok, failureDetail(report)).toBe(true);
-  const eps = logger.list();
-  expect(eps).toHaveLength(1);
-  // Through JSON, because that is how an episode reaches `kumiki replay`.
-  return JSON.parse(JSON.stringify(eps[0])) as EpisodeLogEntry;
-}
+const recordOneClick = () => recordOne(load, { do: { clickText: "stamp" } });
 
-async function replayOnce(ep: EpisodeLogEntry): Promise<Record<string, unknown>> {
-  const app = (await loadApp(EXAMPLE)) as AppShape & { live: Record<string, unknown> };
-  return replayEpisodes({
-    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
-    episodes: [ep],
-    mocks: {},
-    observer: () => "continue",
-  }).finalSlots;
-}
+const replayOnce = async (ep: EpisodeLogEntry) => (await replayEpisode(load, ep)).finalSlots;
 
 describe("an episode that read the environment", () => {
   it("records what `random()` and `now` answered", async () => {
