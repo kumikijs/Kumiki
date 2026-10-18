@@ -457,27 +457,62 @@ describe("the effect-cancel step an http.cancel records", () => {
     });
   });
 
-  it("a cancel of a debounce emit a later one replaced records no effect-cancel, and the later one stays pending", async () => {
+  it("a cancel of a debounce emit a later one replaced clears the later one's timer, and records the id it named", async () => {
     await withApp(async ({ start, kill, logger }) => {
       start("deb", "deb#1");
       start("deb", "deb#2");
+      // `deb#1` names what replaced it, so this clears `deb#2`'s timer.
       kill("deb#1");
       await tick(5);
-      expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
-      // The replace itself released `deb#1`'s claim on its own episode.
+      expect(killEpisode(logger).cancels).toEqual([
+        { kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) },
+      ]);
+      // The replace released `deb#1`'s claim and the clear released `deb#2`'s, each on its own
+      // episode.
       expect(allCancels(logger)).toEqual([
         { kind: "effect-cancel", targetId: "deb", ts: expect.any(Number) },
+        { kind: "effect-cancel", targetId: "deb", ts: expect.any(Number) },
+        { kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) },
       ]);
-      // `deb#2` is still waiting on its timer: cancelling it releases it.
+      // Nothing is left pending, so cancelling `deb#2` releases nothing.
       kill("deb#2");
       await tick(5);
       const killEps = logger
         .list()
         .filter((ep) => ep.steps.some((s) => s.kind === "reducer" && s.name === "kill"));
       expect(killEps.map((ep) => ep.steps.filter((s) => s.kind === "effect-cancel"))).toEqual([
+        [{ kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) }],
         [],
-        [{ kind: "effect-cancel", targetId: "deb#2", ts: expect.any(Number) }],
       ]);
+    });
+  });
+
+  it("a cancel of an emit the throttle window dropped aborts the request that opened it, and records the id it named", async () => {
+    await withApp(async ({ start, kill, held, logger }) => {
+      start("thr", "thr#1");
+      start("thr", "thr#2");
+      await tick(5);
+      expect(held.thr).toHaveLength(1);
+      kill("thr#2");
+      await tick(5);
+      expect(held.thr?.[0]?.signal?.aborted).toBe(true);
+      expect(killEpisode(logger).cancels).toEqual([
+        { kind: "effect-cancel", targetId: "thr#2", ts: expect.any(Number) },
+      ]);
+    });
+  });
+
+  it("a cancel of an emit the throttle window dropped, once the request that opened it completed, records no effect-cancel", async () => {
+    await withApp(async ({ start, kill, held, logger }) => {
+      start("thr", "thr#1");
+      start("thr", "thr#2");
+      await tick(5);
+      held.thr?.[0]?.resolve({ kind: "ok", value: "done" });
+      await tick(5);
+      kill("thr#2");
+      await tick(5);
+      expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
+      expect(allCancels(logger)).toEqual([]);
     });
   });
 
