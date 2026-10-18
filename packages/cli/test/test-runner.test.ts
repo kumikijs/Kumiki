@@ -1,9 +1,8 @@
-import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { runTests, runTestsSource } from "../src/smoke.ts";
-import { CLI_ARGV, runCli, SPAWN } from "./helpers/cli.ts";
+import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
 import { APP_A, seed } from "./helpers/files.ts";
 
 const TESTS = feature("28-tests");
@@ -194,58 +193,30 @@ test inc-increments =
     });
   });
 
+  // Two waits of up to CHILD_TIMEOUT_MS each, and SPAWN's margin over one for the stop.
   it("prints `no tests found` when --watch re-runs a file whose last test was deleted", {
-    timeout: 60000,
+    timeout: CHILD_TIMEOUT_MS + SPAWN.timeout,
   }, async () => {
     const file = seed(WITH_TEST, "w.kumiki");
-    const child = spawn(process.execPath, [...CLI_ARGV, "test", file, "--watch"], {
-      stdio: "pipe",
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (s: string) => {
-      stdout += s;
-    });
-    child.stderr.setEncoding("utf8").on("data", (s: string) => {
-      stderr += s;
-    });
-    const until = (done: () => boolean): Promise<void> =>
-      new Promise((settle, fail) => {
-        const check = (): void => {
-          if (!done()) return;
-          child.off("exit", exited);
-          child.stdout.off("data", check);
-          child.stderr.off("data", check);
-          settle();
-        };
-        const exited = (): void => fail(new Error(`watcher exited:\n${stdout}\n${stderr}`));
-        child.on("exit", exited);
-        child.stdout.on("data", check);
-        child.stderr.on("data", check);
-        check();
-      });
+    const cli = spawnCli(["test", file, "--watch"]);
     const CHANGED = "— change detected —";
-    const rerun = (): string => stdout.slice(stdout.indexOf(CHANGED));
+    const rerun = (): string =>
+      cli.stdout.includes(CHANGED) ? cli.stdout.slice(cli.stdout.indexOf(CHANGED)) : "";
     try {
-      await until(() => stdout.includes("watching for changes"));
-      expect(stdout).toContain("FAIL  inc-increments");
+      await waitFor(cli, () => cli.stdout.includes("watching for changes"), "the first run");
+      expect(cli.stdout).toContain("FAIL  inc-increments");
 
       writeFileSync(file, NO_TEST);
-      // The watcher is installed just after it says it is watching, and a write that
-      // lands first goes unseen, so the write repeats until one is picked up.
-      const again = setInterval(() => writeFileSync(file, NO_TEST), 1000);
-      try {
-        await until(() => stdout.includes(CHANGED));
-      } finally {
-        clearInterval(again);
-      }
-      await until(
-        () => /no tests found|\d+\/\d+ passed/.test(rerun()) || stderr.includes("test run failed"),
+      await waitFor(
+        cli,
+        () =>
+          /no tests found|\d+\/\d+ passed/.test(rerun()) || cli.stderr.includes("test run failed"),
+        "the re-run's report",
       );
       expect(rerun()).toContain("no tests found");
       expect(rerun()).not.toContain("inc-increments");
     } finally {
-      child.kill();
+      await cli.stop();
     }
   });
 });
