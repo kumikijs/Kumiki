@@ -1,154 +1,138 @@
 import { app, feature } from "@kumikijs/examples";
-import { type AppShape, type CapabilityProvider, mount } from "@kumikijs/runtime";
+import type { AppShape, CapabilityProvider } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { clickContaining, freshRoot, tick } from "./helpers/dom.ts";
-import { type FetchCall, type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import { clickContaining, mountApp, tick, waitUntil } from "./helpers/dom.ts";
+import {
+  answerAfter,
+  type FetchDouble,
+  stubFetch,
+  type TimedResponder,
+} from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const RETRY_APP = app("08-http-retry");
 const EXAMPLE = feature("192-retry-backoff-cancel");
 
-async function until(done: () => boolean, limitMs = 3000): Promise<void> {
-  const deadline = Date.now() + limitMs;
-  while (!done() && Date.now() < deadline) await tick(5);
-}
-
-const abortError = (): DOMException => new DOMException("The operation was aborted.", "AbortError");
-
-/**
- * 503 to the first call, 200 with `{text: "Fresh quote", author: "B"}` to every later one,
- * `latencyMs` after it is made. A call whose signal is aborted rejects the way `fetch` does.
- */
-function quoteServer(latencyMs: number): (call: FetchCall) => Promise<Response> {
-  let n = 0;
-  return (call) => {
-    n++;
-    const first = n === 1;
-    const signal = call.init.signal;
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) return reject(abortError());
-      const h = setTimeout(() => {
-        resolve(
-          first
-            ? new Response("busy", { status: 503, statusText: "Service Unavailable" })
-            : new Response(JSON.stringify({ text: "Fresh quote", author: "B" }), { status: 200 }),
-        );
-      }, latencyMs);
-      signal?.addEventListener("abort", () => {
-        clearTimeout(h);
-        reject(abortError());
-      });
-    });
-  };
-}
+const busy = (): Response =>
+  new Response("busy", { status: 503, statusText: "Service Unavailable" });
+const quote = (): Response =>
+  new Response(JSON.stringify({ text: "Fresh quote", author: "B" }), { status: 200 });
 
 let double: FetchDouble | undefined;
-let root: HTMLElement | undefined;
-let dispose: (() => void) | undefined;
+let teardown: (() => void) | undefined;
 
 afterEach(() => {
-  dispose?.();
-  root?.remove();
+  teardown?.();
   double?.restore();
-  dispose = undefined;
-  root = undefined;
+  teardown = undefined;
   double = undefined;
 });
 
-function mountAgainst(
+/**
+ * Mount `shape` with `fetch` answering 503 to the first call and a quote to every later one,
+ * `latencyMs` after each call.
+ */
+function mountWithServer(
   shape: AppShape,
   latencyMs: number,
   providers?: Record<string, CapabilityProvider>,
-): HTMLElement {
-  double = stubFetch(quoteServer(latencyMs));
-  const r = freshRoot();
-  root = r;
-  dispose = mount(shape, r, providers ? { providers } : {}).dispose;
-  return r;
+): { root: HTMLElement; server: TimedResponder } {
+  const server = answerAfter(latencyMs, [busy, quote]);
+  double = stubFetch(server.respond);
+  const { root, handle } = mountApp(shape, providers ? { providers } : {});
+  teardown = () => {
+    handle.dispose();
+    root.remove();
+  };
+  return { root, server };
 }
 
-function click(r: HTMLElement, selector: string): void {
-  const el = r.querySelector(selector);
-  if (!el) throw new Error(`nothing matches ${selector}`);
-  el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+/** Until the 503 is in and the request has gone on to sleep out its backoff. */
+async function inBackoff(server: TimedResponder): Promise<void> {
+  await waitUntil(() => server.answered() === 1);
+  await tick(20);
 }
 
 const calls = (): number => double?.calls.length ?? 0;
 const logOf = (r: HTMLElement): string => /log: (\S*)$/.exec(r.textContent ?? "")?.[1] ?? "";
 
-// First, so that what it measures is its own request's wait: a cancelled request that went on
-// sleeping would wake during a later test and call whichever `fetch` double is installed then.
 describe("a request that is not cancelled", () => {
   it("waits out its backoff in full before the next attempt", async () => {
-    const r = mountAgainst(await loadApp(EXAMPLE), 0);
-    click(r, "#load");
-    await tick(300);
-    expect(calls()).toBe(1);
-    expect(logOf(r)).toBe("");
-
-    await until(() => logOf(r) !== "");
-    expect(calls()).toBe(2);
-    expect(logOf(r)).toBe("ok;");
-    expect(r.textContent).toContain("quote: Fresh quote");
+    const { root, server } = mountWithServer(await loadApp(EXAMPLE), 0);
+    clickContaining(root, "Load");
+    await waitUntil(() => logOf(root) !== "");
+    expect(logOf(root)).toBe("ok;");
+    expect(root.textContent).toContain("quote: Fresh quote");
+    expect(server.madeAt).toHaveLength(2);
+    expect((server.madeAt[1] ?? 0) - (server.madeAt[0] ?? 0)).toBeGreaterThanOrEqual(490);
   });
 });
 
 describe("a request superseded by `policy=latest` during its retry backoff", () => {
   it("leaves the newer request's quote on the page, and fetch is called twice", async () => {
-    const r = mountAgainst(await loadApp(RETRY_APP), 0);
-    clickContaining(r, "Load quote");
-    await tick(50);
-    expect(calls()).toBe(1);
-    clickContaining(r, "Load quote");
+    const { root, server } = mountWithServer(await loadApp(RETRY_APP), 0);
+    clickContaining(root, "Load quote");
+    await inBackoff(server);
+    clickContaining(root, "Load quote");
+    await waitUntil(() => root.textContent?.includes("Fresh quote") ?? false);
     await tick(800);
-    expect(r.textContent).toContain("Fresh quote");
-    expect(r.textContent).toContain("— B");
-    expect(r.textContent).not.toContain("request failed");
+    expect(root.textContent).toContain("— B");
+    expect(root.textContent).not.toContain("request failed");
     expect(calls()).toBe(2);
   });
 
   it("delivers its aborted .err at once, before the newer request answers", async () => {
-    const r = mountAgainst(await loadApp(EXAMPLE), 30);
-    click(r, "#load");
-    await tick(60);
-    expect(calls()).toBe(1);
-    expect(logOf(r)).toBe("");
+    const { root, server } = mountWithServer(await loadApp(EXAMPLE), 30);
+    clickContaining(root, "Load");
+    await inBackoff(server);
+    expect(logOf(root)).toBe("");
 
-    click(r, "#load");
+    clickContaining(root, "Load");
     await tick(0);
-    expect(logOf(r)).toBe("aborted;");
+    expect(logOf(root)).toBe("aborted;");
     expect(calls()).toBe(2);
 
-    await until(() => logOf(r) !== "aborted;");
-    expect(logOf(r)).toBe("aborted;ok;");
-    expect(r.textContent).toContain("quote: Fresh quote");
+    await waitUntil(() => logOf(root) !== "aborted;");
+    expect(logOf(root)).toBe("aborted;ok;");
+    expect(root.textContent).toContain("quote: Fresh quote");
 
     await tick(600);
-    expect(logOf(r)).toBe("aborted;ok;");
+    expect(logOf(root)).toBe("aborted;ok;");
     expect(calls()).toBe(2);
   });
 });
 
 describe("a request cancelled by `http.cancel` during its retry backoff", () => {
   it("delivers its aborted .err at once and makes no further attempt", async () => {
-    const r = mountAgainst(await loadApp(EXAMPLE), 0);
-    click(r, "#load");
-    await tick(60);
-    expect(calls()).toBe(1);
-    expect(logOf(r)).toBe("");
+    const { root, server } = mountWithServer(await loadApp(EXAMPLE), 0);
+    clickContaining(root, "Load");
+    await inBackoff(server);
+    expect(logOf(root)).toBe("");
 
-    click(r, "#stop");
+    clickContaining(root, "Stop");
     await tick(0);
-    expect(logOf(r)).toBe("aborted;");
+    expect(logOf(root)).toBe("aborted;");
 
     await tick(600);
-    expect(logOf(r)).toBe("aborted;");
+    expect(logOf(root)).toBe("aborted;");
+    expect(calls()).toBe(1);
+  });
+});
+
+describe("a request whose app is unmounted during its retry backoff", () => {
+  it("makes no further attempt", async () => {
+    const { root, server } = mountWithServer(await loadApp(EXAMPLE), 0);
+    clickContaining(root, "Load");
+    await inBackoff(server);
+    teardown?.();
+    teardown = undefined;
+    await tick(600);
     expect(calls()).toBe(1);
   });
 });
 
 describe("a `policy=queue` chain whose running request is cancelled during its backoff", () => {
-  it("starts the next request at once", async () => {
+  it("starts the entry queued behind it at once", async () => {
     const shape = await loadSource(`type Quote = {text: Text, author: Text}
 slot lastId : EffectId = EffectId.none
 slot log    : Text     = ""
@@ -158,24 +142,27 @@ effect load cap=http.get in=Unit out=Result(Quote, HttpError)
             map-request={url: "/quote", decode: Decoder.Json(Quote)}
 effect cancelLoad cap=http.cancel in=EffectId out=Unit
 reducer go    on=ui.click(GoBtn)   do= lastId := emit load()
+reducer next  on=ui.click(NextBtn) do= emit load()
 reducer stop  on=ui.click(StopBtn) do= emit cancelLoad(lastId)
 reducer onOk  on=load.ok($q, _)    do= log := log + $q.author + ";"
 reducer onErr on=load.err($e, _)   do= log := log + $e.message + ";"
 tile GoBtn   = button(text="Go", onClick=go)
+tile NextBtn = button(text="Next", onClick=next)
 tile StopBtn = button(text="Stop", onClick=stop)
-tile App = column(GoBtn, StopBtn, text("log: " + log))
+tile App = column(GoBtn, NextBtn, StopBtn, text("log: " + log))
 app M caps=[http.get, http.cancel] routes={"/" -> App, "/404" -> App} init=[]`);
-    const r = mountAgainst(shape, 0);
+    const { root, server } = mountWithServer(shape, 0);
 
-    clickContaining(r, "Go");
-    await tick(60);
+    clickContaining(root, "Go");
+    await inBackoff(server);
+    clickContaining(root, "Next");
+    await tick(0);
     expect(calls()).toBe(1);
 
-    clickContaining(r, "Stop");
-    clickContaining(r, "Go");
-    await tick(60);
+    clickContaining(root, "Stop");
+    await tick(0);
     expect(calls()).toBe(2);
-    expect(logOf(r)).toBe("aborted;B;");
+    await waitUntil(() => logOf(root) === "aborted;B;");
   });
 });
 
@@ -192,21 +179,21 @@ tile GoBtn = button(text="Go", onClick=go)
 tile App = column(GoBtn, text("log: " + log))
 app M caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]`);
     let reads = 0;
-    const r = mountAgainst(shape, 0, {
+    const { root } = mountWithServer(shape, 0, {
       "storage.read": () => {
         reads++;
         return { kind: "err", value: "blocked" };
       },
     });
 
-    clickContaining(r, "Go");
-    await tick(60);
-    expect(reads).toBe(1);
-    expect(logOf(r)).toBe("");
+    clickContaining(root, "Go");
+    await waitUntil(() => reads === 1);
+    await tick(20);
+    expect(logOf(root)).toBe("");
 
-    clickContaining(r, "Go");
+    clickContaining(root, "Go");
     await tick(0);
-    expect(logOf(r)).toBe("aborted;");
+    expect(logOf(root)).toBe("aborted;");
     expect(reads).toBe(2);
   });
 });

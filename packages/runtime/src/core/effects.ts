@@ -302,7 +302,8 @@ export function abortedHttpError(): { status: number; message: string; body: str
 }
 
 // The value `.ok` / `.err` receives from a result that stands in for `eff`'s invoke: an err on
-// an effect that fails with `Text` reads through the spec's own `errText`, as the invoke would.
+// an effect that fails with `Text` reads through `eff.errText`, as that invoke's own err does.
+// Any other value goes through unchanged, and a missing one becomes `null`.
 export function standInValue(
   eff: Pick<EffectSpec, "errText"> | undefined,
   outcome: "ok" | "err",
@@ -329,16 +330,26 @@ async function runWithRetry(
     const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
     // An abort during the wait has no attempt running to answer it, so the aborted err
     // comes from here.
-    if (!(await sleep(delay, signal))) {
-      return { kind: "err", value: standInValue(eff, "err", abortedHttpError()) };
-    }
+    if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
     last = await eff.invoke(input, caps, signal);
   }
   return last;
 }
 
+/**
+ * The err of a request aborted between attempts: the aborted `HttpError` on an `http.*` effect,
+ * `"aborted"` through `eff.errText` on one that fails with `Text`, and on any other the
+ * `{message}` an invoke that throws delivers.
+ */
+function abortedErr(eff: EffectSpec): unknown {
+  if (eff.cap.startsWith("http.")) return abortedHttpError();
+  return standInValue(eff, "err", { message: "aborted" });
+}
+
 /** `true` when the wait ran its course, `false` when `signal` aborted it first. */
 function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  // An abort that already happened fires no `abort` event.
+  if (signal?.aborted) return Promise.resolve(false);
   return new Promise((resolve) => {
     const h = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);

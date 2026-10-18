@@ -20,15 +20,25 @@ after:  "Fresh quote — B"                          fetch called 2 times
 ```
 
 An abort during the wait now ends it at once: the request's `.err` fires right
-away with the `aborted` `HttpError` (http.md §6.4.1), before the newer request
-answers, and no further attempt is made. A `policy=queue` chain whose running
-request is cancelled during its wait goes on to its next entry at once rather
-than after the rest of the interval. On a capability that fails with `Text`
-(storage, session, indexed) the err is the `Text` `"aborted"`, read the same
-way a scripted or mocked err is. A request that is not cancelled keeps its
-timing.
+away, before the newer request answers, and no further attempt is made. Under
+`policy=latest-per-key` only a newer emit for the same key does this. A
+`policy=queue` chain whose running request is cancelled during its wait goes
+on to its next entry at once rather than after the rest of the interval. The
+err is the `aborted` `HttpError` (http.md §6.4.1) on an `http.*` effect, the
+`Text` `"aborted"` on a capability that fails with `Text` (storage, session,
+indexed), read the same way a scripted or mocked err is, and
+`{message: "aborted"}`, the shape a throwing invoke delivers, on any other
+capability. Unmounting the app ends the wait too: no further attempt is made,
+and an app with no `.err` reducer no longer reports an unhandled error for a
+result that arrives after it is unmounted. A request that is neither cancelled
+nor unmounted keeps its timing.
 
-http.md §6.5 states the rule in both language tracks, and runtime.md §10.4.4
-points to it. `packages/examples/features/192-retry-backoff-cancel.kumiki`
+http.md §6.5 states the rule in both language tracks, stdlib.md §2.5 names the
+custom-capability err, and runtime.md §10.4.4 points to it. runtime.md also
+drops its "exponential backoff adds ±20% jitter" sentence: http.md §6.5 says
+attempts are the policy's intervals apart, and the runtime has never added
+jitter. Its §10.5.2 no longer names a request in its retry backoff as an
+episode `kumiki run --episode-log` leaves out: disposing the app ends that
+wait, so the episode commits before the run returns and is written. `packages/examples/features/192-retry-backoff-cancel.kumiki`
 supersedes a request and stops another during their waits, and its scenario
 reads the order the result reducers fired in.
