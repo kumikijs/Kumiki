@@ -101,6 +101,13 @@ export async function clickThrough<T>(
   return seen;
 }
 
+/** Dispatch a cancelable bubbling click, as a pointer does, on the link whose whole text is `text`. */
+export function followLink(root: ParentNode, text: string): void {
+  const found = Array.from(root.querySelectorAll("a")).find((a) => a.textContent === text);
+  if (!found) throw new Error(`link "${text}" not found`);
+  found.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+}
+
 /** The first element matching `selector`, typed as `T`. */
 export function find<T extends Element = HTMLElement>(root: ParentNode, selector: string): T {
   const found = root.querySelector(selector);

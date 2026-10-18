@@ -427,6 +427,8 @@ app App
     }
 ```
 
+The first `indexed-*` effect that runs opens the database, and later effects share that connection, including those that start while it is still opening. An open that other connections block (another tab still holding an older `version`) waits until they close. Nothing times that wait out: the effects waiting on the open stay in flight until then, and the runtime reports the block with a console warning. An open that fails is `.err` for the effects waiting on it, and the next effect opens again. When another tab opens a newer `version`, the page closes its connection so that upgrade is not blocked. Its next effect opens again with the page's own `version`, which the upgraded database refuses: every `indexed-*` effect is `.err` (`VersionError: …`) until the page reloads. A connection the browser closes on its own (when site data is cleared, for instance) is not kept either: the next effect opens again.
+
 ---
 
 ## 6.8 Persistence Patterns

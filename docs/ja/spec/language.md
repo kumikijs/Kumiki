@@ -84,7 +84,7 @@ comment     ::= '#' until-eol                    ; 1 行コメントのみ
 **Bool 演算子の注意**:
 - 短絡 AND: `&&`（推奨）または `&`（alias、内部的に同一）
 - 短絡 OR : `||`（推奨）または `|`（alias、ただし match arm との衝突を避けるヒューリスティック付き）
-- `|` を bool OR として書く場合、後続トークンが「**`Variant`/`_` + `->`**」の組み合わせ（つまり match arm 開始）なら parser は arm separator として優先する。それ以外の expression が続く場合は bool OR として解釈する。安全策として迷ったら `||` を使うこと
+- `|` を bool OR として書く場合、後続が「**pattern + `->`**」（`_`、variant 名または束縛名、`Variant(binds)`、tuple のいずれかに `->` が続くもの。つまり match arm 開始）なら parser は arm separator として扱う。`->` で続く式は無いので、そこから始まりうるのは arm だけである。それ以外の expression が続く場合は bool OR として解釈するので、`a | b`、`a | b.c`、`a | f(x)` はいずれも OR になる。安全策として迷ったら `||` を使うこと
 
 ### 1.2.2 予約語
 
@@ -508,6 +508,7 @@ editor := editor.map($1.copy(body="Body"))
 - **`Map(K, V)`** — そのキーのエントリ。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
 - **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
 - **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member) である。所属は `.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
+- **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。
 
 この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
 
@@ -821,7 +822,7 @@ collection-lit ::= '[' (expr (',' expr)*)? ']'
 entry       ::= expr ':' expr
 
 match-arm   ::= '|' pattern '->' expr
-pattern     ::= identifier
+pattern     ::= identifier                            ; union の variant、または束縛名
               | identifier '(' bind (',' bind)* ')'
               | '(' pattern (',' pattern)* ')'        ; tuple
               | '_'
@@ -843,7 +844,7 @@ unop        ::= '-' | '!'
 - **`null` / `undefined` 禁止**
 - **`while` ループ禁止**
 - **代入式禁止**（`:=` は statement、式中で使えない）
-- **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：
+- **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、束縛名、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：
 
 ```kumiki snippet
 # ❌ リテラルパターン — サポートされない
