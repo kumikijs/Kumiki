@@ -82,13 +82,35 @@ export class TokenStream {
     return t.kind === "op" && ops.includes(t.value);
   }
 
-  /** A number literal with the sign the lexer emits as its own operator. */
-  protected eatSignedNumber(): number {
+  /**
+   * A number literal with an optional leading `-` and the text it is written as, or undefined
+   * (nothing consumed) when no number starts here. The lexer emits the sign as its own operator.
+   */
+  protected tryEatSignedNumberLit(): { value: number; raw: string } | undefined {
     if (this.matchOp("-") && this.matchTAt(1, "num")) {
       this.next();
-      return -this.eat("num").value;
+      const t = this.eat("num");
+      return { value: -t.value, raw: `-${t.raw}` };
     }
-    return this.eat("num").value;
+    if (!this.matchT("num")) return undefined;
+    const t = this.eat("num");
+    return { value: t.value, raw: t.raw };
+  }
+
+  /** `tryEatSignedNumberLit`, where a number is required. */
+  protected eatSignedNumberLit(): { value: number; raw: string } {
+    // Not a number: `eat` throws the error that names what is there instead.
+    return this.tryEatSignedNumberLit() ?? this.eat("num");
+  }
+
+  /** A number literal with the sign the lexer emits as its own operator. */
+  protected eatSignedNumber(): number {
+    return this.eatSignedNumberLit().value;
+  }
+
+  /** `eatSignedNumber`, or undefined (nothing consumed) when no number starts here. */
+  protected tryEatSignedNumber(): number | undefined {
+    return this.tryEatSignedNumberLit()?.value;
   }
 
   protected parseDuration(): number {

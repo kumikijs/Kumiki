@@ -1,7 +1,7 @@
 import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clickContaining, mountApp, waitUntil } from "./helpers/dom.ts";
+import { clickThrough } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("130-storage-remove-clear");
@@ -15,29 +15,13 @@ function snapshot(storage: Storage): Record<string, string> {
   return out;
 }
 
-/**
- * Mount `app` and, for each step, click the button and wait until the page shows `until`. Returns what `storage` holds after each step.
- */
-async function run(
+/** Click through `steps` on `app`, and return what `storage` holds after each step. */
+function run(
   app: AppShape,
   storage: Storage,
   steps: [button: string, until: string][],
 ): Promise<Record<string, string>[]> {
-  const { root, handle } = mountApp(app);
-  const after: Record<string, string>[] = [];
-  try {
-    for (const [button, until] of steps) {
-      clickContaining(root, button);
-      await waitUntil(() => (root.textContent ?? "").includes(until)).catch(() => {
-        throw new Error(`after "${button}": wanted "${until}", page shows "${root.textContent}"`);
-      });
-      after.push(snapshot(storage));
-    }
-  } finally {
-    handle.dispose();
-    root.remove();
-  }
-  return after;
+  return clickThrough(app, steps, () => snapshot(storage));
 }
 
 /** A one-button program whose effect `e` reports `shown: ok` or `shown: err`. */

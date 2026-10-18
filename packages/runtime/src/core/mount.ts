@@ -38,6 +38,7 @@ import { applyInitialTheme, maybeReapplyTheme, resolvedThemeName } from "./theme
 import { makeMappingTileCtx, type TileElementMap } from "./tile-ctx.ts";
 import {
   type AppShape,
+  type HoldLeave,
   type MountedApp,
   type MountHandle,
   type MountOptions,
@@ -508,7 +509,7 @@ export function mountCore(
 
   navigation.start();
 
-  const seams = app as MountedApp & { _resolveLeave?: (outcome: "yes" | "no") => void };
+  const seams = app as MountedApp & { _holdLeave?: HoldLeave };
   seams._rerender = render;
   seams._episodeId = safeEpisodeId;
   seams._dispatch = (reducerName, el) => {
@@ -537,7 +538,7 @@ export function mountCore(
     return true;
   };
   seams._navigate = (path, replace) => navigation.navigate(path, !!replace);
-  seams._resolveLeave = navigation.resolveLeave;
+  seams._holdLeave = navigation.holdLeave;
   seams._submitHeldBy = submitHeldBy;
 
   if (options.hydrate) {
