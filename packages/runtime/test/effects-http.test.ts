@@ -277,6 +277,81 @@ describe("httpFetch base-url", () => {
   });
 });
 
+describe("httpFetch global headers and credentials under a base-url", () => {
+  const originalFetch = globalThis.fetch;
+  const API = "https://api.example.com";
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** What the request to `url` carried of the program's global `headers` and `credentials`. */
+  async function carried(url: string, baseUrl?: string, own?: Record<string, string>) {
+    const { calls } = stubFetch(() => new Response("null"));
+    await httpFetch(
+      "GET",
+      { url, headers: own },
+      {
+        ...(baseUrl === undefined ? {} : { baseUrl }),
+        headers: () => ({ Authorization: "Bearer t" }),
+        credentials: "include",
+      },
+    );
+    const init = calls[0]?.init ?? {};
+    // `Accept` is the runtime's own default, not the program's.
+    const { Accept, ...headers } = (init.headers ?? {}) as Record<string, string>;
+    expect(Accept).toBe("application/json");
+    return { headers, credentials: init.credentials };
+  }
+
+  it.each([
+    [API, "/items"],
+    [API, "items"],
+    [`${API}/`, "https://api.example.com/other"],
+    [`${API}/v1`, "/users"],
+    [`${API}/search?q=`, "term"],
+    ["/api", "users"],
+  ])("sends them under the base %s with %s, on the base's origin", async (base, url) => {
+    expect(await carried(url, base)).toEqual({
+      headers: { Authorization: "Bearer t" },
+      credentials: "include",
+    });
+  });
+
+  it.each([
+    [API, "https://cdn.other.org/x"],
+    [API, "//cdn.other.org/x"],
+    [API, "http://api.example.com/x"],
+    [API, "https://api.example.com:8443/x"],
+    ["/api", "https://cdn.other.org/x"],
+  ])("sends neither under the base %s with %s, on another origin", async (base, url) => {
+    expect(await carried(url, base)).toEqual({ headers: {}, credentials: "same-origin" });
+  });
+
+  it("sends neither when the base names no origin it can be read as", async () => {
+    expect(await carried("/x", "https://exa mple.com")).toEqual({
+      headers: {},
+      credentials: "same-origin",
+    });
+  });
+
+  it("still sends a request's own headers to another origin", async () => {
+    expect(await carried("https://cdn.other.org/x", API, { "X-Key": "k" })).toEqual({
+      headers: { "X-Key": "k" },
+      credentials: "same-origin",
+    });
+  });
+
+  it("sends them with every request when there is no base-url", async () => {
+    for (const base of [undefined, ""]) {
+      expect(await carried("https://cdn.other.org/x", base)).toEqual({
+        headers: { Authorization: "Bearer t" },
+        credentials: "include",
+      });
+    }
+  });
+});
+
 describe("httpFetch request body", () => {
   const originalFetch = globalThis.fetch;
 

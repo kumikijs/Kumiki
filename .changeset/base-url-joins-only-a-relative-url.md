@@ -27,3 +27,10 @@ looks like a scheme (`users:search`) is now absolute; write `/users:search`.
 §6.3.1 states the rule. Example 190 makes three of these requests through the
 real handler in `smoke`: one with a leading `/`, one without, and an `https:`
 url.
+
+Under a `base-url`, `app.http`'s `headers` and `credentials` now go only with a
+request to the base's origin. An absolute url on another origin
+(`https://cdn.other.org/item.json`) is sent with neither: no global
+`Authorization`, and the default `same-origin` credentials. A request that
+needs a header there names it in its own `headers`. With no `base-url` nothing
+changes.

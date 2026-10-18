@@ -163,7 +163,7 @@ reducer added
 
 ### 6.3.1 グローバル header の注入 {#_6-3-1-injecting-global-headers}
 
-`app.http` で全 HTTP effect に自動付与する header を宣言できる：
+`app.http` で全 HTTP effect（`base-url` があるときはその origin へのもの — 後述）に自動付与する header を宣言できる：
 
 ```kumiki fragment
 app App
@@ -182,9 +182,9 @@ app App
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
 | `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
-| `headers` | 全リクエストに付与 — リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
+| `headers` | 全リクエストに付与（`base-url` があるときはその origin へのリクエストだけ — 後述）— リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
 | `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
-| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
+| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)。`base-url` があるときはその origin へのリクエストだけ — 後述）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
 | `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
 | `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
@@ -199,6 +199,8 @@ app App
 - 空の url、または `?` か `#` で始まる url は、書かれたとおりにベースの後ろに付ける：`https://api.example.com/items` と `?page=2` は `https://api.example.com/items?page=2` を取得する。
 
 `query` はこうして決まる URL に付け加える（[§6.1.2](#_6-1-2-standard-effect)）。
+
+`base-url` があるとき、`headers` と `credentials` は、ベースの origin — スキーム・ホスト・ポート — へのリクエストにだけ付く：ベースに連結した url と、その origin 上の絶対 url である。それ以外の origin へのリクエストにはグローバルなヘッダーが付かず、`credentials` は既定値（[§6.9](#_6-9-default-settings)）になるので、`headers` の中のトークンがベースの origin の外へ出ることはない。そのようなリクエストは、必要なものを自身の `headers` に書く。パスだけのベースと相対 url はページの origin 上にあり、URL として読めないベースには、リクエストが乗る origin がない。`base-url` がないときは、どちらもすべてのリクエストに付く。
 
 値を取るフィールドはすべて**式**であり、slot を読んでよい。4 つとも評価されるのは
 アプリの構築時ではなく**リクエストを行う時**である：slot を書く reducer は次の

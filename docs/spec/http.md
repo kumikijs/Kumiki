@@ -163,7 +163,7 @@ reducer added
 
 ### 6.3.1 Injecting Global Headers
 
-In `app.http` you can declare headers that are automatically applied to all HTTP effects:
+In `app.http` you can declare headers that are automatically applied to all HTTP effects (under a `base-url`, to those on its origin — see below):
 
 ```kumiki fragment
 app App
@@ -182,9 +182,9 @@ app App
 | http field | Meaning | Evaluated |
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
-| `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
+| `headers` | Applied to every request (under a `base-url`, only to its origin — below) — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
 | `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
-| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
+| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings); under a `base-url`, only to its origin — below) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
 | `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
@@ -199,6 +199,8 @@ app App
 - An empty url, or one that starts with `?` or `#`, is appended to the base as written: `https://api.example.com/items` with `?page=2` fetches `https://api.example.com/items?page=2`.
 
 `query` is appended to the URL this gives ([§6.1.2](#_6-1-2-standard-effect)).
+
+With a `base-url`, `headers` and `credentials` go only with a request to the base's origin — its scheme, host and port: a url joined to the base, or an absolute url on that origin. A request to any other origin carries no global header and the default `credentials` ([§6.9](#_6-9-default-settings)), so a token in `headers` never leaves the base's origin; such a request names what it needs in its own `headers`. A path-only base and a relative url are on the page's origin, and a base that cannot be read as a URL has no origin a request is on. With no `base-url`, both go with every request.
 
 Every field that takes a value takes an **expression**, and may read a slot. All
 four are evaluated **when a request is made**, not when the app is built: a
