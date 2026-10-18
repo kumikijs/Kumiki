@@ -98,6 +98,7 @@ export {
   type EffectSpec,
   type EmitSpec,
   type EventHandler,
+  type HoldLeave,
   type LocationLike,
   type MountedApp,
   type MountHandle,

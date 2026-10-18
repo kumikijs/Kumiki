@@ -1,4 +1,4 @@
-import type { Expr, TileArg, TileExpr, TileMatchArm, TileProp } from "../ast.ts";
+import type { Expr, TileArg, TileExpr, TileProp } from "../ast.ts";
 import { BUILTIN_TILES, VALUE_ARG_BUILTINS } from "../builtins.ts";
 import { StatementParser } from "./statements.ts";
 import { ParseError } from "./token-stream.ts";
@@ -71,18 +71,7 @@ export class TileParser extends StatementParser {
       return { kind: "TileIf", cond, consequent: thenT, alternate: elseT, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      const start = this.next();
-      const scrut = this.parseExpr();
-      this.eat("kw", "with");
-      const arms: TileMatchArm[] = [];
-      while (this.matchOp("|")) {
-        this.next();
-        const pattern = this.parsePattern();
-        this.eat("op", "->");
-        const body = this.parseTileExpr();
-        arms.push({ pattern, body });
-      }
-      return { kind: "TileMatch", scrutinee: scrut, arms, pos: start.pos };
+      return { kind: "TileMatch", ...this.parseMatch(() => this.parseTileExpr()) };
     }
     return this.parseTileCall();
   }

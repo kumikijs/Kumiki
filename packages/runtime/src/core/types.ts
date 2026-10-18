@@ -294,6 +294,13 @@ export type NavContext = {
 
 export type BuiltinInstaller = (app: AppShape, nav: NavContext) => void;
 
+/**
+ * A `confirm` modal hands over how to close it unanswered and gets back how to
+ * settle the held move by its answer. It gets nothing when it was not opened by
+ * the leave guards of a move that is held, so its answer settles no move.
+ */
+export type HoldLeave = (close: () => void) => ((outcome: "yes" | "no") => void) | undefined;
+
 export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;

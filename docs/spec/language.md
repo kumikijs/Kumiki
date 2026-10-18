@@ -84,7 +84,7 @@ A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line.
 **Notes on bool operators**:
 - Short-circuit AND: `&&` (recommended) or `&` (alias, internally identical)
 - Short-circuit OR : `||` (recommended) or `|` (alias, but with a heuristic to avoid collision with match arms)
-- When writing `|` as bool OR, if the following token is the combination "**`Variant`/`_` + `->`**" (i.e. the start of a match arm), the parser prefers to treat it as an arm separator. If any other expression follows, it is interpreted as bool OR. As a safe measure, use `||` when in doubt.
+- When writing `|` as bool OR, if what follows it is "**pattern + `->`**" — `_`, a variant or binding name, `Variant(binds)`, or a tuple, then `->` (i.e. the start of a match arm) — the parser treats it as an arm separator: no expression continues with `->`, so only an arm can begin there. If any other expression follows, it is interpreted as bool OR, so `a | b`, `a | b.c` and `a | f(x)` are bool ORs. As a safe measure, use `||` when in doubt.
 
 ### 1.2.2 Reserved Words
 
@@ -108,7 +108,7 @@ fresh  self  now  null
 - **Macros prohibited**
 
 ::: details What the 256-level limit is measured against
-A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
+A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`, the `where`s written on one type expression, the `.field` / `[index]` steps of an assignment target). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
 :::
 
 ---
@@ -517,6 +517,7 @@ editor := editor.map($1.copy(body="Body"))
 - **`Map(K, V)`** — the entry at the key. `m[k] := v` inserts or replaces it; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does. A read `m[k]` at an absent `k` is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)), as a List index past the end is: there is no `V` for it to answer. `m.get(k)` is the read that answers `None` there instead. In a tile the read runs during render, so an absent key panics that render, the first one included: the nearest `error-boundary` shows its fallback, and with none the built-in panic display replaces the page ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)). A tile reads a key that may be absent through `m.get(k)` or `m.get-or(k, d)`.
 - **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
 - **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+- **Any other type** — nothing. A record, a scalar (`Int`, `Text`, …), an `Option`, a `Result`, a `Tuple` and a union have no place an index names, so an index step into one is [E0602](./errors.md#e0602-unassignable-member) as well, reported at the step: `r["a"] := v` on a record, `n[0] := v` on an `Int`, and `xs[0][0] := v` on a `List(Int)`, whose element is an `Int`. A record's field is written with a field step (`r.a := v`), the payload of an `Option` / `Result` through `.get`, and anything else is replaced whole (`n := v`).
 
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
@@ -831,7 +832,8 @@ expr        ::= literal
 
 call        ::= qname '(' (expr (',' expr)*)? ')'
 record-lit  ::= '{' (field-init (',' field-init)*)? '}'
-field-init  ::= identifier '=' expr | identifier
+field-init  ::= field-name ('=' | ':') expr | field-name
+field-name  ::= identifier | reserved-word     ; §1.2.2, except true / false / now
 collection-lit ::= '[' (expr (',' expr)*)? ']'
                  | '{' (entry (',' entry)*)? '}'
 entry       ::= expr ':' expr
@@ -848,6 +850,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
 unop        ::= '-' | '!'
 ```
 
+**A `{ … }` literal is a record when its first key is a field name, and a Map otherwise.** A field name is an identifier or any reserved word except the three that are a value on their own — `true`, `false`, `now` — so `{type: ui.click, target: Go}` and `{for: "name"}` are records. Those three are keys. `{true: "on", false: "off"}` is a `Map(Bool, Text)`, the same Map `{(true): "on", false: "off"}` writes, and `{now: "start"}` is a `Map(Time, Text)`. Any other first key — a string, a number, `Some(1)`, a name in parentheses `(k)` — makes the literal a Map as well. The first key decides for the whole literal: `{a: 1, true: 2}` is a parse error at `true`, which is a value, not a record field name. `{true}` and `{true = 1}` are the same parse error: a Map key is followed by `:`, so a `true` followed by `,`, `=` or `}` stands where a field name goes.
+
 An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
 ### 1.9.1 Prohibitions
@@ -857,7 +861,7 @@ An `if` and a `match` evaluate to one of their branches, so **every branch has t
 - **`null` / `undefined` prohibited**
 - **`while` loops prohibited**
 - **Assignment expressions prohibited** (`:=` is a statement and cannot be used within an expression)
-- **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
+- **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, a binding name, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
 
 ```kumiki snippet
 # ❌ literal patterns — not supported
@@ -1037,7 +1041,10 @@ fn current() = todos                          # receive it via a fn argument
 reducer r on=ui.change(input[type=file]) do= ...   # write it by tile name
 
 # ❌ literal match pattern
-match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (Prohibitions)
+match status with | "open" -> ... | "closed" -> ...   # a pattern is a variant, Variant(binds), a tuple, a binding name or _; use if/else or a union (Prohibitions)
+
+# ❌ a match with no arms
+tile Width = match size with                          # every match takes one `| pattern -> …` arm or more, in every position: a parse error at the `match`
 
 # ❌ $1 in a tile with no in=
 tile Row = card(text(issues[$1].title))               # E0103: declare `tile Row in=IssueId = …` (Positional Binding / Examples)

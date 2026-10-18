@@ -84,7 +84,7 @@ comment     ::= '#' until-eol                    ; 1 行コメントのみ
 **Bool 演算子の注意**:
 - 短絡 AND: `&&`（推奨）または `&`（alias、内部的に同一）
 - 短絡 OR : `||`（推奨）または `|`（alias、ただし match arm との衝突を避けるヒューリスティック付き）
-- `|` を bool OR として書く場合、後続トークンが「**`Variant`/`_` + `->`**」の組み合わせ（つまり match arm 開始）なら parser は arm separator として優先する。それ以外の expression が続く場合は bool OR として解釈する。安全策として迷ったら `||` を使うこと
+- `|` を bool OR として書く場合、後続が「**pattern + `->`**」（`_`、variant 名または束縛名、`Variant(binds)`、tuple のいずれかに `->` が続くもの。つまり match arm 開始）なら parser は arm separator として扱う。`->` で続く式は無いので、そこから始まりうるのは arm だけである。それ以外の expression が続く場合は bool OR として解釈するので、`a | b`、`a | b.c`、`a | f(x)` はいずれも OR になる。安全策として迷ったら `||` を使うこと
 
 ### 1.2.2 予約語
 
@@ -108,7 +108,7 @@ fresh  self  now  null
 - **マクロ禁止**
 
 ::: details 256 段は何に対する上限か
-自分自身を含みうる構文——括弧式・リスト・レコード・`if`・文ブロック・tile 呼び出し・タプルパターン・型適用・theme レコード——はこれ以上深く入れ子にできず、左結合の連鎖（`1 + 1 + 1 + …`、`x.trim().trim()…`、`not` や `-` の連続）もこれを超えるノードを作れない。上限が掛かるのは**出来上がった木**であって、パーサがそこへどう到達したかではない。パース以降の全段階はその木を再帰で辿るため、ループで解析された連鎖であっても下流でスタックを使い切るからである。
+自分自身を含みうる構文——括弧式・リスト・レコード・`if`・文ブロック・tile 呼び出し・タプルパターン・型適用・theme レコード——はこれ以上深く入れ子にできず、左結合の連鎖（`1 + 1 + 1 + …`、`x.trim().trim()…`、`not` や `-` の連続、1 つの型式に連ねた `where`、代入先 path の `.field` / `[index]` のステップ）もこれを超えるノードを作れない。上限が掛かるのは**出来上がった木**であって、パーサがそこへどう到達したかではない。パース以降の全段階はその木を再帰で辿るため、ループで解析された連鎖であっても下流でスタックを使い切るからである。
 :::
 
 ---
@@ -512,6 +512,7 @@ editor := editor.map($1.copy(body="Body"))
 - **`Map(K, V)`** — そのキーのエントリ。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
 - **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
 - **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member) である。所属は `.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
+- **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。
 
 この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
 
@@ -818,13 +819,14 @@ expr        ::= literal
 
 call        ::= qname '(' (expr (',' expr)*)? ')'
 record-lit  ::= '{' (field-init (',' field-init)*)? '}'
-field-init  ::= identifier '=' expr | identifier
+field-init  ::= field-name ('=' | ':') expr | field-name
+field-name  ::= identifier | reserved-word     ; §1.2.2 のうち true / false / now 以外
 collection-lit ::= '[' (expr (',' expr)*)? ']'
                  | '{' (entry (',' entry)*)? '}'
 entry       ::= expr ':' expr
 
 match-arm   ::= '|' pattern '->' expr
-pattern     ::= identifier
+pattern     ::= identifier                            ; union の variant、または束縛名
               | identifier '(' bind (',' bind)* ')'
               | '(' pattern (',' pattern)* ')'        ; tuple
               | '_'
@@ -835,6 +837,8 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
 unop        ::= '-' | '!'
 ```
 
+**`{ … }` リテラルは、最初のキーがフィールド名ならレコード、そうでなければ Map である。** フィールド名は識別子か予約語なので `{type: ui.click, target: Go}` や `{for: "name"}` はレコードだが、単独で値になる予約語 `true`・`false`・`now` はフィールド名ではない。これらはキーである。`{true: "on", false: "off"}` は `Map(Bool, Text)` で、`{(true): "on", false: "off"}` が書くのと同じ Map になり、`{now: "start"}` は `Map(Time, Text)` になる。それ以外の最初のキー — 文字列、数値、`Some(1)`、括弧で囲んだ名前 `(k)` — もリテラルを Map にする。リテラル全体の読み方は最初のキーが決める。`{a: 1, true: 2}` は `true` の位置で構文エラーになる。`true` は値であり、レコードのフィールド名ではないからである。`{true}` や `{true = 1}` も同じ構文エラーになる。Map のキーには `:` が続くので、`,`・`=`・`}` が続く `true` はフィールド名の位置にある。
+
 `if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
 
 ### 1.9.1 禁止事項
@@ -844,7 +848,7 @@ unop        ::= '-' | '!'
 - **`null` / `undefined` 禁止**
 - **`while` ループ禁止**
 - **代入式禁止**（`:=` は statement、式中で使えない）
-- **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：
+- **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、束縛名、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：
 
 ```kumiki snippet
 # ❌ リテラルパターン — サポートされない
@@ -1016,6 +1020,9 @@ fn current() = todos                          # fn 引数で受け取れ
 
 # ❌ CSS 属性セレクタ
 reducer r on=ui.change(input[type=file]) do= ...   # tile 名で書け
+
+# ❌ arm のない match
+tile Width = match size with                  # どの位置の match も `| pattern -> …` の arm を 1 つ以上とる：`match` の位置でパースエラー
 ```
 
 ---
