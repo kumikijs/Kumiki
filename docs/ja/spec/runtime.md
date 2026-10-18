@@ -224,7 +224,8 @@ app App ... theme = themeName    # ← slot 名を渡す
 `select(value=v, options=[...])` は option の選択状態を **構造的キー**で判定する:
 - variant は `_tag` + payload を再帰的にシリアライズしてキー化する。`Some(Backlog)` と `Some(InProgress)` は別キーになる（フラットな `_tag` 比較だと両者が `"Some"` で衝突するため、payload まで含めることが必須）
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
-- それ以外の値（`Text`・数値・レコード）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。レコードの JSON テキストはフィールドを書かれた順に並べるので、`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option にマッチしない。`==` は両者を等しいとするにもかかわらずである。これは規則ではなく既知の制限である（[#941](https://github.com/kumikijs/Kumiki/issues/941)）
+- それ以外の値（`Text`・数値・レコード・`List`）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。このテキストは、`Map` のキーを保存するテキストと同じく、どの深さのレコードもフィールドをソートした順に並べる（[stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)）。variant の payload の中のレコードも同じようにキー化する
+- `==` が等しいとする 2 つの値は、レコードのフィールドがどの順に書かれていても同じキーを持つ。`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option を選択し、`Some({h=3, w=2})` を持つ slot は `Some({w=2, h=3})` と書かれた option を選択する。`==` が区別する 2 つの値は別のキーを持つ。ただし非有限の `Float`（`NaN`・`Infinity`・`-Infinity`）は JSON テキストが `null` になるため例外である
 - キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示する。`placeholder` の option が選択状態になるのは、両方の経路で、select が値を持たないときに限る
 
 ### 10.3.9 focus 復元

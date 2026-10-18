@@ -1,0 +1,40 @@
+# Feature (runtime.md §10.3.8): a `select` holds a record option by value,
+# whatever order the record's fields are written in.
+#
+# The slot is written `{h=3, w=2}` and its option `{w=2, h=3}`. `==` calls the
+# two equal, so the select holds "2 x 3": a record is keyed by its JSON text
+# with its fields in sorted order, the text a Map key is stored under. A record
+# inside a variant is keyed the same way, so `Some({h=4, w=4})` holds the option
+# written `Some({w=4, h=4})`. The key is the same on the served page and on the
+# mounted one. The scenario drives the mounted selects; what each select holds
+# on both paths is pinned by an integration test in `packages/tests`.
+
+type Dims = {w: Int, h: Int}
+
+slot dims : Dims         = {h=3, w=2}
+slot crop : Option(Dims) = Some({h=4, w=4})
+
+fn dimsOptions() -> List({label: Text, value: Dims})
+   = [{label: "1 x 1", value: {w=1, h=1}},
+      {label: "2 x 3", value: {w=2, h=3}},
+      {label: "4 x 4", value: {w=4, h=4}}]
+
+fn cropOptions() -> List({label: Text, value: Option(Dims)})
+   = [{label: "No crop",    value: None},
+      {label: "Crop 1 x 1", value: Some({w=1, h=1})},
+      {label: "Crop 4 x 4", value: Some({w=4, h=4})}]
+
+fn shown(d: Dims) -> Text = d.w.show + " x " + d.h.show
+
+tile App = column(
+             select(bind=dims, options=dimsOptions()) {id: "dims"},
+             select(bind=crop, options=cropOptions()) {id: "crop"},
+             text("dims: " + shown(dims)),
+             text("dims is 2 x 3: " + (dims == {w=2, h=3}).show),
+             text("crop: " + crop.map(shown($1)).get-or("none")))
+           {pad: "lg", gap: "md"}
+
+app SelectRecordFieldOrder
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
