@@ -29,3 +29,6 @@ two devices, or across a reload beyond the clocks they read.
 Every id still passes the `uuid` refinement, and an episode still records the
 whole id under `fresh-id`, so a replay hands back the recorded id rather than
 minting another.
+
+An emit's own `EffectId` (`<effect>#…`, under every policy but `latest` and
+`latest-per-key`) takes its id from the same generator, so it is a v7 too.

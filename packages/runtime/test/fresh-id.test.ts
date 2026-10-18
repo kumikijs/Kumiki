@@ -122,6 +122,16 @@ describe("ids one runtime mints sort in the order they were minted", () => {
     expectMintOrder([a, b, c, d]);
     expect([a, b, c, d].map(stampOf)).toEqual([T0, T0, T0, T0 + 5]);
   });
+
+  it("with an emit's own EffectId, which the same generator mints", async () => {
+    const s = await freshStdlib();
+    const a = s.freshId();
+    const effectId = s.emitId(undefined, { effect: "load", args: [] });
+    expect(effectId).toMatch(/^load#/);
+    const b = effectId.slice("load#".length);
+    expect(b).toMatch(UUID_V7);
+    expectMintOrder([a, b, s.freshId()]);
+  });
 });
 
 describe("a fresh id in an episode", () => {

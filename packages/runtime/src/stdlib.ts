@@ -1,12 +1,14 @@
 import {
   _setPathHelper,
   currentEpisodeId,
+  emitId,
   entryKey,
   isEntryOf,
   isPanic,
   isPlainDataBag,
   KumikiPanic,
   listPosition,
+  newId,
   type PathSegment,
   panicInfo,
   type RefinementNaming,
@@ -96,35 +98,6 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
   const days = m === 2 ? (leap ? 29 : 28) : m === 4 || m === 6 || m === 9 || m === 11 ? 30 : 31;
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
-}
-
-type PlatformCrypto = { getRandomValues?: (bytes: Uint8Array) => Uint8Array };
-
-/** The millisecond and counter of the last id `uuidV7` minted: the floor the next sorts above. */
-let lastMs = 0;
-let counter = 0;
-
-/**
- * A UUIDv7 (RFC 9562): each id sorts, as text, after the one before it. A new millisecond seeds
- * the counter with 11 random bits, its top bit clear so there is room to count up; the same
- * millisecond, or a clock that stepped back, takes the next count, and a counter that runs out
- * moves the millisecond on instead of wrapping. `crypto.randomUUID` is not asked, since it mints
- * a v4. The `Math.random` fallback is acceptable because a fresh id only has to be distinct,
- * never unguessable.
- */
-function uuidV7(c: PlatformCrypto | undefined): string {
-  const b = new Uint8Array(10);
-  if (c?.getRandomValues) c.getRandomValues(b);
-  else for (let i = 0; i < 10; i++) b[i] = Math.floor(Math.random() * 256);
-  const now = Date.now();
-  if (now > lastMs || ++counter > 0xfff) {
-    lastMs = Math.max(now, lastMs + 1);
-    counter = (((b[8] as number) & 7) << 8) | (b[9] as number);
-  }
-  b[0] = ((b[0] as number) & 0x3f) | 0x80;
-  const ms = lastMs.toString(16).padStart(12, "0");
-  const rand = Array.from(b.subarray(0, 8), (x) => x.toString(16).padStart(2, "0")).join("");
-  return `${ms.slice(0, 8)}-${ms.slice(8)}-${(0x7000 | counter).toString(16)}-${rand.slice(0, 4)}-${rand.slice(4)}`;
 }
 
 export const _stdlibCore = {
@@ -381,8 +354,9 @@ export const _stdlibCore = {
     return valueEqual(a, b);
   },
   freshId(): string {
-    return readEnv("fresh-id", () => uuidV7((globalThis as { crypto?: PlatformCrypto }).crypto));
+    return readEnv("fresh-id", newId);
   },
+  emitId,
   now(): number {
     return readEnv("now", () => Date.now());
   },
