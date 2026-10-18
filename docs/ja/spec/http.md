@@ -191,13 +191,14 @@ app App
 
 取得する URL は `base-url` とリクエストの `url`（[§6.1.2](#_6-1-2-standard-effect)）から次のように決まる：
 
-- **絶対** url は、ベースにかかわらず書かれたとおりに取得する。url が絶対であるのは、スキーム — 英字 1 字の後に英数字・`+`・`-`・`.` が続き、`:` で終わるもの（`https:`・`mailto:`）— で始まるとき、または `//` で始まる（プロトコル相対）ときである。最初のセグメントに `:` を含む url はスキームとして読まれるので、`users:search` のようなパスは `/users:search` と書く。
-- それ以外の url は**相対**であり、ベースとの間に `/` をちょうど 1 つ挟んで連結する。ベースが `/` で終わるか、url が `/` で始まるかは問わない：`https://api.example.com` の下でも `https://api.example.com/` の下でも、`/items/1` と `items/1` はどちらも `https://api.example.com/items/1` を取得する。
+- `base-url` がないとき、または空のときは、すべての url を書かれたとおりに取得する。
+- `?` か `#` を含むベースには、url が何であっても、url を書かれたとおりに後ろに付ける：`https://api.example.com/search?q=` と `term` は `https://api.example.com/search?q=term` を、`https://proxy.example.com/?url=` と `https://target/x` は `https://proxy.example.com/?url=https://target/x` を取得する。
+- それ以外のベースの下では、**絶対** url は書かれたとおりに取得する。url が絶対であるのは、スキーム — ASCII 英字 1 字で始まり、ASCII 英数字・`+`・`-`・`.` が 0 字以上続き、`:` で終わるもの（`https:`・`data:`）— で始まるとき、または `//` で始まる（プロトコル相対）ときである。最初のセグメントが `:` までこの形をしている url は絶対として読まれるので、`users:search` のようなパスは `/users:search` と書く。`1a:b` や `a_b:c` はこの形ではないので相対である。
+- それ以外の url は**相対**である。空であるか `?` か `#` で始まる場合（後述）を除き、ベースとの間に `/` をちょうど 1 つ挟んで連結する。ベースが `/` で終わるか、url が `/` で始まるかは問わない：`https://api.example.com` の下でも `https://api.example.com/` の下でも、`/items/1` と `items/1` はどちらも `https://api.example.com/items/1` を取得する。
 - パスを持つベースは**接頭辞**である：`https://api.example.com/v1` と `/users` は `https://api.example.com/v1/users` を取得する。ブラウザがリンクを解決するように url をベースに対して解決する（`new URL("/users", base)`）のではない。そうすると `/v1` が落ちる。ホスト上の別のパスへのリクエストは URL 全体を書く。パスだけのベースも同じように連結する：`/api` と `users` は `/api/users` を取得する。
 - 空の url、または `?` か `#` で始まる url は、書かれたとおりにベースの後ろに付ける：`https://api.example.com/items` と `?page=2` は `https://api.example.com/items?page=2` を取得する。
-- `base-url` がないとき、または空のときは、すべての url を書かれたとおりに取得する。
 
-`query` は連結した URL に付け加える（[§6.1.2](#_6-1-2-standard-effect)）。
+`query` はこうして決まる URL に付け加える（[§6.1.2](#_6-1-2-standard-effect)）。
 
 値を取るフィールドはすべて**式**であり、slot を読んでよい。4 つとも評価されるのは
 アプリの構築時ではなく**リクエストを行う時**である：slot を書く reducer は次の

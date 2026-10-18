@@ -185,7 +185,7 @@ describe("httpFetch base-url", () => {
   });
 
   async function fetched(
-    url: string,
+    url: unknown,
     baseUrl?: string,
     query?: Record<string, string>,
   ): Promise<string | undefined> {
@@ -195,12 +195,20 @@ describe("httpFetch base-url", () => {
   }
 
   it.each([
-    [API, "/items/1"],
-    [API, "items/1"],
-    [`${API}/`, "/items/1"],
-    [`${API}/`, "items/1"],
-  ])("joins %s and %s with exactly one /", async (base, url) => {
-    expect(await fetched(url, base)).toBe(`${API}/items/1`);
+    [API, "/items/1", `${API}/items/1`],
+    [API, "items/1", `${API}/items/1`],
+    [`${API}/`, "/items/1", `${API}/items/1`],
+    [`${API}/`, "items/1", `${API}/items/1`],
+    [`${API}//`, "items/1", `${API}/items/1`],
+    [API, "items/1?next=https://cdn.other.org", `${API}/items/1?next=https://cdn.other.org`],
+    [API, "items/1#top", `${API}/items/1#top`],
+    [API, "/users:search", `${API}/users:search`],
+    [API, "1a:b", `${API}/1a:b`],
+    [API, "a_b:c", `${API}/a_b:c`],
+    ["/", "users", "/users"],
+    ["/", "/users", "/users"],
+  ])("joins %s and %s with exactly one /", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
   });
 
   it.each([
@@ -208,6 +216,10 @@ describe("httpFetch base-url", () => {
     "HTTP://cdn.other.org/item.json",
     "//cdn.other.org/item.json",
     "data:application/json,null",
+    "git+ssh://host/x",
+    "s3://bucket/key",
+    "a:b",
+    "users:search",
   ])("fetches the absolute url %s as written, whichever way the base ends", async (url) => {
     expect(await fetched(url, API)).toBe(url);
     expect(await fetched(url, `${API}/`)).toBe(url);
@@ -219,17 +231,31 @@ describe("httpFetch base-url", () => {
     [`${API}/v1/`, "/users", `${API}/v1/users`],
     ["/api", "users", "/api/users"],
     ["/api/", "/users", "/api/users"],
-    ["/", "users", "/users"],
   ])("keeps the path of the base %s in front of %s", async (base, url, want) => {
     expect(await fetched(url, base)).toBe(want);
   });
 
   it.each([
-    ["", `${API}/items`],
-    ["?page=2", `${API}/items?page=2`],
-    ["#top", `${API}/items#top`],
-  ])("appends %j to the base as written", async (url, want) => {
-    expect(await fetched(url, `${API}/items`)).toBe(want);
+    [`${API}/items`, "", `${API}/items`],
+    [`${API}/items`, "?page=2", `${API}/items?page=2`],
+    [`${API}/items`, "#top", `${API}/items#top`],
+    [`${API}/items/`, "", `${API}/items/`],
+    [`${API}/items/`, "?page=2", `${API}/items/?page=2`],
+  ])("appends %j to the base %s as written", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
+  });
+
+  it.each([
+    [`${API}/search?q=`, "term", `${API}/search?q=term`],
+    [`${API}/search?q=`, "/term", `${API}/search?q=/term`],
+    [
+      "https://proxy.example.com/?url=",
+      "https://target/x",
+      "https://proxy.example.com/?url=https://target/x",
+    ],
+    [`${API}/page#`, "top", `${API}/page#top`],
+  ])("appends the url to the base %s, which carries a ? or a #, as written", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
   });
 
   it.each([
@@ -239,6 +265,11 @@ describe("httpFetch base-url", () => {
   ])("fetches %s as written with no base-url, or an empty one", async (url) => {
     expect(await fetched(url)).toBe(url);
     expect(await fetched(url, "")).toBe(url);
+  });
+
+  it("joins a url that is not text as its text, and makes the request", async () => {
+    expect(await fetched(42, API)).toBe(`${API}/42`);
+    expect(await fetched(42)).toBe("42");
   });
 
   it("appends the query after the join", async () => {

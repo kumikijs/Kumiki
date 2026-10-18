@@ -29,8 +29,8 @@ export async function httpFetch(
     key?: string;
     value?: unknown;
   };
-  const baseUrl = baseBefore(x.url ?? "", httpCfg?.baseUrl ?? "");
-  const url = withQuery(baseUrl + (x.url ?? ""), x.query);
+  // `map-request` is not checked against the request type, so a url can be any value.
+  const url = withQuery(joinBase(httpCfg?.baseUrl ?? "", String(x.url ?? "")), x.query);
   const decode = x.decode ?? "json";
   let encoded: Encoded = {};
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
@@ -197,11 +197,13 @@ const ABSOLUTE_URL = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
 
 // The base is a prefix, not a URL to resolve against: `new URL("/users", base)`
 // would drop the base's own path.
-function baseBefore(url: string, base: string): string {
-  if (!base || ABSOLUTE_URL.test(url)) return "";
-  if (url === "" || url.startsWith("?") || url.startsWith("#")) return base;
+function joinBase(base: string, url: string): string {
+  if (/[?#]/.test(base) || url === "" || url.startsWith("?") || url.startsWith("#")) {
+    return base + url;
+  }
+  if (!base || ABSOLUTE_URL.test(url)) return url;
   const trimmed = base.replace(/\/+$/, "");
-  return url.startsWith("/") ? trimmed : `${trimmed}/`;
+  return url.startsWith("/") ? trimmed + url : `${trimmed}/${url}`;
 }
 
 function withQuery(url: string, query: Record<string, string> | undefined): string {

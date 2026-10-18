@@ -191,13 +191,14 @@ app App
 
 `base-url` and a request's `url` ([§6.1.2](#_6-1-2-standard-effect)) make the URL that is fetched:
 
-- An **absolute** url is fetched as written, whatever the base. A url is absolute when it starts with a scheme — a letter, then letters, digits, `+`, `-` or `.`, then `:` (`https:`, `mailto:`) — or with `//` (protocol-relative). A first segment holding a `:` reads as a scheme, so a path like `users:search` is written `/users:search`.
-- Any other url is **relative**, and is joined to the base with exactly one `/` between them, whether the base ends in `/` and whether the url starts with one: under `https://api.example.com` and under `https://api.example.com/`, both `/items/1` and `items/1` fetch `https://api.example.com/items/1`.
+- With no `base-url`, or an empty one, every url is fetched as written.
+- A base that carries a `?` or a `#` has the url appended to it as written, whatever the url: `https://api.example.com/search?q=` with `term` fetches `https://api.example.com/search?q=term`, and `https://proxy.example.com/?url=` with `https://target/x` fetches `https://proxy.example.com/?url=https://target/x`.
+- Under any other base, an **absolute** url is fetched as written. A url is absolute when it starts with a scheme — an ASCII letter, then zero or more ASCII letters, digits, `+`, `-` or `.`, then `:` (`https:`, `data:`) — or with `//` (protocol-relative). A first segment of that shape up to its `:` reads as a scheme, so a path like `users:search` is written `/users:search`; `1a:b` and `a_b:c` are not of that shape, and are relative.
+- Any other url is **relative**. Unless it is empty or starts with `?` or `#` (below), it is joined to the base with exactly one `/` between them, whether the base ends in `/` and whether the url starts with one: under `https://api.example.com` and under `https://api.example.com/`, both `/items/1` and `items/1` fetch `https://api.example.com/items/1`.
 - A base that carries a path is a **prefix**: `https://api.example.com/v1` with `/users` fetches `https://api.example.com/v1/users`. The url is not resolved against the base the way a browser resolves a link (`new URL("/users", base)`), which would drop `/v1`; a request for another path on the host writes its whole URL. A base that is only a path is joined the same way: `/api` with `users` fetches `/api/users`.
 - An empty url, or one that starts with `?` or `#`, is appended to the base as written: `https://api.example.com/items` with `?page=2` fetches `https://api.example.com/items?page=2`.
-- With no `base-url`, or an empty one, every url is fetched as written.
 
-`query` is appended to the joined URL ([§6.1.2](#_6-1-2-standard-effect)).
+`query` is appended to the URL this gives ([§6.1.2](#_6-1-2-standard-effect)).
 
 Every field that takes a value takes an **expression**, and may read a slot. All
 four are evaluated **when a request is made**, not when the app is built: a

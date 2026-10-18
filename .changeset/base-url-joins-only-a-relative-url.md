@@ -13,9 +13,17 @@ trailing `/`, `url: "items/1"` requested `https://api.example.comitems/1`.
 
 Now an absolute url (one with a scheme such as `https:`, or a leading `//`) is
 fetched as written, and any other url is joined to the base with exactly one
-`/`, whichever side carries it. A base with a path is a prefix:
-`https://api.example.com/v1` with `/users` fetches
+`/`, whether either side, both or neither carries it. A base with a path is a
+prefix: `https://api.example.com/v1` with `/users` fetches
 `https://api.example.com/v1/users`. An empty url, or one starting with `?` or
-`#`, is still appended to the base as written, and with no `base-url` every url
-is fetched as written. §6.3.1 states the rule, and example 190 makes each kind
-of request through the real handler in `smoke`.
+`#`, is still appended to the base as written, as is any url under a base that
+carries a `?` or a `#` (`https://api.example.com/search?q=` with `term` still
+fetches `…/search?q=term`). With no `base-url` every url is fetched as written.
+A url that is not text is joined as its text, so the request is still made.
+
+One program that worked before now goes elsewhere: a url whose first segment
+looks like a scheme (`users:search`) is now absolute; write `/users:search`.
+
+§6.3.1 states the rule. Example 190 makes three of these requests through the
+real handler in `smoke`: one with a leading `/`, one without, and an `https:`
+url.

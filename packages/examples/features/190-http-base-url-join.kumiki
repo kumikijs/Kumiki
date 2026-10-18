@@ -12,7 +12,8 @@
 #
 # `packages/tests/src/http-base-url.test.ts` reads the URLs that reached `fetch`
 # through the real handler; `smoke` makes each request against
-# `190-http-base-url-join.http.json`, which answers only the joined paths.
+# `190-http-base-url-join.http.json`, which answers each one only at the path the
+# rule gives it (it matches paths, not hosts).
 
 type Item = {name: Text}
 
