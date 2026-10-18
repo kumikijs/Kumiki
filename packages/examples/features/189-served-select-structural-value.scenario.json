@@ -1,7 +1,7 @@
 {
   "steps": [
     {
-      "label": "each select starts on its slot's value",
+      "label": "each slot starts on its initial value",
       "expect": {
         "noErrors": true,
         "domIncludes": ["size: M", "status: InProgress", "dims: 2 x 3"]

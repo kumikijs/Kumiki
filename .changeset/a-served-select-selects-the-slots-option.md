@@ -2,7 +2,7 @@
 "@kumikijs/runtime": patch
 ---
 
-Serve a `select` with its slot's option selected when the options are variants or records
+A served `select` marks its slot's option `selected` when the options are variants or records
 
 `renderToString` marked an `<option>` `selected` when its value was the very
 object the slot held (`o.value === node.value`). A variant or a record option
@@ -26,11 +26,17 @@ The server now keys each option with the same structural key the mounted
 <option value="S">Small</option><option value="M" selected>Medium</option>…
 ```
 
-`Some(Backlog)` and `Some(InProgress)` are told apart by their payload, and a
-record option is selected by its fields, as on the client. The placeholder
-option is still served `selected` only when the select has no value.
+`Some(Backlog)` and `Some(InProgress)` are told apart by their payload, as on
+the client. A record option is matched by its JSON text, fields in the order
+written, so a record whose fields are written in another order matches nothing
+on either path (#941). The placeholder option is served `selected` by the
+client's rule, when the select has no value, so a `Unit` value now selects it
+on the server too.
 
-One consequence for a form posted before hydration: a `Text` option's served
-`value` is now its key as well, `"m"` with the quotes, where it was `m`. That is
-what the hydrated page already sent, so a server reading the field gets the same
-string whether or not the page's script had run.
+A `Text` option's served `value` is now its key as well, `"m"` with the quotes
+where it was `m`, the same as the mounted option's.
+
+Under happy-dom (`kumiki smoke`, `kumiki run`), a mounted `select` whose slot's
+option is third or later now holds that option. It held the second one, because
+happy-dom loses the selectedness of an option inserted already selected; the
+runtime now selects each option after inserting it.

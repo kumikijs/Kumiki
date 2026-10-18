@@ -182,8 +182,9 @@ export function renderTileToString(node: TileNode): string {
           id: tileIdOf(node),
           ...controlAttrs(node.props),
         },
+        // The placeholder is selected by the client's rule too: when the select has no value.
         node.placeholder !== undefined
-          ? `<option value="" disabled${node.value === undefined ? " selected" : ""}>${escapeText(node.placeholder)}</option>${opts}`
+          ? `<option value="" disabled${node.value == null ? " selected" : ""}>${escapeText(node.placeholder)}</option>${opts}`
           : opts,
       );
     }

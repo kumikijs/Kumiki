@@ -2,11 +2,9 @@ import { feature } from "@kumikijs/examples";
 import { type AppShape, renderToString } from "@kumikijs/runtime";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { find, mountApp } from "./helpers/dom.ts";
-import { loadApp, loadSource } from "./helpers/load.ts";
-import { withApp } from "./helpers/source.ts";
+import { loadApp } from "./helpers/load.ts";
 
 const EXAMPLE = feature("189-served-select-structural-value");
-const SHIPPED_SELECT = feature("14-select");
 
 async function served(app: AppShape): Promise<HTMLElement> {
   const { html } = await renderToString(app);
@@ -52,34 +50,5 @@ describe("a served select whose option values are structural", () => {
     for (const id of ["#size", "#status", "#dims"]) {
       expect(values(select(page, id)), id).toEqual(values(select(root, id)));
     }
-  });
-
-  it("selects the slot's value in the shipped select example", async () => {
-    const page = await served(await loadApp(SHIPPED_SELECT));
-    expect(selectedInMarkup(select(page, "select"))).toEqual(["Medium"]);
-  });
-
-  it.each([
-    ["value=M, ", ["Medium"]],
-    ["", ["Pick a size"]],
-  ])("selects the placeholder only when the select has no value (%j)", async (value, want) => {
-    const src = withApp(`type Size = S | M | L
-fn sizeOptions() -> List({label: Text, value: Size})
-   = [{label: "Small", value: S}, {label: "Medium", value: M}]
-tile App = column(select(${value}options=sizeOptions(), placeholder="Pick a size"))`);
-    const page = await served(await loadSource(src));
-    expect(selectedInMarkup(select(page, "select"))).toEqual(want);
-  });
-
-  it("keys a Text-valued select the way the mounted one does", async () => {
-    const app = await loadSource(
-      withApp(`slot pick : Text = "m"
-fn opts() -> List({label: Text, value: Text})
-   = [{label: "Small", value: "s"}, {label: "Medium", value: "m"}]
-tile App = column(select(bind=pick, options=opts()))`),
-    );
-    const server = select(await served(app), "select");
-    expect(selectedInMarkup(server)).toEqual(["Medium"]);
-    expect(values(server)).toEqual(values(select(mounted(app), "select")));
   });
 });

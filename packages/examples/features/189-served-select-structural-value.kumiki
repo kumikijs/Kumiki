@@ -2,14 +2,14 @@
 # variants, variants with a payload, and records, served the way it mounts.
 #
 # An option is matched by the structural key of its value (a variant's tag
-# and payload, a record's fields), not by being the object the slot holds, so
+# and payload, a record's JSON text, fields in the order written), not by
+# being the object the slot holds. The payload is part of the key, so
 # `Some(Backlog)` and `Some(InProgress)` are two options. The server and the
 # client use the same key: it is each `<option>`'s `value`, and the option
 # whose key is the bound slot's is the selected one. The served page marks
 # that option `selected`, so its first paint shows "Medium", "In progress" and
 # "2 x 3" before any script runs. The scenario drives the mounted selects;
-# what the server serves is read in
-# packages/tests/src/served-select-structural-value.test.ts.
+# what the server serves is pinned by an integration test in `packages/tests`.
 
 type Size   = S | M | L
 type Status = Backlog | InProgress | Done

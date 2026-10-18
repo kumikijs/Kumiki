@@ -224,8 +224,8 @@ app App ... theme = themeName    # ← slot 名を渡す
 `select(value=v, options=[...])` は option の選択状態を **構造的キー**で判定する:
 - variant は `_tag` + payload を再帰的にシリアライズしてキー化する。`Some(Backlog)` と `Some(InProgress)` は別キーになる（フラットな `_tag` 比較だと両者が `"Some"` で衝突するため、payload まで含めることが必須）
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
-- それ以外の値（`Text`・数値・レコード）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる
-- キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示し、hydration 前に送信されたフォームは hydration 後と同じキーを送る。`placeholder` の option が `selected` で配信されるのは、select が値を持たないときに限る
+- それ以外の値（`Text`・数値・レコード）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。レコードの JSON テキストはフィールドを書かれた順に並べるので、`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option にマッチしない。`==` は両者を等しいとするにもかかわらずである。これは規則ではなく既知の制限である（[#941](https://github.com/kumikijs/Kumiki/issues/941)）
+- キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示する。`placeholder` の option が選択状態になるのは、両方の経路で、select が値を持たないときに限る
 
 ### 10.3.9 focus 復元
 
@@ -838,7 +838,7 @@ kumiki replay --until-step 5                # 途中まで
   - `overlay` は 2 つめ以降の子を、レンダラが組むのと同じ絶対配置のレイヤーで包み、`align` で配置する。
   - **閉じた** `modal` / `drawer` / `popover` は、空文字列ではなく、レンダラがマウントするのと同じ「存在するが隠れた」ホスト（コンテンツ箱を包む `display: none`）として配信される。サーフェスの開閉は両方の経路でスタイルの切り替えであり、閉じたサーフェスの中身はクローラから読める。（理由は hydration ではない：hydration はどちらの形を配信しても、配信された DOM を丸ごと置き換える — [§10.6.2](#_10-6-2-hydration)。）
   - `check` / `switch` / `radio` はコントロールを包む `<label>` として、`error` はメッセージが入る `<span>` として配信される。
-- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value` / `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。`<option>` の `value` も同様であり、両方の経路でその option のキーになる（[§10.3.8](#_10-3-8-value-matching-of-select)）。
+- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value`（`<option>` のものを除く）/ `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。`<option>` の `value` も反映される。両方の経路でその option のキーになるので、両者は一致しなければならない（[§10.3.8](#_10-3-8-value-matching-of-select)）。
 - レスポンス bundle 構成：
   - HTML（初期 tile 描画結果）
   - JSON（初期 slot snapshot）
