@@ -39,7 +39,7 @@ export function standInValue(
 }
 
 type MissingEntryReducer = {
-  /** The name the log gives the entry reducer; absent when its `reducer` step has none. */
+  /** The name the log gives the entry reducer; absent when the log gives none. */
   reducer?: string;
   message: string;
 };
@@ -257,7 +257,8 @@ export function executeEpisode(
 
   // The entry step: the first `reducer` step, or the first `panic` step naming the reducer whose
   // body threw (one with no `name` is a capability refusal). A `reducer` step always names one,
-  // so a log line that lost its `name` is reported below, not passed over as no entry at all.
+  // so a log line that lost its `name` is reported below, not passed over as no entry at all;
+  // and only an `ssr.hydrate` bootstrap opens without one, so any other episode lacking it is too.
   const entryAt = ep.steps.findIndex((s) => s.kind === "reducer" || namesItsReducer(s));
   const entryStep: EpisodeStepLite | undefined = ep.steps[entryAt];
   const firstRed = namesItsReducer(entryStep) ? entryStep : undefined;
@@ -272,6 +273,8 @@ export function executeEpisode(
     };
   } else if (entryStep !== undefined && !firstRed) {
     entryReducerMissing = { message: `reducer step ${entryAt + 1} has no name` };
+  } else if (entryStep === undefined && ep.trigger.kind !== "ssr.hydrate") {
+    entryReducerMissing = { message: "no reducer step" };
   }
   const cursors: Record<string, number> = {};
   const entryIn = firstRed && entry ? entryPayload(app.effects, ep, entry, firstRed, cursors) : {};

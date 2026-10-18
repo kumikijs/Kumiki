@@ -41,4 +41,4 @@ An entry `reducer` step with no `name`, which only a hand-edited log carries, is
 
 `kumiki replay --until-step N` counts only the episodes it reached: `N episode(s) replayed` used to count every episode in the log, the ones after the stop included. `ReplayReport.replayed` carries the count.
 
-An episode with no entry reducer at all — no `reducer` step and no named `panic` step — still replays clean: the live runtime records one only for an `ssr.hydrate` bootstrap whose `app.init` results reached no reducer, no reducer ran in it, and replay re-runs reducers only.
+An `ssr.hydrate` bootstrap with no entry reducer at all — no `reducer` step and no named `panic` step — still replays clean: no reducer ran in it, and replay re-runs reducers only. Any other episode without one is now reported as not replayed, with `no reducer step`: the live runtime records the reducer that opens it, so such an episode comes from a trimmed or hand-edited log.

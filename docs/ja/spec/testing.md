@@ -325,7 +325,7 @@ FAIL  replay-renamed (Nms)
   diff at:  episodes
 ```
 
-replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。`name` のない入口の `reducer` step も同じように失敗させ、その報告は `reducer step <n> has no name` である。入口の reducer がまったくない episode は reducer が 1 つも走らなかった episode であり、クリーンに replay される。その理由はランタイム §10.5.3 にある。
+replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。`name` のない入口の `reducer` step も同じように失敗させ、その報告は `reducer step <n> has no name` である。入口の reducer がまったくない `ssr.hydrate` の bootstrap は reducer が 1 つも走らなかった episode であり、クリーンに replay される。それ以外の episode に入口の reducer がなければ、`no reducer step` で失敗させる。その理由はランタイム §10.5.3 にある。
 
 ## 8.7 ランナー
 

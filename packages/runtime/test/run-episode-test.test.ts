@@ -329,6 +329,26 @@ describe("an episode whose entry reducer is not in the program", () => {
     ]);
   });
 
+  it("reports an episode with no entry step whose trigger is not an `ssr.hydrate` bootstrap", () => {
+    // The live runtime opens every other episode at a reducer and records it, so a log without
+    // one was trimmed or edited: a crash logged as a `panic` with no `name`, or no steps at all.
+    const trimmed = (id: string, steps: EpisodeLogEntry["steps"]): EpisodeLogEntry => ({
+      id,
+      trigger: { kind: "ui.click", target: "IncBtn" },
+      status: "completed",
+      steps,
+    });
+    const episodes = [
+      trimmed("ep_empty", []),
+      trimmed("ep_crash", [{ kind: "panic", message: "boom", location: 'reducer "inc"' }]),
+    ];
+    const app = renamedApp("inc");
+    expect(episodeTest(app, episodes, { noPanics: true })).toEqual(
+      failed("ep_empty: no reducer step; ep_crash: no reducer step"),
+    );
+    expect(app.live.count).toBe(0);
+  });
+
   const noEntryReducer: [string, EpisodeLogEntry["steps"]][] = [
     [
       "an `app.init` result no reducer handles",

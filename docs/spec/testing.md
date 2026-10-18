@@ -377,7 +377,7 @@ FAIL  replay-renamed (Nms)
   diff at:  episodes
 ```
 
-Replay has nothing to run such an episode with ([runtime.md §10.5.3](./runtime.md#_10-5-3-replay)), and an episode that is not replayed raises no panic and no error, so `no-panics` / `no-errors` alone would hold over it on the very rename that stopped it testing anything. Record the log again, or give the reducer the name the log has. An entry `reducer` step with no `name` fails it the same way, with `reducer step <n> has no name`. An episode with no entry reducer at all is one in which no reducer ran, and replays clean; runtime.md §10.5.3 says why.
+Replay has nothing to run such an episode with ([runtime.md §10.5.3](./runtime.md#_10-5-3-replay)), and an episode that is not replayed raises no panic and no error, so `no-panics` / `no-errors` alone would hold over it on the very rename that stopped it testing anything. Record the log again, or give the reducer the name the log has. An entry `reducer` step with no `name` fails it the same way, with `reducer step <n> has no name`. An `ssr.hydrate` bootstrap with no entry reducer at all is one in which no reducer ran, and replays clean; any other episode without one fails it with `no reducer step`. runtime.md §10.5.3 says why.
 
 ## 8.7 The Runner
 
