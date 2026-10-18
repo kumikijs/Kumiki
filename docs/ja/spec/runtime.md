@@ -796,7 +796,9 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 - メモリに直近 N 件（デフォルト 100）
 - localStorage に直近 M 件（デフォルト 20、サイズ上限 5MB）
-- 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し
+- 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し（`kumiki run` は `KUMIKI_EPISODE_LOG` からもパスを受け取る）
+
+`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わった後に commit する episode（アプリの dispose 時にまだ `retry=` の backoff を待っていた effect のものなど）は書かれない（[#942](https://github.com/kumikijs/Kumiki/issues/942)）。
 
 ### 10.5.3 replay
 
