@@ -5,12 +5,14 @@
 #
 #   button(text="Save", disabled=if phase == Busy then true else false)
 #   button(text="Undo", disabled=Idle == phase)
-#   Count(if phase == Busy then 100 else 1)        an Int, as `$1`
-#   Next(if phase == Busy then Idle else Busy)      a variant, as `$1`
-#   Say(shout("ok"))                                what the fn returns
+#   Count(if phase == Busy then 100 else 1)            an Int, as `$1`
+#   Count(match phase with | Idle -> 2 | Busy -> 200)  an Int, as `$1`
+#   Next(if phase == Busy then Idle else Busy)          a variant, as `$1`
+#   Say(label("ok"))                                    what the fn `label` returns, not the
+#                                                       builtin tile of that name
 #
-# A tile argument is a tile only as a positional argument of a builtin that
-# renders it as a child (`column`, `row`, `box`, …): the `if` at the end of
+# A tile argument is a tile only as a positional argument of a builtin other
+# than the value builtins (`column`, `row`, `box`, …): the `if` at the end of
 # `App` picks a tile. A capitalised name written as an event handler of such a
 # builtin is a tile call, and names the reducer it spells.
 
@@ -20,7 +22,7 @@ slot phase  : Phase = Idle
 slot saved  : Int   = 0
 slot undone : Int   = 0
 
-fn shout(t: Text) -> Text = t + "!"
+fn label(t: Text) -> Text = t + "!"
 
 reducer toggle on=ui.click(Toggle) do= phase := if phase == Busy then Idle else Busy
 reducer save   on=ui.click(Save)   do= saved := saved + 1
@@ -41,8 +43,9 @@ tile App = column(
   Save,
   Undo,
   Count(if phase == Busy then 100 else 1),
+  Count(match phase with | Idle -> 2 | Busy -> 200),
   Next(if phase == Busy then Idle else Busy),
-  Say(shout("ok")),
+  Say(label("ok")),
   text("saved: " + saved.show + " undone: " + undone.show),
   if phase == Busy then text("working") else text("waiting"))
 

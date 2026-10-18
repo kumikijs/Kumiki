@@ -64,7 +64,8 @@ describe("a named argument reaches props", () => {
   });
 
   it("does not lower a tile-valued argument as if it were prop data", () => {
-    // A named argument parses as a value, so only a `when` or a `for` puts a tile there.
+    // Outside an event handler, a named argument parses as a value, so only a `when` or a
+    // `for` puts a tile there.
     const js = emit('box(header=when(n > 0, text("inner")), text("body"))', "slot n : Int = 1");
     const route = js.slice(js.indexOf('pattern: "/"'), js.indexOf('pattern: "/404"'));
     expect(route.split('kind: "text"').length - 1).toBe(1);
@@ -128,7 +129,8 @@ describe("which argument a user tile takes as its input", () => {
     expect(inputArg(emit('column(Row(bind=draft, "hi"), text(n.show))', HOST), "Row")).toBe('"hi"');
   });
 
-  // A named argument parses as a value, so only a `when` or a `for` puts a tile there.
+  // Outside an event handler, a named argument parses as a value, so only a `when` or a
+  // `for` puts a tile there.
   it.each([
     'column(Btn(header=when(n > 0, text("inner"))), text(n.show))',
     'column(Btn(header=for x in [1] text("inner")), text(n.show))',

@@ -1,9 +1,9 @@
-import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { find, mountApp, tick } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
-const program = (probe: string) => `type F = All | Done
+const DEFS = `type F = All | Done
 type C = Red | Blue
 slot busy : Bool = false
 slot filter : F = All
@@ -16,13 +16,9 @@ tile Flip = button(text="flip") {id: "flip"}
 tile Row in=Int = text("n=" + $1.show)
 tile Tab in=F = text(match $1 with | All -> "tab all" | Done -> "tab done")
 tile Say in=Text = text($1)
-tile App = column(Flip, ${probe})
-
-app A
-  caps   = []
-  routes = {"/" -> App, "/404" -> App}
-  init   = []
 `;
+
+const program = (probe: string) => withApp(`${DEFS}tile App = column(Flip, ${probe})`);
 
 async function mountProbe(
   probe: string,
@@ -53,23 +49,6 @@ function probeOf(root: HTMLElement, kind: string): HTMLElement {
 
 /** What the probe — everything after `Flip` — shows as text. */
 const shown = (root: HTMLElement) => (root.textContent ?? "").replace(/^flip/, "");
-
-describe("each argument checks clean", () => {
-  it.each([
-    'button(text="Save", disabled=if busy then true else false)',
-    'box(text("tab"), class=if busy then "tab on" else "tab")',
-    "progress(value=3, max=if busy then 10 else 20)",
-    'radio(group="f", value="all", selected=All == filter)',
-    "slider(bind=v, max=Int.parse(s).get-or(10))",
-    "Row(if busy then 100 else 1)",
-    "Row(match c with | Red -> 100 | Blue -> 1)",
-    "Tab(if busy then Done else All)",
-    'Say(label("x"))',
-  ])("%s", (probe) => {
-    const errors = check(parse(lex(program(probe)))).filter((e) => e.severity !== "warning");
-    expect(errors.map((e) => `${e.code} ${e.message}`)).toEqual([]);
-  });
-});
 
 describe("a named argument of a builtin is the value it spells", () => {
   it("disabled=if … toggles with busy", async () => {

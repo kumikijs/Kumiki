@@ -81,8 +81,8 @@ export class TileParser extends StatementParser {
     return { kind: "TileCall", name, args, props, pos: nameTok.pos };
   }
 
-  // A capitalised handler of a builtin that takes tiles stays a tile call so that
-  // `onClick=Bump {}` parses; every other named argument is a value.
+  // On a builtin other than the value builtins, a capitalised handler parses as a tile call
+  // so that `onClick=Bump {}` parses; every other named argument is a value.
   protected parseTileArg(callee: string): TileArg {
     const first = this.peek();
     if ((first.kind === "ident" || first.kind === "kw") && this.matchTAt(1, "op", "=")) {

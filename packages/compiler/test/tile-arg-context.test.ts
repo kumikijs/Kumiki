@@ -1,7 +1,8 @@
 import { type Expr, lex, parse, type TileExpr } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { tileCall } from "./helpers/ast.ts";
-import { errorsOf } from "./helpers/diagnostics.ts";
+import { summariesOf } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 const HOST = `type F = All | Done
 type C = Red | Blue
@@ -20,17 +21,12 @@ tile A = text("a")
 tile B = text("b")
 `;
 
-const program = (tile: string) => `${HOST}tile T = ${tile}
-app P
-    caps   = []
-    routes = {"/" -> T, "/404" -> T}
-    init   = []
-`;
+const program = (tile: string) => withApp(`${HOST}tile App = ${tile}`);
 
 /** The named argument `at`, or the positional argument at index `at`, of `tile`'s outermost call. */
 function argOf(tile: string, at: string | number): Expr | TileExpr {
-  const def = parse(lex(program(tile))).defs.find((d) => d.kind === "TileDef" && d.name === "T");
-  if (def?.kind !== "TileDef") throw new Error("fixture has no tile T");
+  const def = parse(lex(program(tile))).defs.find((d) => d.kind === "TileDef" && d.name === "App");
+  if (def?.kind !== "TileDef") throw new Error("fixture has no tile App");
   const args = tileCall(def.body).args;
   const arg =
     typeof at === "string"
@@ -45,7 +41,7 @@ function shapeOf(v: Expr | TileExpr): string {
   return v.kind;
 }
 
-const summaries = (tile: string) => errorsOf(program(tile)).map((e) => `${e.code} ${e.message}`);
+const summaries = (tile: string) => summariesOf(program(tile));
 
 describe("a named argument is a value", () => {
   it.each([
@@ -62,6 +58,13 @@ describe("a named argument is a value", () => {
     // `label` is the program's fn, not the builtin tile.
     ['box(text("x"), class=label("y"))', "class", "Call"],
     ['Btn(hint=if busy then "a" else "b")', "hint", "IfExpr"],
+    // A capitalised name is a variant tag in a named argument that is not a handler,
+    // on a builtin other than the value builtins too.
+    ['button(text="x", value=All)', "value", "Variant All"],
+    ['box(text("x"), header=All)', "header", "Variant All"],
+    ['radio(group="f", value=All)', "value", "Variant All"],
+    ['button(text="x", disabled=All == filter)', "disabled", "BinOp"],
+    ["input(bind=s, value=Int.parse(s).get-or(0).show)", "value", "FieldAccess"],
   ])("%s — %s is %s", (tile, at, shape) => {
     expect(shapeOf(argOf(tile, at))).toBe(shape);
     expect(summaries(tile)).toEqual([]);
@@ -75,7 +78,7 @@ describe("a capitalised name written as an event handler", () => {
     ["check(bind=busy, onChange=Bump)", "onChange"],
     ["slider(bind=v, onChange=Bump)", "onChange"],
     ["column(onClick=Bump)", "onClick"],
-  ])("is a tile call on a builtin that takes tiles: %s", (tile, at) => {
+  ])("is a tile call on a builtin other than the value builtins: %s", (tile, at) => {
     expect(shapeOf(argOf(tile, at))).toBe("TileCall Bump");
   });
 
@@ -97,16 +100,6 @@ describe("a capitalised name written as an event handler", () => {
   ])("is a variant tag on a value builtin or a user tile: %s", (tile, at) => {
     expect(shapeOf(argOf(tile, at))).toBe("Variant Bump");
   });
-
-  it.each([
-    ['button(text="x", value=All)', "value", "Variant All"],
-    ['box(text("x"), header=All)', "header", "Variant All"],
-    ['radio(group="f", value=All)', "value", "Variant All"],
-    ['button(text="x", disabled=All == filter)', "disabled", "BinOp"],
-    ["input(bind=s, value=Int.parse(s).get-or(0).show)", "value", "FieldAccess"],
-  ])("is a value as any other named argument: %s — %s is %s", (tile, at, shape) => {
-    expect(shapeOf(argOf(tile, at))).toBe(shape);
-  });
 });
 
 describe("a user tile's positional argument is its input, a value", () => {
@@ -122,7 +115,7 @@ describe("a user tile's positional argument is its input, a value", () => {
   });
 });
 
-describe("a positional argument of a builtin that renders it as a child is a tile", () => {
+describe("a positional argument of a builtin other than the value builtins is a tile", () => {
   it.each([
     ["column(if busy then A() else B())", "TileIf"],
     ["column(match c with | Red -> A | Blue -> spinner())", "TileMatch"],
@@ -139,5 +132,46 @@ describe("a positional argument of a builtin that renders it as a child is a til
     ['heading(label("x"))', "Call"],
   ])("leaves a value builtin's content a value: %s is %s", (tile, shape) => {
     expect(shapeOf(argOf(tile, 0))).toBe(shape);
+  });
+});
+
+describe("a builtin tile's name called where a value belongs", () => {
+  const misplaced = (name: string) =>
+    `E0116 "${name}" is a tile, and a tile renders only as a positional argument of a builtin other than the value builtins`;
+
+  it.each([
+    'card(text("body"), header=text("a"))',
+    'Btn(header=text("a"))',
+    'Say(text("x"))',
+    'Row(text("x"))',
+    'heading(text("x"))',
+  ])("is reported by its position, not its spelling: %s", (tile) => {
+    expect(summaries(tile)).toContain(misplaced("text"));
+    expect(summaries(tile)).not.toContain('E0116 Call to undefined function "text"');
+  });
+
+  it("is reported as the only diagnostic where nothing else is wrong", () => {
+    expect(summaries('Say(text("x"))')).toEqual([misplaced("text")]);
+    expect(summaries('card(text("body"), header=text("a"))')).toEqual([misplaced("text")]);
+  });
+
+  it("is a call to the program's fn when one has that name", () => {
+    expect(summaries('Say(label("x"))')).toEqual([]);
+  });
+});
+
+describe("a call to an undefined tile", () => {
+  it("reports the name once, and not each argument it would have read", () => {
+    expect(summaries('colum(text("a"), heading("b"))')).toEqual([
+      'E0105 Reference to undefined tile "colum"',
+    ]);
+  });
+});
+
+describe("a capitalised name with a props block in a named argument that is not a handler", () => {
+  it("is a parse error, as a value has no props block", () => {
+    expect(() => parse(lex(program('box(text("x"), header=A {id: "y"})')))).toThrow(
+      "Expected op()), got op({)",
+    );
   });
 });

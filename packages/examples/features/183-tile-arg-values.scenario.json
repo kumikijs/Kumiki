@@ -4,7 +4,7 @@
       "label": "idle: each argument renders the value its expression gives",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["n=1", "next: busy", "ok!", "saved: 0 undone: 0", "waiting"]
+        "domIncludes": ["n=1", "n=2", "next: busy", "ok!", "saved: 0 undone: 0", "waiting"]
       }
     },
     {
@@ -27,7 +27,7 @@
       "expect": {
         "noErrors": true,
         "state": { "phase": { "_tag": "Busy" } },
-        "domIncludes": ["n=100", "next: idle", "working"]
+        "domIncludes": ["n=100", "n=200", "next: idle", "working"]
       }
     },
     {
