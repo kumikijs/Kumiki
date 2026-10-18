@@ -84,17 +84,18 @@ Decoder.None         # レスポンス本文を捨てる
 
 decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
 
-### 6.1.5 共通 props（自動付与）
+### 6.1.5 共通 props（自動付与） {#_6-1-5-common-props-auto-applied}
 
 すべての HTTP effect は次を自動付与：
 
-- `Accept: application/json`（Decoder が Json のとき）
+- `Accept: application/json`（Decoder が Json のとき。リクエストが Decoder を指定しないときも Json である）
 - `Content-Type: application/json`（HttpBody が Json のとき、または本文が HttpBody の variant でないとき）
 - `Content-Type: application/x-www-form-urlencoded`（Form のとき）
 - `Content-Type: multipart/form-data`（Multipart のとき。boundary を含めるため fetch 自身が書く）
-- `User-Agent: Kumiki`
 
-ユーザー指定の headers が優先される。上の既定値より `app.http.headers` が、`app.http.headers` より effect 自身の `headers` が優先される。ヘッダ名はどの段階でも大文字小文字を区別せずに比べるので、effect の `content-type` はグローバルの `Content-Type` を置き換え、送られる値はちょうど 1 つになる。
+ブラウザはスクリプトが `User-Agent` を設定することを確実には許さないので、ランタイムはこれを付与しない。
+
+ユーザー指定の headers が優先される。上の既定値より `app.http.headers` が、`app.http.headers` より effect 自身の `headers` が優先される。ヘッダ名はどの段階でも大文字小文字を区別せずに比べるので、effect の `content-type` はグローバルの `Content-Type` も既定の Content-Type も置き換え、どのヘッダも送られる値はちょうど 1 つになる。
 
 例外は `Multipart` だけである。プログラムが指定した `Content-Type` は捨てられる。このヘッダには fetch だけが知る boundary が必要で、boundary のない `multipart/form-data` はサーバが解析できないからである。
 
@@ -162,7 +163,7 @@ reducer added
 
 ### 6.3.1 グローバル header の注入 {#_6-3-1-injecting-global-headers}
 
-`app.http` で全 HTTP effect に自動付与する header を宣言できる：
+`app.http` で全 HTTP effect（`base-url` があるときはその origin へのもの — 後述）に自動付与する header を宣言できる：
 
 ```kumiki fragment
 app App
@@ -181,12 +182,25 @@ app App
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
 | `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
-| `headers` | 全リクエストに付与 — リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
+| `headers` | 全リクエストに付与（`base-url` があるときはその origin へのリクエストだけ — 後述）— リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
 | `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
-| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
+| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)。`base-url` があるときはその origin へのリクエストだけ — 後述）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
 | `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
 | `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
+
+取得する URL は `base-url` とリクエストの `url`（[§6.1.2](#_6-1-2-standard-effect)）から次のように決まる：
+
+- `base-url` がないとき、または空のときは、すべての url を書かれたとおりに取得する。
+- `?` か `#` を含むベースには、url が何であっても、url を書かれたとおりに後ろに付ける：`https://api.example.com/search?q=` と `term` は `https://api.example.com/search?q=term` を、`https://proxy.example.com/?url=` と `https://target/x` は `https://proxy.example.com/?url=https://target/x` を取得する。
+- それ以外のベースの下では、**絶対** url は書かれたとおりに取得する。url が絶対であるのは、スキーム — ASCII 英字 1 字で始まり、ASCII 英数字・`+`・`-`・`.` が 0 字以上続き、`:` で終わるもの（`https:`・`data:`）— で始まるとき、または `//` で始まる（プロトコル相対）ときである。最初のセグメントが `:` までこの形をしている url は絶対として読まれるので、`users:search` のようなパスは `/users:search` と書く。`1a:b` や `a_b:c` はこの形ではないので相対である。
+- それ以外の url は**相対**である。空であるか `?` か `#` で始まる場合（後述）を除き、ベースとの間に `/` をちょうど 1 つ挟んで連結する。ベースが `/` で終わるか、url が `/` で始まるかは問わない：`https://api.example.com` の下でも `https://api.example.com/` の下でも、`/items/1` と `items/1` はどちらも `https://api.example.com/items/1` を取得する。
+- パスを持つベースは**接頭辞**である：`https://api.example.com/v1` と `/users` は `https://api.example.com/v1/users` を取得する。ブラウザがリンクを解決するように url をベースに対して解決する（`new URL("/users", base)`）のではない。そうすると `/v1` が落ちる。ホスト上の別のパスへのリクエストは URL 全体を書く。パスだけのベースも同じように連結する：`/api` と `users` は `/api/users` を取得する。
+- 空の url、または `?` か `#` で始まる url は、書かれたとおりにベースの後ろに付ける：`https://api.example.com/items` と `?page=2` は `https://api.example.com/items?page=2` を取得する。
+
+`query` はこうして決まる URL に付け加える（[§6.1.2](#_6-1-2-standard-effect)）。
+
+`base-url` があるとき、`headers` と `credentials` は、ベースの origin — スキーム・ホスト・ポート — へのリクエストにだけ付く：ベースに連結した url と、その origin 上の絶対 url である。それ以外の origin へのリクエストにはグローバルなヘッダーが付かず、`credentials` は既定値（[§6.9](#_6-9-default-settings)）になるので、`headers` の中のトークンがベースの origin の外へ出ることはない。そのようなリクエストは、必要なものを自身の `headers` に書く。パスだけのベースと相対 url はページの origin 上にあり、URL として読めないベースには、リクエストが乗る origin がない。`base-url` がないときは、どちらもすべてのリクエストに付く。
 
 値を取るフィールドはすべて**式**であり、slot を読んでよい。4 つとも評価されるのは
 アプリの構築時ではなく**リクエストを行う時**である：slot を書く reducer は次の
@@ -260,7 +274,12 @@ reducer cancelSearch
 
 `emit` を式として使うと、dispatch された effect の `EffectId` が返る（[stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) 参照）。`EffectId.none` センチネルにより `emit cancel(EffectId.none)` は安全な no-op になる。
 
-id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest-per-key(<expr>)` を宣言していなければ `_`、宣言していればその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、`emit` が返す id は自分が開始したリクエストを指す。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+`emit` が返す id は、その `emit` が開始するリクエストを指し、policy がその emit を捨てた場合は、それを吸収したリクエストを指す。それ以外に何を指すかは effect の policy で決まる：
+
+- **`policy=latest` と `policy=latest-per-key(<expr>)`** は key ごとに 1 つのリクエストを実行し、id はその key のもの `<effect-name>:<key>` である。`latest` では `<key>` は `_`。`latest-per-key` ではその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、id は `emit` が開始したリクエストを指す。同じ key の後続の emit はそのリクエストを abort し、自分のリクエストを同じ id で実行するので、どちらの id で cancel しても実行中のほうが abort される。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+- **それ以外の policy** — 指定なし、`queue`、`debounce`、`throttle`、`once` — では、`emit` 1 回が 1 つのリクエストであり、他のどの emit も返さない固有の id を持つ。同じ effect の 2 回の emit は、1 つの reducer 本体からでも 2 つからでも 2 つの id を返し、一方が開始したリクエストを cancel しても、他方のリクエストはそのままである。id は `<effect-name>#` に、`<T>.fresh()` と同じ生成器（[stdlib §2.4.1](./stdlib.md#_2-4-1-id-生成)）による新しい ID を続けたもので、専用の `effect-id` の読みとして記録される（[runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）ため、replay した reducer 本体は記録時と同じ id を返す。
+
+policy が**捨てた** emit はリクエストを開始せず、その id はそれを吸収したリクエストを指す：`throttle` ではウィンドウ内の emit がウィンドウを開いたリクエストを、`once` では既に見た入力に対する emit がその入力で開始したリクエストを、`debounce` ではタイマー発火前に後続の emit に置き換えられた emit が、その後続の emit の指すものを指す。したがって `lastId := emit work(x)` の後の `emit cancel(lastId)` は、`lastId` がどの emit から来たものであれ、policy が残したリクエストに届く。そのリクエストが完了した後は、完了した id と同じく、捨てられた id も何も指さない。
 
 `cap=http.cancel` の effect は `in=EffectId out=Unit` を満たさなければならず、それ以外の形はコンパイル時に拒否される（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
@@ -268,8 +287,10 @@ id は `<effect-name>:<key>` である。`<key>` は、effect が `policy=latest
 
 - 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
 - キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
-- 同 effect に対する `debounce` タイマーは cancel でクリアされ、まだ発行されていない待機中リクエストは発生しない。
-- `throttle` のウィンドウマーカーは **そのまま維持される**。元の effect はすでに launch 済み（cancel はその進行中リクエストを abort）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
+- cancel が作用するのは、その id が指す 1 つのリクエストだけである。同じ effect の他の進行中リクエストは実行を続け、それぞれの `.ok` / `.err` を届ける。
+- `queue` では、cancel はその id が指すエントリにだけ作用する。まだ待機中のエントリはキューから取り除かれ、そのリクエストは発行されず `.err` も起動しない。実行中のエントリは他の進行中リクエストと同じく abort され、キューは次のエントリへ進む。他のエントリはすべて本来どおり実行される。
+- `debounce` タイマーを待っている emit、またはそれが置き換えた emit の id で cancel すると、そのタイマーはクリアされ、まだ発行されていない待機中リクエストは発生せず `.err` も起動しない。タイマーがすでに発火したリクエストはそれ自体が 1 つのリクエストであり、タイマーを待っている後続の emit の id で cancel しても実行を続ける。
+- `throttle` のウィンドウマーカーは **そのまま維持される**。ウィンドウを開いたリクエストはすでに launch 済み（その id、またはウィンドウが捨てた emit の id で cancel すると、その進行中リクエストが abort される）であり、マーカーを消すと直後の emit がウィンドウ終了前にレート制限をすり抜けてしまう。
 
 ---
 
@@ -335,7 +356,7 @@ effect storage-read   cap=storage.read
                       out=Result(Option(Decoded), Text)
 
 effect storage-write  cap=storage.write
-                      in={key: Text, value: JsonValue}
+                      in={key: Text, value: T}
                       out=Result(Unit, Text)
 
 effect storage-remove cap=storage.write
@@ -349,9 +370,11 @@ effect storage-clear  cap=storage.write
 
 クリアは宣言で決まる。`map-request` を持たず `in=Unit`（直接、または別名を通して）と宣言した effect がストレージを空にする。空になるのはこのアプリが書いたキーだけでなく、**オリジン全体**の localStorage である。それ以外の `storage.write` は書き込みか削除で、リクエスト（effect の入力、または `map-request` が組み立てたもの）で区別される。`key` を持ち `value` フィールドを持たないレコードはそのキーを削除し（以後の `storage-read` は `Ok(None)` を返す）、`value` フィールドを持つレコードはそれを書き込む。値そのものは問わない。`None`・`[]`・レコードはいずれも書き込まれる。
 
-このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、JSON で表せない `value` がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
+このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、フィールドはあるが値を持たない `value`（`undefined`）がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
 
-保存された値は常に JSON として parse される。read の `Decoder.Json(T)` が parse した値を拒否した場合（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）、read は `decode failed:` で始まる `Text` を値とする `.err` になる。parse できない値と同じ扱いである。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
+**保存形。** JSON が保持できる値は、その JSON テキストとして保存される。`{n: 1}` は `{"n":1}` として保存される。どこかに `Bytes`、有限でない数（`NaN`・`Infinity`・`-Infinity`）または負のゼロを含む値は **タグ付き形式** で保存される。`~` の後に値の JSON が続き、その中で `Bytes` はそれぞれ `{"$bytes": "<その base64>"}`、そうした数はそれぞれ `{"$float": "NaN"}`（または `"Infinity"`・`"-Infinity"`・`"-0"`）と書かれ、値の中のオブジェクトのキー（タグ自身のキーを除く）のうち `$` で始まるもの（`Map(Text, V)` のキーや `Set(Text)` の要素はそうなり得る）は先頭に `$` をもう1つ付けて書かれる。エスケープされたそのキーは `$$` で始まるので、タグ付き形式で `$` 1つで始まるキーを持つオブジェクトはタグだけである。たとえば `{data: Bytes.from-text("hi"), ratio: 1.0 / 0.0}` は `~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}` として保存され、`storage-read` は同じ2バイトと `Infinity` を返す。`~` で始まる JSON テキストは無いので、read は最初の1文字で2つの形式を見分け、JSON として保存されたエントリは、どのビルドが書いたものでも、その JSON のとおりに読み戻される。保存された `{"$bytes":"aGk="}` は書き込まれたときの1エントリの `Map(Text, Text)` であり、`Bytes` ではない。
+
+read は保存されたテキストをその形式に従ってデコードする。タグ付き形式では、`$` 1つで始まるキーを持つオブジェクトはタグそのものでなければならない。パディング付きの標準 base64 を持つ `{"$bytes": …}` か、`"NaN"`・`"Infinity"`・`"-Infinity"`・`"-0"` のいずれかを持つ `{"$float": …}` で、ほかのキーは持たない。JSON でない保存テキストや、タグの位置にそれ以外のものがあるタグ付きテキストはデコードできず、read はキーとストレージを示す `decode failed:` で始まる `Text` を値とする `.err` になる。read の `Decoder.Json(T)` がデコードした値を拒否した場合（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）も、read は `decode failed:` で始まる `Text` を値とする `.err` になる。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
 
 **err 値は宣言どおりの `Text`。** storage / session / indexed の effect が失敗すると、失敗のメッセージをそのまま `Text` として渡す — 読み取りがバックエンドのブロックに当たれば `"SecurityError: …"`、書き込みなら上記の呼び出しとキーを示すメッセージ、`app.indexed-db` の無いアプリで `indexed-*` effect が動けば `"app.indexed-db is not declared"` — それを包むレコードではない。effect の `map-request`、またはその capability に登録されたホストの provider が例外を投げた場合も同じ `Text` が渡る。したがって `.err($e, _)` は `$e : Text` を束縛し（[位置束縛](./language.md#_1-6-5-positional-binding)）、`problem := $e` はメッセージを格納し、`$e.message` は E0108 になる。
 
@@ -388,7 +411,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` も同じ形。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。
+`session-*` も同じ形で、保存形も同じ（[6.7.2](#_6-7-2-宣言-localstorage)）。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。`indexed-*` にタグ付き形式は無い。IndexedDB は `indexed-write` が書くレコードの構造化複製を保持するので、書いたレコードの中の `Bytes`・有限でない数・負のゼロは `indexed-read` からそのまま返る。レコードでない `value` にはストアのキーを置く場所が無く、書いたとおりには返らない。
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read
@@ -396,7 +419,7 @@ effect indexed-read cap=indexed.read
                     out=Result(Option(Decoded), Text)
 
 effect indexed-write cap=indexed.write
-                     in={store: Text, key: Text, value: JsonValue}
+                     in={store: Text, key: Text, value: T}
                      out=Result(Unit, Text)
 
 effect indexed-query cap=indexed.read
@@ -418,6 +441,8 @@ app App
         ]
     }
 ```
+
+データベースは最初に動いた `indexed-*` effect が開き、以降の effect は、開いている途中に始まったものも含めてその接続を共有する。他の接続にブロックされた open（別タブがまだ古い `version` を開いている）はそれらが閉じるまで待つ。この待ちにタイムアウトは無い。それまで open を待つ effect は実行中のままで、ランタイムはブロックをコンソールの警告で知らせる。失敗した open はそれを待っていた effect の `.err` になり、次の effect が開き直す。別タブが新しい `version` を開くと、ページは自分の接続を閉じてそのアップグレードをブロックしない。次の effect はページ自身の `version` で開き直すが、アップグレード済みのデータベースはそれを拒むので、ページを再読み込みするまですべての `indexed-*` effect が `.err`（`VersionError: …`）になる。ブラウザが自ら閉じた接続（サイトデータの消去など）も保持されず、次の effect が開き直す。
 
 ---
 
@@ -476,9 +501,9 @@ reducer addErr
 |---|---|
 | `timeout` | 30 秒 |
 | `retry` | `none` |
-| `Accept` | `application/json` |
+| `Accept` (Json decoder 時) | `application/json` |
 | `Content-Type` (Json body 時) | `application/json` |
-| `User-Agent` | `Kumiki` |
+| `User-Agent` | ランタイムは付与しない（[§6.1.5](#_6-1-5-common-props-auto-applied)） |
 | `credentials` | `same-origin` |
 
 ストレージ effect のデフォルト：
