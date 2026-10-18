@@ -424,8 +424,9 @@ function checkTileCall(
   ctx: Ctx,
   place: TilePlace | null,
 ): void {
+  const unknown = !namesTile(t.name, sym);
   if (place === null) {
-    if (!namesTile(t.name, sym)) errors.push(undefinedTile(t.name, t.pos));
+    if (unknown) errors.push(undefinedTile(t.name, t.pos));
   } else {
     const found = occupantOf(t, sym, ctx);
     if (found.kind !== "tile") errors.push(notATile(found, place, t.pos));
@@ -479,6 +480,9 @@ function checkTileCall(
 
   for (const arg of t.args) {
     const v = arg.value;
+    // Whether a positional argument is a tile or a value depends on the tile it is passed to,
+    // so an undefined one leaves nothing to check it as.
+    if (unknown && arg.name === undefined) continue;
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
