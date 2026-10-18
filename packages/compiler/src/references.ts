@@ -27,6 +27,11 @@ export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | 
 export type Reference = {
   layer: RefLayer;
   name: string;
+  /**
+   * Where the name's text starts, so the source at `pos` spells `name`: one column past the
+   * opening quote of a string literal. Absent when the name has no spelling of its own to rewrite.
+   * A string literal that spells the name with an escape is the exception, and `rename` refuses it.
+   */
   pos?: Pos;
 };
 
@@ -134,6 +139,10 @@ class Walker {
     if (!pos) return;
     if (!this.index[layer].has(name)) return;
     this.out.push({ layer, name, pos });
+  }
+
+  private addQuoted(layer: RefLayer, str: { value: string; pos: Pos }): void {
+    this.add(layer, str.value, { line: str.pos.line, col: str.pos.col + 1 });
   }
 
   typeExpr(t: TypeExpr | undefined): void {
@@ -372,11 +381,11 @@ class Walker {
           if (t.name === "link" && p.name === "prefetch") {
             // A bare ident or a string literal, both naming a reducer.
             if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
-            else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
+            else if (p.value.kind === "Str") this.addQuoted("reducer", p.value);
             continue;
           }
           if (p.name === "motion" && p.value.kind === "Str") {
-            this.add("motion", p.value.value, p.value.pos);
+            this.addQuoted("motion", p.value);
             continue;
           }
           this.expr(p.value, locals);
