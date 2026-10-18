@@ -39,6 +39,8 @@ kumiki list <layer>                 # レイヤ内の全定義名
 kumiki list                         # 全定義名（layer prefix 付き）
 ```
 
+参照元とは、checker または lowering がその名前をこの定義として読む位置でこの定義を指す定義であり、型メンバ呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。lowering がデコードの型として読む `Decoder.Json(T)` の引数も同じで、`Decoder.Json(Map(ItemId, Item))` の `ItemId` と `Item` は参照である。`ItemId.fresh()` で id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。`Decoder`・`EffectId`・`Duration`・`Bytes` では、引数を与えた `parse` / `show` だけが型メンバ呼び出しである：プログラムが自前の `type Duration` を宣言していれば `Duration.show(d)` はその参照元だが、名前空間の組み込み呼び出し（`Duration.ms(5)`・`EffectId.none`）は型を指さず、`Duration.fresh()` は E0116 である（[E0117](./errors.md#e0117-undef-type)）。
+
 ### 9.2.2 書き込み系 {#_9-2-2-write-commands}
 
 ```bash
@@ -57,6 +59,8 @@ kumiki patch revert <op-id>                 # 特定 op を取り消し
 複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
 `add` の `<layer>` は `kumiki list` が受け付けるラベルのいずれか（`type`・`slot`・`effect`・`reducer`・`tile`・`fn`・`app`・`theme`・`motion`・`test`）で、それ以外の語に対して `kumiki add` はファイルを読む前に `2` で終了する。`<name>` は識別子 1 つであり、`add` はそれ以外を拒否する。body は定義から `<layer> <name>` とその後の区切りを除いたもので、`slot count : Int = 0` なら `Int = 0`、`tile Greeting = heading("Hi")` なら `heading("Hi")` である。tile の節（`in=`・`error-boundary=`・`scroll-restoration=`・`sub-routes=`）と type のパラメータは名前と `=` の間に置かれるので、それらを持つ body はそれらで始まり `=` も含む。`in=Text = heading($1)` は `tile Greet in=Text = heading($1)` を書き、`(T) = {v: T}` は `type Box(T) = {v: T}` を書く。節やパラメータで始まらない `replace` の body は、定義が持つものを残す。`tile Greeting error-boundary=Oops = …` に対して body `heading("Hello")` は `tile Greeting error-boundary=Oops = heading("Hello")` を書く。変えるには残すものを body に書き、すべて外すには body を `=` から始める。`replace` は `replaced` の行の後に、定義から無くなった節やパラメータごとに 1 行（`  dropped error-boundary`、`  dropped parameter T`）を出力する。検証を通る書き込みで、それらが気づかれずに失われることはない。
+
+`rename` は定義自身の名前と、それへの参照をすべて書き換える。文字列リテラルで定義を指す prop は 2 つあり、その名前も参照である：tile の `motion: "Spin"`（[§4.9.1](./style.md#_4-9-1-the-motion-definition)）と link の `prefetch: "loadTodo"`（[§3.8](./routing.md#_3-8-prefetch)）。そこでは引用符の間の文字列が書き換わり、引用符はそのまま残るので、`kumiki rename motion.Spin Whirl` は `{motion: "Spin"}` を `{motion: "Whirl"}` にする。たまたま同じ綴りの、コメント中の語や他の文字列リテラルには触れない。
 
 書き込み系 op はファイルの再パース・再型検査で検証され、`severity: "error"` の診断が 1 つでも出ればロールバックする。ただし例外が 1 つある。プログラムは定義を 1 つずつ積み上げて構築されるため `app` が入るまでは app 不在の状態が続く。したがって **`E0003 missing-app` は書き込み op をロールバックさせない**。完成したアプリケーションかどうかは `kumiki check` が報告するものであり、編集途中のグラフが既に満たしているべき条件ではない。
 

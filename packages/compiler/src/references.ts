@@ -17,6 +17,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
+import { decodedType, typeMemberQualifier } from "./builtin-calls.ts";
 import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
@@ -26,6 +27,11 @@ export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | 
 export type Reference = {
   layer: RefLayer;
   name: string;
+  /**
+   * Where the name's text starts, so the source at `pos` spells `name`: one column past the
+   * opening quote of a string literal. Absent when the name has no spelling of its own to rewrite.
+   * A string literal that spells the name with an escape is the exception, and `rename` refuses it.
+   */
   pos?: Pos;
 };
 
@@ -135,6 +141,10 @@ class Walker {
     this.out.push({ layer, name, pos });
   }
 
+  private addQuoted(layer: RefLayer, str: { value: string; pos: Pos }): void {
+    this.add(layer, str.value, { line: str.pos.line, col: str.pos.col + 1 });
+  }
+
   typeExpr(t: TypeExpr | undefined): void {
     if (!t) return;
     switch (t.kind) {
@@ -188,15 +198,25 @@ class Walker {
         this.expr(e.base, locals);
         this.expr(e.index, locals);
         return;
-      case "Call":
+      case "Call": {
         // `run-reducer(name)` takes a reducer NAME, not a value.
         if (e.callee === "run-reducer") {
           this.runReducerArg(e.args[0]);
           return;
         }
-        if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
+        // Codegen decodes by this argument, so its names are types, though it parses as a value.
+        if (e.callee === "Decoder.Json") {
+          const t = decodedType(e.args[0]);
+          if (t) this.typeExpr(t);
+          else for (const a of e.args) this.expr(a, locals);
+          return;
+        }
+        const qualifier = typeMemberQualifier(e.callee, e.args.length);
+        if (qualifier !== undefined) this.add("type", qualifier, e.pos);
+        else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
+      }
       case "MethodCall":
         this.expr(e.receiver, locals);
         if (e.method === "run-reducer") {
@@ -361,11 +381,11 @@ class Walker {
           if (t.name === "link" && p.name === "prefetch") {
             // A bare ident or a string literal, both naming a reducer.
             if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
-            else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
+            else if (p.value.kind === "Str") this.addQuoted("reducer", p.value);
             continue;
           }
           if (p.name === "motion" && p.value.kind === "Str") {
-            this.add("motion", p.value.value, p.value.pos);
+            this.addQuoted("motion", p.value);
             continue;
           }
           this.expr(p.value, locals);
