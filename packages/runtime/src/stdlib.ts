@@ -1,12 +1,14 @@
 import {
   _setPathHelper,
   currentEpisodeId,
+  emitId,
   entryKey,
   isEntryOf,
   isPanic,
   isPlainDataBag,
   KumikiPanic,
   listPosition,
+  newId,
   type PathSegment,
   panicInfo,
   type RefinementNaming,
@@ -96,21 +98,6 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
   const days = m === 2 ? (leap ? 29 : 28) : m === 4 || m === 6 || m === 9 || m === 11 ? 30 : 31;
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
-}
-
-type PlatformCrypto = {
-  randomUUID?: () => string;
-  getRandomValues?: (bytes: Uint8Array) => Uint8Array;
-};
-
-function uuidV4(c: PlatformCrypto | undefined): string {
-  const bytes = new Uint8Array(16);
-  if (c?.getRandomValues) c.getRandomValues(bytes);
-  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export const _stdlibCore = {
@@ -367,12 +354,9 @@ export const _stdlibCore = {
     return valueEqual(a, b);
   },
   freshId(): string {
-    return readEnv("fresh-id", () => {
-      const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
-      if (c?.randomUUID) return c.randomUUID();
-      return uuidV4(c);
-    });
+    return readEnv("fresh-id", newId);
   },
+  emitId,
   now(): number {
     return readEnv("now", () => Date.now());
   },

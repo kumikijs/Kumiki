@@ -35,17 +35,19 @@ describe("httpFetch", () => {
       "POST",
       {
         url: "/x",
-        headers: { "X-User": "input-wins", "Content-Type": "application/xml" },
+        headers: { "x-user": "input-wins", "content-type": "application/xml" },
         body: { hello: "world" },
       },
       {
-        headers: () => ({ "X-User": "global-loses", "X-Global": "yes" }),
+        headers: () => ({ "X-User": "global-loses", "X-Global": "yes", ACCEPT: "text/x-global" }),
       },
     );
-    const sent = (calls[0]?.init.headers ?? {}) as Record<string, string>;
-    expect(sent["X-User"]).toBe("input-wins");
-    expect(sent["X-Global"]).toBe("yes");
-    expect(sent["Content-Type"]).toBe("application/xml");
+    expect(calls[0]?.init.headers).toEqual({
+      ACCEPT: "text/x-global",
+      "content-type": "application/xml",
+      "x-user": "input-wins",
+      "X-Global": "yes",
+    });
   });
 
   it("threads credentials default same-origin and respects override", async () => {
@@ -211,6 +213,46 @@ describe("httpFetch request body", () => {
     expect(fd.get("agree")).toBe("true");
   });
 
+  it("drops only the Content-Type of a Multipart body, keeping Accept and the global headers", async () => {
+    const { calls } = stubFetch(() => new Response("{}"));
+    await httpFetch(
+      "POST",
+      {
+        url: "/up",
+        decode: "json",
+        headers: { "content-type": "multipart/form-data" },
+        body: multipart({ agree: { _tag: "BoolV", _0: true } }),
+      },
+      { headers: () => ({ Authorization: "Bearer t" }) },
+    );
+    expect(calls[0]?.init.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer t",
+    });
+  });
+
+  it.each([
+    ["the effect's", { "Content-Type": undefined }, undefined],
+    ["a global", undefined, { "Content-Type": undefined }],
+  ])("keeps the default Content-Type when %s value for it is undefined", async (_, own, global) => {
+    // The types rule this out, but a field a predicate-free `Decoder.Json(T)` let through
+    // missing reaches the handler as `undefined`.
+    const { calls } = stubFetch(() => new Response("{}"));
+    await httpFetch(
+      "POST",
+      {
+        url: "/x",
+        headers: own as unknown as Record<string, string> | undefined,
+        body: { _tag: "Json", _0: { a: 1 } },
+      },
+      global ? { headers: () => global as unknown as Record<string, string> } : undefined,
+    );
+    expect(calls[0]?.init.headers).toEqual({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    });
+  });
+
   it("fails a FileV that holds no file, without making a request", async () => {
     // A file record restored from persistence through JSON has `_file: {}`.
     const { calls } = stubFetch(() => new Response("ok"));
@@ -233,7 +275,20 @@ describe("httpFetch request body", () => {
     const { calls } = stubFetch(() => new Response(null));
     await httpFetch(method, { url: "/q", body: { _tag: "Json", _0: { a: 1 } } });
     expect(calls[0]?.init.body).toBeUndefined();
-    expect(calls[0]?.init.headers).toEqual({});
+    expect(calls[0]?.init.headers).toEqual({ Accept: "application/json" });
+  });
+
+  it.each([
+    ["no decoder", undefined, { Accept: "application/json" }],
+    ["Decoder.Json(T) as the sentinel", "json", { Accept: "application/json" }],
+    ["Decoder.Json(T) as a check", () => undefined, { Accept: "application/json" }],
+    ["Decoder.Text", "text", {}],
+    ["Decoder.Bytes", "bytes", {}],
+    ["Decoder.None", "none", {}],
+  ])("sends the Accept that %s implies", async (_, decode, expected) => {
+    const { calls } = stubFetch(() => new Response("null"));
+    await httpFetch("GET", { url: "/q", decode });
+    expect(calls[0]?.init.headers).toEqual(expected);
   });
 });
 
