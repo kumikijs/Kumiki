@@ -30,31 +30,45 @@ describe("codegen", () => {
       app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     `;
     type Host = { __kumikiTests?: unknown; __kumikiCoverage?: unknown };
+    type Loaded = { default: { _tests?: unknown; _coverage?: unknown } };
+    const EARLIER_TESTS = ["from an earlier program"];
+    const EARLIER_COVERAGE = { from: "an earlier program" };
 
-    it("are set to the program's own, empty, when tests are included", async () => {
-      const js = compileOrFail(NO_TESTS, { ...LOADABLE, includeTests: true });
+    /** Import `js` with both globals preset to an earlier program's, then clear them. */
+    async function importOver(js: string, check: (mod: Loaded, host: Host) => void): Promise<void> {
       const host = globalThis as Host;
-      host.__kumikiTests = ["from an earlier program"];
-      host.__kumikiCoverage = "from an earlier program";
+      host.__kumikiTests = EARLIER_TESTS;
+      host.__kumikiCoverage = EARLIER_COVERAGE;
       try {
-        const mod = await importModule<{ default: { _tests?: unknown } }>(js, "codegen");
-        expect(host.__kumikiTests).toEqual([]);
-        expect(host.__kumikiTests).toBe(mod.default._tests);
-        expect(host.__kumikiCoverage).toEqual({
-          reducers: { total: ["inc"], used: [] },
-          tiles: { total: ["B", "App"], used: [] },
-          effects: { total: [], used: [] },
-        });
+        check(await importModule<Loaded>(js, "codegen"), host);
       } finally {
         delete host.__kumikiTests;
         delete host.__kumikiCoverage;
       }
+    }
+
+    it("are the program's own when tests are included: no tests, and its definitions with none used", async () => {
+      await importOver(
+        compileOrFail(NO_TESTS, { ...LOADABLE, includeTests: true }),
+        (mod, host) => {
+          expect(host.__kumikiTests).toEqual([]);
+          expect(host.__kumikiTests).toBe(mod.default._tests);
+          expect(host.__kumikiCoverage).toEqual({
+            reducers: { total: ["inc"], used: [] },
+            tiles: { total: ["B", "App"], used: [] },
+            effects: { total: [], used: [] },
+          });
+        },
+      );
     });
 
-    it("are not emitted when tests are not included", () => {
-      expect(compileOrFail(NO_TESTS)).not.toMatch(
-        /__kumikiTests|__kumikiCoverage|App\._tests|App\._coverage/,
-      );
+    it("are left alone by a module compiled without tests", async () => {
+      await importOver(compileOrFail(NO_TESTS, LOADABLE), (mod, host) => {
+        expect(host.__kumikiTests).toBe(EARLIER_TESTS);
+        expect(host.__kumikiCoverage).toBe(EARLIER_COVERAGE);
+        expect(mod.default._tests).toBeUndefined();
+        expect(mod.default._coverage).toBeUndefined();
+      });
     });
   });
 
