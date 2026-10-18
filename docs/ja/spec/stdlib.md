@@ -25,7 +25,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 let id = emit fetchQuote()
 ```
 
-同じ effect の 2 回の emit は異なる 2 つの id を返し、一方を cancel しても他方は実行を続ける。例外は key ごとに 1 つのリクエストを実行する `policy=latest` / `policy=latest-per-key(...)` で、ある key の emit はすべてその key の id を返し、その id はその key で現在実行中のリクエストを指す（[HTTP §6.4](./http.md#_6-4-cancellation)）。
+同じ effect の 2 回の emit は異なる 2 つの id を返し、一方が開始したリクエストを cancel しても、他方のリクエストはそのままである。policy が捨てた emit の id は、それを吸収したリクエストを指す。例外は key ごとに 1 つのリクエストを実行する `policy=latest` / `policy=latest-per-key(...)` で、ある key の emit はすべてその key の id を返し、その id はその key で現在実行中のリクエストを指す（[HTTP §6.4](./http.md#_6-4-cancellation)）。
 
 `EffectId` 上で定義されている操作は等価比較（`==` / `!=`）と `EffectId` 型 slot への代入のみ。算術・順序比較・`text(...)` での描画はコンパイル時に拒否される（[E0204](./errors.md#e0204-effect-id-misuse)）。
 

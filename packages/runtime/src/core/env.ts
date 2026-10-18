@@ -19,6 +19,7 @@ const ENV_VALUE_TYPE: Record<EnvReadKind, "number" | "string" | "boolean"> = {
   now: "number",
   random: "number",
   "fresh-id": "string",
+  "effect-id": "string",
   "prefers-dark": "boolean",
 };
 
@@ -118,7 +119,7 @@ type PlatformCrypto = {
   getRandomValues?: (bytes: Uint8Array) => Uint8Array;
 };
 
-// What a `fresh-id` read answers live. `crypto.randomUUID` exists only in a secure context, so a
+// What a `fresh-id` or an `effect-id` read answers live. `crypto.randomUUID` exists only in a secure context, so a
 // page on plain http builds a v4 uuid here. `Math.random` is acceptable as the last resort because
 // a fresh id only has to be distinct among the ids one app mints, never unguessable.
 export function newId(): string {

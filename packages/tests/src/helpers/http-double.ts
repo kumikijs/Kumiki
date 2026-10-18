@@ -45,3 +45,32 @@ export function readHeader(h: HeadersInit | undefined, name: string): string | n
   const values = headerValues(h, name);
   return values.length === 0 ? null : values.join(", ");
 }
+
+/** A request {@link holdEach} is holding: where it went, its signal, and how to answer it. */
+export type Held = {
+  url: string;
+  signal: AbortSignal | null | undefined;
+  answer: (text: string) => void;
+};
+
+/**
+ * A responder that answers nothing on its own. Each request waits in `held` until the test calls
+ * its `answer`, and fails the way `fetch` does if its signal is aborted first.
+ */
+export function holdEach(held: Held[] = []): (call: FetchCall) => Promise<Response> {
+  return (call) =>
+    new Promise<Response>((resolve, reject) => {
+      const signal = call.init.signal;
+      held.push({ url: call.url, signal, answer: (text) => resolve(new Response(text)) });
+      signal?.addEventListener("abort", () =>
+        reject(new DOMException("The operation was aborted.", "AbortError")),
+      );
+    });
+}
+
+/** The `i`th request `held` caught, or a failure naming the ones it did. */
+export function heldAt(held: Held[], i: number): Held {
+  const h = held[i];
+  if (!h) throw new Error(`no request #${i} was made; made: ${held.map((x) => x.url).join(", ")}`);
+  return h;
+}

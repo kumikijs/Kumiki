@@ -775,11 +775,11 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 `reducer` step は次も持つ：
 
-- `env-reads`: reducer 本体が実行中に**環境**から読んだ値を、読んだ順に並べたもの。各要素は `{kind, value}` で、`kind` は `now` / `random` / `fresh-id` / `prefers-dark` のいずれか — 答えがプログラムの外から来るビルトイン、すなわち slot の値からは決まらないものである。emit ごとに固有の `EffectId` を与える policy では、`emit` 式も `fresh-id` を読む：その id の新しい部分は `<T>.fresh()` と同じ生成器から来る（[http.md §6.4](./http.md#_6-4-cancellation)）。本体が何も読まなかった場合（大半の reducer がそうである）このフィールドは**省略される**。refinement がバッチを棄却した reducer（[§10.3.3](#_10-3-3-batching)）でも読みは記録する：本体は走ったのであり、それを再実行する replay が同じ答えを見なければ、そもそも棄却しないかもしれない。
+- `env-reads`: reducer 本体が実行中に**環境**から読んだ値を、読んだ順に並べたもの。各要素は `{kind, value}` で、`kind` は `now` / `random` / `fresh-id` / `effect-id` / `prefers-dark` のいずれか — 答えがプログラムの外から来るビルトイン、すなわち slot の値からは決まらないものである。`effect-id` は、emit ごとに固有の `EffectId` を与える policy のもとで `emit` 式が読むものである（[http.md §6.4](./http.md#_6-4-cancellation)）。値は `<T>.fresh()` と同じ生成器から来るが kind は別なので、本体を編集する前に記録したログ — `emit` を足した場合や、emit が何も読まなかった頃のログ — に対して replay しても、`emit` が記録された答えを `fresh()` に渡すことも、その逆も起きない。本体が何も読まなかった場合（大半の reducer がそうである）このフィールドは**省略される**。refinement がバッチを棄却した reducer（[§10.3.3](#_10-3-3-batching)）でも読みは記録する：本体は走ったのであり、それを再実行する replay が同じ答えを見なければ、そもそも棄却しないかもしれない。
 
   記録されるスコープは **reducer 本体** であり、それだけである。これらのビルトインは式が書ける場所ならどこでも呼べる（[§10.10](#_10-10-implementation-responsibilities-of-the-standard-library)）が、tile の式の中の `now` や描画中の `prefers-dark()` のように reducer 本体の外で読まれた値は**記録されず、再現もされない**。描画を replay するものは無いので、それらの読みには再現すべき対象が無い。
 
-  記録されるのは読みが返した値であって、その値を後で何を使って**整形したか**ではない。`now.format(...)` と `Time.parse("yyyy-MM-dd")` はホストの**ローカルタイムゾーン**で解決される（[stdlib.md §2.4.2](./stdlib.md#_2-4-2-時刻)）。タイムゾーンは `env-reads` の kind ではないので、あるゾーンで記録した episode を別のゾーンで replay すると、記録された時刻そのものは再現されるが整形結果は変わる。以下の保証は 4 つの kind についてのものであり、そこから導かれるあらゆる値についてではない。
+  記録されるのは読みが返した値であって、その値を後で何を使って**整形したか**ではない。`now.format(...)` と `Time.parse("yyyy-MM-dd")` はホストの**ローカルタイムゾーン**で解決される（[stdlib.md §2.4.2](./stdlib.md#_2-4-2-時刻)）。タイムゾーンは `env-reads` の kind ではないので、あるゾーンで記録した episode を別のゾーンで replay すると、記録された時刻そのものは再現されるが整形結果は変わる。以下の保証は 5 つの kind についてのものであり、そこから導かれるあらゆる値についてではない。
 
   `env-reads` があるからこそ replay は*同じ実行*になる。reducer が書いた結果だけを記録した episode は replay できない：`replay` は本体を再実行し、環境を読む本体はもう一度環境を読む — 新しいサイコロの目、後の時刻 — ので、replay された `slot-diffs` は記録されたものとは別の実行のものになる。`env-reads` は記録された実行の環境そのものであり、あとで返せるように保持される（[§10.5.3](#_10-5-3-replay)）。
 
@@ -814,7 +814,7 @@ kumiki replay --until-step 5                # 途中まで
 - **環境の読みはログから答える。環境からではない。** reducer 本体を走らせる前に、replay はその reducer の記録済み `env-reads`（[§10.5.1](#_10-5-1-structure-of-an-episode)）を据える。以後 `now` / `random()` / `<T>.fresh()` / `prefers-dark()` は、時計・乱数源・ID 生成器・OS の設定を読み直すのではなく、記録時に返したのと同じ値を返す。`EffectId` が ID 生成器から来る `emit` 式も、記録時に返した id を返す。したがって環境を読んだ reducer の episode を replay すると、記録された `slot-diffs` が毎回そのまま再現される。
   - 読みと記録済みの答えは **kind で** 対応付け、同じ kind の中では記録順に返す。あるビルトインの余分な読みが、別のビルトインの答えをずらすことはない。
   - 対応する答えが尽きた読み — 古いログ、あるいは記録時より多く読んだ本体 — は、replay を失敗させるのではなくライブの値にフォールバックする。その読みだけが replay に再現できないものなので、推測ではなく**報告される**：その step のトレース行に `(env: N read live)` が付き、実行の最後に `environment reads:` の要約が出る。同じ行が、replay 側の本体が使わなかった記録済みの答え（`N recorded unused`）と、ログが持っていた不正な要素（`N malformed`）も報告する。3 つとも無い step は何も言わない。
-  - `value` が欠けている、あるいは `kind` が要求する型でない（`now` / `random` は数値、`fresh-id` は文字列、`prefers-dark` は真偽値）要素は、本体に渡す前にスコープを開く時点で**棄却される**。不正な要素をそのまま消費すると `undefined` が返り、`now.show` は `"undefined"` を描画し算術は `NaN` になるが、理由を告げる throw は起きない。棄却された要素は `malformed` に数え、その読みはライブにフォールバックする。
+  - `value` が欠けている、あるいは `kind` が要求する型でない（`now` / `random` は数値、`fresh-id` / `effect-id` は文字列、`prefers-dark` は真偽値）要素は、本体に渡す前にスコープを開く時点で**棄却される**。不正な要素をそのまま消費すると `undefined` が返り、`now.show` は `"undefined"` を描画し算術は `NaN` になるが、理由を告げる throw は起きない。棄却された要素は `malformed` に数え、その読みはライブにフォールバックする。
   - 記録された `panic` step は `reducer` step と同じように replay される：`name` が入口の reducer を指し、`env-reads` が同じ手順で据えられるので、記録されたクラッシュは再びクラッシュする。
   - 記録済み `env-reads` と replay 中の reducer は**名前で**対応付ける：replay はログの step を辿るのではなく reducer を再実行して連鎖を導くため、reducer `foo` の n 回目の実行が、記録された n 個目の `foo` step の読みを取る。これは順序の仮定であって整合の保証ではない — replay は reducer の emit を宣言順に辿るが、記録側は `.ok` / `.err` step を effect の**完了順**に並べるので、宣言順と違う順で完了した 2 つの effect から同じ reducer に 2 回到達すると、記録された 2 つの読みの組は**入れ替わる**。この失敗は静かである：値は欠落ではなく交差するので、`live` の数には現れない。
 

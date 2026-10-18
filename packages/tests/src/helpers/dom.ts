@@ -29,6 +29,21 @@ export function mountApp(
   return { root, handle: mount(app, root, options) };
 }
 
+/** Mount `app`, run `body` against its root, and tear both down whatever happens. */
+export async function withMounted<T>(
+  app: AppShape,
+  body: (root: HTMLElement) => Promise<T>,
+  options: MountOptions = {},
+): Promise<T> {
+  const { root, handle } = mountApp(app, options);
+  try {
+    return await body(root);
+  } finally {
+    handle.dispose();
+    root.remove();
+  }
+}
+
 /** Mount `app` at `path` under a memory router, read the page text, and unmount. */
 export function textAt(app: AppShape, path: string): string {
   const root = freshRoot();
