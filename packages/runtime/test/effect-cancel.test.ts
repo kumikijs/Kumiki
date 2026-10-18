@@ -1,7 +1,8 @@
 import type { AppShape, EffectResult, EffectSpec, EmitSpec } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { emitId } from "../src/core.ts";
+import { emitId, withEnvRecord, withEnvReplay } from "../src/core.ts";
+import { _stdlibCore } from "../src/stdlib.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
 
@@ -608,7 +609,10 @@ describe("the EffectId an emit yields", () => {
     ["once", { kind: "once" }],
     ["debounce", { kind: "debounce", ms: 5 }],
     ["throttle", { kind: "throttle", ms: 5 }],
-  ] as [string, Policy][])("%s: one id per emit, and the one an emit carries", (_l, policy) => {
+  ] as [
+    string,
+    Policy,
+  ][])("%s: a new id per emit, or the id the record already carries", (_l, policy) => {
     const a = idOf(policy, { effect: "up", args: ["x"] });
     expect(idOf(policy, { effect: "up", args: ["x"] })).not.toBe(a);
     expect(idOf(policy, { effect: "up", args: ["x"], id: a })).toBe(a);
@@ -626,7 +630,78 @@ describe("the EffectId an emit yields", () => {
     const x = idOf(policy, { effect: "up", args: ["x"] });
     expect(idOf(policy, { effect: "up", args: ["x"] })).toBe(x);
     expect(idOf(policy, { effect: "up", args: ["y"] })).not.toBe(x);
-    // The key the emit carries wins over the one `keyOf` reads.
+  });
+
+  it("latest-per-key: the key an emit carries wins over keyOf", () => {
+    const policy: Policy = { kind: "latest-per-key", keyOf: (input) => String(input) };
+    const x = idOf(policy, { effect: "up", args: ["x"] });
     expect(idOf(policy, { effect: "up", args: ["y"], key: "x" })).toBe(x);
+  });
+
+  it("reads its new part as an effect-id, a kind of its own", () => {
+    const out = withEnvRecord(() => idOf({ kind: "queue" }, { effect: "up", args: ["x"] }));
+    expect(out.env.reads.map((r) => r.kind)).toEqual(["effect-id"]);
+  });
+
+  it("takes no answer recorded for <T>.fresh(), so an extra emit cannot shift a fresh id", () => {
+    // A log recorded before emits read anything holds the one `fresh()` answer.
+    const out = withEnvReplay([{ kind: "fresh-id", value: "U1" }], () => ({
+      id: idOf({ kind: "queue" }, { effect: "work", args: ["x"] }),
+      row: _stdlibCore.freshId(),
+    }));
+    expect(out.ok && out.value.row).toBe("U1");
+    expect(out.ok && out.value.id).not.toBe("work#U1");
+    expect(out.env).toMatchObject({ live: 1, unused: 0 });
+  });
+});
+
+describe("dispose", () => {
+  it("aborts every request in flight, two of one effect included", async () => {
+    const signals: AbortSignal[] = [];
+    const app: AppShape = {
+      slots: {},
+      caps: ["http.get"],
+      effects: {
+        work: {
+          name: "work",
+          cap: "http.get",
+          invoke: (_input, _caps, signal) =>
+            new Promise<EffectResult>((resolve) => {
+              if (signal) signals.push(signal);
+              signal?.addEventListener("abort", () =>
+                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } }),
+              );
+            }),
+        },
+      },
+      init: [],
+      reducers: [
+        {
+          name: "go",
+          event: { kind: "ui", ev: "click" },
+          apply: () => ({
+            slots: {},
+            emits: [
+              { effect: "work", args: ["a"] },
+              { effect: "work", args: ["b"] },
+            ],
+          }),
+        },
+      ],
+    };
+    const root = freshRoot();
+    try {
+      const { dispose } = mount(app, root);
+      (app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void })._dispatch(
+        "go",
+        {},
+      );
+      await tick(5);
+      expect(signals).toHaveLength(2);
+      dispose();
+      expect(signals.map((sg) => sg.aborted)).toEqual([true, true]);
+    } finally {
+      root.remove();
+    }
   });
 });
