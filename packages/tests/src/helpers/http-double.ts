@@ -1,4 +1,6 @@
-import { vi } from "vitest";
+import type { AppShape } from "@kumikijs/runtime";
+import { expect, vi } from "vitest";
+import { click, mountApp, waitUntil } from "./dom.ts";
 
 export type FetchCall = { url: string; init: RequestInit };
 
@@ -30,6 +32,29 @@ export function stubFetch(
 }
 
 /**
+ * Mount `app` with `fetch` answering `respond`, click the button whose whole text is `button`, and
+ * return the one request that click made. `fetch` is put back before this returns.
+ */
+export async function sentRequest(
+  app: AppShape,
+  button: string,
+  respond: () => Response,
+): Promise<FetchCall> {
+  const double = stubFetch(respond);
+  const { root, handle } = mountApp(app);
+  try {
+    click(root, button);
+    await waitUntil(() => double.calls.length > 0);
+  } finally {
+    handle.dispose();
+    root.remove();
+    double.restore();
+  }
+  expect(double.calls).toHaveLength(1);
+  return double.calls[0] as FetchCall;
+}
+
+/**
  * Every value `fetch` was given for `name`, whatever the shape, matching the name case-insensitively as HTTP does — so a stray `content-type` beside a `Content-Type` shows up as two values instead of hiding.
  */
 export function headerValues(h: HeadersInit | undefined, name: string): string[] {
@@ -44,4 +69,33 @@ export function headerValues(h: HeadersInit | undefined, name: string): string[]
 export function readHeader(h: HeadersInit | undefined, name: string): string | null {
   const values = headerValues(h, name);
   return values.length === 0 ? null : values.join(", ");
+}
+
+/** A request {@link holdEach} is holding: where it went, its signal, and how to answer it. */
+export type Held = {
+  url: string;
+  signal: AbortSignal | null | undefined;
+  answer: (text: string) => void;
+};
+
+/**
+ * A responder that answers nothing on its own. Each request waits in `held` until the test calls
+ * its `answer`, and fails the way `fetch` does if its signal is aborted first.
+ */
+export function holdEach(held: Held[] = []): (call: FetchCall) => Promise<Response> {
+  return (call) =>
+    new Promise<Response>((resolve, reject) => {
+      const signal = call.init.signal;
+      held.push({ url: call.url, signal, answer: (text) => resolve(new Response(text)) });
+      signal?.addEventListener("abort", () =>
+        reject(new DOMException("The operation was aborted.", "AbortError")),
+      );
+    });
+}
+
+/** The `i`th request `held` caught, or a failure naming the ones it did. */
+export function heldAt(held: Held[], i: number): Held {
+  const h = held[i];
+  if (!h) throw new Error(`no request #${i} was made; made: ${held.map((x) => x.url).join(", ")}`);
+  return h;
 }
