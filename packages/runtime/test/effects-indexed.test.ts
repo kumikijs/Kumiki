@@ -163,6 +163,16 @@ describe("indexed-* happy path with in-memory mock", () => {
     expect(r.value).toMatchObject({ _tag: "None" });
   });
 
+  it("gives back a Bytes and a non-finite number inside the written record as themselves", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-clone" };
+    const value = { data: new Uint8Array([104, 105]), ratio: Number.POSITIVE_INFINITY };
+    expect((await indexedWrite({ store: "notes", key: "a", value }, localCfg)).kind).toBe("ok");
+    expect(await indexedRead({ store: "notes", key: "a" }, localCfg)).toStrictEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: { ...value, id: "a" } },
+    });
+  });
+
   it("indexedRead falls back to query when no key is given", async () => {
     const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-3" };
     await indexedWrite({ store: "notes", key: "a", value: { body: "1" } }, localCfg);
@@ -301,7 +311,8 @@ function makeMockIndexedDb(): IDBFactory {
         keyPath: "id",
         get: (key: string) => makeRequest(store.get(key)),
         put: (record: { id: string }) => {
-          store.set(record.id, record);
+          // IndexedDB keeps a structured clone of the record, not the record itself.
+          store.set(record.id, structuredClone(record));
           return makeRequest(undefined);
         },
         delete: (key: string) => {

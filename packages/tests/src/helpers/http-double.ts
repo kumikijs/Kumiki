@@ -1,4 +1,6 @@
-import { vi } from "vitest";
+import type { AppShape } from "@kumikijs/runtime";
+import { expect, vi } from "vitest";
+import { click, mountApp, waitUntil } from "./dom.ts";
 
 export type FetchCall = { url: string; init: RequestInit };
 
@@ -27,6 +29,29 @@ export function stubFetch(
       globalThis.fetch = original;
     },
   };
+}
+
+/**
+ * Mount `app` with `fetch` answering `respond`, click the button whose whole text is `button`, and
+ * return the one request that click made. `fetch` is put back before this returns.
+ */
+export async function sentRequest(
+  app: AppShape,
+  button: string,
+  respond: () => Response,
+): Promise<FetchCall> {
+  const double = stubFetch(respond);
+  const { root, handle } = mountApp(app);
+  try {
+    click(root, button);
+    await waitUntil(() => double.calls.length > 0);
+  } finally {
+    handle.dispose();
+    root.remove();
+    double.restore();
+  }
+  expect(double.calls).toHaveLength(1);
+  return double.calls[0] as FetchCall;
 }
 
 /**

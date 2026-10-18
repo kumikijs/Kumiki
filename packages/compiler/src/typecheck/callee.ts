@@ -7,6 +7,7 @@ import {
   typeMemberQualifier,
   UNIMPLEMENTED_CALLS,
 } from "../builtin-calls.ts";
+import { BUILTIN_TILES } from "../builtins.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
@@ -116,12 +117,11 @@ export function checkCallee(
     return;
   }
   if (!fn) {
-    errors.push({
-      code: "E0116",
-      kind: "undef-call",
-      message: `Call to undefined function "${callee}"`,
-      pos,
-    });
+    // A builtin tile's name is spelled right: what is wrong is where it is written.
+    const message = BUILTIN_TILES.has(callee)
+      ? `"${callee}" is a tile, and a tile renders only as a positional argument of a builtin other than the value builtins`
+      : `Call to undefined function "${callee}"`;
+    errors.push({ code: "E0116", kind: "undef-call", message, pos });
     return;
   }
   if (fn.params.length !== argCount) {
