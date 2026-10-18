@@ -188,7 +188,7 @@ export async function replayCmd(
     console.log(`(stopped at step ${report.stoppedAt})`);
   }
   const notReplayed = report.entryReducersMissing;
-  console.log(`\n${episodes.length - notReplayed.length} episode(s) replayed`);
+  console.log(`\n${report.replayed} episode(s) replayed`);
   if (notReplayed.length > 0) {
     const formatted = notReplayed.map((m) => `${m.episodeId}: ${m.message}`).join("; ");
     console.error(`not replayed: ${formatted}`);

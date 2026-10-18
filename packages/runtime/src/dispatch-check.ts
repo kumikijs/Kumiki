@@ -1,16 +1,9 @@
 import { nearestName } from "./text-distance.ts";
 
-/**
- * What a tier says about a reducer name that none of `names` matches: the
- * name as written, and the nearest declared one when one is close enough.
- */
+/** The words a `{dispatch}` step and a replayed episode both use for a reducer name none of `names` matches. */
 export function noReducerNamed(written: string, names: Iterable<string>): string {
   const near = nearestName(written, names);
   const hint = near === null ? "" : ` — did you mean "${near}"?`;
-  // The written name is quoted for the same reason `clickText`'s refusal
-  // quotes its text: it came from a fixture, and trailing whitespace or a
-  // stray character in it is invisible unquoted — which is the typo a reader
-  // is here to find.
   return `no reducer named "${written}"${hint}`;
 }
 

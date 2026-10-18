@@ -9,7 +9,7 @@
       }
     },
     {
-      "label": "the renamed reducer runs on a click",
+      "label": "a click runs inc",
       "do": { "clickText": "+" },
       "expect": {
         "noErrors": true,
