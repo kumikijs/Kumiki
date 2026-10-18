@@ -1,5 +1,5 @@
-# Feature (stdlib.md): `sort` orders a `List(Float)` as
-# numbers whatever values it holds.
+# Feature (stdlib.md): `sort` orders a `List(Float)` as numbers,
+# `Infinity`, `-Infinity` and `NaN` included.
 #
 #   List(T).sort : List(T)   ; T is Ord; ascending, as < orders it
 #
