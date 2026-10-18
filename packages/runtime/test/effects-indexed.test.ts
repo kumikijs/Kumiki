@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type IndexedDbCfg,
   indexedDelete,
@@ -35,11 +35,71 @@ describe("indexed-* unavailable backend", () => {
     (globalThis as { indexedDB?: unknown }).indexedDB = original;
   });
 
-  it("indexedRead reports a clean error when indexedDB is missing", async () => {
+  it("indexedRead reports a clean error when indexedDB is missing, and does not keep it", async () => {
     // A fresh cfg avoids hitting the cached open() promise from earlier tests.
     const localCfg: IndexedDbCfg = { ...cfg, name: "missing-db" };
     const r = await indexedRead({ store: "notes", key: "a" }, localCfg);
     expect(r).toEqual({ kind: "err", value: expect.stringMatching(/IndexedDB is not available/) });
+
+    (globalThis as { indexedDB?: unknown }).indexedDB = makeMockIndexedDb();
+    expect((await indexedRead({ store: "notes", key: "a" }, localCfg)).kind).toBe("ok");
+  });
+
+  it("an open() that throws is that call's err, and the next call opens again", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "insecure-db" };
+    (globalThis as { indexedDB?: unknown }).indexedDB = {
+      open(): never {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    };
+    expect(await indexedRead({ store: "notes", key: "a" }, localCfg)).toEqual({
+      kind: "err",
+      value: "SecurityError: The operation is insecure.",
+    });
+
+    (globalThis as { indexedDB?: unknown }).indexedDB = makeMockIndexedDb();
+    expect((await indexedRead({ store: "notes", key: "a" }, localCfg)).kind).toBe("ok");
+  });
+});
+
+describe("indexed-* effects that start while the open is pending", () => {
+  const original = (globalThis as { indexedDB?: unknown }).indexedDB;
+  afterEach(() => {
+    (globalThis as { indexedDB?: unknown }).indexedDB = original;
+    vi.restoreAllMocks();
+  });
+
+  it("share an open that reports blocked, which then succeeds", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const idb = scriptedIndexedDb(["blocked"]);
+    const localCfg: IndexedDbCfg = { ...cfg, name: "blocked-db", version: 2 };
+    const reads = await Promise.all([
+      indexedRead({ store: "notes", key: "a" }, localCfg),
+      indexedRead({ store: "notes", key: "b" }, localCfg),
+    ]);
+    expect(reads.map((r) => r.kind)).toEqual(["ok", "ok"]);
+    expect(idb.opens).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      'kumiki: app.indexed-db "blocked-db" upgrade 1 -> 2 is blocked by other open connections; indexed-* effects wait until they close',
+    );
+  });
+
+  it("share an open that fails, and the call after them opens again", async () => {
+    const idb = scriptedIndexedDb(["error", "success"]);
+    const localCfg: IndexedDbCfg = { ...cfg, name: "failing-db" };
+    const reads = await Promise.all([
+      indexedRead({ store: "notes", key: "a" }, localCfg),
+      indexedRead({ store: "notes", key: "b" }, localCfg),
+    ]);
+    expect(reads).toEqual([
+      { kind: "err", value: "UnknownError: the open failed" },
+      { kind: "err", value: "UnknownError: the open failed" },
+    ]);
+    expect(idb.opens).toBe(1);
+
+    expect((await indexedRead({ store: "notes", key: "a" }, localCfg)).kind).toBe("ok");
+    expect(idb.opens).toBe(2);
   });
 });
 
@@ -112,6 +172,16 @@ describe("indexed-* happy path with in-memory mock", () => {
     expect(r.value).toMatchObject({ _tag: "None" });
   });
 
+  it("gives back a Bytes and a non-finite number inside the written record as themselves", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-clone" };
+    const value = { data: new Uint8Array([104, 105]), ratio: Number.POSITIVE_INFINITY };
+    expect((await indexedWrite({ store: "notes", key: "a", value }, localCfg)).kind).toBe("ok");
+    expect(await indexedRead({ store: "notes", key: "a" }, localCfg)).toStrictEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: { ...value, id: "a" } },
+    });
+  });
+
   it("indexedRead falls back to query when no key is given", async () => {
     const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-3" };
     await indexedWrite({ store: "notes", key: "a", value: { body: "1" } }, localCfg);
@@ -123,6 +193,63 @@ describe("indexed-* happy path with in-memory mock", () => {
     expect((r.value as unknown[]).length).toBe(2);
   });
 });
+
+type Opening = "success" | "blocked" | "error";
+
+/**
+ * Each `open()` answers with the next entry of `script`, the last one repeating, after a timer so
+ * that calls made together are all pending at once. `blocked` comes before a later success on the
+ * same request, as the IndexedDB open steps send it, and the success is `makeMockIndexedDb`'s.
+ */
+function scriptedIndexedDb(script: Opening[]): { opens: number } {
+  const inner = makeMockIndexedDb();
+  const double = { opens: 0 };
+  const call = (target: object, handler: unknown, ev: Event): void => {
+    if (typeof handler === "function") handler.call(target, ev);
+  };
+  const factory = {
+    open(name: string, version: number): object {
+      const how = script[Math.min(double.opens, script.length - 1)];
+      double.opens++;
+      const req: Record<string, unknown> = {
+        result: undefined,
+        error: null,
+        transaction: null,
+        onsuccess: null,
+        onerror: null,
+        onblocked: null,
+        onupgradeneeded: null,
+      };
+      const succeed = (): void => {
+        const real = inner.open(name, version);
+        real.onupgradeneeded = (ev) => {
+          req.result = real.result;
+          req.transaction = real.transaction;
+          call(req, req.onupgradeneeded, ev);
+        };
+        real.onsuccess = (ev) => {
+          req.result = real.result;
+          call(req, req.onsuccess, ev);
+        };
+      };
+      setTimeout(() => {
+        if (how === "error") {
+          req.error = new DOMException("the open failed", "UnknownError");
+          call(req, req.onerror, new Event("error"));
+        } else if (how === "blocked") {
+          const ev = Object.assign(new Event("blocked"), { oldVersion: 1, newVersion: version });
+          call(req, req.onblocked, ev);
+          setTimeout(succeed, 20);
+        } else {
+          succeed();
+        }
+      });
+      return req;
+    },
+  };
+  (globalThis as { indexedDB?: unknown }).indexedDB = factory;
+  return double;
+}
 
 function makeMockIndexedDb(): IDBFactory {
   const dbs = new Map<string, Map<string, Map<string, unknown>>>();
@@ -193,7 +320,8 @@ function makeMockIndexedDb(): IDBFactory {
         keyPath: "id",
         get: (key: string) => makeRequest(store.get(key)),
         put: (record: { id: string }) => {
-          store.set(record.id, record);
+          // IndexedDB keeps a structured clone of the record, not the record itself.
+          store.set(record.id, structuredClone(record));
           return makeRequest(undefined);
         },
         delete: (key: string) => {

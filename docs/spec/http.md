@@ -343,7 +343,7 @@ effect storage-read   cap=storage.read
                       out=Result(Option(Decoded), Text)
 
 effect storage-write  cap=storage.write
-                      in={key: Text, value: JsonValue}
+                      in={key: Text, value: T}
                       out=Result(Unit, Text)
 
 effect storage-remove cap=storage.write
@@ -357,11 +357,13 @@ effect storage-clear  cap=storage.write
 
 A clear is decided by the declaration: an effect declared `in=Unit` (directly or through an alias) with no `map-request` empties the storage, and the storage is the **whole origin's** localStorage, not only the keys this app wrote. Every other `storage.write` is a write or a remove, told apart by the request (the effect's input, or what `map-request` builds): a record with a `key` and no `value` field removes that key (a later `storage-read` answers `Ok(None)`), and a record with a `value` field writes it. The value itself does not matter: `None`, `[]` and a record are all written.
 
-A request that is none of these is `err` and changes nothing: one that is not a record (an empty request included), a `key` that is not a non-empty `Text`, or a `value` that JSON cannot encode. A failed Web Storage call (quota, `SecurityError`) is also `err`, and its message names the call and the key. A host provider for `storage.write` ([§2.5](./stdlib.md#_2-5-standard-capabilities)) receives the request as the effect's input or `map-request` built it, and receives no request for a clear.
+A request that is none of these is `err` and changes nothing: one that is not a record (an empty request included), a `key` that is not a non-empty `Text`, or a `value` field that is present but holds no value (`undefined`). A failed Web Storage call (quota, `SecurityError`) is also `err`, and its message names the call and the key. A host provider for `storage.write` ([§2.5](./stdlib.md#_2-5-standard-capabilities)) receives the request as the effect's input or `map-request` built it, and receives no request for a clear.
 
-A stored value is text, and the read's decoder reads it as [6.1.4](#_6-1-4-the-decoder-type) reads a response body: `Decoder.Json(T)`, and a read with no `decode`, parse it as JSON; `Decoder.Text` delivers the stored text as it is; `Decoder.Bytes` delivers its UTF-8 bytes; `Decoder.None` delivers `Unit`, so the read answers only whether the key is there. A missing key is `Ok(None)` whatever the decoder. `storage-write` stores its value as JSON, so what it wrote is read back by `Decoder.Json`: a `Text` it wrote reads under `Decoder.Text` as its JSON, quotes included (`"dark"`). A plain text another writer stored (`dark`) is read by `Decoder.Text`. A `decode` that is no decoder makes the read `.err` with a `Text` naming it.
+**The stored form.** A value JSON can hold is stored as its JSON text: `{n: 1}` is stored as `{"n":1}`. A value holding a `Bytes`, a non-finite number (`NaN`, `Infinity`, `-Infinity`) or a negative zero anywhere in it is stored in the **tagged form**: `~` followed by the value's JSON, in which each `Bytes` is written `{"$bytes": "<its base64>"}`, each such number `{"$float": "NaN"}` (or `"Infinity"`, `"-Infinity"`, `"-0"`), and each key of an object in the value (a tag's own key aside) that starts with `$`, as a `Map(Text, V)` key or a `Set(Text)` member can, is written with one more `$` in front. Escaped, such a key starts with `$$`, so in the tagged form only a tag is an object whose key starts with a single `$`. For example, `{data: Bytes.from-text("hi"), ratio: 1.0 / 0.0}` is stored as `~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}`, and `storage-read` gives back the same two bytes and `Infinity`. No JSON text starts with `~`, so a read tells the two forms apart by the first character, and an entry stored as JSON reads back as that JSON, whichever build wrote it: a stored `{"$bytes":"aGk="}` is the one-entry `Map(Text, Text)` it was written from, not a `Bytes`.
 
-A stored text that does not parse as JSON, and a value the read's `Decoder.Json(T)` refuses (checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response), each make the read `.err` with a `Text` starting `decode failed:`. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
+The read's decoder reads the stored text as [6.1.4](#_6-1-4-the-decoder-type) reads a response body: `Decoder.Json(T)`, and a read with no `decode`, decode the stored form, as the next paragraph says; `Decoder.Text` delivers the stored text as it is, and `Decoder.Bytes` its UTF-8 bytes, so neither reads the tagged form and a value stored in it reads with its leading `~`; `Decoder.None` delivers `Unit`, so the read answers only whether the key is there. A missing key is `Ok(None)` whatever the decoder. `storage-write` stores its value as JSON (or in the tagged form), so what it wrote is read back by `Decoder.Json`: a `Text` it wrote reads under `Decoder.Text` as its JSON, quotes included (`"dark"`). A plain text another writer stored (`dark`) is read by `Decoder.Text`. A `decode` that is no decoder makes the read `.err` with a `Text` naming it.
+
+`Decoder.Json(T)`, and a read with no `decode`, decode the stored text by its form. In the tagged form, an object with a key that starts with a single `$` is a tag and nothing else: `{"$bytes": …}` holding standard base64 with its padding, or `{"$float": …}` holding `"NaN"`, `"Infinity"`, `"-Infinity"` or `"-0"`, with no other key. A stored text that is not JSON, or a tagged text with anything else where a tag belongs, does not decode, and the read is `.err` with a `Text` starting `decode failed:` that names the key and the storage. When the read's `Decoder.Json(T)` refuses the value it decoded, checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response, the read is `.err` with a `Text` starting `decode failed:` too. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
 
 **The err value is the declared `Text`.** A storage / session / indexed effect that fails delivers the failure's message as a plain `Text` — `"SecurityError: …"` when a read finds the backend blocked, the message naming the call and the key when a write does, `"app.indexed-db is not declared"` when an `indexed-*` effect runs without one — not a record wrapping it. A throw from the effect's `map-request`, or from a host provider registered for the capability, is delivered as the same `Text`. So `.err($e, _)` binds `$e : Text` ([Positional Binding](./language.md#_1-6-5-positional-binding)): `problem := $e` stores the message, and `$e.message` is E0108.
 
@@ -398,7 +400,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` has the same shape. `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`. `session-read` decodes as `storage-read` does. IndexedDB holds structured values rather than text, so no decoder reads anything on `indexed-read`: a record is delivered as it was stored, whichever decoder the read names. The `Decoder.Json(T)` check still runs, so a refused one is `.err` on `indexed-read` as on `storage-read`, and so is a `decode` that is no decoder.
+`session-*` has the same shape and the same stored form ([6.7.2](#_6-7-2-the-declarations-localstorage)), and `session-read` decodes as `storage-read` does. `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`. IndexedDB holds structured values rather than text, so no decoder reads anything on `indexed-read`: a record is delivered as it was stored, whichever decoder the read names. The `Decoder.Json(T)` check still runs, so a refused one is `.err` on `indexed-read` as on `storage-read`, and so is a `decode` that is no decoder. `indexed-*` has no tagged form: IndexedDB keeps a structured clone of the record `indexed-write` puts, so a `Bytes`, a non-finite number or a negative zero inside the written record comes back from `indexed-read` as itself. A `value` that is not a record has no place for the store's key and is not given back as written.
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read
@@ -406,7 +408,7 @@ effect indexed-read cap=indexed.read
                     out=Result(Option(Decoded), Text)
 
 effect indexed-write cap=indexed.write
-                     in={store: Text, key: Text, value: JsonValue}
+                     in={store: Text, key: Text, value: T}
                      out=Result(Unit, Text)
 
 effect indexed-query cap=indexed.read
@@ -428,6 +430,8 @@ app App
         ]
     }
 ```
+
+The first `indexed-*` effect that runs opens the database, and later effects share that connection, including those that start while it is still opening. An open that other connections block (another tab still holding an older `version`) waits until they close. Nothing times that wait out: the effects waiting on the open stay in flight until then, and the runtime reports the block with a console warning. An open that fails is `.err` for the effects waiting on it, and the next effect opens again. When another tab opens a newer `version`, the page closes its connection so that upgrade is not blocked. Its next effect opens again with the page's own `version`, which the upgraded database refuses: every `indexed-*` effect is `.err` (`VersionError: …`) until the page reloads. A connection the browser closes on its own (when site data is cleared, for instance) is not kept either: the next effect opens again.
 
 ---
 
