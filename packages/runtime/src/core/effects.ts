@@ -135,10 +135,20 @@ export function makeEffectDispatcher(
     const ctl = new AbortController();
     state.inflight.set(id, ctl);
     try {
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      onResult(eff.name, res.kind, res.value, input, token);
-    } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input, token);
+      let outcome: "ok" | "err";
+      let value: unknown;
+      try {
+        const res = await runWithRetry(eff, input, caps, ctl.signal);
+        outcome = res.kind;
+        value = res.value;
+      } catch (e) {
+        // An invoke that throws is this request's err, in the form `eff` fails with.
+        outcome = "err";
+        value = standInValue(eff, "err", { message: String(e) });
+      }
+      // Outside the catch: this is the request's one result, and what its delivery throws is
+      // the app's to report, not a second result.
+      onResult(eff.name, outcome, value, input, token);
     } finally {
       if (state.inflight.get(id) === ctl) {
         state.inflight.delete(id);
@@ -295,6 +305,17 @@ export function readStatus(value: unknown): number | null {
   if (!value || typeof value !== "object") return null;
   const s = (value as { status?: unknown }).status;
   return typeof s === "number" ? s : null;
+}
+
+// The value `.ok` / `.err` receives from a result that stands in for `eff`'s invoke: an err on
+// an effect that fails with `Text` reads through `eff.errText`, as that invoke's own err does.
+// Any other value goes through unchanged, and a missing one becomes `null`.
+export function standInValue(
+  eff: Pick<EffectSpec, "errText"> | undefined,
+  outcome: "ok" | "err",
+  value: unknown,
+): unknown {
+  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
 async function runWithRetry(

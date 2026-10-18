@@ -728,9 +728,13 @@ step が付く episode は、いま開いている episode ではなく、その
 
 `retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで再試行。指数バックオフは jitter ±20% を加える。
 
-### 10.4.5 結果の配送
+### 10.4.5 結果の配送 {#_10-4-5-delivery-of-results}
 
 effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` イベントとしてランタイムに通知。マッチする reducer が実行される。
+
+1 つのリクエストが配送する結果は**ちょうど 1 つ**である。invoke が例外を投げた場合は、それがそのリクエストの err になる。`Text` で失敗する effect（[http.md §6.7](./http.md#_6-7-storage-effects)）では、その `.err` reducer は投げられた値のテキストをその `Text` として受け取り、それ以外の effect では [stdlib.md §2.5](./stdlib.md#_2-5-standard-capabilities) の `{message: Text}` を受け取る。
+
+その結果を配送している最中に、結果が実行する reducer の本体の外で throw されたものは、2 つ目の結果ではない。そこで throw しうるのは、その reducer が emit したものの dispatch や、その後の描画である。リクエストはその時点ですでに 1 つの結果を受け取っているので、そのリクエストに対して `.err` reducer は実行されない。この throw はアプリのエラーであり、reducer の panic と同じように報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。報告先は `console.error`、結果が属する episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す（`effect "loadNote"`）。その結果に対する effect の他の reducer は、本体の panic の後と同じく、引き続き実行される。本体の中の panic は reducer の panic のままであり、`category` は `"reducer"`、`location` は `reducer "<name>"` となる。
 
 ### 10.4.6 標準 capability の実装
 
