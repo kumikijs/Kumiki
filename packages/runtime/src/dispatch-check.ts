@@ -1,5 +1,13 @@
 import { nearestNames } from "./text-distance.ts";
 
+/** The words a `{dispatch}` step and a replayed episode both use for a reducer name none of `names` matches. */
+export function noReducerNamed(written: string, names: Iterable<string>): string {
+  const near = nearestNames(written, names);
+  // A tie names every reducer in it, so declaration order does not answer what distance does not.
+  const hint = near.length === 0 ? "" : ` — did you mean ${orList(near)}?`;
+  return `no reducer named "${written}"${hint}`;
+}
+
 /** A reducer as a `{dispatch}` step sees it: its name, and the id it is scoped to. */
 export type DispatchTarget = {
   name: string;
@@ -14,13 +22,10 @@ export function dispatchFault(
 ): string | undefined {
   const target = targets.find((t) => t.name === written);
   if (!target) {
-    const near = nearestNames(
+    return noReducerNamed(
       written,
       targets.map((t) => t.name),
     );
-    // A tie names every reducer in it, so declaration order does not answer what distance does not.
-    const hint = near.length === 0 ? "" : ` — did you mean ${orList(near)}?`;
-    return `no reducer named "${written}"${hint}`;
   }
   if (target.id !== null && payload.id !== target.id) {
     return (

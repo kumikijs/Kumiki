@@ -49,7 +49,8 @@ a declared `fn` beside a built-in call one edit away from the same typo
 goes to the `fn`.
 
 The verification tiers' unknown-reducer message reads the same ranking and
-names every tied reducer, where it named the first one declared:
+names every tied reducer, where it named the first one declared. `kumiki replay`
+and `episode-test` give an episode whose entry reducer is gone the same words:
 
 ```
 action failed: no reducer named "add" — did you mean "addA" or "addB"?
