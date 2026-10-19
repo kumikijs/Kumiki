@@ -38,7 +38,9 @@ describe("Time.format and Time.parse", () => {
 
   it("reads text by Time.parse's grammar and no other", () => {
     const pattern = "yyyy-MM-dd HH:mm";
-    const noInstant = _stdlib.formatTime(Number.NaN, pattern);
+    // Every field of no instant is `NaN`, and `yyyy` pads it to four characters.
+    const noInstant = "0NaN-NaN-NaN NaN:NaN";
+    expect(_stdlib.formatTime(Number.NaN, pattern)).toBe(noInstant);
     for (const text of [
       "1",
       "12",
@@ -216,7 +218,8 @@ describe("Time.format and Time.parse", () => {
   });
 
   it("is None for text the platform's fallback parser reads as a day", () => {
-    // V8 reads each of these as a day in 2001; the answer must not depend on the engine.
+    // V8 reads each of these as a date; `Time.parse` reads only its own grammar, so the answer
+    // does not depend on the engine.
     for (const bad of [
       "1",
       "12",

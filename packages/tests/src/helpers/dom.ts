@@ -54,6 +54,13 @@ export function textAt(app: AppShape, path: string): string {
   return text;
 }
 
+/** The text of each element under `root` that has no child elements, in document order. */
+export function texts(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll("*"))
+    .filter((el) => el.children.length === 0)
+    .map((el) => el.textContent ?? "");
+}
+
 export const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Poll `done` every `pollMs` until it holds; throw once `timeoutMs` has passed. */

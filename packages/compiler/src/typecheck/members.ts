@@ -87,7 +87,7 @@ export function undefMemberError(
 }
 
 const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
-  Set: new Set(["to-list"]),
+  Set: new Set(["to-list", "filter"]),
   Map: new Set(["keys", "entries", "filter", "map"]),
 };
 

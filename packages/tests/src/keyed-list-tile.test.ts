@@ -1,7 +1,7 @@
 import { feature } from "@kumikijs/examples";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { click, freshRoot } from "./helpers/dom.ts";
+import { click, freshRoot, texts } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
 /** The element whose own text is `text`. */
@@ -11,13 +11,6 @@ function byText(root: HTMLElement, text: string): Element {
   );
   if (!el) throw new Error(`no element reads "${text}"`);
   return el;
-}
-
-/** The leaf texts, in document order. */
-function texts(root: HTMLElement): string[] {
-  return [...root.querySelectorAll("*")]
-    .filter((e) => e.children.length === 0)
-    .map((e) => e.textContent ?? "");
 }
 
 /** Mount the example, collecting every `console.error` until the test ends. */

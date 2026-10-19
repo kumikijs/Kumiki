@@ -1,15 +1,14 @@
 import { feature } from "@kumikijs/examples";
-import { _stdlib, mount, runScenario } from "@kumikijs/runtime";
+import { _stdlib, runScenario } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { waitUntil, withRoot } from "./helpers/dom.ts";
+import { freshRoot, texts, waitUntil, withMounted } from "./helpers/dom.ts";
 import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
 
-function lines(root: HTMLElement): string[] {
-  return Array.from(root.querySelectorAll("*"))
-    .filter((el) => el.children.length === 0)
-    .map((el) => el.textContent ?? "");
-}
+const PATTERN = "yyyy-MM-dd HH:mm";
+// What `format(PATTERN)` renders for a value that names no instant (stdlib.md §2.2.8).
+const NO_INSTANT = "0NaN-NaN-NaN NaN:NaN";
 
 describe("format reads a Time held as text by Time.parse's grammar", () => {
   let double: FetchDouble | undefined;
@@ -20,7 +19,7 @@ describe("format reads a Time held as text by Time.parse's grammar", () => {
   });
 
   it("renders each decoded text as Time.parse reads it, so digits are no instant", async () => {
-    const texts = [
+    const inputs = [
       "1",
       "2026",
       "20260307",
@@ -34,48 +33,35 @@ describe("format reads a Time held as text by Time.parse's grammar", () => {
       "2026-03-07T10:00:00Z",
       "2026-03-07T19:00:00+09:00",
     ];
-    const rows = texts.map((at, i) => ({ label: `row${i}`, at }));
+    const rows = inputs.map((at, i) => ({ label: `row${i}`, at }));
     double = stubFetch(() => new Response(JSON.stringify(rows)));
     const app = await loadApp(feature("198-time-from-text"));
-    await withRoot(async (root) => {
-      const { dispose } = mount(app, root);
-      try {
-        await waitUntil(() => lines(root).some((l) => l.startsWith(`row${texts.length - 1}: `)), {
-          timeoutMs: 3000,
-        });
-        const pattern = "yyyy-MM-dd HH:mm";
-        const noInstant = _stdlib.formatTime(Number.NaN, pattern);
-        texts.forEach((text, i) => {
-          const parsed = _stdlib.parseTime(text);
-          const expected =
-            parsed._tag === "Some" ? _stdlib.formatTime(parsed._0, pattern) : noInstant;
-          expect(lines(root), text).toContain(`row${i}: ${expected}`);
-        });
-        expect(lines(root)).toContain(`row0: ${noInstant}`);
-        expect(root.textContent).not.toContain("1969-12-31");
-        expect(root.textContent).not.toContain("1970-01-01");
-      } finally {
-        dispose();
-      }
+    await withMounted(app, async (root) => {
+      await waitUntil(() => texts(root).some((l) => l.startsWith(`row${inputs.length - 1}: `)), {
+        timeoutMs: 3000,
+      });
+      inputs.forEach((text, i) => {
+        const parsed = _stdlib.parseTime(text);
+        const expected =
+          parsed._tag === "Some" ? _stdlib.formatTime(parsed._0, PATTERN) : NO_INSTANT;
+        expect(texts(root), text).toContain(`row${i}: ${expected}`);
+      });
+      expect(texts(root)).toContain(`row0: ${NO_INSTANT}`);
+      expect(root.textContent).not.toContain("1969-12-31");
+      expect(root.textContent).not.toContain("1970-01-01");
     });
   });
 });
 
-describe("T.parse on a type over Time reads the same grammar", () => {
-  it("is None for the text the platform's parser reads as a day, and Some for ISO 8601", async () => {
+describe("format on a Time the program keeps in a Set", () => {
+  // A Set stores its elements as object keys, which are text; `filter` hands each one back as
+  // the number it was added as, so `format` reads the instant rather than the digits.
+  it("keeps an element whose year filter reads through format", async () => {
     const shape = await loadSource(`
-type Stamp = nominal Time
-slot digit   : Option(Stamp) = None
-slot words   : Option(Stamp) = None
-slot month   : Option(Stamp) = None
-slot weekday : Option(Stamp) = None
-slot utc     : Option(Stamp) = None
+slot days : Set(Time) = {}
+slot kept : Int = -1
 reducer go on=ui.click(Go)
-    do= digit   := Stamp.parse("1")
-        words   := Stamp.parse("hello 12")
-        month   := Stamp.parse("March 7")
-        weekday := Stamp.parse("Tue 5")
-        utc     := Stamp.parse("2026-03-07T10:00:00Z")
+    do= kept := days.add(1772877600000).filter($1.format("yyyy") == "2026").size
 tile Go = button(text="go")
 tile App = column(Go)
 app A
@@ -83,18 +69,10 @@ app A
     routes = {"/" -> App, "/404" -> App}
     init   = []
 `);
-    await withRoot(async (root) => {
-      const report = await runScenario(shape, root, {
-        steps: [{ do: { dispatch: "go" }, expect: { noErrors: true } }],
-      });
-      expect(report.ok, JSON.stringify(report.steps)).toBe(true);
-      expect(shape.live).toMatchObject({
-        digit: { _tag: "None" },
-        words: { _tag: "None" },
-        month: { _tag: "None" },
-        weekday: { _tag: "None" },
-        utc: { _tag: "Some", _0: Date.UTC(2026, 2, 7, 10) },
-      });
+    const report = await runScenario(shape, freshRoot(), {
+      steps: [{ do: { dispatch: "go" }, expect: { noErrors: true } }],
     });
+    expect(report.ok, failureDetail(report)).toBe(true);
+    expect(shape.live?.kept).toBe(1);
   });
 });

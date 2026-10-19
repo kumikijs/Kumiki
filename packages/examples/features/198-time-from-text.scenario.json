@@ -9,7 +9,7 @@
   },
   "steps": [
     {
-      "label": "text outside ISO 8601 is no instant; ISO 8601 text is the instant it names",
+      "label": "text outside Time.parse's grammar is no instant; text in it is the instant it names",
       "expect": {
         "noErrors": true,
         "state": {
@@ -22,8 +22,12 @@
           "local": "2026-03-07 10:00",
           "day": "2026-03-07 00:00"
         },
-        "domIncludes": ["1: none", "local: 2026-03-07 10:00", "iso: 2026-03-07 10:00"],
-        "domExcludes": ["digit: 1970-01-01", "digit: 1969-12-31"]
+        "domIncludes": [
+          "1: none",
+          "local: 2026-03-07 10:00",
+          "iso: 2026-03-07 10:00",
+          "digit: 0NaN-NaN-NaN NaN:NaN"
+        ]
       }
     }
   ]

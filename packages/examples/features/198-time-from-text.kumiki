@@ -12,7 +12,8 @@
 #
 # `stamps` is filled from a JSON payload whose `at` fields are text, which
 # `Decoder.Json` does not convert. `format` reads each one by the same grammar:
-# "1" is no instant there either, rather than a millisecond after the epoch.
+# "1" is no instant there either, rather than a millisecond after the epoch, so
+# it renders every field as NaN: "0NaN-NaN-NaN NaN:NaN".
 
 type Stamp = {label: Text, at: Time}
 
