@@ -148,11 +148,33 @@ describe("a generated value is a value of its for-all type", () => {
 
 describe("a shrunk counterexample is a value of its for-all type", () => {
   /** The counterexample a property that never holds is shrunk to. */
-  function minimal(vars: Record<string, GenDesc>): unknown {
-    const r = _stdlib.runPropertyTest({ name: "never", vars, trial: () => false, seed: 3 });
+  function minimal(vars: Record<string, GenDesc>, shrink = true): unknown {
+    const r = _stdlib.runPropertyTest({ name: "never", vars, trial: () => false, seed: 3, shrink });
     expect(r.pass).toBe(false);
     return JSON.parse((r.actual ?? "").replace(/^counterexample \(case \d+\/\d+\): /, ""));
   }
+
+  it("shrinks a form to a shorter value of the shape it was generated in", () => {
+    const { e } = minimal({ e: { t: "Text", form: "email" } }) as { e: string };
+    expect(e).toMatch(/^[a-z]@[a-z]\.example\.com$/);
+    const { u } = minimal({ u: { t: "Text", form: "url" } }) as { u: string };
+    expect(u).toMatch(/^https:\/\/[a-z]\.example\.com\/[a-z]$/);
+    const uuid: Record<string, GenDesc> = { id: { t: "Text", form: "uuid" } };
+    expect(minimal(uuid)).toEqual(minimal(uuid, false));
+  });
+
+  it("shrinks a one-of value through the literals listed before it", () => {
+    const vars: Record<string, GenDesc> = { size: { t: "Text", oneOf: ["xs", "sm", "md", "lg"] } };
+    const property = (shrink: boolean) =>
+      _stdlib.runPropertyTest({
+        name: "only-xs",
+        vars,
+        trial: (b) => b.size === "xs",
+        shrink,
+      });
+    expect(property(false).actual).toMatch(/\{"size":"(md|lg)"\}$/);
+    expect(property(true).actual).toMatch(/\{"size":"sm"\}$/);
+  });
 
   it("shrinks a bounded Int toward zero without leaving its bounds", () => {
     expect(minimal({ n: { t: "Int", min: 1, max: 9 } })).toEqual({ n: 1 });
@@ -264,5 +286,90 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
     });
     expect(r.pass).toBe(false);
     expect(r.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":2\}$/);
+  });
+
+  // Refused exactly when `step` is more than `count`.
+  const take: ReducerSpec = {
+    name: "take",
+    event: { kind: "ui", ev: "click" },
+    apply: (live) => ({
+      slots: { count: (live.count as number) - (live.step as number) },
+      emits: [],
+    }),
+  };
+  const takeApp = (): StepApp => {
+    const app = appWith("count", [0, 100], take);
+    app.slots.step = { value: 1 };
+    return app;
+  };
+  /** What `count` is after `take` runs on `count` and `step`; throws when it is refused. */
+  const after = (app: StepApp, count: unknown, step: unknown): number =>
+    _stdlib.runReducerStep(app, { slots: { count, step } }, "take", {}).slots.count as number;
+
+  it("shrinks an invariant failure only through trials in which every step ran", () => {
+    // n in 1..11 commits 0..10 and fails; n = 0 is refused, a failure of another kind.
+    const app = takeApp();
+    const r = _stdlib.runPropertyTest({
+      name: "take-stays-above-ten",
+      vars: { n: { t: "Int", min: 0, max: 100 } },
+      trial: (b) => after(app, b.n, 1) > 10,
+    });
+    expect(r.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":1\}$/);
+  });
+
+  it("shrinks a refused trial only among trials refused the same way", () => {
+    // The step-1 trial fails too, but with every step run: not the failure the refused case reports.
+    const app = takeApp();
+    const property = (shrink: boolean) =>
+      _stdlib.runPropertyTest({
+        name: "take-from-ten-lands-on-seven",
+        vars: { s: { t: "Int", min: 1, max: 50 } },
+        trial: (b) => after(app, 10, b.s) === 7,
+        shrink,
+      });
+    const generated = /\{"s":(\d+)\}/.exec(property(false).actual ?? "")?.[1];
+    const m = /^counterexample \(case \d+\/100\): \{"s":(\d+)\} — (.*)$/.exec(
+      property(true).actual ?? "",
+    );
+    const s = Number(m?.[1]);
+    expect(s).toBeGreaterThan(10);
+    expect(s).toBeLessThan(Number(generated));
+    expect(m?.[2]).toBe(
+      `reducer "take" was rejected: slot "count" cannot hold ${10 - s} (between(0, 100))`,
+    );
+  });
+
+  it("does not shrink a refused trial toward one refused for another slot", () => {
+    // `low` refuses s above 10 and `high` s below 20, so every trial is refused by one or both.
+    const between = (v: unknown) => typeof v === "number" && v >= 0 && v <= 100;
+    const slot = { value: 0, refine: between, refineKind: "between", refineArgs: [0, 100] };
+    const app: StepApp = {
+      live: {},
+      slots: { low: slot, high: slot, s: { value: 0 } },
+      reducers: [
+        {
+          name: "split",
+          event: { kind: "ui", ev: "click" },
+          apply: (live) => ({
+            slots: { low: 10 - (live.s as number), high: (live.s as number) - 20 },
+            emits: [],
+          }),
+        },
+      ],
+    };
+    const property = (shrink: boolean) =>
+      _stdlib.runPropertyTest({
+        name: "split-is-refused",
+        vars: { s: { t: "Int", min: 1, max: 50 } },
+        trial: (b) => {
+          _stdlib.runReducerStep(app, { slots: { s: b.s } }, "split", {});
+          return true;
+        },
+        shrink,
+      });
+    const generated = property(false).actual;
+    expect(generated).toMatch(/— reducer "split" was rejected: slot "low" cannot hold -\d+ \(/);
+    expect(generated).not.toContain('slot "high"');
+    expect(property(true).actual).toBe(generated);
   });
 });
