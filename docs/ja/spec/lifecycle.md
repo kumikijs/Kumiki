@@ -154,7 +154,7 @@ type PanicInfo = {
 }
 ```
 
-`category` は、runtime 側のどこでその失敗を捕捉したかを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路と、capability チェックが拒否した effect を指す `capability`（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）である —— `capability` だけは、何も throw されていない出来事を報告する値である。`effect` と `unknown` は予約値であり、今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするためにある。
+`category` は、runtime 側のどこでその失敗を捕捉したかを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路と、何も throw されていない出来事を報告する 2 つの値である。`effect` は dispatcher が実行できなかった emit — `app.effects` にその名前の effect が無いもの — を指し（[runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)）、`capability` は capability チェックが拒否した effect を指す（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）。`unknown` は予約値であり、今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするためにある。
 
 `episode-id` は panic が起きた episode を名指す（[runtime.md §10.5](./runtime.md#_10-5-episode-loop)）—— ユーザーが見た panic と、`kumiki replay` / `kumiki_episode_tail` が読み戻すものとを繋ぐ結合キーである。`Option(Text)` なのは、episode が常に開いているとは限らないからだ：episode logger を接続していないホストには名指すべき episode が無く、それに対する答えが `None` である。どの dispatch にも属さない場所で発生した panic —— 例えば初回描画で捕捉された描画 panic —— も同じである。
 
