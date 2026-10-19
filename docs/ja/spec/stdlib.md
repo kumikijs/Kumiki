@@ -467,7 +467,7 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 
 ## 2.4 ビルトイン関数 {#_2-4-builtin-functions}
 
-プログラムは以下の関数の名前で `fn` を宣言してよい。その場合、その名前の呼び出しはその `fn` の呼び出しとなり、`fn` のシグネチャで検査されて `fn` の本体を実行する。そのプログラムからビルトインには届かない（[言語 §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)）。`now` は予約語であり宣言できない。
+プログラムは `random`、`fmt`、`trace`、`panic`（以下）、または `file-url`（[フォーム §5.10](./forms.md#_5-10-file-upload)）/ `prefers-dark`（[スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従)）という名前の `fn` を宣言してよい。その場合、その名前の呼び出しはその `fn` に届き、`fn` のシグネチャで検査されて `fn` の本体を実行する。ただし reducer の `panic(message)` 文はビルトインのままである（[言語 §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)）。`now` は予約語であり宣言できない。
 
 ### 2.4.1 ID 生成
 

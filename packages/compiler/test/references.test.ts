@@ -222,6 +222,25 @@ tile B = button(text="b")
         "slot.count@3:53",
       ]);
     });
+
+    it("reads the chained `.run-reducer(r)` as no reducer once a fn has the name", () => {
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+      // The receiver is the fn's call, and `inc` is a value the walker finds no definition for.
+      expect(refsOf(src, "test.chain")).toEqual([
+        "slot.count@-",
+        "tile.B@8:73",
+        "fn.run-reducer@9:21",
+      ]);
+    });
   });
 
   describe("the app definition", () => {

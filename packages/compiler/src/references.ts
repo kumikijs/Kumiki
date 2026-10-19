@@ -210,7 +210,7 @@ class Walker {
       }
       case "MethodCall":
         this.expr(e.receiver, locals);
-        if (e.method === "run-reducer") {
+        if (e.method === RUN_REDUCER && callsBuiltin(e.method, (n) => this.index.fn.has(n))) {
           this.runReducerArg(e.args[0]);
           return;
         }

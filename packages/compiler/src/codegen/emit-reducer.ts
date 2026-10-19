@@ -1,6 +1,5 @@
 import type { Expr, Lvalue, ReducerDef, Statement } from "../ast.ts";
 import { assertNever } from "../ast.ts";
-import { callsBuiltin, RUN_REDUCER } from "../builtin-calls.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import {
   bindRef,
@@ -12,7 +11,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
-import { jsOfExpr, reducerEmitJs, reducerNameArg, slotReadJs, tupleArm } from "./expr.ts";
+import { jsOfExpr, reducerEmitJs, slotReadJs, tupleArm } from "./expr.ts";
 import { indexSegmentJs, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
@@ -123,85 +122,6 @@ export function collectEmits(stmts: Statement[]): string[] {
   };
   walk(stmts);
   return out;
-}
-
-/** Invoke `cb` with each `run-reducer(name)` target inside an expression. */
-export function scanRunReducers(
-  e: Expr | undefined,
-  declaresFn: (name: string) => boolean,
-  cb: (name: string) => void,
-): void {
-  if (!e) return;
-  if (e.kind === "Call" && e.callee === RUN_REDUCER && callsBuiltin(e.callee, declaresFn)) {
-    cb(reducerNameArg(e.args[0]));
-  }
-  if (e.kind === "MethodCall" && e.method === "run-reducer") cb(reducerNameArg(e.args[0]));
-  switch (e.kind) {
-    case "BinOp":
-      scanRunReducers(e.lhs, declaresFn, cb);
-      scanRunReducers(e.rhs, declaresFn, cb);
-      break;
-    case "UnaryOp":
-      scanRunReducers(e.rhs, declaresFn, cb);
-      break;
-    case "FieldAccess":
-      scanRunReducers(e.base, declaresFn, cb);
-      break;
-    case "Index":
-      scanRunReducers(e.base, declaresFn, cb);
-      scanRunReducers(e.index, declaresFn, cb);
-      break;
-    case "Call":
-      for (const a of e.args) scanRunReducers(a, declaresFn, cb);
-      break;
-    case "MethodCall":
-      scanRunReducers(e.receiver, declaresFn, cb);
-      for (const a of e.args) scanRunReducers(a, declaresFn, cb);
-      break;
-    case "RecordLit":
-      for (const f of e.fields) scanRunReducers(f.value, declaresFn, cb);
-      break;
-    case "ListLit":
-      for (const it of e.items) scanRunReducers(it, declaresFn, cb);
-      break;
-    case "MapLit":
-      for (const en of e.entries) {
-        scanRunReducers(en.key, declaresFn, cb);
-        scanRunReducers(en.value, declaresFn, cb);
-      }
-      break;
-    case "MatchExpr":
-      scanRunReducers(e.scrutinee, declaresFn, cb);
-      for (const a of e.arms) scanRunReducers(a.body, declaresFn, cb);
-      break;
-    case "IfExpr":
-      scanRunReducers(e.cond, declaresFn, cb);
-      scanRunReducers(e.consequent, declaresFn, cb);
-      scanRunReducers(e.alternate, declaresFn, cb);
-      break;
-    case "LetIn":
-      scanRunReducers(e.value, declaresFn, cb);
-      scanRunReducers(e.body, declaresFn, cb);
-      break;
-    case "Variant":
-      for (const p of e.payload) scanRunReducers(p, declaresFn, cb);
-      break;
-    case "TupleLit":
-      for (const it of e.items) scanRunReducers(it, declaresFn, cb);
-      break;
-    // Leaves, plus the two forms whose own arguments are walked above.
-    case "Num":
-    case "Str":
-    case "Bool":
-    case "Unit":
-    case "Ref":
-    case "Wildcard":
-    case "TokenRef":
-    case "EmitExpr":
-      break;
-    default:
-      assertNever(e);
-  }
 }
 
 export function genReducer(r: ReducerDef, gen: GenCtx): string {

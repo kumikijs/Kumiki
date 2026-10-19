@@ -65,8 +65,9 @@ what the test says rather than what it does.
 
 A slot is *readable* in a test body — the value is the one the slot holds — and
 a `for-all` name is in scope in both `given` and `invariant`, with the type its
-generator declares. `run-reducer(<reducer>)` takes a reducer name rather than a
-value, and only a property-test invariant may call it
+generator declares. In a program that declares no `fn run-reducer`
+([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)), `run-reducer(<reducer>)` takes a reducer name
+rather than a value, and only a property-test invariant may call it
 ([§8.3](#_8-3-property-tests)): it lowers to a read of the trial's bindings, so
 anywhere else the generated module dies before a single test reports.
 

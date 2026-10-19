@@ -460,7 +460,10 @@ export function methodCallJs(
   keyKind?: KeyKind,
   shape?: FragmentShape,
 ): string {
-  if (method === "run-reducer") {
+  if (
+    method === RUN_REDUCER &&
+    callsBuiltin(method, (name) => ctx.gen.fns.some((f) => f.name === name))
+  ) {
     return `_s.runReducerStep(App, ${jsOfExpr(recv, ctx)}, ${JSON.stringify(reducerNameArg(written[0]))}, _event)`;
   }
   const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);

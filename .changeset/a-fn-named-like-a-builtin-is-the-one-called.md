@@ -26,18 +26,19 @@ Each call ran the built-in instead: `fmt(3)` rendered `3`, `panic("x")`
 replaced the page with `Something went wrong: x`, and `run-reducer(3)` threw
 `_init is not defined`. The checker read some of the names as the built-in
 too: with `fn random() -> Int = 4`, `n := random()` into an `Int` slot was
-E0201 `Expected Int but got Float`, and a `fn random` or `fn panic` taking a
-different number of arguments was E0213 at every call.
+E0201 `Expected Int but got Float`, and a `fn` such as `fn random` or
+`fn panic` taking a different number of arguments was E0213 at every call.
 
 Now a `fn` the program declares wins over the built-in of its name. Every call
 of the name is checked against the `fn`'s signature and runs its body: in a
 tile, a reducer, another `fn`, a test body, and a fragment position that names
 the `fn` (`xs.map(fmt)`). The program above renders `custom 3`, `soft x` and
-`4`. The checker and code generation decide which a call is from one table of
-built-in callee names, so a built-in added later cannot take a call away from a
-`fn` on one side only.
+`4`. The checker and code generation decide from one table of built-in callee
+names whether a call is the built-in, so a built-in added later cannot take a
+call away from a `fn` on one side only.
 
 `run-reducer` in a property-test invariant is still the built-in where no `fn`
-has that name, and `panic("…")` written on its own as a reducer statement still
+has that name; with one declared, the chained `….run-reducer(r)` is E0801 rather
+than the built-in. `panic("…")` written on its own as a reducer statement still
 stops the reducer. `now` is a reserved word, so no `fn` can be named it. A
 program that declares none of these names builds exactly as before.

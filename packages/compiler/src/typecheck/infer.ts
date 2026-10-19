@@ -335,7 +335,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     }
     case "MethodCall": {
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
-      if (e.method === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
+      if (e.method === RUN_REDUCER && ctx.runReducerScope && isBuiltinCall(e.method, sym)) {
+        return runReducerState(sym, e.pos);
+      }
       const decided = receiverMemberResult(
         inferType(e.receiver, sym, ctx),
         e.method,

@@ -127,11 +127,11 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
         });
       }
     };
+    // With a `fn run-reducer` declared, neither spelling is the built-in (Language §1.8.5).
+    if (!isBuiltinCall(RUN_REDUCER, sym)) return;
     walkExpr(t.invariant, (n) => {
-      if (n.kind === "Call" && n.callee === RUN_REDUCER && isBuiltinCall(n.callee, sym)) {
-        checkRunReducer(n.args, n.pos);
-      }
-      if (n.kind === "MethodCall" && n.method === "run-reducer") checkRunReducer(n.args, n.pos);
+      if (n.kind === "Call" && n.callee === RUN_REDUCER) checkRunReducer(n.args, n.pos);
+      if (n.kind === "MethodCall" && n.method === RUN_REDUCER) checkRunReducer(n.args, n.pos);
     });
     return;
   }

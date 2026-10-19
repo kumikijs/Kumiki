@@ -265,6 +265,59 @@ test holds =
     expect(checkSource(declaring(name))).toEqual([]);
   });
 
+  // The same fn called the way no `(Int, Int) -> Int` accepts, so an empty answer cannot pass for
+  // a call checked against the fn: only its signature explains each diagnostic.
+  const misCalling = (name: string, call: string) => `slot a : Int = 0
+fn ${name}(x: Int, y: Int) -> Int = x + y
+reducer r on=ui.click(B) do= a := ${call}
+tile B = button(text="b")
+tile App = column(B, text(a.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  it.each(DECLARABLE)("reports a call to fn %s with one argument by the fn's arity", (name) => {
+    const found = checkSource(misCalling(name, `${name}(1)`));
+    expect(found.map((e) => `${e.code} ${e.message}`)).toEqual([
+      `E0213 Function "${name}" expects 2 argument(s) but got 1`,
+    ]);
+  });
+
+  it.each(DECLARABLE)("reports a Text argument to fn %s by the fn's parameter type", (name) => {
+    expect(codesOf(misCalling(name, `${name}("x", 1)`))).toEqual(["E0201"]);
+  });
+
+  it("gives a call to a declared fn fmt no W0214", () => {
+    const calling = (fn: string) => `slot t : Text = ""
+${fn}
+reducer r on=ui.click(B) do= t := fmt("{1}", 1)
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(calling(""))).toEqual(["W0214"]);
+    expect(checkSource(calling("fn fmt(t: Text, n: Int) -> Text = t + n.show"))).toEqual([]);
+  });
+
+  it("leaves the chained `.run-reducer(r)` no builtin once a fn has the name", () => {
+    const src = `fn run-reducer(x: Int) -> Int = x + 1
+slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+    expect(checkSource(src).map((e) => `${e.code} ${e.message}`)).toEqual([
+      'E0801 Method ".run-reducer" is not implemented by the runtime',
+      'E0103 Reference to undefined name "inc"',
+    ]);
+    expect(emit("run-reducer", src)).toContain('reducers: { total: ["inc"], used: [] }');
+  });
+
   it.each(DECLARABLE)("lowers every call to fn %s to the fn", (name) => {
     // A builtin lowers through `_s.`, which the look-behind leaves alone.
     const calls = new RegExp(`(?<![.\\w$])${jsBinding(name)}\\(`, "g");

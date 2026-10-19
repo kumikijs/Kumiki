@@ -215,7 +215,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
-      if (ctx.kind === "test" && e.method === "run-reducer") {
+      if (ctx.kind === "test" && e.method === RUN_REDUCER && isBuiltinCall(e.method, sym)) {
         checkExpr(e.receiver, sym, errors, ctx);
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
