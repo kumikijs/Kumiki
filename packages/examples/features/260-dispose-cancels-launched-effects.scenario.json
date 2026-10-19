@@ -1,0 +1,26 @@
+{
+  "effects": {
+    "loadQuote": [
+      {
+        "outcome": "err",
+        "value": { "status": 503, "message": "Service Unavailable", "body": "" }
+      },
+      { "outcome": "ok", "value": { "text": "Fresh quote", "author": "B" } }
+    ]
+  },
+  "steps": [
+    {
+      "label": "nothing loaded yet",
+      "expect": { "noErrors": true, "state": { "status": "idle" } }
+    },
+    {
+      "label": "the first attempt answers 503, so the request waits 500ms before its second; the scenario ends here, inside that wait, and disposing the app cancels the request",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "loading" },
+        "domIncludes": ["status: loading"]
+      }
+    }
+  ]
+}

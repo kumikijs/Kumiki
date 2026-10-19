@@ -1,0 +1,39 @@
+# Feature (runtime.md §10.4.7): disposing the app cancels every effect it
+# launched, and the episode of each commits before `dispose` returns.
+#
+#   kumiki run 260-dispose-cancels-launched-effects.kumiki \
+#       260-dispose-cancels-launched-effects.scenario.json --episode-log run.log.jsonl
+#   kumiki replay 260-dispose-cancels-launched-effects.kumiki \
+#       --from-log run.log.jsonl --mock 'loadQuote: from-log'
+#
+# `loadQuote` retries a 5xx once, 500ms later. The scenario clicks Load, the
+# first attempt answers 503, and the scenario ends inside the 500ms wait, so
+# the run disposes the app while the request is still waiting. Dispose ends
+# the wait and records an `effect-cancel` on the click's episode, which then
+# commits, before the run returns, so the log file holds it. The request makes
+# no second attempt and delivers nothing, so the episode has no `effect-end`
+# and no reducer runs after the click's. Replaying the log ends where the run
+# did, with `status` at "loading", not at a `.err` the run never reached.
+
+type Quote = {text: Text, author: Text}
+
+slot status : Text = "idle"
+
+effect loadQuote cap=http.get
+                 in=Unit
+                 out=Result(Quote, HttpError)
+                 retry=linear(2, 500ms)
+                 map-request={url: "/quote", decode: Decoder.Json(Quote)}
+
+reducer load   on=ui.click(LoadBtn)    do= status := "loading"
+                                           emit loadQuote()
+reducer loaded on=loadQuote.ok($q, _)  do= status := "quote: " + $q.text
+reducer failed on=loadQuote.err($e, _) do= status := "failed: " + $e.message
+
+tile LoadBtn = button(text="Load", onClick=load) {id: "load"}
+tile App = column(LoadBtn, text("status: " + status)) {pad: "lg", gap: "md"}
+
+app DisposeCancelsLaunchedEffects
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -730,7 +730,7 @@ step が付く episode は、いま開いている episode ではなく、その
 
 `retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで、policy が定める間隔を待って再試行する（[http.md §6.5](./http.md#_6-5-リトライ)）。
 
-試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも待機を終える（[http.md §6.5](./http.md#_6-5-リトライ)）。
+試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも、アプリが launch したすべての effect を終わらせるのと同じく、待機を終える（[§10.4.7](#_10-4-7-dispose)）。
 
 ### 10.4.5 結果の配送
 
@@ -753,6 +753,12 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 | `media.*` | MediaDevices API |
 | `geo.*` | Geolocation API |
 | `socket.*` | WebSocket |
+
+### 10.4.7 dispose
+
+アプリを dispose する（最後のビューを dispose する、[§10.9](#_10-9-ランタイム-api-埋め込み用)）と、dispatcher がまだ抱えている effect はすべて終わる。まだ発火していない `debounce` タイマーと、まだ始まっていない `queue` のエントリは launch されない。すでに launch された effect は、invoke がまだ走っていても、`retry=` の試行間で待機していても（[§10.4.4](#_10-4-4-retry)）、シグナルを通じて abort される。キャンセルによってすでに abort されたがまだ結果が戻っていない effect も同様である。これらはそれぞれ、自分の `effect-start` を確保した episode に `effect-cancel` step（`targetId = <effect-name>`）を残し、その episode は `effect-end` なしで `status="completed"` として、`dispose` が返る前に commit する。
+
+それ以降、アプリが launch したものは結果を届けない。アプリの dispose 後に答えた invoke は、abort を無視したものも含めて、`.ok` / `.err` reducer に届かず、step も残さず、未処理エラーとしても報告されない。したがって `dispose` が返った時点で、アプリが launch したすべての effect の episode は、アプリが止めたところで終わった形で commit 済みである。結果をログから取る replay（[§10.5.3](#_10-5-3-replay)）は、キャンセルされた effect の結果をログに見つけず、アプリが受け取らなかった結果を届けることはない。
 
 ---
 
@@ -802,7 +808,7 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 - localStorage に直近 M 件（デフォルト 20、サイズ上限 5MB）
 - 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し（`kumiki run` は `KUMIKI_EPISODE_LOG` からもパスを受け取る）
 
-`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わった後に commit する episode（invoke が abort で止まらずアプリの dispose 後も走り続ける effect のものなど）は書かれない（[#942](https://github.com/kumikijs/Kumiki/issues/942)）。`retry=` の backoff を待っている effect はこれに当たらない。アプリを dispose するとその待機は終わる（[http.md §6.5](./http.md#_6-5-リトライ)）ので、episode は実行が返る前に commit され、書かれる。
+`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わると、実行はアプリを dispose し、まだ走っている effect や `retry=` の backoff を待っている effect はすべてキャンセルされる（[§10.4.7](#_10-4-7-dispose)）。それらの episode は実行が返る前に、それぞれ `effect-cancel` で終わる形で commit されるので、ファイルにも書かれる。それらの effect がその後に答えたものは一切記録されない。
 
 ### 10.5.3 replay
 

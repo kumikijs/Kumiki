@@ -344,19 +344,19 @@ describe("a request waiting between retry attempts", () => {
     expect(error).not.toHaveBeenCalled();
   });
 
-  // What #942 leaves: the end is still recorded once the app is unmounted, as it is for a request
-  // in flight at unmount, but no reducer receives it.
-  it("records its aborted end at unmount, which no .err reducer receives", async () => {
+  it("records an effect-cancel at unmount before dispose returns, and no end after it", async () => {
     const logger = createEpisodeLogger();
     const a = open({ retry: { kind: "linear", n: 2, ms: 500 }, episodeLogger: logger });
     a.dispatch("go");
     await vi.advanceTimersByTimeAsync(100);
     a.dispose();
     disposeApp = undefined;
-    await vi.advanceTimersByTimeAsync(0);
-    expect(a.errs).toEqual([]);
     const steps = logger.list().flatMap((ep) => ep.steps);
-    expect(steps.at(-1)).toMatchObject({ kind: "effect-end", result: "err", value: ABORTED_HTTP });
+    expect(steps.at(-1)).toMatchObject({ kind: "effect-cancel", targetId: "load" });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(a.errs).toEqual([]);
+    expect(logger.list().flatMap((ep) => ep.steps)).toEqual(steps);
+    expect(steps.filter((st) => st.kind === "effect-end")).toEqual([]);
     expect(steps.filter((st) => st.kind === "reducer")).toHaveLength(1);
   });
 });
