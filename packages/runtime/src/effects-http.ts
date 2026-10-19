@@ -1,4 +1,4 @@
-import type { EffectResult } from "./core.ts";
+import { abortedHttpError, type EffectResult } from "./core.ts";
 import { type Decode, decodeOf, decodeRead, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
@@ -116,9 +116,7 @@ export async function httpFetch(
     };
   } catch (e) {
     const aborted = externallyAborted || isAbortError(e);
-    if (aborted) {
-      return { kind: "err", value: { status: 0, message: "aborted", body: "" } };
-    }
+    if (aborted) return { kind: "err", value: abortedHttpError() };
     return { kind: "err", value: { status: 0, message: String(e), body: "" } };
   } finally {
     clearTimeout(timer);
