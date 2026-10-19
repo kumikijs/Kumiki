@@ -317,6 +317,8 @@ effect loadCritical cap=http.get
 
 Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON or whose value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
 
+A request waiting between attempts stops waiting at once when it is cancelled: by `http.cancel` ([6.4](#_6-4-cancellation)), by a newer emit under `policy=latest`, or by a newer emit for the same key under `policy=latest-per-key`. Its `.err` fires right away, before any request emitted later can deliver its own result, and no further attempt is made; under `policy=queue`, the next entry starts at once instead of after the rest of the interval. That err is the `aborted` `HttpError` of [6.4.1](#_6-4-1-behavior) on an `http.*` effect, the `Text` `"aborted"` on a capability that fails with `Text` ([6.7](#_6-7-storage-effects)), and `{message: "aborted"}`, the shape an invoke that throws delivers ([stdlib §2.5](./stdlib.md#_2-5-standard-capabilities)), on any other capability. Unmounting the app ends the wait too, with no further attempt; nothing is delivered, as no reducer runs once the app is unmounted. A request that is neither cancelled nor unmounted waits out every interval in full.
+
 ---
 
 ## 6.6 High-Level Wrappers
