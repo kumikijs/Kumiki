@@ -25,15 +25,7 @@ import {
   genValue,
   shrinkCounterexample,
 } from "./testkit/generate.ts";
-import {
-  type EnvDrift,
-  executeEpisode,
-  type ReplayApp,
-  type ReplayObserver,
-  resetLiveFromSlots,
-  type SlotMetaLike,
-  seedRoute,
-} from "./testkit/replay.ts";
+import { type ReplayApp, replayEpisodes, type SlotMetaLike, seedRoute } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
@@ -241,18 +233,19 @@ export const _stdlibTest = {
     };
   }): TestResult {
     const { name, app, episodes, mocks, expect } = input;
-    resetLiveFromSlots(app);
+    const report = replayEpisodes({ app, episodes, mocks, observer: () => "continue" });
 
-    const panics: { episodeId: string; message: string }[] = [];
-    const unhandledErrors: string[] = [];
-    const stepCounter = { n: 0 };
-    const observer: ReplayObserver = () => "continue";
-    const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
-
-    for (const ep of episodes) {
-      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
-      for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
-      for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
+    // Ahead of every `expect`: an episode that was not replayed moved no slot and raised
+    // nothing, so each expectation would be judged on its absence, and a slot mismatch
+    // would name the symptom rather than the missing reducer.
+    if (report.entryReducersMissing.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "every episode replayed",
+        actual: report.entryReducersMissing.map((m) => `${m.episodeId}: ${m.message}`).join("; "),
+        diffAt: "episodes",
+      };
     }
 
     let expectedSlots: Record<string, unknown> | null = null;
@@ -285,21 +278,21 @@ export const _stdlibTest = {
         }
       }
     }
-    if (expect.noPanics && panics.length > 0) {
+    if (expect.noPanics && report.panics.length > 0) {
       return {
         name,
         pass: false,
         expected: "no panics",
-        actual: panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
+        actual: report.panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
         diffAt: "panics",
       };
     }
-    if (expect.noErrors && unhandledErrors.length > 0) {
+    if (expect.noErrors && report.unhandledErrors.length > 0) {
       return {
         name,
         pass: false,
         expected: "no unhandled effect errors",
-        actual: unhandledErrors.join(", "),
+        actual: report.unhandledErrors.map((u) => u.effect).join(", "),
         diffAt: "errors",
       };
     }
