@@ -153,30 +153,37 @@ export function makeEffectDispatcher(
       if (!eff) return;
       if (eff.cap === "http.cancel") {
         const named = String(emit.args[0] ?? "");
+        // The episode records a cancel only when it released something; the reducer step's
+        // `emits` already says it was emitted.
+        let released = false;
         if (named.length > 0) {
           const target = state.absorbedBy.get(named) ?? named;
           const ic = state.inflight.get(target);
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+            released = true;
           }
           for (const [name, q] of state.queues) {
             const i = q.pending.findIndex((e) => e.id === target);
             if (i === -1) continue;
             const [e] = q.pending.splice(i, 1);
             if (e?.token) onPolicyCancel?.(e.token, name);
+            released = true;
             break;
           }
+          // A throttle timer marks an open window, not a pending launch, so it is not released.
           for (const [name, t] of state.timers) {
             if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
             state.timers.delete(name);
+            released = true;
             if (t.token) onPolicyCancel?.(t.token, name);
             break;
           }
           settle(target);
-          onCancel?.(named);
         }
+        if (released) onCancel?.(named);
         return;
       }
       const input = emit.args[0];
