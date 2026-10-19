@@ -6,6 +6,7 @@ import {
   readControl,
   StepRefusal,
 } from "./control-check.ts";
+import { standInValue } from "./core.ts";
 import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
@@ -21,7 +22,6 @@ import {
   validateScenario,
 } from "./scenario/vocabulary.ts";
 import { submitFault } from "./submit-check.ts";
-import { standInValue } from "./testkit.ts";
 
 export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
 
