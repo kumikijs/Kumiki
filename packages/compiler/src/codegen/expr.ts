@@ -1,6 +1,6 @@
-import type { Expr, FragmentShape, KeyKind, Pattern, Pos, TypeExpr } from "../ast.ts";
+import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
+import { decodedType } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
-import { PRIM_TYPES } from "../parser.ts";
 import {
   addBind,
   bindRef,
@@ -20,27 +20,6 @@ export function reducerNameArg(e: Expr | undefined): string {
   if (e?.kind === "Ref") return e.name;
   if (e?.kind === "Variant") return e.name;
   return "";
-}
-
-function decodedType(e: Expr | undefined): TypeExpr | undefined {
-  if (e?.kind === "Variant") {
-    if (e.payload.length === 0) {
-      return PRIM_TYPES.has(e.name)
-        ? { kind: "TypePrim", name: e.name as "Text", pos: e.pos }
-        : { kind: "TypeRef", name: e.name, pos: e.pos };
-    }
-    const args = e.payload.map(decodedType);
-    if (!args.every((a): a is TypeExpr => a !== undefined)) return undefined;
-    return { kind: "TypeApp", name: e.name, args, pos: e.pos };
-  }
-  if (e?.kind === "RecordLit") {
-    const fields = e.fields.map((f) => ({ name: f.name, type: decodedType(f.value), pos: f.pos }));
-    if (!fields.every((f): f is { name: string; type: TypeExpr; pos: Pos } => !!f.type)) {
-      return undefined;
-    }
-    return { kind: "TypeRecord", fields, pos: e.pos };
-  }
-  return undefined;
 }
 
 function requiredArg(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
@@ -683,8 +662,9 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
 }
 
 export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
-  const { stmts, idJs } = reducerEmitJs(e.effect, e.args, ctx);
-  return `((() => { ${stmts} return ${idJs}; })())`;
+  const { binds, record } = reducerEmitJs(e.effect, e.args, ctx);
+  const spec = `_effects[${JSON.stringify(e.effect)}]`;
+  return `((() => { ${binds}const __e = ${record}; _emits.push(__e); return (__e.id = _s.emitId(${spec}, __e)); })())`;
 }
 
 export function slotReadJs(name: string, reducerScope: boolean | undefined): string {
@@ -698,23 +678,20 @@ export function reducerEmitJs(
   effect: string,
   args: Expr[],
   ctx: EvalCtx,
-): { stmts: string; idJs: string } {
+): { binds: string; record: string } {
   const effectJson = JSON.stringify(effect);
   const policy = ctx.gen.effects.find((d) => d.name === effect)?.policy;
   if (policy?.kind !== "PolLatestKey") {
     const argsJs = args.map((a) => jsOfExpr(a, ctx)).join(", ");
-    return {
-      stmts: `_emits.push({ effect: ${effectJson}, args: [${argsJs}] });`,
-      idJs: JSON.stringify(`${effect}:_`),
-    };
+    return { binds: "", record: `{ effect: ${effectJson}, args: [${argsJs}] }` };
   }
   const argBinds = args.map((a, i) => `const __a${i} = ${jsOfExpr(a, ctx)};`).join(" ");
   const argRefs = args.map((_, i) => `__a${i}`).join(", ");
   const inputRef = args[0] ? "__a0" : "null";
   const keyJs = `${policyKeyOfJs(policy.key, ctx.gen, true)}(${inputRef})`;
   return {
-    stmts: `${argBinds} const __k = ${keyJs}; _emits.push({ effect: ${effectJson}, args: [${argRefs}], key: __k });`,
-    idJs: `${JSON.stringify(`${effect}:`)} + __k`,
+    binds: `${argBinds} const __k = ${keyJs}; `,
+    record: `{ effect: ${effectJson}, args: [${argRefs}], key: __k }`,
   };
 }
 
