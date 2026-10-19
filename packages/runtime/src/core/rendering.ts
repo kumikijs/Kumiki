@@ -1,3 +1,5 @@
+import type { EpisodeLogger } from "../episode.ts";
+import { type PanicRecord, panicInfo } from "./panic.ts";
 import type { AppShape, MountedApp } from "./types.ts";
 
 const ROOT_ATTR = "data-kumiki-root";
@@ -63,26 +65,47 @@ export function withRenderingView<T>(view: Element, fn: () => T): T {
   }
 }
 
-type RenderEpisodeHost = {
-  __kumikiRenderEpisode__?: (() => string | undefined) | null | undefined;
-};
+/** `episodeId` is the episode the `panic` step landed on; `undefined` with no logger or no open episode. */
+export type RenderPanic = { rec: PanicRecord; episodeId: string | undefined };
 
-export function currentEpisodeId(): string | undefined {
-  return (globalThis as RenderEpisodeHost).__kumikiRenderEpisode__?.();
+/** Where a render pass records a panic caught inside it; `site` becomes the step's `location`. */
+export type RenderPanicSink = (e: unknown, site: string) => RenderPanic;
+
+export function recordRenderPanic(
+  logger: EpisodeLogger | null | undefined,
+  e: unknown,
+  site: string,
+): RenderPanic {
+  const rec = panicInfo(e, "tile-render");
+  return { rec, episodeId: logger?.recordPanic({ ...rec, location: site }) };
 }
 
-export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
+// On globalThis because a `bundle: true` app carries its own inlined runtime: the
+// `_s.boundaryPanic` that reports belongs to that copy, the `mount` that renders
+// to the tool's, and a module-local would record the panic nowhere.
+type RenderPanicHost = {
+  __kumikiRenderPanic__?: RenderPanicSink | null | undefined;
+};
+
+export function recordInRenderPass(e: unknown, site: string): RenderPanic {
+  const sink = (globalThis as RenderPanicHost).__kumikiRenderPanic__;
+  return sink ? sink(e, site) : recordRenderPanic(undefined, e, site);
+}
+
+// `panics` is the caller's rather than the app's: one compiled app can be
+// mounted more than once and rendered on the server besides, each with its own log.
+export function withRenderingApp<T>(app: AppShape, fn: () => T, panics?: RenderPanicSink): T {
   const prev = renderingApp;
-  const host = globalThis as RenderEpisodeHost;
-  const prevEpisode = host.__kumikiRenderEpisode__;
+  const host = globalThis as RenderPanicHost;
+  const prevPanics = host.__kumikiRenderPanic__;
   // Renders only run from mountCore, after the imperative seams are attached.
   renderingApp = app as MountedApp;
-  host.__kumikiRenderEpisode__ = (app as MountedApp)._episodeId;
+  host.__kumikiRenderPanic__ = panics;
   try {
     return fn();
   } finally {
     renderingApp = prev;
-    host.__kumikiRenderEpisode__ = prevEpisode;
+    host.__kumikiRenderPanic__ = prevPanics;
   }
 }
 
