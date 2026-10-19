@@ -781,6 +781,10 @@ A request cancelled during the wait between attempts ends the wait at once and m
 
 On effect completion, the result is notified to the runtime as an `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` event. The matching reducer is executed.
 
+A request delivers **exactly one** result. An invoke that throws is that request's err: on an effect that fails with `Text` ([http.md §6.7](./http.md#_6-7-storage-effects)) its `.err` reducer receives the thrown value's text as that `Text`, and on any other effect the `{message: Text}` of [stdlib.md §2.5](./stdlib.md#_2-5-standard-capabilities).
+
+What throws while that result is being delivered, past the body of a reducer it runs, is not a second result. The dispatch of what the reducer emitted can throw there, and so can the render after it. The request has its one result by then, so its `.err` reducers do not run for it. The throw is an error of the app, reported as a reducer panic is ([lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)): to `console.error`, as a `panic` step on the episode the result belongs to, and to `app.error`, under `category: "effect"` with a `location` naming the effect (`effect "loadNote"`). The effect's other reducers on that result still run, as they do after a panic in one's body. A panic inside the body stays a reducer panic, under `category: "reducer"` and `location: reducer "<name>"`.
+
 ### 10.4.6 Implementation of Standard Capabilities
 
 | capability | Implementation |
@@ -850,7 +854,7 @@ A `panic` step additionally carries:
 
 - `stack`: the `Error.stack` of the caught throw, when available.
 - `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
-- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the failure was caught, or for `capability` refused. Emitted by the reducer / tile-render / hydrate / capability sites today; `effect` and `unknown` are reserved values so consumers can exhaustive-switch as future callsites are wired in — a capability provider throw surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step, which is a different thing from the refusal `capability` names.
+- `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the failure was caught, or for `capability` refused. Emitted by the reducer / effect / tile-render / hydrate / capability sites today. `effect` is a throw past a reducer's body while it ran on an effect's result ([§10.4.5](#_10-4-5-delivery-of-results)), and its `location` names the effect. `unknown` is a reserved value so consumers can exhaustive-switch as future callsites are wired in. A capability provider throw surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step, which is a different thing from the refusal `capability` names and from the throw `effect` names.
 
 `stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. The `stack` and the cause **chain** are dev-tooling and stay here: the runtime never splats the `PanicRecord` into a user reducer `$event`. What a program is handed is the `PanicInfo` [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) declares — `message`, `location`, `category`, the id of this episode as `episode-id`, and `cause` as the **nearest** link's message alone, with no stack on it.
 

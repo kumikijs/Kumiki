@@ -633,6 +633,8 @@ The compiled bundle auto-mounts to `#root`; a host embedding the bundle can regi
 
 **Unhandled effect errors are surfaced, never silent.** An effect that resolves to `err` is delivered to every matching `.err` reducer. If a program wires **no** `.err` reducer for that effect, the dropped error is reported via `console.error` (`[kumiki] effect "<name>" returned an error with no .err reducer: …`), so the verification tiers (`smoke` / `runScenario`, which capture `console.error`) flag it — consistent with the live-panic model ([Error Handling](./lifecycle.md#_7-2-error-handling)). A failed capability must never look like a no-op: the storage-unavailable case (opaque-origin sandbox, private mode) is exactly this — `storage.read` / `storage.write` return `err`, and an app handling only `.ok` would otherwise silently do nothing. The default contract is therefore **`err` plus a surfaced report**; a program opts into handling (or deliberately ignoring) the error by wiring an `.err` reducer — even an empty one. An in-memory storage fallback is **not** the default behavior (it would paper over this contract); a host that wants one supplies it explicitly via a `storage.*` provider.
 
+**One result per request.** Each request delivers one result, so an `.err` reducer never runs for a request that got `.ok`. A throw while that `.ok` is being delivered, past the body of a reducer it runs, is an error of the app: it reaches `app.error` under `category: "effect"`, not an `.err` reducer ([runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)).
+
 ---
 
 ## 2.6 Standard Effects

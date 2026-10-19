@@ -397,7 +397,16 @@ export function mountCore(
     return { kind: "lifecycle", target: r.event.name };
   }
 
-  function applyReducer(r: ReducerSpec, payload: Record<string, unknown>): void {
+  /**
+   * Run `r` on `payload` inside an episode, opening one when none is open. A panic inside the
+   * body is reported by {@link applyReducerBody}. `escaped`, when given, takes what throws past
+   * the body, while that episode is still open; without it the throw goes on to the caller.
+   */
+  function applyReducer(
+    r: ReducerSpec,
+    payload: Record<string, unknown>,
+    escaped?: (e: unknown) => void,
+  ): void {
     if (disposed) return;
     const opened = episode && !episode.hasOpenEpisode();
     if (opened) {
@@ -406,6 +415,9 @@ export function mountCore(
     }
     try {
       applyReducerBody(r, payload);
+    } catch (e) {
+      if (!escaped) throw e;
+      escaped(e);
     } finally {
       if (opened) episode?.endTrigger();
     }
@@ -449,6 +461,17 @@ export function mountCore(
     }
   }
 
+  /**
+   * What threw past a reducer's body while it ran on `effect`'s result: the dispatch of what it
+   * emitted, the render after it. The request already has its one result, so this is not
+   * another: it is an error of the app, reported as a reducer panic is.
+   */
+  function handleDeliveryThrow(effect: string, e: unknown): void {
+    const location = `effect "${effect}"`;
+    reportPanic(location, e);
+    fireAppError(panicInfo(e, "effect"), location);
+  }
+
   function handleEffectResult(
     effect: string,
     outcome: "ok" | "err",
@@ -457,11 +480,13 @@ export function mountCore(
     token = "",
   ): void {
     const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
+    // The effect's other reducers still run after one throws, as they do after a panic.
+    const escaped = (e: unknown): void => handleDeliveryThrow(effect, e);
     let matched = 0;
     try {
       for (const r of app.reducers) {
         if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
-          applyReducer(r, { $1: value, $2: key });
+          applyReducer(r, { $1: value, $2: key }, escaped);
           matched++;
         }
       }
@@ -479,7 +504,7 @@ export function mountCore(
           if (name) {
             const r = app.reducers.find((r) => r.name === name);
             if (r) {
-              applyReducer(r, { $1: value, $2: key });
+              applyReducer(r, { $1: value, $2: key }, escaped);
               matched++;
             }
           }

@@ -607,6 +607,8 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 **未処理の effect エラーは surface され、決して silent にならない。** `err` に解決した effect は、対応するすべての `.err` reducer へ配送される。プログラムがその effect に `.err` reducer を**一切**配線していない場合、捨てられたエラーは `console.error`（`[kumiki] effect "<name>" returned an error with no .err reducer: …`）で報告され、検証 tier（`console.error` を捕捉する `smoke` / `runScenario`）が検知する — live panic モデル（[エラー処理](./lifecycle.md#_7-2-error-handling)）と整合する。失敗した capability が no-op に見えてはならない：storage 利用不可ケース（opaque-origin サンドボックス、プライベートモード）がまさにこれで、`storage.read` / `storage.write` は `err` を返し、`.ok` だけを扱うアプリは黙って何もしないことになる。よってデフォルト契約は **`err` + surface された報告**であり、プログラムは `.err` reducer（空でもよい）を配線してエラーを処理（または意図的に無視）することを選ぶ。in-memory storage フォールバックはデフォルト挙動では**ない**（契約を覆い隠すため）；欲しいホストは `storage.*` provider で明示的に供給する。
 
+**1 つのリクエストに結果は 1 つ。** 各リクエストが配送する結果は 1 つなので、`.ok` を受け取ったリクエストに対して `.err` reducer が実行されることはない。その `.ok` を配送している最中に、それが実行する reducer の本体の外で起きた throw はアプリのエラーであり、`.err` reducer ではなく `category: "effect"` の `app.error` に届く（[runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)）。
+
 ---
 
 ## 2.6 標準 effect
