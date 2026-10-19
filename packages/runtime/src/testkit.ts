@@ -1,9 +1,11 @@
 import {
   batchRejections,
+  type EmitSpec,
   type ReducerSpec,
   type RefinementRejection,
   rejectedBatchText,
   reportRejectedBatch,
+  standInValue,
 } from "./core.ts";
 import { valueEqual } from "./stdlib.ts";
 import type {
@@ -32,10 +34,26 @@ import {
   resetLiveFromSlots,
   type SlotMetaLike,
   seedRoute,
-  standInValue,
 } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
+
+// `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
+// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree
+// on a batch that commits; a `run-reducer` step fails its trial on a rejected one instead.
+function settleBatch(
+  reducer: string,
+  before: Record<string, unknown>,
+  result: Partial<ReturnType<ReducerSpec["apply"]>> | null | undefined,
+  slotMetas: Record<string, SlotMetaLike>,
+): { slots: Record<string, unknown>; emits: EmitSpec[] } {
+  const rejected = batchRejections(result, slotMetas);
+  if (rejected.length > 0) {
+    reportRejectedBatch(reducer, rejected);
+    return { slots: { ...before }, emits: [] };
+  }
+  return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
+}
 
 /** A `run-reducer` step whose batch a refinement rejected: the reducer did not run, so the trial fails. */
 class RejectedStep extends Error {}
@@ -67,17 +85,14 @@ export const _stdlibTest = {
     name: string,
     event: Record<string, unknown>,
   ): { slots: Record<string, unknown> } {
-    const slots = state?.slots ?? {};
-    this.resetLive(app.live, app.slots, slots);
+    this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
     const rejected = batchRejections(res, app.slots);
-    // Answering the state the step started from would let the invariant hold about a reducer that never ran.
+    // Answering the table without the writes would let the invariant hold about a reducer that never ran.
     if (rejected.length > 0) throw new RejectedStep(rejectedBatchText(name, rejected));
-    const next: Record<string, unknown> = { ...slots };
-    for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
-    return { slots: next };
+    return { slots: settleBatch(name, app.live, res, app.slots).slots };
   },
   runPropertyTest(input: {
     name: string;
@@ -153,13 +168,8 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
-    const rejected = batchRejections(result, slotMetas);
-    if (rejected.length > 0) {
-      reportRejectedBatch(target, rejected);
-      return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
-    }
-    const finalSlots = { ...givenSlots, ...(result?.slots ?? {}) };
-    return compareReducerExpect(name, finalSlots, result?.emits ?? [], panic, expect);
+    const after = settleBatch(target, givenSlots, result, slotMetas);
+    return compareReducerExpect(name, after.slots, after.emits, panic, expect);
   },
   runReducerTestFlow(input: {
     name: string;
@@ -329,5 +339,4 @@ export {
   type ReplayObserver,
   type ReplayReport,
   replayEpisodes,
-  standInValue,
 } from "./testkit/replay.ts";
