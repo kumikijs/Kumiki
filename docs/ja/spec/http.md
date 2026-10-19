@@ -163,7 +163,7 @@ reducer added
 
 ### 6.3.1 グローバル header の注入 {#_6-3-1-injecting-global-headers}
 
-`app.http` で全 HTTP effect に自動付与する header を宣言できる：
+`app.http` で全 HTTP effect（`base-url` があるときはその origin へのもの — 後述）に自動付与する header を宣言できる：
 
 ```kumiki fragment
 app App
@@ -182,12 +182,25 @@ app App
 | http フィールド | 意味 | 評価タイミング |
 |---|---|---|
 | `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
-| `headers` | 全リクエストに付与 — リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
+| `headers` | 全リクエストに付与（`base-url` があるときはその origin へのリクエストだけ — 後述）— リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
 | `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
-| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
+| `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)。`base-url` があるときはその origin へのリクエストだけ — 後述）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
 | `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
 | `on-5xx` | 5xx を受けた reducer（同上） | コンパイル時に解決 |
+
+取得する URL は `base-url` とリクエストの `url`（[§6.1.2](#_6-1-2-standard-effect)）から次のように決まる：
+
+- `base-url` がないとき、または空のときは、すべての url を書かれたとおりに取得する。
+- `?` か `#` を含むベースには、url が何であっても、url を書かれたとおりに後ろに付ける：`https://api.example.com/search?q=` と `term` は `https://api.example.com/search?q=term` を、`https://proxy.example.com/?url=` と `https://target/x` は `https://proxy.example.com/?url=https://target/x` を取得する。
+- それ以外のベースの下では、**絶対** url は書かれたとおりに取得する。url が絶対であるのは、スキーム — ASCII 英字 1 字で始まり、ASCII 英数字・`+`・`-`・`.` が 0 字以上続き、`:` で終わるもの（`https:`・`data:`）— で始まるとき、または `//` で始まる（プロトコル相対）ときである。最初のセグメントが `:` までこの形をしている url は絶対として読まれるので、`users:search` のようなパスは `/users:search` と書く。`1a:b` や `a_b:c` はこの形ではないので相対である。
+- それ以外の url は**相対**である。空であるか `?` か `#` で始まる場合（後述）を除き、ベースとの間に `/` をちょうど 1 つ挟んで連結する。ベースが `/` で終わるか、url が `/` で始まるかは問わない：`https://api.example.com` の下でも `https://api.example.com/` の下でも、`/items/1` と `items/1` はどちらも `https://api.example.com/items/1` を取得する。
+- パスを持つベースは**接頭辞**である：`https://api.example.com/v1` と `/users` は `https://api.example.com/v1/users` を取得する。ブラウザがリンクを解決するように url をベースに対して解決する（`new URL("/users", base)`）のではない。そうすると `/v1` が落ちる。ホスト上の別のパスへのリクエストは URL 全体を書く。パスだけのベースも同じように連結する：`/api` と `users` は `/api/users` を取得する。
+- 空の url、または `?` か `#` で始まる url は、書かれたとおりにベースの後ろに付ける：`https://api.example.com/items` と `?page=2` は `https://api.example.com/items?page=2` を取得する。
+
+`query` はこうして決まる URL に付け加える（[§6.1.2](#_6-1-2-standard-effect)）。
+
+`base-url` があるとき、`headers` と `credentials` は、ベースの origin — スキーム・ホスト・ポート — へのリクエストにだけ付く：ベースに連結した url と、その origin 上の絶対 url である。それ以外の origin へのリクエストにはグローバルなヘッダーが付かず、`credentials` は既定値（[§6.9](#_6-9-default-settings)）になるので、`headers` の中のトークンがベースの origin の外へ出ることはない。そのようなリクエストは、必要なものを自身の `headers` に書く。パスだけのベースと相対 url はページの origin 上にあり、URL として読めないベースには、リクエストが乗る origin がない。`base-url` がないときは、どちらもすべてのリクエストに付く。
 
 値を取るフィールドはすべて**式**であり、slot を読んでよい。4 つとも評価されるのは
 アプリの構築時ではなく**リクエストを行う時**である：slot を書く reducer は次の
@@ -298,6 +311,8 @@ effect loadCritical cap=http.get
 | `exponential(N, initial-ms, factor)` | N 回まで、初回 initial-ms、毎回 factor 倍 |
 
 リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文が JSON として壊れている 2xx、および decode した値を `T` が拒否した 2xx（[6.1.4](#_6-1-4-decoder-型)）もリトライしない。サーバーはすでにリクエストを受理しているので、リトライは同じ副作用をもう一度起こすだけになる。
+
+試行と試行の間で待機しているリクエストは、キャンセルされるとその場で待機を終える。キャンセルするのは、`http.cancel`（[6.4](#_6-4-cancellation)）、`policy=latest` のもとでの新しい emit、`policy=latest-per-key` のもとでの同じ key への新しい emit である。その `.err` は直ちに発火し、後から emit されたリクエストが自分の結果を届けるより先に届く。それ以上の試行は行わない。`policy=queue` では、次のエントリが残りの間隔を待たずにすぐ始まる。この err は、`http.*` の effect では [6.4.1](#_6-4-1-挙動) の `aborted` な `HttpError`、err が `Text` の capability（[6.7](#_6-7-storage-effects)）では `Text` の `"aborted"`、それ以外の capability では、例外を投げた invoke が届けるのと同じ形の `{message: "aborted"}`（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）である。アプリのアンマウントも待機を終え、それ以上の試行は行わない。アンマウント後は reducer が走らないので、何も届かない。キャンセルもアンマウントもされないリクエストは各間隔を最後まで待つ。
 
 ---
 

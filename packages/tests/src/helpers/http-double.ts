@@ -71,6 +71,49 @@ export function readHeader(h: HeadersInit | undefined, name: string): string | n
   return values.length === 0 ? null : values.join(", ");
 }
 
+/** What `fetch` rejects with when the request's signal aborts. */
+export const abortError = (): DOMException =>
+  new DOMException("The operation was aborted.", "AbortError");
+
+/** A responder {@link answerAfter} built, and what it has seen. */
+export type TimedResponder = {
+  respond: (call: FetchCall) => Promise<Response>;
+  /** `performance.now()` when each call was made, in order. */
+  madeAt: number[];
+  /** How many calls it has answered. A call whose signal aborted first is not one of them. */
+  answered: () => number;
+};
+
+/**
+ * A responder that answers the `i`th call with `responses[i]` (the last one for every call past
+ * the end), `latencyMs` after the call is made. A call whose signal aborts first rejects the way
+ * `fetch` does.
+ */
+export function answerAfter(latencyMs: number, responses: Array<() => Response>): TimedResponder {
+  const madeAt: number[] = [];
+  let answered = 0;
+  return {
+    madeAt,
+    answered: () => answered,
+    respond: (call) => {
+      const make = responses[Math.min(madeAt.length, responses.length - 1)] as () => Response;
+      madeAt.push(performance.now());
+      const signal = call.init.signal;
+      return new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(abortError());
+        const h = setTimeout(() => {
+          answered++;
+          resolve(make());
+        }, latencyMs);
+        signal?.addEventListener("abort", () => {
+          clearTimeout(h);
+          reject(abortError());
+        });
+      });
+    },
+  };
+}
+
 /** A request {@link holdEach} is holding: where it went, its signal, and how to answer it. */
 export type Held = {
   url: string;
@@ -87,9 +130,7 @@ export function holdEach(held: Held[] = []): (call: FetchCall) => Promise<Respon
     new Promise<Response>((resolve, reject) => {
       const signal = call.init.signal;
       held.push({ url: call.url, signal, answer: (text) => resolve(new Response(text)) });
-      signal?.addEventListener("abort", () =>
-        reject(new DOMException("The operation was aborted.", "AbortError")),
-      );
+      signal?.addEventListener("abort", () => reject(abortError()));
     });
 }
 
