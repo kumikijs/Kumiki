@@ -24,12 +24,7 @@ import {
   genValue,
   shrinkCounterexample,
 } from "./testkit/generate.ts";
-import {
-  type ReplayApp,
-  replayEpisodes,
-  type SlotMetaLike,
-  seedRoute,
-} from "./testkit/replay.ts";
+import { type ReplayApp, replayEpisodes, type SlotMetaLike, seedRoute } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
