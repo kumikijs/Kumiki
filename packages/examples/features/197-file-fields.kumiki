@@ -6,12 +6,12 @@
 # The file's bytes are not a field: a browser reads them only asynchronously,
 # so the record the `change` event delivers cannot hold them. They reach a
 # server as a `FileV` part of a `Multipart` body (http.md, forms.md), which is
-# what `upload` sends.
+# what `uploadFile` sends.
 #
 # The scenario hands `pick` a file record through `{dispatch}`, since a
 # scenario cannot put a real file in the input. `packages/tests/src/file-fields.test.ts`
 # picks a real one, checks the record the runtime builds, and reads the bytes
-# back out of the request `upload` makes.
+# back out of the request `uploadFile` makes.
 
 slot picked : Option(File) = None
 slot sentTo : Text         = "-"

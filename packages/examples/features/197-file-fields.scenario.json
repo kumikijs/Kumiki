@@ -25,7 +25,7 @@
       }
     },
     {
-      "label": "Upload hands the picked file to uploadFile, whose answer is shown",
+      "label": "Upload with a file picked emits uploadFile, and its answer is shown",
       "do": { "click": "#upload" },
       "expect": { "noErrors": true, "domIncludes": ["sent to: /files/notes.txt"] }
     }

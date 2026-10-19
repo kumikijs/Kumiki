@@ -84,7 +84,10 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
 ];
 
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
-// delivers cannot hold them; they are not a field.
+// delivers cannot hold them; they are not a field. `File` stays a `TypePrim` with this
+// side table, not a record in `STDLIB_TYPES` like `Route`: a record type would accept any
+// `{name, size, type}` literal as a `File`, and that value has no `_file` for a `FileV`
+// part or `file-url()` to read. As a prim, a `File` is only ever one the runtime made.
 export const FILE_FIELDS: RecordType = record({
   name: prim("Text"),
   size: prim("Int"),

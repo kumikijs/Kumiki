@@ -3,7 +3,7 @@ import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
-import { FILE_FIELDS } from "../stdlib-types.ts";
+import { FILE_FIELDS, type PrimName } from "../stdlib-types.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
 import type { Ctx, SymbolTable } from "./context.ts";
 import { binOpResult } from "./expr.ts";
@@ -32,8 +32,6 @@ export const container = (name: string, args: TypeExpr[], pos: Pos): TypeExpr =>
   args,
   pos,
 });
-
-type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
 
 /** True when `t` is a number — the operand family arithmetic is defined on. */
 export function isNumeric(t: TypeExpr | null, sym: SymbolTable): boolean {

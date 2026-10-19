@@ -136,6 +136,19 @@ export function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: s
   field.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+/** Pick `file` in `input` as the browser's file chooser would. */
+export function pickFile(input: HTMLInputElement, file: File): void {
+  try {
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file] as unknown as FileList,
+    });
+  } catch {
+    (input as unknown as { files: File[] }).files = [file];
+  }
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 /** `typeInto` the field matching `selector`. */
 export function fill(root: ParentNode, selector: string, value: string): void {
   typeInto(find<HTMLInputElement>(root, selector), value);
