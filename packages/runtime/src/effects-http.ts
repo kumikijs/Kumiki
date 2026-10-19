@@ -29,8 +29,11 @@ export async function httpFetch(
     key?: string;
     value?: unknown;
   };
-  const baseUrl = httpCfg?.baseUrl ?? "";
-  const url = withQuery(baseUrl + (x.url ?? ""), x.query);
+  const base = httpCfg?.baseUrl ?? "";
+  // `map-request` is not checked against the request type, so a url can be any value.
+  const url = withQuery(joinBase(base, String(x.url ?? "")), x.query);
+  // Under a base, the program's own headers and credentials stay on the base's origin.
+  const global = base === "" || sameOrigin(url, base);
   const decode = x.decode ?? "json";
   let encoded: Encoded = {};
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
@@ -44,7 +47,7 @@ export async function httpFetch(
   const headers: Record<string, string> = {};
   const layers = [
     defaultHeaders(decode, encoded.contentType),
-    httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {},
+    global && httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {},
     x.headers ?? {},
   ];
   // A value the types rule out but a lax decoder let through as `undefined` sets nothing, so it
@@ -57,7 +60,7 @@ export async function httpFetch(
   const init: RequestInit = {
     method,
     headers,
-    credentials: httpCfg?.credentials ?? DEFAULT_CREDENTIALS,
+    credentials: (global ? httpCfg?.credentials : undefined) ?? DEFAULT_CREDENTIALS,
   };
   if (encoded.body !== undefined) init.body = encoded.body;
 
@@ -189,6 +192,31 @@ function setHeader(headers: Record<string, string>, name: string, value?: string
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+const ABSOLUTE_URL = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
+
+// The base is a prefix, not a URL to resolve against: `new URL("/users", base)`
+// would drop the base's own path.
+function joinBase(base: string, url: string): string {
+  if (/[?#]/.test(base) || url === "" || url.startsWith("?") || url.startsWith("#")) {
+    return base + url;
+  }
+  if (!base || ABSOLUTE_URL.test(url)) return url;
+  const trimmed = base.replace(/\/+$/, "");
+  return url.startsWith("/") ? trimmed + url : `${trimmed}/${url}`;
+}
+
+// A relative url and a path-only base both resolve against the page; with no http(s) page, as on
+// a server, against one placeholder origin, so they still agree with each other.
+function sameOrigin(url: string, base: string): boolean {
+  const href = (globalThis as { location?: { href?: string } }).location?.href;
+  const page = href && /^https?:/i.test(href) ? href : "http://localhost/";
+  try {
+    return new URL(url, page).origin === new URL(base, page).origin;
+  } catch {
+    return false;
+  }
 }
 
 function withQuery(url: string, query: Record<string, string> | undefined): string {
