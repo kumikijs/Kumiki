@@ -367,6 +367,21 @@ describe("every tier applies the same rule", () => {
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 
+  it("refuses the batch in a reducer-test, and drops its emits", () => {
+    const result = _stdlib.runReducerTest({
+      name: "t",
+      target: "bump",
+      givenSlots: { count: 0, log: "" },
+      slotMetas: makeApp().slots,
+      result: { slots: { count: 4, log: "written" }, emits: [{ effect: "persist", args: [] }] },
+      panic: null,
+      expect: { kind: "state", slots: { count: 0, log: "" }, effects: [] },
+    });
+
+    expect(result.pass).toBe(true);
+    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
+  });
+
   it("refuses the batch in a property-test's run-reducer step, failing the trial", () => {
     const app = {
       live: { count: 0, log: "" } as Record<string, unknown>,

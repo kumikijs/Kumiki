@@ -53,6 +53,8 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 いくつかの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になり、`given` / `expect` / `mocks`（や `given` の `mocks` / `event`）がレコードでなければ空のレコードとして読まれ、書いたはずのセットアップ・主張・台本が起きない。一段下の slot → 値のセクション——`given` の `slots`、`reducer-test` の `expect` の `slots`、`episode-test` の `expect` の `slots-equal`——も同じくレコードであり、そうでなければどの slot も設定せず、どの slot も主張しなかった。`slots-equal` だけはレコードの代わりに裸の名前 `from-log`（ログ自身の最終値）も取る。それ以外のどの位置でも、`from-log` は他と同じただの名前である。
 
+参照グラフもテスト本体を同じように、セクションごとに読む（[AI 編集 §9.2](./ai-edit.md#_9-2-kumiki-cli)）。上で解決される名前はどれもテストからの参照であり、`kumiki refs` はその名前のもとにテストを挙げる。テスト種別のどのセクションも名指さないキーの下には、参照は 1 つも無い。セクション名がセクションであるのは、それが属する `given` / `expect` の最上位だけである——`slots` の下の `mocks` や `effects` は他と同じ slot である。`for-all` の名前は、テストがそれを読むどこでも生成された値であり、同名の `fn` や slot ではない。`kumiki rename` が書き換えるのは、テストが識別子として書いた名前——呼び出し、`expect.effects` の要素、`<slots.X>`、event の `target`——である。レコードのキーとして書いた名前——`slots` / `slots-equal` のキー、`mocks` のキー——は自分の位置を持たないので、`rename` はその名前を拒否し、もう存在しない定義をテストが名指したまま残すことはしない。
+
 これらが解決されるまで、テスト本体の名前は何を書いても受理され、lowering は読めないものを捨てていた：何も名指さない slot キーはテストを slot の既定値のまま走らせる——**成功**しながら、自分が用意していない前提を主張していた。`invariant` の中の未定義呼び出しはさらに悪い。property ランナーが trial の例外を捕まえて invariant の反証として描画するため、出力は無実のコードを犯人に仕立てていた。
 
 ## 8.2 Reducer テスト
@@ -197,9 +199,9 @@ refinement は棄却サンプリングではなく基底の生成器への制約
 
 失敗時、反例は**縮小**され（`shrink = false` で無効化）、その型の値であり続け、refinement が生成器に与える定義域の中にある最小の値へ向かう。したがって報告される反例は、試行が実行されえた値である。数値は 0 へ、refinement が 0 を除外するときは 0 に最も近い境界へ向かう：`positive` → 1、`negative` → -1、`between(5, 10)` → 5、`positive` な `Float` → その生成器が引く最小の値。テキストは許される最短の接頭辞へ向かう：制約がなければ `""`、`nonempty` なら 1 文字、`len-gt(3)` なら 4 文字であり、`len-eq` のテキストは長さを保つ。`email` / `url` は、生成されたときの形のまま 1 文字ずつ短くなり、各語が 1 文字になるまで縮む（`q@k.example.com`）。`""` にはならない。形が長さを固定する `uuid` は生成されたまま報告される。`one-of` の値は自分より前に列挙されたリテラルを通って先頭へ向かい、列挙の外には出ない — リテラルが 1 つなら動かない。レコードとタプルは一部分ずつ、それぞれ自身の型に従って縮小され、どの部分も失わない。コレクションは要素を減らし、`Some` は `None` になり、`Bool`・`Result`・union のヴァリアントは生成されたまま報告される。
 
-縮小は、生成されたケースの失敗の仕方を保つ。invariant が偽になったケースは、どの `run-reducer` も実行されたケースだけを通って進む。拒否されたケース（[§8.3](#_8-3-property-tests)）は、同じように — 同じ reducer で、同じ slot について、同じ述語で — 拒否されるケースだけを通って進み、縮小後のケース自身の拒否とともに報告される。`count : Int where between(0, 100)` のとき、`n: Int where between(0, 100)` に対する `run-reducer(dec).slots.count > 10` は両方の仕方で失敗する。`dec` が実行された生成ケースは `{"n":1}` へ縮小され、`dec` が拒否される `{"n":0}` へは決して縮小されない。
+縮小は、生成されたケースの失敗の仕方を保つ。invariant が偽になったケースは、どの `run-reducer` も実行されたケースだけを通って進む。拒否されたケース（[§8.3.1](#_8-3-1-構文)）は、同じように — 同じ reducer で、同じ slot について、同じ述語で — 拒否されるケースだけを通って進み、縮小後のケース自身の拒否とともに報告される。`count : Int where between(0, 100)` のとき、`n: Int where between(0, 100)` に対する `run-reducer(dec).slots.count > 10` は両方の仕方で失敗する。`dec` が実行された生成ケースは `{"n":1}` へ縮小され、`dec` が拒否される `{"n":0}` へは決して縮小されない。
 
-`invariant` の中の `run-reducer(name)` は、`given` のイベントを使って現在の `{slots}` 状態に reducer を適用し次の状態を返すので、手順を連鎖できる（`run-reducer(toggle).run-reducer(toggle).slots.todos`）。
+`invariant` の中の `run-reducer(name)` は、`given` のイベントを使って現在の `{slots}` 状態に reducer を適用し、次の状態を返す。次の状態は slot テーブル全体である — 宣言された既定値と seed された `route`（[§8.2.5](#_8-2-5-the-route-slot)）、次に `given.slots`、その上に reducer の書き込み。したがって、試行が seed も書き込みもしない slot は、reducer テストと同じくその既定値を読む。手順は連鎖でき（`run-reducer(toggle).run-reducer(toggle).slots.todos`）、各手順は直前の手順が返したテーブル全体から始まる。refinement がバッチを拒否した手順は状態を返さず、試行はその拒否とともに失敗する（[§8.3.1](#_8-3-1-構文)）。
 
 カスタム生成器：
 

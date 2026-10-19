@@ -84,6 +84,19 @@ not seeded no slot, or asserted none. `slots-equal` alone also takes the bare
 name `from-log` (the log's own final values) in place of a record; it is a name
 like any other at every other position.
 
+The reference graph reads a test body the same way, section by section
+([AI Editing §9.2](./ai-edit.md#_9-2-the-kumiki-cli)): each name resolved above
+is a reference from the test, so `kumiki refs` lists the test under it, and
+nothing under a key that names no section of the test's kind is one. A section
+name is a section only at the top of the `given` or `expect` it belongs to —
+under `slots`, `mocks` or `effects` is a slot like any other — and a `for-all`
+name is the generated value wherever the test reads it, never the `fn` or slot
+of the same name. `kumiki rename` rewrites a name the test wrote as an
+identifier: a call, an `expect.effects` entry, a `<slots.X>`, an event
+`target`. A name written as a record key — a `slots` / `slots-equal` key, a
+`mocks` key — has no position of its own, so `rename` refuses that name rather
+than leave the test naming a definition that no longer exists.
+
 Before any of this was resolved, a name in a test body was accepted whatever it
 said, and the lowering dropped what it could not read: a slot key naming
 nothing left the test running against the slot's default — **passing**, while
@@ -245,7 +258,7 @@ test foo =
 >
 > Shrinking keeps the way the generated case failed. A case whose invariant is false moves only through cases in which every `run-reducer` ran; a refused case ([§8.3.1](#_8-3-1-syntax)) moves only through cases refused the same way — by the same reducer, for the same slots, by the same predicates — and is reported with the shrunk case's own rejection. With `count : Int where between(0, 100)`, `run-reducer(dec).slots.count > 10` over `n: Int where between(0, 100)` fails both ways; a generated case where `dec` ran shrinks to `{"n":1}`, never to `{"n":0}`, where `dec` is refused.
 >
-> `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state, so steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`).
+> `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state: the whole slot table — the declared defaults and the seeded `route` ([§8.2.5](#_8-2-5-the-route-slot)), then `given.slots`, then the reducer's writes. A slot the trial neither seeds nor writes therefore reads its default, as it does in a reducer-test. Steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`), each starting from the whole table the step before it answers. A step whose batch a refinement rejects answers no state: the trial fails with the rejection ([§8.3.1](#_8-3-1-syntax)).
 
 ## 8.4 Tile snapshot Tests
 
