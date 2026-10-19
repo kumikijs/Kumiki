@@ -10,6 +10,7 @@ import {
   type RefinementNaming,
   type RefinementRejection,
   reportRejectedBatch,
+  standInValue,
   withEnvReplay,
 } from "../core.ts";
 import { noReducerNamed } from "../dispatch-check.ts";
@@ -29,14 +30,6 @@ export type ReplayApp = {
   reducers: ReducerSpec[];
   effects: Record<string, Pick<EffectSpec, "errText">>;
 };
-
-export function standInValue(
-  eff: Pick<EffectSpec, "errText"> | undefined,
-  outcome: "ok" | "err",
-  value: unknown,
-): unknown {
-  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
-}
 
 type MissingEntryReducer = {
   /** The name the log gives the entry reducer; absent when the log gives none. */

@@ -19,11 +19,22 @@ export const SPAWN = { timeout: CHILD_TIMEOUT_MS + 10_000 };
 
 export type CliResult = { stdout: string; stderr: string; out: string; code: number };
 
-export function runCli(args: readonly string[], options: { input?: string } = {}): CliResult {
+/**
+ * Spawn the CLI with `args`. `env` is merged over `process.env`, where spawn's own `env` would
+ * replace it. `KUMIKI_EPISODE_LOG` is not inherited, so a run a test spawns never appends to a
+ * log the developer's shell names; a test that wants one passes it in `env`.
+ */
+export function runCli(
+  args: readonly string[],
+  options: { input?: string; env?: Record<string, string> } = {},
+): CliResult {
+  const inherited: NodeJS.ProcessEnv = { ...process.env };
+  delete inherited.KUMIKI_EPISODE_LOG;
   const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
     encoding: "utf8",
     input: options.input,
     timeout: CHILD_TIMEOUT_MS,
+    env: { ...inherited, ...options.env },
   });
   // A child that never started or was killed has no status; reporting it as a failure exit would satisfy `code: 1` assertions without the CLI having run.
   if (res.error) throw res.error;

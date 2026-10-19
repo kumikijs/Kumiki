@@ -224,6 +224,8 @@ app App ... theme = themeName    # ← pass the slot name
 `select(value=v, options=[...])` decides the selected state of an option by a **structural key**:
 - A variant is keyed by recursively serializing `_tag` + payload. `Some(Backlog)` and `Some(InProgress)` become different keys (with a flat `_tag` comparison both would collide as `"Some"`, so including the payload is essential)
 - You can use a "variant wrapped in a variant" such as `Option(Status)` as an option value
+- Any other value (a `Text`, a number, a record) is keyed by its JSON text, so the `Text` `m` is keyed as `"m"`, quotes included. A record's JSON text lists its fields in the order they were written, so a slot holding `{h=3, w=2}` matches no option written `{w=2, h=3}`, although `==` calls the two equal. This is a known limitation, not a rule ([#941](https://github.com/kumikijs/Kumiki/issues/941))
+- The key is what an `<option>` carries as its `value` on both render paths, and the option whose key is `v`'s is the selected one. The served page ([§10.6.1](#_10-6-1-ssr)) marks that option with the `selected` attribute, so its first paint shows `v` for a variant or a record as it does for a `Text`. On both paths a `placeholder` option is selected only when the select has no value
 
 ### 10.3.9 Focus Restoration
 
@@ -771,7 +773,9 @@ The one emit with no episode to name is one from `app.init`, dispatched before t
 
 ### 10.4.4 retry
 
-When `retry=...` is specified, retry on an `Err` result that is a 5xx/network error. Exponential backoff adds ±20% jitter.
+When `retry=...` is specified, retry on an `Err` result that is a 5xx/network error, waiting the intervals the policy names ([http.md §6.5](./http.md#_6-5-retry)).
+
+A request cancelled during the wait between attempts ends the wait at once and makes no further attempt; its `.err` fires right away. Unmounting the app ends the wait too ([http.md §6.5](./http.md#_6-5-retry)).
 
 ### 10.4.5 Delivery of Results
 
@@ -882,7 +886,9 @@ Example:
 
 - The most recent N in memory (default 100)
 - The most recent M in localStorage (default 20, size limit 5MB)
-- During development, write to a file with `--episode-log /path/to/log.jsonl`
+- During development, write to a file with `--episode-log /path/to/log.jsonl` (`kumiki run` also takes the path from `KUMIKI_EPISODE_LOG`)
+
+The file `kumiki run` writes is a separate store, not a copy of the in-memory one. It holds every episode the run commits, one JSON object per line, and N does not bound it. The run appends to the file rather than truncating it, so a file that starts empty begins with the run's first episode, which is where replay from slot defaults ([§10.5.3](#_10-5-3-replay)) starts, even for a run that commits more than N. An episode that commits after the scenario has finished, such as one whose effect's invoke runs on past the app's dispose instead of stopping at its abort, is not written ([#942](https://github.com/kumikijs/Kumiki/issues/942)). An effect still waiting in a `retry=` backoff is not one: disposing the app ends that wait ([http.md §6.5](./http.md#_6-5-retry)), so its episode commits before the run returns and is written.
 
 The bootstrap episode (`trigger.kind = "ssr.hydrate"`) is stored on the same path as any other episode: appended to the in-memory ring and (when localStorage mirroring is enabled) persisted on the same eviction policy. No special pinning — once enough later episodes accrue, the bootstrap eventually falls off the tail like any FIFO entry. Hydration runs `persistLocalStorage()` as part of the ingest so the mirror reflects the bootstrap immediately (an AC for [§10.6.2](#_10-6-2-hydration) verification).
 
@@ -933,7 +939,7 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
   - `overlay` wraps every child after the first in the same absolutely-positioned layer the renderer builds, placed by `align`.
   - A **closed** `modal` / `drawer` / `popover` is served as the present-but-hidden host the renderer mounts — `display: none` around the content box — rather than as an empty string. Opening a surface is a style flip on both paths, and the content of a closed one stays readable to a crawler. (Hydration is not the reason: it replaces the served DOM wholesale either way — [§10.6.2](#_10-6-2-hydration).)
   - `check` / `switch` / `radio` are served as the `<label>` that wraps their control, and `error` as the `<span>` its message will arrive in.
-- Form state is the one thing a served attribute carries that the mounted element does not — but only where the property does not reflect: `value`, `checked` and `selected` are set as DOM properties on the client and leave the markup untouched, while an attribute is the only way a served page can carry them. `disabled`, `readonly` and `<details open>` DO reflect, so they are attributes on both paths and must agree.
+- Form state is the one thing a served attribute carries that the mounted element does not — but only where the property does not reflect: `value` (other than an `<option>`'s), `checked` and `selected` are set as DOM properties on the client and leave the markup untouched, while an attribute is the only way a served page can carry them. `disabled`, `readonly` and `<details open>` DO reflect, so they are attributes on both paths and must agree. An `<option>`'s `value` reflects as well: it is the option's key on both paths, so the two must agree ([§10.3.8](#_10-3-8-value-matching-of-select)).
 - Response bundle composition:
   - HTML (the result of initial tile rendering)
   - JSON (the snapshot envelope, structured as below)

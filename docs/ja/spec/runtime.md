@@ -219,11 +219,13 @@ app App ... theme = themeName    # ← slot 名を渡す
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): 引数数で判別
 - `m.entries` は `[[k, v], ...]` で返る。後続の list ops の lambda が `$1` / `$2` をどう束縛するかはここではなく、受信側の型から型検査器が決める（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— `Tuple(K, V)` の要素は `$1=k, $2=v` に分解される
 
-### 10.3.8 select の値マッチング
+### 10.3.8 select の値マッチング {#_10-3-8-value-matching-of-select}
 
 `select(value=v, options=[...])` は option の選択状態を **構造的キー**で判定する:
 - variant は `_tag` + payload を再帰的にシリアライズしてキー化する。`Some(Backlog)` と `Some(InProgress)` は別キーになる（フラットな `_tag` 比較だと両者が `"Some"` で衝突するため、payload まで含めることが必須）
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
+- それ以外の値（`Text`・数値・レコード）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。レコードの JSON テキストはフィールドを書かれた順に並べるので、`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option にマッチしない。`==` は両者を等しいとするにもかかわらずである。これは規則ではなく既知の制限である（[#941](https://github.com/kumikijs/Kumiki/issues/941)）
+- キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示する。`placeholder` の option が選択状態になるのは、両方の経路で、select が値を持たないときに限る
 
 ### 10.3.9 focus 復元
 
@@ -726,7 +728,9 @@ step が付く episode は、いま開いている episode ではなく、その
 
 ### 10.4.4 retry
 
-`retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで再試行。指数バックオフは jitter ±20% を加える。
+`retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで、policy が定める間隔を待って再試行する（[http.md §6.5](./http.md#_6-5-リトライ)）。
+
+試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも待機を終える（[http.md §6.5](./http.md#_6-5-リトライ)）。
 
 ### 10.4.5 結果の配送
 
@@ -796,7 +800,9 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 - メモリに直近 N 件（デフォルト 100）
 - localStorage に直近 M 件（デフォルト 20、サイズ上限 5MB）
-- 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し
+- 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し（`kumiki run` は `KUMIKI_EPISODE_LOG` からもパスを受け取る）
+
+`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わった後に commit する episode（invoke が abort で止まらずアプリの dispose 後も走り続ける effect のものなど）は書かれない（[#942](https://github.com/kumikijs/Kumiki/issues/942)）。`retry=` の backoff を待っている effect はこれに当たらない。アプリを dispose するとその待機は終わる（[http.md §6.5](./http.md#_6-5-リトライ)）ので、episode は実行が返る前に commit され、書かれる。
 
 ### 10.5.3 replay
 
@@ -838,7 +844,7 @@ kumiki replay --until-step 5                # 途中まで
   - `overlay` は 2 つめ以降の子を、レンダラが組むのと同じ絶対配置のレイヤーで包み、`align` で配置する。
   - **閉じた** `modal` / `drawer` / `popover` は、空文字列ではなく、レンダラがマウントするのと同じ「存在するが隠れた」ホスト（コンテンツ箱を包む `display: none`）として配信される。サーフェスの開閉は両方の経路でスタイルの切り替えであり、閉じたサーフェスの中身はクローラから読める。（理由は hydration ではない：hydration はどちらの形を配信しても、配信された DOM を丸ごと置き換える — [§10.6.2](#_10-6-2-hydration)。）
   - `check` / `switch` / `radio` はコントロールを包む `<label>` として、`error` はメッセージが入る `<span>` として配信される。
-- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value` / `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。
+- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value`（`<option>` のものを除く）/ `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。`<option>` の `value` も反映される。両方の経路でその option のキーになるので、両者は一致しなければならない（[§10.3.8](#_10-3-8-value-matching-of-select)）。
 - レスポンス bundle 構成：
   - HTML（初期 tile 描画結果）
   - JSON（初期 slot snapshot）
