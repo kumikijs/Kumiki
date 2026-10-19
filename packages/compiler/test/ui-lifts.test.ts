@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { UiEventKind } from "../src/ast.ts";
+import { BUILTIN_TILES } from "../src/builtins.ts";
 import { compile } from "../src/compile.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { buildDefIndex, referencesIn } from "../src/references.ts";
 import {
+  firesUnheardIn,
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
+  labelWrappedUnreached,
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
 } from "../src/ui-lifts.ts";
@@ -53,6 +56,73 @@ describe("UI_LIFTS", () => {
     expect(byEv.get("key")?.tiles).toEqual(new Set([...focusable, "check", "radio", "switch"]));
     expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
     expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
+  });
+});
+
+describe("labelWrappedUnreached", () => {
+  const LABEL_WRAPPED = ["check", "radio", "switch"];
+
+  it("answers focus and blur, which fire on the <input> and do not bubble to the <label>", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => labelWrappedUnreached(ev, LABEL_WRAPPED).length > 0,
+    );
+    expect(answered.sort()).toEqual(["blur", "focus"]);
+    expect(labelWrappedUnreached("focus", LABEL_WRAPPED)).toEqual(LABEL_WRAPPED);
+    expect(labelWrappedUnreached("blur", LABEL_WRAPPED)).toEqual(LABEL_WRAPPED);
+  });
+
+  it("names only kinds the event's row leaves out, so W0212 can give it as the reason", () => {
+    for (const ev of ALL_UI_EVENT_KINDS) {
+      const row = UI_EVENT_TILE_KINDS[ev];
+      for (const kind of labelWrappedUnreached(ev, LABEL_WRAPPED)) {
+        expect(row?.has(kind), `${kind} in the ${ev} row`).toBe(false);
+      }
+    }
+  });
+
+  it("keeps the label-wrapped kinds of a body and drops the rest, sorted", () => {
+    expect(labelWrappedUnreached("focus", ["text", "switch", "box", "check"])).toEqual([
+      "check",
+      "switch",
+    ]);
+    expect(labelWrappedUnreached("focus", ["box", "text"])).toEqual([]);
+  });
+});
+
+describe("firesUnheard / firesUnheardIn", () => {
+  it("records only builtin kinds that its row leaves out", () => {
+    for (const lift of UI_LIFTS) {
+      for (const kind of Object.keys(lift.firesUnheard ?? {})) {
+        expect(BUILTIN_TILES.has(kind), `${kind} in the ${lift.ev} record`).toBe(true);
+        expect(lift.tiles?.has(kind), `${kind} in the ${lift.ev} row`).toBe(false);
+      }
+    }
+  });
+
+  it("records the absences that are runtime policy: link for click, five kinds for input", () => {
+    const recorded = Object.fromEntries(
+      UI_LIFTS.filter((l) => l.firesUnheard).map((l) => [
+        l.ev,
+        Object.keys(l.firesUnheard ?? {}).sort(),
+      ]),
+    );
+    expect(recorded).toEqual({
+      click: ["link"],
+      input: ["check", "radio", "select", "slider", "switch"],
+    });
+  });
+
+  it("groups the kinds of a body by what their renderer does instead, with the row's handler", () => {
+    expect(firesUnheardIn("input", ["text", "switch", "slider", "check"])).toEqual([
+      { kinds: ["check", "switch"], instead: 'listens for "change" instead', handler: "onInput" },
+      { kinds: ["slider"], instead: "listens for it only to write the bind", handler: "onInput" },
+    ]);
+  });
+
+  it("answers nothing for a kind whose element fires nothing, or a row with no record", () => {
+    expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
+    expect(firesUnheardIn("change", ["editable"])).toEqual([]);
+    expect(firesUnheardIn("focus", ["check"])).toEqual([]);
   });
 });
 
