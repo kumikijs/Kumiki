@@ -603,8 +603,9 @@ export function methodCallJs(
       // Within expr, $1 is the current Err payload.
       return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
     case "replace":
-      // `replaceAll` reads a string replacement as a pattern (`$$`, `$&`), so `to` goes in through
-      // a replacer, which is inserted as written. Inline, so only an app that calls it ships it.
+      // `replaceAll` reads a string replacement as a pattern (`$$`, `$&`) but inserts a replacer's
+      // return as written. `to` is read once, before the scan: a thunk would re-read it per match.
+      // Inline rather than an `_s` helper, which every app would ship.
       return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ((__to) => () => __to)(String(${argRaw(args[1]!)})))`;
     case "min":
       return `Math.min((${recvJs}), (${argRaw(args[0]!)}))`;

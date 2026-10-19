@@ -14,6 +14,17 @@
           "plain=a/b/c"
         ]
       }
+    },
+    {
+      "label": "`to` typed into the input is inserted as written",
+      "do": {
+        "fill": "#price",
+        "value": "$&"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["from-slot=cost: $&"]
+      }
     }
   ]
 }

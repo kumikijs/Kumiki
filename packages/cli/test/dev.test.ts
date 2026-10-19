@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -55,6 +56,21 @@ describe("kumiki dev", () => {
     const code = await res.text();
     expect(code).not.toContain("__KUMIKI_TARGET__");
     expect(code).toMatch(/app\.kumiki/);
+  });
+
+  it("puts a project path holding `$$` or `$&` into the dev client as written", async () => {
+    const dir = join(tempDir(), "a$$b$&c");
+    mkdirSync(dir);
+    const file = join(dir, "app.kumiki");
+    copyFileSync(COUNTER, file);
+    const { server, url } = await startDevServer(file, { port: 0 });
+    close = () => server.close();
+    const res = await fetch(new URL("/@kumiki-dev/client.ts", url));
+    // Read as a pattern, the path names a directory that does not exist and the import fails.
+    expect(res.status).toBe(200);
+    const code = await res.text();
+    expect(code).not.toContain("__KUMIKI_TARGET__");
+    expect(code).toContain('import InitialApp from "/app.kumiki?import"');
   });
 
   it("reads a capability manifest at the project root, as check does", {

@@ -3,7 +3,8 @@
 #
 # `to` has no substitution syntax. A `$` in it is text, whatever follows it
 # (`$$`, `$&`, `` $` ``, `$'`), so a price, a currency template or text held in
-# a slot comes out as it went in.
+# a slot comes out as it went in. `from-slot=` reads `to` from `price`, which
+# the input edits; the scenario types `$&` into it.
 
 slot price : Text = "$$5"
 
@@ -11,12 +12,11 @@ tile App
     = column(
         heading("text replace"),
         text("literal=" + "cost: X".replace("X", "$$5")),
-        # The same `to`, read from a slot rather than written in place.
+        input(bind=price, id="price"),
         text("from-slot=" + "cost: X".replace("X", price)),
         text("match=" + "a-b".replace("-", "$&$&")),
         text("before=" + "one two".replace(" ", "$`")),
         text("after=" + "one two".replace(" ", "$'")),
-        # Every occurrence of `from` is replaced, and a `.` in it is a `.`.
         text("every=" + "a-b-c".replace("-", "+")),
         text("plain=" + "a.b.c".replace(".", "/")))
       {pad: "lg", gap: "md"}

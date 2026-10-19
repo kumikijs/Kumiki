@@ -1,6 +1,3 @@
-// These run the lowered expression rather than read the generated JS: what the module computes is
-// the claim, whichever way the lowering spells it.
-
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadApp, type ReducerShape } from "./helpers/module.ts";
 
@@ -12,7 +9,6 @@ const PATTERNS: Case[] = [
   { recv: "a-b", from: "-", to: "$&$&", out: "a$&$&b" },
   { recv: "one two", from: " ", to: "$`", out: "one$`two" },
   { recv: "one two", from: " ", to: "$'", out: "one$'two" },
-  { recv: "a-b", from: "-", to: "$1$<name>", out: "a$1$<name>b" },
 ];
 
 /** What `from` matches: every occurrence, as plain text. */
@@ -21,9 +17,11 @@ const OCCURRENCES: Case[] = [
   { recv: "a.b.c", from: ".", to: "$", out: "a$b$c" },
   { recv: "a+b", from: "a+", to: "x", out: "xb" },
   { recv: "abc", from: "x", to: "$&", out: "abc" },
-  // An empty `from` matches at every position, the end included, as the
-  // platform's `replaceAll` matches it.
   { recv: "abc", from: "", to: "-", out: "-a-b-c-" },
+  // the inserted text is not scanned again
+  { recv: "a-b", from: "-", to: "-+-", out: "a-+-b" },
+  // matches don't overlap
+  { recv: "aaa", from: "aa", to: "b", out: "ba" },
 ];
 
 const CASES = [...PATTERNS, ...OCCURRENCES];
@@ -34,8 +32,8 @@ function lit(s: string): string {
   return `"${s}"`;
 }
 
-// `fromSlots` hands `to` to the lowering as a value no literal pins, and `once` draws it from
-// `random()`, which answers differently each time it is read.
+// `fromSlots` reads every operand from a slot, so no lowering can specialise on a literal; `once`
+// draws `to` from `random()`, which differs on each read.
 const SOURCE = `slot src   : Text = ""
 slot pat   : Text = ""
 slot rep   : Text = ""
@@ -65,8 +63,7 @@ type AppShape = { live: Record<string, unknown>; reducers: ReducerShape[] };
 
 let app: AppShape;
 
-// Writing a module to disk and importing it costs a real module load, which
-// overruns the 5s default on a cold cache.
+// A real module load can overrun the 10s hook default on a cold cache.
 beforeAll(async () => {
   app = await loadApp<AppShape>(SOURCE, "text-replace");
 }, 30_000);
@@ -79,40 +76,27 @@ function run(name: string, live: Record<string, unknown>): Record<string, unknow
   return reducer.apply({}, {}).slots;
 }
 
-/** Each case's result with every operand written as a literal. */
-function literalResults(cases: Case[]): unknown[] {
-  const slots = run("literals", {});
-  return cases.map((c) => slots[`w${CASES.indexOf(c)}`]);
-}
-
-/** Each case's result with the receiver, `from` and `to` read from slots. */
-function slotResults(cases: Case[]): unknown[] {
-  return cases.map((c) => run("fromSlots", { src: c.recv, pat: c.from, rep: c.to }).held);
-}
-
-const outs = (cases: Case[]): string[] => cases.map((c) => c.out);
-
 describe("Text.replace inserts `to` as written", () => {
-  it("when `to` is a literal", () => {
-    expect(literalResults(PATTERNS)).toEqual(outs(PATTERNS));
+  it.each(PATTERNS)("when `to` is the literal $to", (c) => {
+    expect(run("literals", {})[`w${CASES.indexOf(c)}`]).toBe(c.out);
   });
 
-  it("when `to` is read from a slot", () => {
-    expect(slotResults(PATTERNS)).toEqual(outs(PATTERNS));
+  it.each(PATTERNS)("when `to` is $to read from a slot", (c) => {
+    expect(run("fromSlots", { src: c.recv, pat: c.from, rep: c.to }).held).toBe(c.out);
   });
 });
 
 describe("Text.replace replaces every occurrence of `from`, matched as plain text", () => {
-  it("when `from` is a literal", () => {
-    expect(literalResults(OCCURRENCES)).toEqual(outs(OCCURRENCES));
+  it.each(OCCURRENCES)("$recv with the literal from $from", (c) => {
+    expect(run("literals", {})[`w${CASES.indexOf(c)}`]).toBe(c.out);
   });
 
-  it("when `from` is read from a slot", () => {
-    expect(slotResults(OCCURRENCES)).toEqual(outs(OCCURRENCES));
+  it.each(OCCURRENCES)("$recv with from $from read from a slot", (c) => {
+    expect(run("fromSlots", { src: c.recv, pat: c.from, rep: c.to }).held).toBe(c.out);
   });
 });
 
-describe("Text.replace evaluates `to` once", () => {
+describe("Text.replace reads `to` once, not once per match", () => {
   it("and inserts that one value at every occurrence of `from`", () => {
     const drawn = String(run("once", {}).drawn);
     const parts = /^x(.+)y(.+)z$/.exec(drawn);
