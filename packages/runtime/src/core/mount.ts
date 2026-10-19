@@ -510,7 +510,9 @@ export function mountCore(
           }
         }
       }
-      if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
+      // Once the app is unmounted no reducer runs, so an err has nothing to go unhandled by.
+      if (outcome === "err" && matched === 0 && !disposed)
+        reportUnhandledEffectError(effect, value);
     } finally {
       exitScope?.();
     }

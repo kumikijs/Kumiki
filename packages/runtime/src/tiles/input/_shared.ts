@@ -90,7 +90,8 @@ export function valueKey(v: unknown): string {
     for (let i = 0; `_${i}` in t; i++) parts.push(valueKey(t[`_${i}`]));
     return parts.join("|");
   }
-  return JSON.stringify(v);
+  // `JSON.stringify` has no text for `undefined`, an option written with no `value`.
+  return JSON.stringify(v) ?? String(v);
 }
 
 export type InputHandlers = {
