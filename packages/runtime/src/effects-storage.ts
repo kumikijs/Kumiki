@@ -1,5 +1,5 @@
 import type { EffectResult } from "./core.ts";
-import { type Decode, decodeRefusal } from "./effects-decode.ts";
+import { decodeOf, decodeRead, decodeRefusal, decodesJson } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
@@ -82,21 +82,32 @@ function decodeStored(raw: string): unknown {
 
 async function readFrom(backend: Backend, input: unknown): Promise<EffectResult> {
   try {
-    const { key, decode } = input as { key: string; decode?: Decode };
-    const raw = globalThis[backend].getItem(key);
+    const req = input as { key: string; decode?: unknown };
+    const decode = decodeOf(req.decode);
+    const raw = globalThis[backend].getItem(req.key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
-    let value: unknown;
-    try {
-      value = decodeStored(raw);
-    } catch (e) {
-      const at = JSON.stringify(key);
-      return failed(
-        `decode failed: the text under ${at} in ${backend} is not a stored value (${String(e)})`,
-      );
+    // The tagged form is JSON's, so only a JSON decoding reads it; `Decoder.Text` delivers the
+    // stored text as it is.
+    if (decodesJson(decode)) {
+      let value: unknown;
+      try {
+        value = decodeStored(raw);
+      } catch (e) {
+        const at = JSON.stringify(req.key);
+        return failed(
+          `decode failed: the text under ${at} in ${backend} is not a stored value (${String(e)})`,
+        );
+      }
+      const refused = decodeRefusal(decode, value);
+      if (refused) return { kind: "err", value: refused };
+      return { kind: "ok", value: _stdlibCore.Some(value) };
     }
-    const refused = decodeRefusal(decode, value);
-    if (refused) return { kind: "err", value: refused };
-    return { kind: "ok", value: _stdlibCore.Some(value) };
+    const decoded = await decodeRead(decode, {
+      text: async () => raw,
+      bytes: async () => _stdlibCore.bytesFromText(raw),
+    });
+    if (!decoded.ok) return { kind: "err", value: decoded.message };
+    return { kind: "ok", value: _stdlibCore.Some(decoded.value) };
   } catch (e) {
     return { kind: "err", value: String(e) };
   }
