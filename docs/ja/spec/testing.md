@@ -337,6 +337,8 @@ kumiki test --watch            # 変更時に再実行
 kumiki test --coverage         # カバレッジ (reducer/effect/tile 単位)
 ```
 
+各実行は渡されたファイルの `test` 定義だけを報告する。ひとつのプロセスでプログラムを次々に読み込む `--watch` の再実行や MCP の `kumiki_test` も同じである。`test` を持たないファイルは何も報告しない。フィルタがなければ、`kumiki test` は `no tests found` と出力し、`kumiki_test` は空の `results` を返す。フィルタがあれば、`kumiki test` は stderr に `no tests match "<filter>"` と出力して `1` で終了し、`kumiki_test` は空の `results` を `isError` 付きで返す。
+
 ### 8.7.1 出力 {#_8-7-1-output}
 
 ```
