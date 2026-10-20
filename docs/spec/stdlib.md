@@ -262,7 +262,7 @@ format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 to-ms                       : Int             ; milliseconds since the Unix epoch
 ```
 
-`a.diff(b)` is `a` minus `b`, the time from `b` to `a`: positive when `a` is the later instant, negative when it is the earlier one, and zero when both are the same instant, so `b.plus(a.diff(b))` is `a` whichever of the two comes first. `due.diff(now)` is negative once `due` has passed, and `now.diff(start)` is the time elapsed since `start` ([§2.2.9](#_2-2-9-duration)). The distance between two instants, whichever is the later, is `a.diff(b).to-ms.abs`.
+`a.diff(b)` is `a` minus `b`, the time from `b` to `a`, so `b.plus(a.diff(b))` is `a` whichever of the two comes first. It is positive when `a` is the later instant, negative when it is the earlier one, and zero when both are the same instant. `due.diff(now)` is negative once `due` has passed, and `now.diff(start)` is the time elapsed since `start` ([§2.2.9](#_2-2-9-duration)). The distance between two instants, whichever is the later, is `a.diff(b).to-ms.abs`.
 
 `format` replaces each of these tokens with that field of the instant and copies the rest of the pattern through verbatim, so `"dd/MM/yyyy"` and `"[on] dd"` are both patterns:
 
@@ -307,7 +307,7 @@ Duration.d(n)               : Duration   ; days is also valid
 to-ms                       : Int
 ```
 
-Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition.
+Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition. A `Duration` is signed: `a.diff(b)` is negative when `a` is the earlier instant ([§2.2.8](#_2-2-8-time)).
 
 Every constructor takes its magnitude, and dropping the parentheses does not make one a value: `Duration.h` is read as a call given no argument, which is the same [E0213](./errors.md#e0213-call-arity-mismatch) as `Duration.h()`. `Bytes.*` below is read the same way. Before that, the bare spelling was a field read that evaluated to nothing at all — and a duration of nothing is a duration of zero, which nothing reported.
 

@@ -2,12 +2,12 @@
 #
 #   diff(other) : Duration   ; the receiver minus `other`
 #
-# The result is positive when the receiver is the later instant, negative
-# when it is the earlier one, and zero when both are the same instant, so
-# `b.plus(a.diff(b))` is `a` whichever of the two comes first. A due date has
-# passed when `due.diff(now)` is negative — `status` below reads it that way —
-# and `.to-ms.abs` is the distance between two instants when the order does
-# not matter.
+# The result is the receiver minus `other`, so `b.plus(a.diff(b))` is `a`
+# whichever of the two comes first. It is positive when the receiver is the
+# later instant, negative when it is the earlier one, and zero when both are
+# the same instant. A due date has passed when `due.diff(seen)` is negative —
+# `status` below reads it that way — and `.to-ms.abs` is the distance between
+# two instants when the order does not matter.
 #
 # Both instants are parsed from fixed strings rather than read from `now`, so
 # what renders does not depend on the clock.

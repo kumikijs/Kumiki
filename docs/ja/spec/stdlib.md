@@ -262,7 +262,7 @@ format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 to-ms                       : Int             ; Unix エポックからのミリ秒
 ```
 
-`a.diff(b)` は `a` から `b` を引いたもの、すなわち `b` から `a` までの時間である。`a` の方が後の時刻なら正、前の時刻なら負、同じ時刻なら 0 になるので、どちらが先でも `b.plus(a.diff(b))` は `a` である。`due.diff(now)` は `due` を過ぎると負になり、`now.diff(start)` は `start` からの経過時間である（[§2.2.9](#_2-2-9-duration)）。どちらが後かを問わない 2 つの時刻の隔たりは `a.diff(b).to-ms.abs` である。
+`a.diff(b)` は `a` から `b` を引いたもの、すなわち `b` から `a` までの時間なので、どちらが先でも `b.plus(a.diff(b))` は `a` である。`a` の方が後の時刻なら正、前の時刻なら負、同じ時刻なら 0 になる。`due.diff(now)` は `due` を過ぎると負になり、`now.diff(start)` は `start` からの経過時間である（[§2.2.9](#_2-2-9-duration)）。どちらが後かを問わない 2 つの時刻の隔たりは `a.diff(b).to-ms.abs` である。
 
 `format` は以下のトークンをその時刻のフィールドに置き換え、パターンの残りはそのまま出力する。したがって `"dd/MM/yyyy"` も `"[on] dd"` もパターンである。
 
@@ -307,7 +307,7 @@ Duration.d(n)               : Duration   ; days と書いても可
 to-ms                       : Int
 ```
 
-Time / Duration はランタイム上では **raw ミリ秒数**として表現される。`time.plus(Duration.h(72))` のような演算は単なる ms 加算に展開される。
+Time / Duration はランタイム上では **raw ミリ秒数**として表現される。`time.plus(Duration.h(72))` のような演算は単なる ms 加算に展開される。`Duration` は符号を持ち、`a` の方が前の時刻なら `a.diff(b)` は負になる（[§2.2.8](#_2-2-8-time)）。
 
 構築子はいずれも大きさを引数に取り、括弧を落としても値にはならない。`Duration.h` は引数のない呼び出しとして読まれ、`Duration.h()` と同じ [E0213](./errors.md#e0213-call-arity-mismatch) になる。下の `Bytes.*` も同じ読み方をする。それ以前は括弧なしの表記はフィールド読みで、何も持たない値に評価されていた——そして何も無い duration は 0 の duration であり、それを報告するものは何もなかった。
 

@@ -571,7 +571,7 @@ export function methodCallJs(
     case "format":
       return `_s.formatTime(${recvJs}, ${argRaw(args[0]!)})`;
     case "plus":
-      // Time.plus(durationMs) / Duration.plus — both stored as raw ms numbers.
+      // Time.plus(duration): a Time and a Duration are both stored as raw ms numbers.
       return `((${recvJs}) + (${argRaw(args[0]!)}))`;
     case "minus":
       return `((${recvJs}) - (${argRaw(args[0]!)}))`;
