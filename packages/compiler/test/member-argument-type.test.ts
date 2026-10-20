@@ -2,15 +2,12 @@
 // `Text` into a `List(Int)` slot.
 
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { RECEIVER_PARAMS } from "../src/stdlib-members.ts";
+import { codesOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const app = (defs: string): string =>
   withApp(`${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)`);
-
-function diagnostics(defs: string): string[] {
-  return checkSource(app(defs)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-}
 
 const SLOTS = `type TodoId = nominal Text
 type PostId = nominal Text
@@ -22,15 +19,18 @@ slot byId : Map(TodoId, Int)  = {}
 slot post : PostId            = "p"
 slot s    : Set(Text)         = []
 slot b    : Bool              = false
-slot n    : Int               = 0`;
+slot n    : Int               = 0
+fn toText(x: Int) -> Text = x.show`;
 
-const write = (stmt: string): string[] =>
-  diagnostics(`${SLOTS}\nreducer go on=ui.click(Btn) do= ${stmt}`);
+/** The errors of a reducer that runs `stmt`, each with the source text it is reported at. */
+const write = (stmt: string) =>
+  pointedErrorsOf(app(`${SLOTS}\nreducer go on=ui.click(Btn) do= ${stmt}`));
 
 describe("a member argument the receiver types", () => {
   it("reports each write of the wrong element, key or value at its argument", () => {
     expect(
-      diagnostics(`slot xs : List(Int)      = [1, 2]
+      pointedErrorsOf(
+        app(`slot xs : List(Int)      = [1, 2]
 slot ys : List(Int)      = [9]
 slot m  : Map(Text, Int) = {}
 slot s  : Set(Text)      = []
@@ -39,47 +39,52 @@ reducer go on=ui.click(Btn) do=
     ys := ys.prepend("z").concat(["w"])
     m := m.insert("k", "not an int")
     s := s.add(42)`),
+      ),
     ).toEqual([
-      "E0201 6:19 Expected Int but got Text",
-      "E0201 7:22 Expected Int but got Text",
-      "E0201 7:35 Expected Int but got Text",
-      "E0201 8:24 Expected Int but got Text",
-      "E0201 9:16 Expected Text but got Int",
+      { code: "E0201", message: "Expected Int but got Text", text: '"3")' },
+      { code: "E0201", message: "Expected Int but got Text", text: '"z").concat(["w"])' },
+      { code: "E0201", message: "Expected Int but got Text", text: '"w"])' },
+      { code: "E0201", message: "Expected Int but got Text", text: '"not an int")' },
+      { code: "E0201", message: "Expected Text but got Int", text: "42)" },
     ]);
   });
 
+  // `at` is the source text from the reported position to the end of the line.
   it.each([
-    ["List.push", "xs := xs.push(n.show)", "E0201 12:47 Expected Int but got Text"],
-    ["List.prepend", `xs := xs.prepend("a")`, "E0201 12:50 Expected Int but got Text"],
+    ["List.push", "xs := xs.push(n.show)", "n.show)", "Expected Int but got Text"],
+    ["List.prepend", `xs := xs.prepend("a")`, '"a")', "Expected Int but got Text"],
+    ["List.concat, a list", "xs := xs.concat(ts)", "ts)", "Expected List(Int) but got List(Text)"],
+    ["List.concat, a literal", `xs := xs.concat(["a"])`, '"a"])', "Expected Int but got Text"],
+    ["List.contains", `b := xs.contains("a")`, '"a")', "Expected Int but got Text"],
+    ["Map.has", "b := m.has(1)", "1)", "Expected Text but got Int"],
+    ["Map.get", "n := m.get(1).get-or(0)", "1).get-or(0)", "Expected Text but got Int"],
+    ["Map.get-or's key", "n := m.get-or(1, 0)", "1, 0)", "Expected Text but got Int"],
+    ["Map.insert's key", "m := m.insert(1, 2)", "1, 2)", "Expected Text but got Int"],
+    ["Map.insert's value", `m := m.insert("k", "v")`, '"v")', "Expected Int but got Text"],
+    ["Map.remove", "m := m.remove(1)", "1)", "Expected Text but got Int"],
+    ["Map.update's key", "m := m.update(1, $1 + 1)", "1, $1 + 1)", "Expected Text but got Int"],
+    ["Map.update's value", `m := m.update("k", $1.show)`, "$1.show)", "Expected Int but got Text"],
     [
-      "List.concat, a list",
-      "xs := xs.concat(ts)",
-      "E0201 12:49 Expected List(Int) but got List(Text)",
+      "Map.update's value, a fn named",
+      `m := m.update("k", toText)`,
+      "toText)",
+      'Expected Int but "toText" answers Text',
     ],
-    ["List.concat, a literal", `xs := xs.concat(["a"])`, "E0201 12:50 Expected Int but got Text"],
-    ["List.contains", `b := xs.contains("a")`, "E0201 12:50 Expected Int but got Text"],
-    ["Map.has", "b := m.has(1)", "E0201 12:44 Expected Text but got Int"],
-    ["Map.get", "n := m.get(1).get-or(0)", "E0201 12:44 Expected Text but got Int"],
-    ["Map.get-or's key", "n := m.get-or(1, 0)", "E0201 12:47 Expected Text but got Int"],
-    ["Map.insert's key", `m := m.insert(1, 2)`, "E0201 12:47 Expected Text but got Int"],
-    ["Map.insert's value", `m := m.insert("k", "v")`, "E0201 12:52 Expected Int but got Text"],
-    ["Map.remove", "m := m.remove(1)", "E0201 12:47 Expected Text but got Int"],
-    ["Map.update's key", "m := m.update(1, $1 + 1)", "E0201 12:47 Expected Text but got Int"],
-    ["Map.update's value", `m := m.update("k", $1.show)`, "E0201 12:52 Expected Int but got Text"],
-    ["Map.merge", "m := m.merge(mi)", "E0201 12:46 Expected Map(Text, Int) but got Map(Int, Text)"],
-    ["a nominal key", "byId := byId.insert(post, 1)", "E0201 12:53 Expected TodoId but got PostId"],
-    ["Set.has", "b := s.has(1)", "E0201 12:44 Expected Text but got Int"],
-    ["Set.add", "s := s.add(1)", "E0201 12:44 Expected Text but got Int"],
-    ["Set.remove", "s := s.remove(1)", "E0201 12:47 Expected Text but got Int"],
-    ["Set.toggle", "s := s.toggle(1)", "E0201 12:47 Expected Text but got Int"],
-    ["Set.union", "s := s.union([1])", "E0201 12:47 Expected Text but got Int"],
-  ])("%s is one E0201, at the argument", (_member, stmt, want) => {
-    expect(write(stmt)).toEqual([want]);
+    ["Map.merge", "m := m.merge(mi)", "mi)", "Expected Map(Text, Int) but got Map(Int, Text)"],
+    ["a nominal key", "byId := byId.insert(post, 1)", "post, 1)", "Expected TodoId but got PostId"],
+    ["Set.has", "b := s.has(1)", "1)", "Expected Text but got Int"],
+    ["Set.add", "s := s.add(1)", "1)", "Expected Text but got Int"],
+    ["Set.remove", "s := s.remove(1)", "1)", "Expected Text but got Int"],
+    ["Set.toggle", "s := s.toggle(1)", "1)", "Expected Text but got Int"],
+    ["Set.union", "s := s.union([1])", "1])", "Expected Text but got Int"],
+  ])("%s is one E0201, at the argument", (_member, stmt, at, message) => {
+    expect(write(stmt)).toEqual([{ code: "E0201", message, text: at }]);
   });
 
   it("reports nothing for arguments of the receiver's types, however they are written", () => {
     expect(
-      diagnostics(`type Color  = Red | Green | Blue
+      summariesOf(
+        app(`type Color  = Red | Green | Blue
 type Todo   = {id: Int, title: Text, note: Option(Text)}
 type TodoId = nominal Text
 type Small  = Int where between(0, 10)
@@ -110,6 +115,7 @@ slot b        : Bool                 = false
 slot n        : Int                  = 0
 slot txt      : Text                 = ""
 fn pushed(s: Stack(Int), x: Int) -> Stack(Int) = s.copy(items = s.items.push(x))
+fn exclaimed(t: Text) -> Text = t + "!"
 reducer go on=ui.click(Btn) do=
     fs := fs.push(1).prepend(2).concat([3, 4.5]).concat(nums)
     fset := fset.add(1).remove(2).toggle(3).union([4])
@@ -119,7 +125,7 @@ reducer go on=ui.click(Btn) do=
     todos := todos.push({id: 1, title: "a", note: None}).concat([{id: 2, title: "b", note: Some("x")}])
     byId := byId.insert("t1", {id: 1, title: "a", note: Some("n")}).insert(tid, {id: 2, title: "b", note: None}).remove(tid)
     b := byId.has(tid) && byId.has("raw") && cs.has(Red) && nums.contains(1) && fs.contains(1)
-    byNum := byNum.insert(1, "one").remove(2).update(3, $1 + "!").merge({4: "four"})
+    byNum := byNum.insert(1, "one").remove(2).update(3, $1 + "!").update(4, exclaimed).merge({4: "four"})
     byColor := byColor.insert(Red, 1).update(Green, $1 + 1)
     byPoint := byPoint.insert({x: 1, y: 2}, 3).remove({x: 1, y: 2})
     byOpt := byOpt.insert(None, 1).insert(Some(2), 3)
@@ -132,32 +138,115 @@ reducer go on=ui.click(Btn) do=
     ids := ids.push(1).concat([2]).concat(ids)
     n := byNum.get(1).map($1.length).get-or(0) + byColor.get-or(Red, 0)
     txt := byNum.get-or(1, "none")`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("reads no argument against a parameter the receiver does not type", () => {
+    // Each argument below is of another type than the receiver's element, key and value.
+    expect(
+      summariesOf(
+        app(`slot nums   : List(Int)              = [1, 2]
+slot ts     : List(Text)             = ["a"]
+slot s      : Set(Text)              = []
+slot byNum  : Map(Int, Text)         = {}
+slot flags  : Map(Int, Bool)         = {}
+slot chunks : List(List(Text))       = []
+slot shown  : List(Text)             = []
+slot pairs  : List(Tuple(Int, Text)) = []
+slot first  : Text                   = ""
+slot joined : Text                   = ""
+slot folded : Text                   = ""
+slot found  : Int                    = 0
+reducer go on=ui.click(Btn) do=
+    first := ts.get(0).get-or("")
+    ts := ts.slice(0, 1).sort-by($1.length)
+    chunks := ts.chunk(2)
+    joined := nums.join(",")
+    byNum := byNum.filter($2 != "")
+    flags := byNum.map($2 == "")
+    s := s.filter($1 != "")
+    nums := nums.filter($1 > 0)
+    found := nums.find($1 > 0).get-or(0)
+    folded := nums.fold("", $1 + $2.show)
+    shown := nums.map($1.show)
+    pairs := nums.zip(ts)`),
+      ),
     ).toEqual([]);
   });
 
   it("checks inside a fragment against the element its $1 is bound to", () => {
     expect(
-      diagnostics(`slot sets : List(Set(Int)) = []
+      pointedErrorsOf(
+        app(`slot sets : List(Set(Int)) = []
 reducer go on=ui.click(Btn) do= sets := sets.map($1.add("x"))`),
-    ).toEqual(["E0201 2:57 Expected Int but got Text"]);
+      ),
+    ).toEqual([{ code: "E0201", message: "Expected Int but got Text", text: '"x"))' }]);
   });
 
   it("reads no argument against a receiver whose type is undecided", () => {
-    // `fold`'s accumulator `$1` and a `fn` result with no `->` have no type,
-    // so neither is taken for the `List(Int)` the fold walks.
+    // Neither receiver has a type the checker decides: `fold`'s accumulator `$1` is not the
+    // `List(Int)` the fold walks, and `mk` has no `->`, though its body is a `List(Int)`.
     expect(
-      diagnostics(`slot nums  : List(Int)  = [1]
+      summariesOf(
+        app(`slot nums  : List(Int)  = [1]
 slot texts : List(Text) = []
-fn mk() = ["a"]
+fn mk() = [1]
 reducer go on=ui.click(Btn) do=
     texts := nums.fold([], $1.push($2.show)).concat(mk().push("z"))`),
+      ),
     ).toEqual([]);
   });
 
   it("leaves a call whose count selects no reading on its receiver to the arity report", () => {
     // `m.get-or(d)` is the Option reading; on a Map its one argument is no key.
     expect(write("n := m.get-or(1)")).toEqual([
-      'E0213 12:38 Method ".get-or" on "Map" expects 2 argument(s) (key, default) but got 1 — ".get-or(default)" is the "Option" / "Result" reading',
+      {
+        code: "E0213",
+        message:
+          'Method ".get-or" on "Map" expects 2 argument(s) (key, default) but got 1 — ".get-or(default)" is the "Option" / "Result" reading',
+        text: "m.get-or(1)",
+      },
     ]);
+  });
+});
+
+// A call given fewer arguments than a row lists has none read against it, so a row longer than
+// the arity `check` enforces would turn the check off for every call that arity allows.
+describe("each row of the parameter table is the member's arity", () => {
+  /** A call of `member` on the parameter `recv`, one row per member that takes arguments. */
+  const rowsOf = (
+    receiver: string,
+    recv: string,
+    row: Readonly<Record<string, readonly unknown[]>>,
+  ) =>
+    Object.entries(row)
+      .filter(([, params]) => params.length > 0)
+      .map(([member, params]) => ({
+        name: `${receiver}.${member}`,
+        n: params.length,
+        call: (count: number) =>
+          `${recv}.${member}(${Array.from({ length: count }, () => "1").join(", ")})`,
+      }));
+  const rows = [
+    ...rowsOf("Map", "m", RECEIVER_PARAMS.Map),
+    ...rowsOf("Set", "s", RECEIVER_PARAMS.Set),
+    ...rowsOf("List", "xs", RECEIVER_PARAMS.List),
+  ];
+  const codes = (call: string): string[] =>
+    codesOf(
+      withApp(`fn probe(m: Map(Int, Int), s: Set(Int), xs: List(Int)) = ${call}
+tile App = column(text("x"))`),
+    );
+
+  // stdlib.md writes `slice(start, end)`, but `check` sets `slice` no lower bound yet.
+  const bounded = rows.filter(({ name }) => name !== "List.slice");
+
+  it.each(bounded)("$name with one argument fewer than its row is E0213", ({ n, call }) => {
+    expect(codes(call(n - 1))).toContain("E0213");
+  });
+
+  it.each(rows)("$name with as many arguments as its row is no E0213", ({ n, call }) => {
+    expect(codes(call(n))).not.toContain("E0213");
   });
 });

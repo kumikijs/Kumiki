@@ -1,4 +1,10 @@
-import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
+import {
+  assignable,
+  elementType,
+  nominallyComparable,
+  typeToString,
+  unaliasType,
+} from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { FRAGMENT_ARGUMENTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { receiverParams } from "../stdlib-members.ts";
@@ -278,6 +284,8 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             if (fits && e.method === "sort-by" && i === 0) {
               checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
             }
+            const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
+            if (fits && declared !== null) checkFragmentFnResult(a, declared, sym, errors);
             continue;
           }
           const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
@@ -415,6 +423,24 @@ function checkFragmentFnArity(
     );
   }
   return true;
+}
+
+// A fn named as a fragment answers what an inline fragment would, so its declared result is read
+// against the parameter as the fragment's value is.
+function checkFragmentFnResult(
+  a: Expr & { kind: "Ref" },
+  declared: TypeExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const ret = sym.fns.get(a.name)?.ret ?? null;
+  if (ret === null || !isKnown(ret, sym) || assignable(ret, declared, sym)) return;
+  pushMismatch(
+    errors,
+    "E0201",
+    `Expected ${typeToString(declared)} but "${a.name}" answers ${typeToString(ret)}`,
+    a.pos,
+  );
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -600,9 +626,7 @@ function memberArgType(
       return t.args[0] ?? null;
     case "V":
       return t.args[1] ?? null;
-    case "Map(K, V)":
-    case "Set(T)":
-    case "List(T)":
+    case "self":
       return recv;
   }
 }

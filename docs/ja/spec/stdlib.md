@@ -67,14 +67,14 @@ let id = emit fetchQuote()
 | レシーバ | パラメータ | メンバー |
 |---|---|---|
 | `Map(K, V)` | キー `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
-| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式 |
+| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式（名前で渡した `fn` は宣言された戻り値型を返す） |
 | | `other`（`Map(K, V)`） | `merge` |
 | `Set(T)` | 要素 `T` | `has` / `add` / `remove` / `toggle` |
 | | `other`（`Set(T)`） | `union` / `intersect` / `diff` |
 | `List(T)` | 要素 `T` | `push` / `prepend` / `contains` |
 | | `other`（`List(T)`） | `concat` |
 
-引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：フラグメント、`List.get` の添字、`slice` / `chunk` の数値、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所 — `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — では、どの引数も照合されない。
+引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：`update` 以外のフラグメント、`List.get` の添字、`slice` / `chunk` の数値、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所では、どの引数もパラメータの型と照合されない（各引数の式そのものは検査される）。そうした場所は `fold` のアキュムレータ `$1`、`->` のない `fn` の結果、そして型検査器が結果の型を推論しないメンバーの結果 — `List.map` / `fold` / `zip`、`Map.map`、`Option.map` / `Result.map` — である。したがって `List(Int)` に対する `xs.map($1 * 2).push("w")` は `check` を通る。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。
 
 ### 2.2.1 Map(K, V)
 

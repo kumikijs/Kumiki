@@ -122,9 +122,10 @@ export const UNIVERSAL_MEMBERS: ReadonlySet<string> = new Set(["show"]);
 export type Receiver = keyof typeof RECEIVER_MEMBERS;
 export type MemberOf<R extends Receiver> = (typeof RECEIVER_MEMBERS)[R][number];
 
-type MapParam = "K" | "V" | "Map(K, V)";
-type SetParam = "T" | "Set(T)";
-type ListParam = "T" | "List(T)";
+// `self` is the receiver's own type: the `other` of `Map.merge`, `Set.union` or `List.concat`.
+type MapParam = "K" | "V" | "self";
+type SetParam = "T" | "self";
+type ListParam = "T" | "self";
 
 export type ReceiverParam = MapParam | SetParam | ListParam;
 
@@ -149,7 +150,7 @@ export const RECEIVER_PARAMS = {
     remove: ["K"],
     // The fragment answers the entry's new value.
     update: ["K", "V"],
-    merge: ["Map(K, V)"],
+    merge: ["self"],
     filter: [null],
     map: [null],
   },
@@ -159,9 +160,9 @@ export const RECEIVER_PARAMS = {
     add: ["T"],
     remove: ["T"],
     toggle: ["T"],
-    union: ["Set(T)"],
-    intersect: ["Set(T)"],
-    diff: ["Set(T)"],
+    union: ["self"],
+    intersect: ["self"],
+    diff: ["self"],
     filter: [null],
     "to-list": [],
   },
@@ -174,7 +175,7 @@ export const RECEIVER_PARAMS = {
     last: [],
     push: ["T"],
     prepend: ["T"],
-    concat: ["List(T)"],
+    concat: ["self"],
     slice: [null, null],
     reverse: [],
     sort: [],
@@ -195,14 +196,16 @@ export const RECEIVER_PARAMS = {
   List: ParamRow<"List", ListParam>;
 };
 
+const PARAM_ROWS = new Map<string, ReadonlyMap<string, readonly (ReceiverParam | null)[]>>(
+  Object.entries(RECEIVER_PARAMS).map(([r, row]) => [r, new Map(Object.entries(row))]),
+);
+
+/** The parameters of `receiver.member`, or `undefined` when the table has no row for it. */
 export function receiverParams(
   receiver: string,
   member: string,
 ): readonly (ReceiverParam | null)[] | undefined {
-  if (!Object.hasOwn(RECEIVER_PARAMS, receiver)) return undefined;
-  const row: Readonly<Record<string, readonly (ReceiverParam | null)[]>> =
-    RECEIVER_PARAMS[receiver as keyof typeof RECEIVER_PARAMS];
-  return Object.hasOwn(row, member) ? row[member] : undefined;
+  return PARAM_ROWS.get(receiver)?.get(member);
 }
 
 const MEMBER_SETS = new Map<string, ReadonlySet<string>>(
