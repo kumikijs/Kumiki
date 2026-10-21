@@ -83,6 +83,12 @@ ${APP_A}`,
       description: 'replace "Decodr" with "Decoder" at 4:94',
       fixed: "decode: Decoder.None",
     },
+    {
+      repair: "answers a misspelt `Time.now` with the qualified builtin (E0116)",
+      source: `slot at : Time = Time.nwo\ntile App = column(text(at.format("yyyy")))\n${APP_A}`,
+      description: 'replace "Time.nwo" with "Time.now" at 1:18',
+      fixed: "slot at : Time = Time.now\n",
+    },
   ])("$repair", ({ source, description, fixed }) => {
     const file = seed(source);
     expect(descriptionsOf(file)).toContain(description);
@@ -508,6 +514,12 @@ describe("planFixesExplained: skip-reason classification", () => {
       "E0116",
       'Reference to undefined qualifier "ZZZZZZZZZZ" in "ZZZZZZZZZZ.show"',
       "undef-qualifier",
+    ],
+    [
+      "e0116-no-close-callee",
+      'slot at : Time = nwo()\ntile App = heading("hi")\n',
+      "E0116",
+      'Call to undefined function "nwo"',
     ],
     ["e0117-quoted-name-extract-failed", LONE_TILE, "E0117", "some undefined type"],
     [
