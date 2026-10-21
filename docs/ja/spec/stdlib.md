@@ -25,6 +25,8 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 let id = emit fetchQuote()
 ```
 
+同じ effect の 2 回の emit は異なる 2 つの id を返し、一方が開始したリクエストを cancel しても、他方のリクエストはそのままである。policy が捨てた emit の id は、それを吸収したリクエストを指す。例外は key ごとに 1 つのリクエストを実行する `policy=latest` / `policy=latest-per-key(...)` で、ある key の emit はすべてその key の id を返し、その id はその key で現在実行中のリクエストを指す（[HTTP §6.4](./http.md#_6-4-cancellation)）。
+
 `EffectId` 上で定義されている操作は等価比較（`==` / `!=`）と `EffectId` 型 slot への代入のみ。算術・順序比較・`text(...)` での描画はコンパイル時に拒否される（[E0204](./errors.md#e0204-effect-id-misuse)）。
 
 `EffectId.none` はセンチネル値（空ハンドル）。`EffectId` 型 slot の安全な初期値で、`emit cancel(...)` に渡しても実行時エラーではなく no-op になる。slot を実 `EffectId` で上書きしたあとは、その slot を `cap=http.cancel` の effect に渡すことで対応 effect をキャンセルできる（[HTTP §6.4](./http.md#_6-4-cancellation) 参照）。
@@ -53,7 +55,7 @@ let id = emit fetchQuote()
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
+| `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)） |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error`、`route.error(<pattern>)`（`pattern` が加わる）、および `error-boundary` tile の `in=` に渡る値 |
 
 プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。
@@ -145,7 +147,7 @@ prepend(x)                  : List(T)
 concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
-sort                        : List(T)          ; T は Ord
+sort                        : List(T)          ; T は Ord、昇順（< の順）
 sort-by(expr)               : List(T)          ; expr の昇順（< の順）、安定
 unique                      : List(T)
 map(expr)                   : List(T')
@@ -184,7 +186,9 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 
 - **`Text` の順序は UTF-16 コード単位の順**で、ロケールの照合順ではない：`"Z" < "a"`、`"B" < "a"` であり、かなや漢字は辞書（読み）順ではなくコードポイント順に並ぶ。
 - **キーは実行時の値として並べる。** 数値や `Time` と宣言されたフィールドでも、値が `Text` として届いたもの（たとえば宣言された型へ変換されない HTTP の JSON 本文）は `Text` として並ぶ：`"10"` が `"9"` より前になる。
-- **並べる値のないキー（欠落、または `NaN`）は他のすべてのキーの後ろに並び**、互いの順を保つ。そうなりうるのは checker が型を決められなかったキーだけである。すべてのキーと「等しい」と比べると、1 つあるだけで残りが並ばなくなるため。
+- **並べる値のないキー（欠落、または `NaN`）は他のすべてのキーの後ろに並び**、互いの順を保つ。数値のキーは算術が `NaN` を生むところで `NaN` になり（`0.0 / 0.0`、`(-1.0).sqrt`、`(-1.0).sqrt.floor`）、キーが欠落するのは値がそれを持たずに届いたところ（HTTP の JSON 本文が省いた、または `null` で送ったフィールド）か、checker が型を決められなかったところである。すべてのキーと「等しい」と比べると、1 つあるだけで残りが並ばなくなるため。
+
+**`sort` は、要素がすべて数値かすべて `Text` なら、要素そのものを同じ順で並べる**。判断するのは各要素の実行時の型で、欠落した要素は数えない：`List(Int)` / `List(Float)` / `List(Time)` は数値として、`List(Text)` は UTF-16 コード単位の順に並べる。したがって `[3, 1, 2, 10].sort` は `[1, 2, 3, 10]`、`["9", "10"].sort` は `["10", "9"]` である。欠落した要素は、`sort-by` で欠落したキーが並ぶのと同じく、他のすべての要素の後ろに互いの順を保って並ぶ。有限でない `Float` の値——[§2.2.7](#_2-2-7-int-float) の関数が定義域の外で与える値と、`/` が 0 の除数に与える値（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）——もほかと同じ数値である：`-Infinity` はすべての有限値の前に、`Infinity` は後ろに並ぶので、`[10.0, 9.0, 1.5, 1.0 / 0.0].sort` は `[1.5, 9.0, 10.0, Infinity]` である。`<` がどの値とも順序づけない `NaN` は、`Infinity` も含めて他のすべての要素の後ろに並ぶ。`sort-by` で `NaN` のキーが並ぶのと同じ位置である：`[(-1.0).sqrt, 2.0, 1.0].sort` は `[1.0, 2.0, NaN]`。数値と `Text` の両方を持つリスト（たとえば一部の値が `Text` として届いた `List(Float)`）は、代わりに各要素のテキストの順に並び、欠落した要素はやはり最後になる。数値と `Text` の間の `<` は順序にならないためである：`10`、`"9"`、`2` を持つそのようなリストは `10`、`2`、`"9"` の順になり、同じキーに対する `sort-by` は `2`、`"9"`、`10` の順になる。
 
 ### 2.2.4 Option(T)
 
@@ -248,7 +252,7 @@ show, to-float (Int), to-int (Float, 切り捨て)
 
 Kumiki の算術はこれで全部である。`math` 名前空間は存在しない：修飾子は大文字始まりの名前なので、`math.abs(x)` は `math` という名前への参照になり [E0103](./errors.md#e0103-undef-ref-undef-slot) を報告する。
 
-定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
+定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。有限でない `Float` の値——これらの関数が定義域の外で与える値と、`/` が 0 の除数に与える値（`1.0 / 0.0` は `Infinity`。[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）——もほかと同じ数値である：`sort` は `-Infinity` をすべての有限値の前に、`Infinity` を後ろに、`NaN` を他のすべての要素の後ろに並べる（[§2.2.3](#_2-2-3-list-t)）。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
 
 `x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。
 
@@ -599,9 +603,11 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 これは **capability 境界の登録、すなわち宣言的マニフェストであって、新しい構文や任意コードではない** — Kumiki の非ゴール「マクロ/DSL 拡張をしない」と整合する。動く例：[27-custom-capability](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/27-custom-capability.kumiki)（+ その `kumiki.caps.json`）。
 
+**標準 capability の上書き。** ホストの provider は*標準* capability（`http.*`、`storage.*`、`nav.*`、`notification.show`、`log.write` など）にも登録でき、capability に結び付いた effect は、標準のものも宣言されたものも、`confirm` を除いてすべて組み込み実装より先に `caps.provider(cap)` を参照する。これによりホストは Kumiki のソースを変えずに、HTTP トランスポートの差し替え、認証ヘッダの注入、フレームワークのルーターの接続、トースト UI の置き換えができる。`confirm` は常にランタイム自身のダイアログを描画する（[§2.6.5](#_2-6-5-confirm)）。その答えは `onYes` または `onNo` の reducer を dispatch することで、leave ガードの下ではさらにガードが保留している遷移を確定することで届けられるが（[ルーティング §3.5.2](./routing.md#_3-5-2-leave-ガード)）、`EffectResult`（`{kind:"ok"|"err", value}`）を返す provider にはそのどちらもできない。したがって `notification.show` の provider が置き換えるのは `toast` だけである。provider は effect のリクエスト（`map-request` 適用済み）を受け取り、登録が無ければ組み込みの動作がそのまま走る。
+
 **標準 capability の provider が返す err 値。** storage / session / indexed capability の provider は、組み込みハンドラと同じく、それらの effect が宣言する `Text` を err 値として返す。それ以外の err 値を返した場合も例外を投げた場合も、両者に共通の読み方で `Text` として配送される：`Error` は `Name: message`、`Text` の `message` フィールドを持つレコードはそのフィールド、それ以外はその JSON テキスト（`undefined` のように JSON が無いときは `String` 形）になる。`{kind, value}` でない結果は、provider が返したものを示す err になる。
 
-**`.err` reducer が受け取る値。** storage / session / indexed の effect は、`out=Result(T, Text)` が宣言する `Text`、つまり失敗のメッセージで失敗する（[ストレージ Effect](./http.md#_6-7-storage-effects)）。HTTP effect は `out=` が宣言する `HttpError` レコードで失敗する（[HTTP 共通](./http.md#_6-1-http-共通)）。カスタム capability の err 値はその provider が返すものであり、provider が未登録なら `{message: "Capability <name> has no provider"}` になる。HTTP やカスタムの effect で invoke が例外を投げた場合（`map-request` が panic した、provider が throw した）は、投げられた値のテキストを持つ `{message: Text}` として配送される。
+**`.err` reducer が受け取る値。** storage / session / indexed の effect は、`out=Result(T, Text)` が宣言する `Text`、つまり失敗のメッセージで失敗する（[ストレージ Effect](./http.md#_6-7-storage-effects)）。HTTP effect は `out=` が宣言する `HttpError` レコードで失敗する（[HTTP 共通](./http.md#_6-1-http-共通)）。カスタム capability の err 値はその provider が返すものであり、provider が未登録なら `{message: "Capability <name> has no provider"}` になる。HTTP やカスタムの effect で invoke が例外を投げた場合（`map-request` が panic した、provider が throw した）は、投げられた値のテキストを持つ `{message: Text}` として配送される。`retry` の試行間の待機中にキャンセルされたカスタム effect も、同じ形の `{message: "aborted"}` として配送される（[HTTP §6.5](./http.md#_6-5-リトライ)）。
 
 **未処理の effect エラーは surface され、決して silent にならない。** `err` に解決した effect は、対応するすべての `.err` reducer へ配送される。プログラムがその effect に `.err` reducer を**一切**配線していない場合、捨てられたエラーは `console.error`（`[kumiki] effect "<name>" returned an error with no .err reducer: …`）で報告され、検証 tier（`console.error` を捕捉する `smoke` / `runScenario`）が検知する — live panic モデル（[エラー処理](./lifecycle.md#_7-2-error-handling)）と整合する。失敗した capability が no-op に見えてはならない：storage 利用不可ケース（opaque-origin サンドボックス、プライベートモード）がまさにこれで、`storage.read` / `storage.write` は `err` を返し、`.ok` だけを扱うアプリは黙って何もしないことになる。よってデフォルト契約は **`err` + surface された報告**であり、プログラムは `.err` reducer（空でもよい）を配線してエラーを処理（または意図的に無視）することを選ぶ。in-memory storage フォールバックはデフォルト挙動では**ない**（契約を覆い隠すため）；欲しいホストは `storage.*` provider で明示的に供給する。
 
@@ -653,7 +659,7 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 
 ケイパビリティを要求しない唯一の標準 effect。ユーザーが既に見ているページのビューポートを動かすだけで、その外側には何も届かないからである。→ [ルーティング §3.9](./routing.md#_3-9-スクロール復元)。
 
-### 2.6.5 確認ダイアログ
+### 2.6.5 確認ダイアログ {#_2-6-5-confirm}
 
 ```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit
@@ -661,7 +667,7 @@ effect confirm     cap=notification.show  in={title: Text, message: Text, onYes:
 
 `ReducerRef` は reducer の名前をそのまま書いたもの（`onYes: doDelete`）で、ランタイムが名前で dispatch する。プログラムが書ける型ではなく、この `in=` にだけ現れる。reducer の名前でない裸の名前は [E0103](./errors.md#e0103-undef-ref-undef-slot)、それ以外の値は [E0202](./errors.md#e0202-emit-arg-type-mismatch) である。
 
-ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)。
+ネイティブの `confirm` ではなくモーダルダイアログの tile として描画され、答えは戻り値ではなく reducer に届く。ダイアログは常にランタイム自身のものである。`notification.show` のホスト provider が置き換えるのはトーストであり、`confirm` には届かない（[§2.5](#_2-5-standard-capabilities)）。→ [ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)。
 
 ---
 
