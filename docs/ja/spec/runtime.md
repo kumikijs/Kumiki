@@ -219,11 +219,13 @@ app App ... theme = themeName    # ← slot 名を渡す
 - `.get-or(default)` (Option) / `.get-or(key, default)` (Map): 引数数で判別
 - `m.entries` は `[[k, v], ...]` で返る。後続の list ops の lambda が `$1` / `$2` をどう束縛するかはここではなく、受信側の型から型検査器が決める（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— `Tuple(K, V)` の要素は `$1=k, $2=v` に分解される
 
-### 10.3.8 select の値マッチング
+### 10.3.8 select の値マッチング {#_10-3-8-value-matching-of-select}
 
 `select(value=v, options=[...])` は option の選択状態を **構造的キー**で判定する:
 - variant は `_tag` + payload を再帰的にシリアライズしてキー化する。`Some(Backlog)` と `Some(InProgress)` は別キーになる（フラットな `_tag` 比較だと両者が `"Some"` で衝突するため、payload まで含めることが必須）
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
+- それ以外の値（`Text`・数値・レコード）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。レコードの JSON テキストはフィールドを書かれた順に並べるので、`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option にマッチしない。`==` は両者を等しいとするにもかかわらずである。これは規則ではなく既知の制限である（[#941](https://github.com/kumikijs/Kumiki/issues/941)）
+- キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示する。`placeholder` の option が選択状態になるのは、両方の経路で、select が値を持たないときに限る
 
 ### 10.3.9 focus 復元
 
@@ -726,7 +728,9 @@ step が付く episode は、いま開いている episode ではなく、その
 
 ### 10.4.4 retry
 
-`retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで再試行。指数バックオフは jitter ±20% を加える。
+`retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで、policy が定める間隔を待って再試行する（[http.md §6.5](./http.md#_6-5-リトライ)）。
+
+試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも待機を終える（[http.md §6.5](./http.md#_6-5-リトライ)）。
 
 ### 10.4.5 結果の配送
 
@@ -796,7 +800,9 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 - メモリに直近 N 件（デフォルト 100）
 - localStorage に直近 M 件（デフォルト 20、サイズ上限 5MB）
-- 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し
+- 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し（`kumiki run` は `KUMIKI_EPISODE_LOG` からもパスを受け取る）
+
+`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わった後に commit する episode（invoke が abort で止まらずアプリの dispose 後も走り続ける effect のものなど）は書かれない（[#942](https://github.com/kumikijs/Kumiki/issues/942)）。`retry=` の backoff を待っている effect はこれに当たらない。アプリを dispose するとその待機は終わる（[http.md §6.5](./http.md#_6-5-リトライ)）ので、episode は実行が返る前に commit され、書かれる。
 
 ### 10.5.3 replay
 
@@ -811,6 +817,8 @@ kumiki replay --until-step 5                # 途中まで
 - **入口の reducer は、記録時に受け取った payload で走る。** episode の `trigger.payload` はライブの runtime が最初の reducer に渡した payload そのもの — UI イベントなら `{$el, $event}`、effect の結果なら `{$1, $2}` — であり、replay はそれを加工せずに渡す。したがって `$el.idx` や `$event.value` はライブと同じ値を読む。payload を持たない trigger の最初の reducer が `.ok` / `.err` reducer である場合 — reducer ではなく SSR パスが開く `ssr.hydrate` の bootstrap episode — その reducer は、それより前に記録された同じ effect・同じ結果の `effect-end` のうち最後のものの上で走ったので、その値が reducer の `$1` になる。その記録済みの結果は消費され、同じ effect の `from-log` mock はその次から続く。
   - ログにそのような step がない場合 — 切り詰められた、あるいは手で編集されたログ — reducer は `$1` なしで走り、それは**推測せずに報告される**：episode のトレース行に `(no recorded result for <reducer>)` が付き、実行の最後に `entry results missing:` の要約が出るので、その後の panic が reducer のバグに見えることはない。
   - replay は episode ごとに入口の reducer を 1 つしか持たないので、SSR パスが複数の `app.init` effect を走らせた bootstrap は、最初の入口 reducer の連鎖しか replay されない。そのようなログに対する `slots-equal: from-log` の `episode-test` は panic ではなく slot の不一致で失敗し、2 つの `init` の連鎖が同じ effect を emit すると、入口が進めた `from-log` カーソルが再 emit にもう一方の連鎖の結果を渡しうる。この失敗は静かである：値は欠落ではなく交差する。
+- **入口の reducer がプログラムにない episode は replay されず、それは実行の失敗になる。** 入口の reducer とは、episode の最初の `reducer` step、または本体が throw した reducer を名指す `panic` step である（[§10.5.1](#_10-5-1-structure-of-an-episode)）。ログはその reducer が走ったときの名前を保持するので、改名や削除の後ではプログラムがその名前の reducer を宣言していないことがあり、そのとき replay にはその episode を走らせる手段がない。replay されない episode は panic も未処理のエラーも起こさないので、見過ごさずに報告する：その episode のトレース行の末尾に `(not replayed: <reason>)` が付き、`N episode(s) replayed` の数から除かれ、終了コードは `1` になる。実行の最後には stderr に `not replayed:` の行が 1 行だけ出て、そのような episode をそれぞれ `<episode-id>: <reason>` として挙げ、複数あれば `; ` でつなぐ。replay はその後の episode へ進む。`N episode(s) replayed` の数は replay が到達した episode だけを数えるので、`--until-step` で止まった episode より後のものも含まない。`<reason>` は `no reducer named "<name>"` であり、どの reducer も名指さない scenario の `{dispatch}` step が失敗するときの文言（[testing.md §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification)）と同じで、近い名前があるときに付く `— did you mean "<declared>"?` まで同じである。`name` のない入口の `reducer` step — 手で編集されたログにしか現れない — も replay されず、その `<reason>` は `reducer step <n> has no name` である（`<n>` は episode の step を 1 から数える）。読み飛ばしはしない。読み飛ばせば、それを持つ bootstrap は入口の reducer がまったくない episode（下記）として replay され、クリーンになってしまう。そのような episode に対する `episode-test` は、`expect` が何を挙げていても失敗する（[testing.md §8.6](./testing.md#_8-6-episode-replay)）。
+  - 入口の reducer が**まったくない** episode — `reducer` step も、reducer を名指す `panic` step もない — は、`ssr.hydrate` の bootstrap ならクリーンに replay され、それ以外なら `no reducer step` を理由に replay されない。ライブの runtime は SSR の bootstrap（`ssr.hydrate`、[§10.5.1](#_10-5-1-structure-of-an-episode)）を除くすべての episode を reducer の dispatch で開き、その reducer を `reducer` step か名前付きの `panic` step として記録するので、そのような episode として記録されるのは、`app.init` の結果がどの reducer にも届かなかった bootstrap — `init = []`、あるいは何も処理しない init effect — だけである。replay は reducer を再実行し、`app.init` の emit は決して再実行せず、slot を書くのは reducer だけなので、何も走らせないことがその episode の再現になる。それを失敗にすれば、そのような bootstrap を含むすべてのログが失敗する。それ以外の入口の step を持たない episode は切り詰められた、あるいは手で編集されたログから来たものであり、何も走らせなければすべての検査がその上で成り立ってしまう。そのような bootstrap が記録した capability の拒否 — `name` のない `panic` step — は再現されない。replay はどの episode についても capability を検査しない。
 - **環境の読みはログから答える。環境からではない。** reducer 本体を走らせる前に、replay はその reducer の記録済み `env-reads`（[§10.5.1](#_10-5-1-structure-of-an-episode)）を据える。以後 `now` / `random()` / `<T>.fresh()` / `prefers-dark()` は、時計・乱数源・ID 生成器・OS の設定を読み直すのではなく、記録時に返したのと同じ値を返す。`EffectId` が ID 生成器から来る `emit` 式も、記録時に返した id を返す。したがって環境を読んだ reducer の episode を replay すると、記録された `slot-diffs` が毎回そのまま再現される。
   - 読みと記録済みの答えは **kind で** 対応付け、同じ kind の中では記録順に返す。あるビルトインの余分な読みが、別のビルトインの答えをずらすことはない。
   - 対応する答えが尽きた読み — 古いログ、あるいは記録時より多く読んだ本体 — は、replay を失敗させるのではなくライブの値にフォールバックする。その読みだけが replay に再現できないものなので、推測ではなく**報告される**：その step のトレース行に `(env: N read live)` が付き、実行の最後に `environment reads:` の要約が出る。同じ行が、replay 側の本体が使わなかった記録済みの答え（`N recorded unused`）と、ログが持っていた不正な要素（`N malformed`）も報告する。3 つとも無い step は何も言わない。
@@ -836,7 +844,7 @@ kumiki replay --until-step 5                # 途中まで
   - `overlay` は 2 つめ以降の子を、レンダラが組むのと同じ絶対配置のレイヤーで包み、`align` で配置する。
   - **閉じた** `modal` / `drawer` / `popover` は、空文字列ではなく、レンダラがマウントするのと同じ「存在するが隠れた」ホスト（コンテンツ箱を包む `display: none`）として配信される。サーフェスの開閉は両方の経路でスタイルの切り替えであり、閉じたサーフェスの中身はクローラから読める。（理由は hydration ではない：hydration はどちらの形を配信しても、配信された DOM を丸ごと置き換える — [§10.6.2](#_10-6-2-hydration)。）
   - `check` / `switch` / `radio` はコントロールを包む `<label>` として、`error` はメッセージが入る `<span>` として配信される。
-- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value` / `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。
+- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value`（`<option>` のものを除く）/ `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。`<option>` の `value` も反映される。両方の経路でその option のキーになるので、両者は一致しなければならない（[§10.3.8](#_10-3-8-value-matching-of-select)）。
 - レスポンス bundle 構成：
   - HTML（初期 tile 描画結果）
   - JSON（初期 slot snapshot）
