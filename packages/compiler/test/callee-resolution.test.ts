@@ -413,7 +413,7 @@ describe("a qualified stdlib member is read the same way without its parentheses
   });
 
   it("reads a keyword member the same way, in either spelling", () => {
-    for (const where of ["Decoder.if", "Duration.if", "Bytes.if"]) {
+    for (const where of ["Decoder.if", "Duration.if", "Bytes.if", "Time.if"]) {
       expect(codesOf(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
     }
     expect(codesOf(inReducer("t := (Decoder.if(a)).show"))).toEqual(["E0116"]);
@@ -514,13 +514,26 @@ test stamps =
 `;
 
   const moduleWith = (spelling: string): string =>
-    compileOrFail(EVERYWHERE.replaceAll("NOW", spelling));
+    compileOrFail(EVERYWHERE.replaceAll("NOW", spelling), {
+      runtimeSpecifier: "./runtime.js",
+      includeTests: true,
+    });
 
   it("lowers to the module `now` lowers to, in a slot, fn, reducer, tile and test", () => {
     // Codegen embeds no source positions, so a byte-identical module is "the same builtin" in
-    // every position at once, the environment read the runtime journals included.
+    // every position at once, the environment read the runtime journals included. Each position's
+    // lowering is looked for, so the comparison cannot hold vacuously.
     const bare = moduleWith("now");
-    expect(bare.match(/_s\.now\(\)/g)?.length).toBe(5);
+    const POSITIONS = [
+      "function later(t) { return ((_s.now())",
+      '"at": { value: _s.now() }',
+      '_next["at"] = _s.now();',
+      '_s.formatTime(_s.now(), "yyyy")',
+      '{ "at": _s.now() }',
+    ];
+    for (const lowered of POSITIONS) expect(bare, lowered).toContain(lowered);
+    // The tile is emitted once per route that mounts `App` and once more for the tests.
+    expect(bare.match(/_s\.now\(\)/g)?.length).toBe(7);
     for (const spelling of SPELLINGS) expect(moduleWith(spelling), spelling).toBe(bare);
   });
 
@@ -588,7 +601,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(checkSource(inReducer(`t := (Time.${member}()).show`))).toEqual(bare);
   });
 
-  it("keeps the type members of Time, which a closed namespace refuses", () => {
+  it("keeps fresh and an argument-less parse / show as type members, which Decoder / EffectId / Duration / Bytes report as E0116", () => {
     expect(loweringOf('Time.parse("2026-08-14")')).toContain('_s.parseTime("2026-08-14")');
     expect(codesOf(inReducer("t := Time.show(a)"))).toEqual([]);
     expect(checkSource(inReducer("t := (Time.parse()).show"))[0]?.message).toBe(
@@ -603,6 +616,18 @@ tile App = column(text(s.show))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
     expect(codesOf(src)).toEqual(["E0116"]);
+  });
+
+  // A known gap (errors.md E0116): written bare on any qualifier other than Time and the four
+  // namespaces, a member is a field read with no type. This test changes when the gap closes.
+  it("leaves a bare Stamp.now a field read that passes check", () => {
+    const src = `type Stamp = nominal Time
+slot s : Stamp = Stamp.now
+tile App = column(text(s.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual([]);
+    expect(compileOrFail(src)).toContain('"s": { value: (({ _tag: "Stamp" }))["now"] }');
   });
 });
 
@@ -673,7 +698,7 @@ describe("every built-in is held to the count its lowering reads", () => {
     expect(Object.fromEntries(ALL.map(spelled))).toEqual(EXPECTED);
   });
 
-  it("does not reach the one the parser spells for you", () => {
+  it("the keyword now takes no parentheses, so its count is checked through Time.now", () => {
     expect(codesOf(inReducer("t := now.show"))).toEqual([]);
     expect(() => parse(lex(inReducer("t := now(1).show")))).toThrow(/Expected/);
   });

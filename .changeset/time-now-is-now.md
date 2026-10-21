@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-`Time.now` is the builtin `now`
+`Time.now` and `Time.now()` are the builtin `now` instead of a field read that passes `check` and evaluates to `undefined`, and a bare `Time.<member>` gets the diagnostic its parenthesised spelling gets
 
 stdlib.md lists `Time.now : Time`, but only the bare keyword `now` was
 implemented. `Time.now` parsed as a field read on a variant named `Time`, so it
@@ -14,6 +14,8 @@ had no type and lowered to `(({ _tag: "Time" }))["now"]`, which is `undefined`.
 ```
 slot started : Time = Time.now
 fn flag() -> Bool = Time.now
+tile App = column(text(started.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 ```
 
 ```
@@ -42,5 +44,11 @@ spelling gets:
 
 `Time.parse(text)`, `Time.show(v)` and the other type members on `Time` are
 unchanged. `kumiki fix` offers `Time.now` for a misspelling such as
-`Time.nwo`. A type declared over `Time` (`type Stamp = nominal Time`) has no
-`now` member, and `Stamp.now()` is still E0116.
+`Time.nwo`, and no longer offers the keyword `now` for an unqualified call
+such as `nwo()`: `now` takes no parentheses, so that repair broke the file.
+
+A type declared over `Time` (`type Stamp = nominal Time`) has no `now`
+member, and `Stamp.now()` is still E0116. A bare `Stamp.now` is still a field
+read that passes `check` and evaluates to `undefined`, as on any qualifier
+other than `Time` and the four namespaces; errors.md (E0116) lists it as a
+known gap.

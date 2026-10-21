@@ -8,9 +8,10 @@
 # hands that answer back (runtime.md). `Time.now()` is the same call
 # with its parentheses written.
 #
-# The three spellings below are one builtin. Each slot is read from the clock
-# when the app is built, and again, in the order written, on the click — so
-# the instants are in order, and `format` renders a real year from them.
+# The three spellings below are one builtin. Every Time slot is read from the
+# clock when the app loads; the click reads `stamped`, `called` and `bare`
+# again, in the order written — so the instants are in order, and `format`
+# renders a real year from them.
 
 slot opened  : Time = Time.now
 slot stamped : Time = Time.now

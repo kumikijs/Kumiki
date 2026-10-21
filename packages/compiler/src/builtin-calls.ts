@@ -45,11 +45,16 @@ export const QUALIFIED_CALL_NAMESPACES: ReadonlySet<string> = new Set([
 // spelling was written.
 export const BUILTIN_MEMBERS: ReadonlyMap<string, string> = new Map([["Time.now", "now"]]);
 
+// Kept out of QUALIFIED_CALL_NAMESPACES: isMissingNamespaceMember would then make Time.fresh() or
+// a bare Time.parse an E0116 instead of the type member's report.
 const BUILTIN_MEMBER_QUALIFIERS: ReadonlySet<string> = new Set(
   [...BUILTIN_MEMBERS.keys()].map((name) => name.slice(0, name.indexOf("."))),
 );
 
-// Unlike a closed namespace, a BUILTIN_MEMBERS qualifier keeps the type members every type has.
+// A builtin a member names is offered under that member only: the keyword `now` takes no
+// parentheses, so it never repairs a call.
+const MEMBER_ONLY_BUILTINS: ReadonlySet<string> = new Set(BUILTIN_MEMBERS.values());
+
 export function readsBareMemberAsCall(qualifier: string): boolean {
   return QUALIFIED_CALL_NAMESPACES.has(qualifier) || BUILTIN_MEMBER_QUALIFIERS.has(qualifier);
 }
@@ -147,7 +152,7 @@ export function isBuiltinCallee(callee: string): boolean {
 
 export function calleeCandidates(fnNames: Iterable<string>, missing?: string): string[] {
   const base = [
-    ...BUILTIN_CALLS.keys(),
+    ...[...BUILTIN_CALLS.keys()].filter((name) => !MEMBER_ONLY_BUILTINS.has(name)),
     ...QUALIFIED_BUILTIN_CALLS.keys(),
     ...BUILTIN_MEMBERS.keys(),
     ...fnNames,

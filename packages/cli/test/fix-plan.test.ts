@@ -474,6 +474,12 @@ describe("planFixesExplained: skip-reason classification", () => {
       "E0116",
       'Call to undefined function "doubel-value"',
     ],
+    [
+      "e0116-no-close-callee",
+      'slot at : Time = nwo()\ntile App = heading("hi")\n',
+      "E0116",
+      'Call to undefined function "nwo"',
+    ],
     ["e0117-quoted-name-extract-failed", LONE_TILE, "E0117", "some undefined type"],
     [
       "e0117-no-close-type",
