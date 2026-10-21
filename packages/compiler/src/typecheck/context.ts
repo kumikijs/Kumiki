@@ -10,6 +10,7 @@ import type {
   TypeDef,
   TypeExpr,
 } from "../ast.ts";
+import { callsBuiltin } from "../builtin-calls.ts";
 
 export type KumikiError = {
   code: string;
@@ -93,4 +94,8 @@ export function pureScope(binds: string[]): Ctx {
 
 export function wildcardText(e: Expr & { kind: "Wildcard" }): string {
   return e.wild === "any-id" ? "<any-id>" : `<slots.${e.slot}>`;
+}
+
+export function isBuiltinCall(callee: string, sym: SymbolTable): boolean {
+  return callsBuiltin(callee, (name) => sym.fns.has(name));
 }

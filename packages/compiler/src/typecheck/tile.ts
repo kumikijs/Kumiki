@@ -341,7 +341,8 @@ function checkTileCall(
   ctx: Ctx,
 ): void {
   const userTile = sym.tiles.get(t.name);
-  if (!BUILTIN_TILES.has(t.name) && !userTile) {
+  const undefinedTile = !BUILTIN_TILES.has(t.name) && !userTile;
+  if (undefinedTile) {
     errors.push({
       code: "E0105",
       kind: "undef-tile",
@@ -395,6 +396,9 @@ function checkTileCall(
 
   for (const arg of t.args) {
     const v = arg.value;
+    // Whether a positional argument is a tile or a value depends on the tile it is passed to,
+    // so an undefined one leaves nothing to check it as.
+    if (undefinedTile && arg.name === undefined) continue;
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
