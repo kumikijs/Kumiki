@@ -54,6 +54,13 @@ export function textAt(app: AppShape, path: string): string {
   return text;
 }
 
+/** The text of each element under `root` that has no child elements, in document order. */
+export function texts(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll("*"))
+    .filter((el) => el.children.length === 0)
+    .map((el) => el.textContent ?? "");
+}
+
 export const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Poll `done` every `pollMs` until it holds; throw once `timeoutMs` has passed. */
@@ -134,6 +141,19 @@ export function find<T extends Element = HTMLElement>(root: ParentNode, selector
 export function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   field.value = value;
   field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Pick `file` in `input` as the browser's file chooser would. */
+export function pickFile(input: HTMLInputElement, file: File): void {
+  try {
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file] as unknown as FileList,
+    });
+  } catch {
+    (input as unknown as { files: File[] }).files = [file];
+  }
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 /** `typeInto` the field matching `selector`. */
