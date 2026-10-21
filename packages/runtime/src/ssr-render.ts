@@ -49,7 +49,7 @@ export function renderTileToString(node: TileNode): string {
       const legend = attrValue(node.props?.legend);
       return el(
         node,
-        "div",
+        "fieldset",
         { "data-kumiki-tile": "fieldset" },
         `${legend === undefined ? "" : `<legend>${escapeText(String(legend))}</legend>`}${renderChildren(node.children)}`,
       );

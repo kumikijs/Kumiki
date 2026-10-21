@@ -183,7 +183,8 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 ### 10.3.4 DOM レンダリングの不変条件
 
 - **null/undefined 子ノードは skip される**。`when(false, X)` のような偽分岐は `null` を子に渡すが、`renderTile` はそれを無視して兄弟だけを描画する
-- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll` / `fieldset`** はすべて `<div>` ベースのコンテナ。`stack` は `column` 相当（vertical stack）。`legend` を持つ `fieldset` はそれを `<legend>` として子の前に置く
+- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll`** はすべて `<div>` ベースのコンテナ。`stack` は `column` 相当（vertical stack）
+- **`fieldset`** は `<fieldset>` である。ブラウザが与える枠線・パディング・マージン・最小幅は `0` にリセットされ、`<div>` のコンテナと同じように配置される。それらを設定する prop があればそちらが勝つ。空でない `legend` を持つ `fieldset` はそれを `<legend>` として子の前に置き、支援技術にはそれがグループの名前になる
 - **`grid`** は `display: grid` + `cols` prop で `grid-template-columns: repeat(N, 1fr)` （数値）または直接 CSS 値（文字列）
 - **`divider`** は `<hr>` 単独要素（children なし）
 - **timer reducer** は `setInterval` で発火、app の `dispose` 時に `clearInterval` で停止
