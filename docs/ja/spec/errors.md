@@ -353,13 +353,13 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 | callee | 規定箇所 |
 |---|---|
-| `now` / `random` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-builtin-functions) |
+| `now`（`Time.now` とも書く）/ `random` / `fmt` / `panic` | [標準ライブラリ §2.4](./stdlib.md#_2-4-builtin-functions) |
 | `Duration.*` / `Bytes.*` / `<T>.fresh` / `.parse` / `.show` | [標準ライブラリ §2.2](./stdlib.md#_2-2-コレクションメソッド)・[§2.4](./stdlib.md#_2-4-builtin-functions) |
 | `Decoder.*` / `EffectId.none` | [HTTP / Storage §6.1.4](./http.md#_6-1-4-decoder-型)・[標準ライブラリ §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
 | `file-url` | [フォーム §5.10](./forms.md#_5-10-file-upload) |
 | `prefers-dark` | [スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従) |
 
-`Decoder` / `EffectId` / `Duration` / `Bytes` のメンバを**括弧なし**で書いたものは値ではなく、引数を渡さない呼び出しである。`Decoder.Text` や `EffectId.none` はそう書かれ、`Duration.s` / `Bytes.from-text` も——後者 2 つの名前空間に 0 引数のメンバは無いが——同じ読み方をする。したがってその名前空間が宣言していないメンバは何も持たない値に評価されるのではなくここで報告され（`Duration.nope` は E0116）、実在するメンバに引数を渡さなかった場合は [E0213](#e0213-call-arity-mismatch) になる。この 4 つは上の表が挙げる組み込み呼び出しの qualifier である。それ以外の qualifier に対する括弧なしの `<T>.fresh` / `.parse` / `.show` は呼び出しとして読まれ**ない**——フィールド読みのまま何も持たない値に評価され、診断も出ない。これは規則ではなく既知のギャップである。
+`Decoder` / `EffectId` / `Duration` / `Bytes` のメンバを**括弧なし**で書いたものは値ではなく、引数を渡さない呼び出しである。`Decoder.Text` や `EffectId.none` はそう書かれ、`Duration.s` / `Bytes.from-text` も——後者 2 つの名前空間に 0 引数のメンバは無いが——同じ読み方をする。したがってその名前空間が宣言していないメンバは何も持たない値に評価されるのではなくここで報告され（`Duration.nope` は E0116）、実在するメンバに引数を渡さなかった場合は [E0213](#e0213-call-arity-mismatch) になる。この 4 つは、どのメンバも組み込み呼び出しである名前空間である。`Time` も同じ読み方をする。`Time.now`——上の `now` を型の名前で書いたもの（[標準ライブラリ §2.4.2](./stdlib.md#_2-4-2-時刻)）——が括弧なしで書かれるそのメンバだからである：`Time.nope` は E0116、テキストを渡さない `Time.parse` は [E0213](#e0213-call-arity-mismatch) になり、括弧の有無によらず同じである。4 つと違い、`Time` はあらゆる型が持つ `fresh` / `parse` / `show` をすべて保つ。したがって `fresh` と引数のない `parse` / `show` は、4 つが与える E0116 ではなく型メンバとしての報告（[E0802](#e0802-unimplemented-function)・E0213）を受ける（[E0117](#e0117-undef-type)）。それ以外の qualifier に対する括弧なしの `<Q>.<member>` は呼び出しとして読まれ**ない**——フィールド読みのまま何も持たない値に評価され、診断も出ない：`type Stamp = nominal Time` の `Stamp.now`、`type T2 = Time` の `T2.now`、括弧で囲んだ `(Time).now`、綴りを誤った `Tim.now`、括弧なしの `<T>.fresh` / `.parse` / `.show` はどれも `check` を通る。これは規則ではなく既知のギャップである。括弧を書けばどれも呼び出しとなりその報告を受ける：`Stamp.now()` は E0116 である。
 
 `run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。`fn run-reducer` を宣言していないプログラム（[言語 §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)）では、それ以外の場所に書けば E0116 になる。テスト本体の中では専用の文面を持つ——誤っているのは名前ではなく位置だからである：
 
