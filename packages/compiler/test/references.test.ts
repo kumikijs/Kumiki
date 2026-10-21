@@ -247,7 +247,7 @@ test chain =
 `;
       // The receiver is the fn's call, and `inc` is a value the walker finds no definition for.
       expect(refsOf(src, "test.chain")).toEqual([
-        "slot.count@-",
+        "slot.count@8:30",
         "tile.B@8:73",
         "fn.run-reducer@9:21",
       ]);
