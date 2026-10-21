@@ -277,8 +277,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             checkExpr(a, sym, errors, ctx);
             const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
-            // Any other count is checkGetArity's E0213, with no argument read as the index.
-            if (e.method === "get" && e.args.length === 1) {
+            if (i < listIndexArgs(e.method, e.args.length)) {
               checkListIndex(unaliasType(recvType, sym), a, sym, errors, ctx);
             }
             continue;
@@ -634,5 +633,19 @@ function memberArgType(
       return t.args[1] ?? null;
     case "self":
       return recv;
+  }
+}
+
+function listIndexArgs(member: string, argCount: number): number {
+  switch (member) {
+    case "get":
+      // Any other count is checkGetArity's E0213, with no argument read as the index.
+      return argCount === 1 ? 1 : 0;
+    case "slice":
+      return 2;
+    case "chunk":
+      return 1;
+    default:
+      return 0;
   }
 }
