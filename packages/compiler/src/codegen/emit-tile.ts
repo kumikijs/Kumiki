@@ -4,6 +4,7 @@ import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
+import { writtenValue } from "../typecheck/tile-collect.ts";
 import {
   addBind,
   bindRef,
@@ -434,10 +435,9 @@ function tileCallJs(
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
         const bindInfo = extractBindPath(t.args);
-        // The group is the `<input>`'s `name`, so `name=` spells it too; `group=` wins when both are written.
-        const groupArg =
-          t.args.find((a) => a.name === "group") ?? t.args.find((a) => a.name === "name");
-        if (groupArg) fields.push(`group: ${jsOfExpr(asExpr(groupArg.value), ctx)}`);
+        // The group is the `<input>`'s `name`, so `name` spells it too; `group` wins when both are written (W0217).
+        const group = writtenValue(t, "group") ?? writtenValue(t, "name");
+        if (group) fields.push(`group: ${jsOfExpr(group, ctx)}`);
         let valueJs: string | undefined;
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
@@ -599,8 +599,8 @@ function tileCallJs(
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
         } else {
-          const valArg = t.args.find((a) => a.name === "value");
-          if (valArg) fields.push(`value: ${jsOfExpr(asExpr(valArg.value), ctx)}`);
+          const value = writtenValue(t, "value");
+          if (value) fields.push(`value: ${jsOfExpr(value, ctx)}`);
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
