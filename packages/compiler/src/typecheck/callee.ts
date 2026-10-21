@@ -11,7 +11,7 @@ import { BUILTIN_TILES } from "../builtins.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import { type Ctx, isBuiltinCall, type KumikiError, type SymbolTable } from "./context.ts";
 import { freshResultType, prim } from "./infer.ts";
 
 export function checkCallee(
@@ -98,7 +98,7 @@ export function checkCallee(
       return;
     }
   }
-  const arity = builtinArity(callee);
+  const arity = isBuiltinCall(callee, sym) ? builtinArity(callee) : undefined;
   if (arity !== undefined) {
     if (argCount < arity.min || argCount > arity.max) {
       errors.push({
