@@ -1,20 +1,11 @@
 import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { clickContaining, mountApp, tick } from "./helpers/dom.ts";
-import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import { clickContaining, tick, withMounted } from "./helpers/dom.ts";
+import { type FetchDouble, holdEach, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("116-emit-id-after-key-write");
-
-/** A response that never arrives, and fails the way `fetch` does when its signal is aborted. */
-function pendingUntilAborted(signal: AbortSignal | null | undefined): Promise<Response> {
-  return new Promise((_resolve, reject) => {
-    signal?.addEventListener("abort", () =>
-      reject(new DOMException("The operation was aborted.", "AbortError")),
-    );
-  });
-}
 
 let double: FetchDouble | undefined;
 
@@ -31,22 +22,19 @@ async function startThenCancel(
   url: string,
   shown: string,
 ): Promise<void> {
-  double = stubFetch((call) => pendingUntilAborted(call.init.signal));
-  const { root, handle } = mountApp(app);
-  try {
+  double = stubFetch(holdEach());
+  const { calls } = double;
+  await withMounted(app, async (root) => {
     clickContaining(root, start);
     await tick(30);
-    expect(double.calls.map((c) => c.url)).toEqual([url]);
-    expect(double.calls[0]?.init.signal?.aborted).toBe(false);
+    expect(calls.map((c) => c.url)).toEqual([url]);
+    expect(calls[0]?.init.signal?.aborted).toBe(false);
 
     clickContaining(root, cancel);
     await tick(30);
-    expect(double.calls[0]?.init.signal?.aborted).toBe(true);
+    expect(calls[0]?.init.signal?.aborted).toBe(true);
     expect(root.textContent).toContain(shown);
-  } finally {
-    handle.dispose();
-    root.remove();
-  }
+  });
 }
 
 describe("the EffectId an emit yields after its reducer wrote the key slot", () => {
