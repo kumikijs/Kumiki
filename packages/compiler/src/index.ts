@@ -1,4 +1,4 @@
-export { levenshtein, nearestName } from "@kumikijs/runtime/text-distance";
+export { levenshtein, nearestName, nearestNames } from "@kumikijs/runtime/text-distance";
 export type * from "./ast.ts";
 export { calleeCandidates, isBuiltinCallee } from "./builtin-calls.ts";
 export {
