@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
+import { allFiles } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { codesOf } from "./helpers/diagnostics.ts";
 
@@ -166,11 +169,19 @@ tile B = button(text="b")
       expect(refsOf(src, "reducer.ask")).toEqual(["tile.B@3:25", "reducer.yes@3:79"]);
     });
 
-    it("resolves a motion prop, which is a string literal", () => {
+    it("resolves a motion prop, which is a string literal, at the name inside the quotes", () => {
       const src = `motion Spin = {from: {rotate: "0deg"}, to: {rotate: "360deg"}, duration: "1s"}
 tile S = box() {motion: "Spin"}
 `;
-      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:25"]);
+      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:26"]);
+    });
+
+    it("resolves a link's prefetch written as a string literal at the name inside the quotes", () => {
+      const src = `slot n : Int = 0
+reducer load on=route.enter("/x") do= n := 1
+tile Home = link(to="/x") {text: "go", prefetch: "load"}
+`;
+      expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:51"]);
     });
 
     it("resolves a tile.mount lifecycle event at the tile name, not the pattern", () => {
@@ -206,6 +217,40 @@ test round-trips =
         invariant = run-reducer(inc).slots.count == count
 `;
       expect(refsOf(src, "test.round-trips")).toContain("reducer.inc@8:33");
+    });
+
+    it("reads a call to a declared fn run-reducer as a call to the fn", () => {
+      // A declared fn wins over the builtin of its name, so the argument is a value, not a reducer.
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := run-reducer(count)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.inc")).toEqual([
+        "tile.B@3:25",
+        "slot.count@3:32",
+        "fn.run-reducer@3:41",
+        "slot.count@3:53",
+      ]);
+    });
+
+    it("reads the chained `.run-reducer(r)` as no reducer once a fn has the name", () => {
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+      // The receiver is the fn's call, and `inc` is a value the walker finds no definition for.
+      expect(refsOf(src, "test.chain")).toEqual([
+        "slot.count@-",
+        "tile.B@8:73",
+        "fn.run-reducer@9:21",
+      ]);
     });
   });
 
@@ -572,5 +617,26 @@ tile B = button(text="b", onClick=inc)
         expect(codesOf(src)).toEqual(["E0003"]);
       });
     });
+  });
+});
+
+describe("a reference's position", () => {
+  // `rename` rewrites the text at each position and the content hash labels the token there, so
+  // both rely on the source spelling the name exactly where its reference says.
+  it("is where the source spells the name, in every example", () => {
+    const misplaced: string[] = [];
+    for (const file of allFiles()) {
+      const source = readFileSync(file, "utf8");
+      const lines = source.split("\n");
+      const program = parse(lex(source));
+      const index = buildDefIndex(program);
+      for (const r of program.defs.flatMap((d) => referencesIn(d, index))) {
+        if (!r.pos) continue;
+        const at = lines[r.pos.line - 1]?.slice(r.pos.col - 1, r.pos.col - 1 + r.name.length);
+        if (at !== r.name)
+          misplaced.push(`${basename(file)} ${fmt(r)} reads ${JSON.stringify(at)}`);
+      }
+    }
+    expect(misplaced).toEqual([]);
   });
 });

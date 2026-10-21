@@ -84,7 +84,7 @@ A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line.
 **Notes on bool operators**:
 - Short-circuit AND: `&&` (recommended) or `&` (alias, internally identical)
 - Short-circuit OR : `||` (recommended) or `|` (alias, but with a heuristic to avoid collision with match arms)
-- When writing `|` as bool OR, if the following token is the combination "**`Variant`/`_` + `->`**" (i.e. the start of a match arm), the parser prefers to treat it as an arm separator. If any other expression follows, it is interpreted as bool OR. As a safe measure, use `||` when in doubt.
+- When writing `|` as bool OR, if what follows it is "**pattern + `->`**" — `_`, a variant or binding name, `Variant(binds)`, or a tuple, then `->` (i.e. the start of a match arm) — the parser treats it as an arm separator: no expression continues with `->`, so only an arm can begin there. If any other expression follows, it is interpreted as bool OR, so `a | b`, `a | b.c` and `a | f(x)` are bool ORs. As a safe measure, use `||` when in doubt.
 
 ### 1.2.2 Reserved Words
 
@@ -512,6 +512,7 @@ editor := editor.map($1.copy(body="Body"))
 - **`Map(K, V)`** — the entry at the key. `m[k] := v` inserts or replaces it; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does. A read `m[k]` at an absent `k` is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)), as a List index past the end is: there is no `V` for it to answer. `m.get(k)` is the read that answers `None` there instead. In a tile the read runs during render, so an absent key panics that render, the first one included: the nearest `error-boundary` shows its fallback, and with none the built-in panic display replaces the page ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)). A tile reads a key that may be absent through `m.get(k)` or `m.get-or(k, d)`.
 - **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
 - **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+- **Any other type** — nothing. A record, a scalar (`Int`, `Text`, …), an `Option`, a `Result`, a `Tuple` and a union have no place an index names, so an index step into one is [E0602](./errors.md#e0602-unassignable-member) as well, reported at the step: `r["a"] := v` on a record, `n[0] := v` on an `Int`, and `xs[0][0] := v` on a `List(Int)`, whose element is an `Int`. A record's field is written with a field step (`r.a := v`), the payload of an `Option` / `Result` through `.get`, and anything else is replaced whole (`n := v`).
 
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
@@ -657,10 +658,12 @@ pattern      ::= identifier
 - If the parent tile is `column(A, when(c, B), C)`, then with `c=false`, `[A, C]` is rendered
 - Because the runtime skips null/undefined children, `when` is a safe way to produce a "blank"
 
-**Value context vs tile context for `match`**:
-- A `match` **within the positional arguments** of the `text/heading/markdown/label/link/image/icon` builtins is treated as a value expression (`MatchExpr`). Each arm returns a value (Text, Int, etc.)
-- A `match` within any other tile argument (`column`, `row`, `card`, etc.) is treated as a tile expression (`TileMatch`). Each arm returns a tile
+**Value context vs tile context for `if` and `match`**:
+- A tile argument is a tile only as a **positional argument of a builtin other than the value builtins** (`column`, `row`, `card`, `box`, …) — the one place a tile renders. There, `if` and `match` are tile expressions (`TileIf` / `TileMatch`) whose arms return tiles, a builtin's name followed by `(` or `{` is a call to that builtin, and a capitalised name is a user tile.
+- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
+- `when` and `for` have no value form, so they are tiles wherever they are written.
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
+- Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
 - Example: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
 
 ### 1.7.2 Invariants
@@ -683,7 +686,7 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 With `onClick=saveTodo`, the reducer `saveTodo` is called on click. `{todoId: $1}` is delivered to the reducer as `$el.todoId`.
 
-The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name is a *tile call* when it is a named argument of a builtin that takes tiles (`box`, `button`, `input`, `modal`, `form`), and a variant tag everywhere else: in a props block, as a named argument of a value-arg builtin such as `link`, and as a named argument of a user tile.
+The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name written as an event handler (`onClick=`, `onChange=`, …) is a *tile call* on a builtin other than the value builtins (`box`, `button`, `check`, `radio`, `column`, …), and a variant tag everywhere else: in a props block, on a value builtin such as `link`, and on a user tile.
 
 Because those shapes carry no arguments, the bare name and the argument-less call are one and the same after parsing — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are the same node, and all three bind the reducer. A value that carries arguments is not a name and is [E0201](./errors.md#e0201-type-mismatch).
 
@@ -784,6 +787,12 @@ fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
    = ts.map($2.copy(text=$2.text.trim))
 ```
 
+**A declared `fn` wins over a built-in function of the same name.** A call `name(…)` is to the program's own `fn` when it declares one under that name, and to the [built-in function](./stdlib.md#_2-4-built-in-functions) otherwise. That holds for every built-in a call names without a qualifier: `random`, `fmt`, `panic`, `file-url`, `prefers-dark`, `trace`, and `run-reducer` in a [property-test invariant](./testing.md#_8-3-property-tests). `now` is a reserved word, so no `fn` can be named it. With the `fn` declared, every call of the name is checked against the `fn`'s signature and runs its body: in a tile, a reducer, another `fn`, a test body, and a fragment position that names the `fn` ([§1.8.6](#_1-8-6-partial-application-and-higher-order-functions)). The chained spelling `….run-reducer(r)` stops being the built-in too, and is a method nothing has ([E0801](./errors.md#e0801-unimplemented-method)). Apart from the reducer statement below, the built-in is then out of that program's reach, so a program that needs both gives its `fn` another name.
+
+An effect or a type is different. The runtime supplies the values of a standard effect or type itself, so a program's declaration under that name cannot take effect the way a `fn`'s does. A built-in function is the compiler's to check and to lower, so it can honour the declaration, and a built-in added later cannot break a program that already has a `fn` of that name.
+
+`panic(message)` written on its own as a reducer statement is the statement form rather than a call, since a `fn`'s value would have nowhere to go there. It stops the reducer whatever the program declares.
+
 ### 1.8.6 Partial Application and Higher-Order Functions
 
 Since there are no lambdas, passing higher-order functions uses either a "fn name" or an "expression fragment":
@@ -855,7 +864,7 @@ An `if` and a `match` evaluate to one of their branches, so **every branch has t
 - **`null` / `undefined` prohibited**
 - **`while` loops prohibited**
 - **Assignment expressions prohibited** (`:=` is a statement and cannot be used within an expression)
-- **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
+- **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, a binding name, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:
 
 ```kumiki snippet
 # ❌ literal patterns — not supported
@@ -1035,7 +1044,10 @@ fn current() = todos                          # receive it via a fn argument
 reducer r on=ui.change(input[type=file]) do= ...   # write it by tile name
 
 # ❌ literal match pattern
-match status with | "open" -> ... | "closed" -> ...   # patterns are variant/_ only; use if/else or a union (Prohibitions)
+match status with | "open" -> ... | "closed" -> ...   # a pattern is a variant, Variant(binds), a tuple, a binding name or _; use if/else or a union (Prohibitions)
+
+# ❌ a match with no arms
+tile Width = match size with                          # every match takes one `| pattern -> …` arm or more, in every position: a parse error at the `match`
 
 # ❌ $1 in a tile with no in=
 tile Row = card(text(issues[$1].title))               # E0103: declare `tile Row in=IssueId = …` (Positional Binding / Examples)
