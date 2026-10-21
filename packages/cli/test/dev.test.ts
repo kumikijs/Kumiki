@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -12,7 +11,7 @@ import { join } from "node:path";
 import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startDevServer } from "../src/dev.ts";
-import { CLI_ARGV, runCli } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
 import { tempDir } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
@@ -273,30 +272,17 @@ describe("kumiki dev — CLI dispatch argument parsing", () => {
     "starts the server when the arguments are valid",
     async () => {
       // `--port 0` takes any free port; only a non-zero port is strict.
-      const child = spawn(process.execPath, [...CLI_ARGV, "dev", COUNTER, "--port", "0"], {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const dev = spawnCli(["dev", COUNTER, "--port", "0"]);
       try {
-        const banner = await new Promise<string>((resolveBanner, reject) => {
-          let out = "";
-          let err = "";
-          child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-            out += chunk;
-            const line = /kumiki dev — http:\/\/\S+/.exec(out);
-            if (line) resolveBanner(line[0]);
-          });
-          child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-            err += chunk;
-          });
-          child.on("exit", (code) => {
-            reject(new Error(`kumiki dev exited ${code} before listening:\n${out}${err}`));
-          });
-        });
-        expect(banner).toMatch(/^kumiki dev — http:\/\//);
+        await waitFor(
+          dev,
+          () => /kumiki dev — http:\/\/\S+/.test(dev.stdout),
+          "the listening banner",
+        );
       } finally {
-        child.kill();
+        await dev.stop();
       }
     },
-    DISPATCH_TIMEOUT_MS,
+    SPAWN.timeout,
   );
 });
