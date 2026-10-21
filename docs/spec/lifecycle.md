@@ -283,6 +283,8 @@ reducer noop     on=ui.click(_) do= ()
 
 In the runtime implementation, this is rendered as a **modal dialog tile** (not the native `confirm`). This keeps the UI style consistent and makes testing easier.
 
+The dialog is always the runtime's own. A host provider registered for `notification.show` replaces the toast ([§7.7](#_7-7-toasts)) and is never handed a `confirm`, because the answer is delivered by dispatching `onYes` or `onNo`, which a provider's `EffectResult` cannot do ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)). Emitted from a `route.leave` guard, the dialog holds the move until it is answered or another navigation replaces it ([Routing §3.5.2](./routing.md#_3-5-2-leave-guard)).
+
 ---
 
 ## 7.7 Toasts
