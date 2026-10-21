@@ -17,19 +17,6 @@ describe("the server pass on its own", () => {
     expect(radioInput?.getAttribute("value")).toBe("pro");
     expect(radioInput?.hasAttribute("checked")).toBe(true);
 
-    const select = serverElement({
-      kind: "select",
-      value: "b",
-      options: [
-        { label: "A", value: "a" },
-        { label: "B", value: "b" },
-      ],
-    });
-    const chosen = Array.from(select.querySelectorAll("option")).filter((o) =>
-      o.hasAttribute("selected"),
-    );
-    expect(chosen.map((o) => o.textContent)).toEqual(["B"]);
-
     expect(serverElement({ kind: "textarea", value: "note" }).textContent).toBe("note");
 
     const slider = serverElement({ kind: "slider", value: 5, min: 0, max: 10, step: 2 });
@@ -39,6 +26,79 @@ describe("the server pass on its own", () => {
     const progress = serverElement({ kind: "progress", value: 3, max: 10 });
     expect(progress.getAttribute("value")).toBe("3");
     expect(progress.getAttribute("max")).toBe("10");
+  });
+
+  // `selected` is a property on the client, so a served page carries it only as the attribute.
+  const selectedLabels = (node: TileNode): (string | null)[] =>
+    Array.from(serverElement(node).querySelectorAll("option"))
+      .filter((o) => o.hasAttribute("selected"))
+      .map((o) => o.textContent);
+  const sizes = [
+    { label: "Small", value: { _tag: "S" } },
+    { label: "Medium", value: { _tag: "M" } },
+  ];
+  const statuses = [
+    { label: "Any", value: { _tag: "None" } },
+    { label: "A", value: { _tag: "Some", _0: { _tag: "A" } } },
+    { label: "B", value: { _tag: "Some", _0: { _tag: "B" } } },
+  ];
+
+  it.each<[string, TileNode, string[]]>([
+    [
+      "a Text",
+      {
+        kind: "select",
+        value: "b",
+        options: [
+          { label: "A", value: "a" },
+          { label: "B", value: "b" },
+        ],
+      },
+      ["B"],
+    ],
+    ["a nullary variant", { kind: "select", value: { _tag: "M" }, options: sizes }, ["Medium"]],
+    [
+      "a variant with a payload",
+      { kind: "select", value: { _tag: "Some", _0: { _tag: "B" } }, options: statuses },
+      ["B"],
+    ],
+    ["None", { kind: "select", value: { _tag: "None" }, options: statuses }, ["Any"]],
+    [
+      "a record",
+      {
+        kind: "select",
+        value: { w: 2, h: 3 },
+        options: [
+          { label: "1x1", value: { w: 1, h: 1 } },
+          { label: "2x3", value: { w: 2, h: 3 } },
+        ],
+      },
+      ["2x3"],
+    ],
+    [
+      "an option with no value beside one with a value",
+      {
+        kind: "select",
+        value: "b",
+        options: [
+          { label: "A", value: undefined },
+          { label: "B", value: "b" },
+        ],
+      },
+      ["B"],
+    ],
+    [
+      "no value, under a placeholder",
+      { kind: "select", placeholder: "Pick a size", options: sizes },
+      ["Pick a size"],
+    ],
+    [
+      "a value, under a placeholder",
+      { kind: "select", value: { _tag: "M" }, placeholder: "Pick a size", options: sizes },
+      ["Medium"],
+    ],
+  ])("marks the option a select holds selected (%s)", (_, node, want) => {
+    expect(selectedLabels(node)).toEqual(want);
   });
 
   it("escapes what it puts in text and in an attribute", () => {
