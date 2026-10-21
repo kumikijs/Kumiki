@@ -1,4 +1,4 @@
-import { runOnPage } from "@kumikijs/e2e";
+import { type Action, runOnPage } from "@kumikijs/e2e";
 import { expect, test } from "@playwright/test";
 
 const SOURCE = `slot note : Text = ""
@@ -43,6 +43,81 @@ test("a selector matching nothing fails the step off the error channel", async (
   expect(report.steps[0]?.errors).toEqual([]);
   expect(report.steps[0]?.failures).toEqual([]);
   expect(report.steps[1]?.actionError).toBeTruthy();
+  expect(report.steps[1]?.errors).toEqual([]);
+});
+
+// One test each, so a verb that waits out the test's own timeout is named rather than taking its
+// neighbours down with it.
+const UNMATCHED: Action[] = [
+  { submit: "#typo" },
+  { choose: "#typo", value: "x" },
+  { setProperty: "#typo", property: "value", value: "x" },
+];
+
+for (const action of UNMATCHED) {
+  test(`${Object.keys(action)[0]} on a selector matching nothing fails the step`, async ({
+    page,
+  }) => {
+    const report = await runOnPage(page, SOURCE, { steps: [{ do: action }] });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toContain("#typo");
+    expect(report.steps[0]?.errors).toEqual([]);
+  });
+}
+
+// The `select` tile writes each value into its <option> as JSON, so `"b"` is the value of the
+// option labelled Bee and the label of the third one.
+const CHOOSE_SOURCE = `slot pick : Text = "a"
+fn picks() -> List({label: Text, value: Text})
+   = [{label: "Ay", value: "a"}, {label: "Bee", value: "b"}, {label: "\\"b\\"", value: "c"}]
+tile Box  = box(text("not a select")) {id: "box"}
+tile Lbl  = label("pick one", for="pick") {id: "lbl"}
+tile Pick = select(bind=pick, options=picks()) {id: "pick"}
+tile App  = column(Box, Lbl, Pick, text("pick: " + pick))
+app Chooses
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+test("choose takes the label first, and a value no label carries", async ({ page }) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [
+      { do: { choose: "#pick", value: '"b"' }, expect: { state: { pick: "c" } } },
+      { do: { choose: "#pick", value: '"a"' }, expect: { state: { pick: "a" } } },
+    ],
+  });
+  expect(report.steps.map((s) => s.actionError)).toEqual([undefined, undefined]);
+  expect(report.steps.flatMap((s) => s.failures)).toEqual([]);
+  expect(report.ok).toBe(true);
+});
+
+test("choose on a select with no such option fails the step, naming the value", async ({
+  page,
+}) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [{ do: { choose: "#pick", value: "Zed" } }],
+  });
+  expect(report.ok).toBe(false);
+  expect(report.steps[0]?.actionError).toBe('no option "Zed" in select #pick');
+  expect(report.steps[0]?.errors).toEqual([]);
+  expect(report.steps[0]?.state.pick).toBe("a");
+});
+
+test("choose follows a <label> to its select, and names anything else it matched", async ({
+  page,
+}) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [
+      { do: { choose: "#lbl", value: "Bee" }, expect: { state: { pick: "b" } } },
+      { do: { choose: "#box", value: "Ay" } },
+    ],
+  });
+  expect(report.steps[0]?.actionError).toBeUndefined();
+  expect(report.steps[0]?.failures).toEqual([]);
+  expect(report.steps[1]?.actionError).toContain(
+    "#box matched <div>, which holds no options to choose",
+  );
   expect(report.steps[1]?.errors).toEqual([]);
 });
 
