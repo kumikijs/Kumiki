@@ -26,6 +26,6 @@ too, and so did a step whose batch a refinement rejected.
 
 `run-reducer` now answers the whole slot table the reducer ran against — the
 declared defaults and the seeded `route`, then `given.slots` — with the
-reducer's writes over it, or that table unchanged when the batch is rejected.
+reducer's writes over it.
 `reducer-test` and `run-reducer` share that rule, so the two tiers answer the
 same state for the same reducer. testing.md states it.

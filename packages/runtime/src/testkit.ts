@@ -3,6 +3,7 @@ import {
   type EmitSpec,
   type ReducerSpec,
   type RefinementRejection,
+  rejectedBatchText,
   reportRejectedBatch,
   standInValue,
 } from "./core.ts";
@@ -30,7 +31,8 @@ import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
 // `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
-// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree.
+// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree
+// on a batch that commits; a `run-reducer` step fails its trial on a rejected one instead.
 function settleBatch(
   reducer: string,
   before: Record<string, unknown>,
@@ -44,6 +46,9 @@ function settleBatch(
   }
   return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
 }
+
+/** A `run-reducer` step whose batch a refinement rejected: the reducer did not run, so the trial fails. */
+class RejectedStep extends Error {}
 
 export const _stdlibTest = {
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
@@ -76,6 +81,9 @@ export const _stdlibTest = {
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
+    const rejected = batchRejections(res, app.slots);
+    // Answering the table without the writes would let the invariant hold about a reducer that never ran.
+    if (rejected.length > 0) throw new RejectedStep(rejectedBatchText(name, rejected));
     return { slots: settleBatch(name, app.live, res, app.slots).slots };
   },
   runPropertyTest(input: {
@@ -90,24 +98,25 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
-    const fails = (b: Record<string, unknown>): boolean => {
+    const failure = (b: Record<string, unknown>): { reason?: string } | undefined => {
       try {
-        return trial(b) !== true;
-      } catch {
-        return true;
+        return trial(b) === true ? undefined : {};
+      } catch (e) {
+        return e instanceof RejectedStep ? { reason: e.message } : {};
       }
     };
+    const fails = (b: Record<string, unknown>): boolean => failure(b) !== undefined;
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
       if (fails(binds)) {
         const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
+        const reason = failure(minimal)?.reason;
         return {
           name,
           pass: false,
           expected: "invariant holds for all generated inputs",
-          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}`,
+          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}${reason ? ` — ${reason}` : ""}`,
           diffAt: "(property)",
           cases: i + 1,
         };
