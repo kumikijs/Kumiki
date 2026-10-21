@@ -10,7 +10,7 @@ import {
   tileIdOf,
 } from "./ssr-render/html.ts";
 import { overlayLayerStyle } from "./ssr-render/style.ts";
-import { valueKey } from "./tiles/input/_shared.ts";
+import { boxLabelText, valueKey } from "./tiles/input/_shared.ts";
 import { headingTag } from "./tiles/text/heading.ts";
 
 /** The spinner a loading button carries, as the renderer builds it. */
@@ -19,7 +19,7 @@ const BUTTON_SPINNER =
 
 /** A `check` or `radio` label is a `<span>` after the `<input>`, as the renderers append it. */
 function boxLabel(props: TileProps | undefined): string {
-  const label = typeof props?.label === "string" ? props.label : "";
+  const label = boxLabelText(props);
   return label ? `<span>${escapeText(label)}</span>` : "";
 }
 
