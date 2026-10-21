@@ -1,9 +1,9 @@
 // The corpus example `205-path-param-stray-percent` follows a link and a scenario `navigate`;
 // these are the other ways a path reaches the router.
 
-import { type AppShape, mount, renderToString, routing } from "@kumikijs/runtime";
+import { type AppShape, renderToString, routing } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { freshRoot, textAt, tick } from "./helpers/dom.ts";
+import { click, mountApp, textAt, textOf, tick } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
 
 const SRC = `
@@ -41,18 +41,12 @@ const freshApp = (): Promise<AppShape> => loadSource(SRC, ["nav.push"]);
 const mounted: Array<{ root: HTMLElement; dispose: () => void }> = [];
 
 async function mountInHistory(): Promise<HTMLElement> {
-  const root = freshRoot();
-  mounted.push({ root, dispose: mount(await freshApp(), root).dispose });
+  const { root, handle } = mountApp(await freshApp());
+  mounted.push({ root, dispose: handle.dispose });
   return root;
 }
 
 const memoryTextAt = async (path: string): Promise<string> => textAt(await freshApp(), path);
-
-function textOf(html: string): string {
-  const el = document.createElement("div");
-  el.innerHTML = html;
-  return el.textContent ?? "";
-}
 
 afterEach(() => {
   for (const m of mounted.splice(0)) {
@@ -75,6 +69,10 @@ describe("a parameter segment that is not valid percent-encoding", () => {
     expect(text).not.toContain("404");
   });
 
+  it("falls to /404 when no route matches the rest of the path", async () => {
+    expect(await memoryTextAt("/items/100%/extra")).toContain("404 /items/100%/extra");
+  });
+
   it("renders its route when the app mounts at that URL", async () => {
     window.history.replaceState(null, "", "/items/100%");
     // The URL parser keeps the invalid escape, so the router is handed it raw.
@@ -86,9 +84,7 @@ describe("a parameter segment that is not valid percent-encoding", () => {
 
   it("renders its route when a navigate effect goes there", async () => {
     const root = await mountInHistory();
-    const btn = root.querySelector("button");
-    expect(btn?.textContent).toBe("go");
-    btn?.click();
+    click(root, "go");
     await tick(0);
     expect(window.location.pathname).toBe("/items/100%");
     expect(root.textContent).toContain("Item [100%]");

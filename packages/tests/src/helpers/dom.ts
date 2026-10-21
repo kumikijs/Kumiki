@@ -39,6 +39,13 @@ export function textAt(app: AppShape, path: string): string {
   return text;
 }
 
+/** The text `html` renders, as `textContent` reads it. */
+export function textOf(html: string): string {
+  const el = document.createElement("div");
+  el.innerHTML = html;
+  return el.textContent ?? "";
+}
+
 export const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Poll `done` every `pollMs` until it holds; throw once `timeoutMs` has passed. */

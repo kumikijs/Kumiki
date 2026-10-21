@@ -190,7 +190,7 @@ function matchPattern(pattern: string, path: string): Record<string, string> | n
   return params;
 }
 
-// The path is user input: a segment that is not valid percent-encoding still matches, as written.
+// A path is user input, so an escape that does not decode is kept as written rather than thrown.
 function decodeParam(s: string): string {
   try {
     return decodeURIComponent(s);
