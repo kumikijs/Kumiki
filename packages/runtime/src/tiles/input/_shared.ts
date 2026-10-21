@@ -179,29 +179,6 @@ export function applyControlState(el: HTMLElement, props?: TileProps): void {
   else el.removeAttribute("autocomplete");
 }
 
-/** The text after a `check` or `radio` box, by the `legend` rule: a number shows its digits; a Bool or an empty Text shows nothing. The server pass reads it too. */
-export function boxLabelText(props: TileProps | undefined): string {
-  const label = attrValue(props?.label);
-  return label === undefined ? "" : String(label);
-}
-
-/** Keeps the trailing `<span>` of a `check` or `radio` wrapper in step with its label, adding or removing it. */
-export function syncBoxLabel(wrap: HTMLElement, props: TileProps | undefined): void {
-  const text = boxLabelText(props);
-  const span = wrap.querySelector("span");
-  if (!text) {
-    span?.remove();
-    return;
-  }
-  if (!span) {
-    const s = document.createElement("span");
-    s.textContent = text;
-    wrap.appendChild(s);
-  } else if (span.textContent !== text) {
-    span.textContent = text;
-  }
-}
-
 type ToggleKind = "check" | "switch";
 
 /** A checkbox wrapped in a label, shared by `check` and `switch`; `check` adds its label `<span>` on top. */

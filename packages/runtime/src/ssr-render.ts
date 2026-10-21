@@ -10,7 +10,8 @@ import {
   tileIdOf,
 } from "./ssr-render/html.ts";
 import { overlayLayerStyle } from "./ssr-render/style.ts";
-import { boxLabelText, valueKey } from "./tiles/input/_shared.ts";
+import { valueKey } from "./tiles/input/_shared.ts";
+import { boxLabelText } from "./tiles/input/check.ts";
 import { headingTag } from "./tiles/text/heading.ts";
 
 /** The spinner a loading button carries, as the renderer builds it. */

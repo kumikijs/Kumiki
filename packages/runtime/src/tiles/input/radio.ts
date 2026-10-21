@@ -1,4 +1,5 @@
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
+import { attrValue } from "../../core.ts";
 import {
   applyControlState,
   bindDataset,
@@ -8,12 +9,29 @@ import {
   liveApp,
   reconcileId,
   setHandlers,
-  syncBoxLabel,
   tileId,
   writeBind,
 } from "./_shared.ts";
 
 const RADIO_VALUE = new WeakMap<HTMLElement, unknown>();
+
+/** The text after the box as a trailing `<span>`, by check.ts's `boxLabelText` rule; spelled out here because each tile module ships on its own. */
+function syncLabel(wrap: HTMLElement, props: TileProps | undefined): void {
+  const label = attrValue(props?.label);
+  const text = label === undefined ? "" : String(label);
+  const span = wrap.querySelector("span");
+  if (!text) {
+    span?.remove();
+    return;
+  }
+  if (!span) {
+    const s = document.createElement("span");
+    s.textContent = text;
+    wrap.appendChild(s);
+  } else if (span.textContent !== text) {
+    span.textContent = text;
+  }
+}
 
 function setRadioValue(inp: HTMLInputElement, value: unknown): void {
   if (value === undefined) RADIO_VALUE.delete(inp);
@@ -30,7 +48,7 @@ export const radioTile: TileRenderer<"radio"> = (node) => {
   if (node.group) inp.name = String(node.group);
   inp.checked = !!node.selected;
   wrap.appendChild(inp);
-  syncBoxLabel(wrap, node.props);
+  syncLabel(wrap, node.props);
   if (node.bind) bindDataset(inp, node.bind, node.bindPath);
   setHandlers(inp, inputHandlers(node));
   setRadioValue(inp, node.value);
@@ -61,6 +79,6 @@ export const radioPatcher: TilePatcher<"radio"> = (el, _oldNode, newNode) => {
     setHandlers(inp, inputHandlers(newNode));
     setRadioValue(inp, newNode.value);
   }
-  syncBoxLabel(wrap, newNode.props);
+  syncLabel(wrap, newNode.props);
   applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
 };
