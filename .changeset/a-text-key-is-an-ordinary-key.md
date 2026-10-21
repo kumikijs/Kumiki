@@ -2,7 +2,7 @@
 "@kumikijs/runtime": patch
 ---
 
-A Map or Set key spelled like an object member is an ordinary key
+A Map or Set key spelled like a JavaScript object member, such as `constructor` or `__proto__`, is an ordinary key
 
 A Map and a Set are plain JavaScript objects, and `has`, `get`, `get-or`,
 `update`, `toggle`, `intersect` and `diff` looked a key up with `m[k]` or
@@ -29,8 +29,14 @@ answers the default, and the counter counts every word from 0.
 
 `insert`, `add`, a Map literal and `m[k] := v` already stored a `"__proto__"`
 key as an entry. The members that rebuilt the container one key at a time
-assigned each key into a fresh object, and assigning `"__proto__"` sets the
-object's prototype instead: `remove` of another key, `intersect`, `diff`,
+assigned each key into a fresh object, and assigning `"__proto__"` goes to the
+inherited `__proto__` setter, which makes no entry and, for a record value,
+replaces the object's prototype: `remove` of another key, `intersect`, `diff`,
 `filter` and `map` dropped the entry, and `toggle("__proto__")` on an empty
 Set never added it. They now keep and add it like any other entry.
 stdlib.md states the rule.
+
+A scenario's `state` snapshot was rebuilt the same way, so a `"__proto__"`
+entry with a plain value was missing from it, and one holding a record made a
+partial match read that record's fields as keys of the Map. The snapshot now
+keeps the entry.

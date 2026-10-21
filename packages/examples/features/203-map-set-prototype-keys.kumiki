@@ -1,4 +1,4 @@
-# Feature (stdlib.md): any Text is an ordinary key.
+# Feature (stdlib.md): a Map or Set key spelled like an Object.prototype member is an ordinary key.
 #
 #   Map(K, V).has / get / get-or / update / remove / filter / map, m[k]
 #   Set(T).has / toggle / remove / intersect / diff
@@ -46,9 +46,9 @@ tile App = column(
   text("tags: " + tags.size.show + " valueOf=" + tags.has("valueOf").show),
   text("ctor-intersect: " + ctor.intersect({}).size.show),
   text("ctor-diff: " + ctor.diff({}).size.show),
-  text("pinned-remove: " + pinned.remove("x").has("__proto__").show),
+  text("pinned-remove: " + pinned.remove("x").size.show),
   text("pinned-intersect: " + pinned.intersect(pinned).size.show),
-  text("pinned-diff: " + pinned.diff(["x"]).has("__proto__").show),
+  text("pinned-diff: " + pinned.diff(["x"]).size.show),
   text("notes-remove: " + notes.remove("a").get-or("__proto__", 0).show),
   text("notes-filter: " + notes.filter($2 > 0).get-or("__proto__", 0).show),
   text("notes-map: " + notes.map($2 + 1).get-or("__proto__", 0).show),

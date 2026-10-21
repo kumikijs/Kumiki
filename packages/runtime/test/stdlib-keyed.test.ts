@@ -145,6 +145,51 @@ describe.each([
   });
 });
 
+describe('a "__proto__" entry that holds a record', () => {
+  it("leaves the prototype of what remove, filter and map answer alone", () => {
+    const s = _stdlibCore;
+    const m = s.mapInsert(s.mapInsert({}, "__proto__", { x: 1 }), "a", 2);
+    const second = (pair: unknown) => (pair as [string, unknown])[1];
+    for (const out of [s.mapRemove(m, "a"), s.filter(m, () => true), s.mapOver(m, second)]) {
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+      expect(s.setHas(out, "x")).toBe(false);
+    }
+  });
+});
+
+describe("Set.intersect and Set.diff", () => {
+  const s = _stdlibCore;
+
+  // The kept keys are the stored strings, read again through `entryKey`.
+  it("keep a variant or record element as the element written", () => {
+    const red = { _tag: "Red" };
+    const at = { _tag: "At", _0: { x: 1, y: 2 } };
+    const set = s.setAdd(s.setAdd(s.setAdd({}, red), at), { _tag: "Blue" });
+    const kept = s.setIntersect(set, s.setAdd(s.setAdd({}, at), red));
+    expect(Object.keys(kept)).toEqual(Object.keys(s.setAdd(s.setAdd({}, red), at)));
+    expect(s.setHas(kept, { _0: { y: 2, x: 1 }, _tag: "At" })).toBe(true);
+    const rest = s.setDiff(set, s.setAdd({}, { _tag: "Blue" }));
+    expect(Object.keys(rest)).toEqual(Object.keys(kept));
+  });
+});
+
+describe("Map.remove and Set.toggle", () => {
+  it("leave the receiver as it was", () => {
+    const s = _stdlibCore;
+    const m = s.mapInsert(s.mapInsert({}, "__proto__", 1), "a", 2);
+    s.mapRemove(m, "a");
+    s.mapRemove(m, "__proto__");
+    expect(Object.entries(m)).toEqual([
+      ["__proto__", 1],
+      ["a", 2],
+    ]);
+    const set = s.setAdd(s.setAdd({}, "__proto__"), "a");
+    s.setToggle(set, "a");
+    s.setToggle(set, "b");
+    expect(Object.keys(set)).toEqual(["__proto__", "a"]);
+  });
+});
+
 describe("an index read", () => {
   it("reads the element of a List at the index", () => {
     expect(_stdlibCore.index([10, 20, 30], 1)).toBe(20);

@@ -19,9 +19,9 @@
       "expect": {
         "noErrors": true,
         "domIncludes": [
-          "pinned-remove: true",
+          "pinned-remove: 1",
           "pinned-intersect: 2",
-          "pinned-diff: true",
+          "pinned-diff: 1",
           "notes-remove: 7",
           "notes-filter: 7",
           "notes-map: 8"

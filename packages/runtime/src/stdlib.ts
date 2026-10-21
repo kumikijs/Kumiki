@@ -53,7 +53,7 @@ function assertNeverKind(kind: never): never {
 }
 
 // Object.fromEntries defines each key as an own entry; assigning "__proto__" into a fresh object
-// would set its prototype and drop the member.
+// goes to the inherited __proto__ setter and makes no entry.
 function setKeep(
   a: Record<string, true> | undefined | null,
   b: Record<string, true> | undefined | null,
@@ -222,8 +222,8 @@ export const _stdlibCore = {
   mapInsert(m: Record<string, unknown>, k: unknown, v: unknown): Record<string, unknown> {
     return { ...m, [entryKey(k)]: v };
   },
-  // Copy-and-delete keeps a "__proto__" entry; assigning that key into a fresh object would set
-  // its prototype instead.
+  // `Map.remove(k)` and `Set.remove(x)`. Copy-and-delete keeps a "__proto__" entry, which
+  // assigning into a fresh object would hand to the inherited __proto__ setter.
   mapRemove<V>(m: Record<string, V> | undefined | null, k: unknown): Record<string, V> {
     const out = { ...m };
     delete out[entryKey(k)];
