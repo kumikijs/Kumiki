@@ -1,4 +1,4 @@
-import { type AppShape, mount } from "@kumikijs/runtime";
+import { type AppShape, mount, renderToString } from "@kumikijs/runtime";
 
 type MountOptions = NonNullable<Parameters<typeof mount>[2]>;
 type MountHandle = ReturnType<typeof mount>;
@@ -27,6 +27,13 @@ export function mountApp(
 ): { root: HTMLElement; handle: MountHandle } {
   const root = freshRoot();
   return { root, handle: mount(app, root, options) };
+}
+
+/** The page `renderToString` serves for `app`, parsed under a detached element. */
+export async function served(app: AppShape): Promise<HTMLElement> {
+  const page = document.createElement("div");
+  page.innerHTML = (await renderToString(app)).html;
+  return page;
 }
 
 /** Mount `app`, run `body` against its root, and tear both down whatever happens. */

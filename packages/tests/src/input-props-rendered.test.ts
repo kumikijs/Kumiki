@@ -1,39 +1,32 @@
 import { feature } from "@kumikijs/examples";
-import { mount, renderToString } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it } from "vitest";
-import { button, find, freshRoot, tick } from "./helpers/dom.ts";
+import type { AppShape } from "@kumikijs/runtime";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { button, find, mountApp, served, tick } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 import { withApp } from "./helpers/source.ts";
 
 const example = feature("204-input-props-rendered");
 
-// Torn down here rather than at the end of each test, so a failing assertion cannot leave its radios in the next test's group.
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const c of cleanups.splice(0)) c();
-});
+/** The example, or the program `src` when one is given. */
+const appFrom = (src?: string): Promise<AppShape> =>
+  src === undefined ? loadApp(example) : loadSource(src);
 
+// Torn down even when an assertion fails, so a failing test cannot leave its radios in the next test's group.
 async function mounted(
   src?: string,
 ): Promise<{ root: HTMLElement; live: Record<string, unknown> | undefined }> {
-  const app = src === undefined ? await loadApp(example) : await loadSource(src);
-  const root = freshRoot();
-  cleanups.push(() => root.remove());
-  const handle = mount(app, root);
-  cleanups.unshift(() => handle.dispose());
+  const app = await appFrom(src);
+  const { root, handle } = mountApp(app);
+  onTestFinished(() => {
+    handle.dispose();
+    root.remove();
+  });
   return {
     root,
     get live() {
       return app.live;
     },
   };
-}
-
-async function served(src?: string): Promise<HTMLElement> {
-  const app = src === undefined ? await loadApp(example) : await loadSource(src);
-  const host = document.createElement("div");
-  host.innerHTML = (await renderToString(app)).html;
-  return host;
 }
 
 /** Each element child of `el` as its tag and the text it holds. */
@@ -44,6 +37,14 @@ function parts(el: Element): string[] {
 /** What each `fieldset` tile renders, child by child. */
 function fieldsets(root: ParentNode): string[][] {
   return Array.from(root.querySelectorAll("[data-kumiki-tile='fieldset']")).map(parts);
+}
+
+/** The element each `fieldset` tile is, and the browser defaults it resets. */
+function fieldsetBoxes(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-kumiki-tile='fieldset']")).map(
+    (f) =>
+      `${f.tagName.toLowerCase()} border:${f.style.border} padding:${f.style.padding} margin:${f.style.margin} min-width:${f.style.minWidth}`,
+  );
 }
 
 /** The DOM half and the served half of the example read the same way. */
@@ -72,13 +73,20 @@ describe("the props the input elements list are rendered", () => {
     expect(fieldsets(root)).toEqual(RENDERED.fieldsets);
   });
 
+  it("renders a fieldset as a <fieldset> without the browser's border and spacing", async () => {
+    const { root } = await mounted();
+    const reset = "fieldset border:0px padding:0px margin:0px min-width:0";
+    expect(fieldsetBoxes(root)).toEqual([reset, reset]);
+    expect(fieldsetBoxes(await served(await appFrom()))).toEqual([reset, reset]);
+  });
+
   it("keeps a legend read from a slot in step with it, on the same element", async () => {
     const app = await mounted();
     const legend = find(
       app.root,
       "[data-kumiki-tile='fieldset'] + [data-kumiki-tile='fieldset']",
     ).firstElementChild;
-    app.root.querySelectorAll<HTMLInputElement>("input[type='radio']")[1]?.click();
+    find<HTMLInputElement>(app.root, "[data-kumiki-tile='radio']:last-child > input").click();
     await tick(0);
     expect(app.live?.mode).toBe("b");
     expect(fieldsets(app.root)[1]).toEqual(["legend:Mode: b", "label:Option A", "label:Option B"]);
@@ -102,7 +110,7 @@ describe("the props the input elements list are rendered", () => {
   });
 
   it("serves the same elements from renderToString", async () => {
-    const host = await served();
+    const host = await served(await appFrom());
     expect(parts(find(host, "[data-kumiki-tile='check']"))).toEqual(RENDERED.check);
     expect(fieldsets(host)).toEqual(RENDERED.fieldsets);
     const radios = Array.from(host.querySelectorAll("input[type='radio']"));
@@ -119,7 +127,7 @@ describe("the same props in their other forms", () => {
     const src = appOf("", `check(label="Remember me")`);
     const { root } = await mounted(src);
     expect(parts(find(root, "[data-kumiki-tile='check']"))).toEqual(["input:", "span:Remember me"]);
-    expect(parts(find(await served(src), "[data-kumiki-tile='check']"))).toEqual([
+    expect(parts(find(await served(await appFrom(src)), "[data-kumiki-tile='check']"))).toEqual([
       "input:",
       "span:Remember me",
     ]);
@@ -174,16 +182,27 @@ tile StepBtn = button(text="Step")`,
     ]);
   });
 
-  it("names a radio by group= when it also says name=", async () => {
-    const src = appOf("", `radio(group="g", name="n", value="a") {label: "A"}`);
+  it.each([
+    [
+      "names a radio by group= when it also says name=",
+      "",
+      `radio(group="g", name="n", value="a") {label: "A"}`,
+      "input[type='radio']",
+      "name",
+      "g",
+    ],
+    [
+      "shows a bound slider's slot over a value= beside it",
+      "slot v : Int = 3",
+      "slider(bind=v, value=7, min=0, max=10)",
+      "input[type='range']",
+      "value",
+      "3",
+    ],
+  ] as const)("%s", async (_, slots, tile, selector, attr, shown) => {
+    const src = appOf(slots, tile);
     const { root } = await mounted(src);
-    expect(find(root, "input[type='radio']").getAttribute("name")).toBe("g");
-    expect(find(await served(src), "input[type='radio']").getAttribute("name")).toBe("g");
-  });
-
-  it("shows a bound slider's slot over a value= beside it", async () => {
-    const src = appOf("slot v : Int = 3", "slider(bind=v, value=7, min=0, max=10)");
-    const { root } = await mounted(src);
-    expect(find<HTMLInputElement>(root, "input[type='range']").value).toBe("3");
+    expect(find<HTMLInputElement>(root, selector)[attr]).toBe(shown);
+    expect(find(await served(await appFrom(src)), selector).getAttribute(attr)).toBe(shown);
   });
 });

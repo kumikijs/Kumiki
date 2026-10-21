@@ -231,8 +231,14 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         { kind: "radio", group: "plan", value: "pro", selected: true, props: { label: "Pro" } },
       ],
       ["radio (no label)", { kind: "radio", group: "plan", value: "free" }],
-      ["radio (number label)", { kind: "radio", group: "plan", value: "free", props: { label: 5 } }],
-      ["radio (Bool label)", { kind: "radio", group: "plan", value: "free", props: { label: true } }],
+      [
+        "radio (number label)",
+        { kind: "radio", group: "plan", value: "free", props: { label: 5 } },
+      ],
+      [
+        "radio (Bool label)",
+        { kind: "radio", group: "plan", value: "free", props: { label: true } },
+      ],
       [
         "radio (bind)",
         { kind: "radio", group: "plan", value: "pro", selected: true, bind: "plan" },

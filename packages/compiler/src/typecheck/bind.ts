@@ -71,7 +71,10 @@ function writtenAt(t: TileExpr & { kind: "TileCall" }, name: string): Pos[] {
  * A slider's `value` is the value an unbound slider shows, so beside `bind=` it is a second answer to what the slider shows (W0216, as on a toggle).
  * A radio's `name` spells its `group`, so beside `group` it is a second answer to which set the radio is in (W0217).
  */
-export function checkSecondSpelling(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+export function checkSecondSpelling(
+  t: TileExpr & { kind: "TileCall" },
+  errors: KumikiError[],
+): void {
   if (t.name === "slider" && t.args.some((a) => a.name === "bind")) {
     for (const pos of writtenAt(t, "value")) {
       errors.push({
