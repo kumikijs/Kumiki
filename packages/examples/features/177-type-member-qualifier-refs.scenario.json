@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "nothing is added yet",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["items: 0", "none picked"],
+        "state": { "picked": { "_tag": "None" } }
+      }
+    },
+    {
+      "label": "typing fills the draft",
+      "do": { "fill": "#draft", "value": "Milk" },
+      "expect": { "noErrors": true, "state": { "draft": "Milk" } }
+    },
+    {
+      "label": "submitting mints an id, keys the item by it, and reads it back through the same type",
+      "do": { "submit": "#draft" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["items: 1", "picked true"],
+        "state": { "draft": "" }
+      }
+    }
+  ]
+}

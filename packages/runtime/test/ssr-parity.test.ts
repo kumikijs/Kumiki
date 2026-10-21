@@ -261,6 +261,39 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
           options: [{ label: "A", value: "a" }],
         },
       ],
+      [
+        "select (variant and record values)",
+        {
+          kind: "select",
+          value: { _tag: "Some", _0: { _tag: "B" } },
+          options: [
+            { label: "None", value: { _tag: "None" } },
+            { label: "A", value: { _tag: "Some", _0: { _tag: "A" } } },
+            { label: "B", value: { _tag: "Some", _0: { _tag: "B" } } },
+            { label: "Box", value: { w: 2, h: 3 } },
+          ],
+        },
+      ],
+      [
+        "select (an option with no value)",
+        {
+          kind: "select",
+          value: "b",
+          options: [
+            { label: "A", value: undefined },
+            { label: "B", value: "b" },
+          ],
+        },
+      ],
+      [
+        "select (placeholder, the Unit value)",
+        {
+          kind: "select",
+          value: null,
+          placeholder: "Pick one",
+          options: [{ label: "A", value: "a" }],
+        },
+      ],
     ],
   },
   slider: {
@@ -432,6 +465,27 @@ describe("the server pass renders what the client renders", () => {
           expect(shapeOf(server, opts)).toEqual(shapeOf(client, opts));
         });
       }
+    });
+  }
+});
+
+// The shape comparison skips `selected`, a property on the client, so which option a select
+// holds is compared on its own: the served attribute against the mounted option's property.
+describe("a select holds the same option on both paths", () => {
+  const onServer = (el: HTMLElement): (string | null)[] =>
+    Array.from(el.querySelectorAll("option"))
+      .filter((o) => o.hasAttribute("selected"))
+      .map((o) => o.textContent);
+  const onClient = (el: HTMLElement): (string | null)[] =>
+    Array.from((el as HTMLSelectElement).options)
+      .filter((o) => o.selected)
+      .map((o) => o.textContent);
+
+  for (const [label, node] of TABLE.select.cases) {
+    it(`agrees on ${label}`, () => {
+      const served = onServer(serverElement(node));
+      expect(served).toHaveLength(1);
+      expect(served).toEqual(onClient(clientElement(node)));
     });
   }
 });

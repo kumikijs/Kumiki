@@ -17,7 +17,7 @@ import {
 } from "../stdlib-members.ts";
 import { STDLIB_TYPES } from "../stdlib-types.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
-import { inferType, PRIM_FIELDS, typeName } from "./infer.ts";
+import { inferType, primFieldType, typeName } from "./infer.ts";
 
 type MemberClass = "field" | "member" | "unknown" | "undecidable";
 
@@ -33,7 +33,7 @@ export function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolT
   const receivers = memberReceivers(raw, t, sym);
   if (receivers === null) return "undecidable";
 
-  if (t.kind === "TypePrim" && PRIM_FIELDS[t.name]?.[field]) return "field";
+  if (t.kind === "TypePrim" && primFieldType(t.name, field) !== null) return "field";
 
   return receivers.some((r) => hasMember(r, field)) ? "member" : "unknown";
 }
@@ -93,7 +93,7 @@ export function undefMemberError(
 }
 
 const KEY_READERS: Readonly<Record<string, ReadonlySet<string>>> = {
-  Set: new Set(["to-list"]),
+  Set: new Set(["to-list", "filter"]),
   Map: new Set(["keys", "entries", "filter", "map"]),
 };
 
