@@ -7,7 +7,8 @@
 # - A radio's `group` is its `<input>`'s `name`, which is what makes the
 #   radios that share it one set; written as `name=`, it groups them the same.
 # - A `slider` without `bind` shows the one-way `value=` it is given, and
-#   moves when a reducer writes the slot behind it.
+#   moves when a reducer writes the slot behind it, even one that caps what
+#   the slider just wrote while the slider still has focus.
 
 slot agreed : Bool = false
 slot mode   : Text = "a"
@@ -16,7 +17,7 @@ slot vol    : Int  = 10
 reducer toggle on=ui.click(AgreeCheck) do= agreed := not agreed
 reducer pickA  on=ui.change(RadioA)    do= mode := "a"
 reducer pickB  on=ui.change(RadioB)    do= mode := "b"
-reducer setVol on=ui.change(VolSlider) do= vol := $event.value
+reducer setVol on=ui.change(VolSlider) do= vol := if $event.value > 50 then 50 else $event.value
 reducer louder on=ui.click(LouderBtn)  do= vol := vol + 10
 
 tile AgreeCheck = check(value=agreed) {label: "I agree to the terms"}

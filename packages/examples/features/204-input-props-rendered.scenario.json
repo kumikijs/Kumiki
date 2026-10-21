@@ -36,6 +36,11 @@
       "label": "and a reducer adds to the value the slider wrote",
       "do": { "clickText": "Louder" },
       "expect": { "noErrors": true, "state": { "vol": 45 }, "domIncludes": ["vol=45"] }
+    },
+    {
+      "label": "the reducer caps a value past 50 (the thumb following it is pinned in the browser tier)",
+      "do": { "fill": "input[type='range']", "value": "80" },
+      "expect": { "noErrors": true, "state": { "vol": 50 }, "domIncludes": ["vol=50"] }
     }
   ]
 }
