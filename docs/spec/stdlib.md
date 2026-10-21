@@ -25,6 +25,8 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 let id = emit fetchQuote()
 ```
 
+Two emits of one effect yield two different ids, and cancelling the request one of them starts leaves the other's as it is; the id of an emit the policy drops names the request that absorbed it. The exception is `policy=latest` / `policy=latest-per-key(...)`, which run one request per key: every emit under a key yields that key's id, which names the request currently running under it ([HTTP §6.4](./http.md#_6-4-cancellation)).
+
 The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
 
 `EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
@@ -53,7 +55,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
+| `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)) |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error`, of `route.error(<pattern>)` (which adds `pattern`), and of an `error-boundary` tile's `in=` |
 
 ---
@@ -143,7 +145,7 @@ prepend(x)                  : List(T)
 concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
-sort                        : List(T)          ; T is Ord
+sort                        : List(T)          ; T is Ord; ascending, as < orders it
 sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
 unique                      : List(T)
 map(expr)                   : List(T')
@@ -182,7 +184,9 @@ fn norm() -> List(Todo) = todos.reverse       # same as above
 
 - **`Text` order is UTF-16 code-unit order**, not a locale's collation: `"Z" < "a"`, `"B" < "a"`, and kana and kanji sort by code point rather than in dictionary (reading) order.
 - **A key is ordered as the value it is at runtime.** A field declared numeric or `Time` whose value arrives as `Text` — for example from an HTTP JSON body, which is not converted to the declared types — is ordered as `Text`: `"10"` before `"9"`.
-- **A key with no value to order — absent, or `NaN` — sorts after every other key**, keeping its order. Only a key the checker could not type can be one; compared as "equal" to every key, a single one would otherwise stop the rest from sorting.
+- **A key with no value to order — absent, or `NaN` — sorts after every other key**, keeping its order. A numeric key is `NaN` wherever arithmetic makes it one (`0.0 / 0.0`, `(-1.0).sqrt`, `(-1.0).sqrt.floor`), and a key is absent where its value arrived without it (a field an HTTP JSON body omits or sends as `null`) or where the checker could not type it; compared as "equal" to every key, a single one would otherwise stop the rest from sorting.
+
+**`sort` orders the elements themselves the same way when they are all numbers or all `Text`**, judged by each element's runtime type with the absent ones left out: a `List(Int)`, `List(Float)` or `List(Time)` numerically, and a `List(Text)` in UTF-16 code-unit order, so `[3, 1, 2, 10].sort` is `[1, 2, 3, 10]` and `["9", "10"].sort` is `["10", "9"]`. An absent element sorts after every other, keeping its order, as an absent key does in `sort-by`. Non-finite `Float` values — what the functions of [§2.2.7](#_2-2-7-int-float) give outside their domain, and what `/` gives for a zero divisor ([language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `-Infinity` sorts before every finite value and `Infinity` after, so `[10.0, 9.0, 1.5, 1.0 / 0.0].sort` is `[1.5, 9.0, 10.0, Infinity]`. `NaN`, which `<` orders against nothing, sorts after every other element, `Infinity` included, as a `NaN` key does in `sort-by`: `[(-1.0).sqrt, 2.0, 1.0].sort` is `[1.0, 2.0, NaN]`. A list holding both numbers and `Text` — a `List(Float)` some of whose values arrived as `Text`, say — is ordered by each element's text instead, absent elements still last, because `<` between a number and a `Text` is no order: such a list holding `10`, `"9"` and `2` sorts as `10`, `2`, `"9"`, where `sort-by` on the same keys gives `2`, `"9"`, `10`.
 
 ### 2.2.4 Option(T)
 
@@ -246,7 +250,7 @@ show, to-float (Int), to-int (Float, truncated)
 
 These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier is a capitalised name, so `math.abs(x)` is a reference to a name called `math` and reports [E0103](./errors.md#e0103-undef-ref-undef-slot).
 
-An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
+An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Non-finite `Float` values — what these functions give outside their domain, and what `/` gives for a zero divisor (`1.0 / 0.0` is `Infinity`; [language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `sort` puts `-Infinity` before every finite value, `Infinity` after, and `NaN` after every other element ([§2.2.3](#_2-2-3-list-t)). Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
 `x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
 
@@ -625,9 +629,9 @@ A provider returns an `EffectResult` (`{kind:"ok"|"err", value}`), sync or async
 
 The compiled bundle auto-mounts to `#root`; a host embedding the bundle can register providers by assigning `globalThis.__kumikiProviders` before the module loads.
 
-**Overriding a standard capability.** A provider may also be registered for a *standard* capability (`http.*`, `storage.*`, `nav.*`, `notification.show`, `log.write`, …) — every effect invoke consults `caps.provider(cap)` before its built-in implementation. This lets a host swap the HTTP transport (axios / ofetch), inject auth headers, plug in a framework router, or replace the toast UI, without changing the Kumiki source. The provider receives the effect's (already `map-request`-mapped) request; when none is registered the built-in behavior runs unchanged. A provider for a storage / session / indexed capability returns the `Text` those effects declare as its err value, as the built-in handlers do. Any other err value it returns, and anything it throws, is delivered as a `Text` read the same way for both: an `Error` is `Name: message`, a record with a `Text` `message` field is that field, and anything else is its JSON text (or its `String` form when JSON has none, as for `undefined`). A result that is not `{kind, value}` is an err naming what the provider returned.
+**Overriding a standard capability.** A provider may also be registered for a *standard* capability (`http.*`, `storage.*`, `nav.*`, `notification.show`, `log.write`, …) — every effect bound to a capability, standard or declared, consults `caps.provider(cap)` before its built-in implementation, except `confirm`. This lets a host swap the HTTP transport (axios / ofetch), inject auth headers, plug in a framework router, or replace the toast UI, without changing the Kumiki source. `confirm` always renders the runtime's own dialog ([§2.6.5](#_2-6-5-confirm)): its answer is delivered by dispatching the `onYes` or `onNo` reducer and, under a leave guard, by settling the move the guard holds ([Routing §3.5.2](./routing.md#_3-5-2-leave-guard)), and a provider returns an `EffectResult`, which can do neither. A `notification.show` provider therefore replaces `toast` and nothing else. The provider receives the effect's (already `map-request`-mapped) request; when none is registered the built-in behavior runs unchanged. A provider for a storage / session / indexed capability returns the `Text` those effects declare as its err value, as the built-in handlers do. Any other err value it returns, and anything it throws, is delivered as a `Text` read the same way for both: an `Error` is `Name: message`, a record with a `Text` `message` field is that field, and anything else is its JSON text (or its `String` form when JSON has none, as for `undefined`). A result that is not `{kind, value}` is an err naming what the provider returned.
 
-**What an `.err` reducer receives.** A storage / session / indexed effect fails with the `Text` its `out=Result(T, Text)` declares — the failure's message ([Storage Effects](./http.md#_6-7-storage-effects)). An HTTP effect fails with the `HttpError` record its `out=` declares ([HTTP Common](./http.md#_6-1-http-common)). A custom capability's err value is whatever its provider returns; with no provider registered it is `{message: "Capability <name> has no provider"}`. On an HTTP or custom effect, an invoke that throws — its `map-request` panics, or its provider throws — is delivered as `{message: Text}`, the thrown value's text.
+**What an `.err` reducer receives.** A storage / session / indexed effect fails with the `Text` its `out=Result(T, Text)` declares — the failure's message ([Storage Effects](./http.md#_6-7-storage-effects)). An HTTP effect fails with the `HttpError` record its `out=` declares ([HTTP Common](./http.md#_6-1-http-common)). A custom capability's err value is whatever its provider returns; with no provider registered it is `{message: "Capability <name> has no provider"}`. On an HTTP or custom effect, an invoke that throws — its `map-request` panics, or its provider throws — is delivered as `{message: Text}`, the thrown value's text. A custom effect cancelled while it waits between `retry` attempts is delivered the same shape, `{message: "aborted"}` ([HTTP §6.5](./http.md#_6-5-retry)).
 
 **Unhandled effect errors are surfaced, never silent.** An effect that resolves to `err` is delivered to every matching `.err` reducer. If a program wires **no** `.err` reducer for that effect, the dropped error is reported via `console.error` (`[kumiki] effect "<name>" returned an error with no .err reducer: …`), so the verification tiers (`smoke` / `runScenario`, which capture `console.error`) flag it — consistent with the live-panic model ([Error Handling](./lifecycle.md#_7-2-error-handling)). A failed capability must never look like a no-op: the storage-unavailable case (opaque-origin sandbox, private mode) is exactly this — `storage.read` / `storage.write` return `err`, and an app handling only `.ok` would otherwise silently do nothing. The default contract is therefore **`err` plus a surfaced report**; a program opts into handling (or deliberately ignoring) the error by wiring an `.err` reducer — even an empty one. An in-memory storage fallback is **not** the default behavior (it would paper over this contract); a host that wants one supplies it explicitly via a `storage.*` provider.
 
@@ -687,7 +691,7 @@ effect confirm     cap=notification.show  in={title: Text, message: Text, onYes:
 
 `ReducerRef` is a reducer's name written bare (`onYes: doDelete`), which the runtime dispatches by name. It is not a type a program can write; it exists only in this `in=`. A bare name that is not a reducer's is [E0103](./errors.md#e0103-undef-ref-undef-slot), and any other value there is [E0202](./errors.md#e0202-emit-arg-type-mismatch).
 
-Rendered as a modal dialog tile rather than the native `confirm`, and it delivers its answer to a reducer rather than returning one. → [Lifecycle §7.6](./lifecycle.md#_7-6-confirmation-dialogs).
+Rendered as a modal dialog tile rather than the native `confirm`, and it delivers its answer to a reducer rather than returning one. The dialog is always the runtime's own: a host provider for `notification.show` replaces the toast and does not reach `confirm` ([§2.5](#_2-5-standard-capabilities)). → [Lifecycle §7.6](./lifecycle.md#_7-6-confirmation-dialogs).
 
 ---
 
