@@ -239,6 +239,8 @@ parse-float                 : Option(Float)
 
 `replace(from, to)` は、プレーンテキストとして照合した `from` の出現箇所をすべて、書かれたとおりの `to` に置き換える：`"a-b-c".replace("-", "+")` は `"a+b+c"`、`"a.b.c".replace(".", "/")` は `"a/b/c"` である。`to` に置換構文はない。`to` の中の `$` は後に何が続いてもただの文字であり、`"cost: X".replace("X", "$$5")` は `"cost: $$5"`、`"a-b".replace("-", "$&")` は `"a$&b"` になる。`to` がリテラルでも slot から読んだ値でも同じである。出現箇所は左から重ならないように探すので、`"aaa".replace("aa", "b")` は `"ba"` になる。空の `from` は末尾を含む UTF-16 コード単位のすべての位置に一致し、`"abc".replace("", "-")` は `"-a-b-c-"` になる。
 
+`text.parse-int` は [`Int.parse(text)`](#_2-4-3-型変換) と、`text.parse-float` は `Float.parse(text)` と同じように `text` を読む。読み方は一つなので、2 つの綴りが同じテキストから違う値を作ることはない。読むのは 10 進のテキストだけで、しかもその全体である：`"3.7".parse-int`・`"1e3".parse-int`・`"0x10".parse-int`・`" 12 ".parse-int` はいずれも `None` であり、`"3.7".parse-float` は `Some(3.7)`、`"1e3".parse-float` は `Some(1000)` である。小数は `Int` に切り捨てられない——切り捨てたいなら `text.parse-float.map($1.to-int)` と書く。前後の空白も読み飛ばさない：空白があり得るテキストは `text.trim.parse-int` で読む。
+
 ### 2.2.7 Int / Float
 
 ```
@@ -506,14 +508,14 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 
 | 基底型 | `Some` の中身 | `None` になるテキスト |
 |---|---|---|
-| `Int` | 表す数値: 省略可能な `+` / `-` と 10 進数字 | それ以外 — 小数、指数、`0x` / `0b` 接頭辞、前後の空白、空 |
+| `Int` | 表す数値: 省略可能な `+` / `-` と 10 進数字 | それ以外 — 小数、指数、`0x` / `0b` 接頭辞、前後の空白、空 — または有限に収まらない大きさの数値 |
 | `Float` | 表す数値: 省略可能な `+` / `-`、10 進数字、省略可能な `.` と数字、省略可能な `e` / `E` 指数 | それ以外 — `.5`、`1.`、`0x10`、`Infinity`、前後の空白、空 — または有限に収まらない大きさの数値 |
 | `Time` | [`Time.parse`](#_2-2-8-time) が読む時刻 | [`Time.parse`](#_2-2-8-time) の文法から外れる、または暦にない日付（`2026-02-30`）を指す — `2026/02/30`、`+002026-08-14`、`2026-08-14T24:00`、前後の空白、空 |
 | `Bool` | `"true"` なら `true`、`"false"` なら `false` — `.show` が生成する 2 つの綴り | それ以外 |
 | `Text` | テキストそのもの | 空 |
 | `Bytes` | `Bytes.from-text` と同じ UTF-8 バイト列 | 空 |
 
-読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。
+読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。`Int` と `Float` の読み方は、`text.parse-int` と `text.parse-float`（[§2.2.6](#_2-2-6-text)）が読む読み方でもあり、`Int` や `Float` に bind された `input` がテキストを読む読み方（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）でもある。
 
 読んだ値はその後 `T` が持つすべての `where` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）に照らされ、どれかを満たさない値は `None` になる: `type Cents = nominal Int where positive` なら `Cents.parse("-5")` は `None` である。したがって `parse` は自身の型が拒否する値を決して生成しない — `Option(Cents)` は slot 書き込みのガードを通らないので、その検査ができるのは parse の時点だけである。
 
