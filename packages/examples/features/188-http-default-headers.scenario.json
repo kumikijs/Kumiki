@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been sent yet",
+      "expect": { "noErrors": true, "state": { "status": "idle" } }
+    },
+    {
+      "label": "the GET with a Json decoder is answered",
+      "do": { "click": "#load" },
+      "expect": { "noErrors": true, "state": { "status": "load lamp" } }
+    },
+    {
+      "label": "the PATCH with its own content-type is answered",
+      "do": { "click": "#rename" },
+      "expect": { "noErrors": true, "state": { "status": "rename lamp" } }
+    },
+    {
+      "label": "the GET with its own ACCEPT is answered",
+      "do": { "click": "#feed" },
+      "expect": { "noErrors": true, "state": { "status": "feed lamp" } }
+    },
+    {
+      "label": "the GET with a Text decoder is answered",
+      "do": { "click": "#readme" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "readme shop" },
+        "domIncludes": ["status: readme shop"]
+      }
+    }
+  ],
+  "effects": {
+    "load": [{ "outcome": "ok", "value": { "name": "lamp" } }],
+    "rename": [{ "outcome": "ok", "value": { "name": "lamp" } }],
+    "feed": [{ "outcome": "ok", "value": { "name": "lamp" } }],
+    "readme": [{ "outcome": "ok", "value": "shop" }]
+  }
+}
