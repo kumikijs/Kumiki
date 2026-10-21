@@ -1,5 +1,5 @@
 import type { Expr, Pos, TypeExpr } from "./ast.ts";
-import { PRIM_TYPES } from "./parser/types.ts";
+import { isPrimTypeName } from "./stdlib-types.ts";
 
 export type BuiltinArity = { readonly min: number; readonly max: number };
 
@@ -96,8 +96,8 @@ export function typeMemberQualifier(callee: string, argCount: number): string | 
 export function decodedType(e: Expr | undefined): TypeExpr | undefined {
   if (e?.kind === "Variant") {
     if (e.payload.length === 0) {
-      return PRIM_TYPES.has(e.name)
-        ? { kind: "TypePrim", name: e.name as "Text", pos: e.pos }
+      return isPrimTypeName(e.name)
+        ? { kind: "TypePrim", name: e.name, pos: e.pos }
         : { kind: "TypeRef", name: e.name, pos: e.pos };
     }
     const args = e.payload.map(decodedType);
