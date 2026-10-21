@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
+import { allFiles } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { codesOf } from "./helpers/diagnostics.ts";
 
@@ -41,6 +44,68 @@ type Item = {id: ItemId, label: Text}
 slot label : Text = ""
 `;
     expect(refsOf(src, "type.Item")).toEqual(["type.ItemId@2:18"]);
+  });
+
+  describe("a qualified call", () => {
+    it("names the type a type-member call is qualified by, at the qualifier", () => {
+      const src = `type ItemId = nominal Text where uuid
+slot last : Option(ItemId) = None
+slot shown : Text = ""
+reducer add on=ui.click(B) do=
+    let id = ItemId.fresh()
+    shown := ItemId.show(id) + Int.show(1)
+    last := ItemId.parse(shown)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.add").filter((r) => r.startsWith("type."))).toEqual([
+        "type.ItemId@5:14",
+        "type.ItemId@6:14",
+        "type.ItemId@7:13",
+      ]);
+    });
+
+    describe("with a program's own `type Duration`, a call on the namespace", () => {
+      it.each([
+        { call: "Duration.ms(5)", why: "a built-in call names no type", edges: [] },
+        // E0116, so this fixture does not check, but it is the case that fails if the namespace
+        // exclusion is dropped: `fresh` is a type member on any other qualifier.
+        { call: "Duration.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
+        {
+          call: "Duration.show(raw)",
+          why: "show given its argument",
+          edges: ["type.Duration@4:12"],
+        },
+        {
+          call: "Duration.parse(raw)",
+          why: "parse given its argument",
+          edges: ["type.Duration@4:12"],
+        },
+      ])("$call: $why", ({ call, edges }) => {
+        const src = `type Duration = nominal Text
+slot raw : Text = ""
+reducer r on=ui.click(B) do=
+    raw := ${call}
+tile B = button(text="b")
+`;
+        expect(refsOf(src, "reducer.r").filter((r) => r.startsWith("type."))).toEqual(edges);
+      });
+    });
+  });
+
+  it("names the types a Decoder.Json argument spells, at each name", () => {
+    // The argument parses as a value, but codegen decodes by it as a type.
+    const src = `type ItemId = nominal Text where uuid
+type Item = {id: ItemId, label: Text}
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Map(ItemId, Item)), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json(Map(ItemId, Item))}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.ItemId@7:57",
+      "type.Item@7:65",
+    ]);
   });
 
   describe("a local binding shadows a definition of the same name", () => {
@@ -104,11 +169,19 @@ tile B = button(text="b")
       expect(refsOf(src, "reducer.ask")).toEqual(["tile.B@3:25", "reducer.yes@3:79"]);
     });
 
-    it("resolves a motion prop, which is a string literal", () => {
+    it("resolves a motion prop, which is a string literal, at the name inside the quotes", () => {
       const src = `motion Spin = {from: {rotate: "0deg"}, to: {rotate: "360deg"}, duration: "1s"}
 tile S = box() {motion: "Spin"}
 `;
-      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:25"]);
+      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:26"]);
+    });
+
+    it("resolves a link's prefetch written as a string literal at the name inside the quotes", () => {
+      const src = `slot n : Int = 0
+reducer load on=route.enter("/x") do= n := 1
+tile Home = link(to="/x") {text: "go", prefetch: "load"}
+`;
+      expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:51"]);
     });
 
     it("resolves a tile.mount lifecycle event at the tile name, not the pattern", () => {
@@ -144,6 +217,40 @@ test round-trips =
         invariant = run-reducer(inc).slots.count == count
 `;
       expect(refsOf(src, "test.round-trips")).toContain("reducer.inc@8:33");
+    });
+
+    it("reads a call to a declared fn run-reducer as a call to the fn", () => {
+      // A declared fn wins over the builtin of its name, so the argument is a value, not a reducer.
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := run-reducer(count)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.inc")).toEqual([
+        "tile.B@3:25",
+        "slot.count@3:32",
+        "fn.run-reducer@3:41",
+        "slot.count@3:53",
+      ]);
+    });
+
+    it("reads the chained `.run-reducer(r)` as no reducer once a fn has the name", () => {
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+      // The receiver is the fn's call, and `inc` is a value the walker finds no definition for.
+      expect(refsOf(src, "test.chain")).toEqual([
+        "slot.count@-",
+        "tile.B@8:73",
+        "fn.run-reducer@9:21",
+      ]);
     });
   });
 
@@ -433,5 +540,26 @@ test t =
         expect(refsOf(src, "test.t")).toEqual(["reducer.go@7:18", "tile.B@8:51", "slot.nav@-"]);
       });
     });
+  });
+});
+
+describe("a reference's position", () => {
+  // `rename` rewrites the text at each position and the content hash labels the token there, so
+  // both rely on the source spelling the name exactly where its reference says.
+  it("is where the source spells the name, in every example", () => {
+    const misplaced: string[] = [];
+    for (const file of allFiles()) {
+      const source = readFileSync(file, "utf8");
+      const lines = source.split("\n");
+      const program = parse(lex(source));
+      const index = buildDefIndex(program);
+      for (const r of program.defs.flatMap((d) => referencesIn(d, index))) {
+        if (!r.pos) continue;
+        const at = lines[r.pos.line - 1]?.slice(r.pos.col - 1, r.pos.col - 1 + r.name.length);
+        if (at !== r.name)
+          misplaced.push(`${basename(file)} ${fmt(r)} reads ${JSON.stringify(at)}`);
+      }
+    }
+    expect(misplaced).toEqual([]);
   });
 });

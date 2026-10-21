@@ -11,7 +11,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
-import { jsOfExpr, reducerEmitJs, reducerNameArg, slotReadJs, tupleArm } from "./expr.ts";
+import { jsOfExpr, reducerEmitJs, slotReadJs, tupleArm } from "./expr.ts";
 import { indexSegmentJs, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
@@ -123,80 +123,6 @@ export function collectEmits(stmts: Statement[]): string[] {
   };
   walk(stmts);
   return out;
-}
-
-/** Invoke `cb` with each `run-reducer(name)` target inside an expression. */
-export function scanRunReducers(e: Expr | undefined, cb: (name: string) => void): void {
-  if (!e) return;
-  if (e.kind === "Call" && e.callee === "run-reducer") cb(reducerNameArg(e.args[0]));
-  if (e.kind === "MethodCall" && e.method === "run-reducer") cb(reducerNameArg(e.args[0]));
-  switch (e.kind) {
-    case "BinOp":
-      scanRunReducers(e.lhs, cb);
-      scanRunReducers(e.rhs, cb);
-      break;
-    case "UnaryOp":
-      scanRunReducers(e.rhs, cb);
-      break;
-    case "FieldAccess":
-      scanRunReducers(e.base, cb);
-      break;
-    case "Index":
-      scanRunReducers(e.base, cb);
-      scanRunReducers(e.index, cb);
-      break;
-    case "Call":
-      for (const a of e.args) scanRunReducers(a, cb);
-      break;
-    case "MethodCall":
-      scanRunReducers(e.receiver, cb);
-      for (const a of e.args) scanRunReducers(a, cb);
-      break;
-    case "RecordLit":
-      for (const f of e.fields) scanRunReducers(f.value, cb);
-      break;
-    case "ListLit":
-      for (const it of e.items) scanRunReducers(it, cb);
-      break;
-    case "MapLit":
-      for (const en of e.entries) {
-        scanRunReducers(en.key, cb);
-        scanRunReducers(en.value, cb);
-      }
-      break;
-    case "MatchExpr":
-      scanRunReducers(e.scrutinee, cb);
-      for (const a of e.arms) scanRunReducers(a.body, cb);
-      break;
-    case "IfExpr":
-      scanRunReducers(e.cond, cb);
-      scanRunReducers(e.consequent, cb);
-      scanRunReducers(e.alternate, cb);
-      break;
-    case "LetIn":
-      scanRunReducers(e.value, cb);
-      scanRunReducers(e.body, cb);
-      break;
-    case "Variant":
-      for (const p of e.payload) scanRunReducers(p, cb);
-      break;
-    case "TupleLit":
-      for (const it of e.items) scanRunReducers(it, cb);
-      break;
-    // Leaves, plus the two forms whose own arguments are walked above.
-    case "Num":
-    case "Str":
-    case "Bool":
-    case "Unit":
-    case "Null":
-    case "Ref":
-    case "Wildcard":
-    case "TokenRef":
-    case "EmitExpr":
-      break;
-    default:
-      assertNever(e);
-  }
 }
 
 export function genReducer(r: ReducerDef, gen: GenCtx): string {
@@ -312,7 +238,8 @@ export function genStatement(s: Statement, ctx: EvalCtx): string {
       const args = s.args.map((a) => jsOfConfirmArg(a, ctx)).join(", ");
       return `_emits.push({ effect: "confirm", args: [${args}] });`;
     }
-    return `{ ${reducerEmitJs(s.effect, s.args, ctx).stmts} }`;
+    const { binds, record } = reducerEmitJs(s.effect, s.args, ctx);
+    return `{ ${binds}_emits.push(${record}); }`;
   }
   if (s.kind === "StopTimer") {
     return `_stops.push(${JSON.stringify(s.name)});`;
