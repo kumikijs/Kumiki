@@ -241,7 +241,7 @@ pass は動かす必要のある子だけを配置するので（[§10.3.10](#_1
 再レンダリング後も入力中の input/textarea の focus とカーソル位置を維持する:
 - `bind=` がある要素: `data-kumiki-bind` 属性（nested path は full path 文字列）で再特定
 - `id=` がある要素: id で再特定
-- どちらもない（`value=` のみの検索ボックス等）: **DOM child-index path** で位置ベースに再特定
+- どちらもない（`value=` のみの検索ボックス等）: pass がその要素を view に残していればその要素自体。pass が作り直した要素だけを **DOM child-index path** で位置ベースに再特定する。そのため、タイルでない要素（`fieldset` の `<legend>` など）がコントロールの前に現れたり消えたりしても、focus が兄弟に移らない
 - `<select>` も snapshot 対象に含まれるので、reorder / bailout パスでもピッカーへの focus は復元される（open dropdown の状態は復元不能で、それは [§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190) の patch パス側の保証）
 
 ### 10.3.10 安定タイル identity

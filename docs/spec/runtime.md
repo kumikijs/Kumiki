@@ -243,7 +243,7 @@ leaves.
 It maintains the focus and cursor position of an input/textarea being edited even after re-rendering:
 - Elements with `bind=`: re-identified by the `data-kumiki-bind` attribute (a nested path is a full path string)
 - Elements with `id=`: re-identified by id
-- Neither (e.g. a search box with only `value=`): re-identified positionally by a **DOM child-index path**
+- Neither (e.g. a search box with only `value=`): the focused element itself while the pass kept it in the view, and only an element the pass rebuilt is re-identified positionally by a **DOM child-index path**. So an element that is not a tile coming or going in front of the control, such as a `fieldset`'s `<legend>`, does not hand focus to a sibling
 - `<select>` is included in the snapshot set so the reorder / bailout paths can restore focus on the picker (its native open-dropdown state is unrecoverable here — that guarantee comes from the patch path in [§10.3.11](#_10-3-11-identity-preserving-reconciliation-190))
 
 ### 10.3.10 Stable tile identity
