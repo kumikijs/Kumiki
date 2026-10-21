@@ -237,6 +237,8 @@ parse-int                   : Option(Int)
 parse-float                 : Option(Float)
 ```
 
+`replace(from, to)` replaces every occurrence of `from`, matched as plain text, with `to` as written: `"a-b-c".replace("-", "+")` is `"a+b+c"`, and `"a.b.c".replace(".", "/")` is `"a/b/c"`. `to` has no substitution syntax. A `$` in it is text, whatever follows it, so `"cost: X".replace("X", "$$5")` is `"cost: $$5"` and `"a-b".replace("-", "$&")` is `"a$&b"`, whether `to` is a literal or a value read from a slot. Occurrences are found left to right and do not overlap, so `"aaa".replace("aa", "b")` is `"ba"`; an empty `from` matches at every UTF-16 code-unit position, the end included, so `"abc".replace("", "-")` is `"-a-b-c-"`.
+
 ### 2.2.7 Int / Float
 
 ```
