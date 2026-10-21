@@ -475,6 +475,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 
 ## 2.4 ビルトイン関数 {#_2-4-builtin-functions}
 
+プログラムは `random`、`fmt`、`trace`、`panic`（以下）、または `file-url`（[フォーム §5.10](./forms.md#_5-10-file-upload)）/ `prefers-dark`（[スタイル §4.6.1](./style.md#_4-6-1-os-設定への追従)）という名前の `fn` を宣言してよい。その場合、その名前の呼び出しはその `fn` に届き、`fn` のシグネチャで検査されて `fn` の本体を実行する。ただし reducer の `panic(message)` 文はビルトインのままである（[言語 §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)）。`now` は予約語であり宣言できない。
+
 ### 2.4.1 ID 生成
 
 ```
@@ -560,7 +562,7 @@ trace(label, value)        : T            ; episode log にラベル付きで記
 panic(message)             : never        ; プログラムを停止（reducer 内のみ）
 ```
 
-`trace` は**未実装**である。lowering された式から mount の episode logger へ到達する経路が無く、記録するには存在しないランタイム接続点が要る。`check` はこの呼び出しに対して [E0802](./errors.md#e0802-unimplemented-function) を報告し、名前が評価時に未定義グローバルへ落ちることを防ぐ。`panic` は実装済み。
+`trace` は**未実装**である。lowering された式から mount の episode logger へ到達する経路が無く、記録するには存在しないランタイム接続点が要る。`check` は `fn trace` を宣言していないプログラムでのこの呼び出しに対して [E0802](./errors.md#e0802-unimplemented-function) を報告し、名前が評価時に未定義グローバルへ落ちることを防ぐ。`panic` は実装済み。
 
 ---
 

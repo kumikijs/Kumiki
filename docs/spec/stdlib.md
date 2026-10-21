@@ -476,6 +476,8 @@ Both rendering paths write them: what a mounted element carries, a served page c
 
 ## 2.4 Built-in Functions
 
+A program may declare a `fn` named `random`, `fmt`, `trace` or `panic` (below), or `file-url` ([Forms §5.10](./forms.md#_5-10-file-upload)) / `prefers-dark` ([Style §4.6.1](./style.md#_4-6-1-following-os-settings)). Calls of that name then reach the `fn`, checked against its signature and running its body, except a reducer's `panic(message)` statement, which stays the built-in ([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)). `now` is a reserved word and cannot be declared.
+
 ### 2.4.1 ID Generation
 
 ```
@@ -561,7 +563,7 @@ trace(label, value)        : T            ; records to the episode log with a la
 panic(message)             : never        ; stops the program (inside a reducer only)
 ```
 
-`trace` is **not implemented yet**: a lowered expression has no route to the mount's episode logger, so recording one needs a runtime seam that does not exist. `check` reports [E0802](./errors.md#e0802-unimplemented-function) for a call to it, rather than letting the name become an undefined global at evaluation time. `panic` is implemented.
+`trace` is **not implemented yet**: a lowered expression has no route to the mount's episode logger, so recording one needs a runtime seam that does not exist. `check` reports [E0802](./errors.md#e0802-unimplemented-function) for a call to it in a program that declares no `fn trace`, rather than letting the name become an undefined global at evaluation time. `panic` is implemented.
 
 ---
 
