@@ -29,6 +29,21 @@ export function mountApp(
   return { root, handle: mount(app, root, options) };
 }
 
+/** Mount `app`, run `body` against its root, and tear both down whatever happens. */
+export async function withMounted<T>(
+  app: AppShape,
+  body: (root: HTMLElement) => Promise<T>,
+  options: MountOptions = {},
+): Promise<T> {
+  const { root, handle } = mountApp(app, options);
+  try {
+    return await body(root);
+  } finally {
+    handle.dispose();
+    root.remove();
+  }
+}
+
 /** Mount `app` at `path` under a memory router, read the page text, and unmount. */
 export function textAt(app: AppShape, path: string): string {
   const root = freshRoot();
@@ -44,6 +59,13 @@ export function textOf(html: string): string {
   const el = document.createElement("div");
   el.innerHTML = html;
   return el.textContent ?? "";
+}
+
+/** The text of each element under `root` that has no child elements, in document order. */
+export function texts(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll("*"))
+    .filter((el) => el.children.length === 0)
+    .map((el) => el.textContent ?? "");
 }
 
 export const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -81,6 +103,40 @@ export function clickContaining(root: ParentNode, text: string): void {
   found.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
+/**
+ * Mount `app` and, for each step, click the button whose text contains `button`, then wait until
+ * the page shows `until`; `after` runs as each step lands, and what it returns is collected. A step
+ * whose text never shows throws with what the page shows instead.
+ */
+export async function clickThrough<T>(
+  app: AppShape,
+  steps: [button: string, until: string][],
+  after: (root: HTMLElement) => T,
+): Promise<T[]> {
+  const { root, handle } = mountApp(app);
+  const seen: T[] = [];
+  try {
+    for (const [button, until] of steps) {
+      clickContaining(root, button);
+      await waitUntil(() => (root.textContent ?? "").includes(until)).catch(() => {
+        throw new Error(`after "${button}": wanted "${until}", page shows "${root.textContent}"`);
+      });
+      seen.push(after(root));
+    }
+  } finally {
+    handle.dispose();
+    root.remove();
+  }
+  return seen;
+}
+
+/** Dispatch a cancelable bubbling click, as a pointer does, on the link whose whole text is `text`. */
+export function followLink(root: ParentNode, text: string): void {
+  const found = Array.from(root.querySelectorAll("a")).find((a) => a.textContent === text);
+  if (!found) throw new Error(`link "${text}" not found`);
+  found.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+}
+
 /** The first element matching `selector`, typed as `T`. */
 export function find<T extends Element = HTMLElement>(root: ParentNode, selector: string): T {
   const found = root.querySelector(selector);
@@ -92,6 +148,19 @@ export function find<T extends Element = HTMLElement>(root: ParentNode, selector
 export function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   field.value = value;
   field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Pick `file` in `input` as the browser's file chooser would. */
+export function pickFile(input: HTMLInputElement, file: File): void {
+  try {
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file] as unknown as FileList,
+    });
+  } catch {
+    (input as unknown as { files: File[] }).files = [file];
+  }
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 /** `typeInto` the field matching `selector`. */
