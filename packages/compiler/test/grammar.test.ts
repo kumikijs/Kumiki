@@ -250,6 +250,56 @@ app A caps=[telemetry.out] routes={"/" -> App2, "/404" -> App2} init=[]
   });
 });
 
+describe("`|` stays bool OR unless a pattern and `->` follow it", () => {
+  const rhs: [string, Record<string, unknown>][] = [
+    ["b", { kind: "Ref", name: "b" }],
+    ["b.c", { kind: "FieldAccess", base: { kind: "Ref", name: "b" }, field: "c" }],
+    ["f(x)", { kind: "Call", callee: "f", args: [{ kind: "Ref", name: "x" }] }],
+  ];
+  const or = (shape: Record<string, unknown>) => ({
+    kind: "BinOp",
+    op: "|",
+    lhs: { kind: "Ref", name: "a" },
+    rhs: shape,
+  });
+  const defOf = (src: string) => parse(lex(src)).defs[0];
+
+  it.each(rhs)("in a value match's arm body: a | %s", (written, shape) => {
+    expect(
+      defOf(`fn g(x: Color) -> Bool = match x with | Red -> a | ${written} | other -> b`),
+    ).toMatchObject({
+      body: {
+        kind: "MatchExpr",
+        arms: [
+          { pattern: { kind: "PVariant", name: "Red" }, body: or(shape) },
+          { pattern: { kind: "PBind", name: "other" }, body: { kind: "Ref", name: "b" } },
+        ],
+      },
+    });
+  });
+
+  it.each(rhs)("in a statement match's arm body: a | %s", (written, shape) => {
+    expect(
+      defOf(
+        `reducer r on=ui.click(Go) do= match c with | Red -> a := a | ${written} | other -> a := b`,
+      ),
+    ).toMatchObject({
+      do: [
+        {
+          kind: "MatchStmt",
+          arms: [
+            { pattern: { kind: "PVariant", name: "Red" }, body: [{ rhs: or(shape) }] },
+            {
+              pattern: { kind: "PBind", name: "other" },
+              body: [{ rhs: { kind: "Ref", name: "b" } }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+});
+
 describe("diagnostics that pointed at the wrong thing", () => {
   it("reports an unknown duration unit at the unit", () => {
     const line = `effect load cap=http.get in=Unit out=Result(Text, Text) retry=linear(3, 100xy)`;
