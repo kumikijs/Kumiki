@@ -1,5 +1,5 @@
 import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
@@ -291,19 +291,35 @@ function checkIndexLvalue(
 ): void {
   const raw = lvalueType(lv.base, sym);
   checkListIndex(unaliasType(raw, sym), lv.index, sym, errors, ctx);
+  checkIndexIsPlace(raw, lv.index, "assign", lv.pos, sym, errors);
+}
+
+/** An index step a write goes through, on the left of `:=` or in a `bind=` target. */
+export function checkIndexIsPlace(
+  raw: TypeExpr | null,
+  index: Expr,
+  verb: "assign" | "bind",
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
   const step = indexStep(raw, sym);
   if (step.kind !== "no-place") return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
-    message: noPlaceMessage(step, lv.index),
-    pos: lv.pos,
+    message: noPlaceMessage(step, index, verb),
+    pos,
   });
 }
 
-function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
+function noPlaceMessage(
+  step: IndexStep & { kind: "no-place" },
+  index: Expr,
+  verb: "assign" | "bind",
+): string {
   const { raw, base } = step;
-  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
+  const into = `Cannot ${verb} through an index into "${typeToString(raw)}"`;
   if (base.kind === "TypeApp" && base.name === "Set") {
     return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
   }

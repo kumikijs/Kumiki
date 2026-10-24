@@ -32,7 +32,7 @@ tile App = column(
   text("todos=" + todos.map($1.text).join(",")),
   text("title=" + title))`);
     const reported = checkSource(source).map((d) => [d.code, d.kind, d.pos, d.message]);
-    const tail = "a bind writes back to a slot or a field path into one";
+    const tail = "a bind writes back to a slot or a path into one";
     const see = "(see docs/spec/forms.md)";
     expect(reported).toEqual([
       [
