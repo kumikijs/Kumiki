@@ -19,6 +19,8 @@ slot n     : Int                 = 0
 slot seen  : Int                 = 0
 slot ls    : List(Set(Int))      = [[1]]
 slot m     : Map(Text, Set(Int)) = {}
+slot ss    : Set(Set(Int))       = [[1]]
+slot byset : Map(Set(Text), Int) = {}
 slot lt    : Set(Int)            = []
 slot recs  : Set(P)              = [{x: 1}, {x: 2}]
 slot recs2 : Set(P)              = {}
@@ -30,6 +32,7 @@ reducer go on=ui.click(Go) do=
     seen := count(["p", "p", "q"])
     ls := ls.push([2, 2])
     m := m.insert("k", [1, 1])
+    byset := byset.insert(["a", "b"], 1)
     lt := let x = 3 in [x, x]
 tile Go = button(text="go") {id: "go"}`;
 
@@ -74,10 +77,11 @@ describe("the literal is a Set wherever it is written", () => {
 
   it("in a member's argument whose type the receiver fixes", async () => {
     const text = await render(
-      '"r=" + ls.contains([1]).show + ls.contains([2]).show + m.get-or("k", {}).size.show',
+      '"r=" + ls.contains([1]).show + ls.contains([2]).show + m.get-or("k", {}).size.show' +
+        ' + " " + ss.has([1]).show + " " + byset.get-or(["b", "a"], 0).show',
       1,
     );
-    expect(text).toContain("r=truetrue1");
+    expect(text).toContain("r=truetrue1 true 1");
   });
 
   it("in a let … in body", async () => {
