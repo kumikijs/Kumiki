@@ -23,31 +23,37 @@ E0204 effect-id-misuse at 4:38: heading(...) cannot render EffectId — it is an
 E0204 effect-id-misuse at 4:47: .show cannot render EffectId — it is an opaque handle
 ```
 
-A value whose type is `EffectId`, through an alias or a `nominal` too, is
-refused where it becomes text:
+A value whose type is `EffectId`, through an alias, a `nominal` or a `let`
+too, is refused in these places:
 
-- the content of every value builtin — `text`, `heading`, `markdown`, `code`,
+- the content of every value builtin: `text`, `heading`, `markdown`, `code`,
   `label`, `link`, `editable`, and `image` / `icon`, whose content is `src=` /
-  `name=` — read off the table the lowering reads content from;
+  `name=`;
+- `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable`
+  binds;
 - every argument of `fmt(...)`, the template included;
 - `show` in each spelling: `h.show`, `h.show()`, and `T.show(h)` whatever `T`
-  is. `show` was the one member every value had, and an `EffectId` no longer
-  has it (stdlib §2.1.1.1, §2.2.7).
+  is (stdlib.md).
 
 The documented message names the builtin that renders the handle —
 `<builtin>(...) cannot render EffectId — it is an opaque handle` — and `show`
-has its own: `.show cannot render EffectId — it is an opaque handle`. A sum that
-already drew the operator's E0204, such as `text("id " + h)`, is still one
-report. An operator on an alias of `EffectId` is now E0204 as on `EffectId`
-itself: with `type Handle = EffectId`, `x + "a"` checked `ok` and `x < x` was
-E0201.
+has its own: `.show cannot render EffectId — it is an opaque handle`. An
+operator applied to a handle, as in `text("id " + h)`, is still one report. An
+operator on an alias of `EffectId` is now E0204 as on `EffectId` itself: with
+`type Handle = EffectId`, `x + "a"` checked `ok` and `x < x` was E0201.
+
+An `EffectId` has no member besides `show`, so `h.upper` and `h.length` are
+now **E0108**, as a member of another type is. They checked `ok` and showed
+the handle's text.
+
+A `let … in …` now has its body's type wherever the checker infers one, so
+`text(let x = h in x)` is refused like `text(h)`.
 
 What stops checking is a program that renders a handle. Render what comparing
-it with the sentinel answers instead — `text(if h == EffectId.none then "idle"
-else "loading")`, or `(h != EffectId.none).show`. `features/209-effect-id-opaque`
-does both. `features/116-emit-id-after-key-write` showed its id with
-`text(lastId.show)`; it no longer does, and its scenario still pins the id
-through slot state.
+it with the sentinel answers instead: `text(if h == EffectId.none then "idle"
+else "loading")`, or `(h != EffectId.none).show`.
 
-A `List(EffectId)` rendered whole, or joined with `.join(…)`, still shows each
-handle. errors.md records it as a known gap.
+Some places still show a handle and are not reported, as known gaps: a `List`
+or a tuple with handles in it, rendered whole or joined with `.join(…)`; a
+handle given to another named argument or prop that renders text, such as
+`tooltip(…, text=h)` or `input(value=h)`; and `panic(h)`.

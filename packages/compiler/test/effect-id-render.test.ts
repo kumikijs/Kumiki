@@ -1,7 +1,7 @@
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { VALUE_BUILTIN_CONTENT } from "../src/builtins.ts";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { type Located, locatedOf, posOf } from "./helpers/diagnostics.ts";
 import { compileOrFail } from "./helpers/module.ts";
 
 const DEFS = `slot handle : EffectId = EffectId.none
@@ -13,23 +13,34 @@ slot busy : Bool = false
 effect stop cap=http.cancel in=EffectId out=Unit
 tile B = button(text="b")`;
 
-/** The line `body` starts on: the one after `DEFS`. */
-const LINE = DEFS.split("\n").length + 1;
-
+/** `body` comes first, so a needle is found in it before `DEFS`. */
 const program = (body: string) =>
-  `${DEFS}\n${body}\napp A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]\n`;
+  `${body}\n${DEFS}\napp A caps=[http.cancel] routes={"/" -> App, "/404" -> App} init=[]\n`;
 
-const diagnostics = (body: string) =>
-  checkSource(program(body)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-
-const codes = (body: string) => codesOf(program(body));
+const diagnostics = (body: string) => locatedOf(program(body));
 
 /** `body`'s first line, with `expr` inside `column(B, …)`. */
 const tile = (expr: string) => `tile App = column(B, ${expr})`;
 
-/** The E0204 at `needle`, the handle `renderer` renders on `body`'s first line. */
+/** The diagnostic `code` reports with `message` at the first `needle` in `body`. */
+const at = (body: string, needle: string, code: string, message: string): Located => ({
+  code,
+  message,
+  ...posOf(program(body), needle),
+});
+
+/** The E0204 for the handle `renderer` renders at the first `needle` in `body`. */
 const rendered = (body: string, needle: string, renderer: string) =>
-  `E0204 ${LINE}:${body.indexOf(needle) + 1} ${renderer} cannot render EffectId — it is an opaque handle`;
+  at(body, needle, "E0204", `${renderer} cannot render EffectId — it is an opaque handle`);
+
+/** The E0204 for operator `op` at the first `needle` in `body`. */
+const operated = (body: string, needle: string, op: string) =>
+  at(
+    body,
+    needle,
+    "E0204",
+    `Operator "${op}" cannot be applied to EffectId — only "==" / "!=" are defined`,
+  );
 
 /** Arguments a builtin needs beside its content for the call to draw nothing else. */
 const BESIDE: Partial<Record<keyof typeof VALUE_BUILTIN_CONTENT, string>> = {
@@ -37,29 +48,38 @@ const BESIDE: Partial<Record<keyof typeof VALUE_BUILTIN_CONTENT, string>> = {
   image: 'alt="a"',
 };
 
-describe("a value builtin's content", () => {
-  const builtins = Object.entries(VALUE_BUILTIN_CONTENT) as [
-    keyof typeof VALUE_BUILTIN_CONTENT,
-    (typeof VALUE_BUILTIN_CONTENT)[keyof typeof VALUE_BUILTIN_CONTENT],
-  ][];
+describe("what a builtin renders as text", () => {
+  const call = (name: keyof typeof VALUE_BUILTIN_CONTENT, content: string) =>
+    `${name}(${[content, BESIDE[name]].filter(Boolean).join(", ")})`;
+  // Each builtin's content where it reads it first, and its `text=` too when it reads both.
+  const calls = (
+    Object.entries(VALUE_BUILTIN_CONTENT) as [
+      keyof typeof VALUE_BUILTIN_CONTENT,
+      (typeof VALUE_BUILTIN_CONTENT)[keyof typeof VALUE_BUILTIN_CONTENT],
+    ][]
+  ).flatMap(([name, reading]): [string, string][] => {
+    const named = "named" in reading ? reading.named : undefined;
+    const first: [string, string] = [
+      name,
+      call(name, reading.positional ? "handle" : `${named}=handle`),
+    ];
+    return reading.positional && named ? [first, [name, call(name, `${named}=handle`)]] : [first];
+  });
 
-  for (const [name, reading] of builtins) {
-    const content = reading.positional ? "handle" : `${reading.named}=handle`;
-    const call = `${name}(${[content, BESIDE[name]].filter(Boolean).join(", ")})`;
-    it(`refuses ${call}`, () => {
-      const body = tile(call);
-      expect(diagnostics(body)).toEqual([rendered(body, "handle", `${name}(...)`)]);
-    });
-  }
+  it.each([
+    ...calls,
+    ["button", "button(text=handle)"],
+    ["link", 'link(to="/") {text: handle}'],
+    ["editable", "editable(bind=handle)"],
+  ])("%s refuses %s", (name, expr) => {
+    const body = tile(expr);
+    expect(diagnostics(body)).toEqual([rendered(body, "handle", `${name}(...)`)]);
+  });
 
-  for (const [name, reading] of builtins) {
-    if (!reading.positional || !("named" in reading)) continue;
-    const call = `${name}(${[`${reading.named}=handle`, BESIDE[name]].filter(Boolean).join(", ")})`;
-    it(`refuses ${call}`, () => {
-      const body = tile(call);
-      expect(diagnostics(body)).toEqual([rendered(body, "handle", `${name}(...)`)]);
-    });
-  }
+  it("refuses a handle a let names, at the let", () => {
+    const body = tile("text(let x = handle in x)");
+    expect(diagnostics(body)).toEqual([rendered(body, "let", "text(...)")]);
+  });
 });
 
 describe("show", () => {
@@ -75,8 +95,38 @@ describe("show", () => {
     expect(diagnostics(body)).toEqual([rendered(body, "handle", ".show")]);
   });
 
+  it("refuses a qualified show beside the qualifier's own report", () => {
+    const body = tile("text(Itn.show(handle))");
+    expect(diagnostics(body)).toEqual([
+      rendered(body, "handle", ".show"),
+      at(body, "Itn", "E0117", 'Reference to undefined type "Itn"'),
+    ]);
+  });
+
+  it("refuses a key that shows a handle", () => {
+    const body = tile('for x in hs text("row") {key: x.show}');
+    expect(diagnostics(body)).toEqual([rendered(body, "x.show", ".show")]);
+  });
+
   it("still shows what a qualified show is given, whatever the qualifier", () => {
-    expect(codes(tile(`text(EffectId.show(busy))`))).toEqual([]);
+    expect(diagnostics(tile(`text(EffectId.show(busy))`))).toEqual([]);
+  });
+});
+
+describe("a member other than show", () => {
+  it.each([
+    ["upper", "Text"],
+    ["length", "List / Text"],
+  ])("is not one an EffectId has: .%s is E0108", (member, owners) => {
+    const body = tile(`text(handle.${member})`);
+    expect(diagnostics(body)).toEqual([
+      at(
+        body,
+        "handle",
+        "E0108",
+        `Type "EffectId" has no member ".${member}" — it is a member of ${owners}`,
+      ),
+    ]);
   });
 });
 
@@ -84,9 +134,23 @@ describe("fmt", () => {
   it.each([
     ['fmt("id {0}", handle)', "handle"],
     ["fmt(handle)", "handle"],
+    ['fmt("id {0}", let x = handle in x)', "let"],
   ])("refuses text(%s)", (expr, needle) => {
     const body = tile(`text(${expr})`);
     expect(diagnostics(body)).toEqual([rendered(body, needle, "fmt(...)")]);
+  });
+
+  it("refuses it in a reducer", () => {
+    const body = `reducer z on=ui.click(B) do= t := fmt("id {0}", handle)\n${tile("text(t)")}`;
+    expect(diagnostics(body)).toEqual([rendered(body, "handle", "fmt(...)")]);
+  });
+
+  it("reports each handle among its arguments", () => {
+    const body = tile('text(fmt("{0} {1}", handle, handle))');
+    expect(diagnostics(body)).toEqual([
+      rendered(body, "handle,", "fmt(...)"),
+      rendered(body, "handle)", "fmt(...)"),
+    ]);
   });
 });
 
@@ -97,6 +161,7 @@ describe("a handle reached through another expression is still a handle", () => 
     ["a list element", "hs[0]"],
     ["a list's head unwrapped", "hs.head.get"],
     ["an if over handles", "if busy then handle else EffectId.none"],
+    ["an if over a let", "if busy then (let x = handle in x) else EffectId.none"],
     ["the sentinel itself", "EffectId.none"],
   ])("refuses %s", (_label, expr) => {
     const body = tile(`text(${expr})`);
@@ -118,17 +183,27 @@ describe("a handle reached through another expression is still a handle", () => 
     expect(diagnostics(body)).toEqual([rendered(body, "x)", "text(...)")]);
   });
 
-  it.each([
+  describe.each([
     ["an alias", "type Handle = EffectId"],
     ["a nominal", "type Handle = nominal EffectId"],
-  ])("refuses %s of EffectId, which is one", (_label, decl) => {
-    const body = `${tile("text(mine)")}\n${decl}\nslot mine : Handle = EffectId.none`;
-    expect(diagnostics(body)).toEqual([rendered(body, "mine", "text(...)")]);
-  });
+  ])("%s of EffectId, which is one", (_label, decl) => {
+    const withMine = (body: string) => `${body}\n${decl}\nslot mine : Handle = EffectId.none`;
 
-  it("refuses an operator on an alias of EffectId, as on EffectId", () => {
-    const body = `${tile("text(t)")}\ntype Handle = EffectId\nslot mine : Handle = EffectId.none\nreducer z on=ui.click(B) do= t := mine + "x"`;
-    expect(codes(body)).toEqual(["E0204"]);
+    it("refuses text(mine) and text(mine.show)", () => {
+      const body = withMine(tile("text(mine), text(mine.show)"));
+      expect(diagnostics(body)).toEqual([
+        rendered(body, "mine)", "text(...)"),
+        rendered(body, "mine.show", ".show"),
+      ]);
+    });
+
+    it.each([
+      ['t := mine + "x"', 'mine + "x"', "+"],
+      ["busy := mine < mine", "mine < mine", "<"],
+    ])("refuses %s, as on EffectId", (stmt, expr, op) => {
+      const body = withMine(`reducer z on=ui.click(B) do= ${stmt}\n${tile("text(t)")}`);
+      expect(diagnostics(body)).toEqual([operated(body, expr, op)]);
+    });
   });
 });
 
@@ -139,9 +214,7 @@ describe("one mistake, one report", () => {
     "handle + handle",
   ])("text(%s) is the operator's report alone", (sum) => {
     const body = tile(`text(${sum})`);
-    expect(diagnostics(body)).toEqual([
-      `E0204 ${LINE}:${body.indexOf(sum) + 1} Operator "+" cannot be applied to EffectId — only "==" / "!=" are defined`,
-    ]);
+    expect(diagnostics(body)).toEqual([operated(body, sum, "+")]);
   });
 });
 
@@ -153,7 +226,7 @@ reducer keep   on=ui.click(B) do= kept := handle
 reducer cancel on=ui.click(B) do= emit stop(kept)
                                   kept := EffectId.none
 ${tile("text(t)")}`;
-    expect(codes(body)).toEqual([]);
+    expect(diagnostics(body)).toEqual([]);
   });
 
   it.each([
@@ -161,12 +234,14 @@ ${tile("text(t)")}`;
     "text((handle != EffectId.none).show)",
     'for x in hs text("row") {key: x}',
   ])("renders what is derived from a handle: %s", (expr) => {
-    expect(codes(tile(expr))).toEqual([]);
+    expect(diagnostics(tile(expr))).toEqual([]);
   });
 
-  it("leaves an Option of a handle alone, which renders its tag", () => {
-    expect(codes(tile("text(o)"))).not.toContain("E0204");
-    expect(codes(tile("text(o.show)"))).not.toContain("E0204");
+  it.each([
+    ["an Option of a handle, which renders its tag", "o"],
+    ["a record that holds a handle, which does not render its fields", "r"],
+  ])("leaves %s alone", (_label, v) => {
+    expect(diagnostics(tile(`text(${v}), text(${v}.show)`))).toEqual([]);
   });
 
   it.each([
@@ -180,13 +255,13 @@ ${tile("text(t)")}`;
     ["Duration", "Duration.ms(1)"],
   ])("renders a %s, with text and with show", (type, init) => {
     const body = `${tile("text(v), text(v.show)")}\nslot v : ${type} = ${init}`;
-    expect(codes(body)).toEqual([]);
+    expect(diagnostics(body)).toEqual([]);
   });
 
   it("renders a File", () => {
-    expect(codes(`tile F in=File = column(text($1), text($1.show))\n${tile("text(t)")}`)).toEqual(
-      [],
-    );
+    expect(
+      diagnostics(`tile F in=File = column(text($1), text($1.show))\n${tile("text(t)")}`),
+    ).toEqual([]);
   });
 });
 
@@ -199,15 +274,14 @@ app M caps=[notification.show] routes={"/" -> P, "/404" -> P} init=[]
 `;
 
   it("refuses text(h), heading(h) and h.show", () => {
-    const r = compile(page("text(h), heading(h), text(h.show)"), {
-      runtimeSpecifier: "./runtime.js",
-    });
-    expect(r.kind).toBe("fail");
-    if (r.kind !== "fail") return;
-    expect(r.errors.map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`)).toEqual([
-      "E0204 4:26 text(...) cannot render EffectId — it is an opaque handle",
-      "E0204 4:38 heading(...) cannot render EffectId — it is an opaque handle",
-      "E0204 4:47 .show cannot render EffectId — it is an opaque handle",
+    const src = page("text(h), heading(h), text(h.show)");
+    expect(compile(src, { runtimeSpecifier: "./runtime.js" }).kind).toBe("fail");
+    const message = (renderer: string) =>
+      `${renderer} cannot render EffectId — it is an opaque handle`;
+    expect(locatedOf(src)).toEqual([
+      { code: "E0204", message: message("text(...)"), line: 4, col: 26 },
+      { code: "E0204", message: message("heading(...)"), line: 4, col: 38 },
+      { code: "E0204", message: message(".show"), line: 4, col: 47 },
     ]);
   });
 

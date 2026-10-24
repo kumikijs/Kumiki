@@ -17,7 +17,7 @@
       }
     },
     {
-      "label": "cancel hands the handle to http.cancel and puts the sentinel back",
+      "label": "cancel puts the sentinel back",
       "do": { "click": "#cancel" },
       "expect": {
         "noErrors": true,

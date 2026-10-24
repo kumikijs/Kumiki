@@ -114,9 +114,10 @@ export const RECEIVER_MEMBERS = {
   Duration: ["to-ms"],
   Bytes: [],
   File: [],
+  EffectId: [],
 } as const satisfies Record<string, readonly string[]>;
 
-/** Every value has these, whatever its type — but an `EffectId`, which has no member at all. */
+/** Every value has these, whatever its type. `show` on an `EffectId` is E0204, refused where the value is shown rather than by this set. */
 export const UNIVERSAL_MEMBERS: ReadonlySet<string> = new Set(["show"]);
 
 export type Receiver = keyof typeof RECEIVER_MEMBERS;

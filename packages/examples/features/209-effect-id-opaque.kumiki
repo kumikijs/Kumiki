@@ -1,6 +1,6 @@
 # Feature: an `EffectId` is an opaque handle (stdlib.md). A program
-# compares it with `==` / `!=`, keeps it in a slot of type `EffectId` and hands
-# it to an `http.cancel` effect, and that is all. Rendering it is E0204:
+# compares it with `==` / `!=`, keeps it in a slot of type `EffectId`, passes
+# it to a `fn` and hands it to an `http.cancel` effect. Rendering it is E0204:
 # `text(handle)`, `heading(handle)` and `handle.show` would show whatever the
 # runtime represents a handle as, which is the runtime's to change.
 #

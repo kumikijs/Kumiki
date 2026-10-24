@@ -329,6 +329,22 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
   });
 }
 
+/**
+ * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
+ * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
+ */
+function renderedText(t: TileExpr & { kind: "TileCall" }): Expr[] {
+  const named = (name: string) => t.args.find((a) => a.name === name)?.value;
+  const content = contentArg(t)?.value;
+  const values = [
+    content,
+    t.name === "button" ? named("text") : undefined,
+    t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
+    t.name === "editable" ? named("bind") : undefined,
+  ];
+  return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -348,9 +364,8 @@ function checkTileCall(
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
   checkContentArgs(t, errors);
-  const content = contentArg(t);
-  if (content && !isTileExpr(content.value)) {
-    refuseRenderedEffectId(content.value, `${t.name}(...)`, sym, errors, ctx);
+  for (const value of renderedText(t)) {
+    refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
   }
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);

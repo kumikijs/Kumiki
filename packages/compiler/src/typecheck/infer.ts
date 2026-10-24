@@ -6,7 +6,7 @@ import { hasMember, isOwnMember } from "../stdlib-members.ts";
 import { FILE_FIELDS, type PrimName } from "../stdlib-types.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
-import { binOpResult } from "./expr.ts";
+import { binOpResult, letInScope } from "./expr.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -415,6 +415,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
         sym,
       );
     }
+    case "LetIn":
+      // The body is the value, read with the name bound.
+      return inferType(e.body, sym, letInScope(e, sym, ctx));
     case "EmitExpr":
       return prim("EffectId", e.pos);
     case "Call": {
