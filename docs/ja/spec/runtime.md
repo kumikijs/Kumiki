@@ -835,7 +835,7 @@ kumiki replay --until-step 5                # 途中まで
 
 - HTML 生成は **server-side** で初期 route の tile を 1 回描画
   - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`mount` と同じ解決で先に処理され、その行き先が描画される。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、行き先を指す。
-  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。クライアントのルーターがロケーションを読むのと同じ方法で分割され、pathname は**書かれたとおりに**照合される：`//foo` や `/a/../b` は正規化されない。ブラウザの `location.pathname` がそれらを保つためであり、サーバーはクライアントと同じ場所に行き着かなければならない。
+  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。サーバーがクライアントと同じ場所に行き着くよう、ブラウザの `location` がその URL を保持するのと同じ形で保持される：`/a/../b` は `/b` になり、空白や ASCII 以外の文字はパーセントエンコードされ（`/ja/概要` は `/ja/%E6%A6%82%E8%A6%81`）、`//foo` はそれ自体のパスのままである。そのうえで、クライアントのルーターがロケーションを読むのと同じ方法で分割される。リダイレクトの宛先は、クライアントと同じく要求されたパスに対して解決される（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
 - **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` のボックス寸法、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
   - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
@@ -1021,7 +1021,7 @@ again.env.live;                                 // その一覧では答えら�
 | 機能 | 保証 |
 |---|---|
 | `Map`, `Set`, `List` | 純粋（in-place mutation なし） |
-| `Option`, `Result` | パターンマッチ網羅検査 |
+| `Option`, `Result` | 値としての `match` の網羅検査（[E0227](./errors.md#e0227-non-exhaustive-match)）。どの arm にも一致しない値は panic になる |
 | `now`, `random()` | 式が書ける場所ならどこでも呼べる。**reducer 本体の中で**読んだ値は、その episode の step に `env-reads` として記録される（[§10.5.1](#_10-5-1-structure-of-an-episode)）ため、replay は新しい値を引かずに同じ値を再現する。それ以外の場所（tile の式、描画）での読みは記録されず、それらを replay するものも無い |
 | `*.fresh()` | UUIDv7 を生成。`now` / `random()` と同じ reducer 本体スコープで `env-reads` として記録されるため、replay した episode は実行が実際に刻んだ ID を刻む |
 | `panic(message)` | episode を `panic` 状態にして slot をロールバック |

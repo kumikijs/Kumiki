@@ -896,7 +896,7 @@ A `radio` carries a `bind=` and no `value=`.
 
 > `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md)`
 
-A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while every `match` on the slot falls through and the block it renders disappears without a word.
+A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while a tile `match` on the slot matches no arm and the block it renders disappears without a word.
 
 An error, not a warning: a radio with nothing to write asserts nothing when it is chosen, and no program means that. It is reported whether or not the bound type can be read.
 
@@ -916,6 +916,18 @@ The second form is a bound type with no row in the table at all: a `Bool` (bind 
 The bound type is unaliased first, so `type Qty = Int where positive` and a `nominal Int` are an `Int` here. Only a literal `type=` is judged against it; a `type=` written as an expression is not known here, and only the second form applies beside one. A bind whose type cannot be read is not reported (its own code, such as [E0103](#e0103-undef-ref-undef-slot), names it), and `type="file"` with a bind is [E0205](#e0205-bind-on-file-input).
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
+
+### E0227 `non-exhaustive-match`
+
+A `match` used as a value has no arm for some value of its scrutinee's type ([Language §1.9](./language.md#_1-9-expression-language)). A value `match` evaluates to one of its arms, so a value none of them matches would leave it nothing to evaluate to.
+
+> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …` ``
+
+Each value left out is written as the pattern that would match it, in the order the type declares its variants (`None` before `Some`, `Ok` before `Err`): `Blue` for a variant with no payload, `Some(_)` for one with a payload, and `(None, Green)` for a combination of a tuple's items. `_` stands for every value of an item whose type has no variants, and for the items after the point where no arm applies any more: `(None, _)` when no arm takes a `None` at all. The message names up to eight values; when there are more, the list ends with `, among others`. A variant pattern's binds take any payload, so `Some(v)` covers every `Some`; tuples are the only patterns that nest. `Bool`, `Int`, `Text`, a record and a `List` have no variants, and there are no literal patterns ([Language §1.9.1](./language.md#_1-9-1-prohibitions)), so `_` or a name is the arm that covers one.
+
+Coverage is judged once every arm's pattern fits the scrutinee: an arm that does not is [E0207](#e0207-pat-arity-mismatch), [E0208](#e0208-pat-type-mismatch) or [E0209](#e0209-pat-unknown-variant), reported alone. Where the scrutinee's type cannot be decided, for example `$el`, whose props the checker does not type, the result of a `fold`, `map` or `zip`, or a `map-request`'s `$1`, nothing is reported here, and a value no arm matches is a panic at run time ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). A tuple with one such item is still judged on its other items, and its type is written with `?` in that place: `match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` is reported on `Tuple(?, Color)` for `(_, Blue)`. The values the checker can name are reported even when other values hinge on an undecidable item. A `match` statement in a reducer body and a `match` in tile position are not values, and this code does not reach them.
+
+**Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
 
 ### E0230 `error-field-not-path`
 

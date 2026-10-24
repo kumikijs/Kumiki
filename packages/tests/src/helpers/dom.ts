@@ -144,6 +144,19 @@ export function followLink(root: ParentNode, text: string): void {
   found.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 }
 
+/**
+ * Follow the link, or click the button, whose whole text is `text`, and let the effects the click
+ * emits run: a button's `navigate` is an effect, which the dispatcher runs on a microtask.
+ */
+export async function press(root: ParentNode, text: string): Promise<void> {
+  if (Array.from(root.querySelectorAll("a")).some((a) => a.textContent === text)) {
+    followLink(root, text);
+  } else {
+    click(root, text);
+  }
+  await tick(0);
+}
+
 /** The first element matching `selector`, typed as `T`. */
 export function find<T extends Element = HTMLElement>(root: ParentNode, selector: string): T {
   const found = root.querySelector(selector);
