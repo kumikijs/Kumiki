@@ -30,10 +30,10 @@ export function createNavigation(deps: {
   router: Router | null;
   /** Where an in-page jump looks up the element its hash names. */
   root: Node;
-  fireLifecycle: (name: string, payload: Record<string, unknown>) => void;
+  fireRouteEvent: (kind: "enter" | "leave", route: ParsedRoute) => void;
   render: () => void;
 }): Navigation {
-  const { app, slots, routing, router, root, fireLifecycle, render } = deps;
+  const { app, slots, routing, router, root, fireRouteEvent, render } = deps;
   let pendingLeave: HeldMove | null = null;
   let leaving: HeldMove | null = null;
   // Bumped by every sync, so one that a leave guard's own navigation overtook stops there.
@@ -44,7 +44,7 @@ export function createNavigation(deps: {
 
   const enter = (route: ParsedRoute): void => {
     slots.route = route;
-    fireLifecycle(`route.enter(${JSON.stringify(route.pattern)})`, { $route: route });
+    fireRouteEvent("enter", route);
     applyScrollFor(route);
     render();
   };
@@ -88,7 +88,7 @@ export function createNavigation(deps: {
       const move: HeldMove = { oldRoute, newRoute, closes: [] };
       leaving = move;
       try {
-        fireLifecycle(`route.leave(${JSON.stringify(oldRoute.pattern)})`, { $route: oldRoute });
+        fireRouteEvent("leave", oldRoute);
       } finally {
         leaving = null;
       }
