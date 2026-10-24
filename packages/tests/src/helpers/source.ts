@@ -8,6 +8,14 @@ app A
 `;
 }
 
+/** Where `needle` first occurs in `src`, as the `line:col` a diagnostic or a panic names. */
+export function placeOf(src: string, needle: string): string {
+  const at = src.indexOf(needle);
+  if (at < 0) throw new Error(`"${needle}" does not occur in the source`);
+  const before = src.slice(0, at).split("\n");
+  return `${before.length}:${(before[before.length - 1] ?? "").length + 1}`;
+}
+
 /** An edited source, and the 1-based line and column its replacement starts at. */
 export type Edited = { source: string; line: number; col: number };
 
