@@ -10,9 +10,10 @@
 # again. A query-only move such as `?page=2` stays on the route as well, and
 # does run `route.enter` again.
 #
-# `kumiki run` mounts the history router, which is what this scenario drives;
-# packages/tests/src/relative-route-target.test.ts runs the same targets under the
-# memory router too.
+# The scenario runs under both routers: `kumiki run` and scenarios.test.ts mount the
+# history router, and scenario-examples.test.ts mounts the memory router the docs
+# preview uses, which opens at `/`. packages/tests/src/relative-route-target.test.ts
+# runs more targets, from a non-ASCII location as well.
 
 slot enters : Int = 0
 
@@ -32,10 +33,11 @@ tile Docs = page(
     link(to="../guide") {text: "Guide"},
     InstallBtn,
     heading("FAQ") {id: "faq"})
+tile Home     = page(heading("Home"), link(to="/docs/intro") {text: "Open the docs"})
 tile Guide    = page(heading("Guide"), link(to="docs/intro") {text: "Back to the docs"})
 tile NotFound = page(heading("Not found " + route.path))
 
 app MemoryRouterRelativeLink
     caps   = [nav.push]
-    routes = {"/docs/:page" -> Docs, "/guide" -> Guide, "/404" -> NotFound}
+    routes = {"/" -> Home, "/docs/:page" -> Docs, "/guide" -> Guide, "/404" -> NotFound}
     init   = []

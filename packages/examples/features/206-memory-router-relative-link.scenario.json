@@ -1,8 +1,12 @@
 {
   "steps": [
     {
+      "label": "the app opens at its home page",
+      "expect": { "noErrors": true, "domIncludes": ["Home"], "domExcludes": ["Not found"] }
+    },
+    {
       "label": "arriving enters the docs route once",
-      "do": { "navigate": "/docs/intro" },
+      "do": { "clickText": "Open the docs" },
       "expect": {
         "noErrors": true,
         "domIncludes": ["Docs intro, page 1", "hash: none", "entered: 1"]

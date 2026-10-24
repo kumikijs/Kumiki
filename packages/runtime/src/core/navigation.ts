@@ -1,4 +1,12 @@
-import type { AppShape, HoldLeave, ParsedRoute, RouteEntry, Router, RoutingImpl } from "./types.ts";
+import {
+  type AppShape,
+  type HoldLeave,
+  NONE,
+  type ParsedRoute,
+  type RouteEntry,
+  type Router,
+  type RoutingImpl,
+} from "./types.ts";
 
 /** A move a leave guard's `confirm` holds, and how to close every dialog its guards opened. */
 type HeldMove = { oldRoute: ParsedRoute; newRoute: ParsedRoute; closes: (() => void)[] };
@@ -34,15 +42,18 @@ export function createNavigation(deps: {
   let lastNavSource: "push" | "replace" | "pop" = "push";
   let unsubscribe: (() => void) | undefined;
 
-  /** An in-page jump runs no `route.enter` and no scroll to the top; it calls `jump` once the page is painted. */
-  const enter = (route: ParsedRoute, jump?: () => void): void => {
+  const enter = (route: ParsedRoute): void => {
     slots.route = route;
-    if (!jump) {
-      fireLifecycle(`route.enter(${JSON.stringify(route.pattern)})`, { $route: route });
-      applyScrollFor(route);
-    }
+    fireLifecycle(`route.enter(${JSON.stringify(route.pattern)})`, { $route: route });
+    applyScrollFor(route);
     render();
-    jump?.();
+  };
+
+  /** A move within the page shown runs no `route.enter` and no scroll to the top; `scroll` runs once the page has rendered. */
+  const stay = (route: ParsedRoute, scroll: () => void): void => {
+    slots.route = route;
+    render();
+    scroll();
   };
 
   const closeAll = (move: HeldMove | null): void => {
@@ -71,7 +82,7 @@ export function createNavigation(deps: {
     if (oldRoute && typeof window !== "undefined") {
       const x = typeof window.scrollX === "number" ? window.scrollX : 0;
       const y = typeof window.scrollY === "number" ? window.scrollY : 0;
-      scrollSaved.set(oldRoute.path, { x, y });
+      scrollSaved.set(routing.href(oldRoute), { x, y });
     }
     if (oldRoute && oldRoute.path !== newRoute.path) {
       const move: HeldMove = { oldRoute, newRoute, closes: [] };
@@ -88,7 +99,19 @@ export function createNavigation(deps: {
         return;
       }
     }
-    enter(newRoute, routing.jump(oldRoute, newRoute, root));
+    const jump = routing.jump(oldRoute, newRoute, root);
+    const page = (r: ParsedRoute): string => routing.href({ ...r, hash: NONE });
+    if (lastNavSource === "pop" && oldRoute && page(oldRoute) === page(newRoute)) {
+      // Back or Forward between two entries of one page moves within it, as a browser does
+      // between a document's fragments: to where that entry was left, else to its element.
+      stay(newRoute, () => {
+        if (!restoreScrollFor(newRoute)) jump?.();
+      });
+    } else if (jump) {
+      stay(newRoute, jump);
+    } else {
+      enter(newRoute);
+    }
   }
 
   function findRouteEntry(route: ParsedRoute): RouteEntry | undefined {
@@ -122,8 +145,22 @@ export function createNavigation(deps: {
   function applyScrollFor(route: ParsedRoute): void {
     if (typeof window === "undefined" || typeof window.scrollTo !== "function") return;
     if (findRouteEntry(route)?.scrollRestoration === false) return;
-    const saved = lastNavSource === "pop" ? scrollSaved.get(route.path) : undefined;
+    const saved = lastNavSource === "pop" ? scrollSaved.get(routing?.href(route) ?? "") : undefined;
     window.scrollTo(saved?.x ?? 0, saved?.y ?? 0);
+  }
+
+  /**
+   * Return to the position `route`'s URL was left at. False when none is kept for it, so the
+   * caller scrolls instead; a route with `scroll-restoration = false` stays where it is.
+   */
+  function restoreScrollFor(route: ParsedRoute): boolean {
+    if (findRouteEntry(route)?.scrollRestoration === false) return true;
+    const saved = scrollSaved.get(routing?.href(route) ?? "");
+    if (!saved || typeof window === "undefined" || typeof window.scrollTo !== "function") {
+      return false;
+    }
+    window.scrollTo(saved.x, saved.y);
+    return true;
   }
 
   return {

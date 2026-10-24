@@ -44,9 +44,12 @@ export function splitPath(p: string): LocationLike {
 /** A router location has no origin of its own, and `.invalid` (RFC 2606) is one no real target can name. */
 const BASE_ORIGIN = "http://router.invalid";
 
-/** A target that names an origin of its own (`https://…`, `mailto:`) is left as written: resolving it would drop that origin. */
-function resolveTarget(to: string, at: LocationLike): string {
-  if (to[0] === "/") return to;
+/**
+ * `to` resolved against `at` and written as the URL parser writes it, percent-encoded as
+ * `location` is, so both routers hold one form. A target that names an origin of its own
+ * (`https://…`, `//host`, `mailto:`) is left as written: resolving it would drop that origin.
+ */
+export function resolveTarget(to: string, at: LocationLike): string {
   try {
     const url = new URL(to, BASE_ORIGIN + at.pathname + at.search + at.hash);
     if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
@@ -56,8 +59,23 @@ function resolveTarget(to: string, at: LocationLike): string {
   return to;
 }
 
+/**
+ * A path the app is at, held as a browser's `location` holds that URL: `/a/../b` as `/b`, `/あ`
+ * percent-encoded, and `//foo` kept as a path, since here it is not a target naming a host.
+ */
+export function normalizeLocation(path: string): string {
+  const p = path || "/";
+  try {
+    const url = new URL(p[0] === "/" ? BASE_ORIGIN + p : p, `${BASE_ORIGIN}/`);
+    if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
+  } catch {
+    // Not a URL at all (`http://[`).
+  }
+  return p;
+}
+
 function memoryRouter(initialPath = "/"): Router {
-  const stack: string[] = [initialPath || "/"];
+  const stack: string[] = [normalizeLocation(initialPath)];
   const listeners = new Set<() => void>();
   return {
     read: () => splitPath(stack[stack.length - 1] ?? "/"),
@@ -197,12 +215,24 @@ function matchPattern(pattern: string, path: string): Record<string, string> | n
     if (s === undefined) return null;
     if (p.startsWith(":")) {
       params[p.slice(1)] = decodeParam(s);
-    } else if (p !== s) {
+    } else if (p !== s && encodedSegment(p) !== s) {
       return null;
     }
   }
   if (pathSegs.length !== patSegs.length) return null;
   return params;
+}
+
+const encodedSegments = new Map<string, string>();
+
+/** A static segment as the URL parser writes it in a path (`概要` as `%E6%A6%82%E8%A6%81`), never decoded. */
+function encodedSegment(seg: string): string {
+  let out = encodedSegments.get(seg);
+  if (out === undefined) {
+    out = new URL(`/${seg}`, BASE_ORIGIN).pathname.slice(1);
+    encodedSegments.set(seg, out);
+  }
+  return out;
 }
 
 // A path is user input, so an escape that does not decode is kept as written rather than thrown.
@@ -288,19 +318,14 @@ function href({ path, query, hash }: ParsedRoute): string {
   return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
 }
 
-/** The element is looked up by the hash as written and then percent-decoded, as a browser finds a fragment's target. */
+/** The element is looked up in the root the app is mounted in, by the hash as written and then percent-decoded. */
 function jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined {
   if (to.hash._tag !== "Some") return undefined;
   if (href({ ...from, hash: NONE }) !== href({ ...to, hash: NONE })) return undefined;
   const id = to.hash._0;
   return () => {
     const scope = root.getRootNode() as Partial<Pick<Document, "getElementById">>;
-    let el = scope.getElementById?.(id);
-    try {
-      el ??= scope.getElementById?.(decodeURIComponent(id));
-    } catch {
-      // A malformed escape (`#100%`): the hash as written was the only name.
-    }
+    const el = scope.getElementById?.(id) ?? scope.getElementById?.(decodeParam(id));
     el?.scrollIntoView();
   };
 }
