@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "the fallback panics too, so its own boundary shows the last resort",
+      "expect": {
+        "noErrors": true,
+        "state": { "lastResortShown": 1, "lastResortGone": 0 },
+        "domIncludes": ["chart unavailable: get called on None in ChartFallback"],
+        "domExcludes": ["cached chart"]
+      }
+    },
+    {
+      "label": "with a cached value the fallback renders, and the last resort leaves",
+      "do": { "clickText": "cache" },
+      "expect": {
+        "noErrors": true,
+        "state": { "lastResortShown": 1, "lastResortGone": 1 },
+        "domIncludes": ["cached chart: 7 (get called on None)"],
+        "domExcludes": ["chart unavailable"]
+      }
+    },
+    {
+      "label": "the tile renders without panicking, so neither fallback is shown",
+      "do": { "clickText": "load" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["chart: 42"],
+        "domExcludes": ["cached chart", "chart unavailable"]
+      }
+    }
+  ]
+}
