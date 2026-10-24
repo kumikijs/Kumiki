@@ -61,6 +61,46 @@ export function checkBindStrictProp(
   }
 }
 
+/** Where `t` writes `name`, as a named argument or in its props block. */
+function writtenAt(t: TileExpr & { kind: "TileCall" }, name: string): Pos[] {
+  return [
+    ...t.args.flatMap((a) => (a.name === name ? [a.namePos] : [])),
+    ...t.props.flatMap((p) => (p.name === name ? [p.pos] : [])),
+  ];
+}
+
+/**
+ * A slider's `value` is the value an unbound slider shows, so beside `bind=` it is a second answer to what the slider shows (W0216, as on a toggle).
+ * A radio's `name` spells its `group`, so beside `group` it is a second answer to which set the radio is in (W0217).
+ */
+export function checkSecondSpelling(
+  t: TileExpr & { kind: "TileCall" },
+  errors: KumikiError[],
+): void {
+  if (t.name === "slider" && t.args.some((a) => a.name === "bind")) {
+    for (const pos of writtenAt(t, "value")) {
+      errors.push({
+        code: "W0216",
+        kind: "selection-beside-bind",
+        severity: "warning",
+        message: `"value" on slider() is not read beside bind= — the bound value is what it shows. Remove it (see docs/spec/forms.md)`,
+        pos,
+      });
+    }
+  }
+  if (t.name === "radio" && writtenAt(t, "group").length > 0) {
+    for (const pos of writtenAt(t, "name")) {
+      errors.push({
+        code: "W0217",
+        kind: "name-beside-group",
+        severity: "warning",
+        message: `"name" on radio() is not read beside group= — group= names the set the radio is in. Remove one (see docs/spec/forms.md)`,
+        pos,
+      });
+    }
+  }
+}
+
 const TOGGLE_BIND_CONTROLS = new Set(["check", "switch", "radio"]);
 
 /** The argument each toggle reads for its selection when it has no `bind=`. */
