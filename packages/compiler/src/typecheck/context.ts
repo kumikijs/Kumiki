@@ -37,6 +37,7 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  builtinKindsIn: (tileName: string) => ReadonlySet<string>;
   app?: AppDef;
 };
 

@@ -1,11 +1,15 @@
 import type { AppDef, FnDef, Program, TileDef, TypeDef } from "./ast.ts";
 import {
   aliasTarget,
-  boundaryTarget,
-  expansionTargets,
+  type Expansion,
+  expansionDepths,
   findCycles,
   type GraphEdge,
+  type PlacedEdge,
+  type TileExpansion,
+  tileExpansion,
 } from "./def-graph.ts";
+import { MAX_NESTING_DEPTH } from "./parser.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
 import { checkApp } from "./typecheck/app.ts";
@@ -18,7 +22,11 @@ import { routeChainResolver } from "./typecheck/route-chain.ts";
 import { checkSlot } from "./typecheck/slot.ts";
 import { checkTest } from "./typecheck/test.ts";
 import { checkTile } from "./typecheck/tile.ts";
-import { collectElementIds, collectPrefetchTargets } from "./typecheck/tile-collect.ts";
+import {
+  collectElementIds,
+  collectPrefetchTargets,
+  collectTileBuiltinKinds,
+} from "./typecheck/tile-collect.ts";
 import { checkTypeDef } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
 
@@ -83,11 +91,12 @@ function checkAll(
   iconDomain: Set<string>,
 ): KumikiError[] {
   const errors: KumikiError[] = [];
+  const tiles = new Map<string, TileDef>();
   const sym: SymbolTable = {
     types: new Map(STDLIB_TYPES.map((t) => [t.name, t])),
     slots: new Map(),
     reducers: new Map(),
-    tiles: new Map(),
+    tiles,
     fns: new Map(),
     effects: new Map(),
     timerNames: new Set(),
@@ -96,6 +105,8 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    // Read as the definitions are checked, by which point every tile has been registered.
+    builtinKindsIn: collectTileBuiltinKinds(tiles),
   };
 
   for (const def of program.defs) {
@@ -187,15 +198,12 @@ function checkCycles(
   errors: KumikiError[],
 ): void {
   const tiles = program.defs.filter((d): d is TileDef => d.kind === "TileDef");
-  const tileEdges = (name: string): readonly GraphEdge[] => {
-    const def = sym.tiles.get(name);
-    if (!def) return [];
-    const boundary = boundaryTarget(def);
-    const targets = boundary
-      ? [...expansionTargets(def.body), boundary]
-      : expansionTargets(def.body);
-    return targets.filter((e) => sym.tiles.has(e.to));
-  };
+  const tileGraph = new Map<string, TileExpansion>();
+  for (const [name, def] of sym.tiles) {
+    const { depth, edges } = tileExpansion(def);
+    tileGraph.set(name, { depth, edges: edges.filter((e) => sym.tiles.has(e.to)) });
+  }
+  const tileEdges = (name: string): readonly PlacedEdge[] => tileGraph.get(name)?.edges ?? [];
   for (const cycle of findCycles(
     tiles.map((t) => t.name),
     tileEdges,
@@ -207,6 +215,7 @@ function checkCycles(
       pos: cycle.pos,
     });
   }
+  checkTileDepth(tileGraph, errors);
 
   const fns = program.defs.filter((d): d is FnDef => d.kind === "FnDef");
   const fnEdges = (name: string): readonly GraphEdge[] => {
@@ -247,4 +256,51 @@ function checkCycles(
       pos: cycle.pos,
     });
   }
+}
+
+// Reported once for each tile nothing measured expands into: every tile inside that one's tree is
+// over only because it is deep there, and naming each would bury the one report.
+function checkTileDepth(
+  tileGraph: ReadonlyMap<string, TileExpansion>,
+  errors: KumikiError[],
+): void {
+  const edgesOf = (name: string): readonly PlacedEdge[] => tileGraph.get(name)?.edges ?? [];
+  const ownDepth = (name: string): number => tileGraph.get(name)?.depth ?? 0;
+  const depths = expansionDepths(tileGraph.keys(), edgesOf, ownDepth);
+  const inside = new Set<string>();
+  for (const name of depths.keys()) for (const e of edgesOf(name)) inside.add(e.to);
+
+  for (const name of tileGraph.keys()) {
+    const root = depths.get(name);
+    if (!root || root.depth <= MAX_NESTING_DEPTH || inside.has(name)) continue;
+    const over = whereDepthGoesOver(name, depths, ownDepth);
+    // A tree over with nothing inlined on its deepest path is one definition, which the parser
+    // refuses before this runs.
+    if (!over) continue;
+    errors.push({
+      code: "E0237",
+      kind: "tile-depth",
+      message: `Tile "${name}" nests ${root.depth} levels deep once the tiles in it are inlined, past the limit of ${MAX_NESTING_DEPTH}; it goes over where "${over.from}" expands into "${over.edge.to}"`,
+      pos: over.edge.pos,
+    });
+  }
+}
+
+/** Down `root`'s deepest path, the first edge whose target's own body reaches past the bound. */
+function whereDepthGoesOver(
+  root: string,
+  depths: ReadonlyMap<string, Expansion>,
+  ownDepth: (name: string) => number,
+): { readonly from: string; readonly edge: PlacedEdge } | null {
+  let base = 0;
+  let from = root;
+  let last: { readonly from: string; readonly edge: PlacedEdge } | null = null;
+  for (let edge = depths.get(root)?.via; edge; edge = depths.get(from)?.via) {
+    last = { from, edge };
+    const at = base + edge.level;
+    if (at + ownDepth(edge.to) > MAX_NESTING_DEPTH) return last;
+    base = at;
+    from = edge.to;
+  }
+  return last;
 }
