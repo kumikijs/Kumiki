@@ -7,7 +7,7 @@ export type TypeEnv = { types: ReadonlyMap<string, TypeDef> };
 
 export const unknownType = (pos: Pos): TypeExpr => ({ kind: "TypeRef", name: "?", pos });
 
-/** True when nothing can be concluded about `t` — an unresolved name, or absent. */
+/** True when nothing can be concluded about `t` — an unresolved name, bare or applied, or absent. */
 export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
   const u = unaliasType(t, env);
   return u === null || u.kind === "TypeRef";
@@ -95,7 +95,12 @@ function unaliasFrom(t: TypeExpr | null, outer: ReadonlySet<string>, walk: Walk)
   const seen = walk.origins.get(t) ?? outer;
   if (t.kind === "TypeRef" || t.kind === "TypeApp") {
     const def = walk.env.types.get(t.name);
-    if (!def) return t;
+    // Arguments to a name that is no type describe nothing to compare against.
+    if (!def) {
+      return t.kind === "TypeApp" && !isKnownTypeName(t.name, walk.env)
+        ? { kind: "TypeRef", name: t.name, pos: t.pos }
+        : t;
+    }
     if (seen.has(t.name)) return null;
     const arg = forwardedArg(t, def, walk.forwarded.through);
     if (arg) return unaliasFrom(arg, seen, walk);
