@@ -110,6 +110,10 @@ reducer trackPageView
 
 When you want to target multiple tiles at once, define multiple reducers with the same name (executed in definition order).
 
+Both events count per tile name, not per instance. `tile.mount(X)` fires when an `X` appears while no `X` is on screen, and `tile.unmount(X)` when the last `X` on screen leaves. A second `X` appearing beside the first fires nothing, and neither does one of two leaving.
+
+An `error-boundary` fallback ([§7.3](#_7-3-error-boundaries-per-tile)) is a tile on screen like any other, wherever the tile that declares it renders. `tile.mount(<fallback>)` fires when the boundary shows it, and `tile.unmount(<fallback>)` fires when it leaves: the declaring tile renders again without panicking, or the declaring tile itself leaves. By the per-name rule above, a fallback that two boundaries show at once leaves only when neither shows it. A fallback that re-renders with the panic still there has not appeared again, and fires nothing. The fallback renders in place of the declaring tile's body, so while it stands in, neither the declaring tile nor any tile under it fires `tile.mount`. When a mounted declaring tile starts panicking, it and the tiles under it fire `tile.unmount`.
+
 ---
 
 ## 7.2 Error Handling
