@@ -184,6 +184,8 @@ panic がプログラムに届くすべての経路 —— `app.error` reducer�
 
 開発ツール向けのフィールドである `stack`（JS の `Error.stack`）と機械可読な `Error.cause` チェーンは episode log（`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）に記録されるが、ユーザー向けの `$event` には意図的に**公開しない** —— 生のスタックを本番 UI に漏らすのは footgun だからである。参照するには `kumiki replay` / `kumiki_episode_tail` を使う。
 
+検査器は `$event` を標準ライブラリの定義から型付けする：`app.error` reducer では `PanicInfo`、`route.error(<pattern>)` reducer では `RouteErrorInfo` —— 同じフィールドに `pattern: Text` を加えたもの —— である（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。持たないフィールド —— 綴り誤り、`stack`、`app.error` reducer での `pattern` —— は [E0108](./errors.md#e0108-undef-member) であり、別の型の slot へ書き込むフィールドは [E0201](./errors.md#e0201-type-mismatch) である。`RouteErrorInfo` は `PanicInfo` ではない —— レコード型は自分と同じフィールド集合にしか一致しない —— ので、`app.error` の panic を丸ごと保持する slot は `Option(PanicInfo)`、`route.error` の panic を丸ごと保持する slot は `Option(RouteErrorInfo)` である。
+
 ---
 
 ## 7.3 エラー境界（タイル単位）
