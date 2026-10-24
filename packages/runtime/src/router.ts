@@ -42,8 +42,41 @@ export function splitPath(p: string): LocationLike {
   return { pathname: rest || "/", search, hash };
 }
 
+/** A router location has no origin of its own, and `.invalid` (RFC 2606) is one no real target can name. */
+const BASE_ORIGIN = "http://router.invalid";
+
+/**
+ * `to` resolved against `at` and written as the URL parser writes it, percent-encoded as
+ * `location` is, so both routers hold one form. A target that names an origin of its own
+ * (`https://…`, `//host`, `mailto:`) is left as written: resolving it would drop that origin.
+ */
+export function resolveTarget(to: string, at: LocationLike): string {
+  try {
+    const url = new URL(to, BASE_ORIGIN + at.pathname + at.search + at.hash);
+    if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
+  } catch {
+    // Not a URL even against `at` (`http://[`).
+  }
+  return to;
+}
+
+/**
+ * A path the app is at, held as a browser's `location` holds that URL: `/a/../b` as `/b`, `/あ`
+ * percent-encoded, and `//foo` kept as a path, since here it is not a target naming a host.
+ */
+export function normalizeLocation(path: string): string {
+  const p = path || "/";
+  try {
+    const url = new URL(p[0] === "/" ? BASE_ORIGIN + p : p, `${BASE_ORIGIN}/`);
+    if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
+  } catch {
+    // Not a URL at all (`http://[`).
+  }
+  return p;
+}
+
 function memoryRouter(initialPath = "/"): Router {
-  const stack: string[] = [initialPath || "/"];
+  const stack: string[] = [normalizeLocation(initialPath)];
   const listeners = new Set<() => void>();
   return {
     read: () => splitPath(stack[stack.length - 1] ?? "/"),
@@ -225,13 +258,34 @@ function matchPattern(pattern: string, path: string): Record<string, string> | n
     const s = pathSegs[i];
     if (s === undefined) return null;
     if (p.startsWith(":")) {
-      params[p.slice(1)] = decodeURIComponent(s);
-    } else if (p !== s) {
+      params[p.slice(1)] = decodeParam(s);
+    } else if (p !== s && encodedSegment(p) !== s) {
       return null;
     }
   }
   if (pathSegs.length !== patSegs.length) return null;
   return params;
+}
+
+const encodedSegments = new Map<string, string>();
+
+/** A static segment as the URL parser writes it in a path (`概要` as `%E6%A6%82%E8%A6%81`), never decoded. */
+function encodedSegment(seg: string): string {
+  let out = encodedSegments.get(seg);
+  if (out === undefined) {
+    out = new URL(`/${seg}`, BASE_ORIGIN).pathname.slice(1);
+    encodedSegments.set(seg, out);
+  }
+  return out;
+}
+
+// A path is user input, so an escape that does not decode is kept as written rather than thrown.
+function decodeParam(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }
 
 function buildPath(x: {
@@ -303,17 +357,37 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
   };
 }
 
+function href({ path, query, hash }: ParsedRoute): string {
+  const search = new URLSearchParams(query).toString();
+  return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
+}
+
+/** The element is looked up in the root the app is mounted in, by the hash as written and then percent-decoded. */
+function jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined {
+  if (to.hash._tag !== "Some") return undefined;
+  if (href({ ...from, hash: NONE }) !== href({ ...to, hash: NONE })) return undefined;
+  const id = to.hash._0;
+  return () => {
+    const scope = root.getRootNode() as Partial<Pick<Document, "getElementById">>;
+    const el = scope.getElementById?.(id) ?? scope.getElementById?.(decodeParam(id));
+    el?.scrollIntoView();
+  };
+}
+
 /** The routing module surface consumed by `mountCore` (see core `RoutingImpl`). */
 export const routing: RoutingImpl = {
   createRouter(mode, initialPath) {
-    return mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    const router = mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    const resolving =
+      (go: (path: string) => void) =>
+      (path: string): void =>
+        go(resolveTarget(path, router.read()));
+    return { ...router, push: resolving(router.push), replace: resolving(router.replace) };
   },
   parseLocation,
   matchPattern,
   findRedirect,
-  href({ path, query, hash }) {
-    const search = new URLSearchParams(query).toString();
-    return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
-  },
+  href,
+  jump,
   installNavEffects,
 };

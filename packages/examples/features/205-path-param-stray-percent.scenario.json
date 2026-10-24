@@ -1,0 +1,37 @@
+{
+  "steps": [
+    {
+      "label": "the app starts at / with the link rendered",
+      "expect": { "noErrors": true, "domIncludes": ["Home", "the full amount"] }
+    },
+    {
+      "label": "a link to a stray % renders the route, with the segment kept as written",
+      "do": { "clickText": "the full amount" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Item [100%]", "at /items/100%"],
+        "domExcludes": ["404"]
+      }
+    },
+    {
+      "label": "a well-formed escape is decoded",
+      "do": { "navigate": "/items/a%2Fb" },
+      "expect": { "noErrors": true, "domIncludes": ["Item [a/b]", "at /items/a%2Fb"] }
+    },
+    {
+      "label": "a multi-byte escape is decoded",
+      "do": { "navigate": "/items/%E3%81%82" },
+      "expect": { "noErrors": true, "domIncludes": ["Item [あ]"] }
+    },
+    {
+      "label": "escapes that do not spell UTF-8 are kept as written",
+      "do": { "navigate": "/items/%E3%81" },
+      "expect": { "noErrors": true, "domIncludes": ["Item [%E3%81]"], "domExcludes": ["404"] }
+    },
+    {
+      "label": "navigating to a stray % directly renders the route too",
+      "do": { "navigate": "/items/50%off" },
+      "expect": { "noErrors": true, "domIncludes": ["Item [50%off]"], "domExcludes": ["404"] }
+    }
+  ]
+}
