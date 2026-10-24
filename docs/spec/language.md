@@ -658,10 +658,12 @@ pattern      ::= identifier
 - If the parent tile is `column(A, when(c, B), C)`, then with `c=false`, `[A, C]` is rendered
 - Because the runtime skips null/undefined children, `when` is a safe way to produce a "blank"
 
-**Value context vs tile context for `match`**:
-- A `match` **within the positional arguments** of the `text/heading/markdown/label/link/image/icon` builtins is treated as a value expression (`MatchExpr`). Each arm returns a value (Text, Int, etc.)
-- A `match` within any other tile argument (`column`, `row`, `card`, etc.) is treated as a tile expression (`TileMatch`). Each arm returns a tile
+**Value context vs tile context for `if` and `match`**:
+- A tile argument is a tile only as a **positional argument of a builtin other than the value builtins** (`column`, `row`, `card`, `box`, …) — the one place a tile renders. There, `if` and `match` are tile expressions (`TileIf` / `TileMatch`) whose arms return tiles, a builtin's name followed by `(` or `{` is a call to that builtin, and a capitalised name is a user tile.
+- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
+- `when` and `for` have no value form, so they are tiles wherever they are written.
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
+- Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
 - Example: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
 
 ### 1.7.2 Invariants
@@ -684,7 +686,7 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 With `onClick=saveTodo`, the reducer `saveTodo` is called on click. `{todoId: $1}` is delivered to the reducer as `$el.todoId`.
 
-The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name is a *tile call* when it is a named argument of a builtin that takes tiles (`box`, `button`, `input`, `modal`, `form`), and a variant tag everywhere else: in a props block, as a named argument of a value-arg builtin such as `link`, and as a named argument of a user tile.
+The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name written as an event handler (`onClick=`, `onChange=`, …) is a *tile call* on a builtin other than the value builtins (`box`, `button`, `check`, `radio`, `column`, …), and a variant tag everywhere else: in a props block, on a value builtin such as `link`, and on a user tile.
 
 Because those shapes carry no arguments, the bare name and the argument-less call are one and the same after parsing — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are the same node, and all three bind the reducer. A value that carries arguments is not a name and is [E0201](./errors.md#e0201-type-mismatch).
 
@@ -784,6 +786,12 @@ reducer normalize
 fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
    = ts.map($2.copy(text=$2.text.trim))
 ```
+
+**A declared `fn` wins over a built-in function of the same name.** A call `name(…)` is to the program's own `fn` when it declares one under that name, and to the [built-in function](./stdlib.md#_2-4-built-in-functions) otherwise. That holds for every built-in a call names without a qualifier: `random`, `fmt`, `panic`, `file-url`, `prefers-dark`, `trace`, and `run-reducer` in a [property-test invariant](./testing.md#_8-3-property-tests). `now` is a reserved word, so no `fn` can be named it. With the `fn` declared, every call of the name is checked against the `fn`'s signature and runs its body: in a tile, a reducer, another `fn`, a test body, and a fragment position that names the `fn` ([§1.8.6](#_1-8-6-partial-application-and-higher-order-functions)). The chained spelling `….run-reducer(r)` stops being the built-in too, and is a method nothing has ([E0801](./errors.md#e0801-unimplemented-method)). Apart from the reducer statement below, the built-in is then out of that program's reach, so a program that needs both gives its `fn` another name.
+
+An effect or a type is different. The runtime supplies the values of a standard effect or type itself, so a program's declaration under that name cannot take effect the way a `fn`'s does. A built-in function is the compiler's to check and to lower, so it can honour the declaration, and a built-in added later cannot break a program that already has a `fn` of that name.
+
+`panic(message)` written on its own as a reducer statement is the statement form rather than a call, since a `fn`'s value would have nowhere to go there. It stops the reducer whatever the program declares.
 
 ### 1.8.6 Partial Application and Higher-Order Functions
 

@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "both slots start at their defaults",
+      "expect": { "noErrors": true, "domIncludes": ["count: 0", "label: x"] }
+    },
+    {
+      "label": "inc writes count and leaves label at its default",
+      "do": { "click": "#inc" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["count: 1", "label: x"],
+        "state": { "count": 1, "label": "x" }
+      }
+    }
+  ]
+}
