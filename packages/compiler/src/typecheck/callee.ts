@@ -18,6 +18,7 @@ import {
   type StatementScope,
   type SymbolTable,
 } from "./context.ts";
+import { refuseRenderedEffectId } from "./expr.ts";
 import { freshResultType, prim } from "./infer.ts";
 
 export function checkCallee(
@@ -115,7 +116,10 @@ export function checkCallee(
       });
       return;
     }
-    if (callee === "fmt") reportFmtPlaceholders(args, pos, errors);
+    if (callee === "fmt") {
+      reportFmtPlaceholders(args, pos, errors);
+      for (const a of args) refuseRenderedEffectId(a, "fmt(...)", sym, errors, ctx);
+    }
     const text = args[0];
     if (dot > 0 && callee.slice(dot + 1) === "parse" && text) {
       checkAgainst(text, prim("Text", pos), sym, errors, ctx);
