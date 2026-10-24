@@ -294,6 +294,119 @@ describe("the checker scopes each `if` branch as codegen does", () => {
   });
 });
 
+describe("an E0103 for a name a nested body declared names the body", () => {
+  // A rename to a close name type-checks and reads another value, so the diagnostic says which
+  // body ended the name: in `endedScope` for `kumiki fix`, in the message for the author.
+  const undefinedNames = (source: string) =>
+    checkSource(source)
+      .filter((e) => e.code === "E0103")
+      .map((e) => ({ endedScope: e.endedScope, message: e.message }));
+  const HINTS: Record<string, string> = {
+    if: 'it is scoped to an "if" branch, which ends with it: declare it before the "if", or move the read into the branch',
+    for: 'it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body',
+    match:
+      'it is scoped to a match arm, which ends with it: declare it before the "match", or move the read into the arm',
+  };
+  const hinted = (name: string, scope: string) => ({
+    endedScope: scope,
+    message: `Reference to undefined name "${name}" — ${HINTS[scope]} (see docs/spec/language.md)`,
+  });
+
+  it.each([
+    {
+      reads: "a loop variable after the loop",
+      body: "for idx in [1] { () }\n        total := idx",
+      name: "idx",
+      scope: "for",
+    },
+    {
+      reads: "a `let` a `for` body declared",
+      body: "for x in [1] { let n = x }\n        total := n",
+      name: "n",
+      scope: "for",
+    },
+    {
+      reads: "a `let` after the `if`",
+      body: "if flag then { let n = 1 } else { () }\n        total := n",
+      name: "n",
+      scope: "if",
+    },
+    {
+      reads: "a `let` the `else` branch declared",
+      body: "if flag then { () } else { let n = 1 }\n        total := n",
+      name: "n",
+      scope: "if",
+    },
+    {
+      reads: "a `let` in the other branch",
+      body: "if flag then { let n = 1 } else { total := n }",
+      name: "n",
+      scope: "if",
+    },
+    {
+      reads: "a pattern variable after the match",
+      body: "match Some(1) with\n          | Some(v) -> { () }\n          | None    -> { () }\n        total := v",
+      name: "v",
+      scope: "match",
+    },
+    {
+      reads: "a `let` a catch-all arm declared",
+      body: "match Some(1) with\n          | Some(v) -> { () }\n          | _       -> { let n = 2 }\n        total := n",
+      name: "n",
+      scope: "match",
+    },
+    {
+      reads: "a `let` of a nested body, naming the innermost one",
+      body: "for x in [1] {\n          if flag then { let n = x } else { () }\n        }\n        total := n",
+      name: "n",
+      scope: "if",
+    },
+    {
+      reads: "a name a body nested in a branch declared, later in that branch",
+      body: "if flag then {\n          for i in [1] { () }\n          total := i\n        } else { () }",
+      name: "i",
+      scope: "for",
+    },
+    {
+      // `seed` is one edit from the slot `seen`, the case the arithmetic hint stands down for.
+      reads: "a name one edit from a name in scope",
+      body: 'for seed in ["a"] { () }\n        seen := seed',
+      name: "seed",
+      scope: "for",
+    },
+  ])("names the body for $reads", ({ body, name, scope }) => {
+    expect(undefinedNames(program("app.start", body))).toEqual([hinted(name, scope)]);
+  });
+
+  it.each([
+    {
+      case: "a misspelling no body declared",
+      source: program("app.start", "for x in [1] { () }\n        total := totl"),
+      name: "totl",
+    },
+    {
+      case: "a body's name read in another reducer",
+      source: program("app.start", "for idx in [1] { () }").replace(
+        "tile Page",
+        "reducer other on=app.stop do= total := idx\n\ntile Page",
+      ),
+      name: "idx",
+    },
+  ])("keeps the plain message for $case", ({ source, name }) => {
+    expect(undefinedNames(source)).toEqual([
+      { endedScope: undefined, message: `Reference to undefined name "${name}"` },
+    ]);
+  });
+
+  it("reads the slot a branch's `let` shadowed once the branch ends", () => {
+    const src = program(
+      "app.start",
+      "if flag then { let total = 5\n                       seen := total.show } else { () }\n        total := total + 1",
+    );
+    expect(codesOf(src)).toEqual([]);
+  });
+});
+
 describe("a branch's `let` leaves the type of the name after the `if` alone", () => {
   const shadowed = (write: string): string =>
     program(
