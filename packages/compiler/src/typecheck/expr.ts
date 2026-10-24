@@ -1,6 +1,14 @@
-import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
+import {
+  assignable,
+  elementType,
+  nominallyComparable,
+  typeToString,
+  unaliasType,
+} from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
+import { RUN_REDUCER } from "../builtin-calls.ts";
 import { FRAGMENT_ARGUMENTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { receiverParams } from "../stdlib-members.ts";
 import {
   checkAgainst,
   checkEmitTarget,
@@ -14,6 +22,7 @@ import {
   bindLocal,
   type Ctx,
   innerScope,
+  isBuiltinCall,
   type KumikiError,
   type SymbolTable,
   wildcardText,
@@ -37,7 +46,11 @@ import {
   keyKindOfReader,
   undefMemberError,
 } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import {
+  checkMatchCovers,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+} from "./patterns.ts";
 import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
@@ -135,6 +148,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
+      if (e.name === "$1" && ctx.noInputEffect !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `"$1" is undefined here — effect "${ctx.noInputEffect}" declares in=Unit, so it is emitted with no argument`,
+          pos: e.pos,
+        });
+        return;
+      }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
         const { method, hides } = ctx.oneValueFragment;
         errors.push({
@@ -204,7 +226,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
       return;
     case "Call":
-      if (ctx.kind === "test" && e.callee === "run-reducer") {
+      if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
@@ -213,7 +235,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
-      if (ctx.kind === "test" && e.method === "run-reducer") {
+      if (ctx.kind === "test" && e.method === RUN_REDUCER && isBuiltinCall(e.method, sym)) {
         checkExpr(e.receiver, sym, errors, ctx);
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
@@ -266,7 +288,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         for (const [i, a] of e.args.entries()) {
           if (fragment?.index !== i) {
             checkExpr(a, sym, errors, ctx);
-            const declared = memberArgType(recvType, e.method, i, sym);
+            const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
@@ -277,6 +299,8 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             if (fits && e.method === "sort-by" && i === 0) {
               checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
             }
+            const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
+            if (fits && declared !== null) checkFragmentFnResult(a, declared, sym, errors);
             continue;
           }
           const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
@@ -293,7 +317,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
           }
-          const declared = memberArgType(recvType, e.method, i, sym);
+          const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
           if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
         }
       }
@@ -332,12 +356,16 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = inferType(e.scrutinee, sym, ctx);
+      let patternsFit = true;
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
       }
+      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }
     case "IfExpr":
@@ -414,6 +442,24 @@ function checkFragmentFnArity(
     );
   }
   return true;
+}
+
+// A fn named as a fragment answers what an inline fragment would, so its declared result is read
+// against the parameter as the fragment's value is.
+function checkFragmentFnResult(
+  a: Expr & { kind: "Ref" },
+  declared: TypeExpr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const ret = sym.fns.get(a.name)?.ret ?? null;
+  if (ret === null || !isKnown(ret, sym) || assignable(ret, declared, sym)) return;
+  pushMismatch(
+    errors,
+    "E0201",
+    `Expected ${typeToString(declared)} but "${a.name}" answers ${typeToString(ret)}`,
+    a.pos,
+  );
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -577,29 +623,29 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
   return inner;
 }
 
+// A call given fewer arguments than the signature takes has none read against it: which argument
+// it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
   index: number,
+  argCount: number,
   sym: SymbolTable,
 ): TypeExpr | null {
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
-  const [a, b] = t.args;
-  switch (t.name) {
-    case "List":
-      return index === 0 && LIST_ELEMENT_ARGS.has(member) ? (a ?? null) : null;
-    case "Map":
-      return index === 1 && MAP_VALUE_ARGS.has(member) ? (b ?? null) : null;
-    case "Set":
-      return index === 0 && SET_OPERANDS.has(member) ? recv : null;
-    default:
+  const params = receiverParams(t.name, member);
+  if (params === undefined || argCount < params.length) return null;
+  const param = params[index] ?? null;
+  switch (param) {
+    case null:
       return null;
+    case "K":
+    case "T":
+      return t.args[0] ?? null;
+    case "V":
+      return t.args[1] ?? null;
+    case "self":
+      return recv;
   }
 }
-
-const LIST_ELEMENT_ARGS: ReadonlySet<string> = new Set(["contains", "push", "prepend"]);
-
-const MAP_VALUE_ARGS: ReadonlySet<string> = new Set(["insert", "update"]);
-
-const SET_OPERANDS: ReadonlySet<string> = new Set(["union", "intersect", "diff"]);

@@ -95,7 +95,8 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
   const runtimeAbs = require.resolve("@kumikijs/runtime");
 
   const targetUrl = opts.targetAbs.replace(/\\/g, "/");
-  const clientSource = clientTemplate.replaceAll("__KUMIKI_TARGET__", targetUrl);
+  // A replacer, so a `$$` or `$&` in the path is inserted as written rather than read as a pattern.
+  const clientSource = clientTemplate.replaceAll("__KUMIKI_TARGET__", () => targetUrl);
 
   return {
     name: "kumiki-dev-internal",

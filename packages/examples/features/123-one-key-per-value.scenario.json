@@ -135,7 +135,12 @@
           "ids: 1 has1=false",
           "flags: 1 true=false",
           "words: 1 x=false"
-        ]
+        ],
+        "state": {
+          "items": {
+            "2": "b"
+          }
+        }
       }
     },
     {
