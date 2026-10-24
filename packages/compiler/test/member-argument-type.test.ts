@@ -185,17 +185,28 @@ reducer go on=ui.click(Btn) do= sets := sets.map($1.add("x"))`),
   });
 
   it("reads no argument against a receiver whose type is undecided", () => {
-    // Neither receiver has a type the checker decides: `fold`'s accumulator `$1` is not the
-    // `List(Int)` the fold walks, and `mk` has no `->`, though its body is a `List(Int)`.
+    // `fold`'s accumulator `$1` is not the `List(Int)` the fold walks: the checker decides no type
+    // for it.
     expect(
       summariesOf(
         app(`slot nums  : List(Int)  = [1]
 slot texts : List(Text) = []
-fn mk() = [1]
 reducer go on=ui.click(Btn) do=
-    texts := nums.fold([], $1.push($2.show)).concat(mk().push("z"))`),
+    texts := nums.fold([], $1.push($2.show))`),
       ),
     ).toEqual([]);
+  });
+
+  it("reads an argument against the result of a fn with no `->`, which is its body's type", () => {
+    // `mk` has no `->`, so it returns its body's type, a `List(Int)`.
+    expect(
+      pointedErrorsOf(
+        app(`slot texts : List(Text) = []
+fn mk() = [1]
+reducer go on=ui.click(Btn) do=
+    texts := mk().push("z").map($1.show)`),
+      ),
+    ).toEqual([{ code: "E0201", message: "Expected Int but got Text", text: '"z").map($1.show)' }]);
   });
 
   it("leaves a call whose count selects no reading on its receiver to the arity report", () => {

@@ -27,7 +27,7 @@ import {
   type SymbolTable,
   wildcardText,
 } from "./context.ts";
-import { currentFnName } from "./fn.ts";
+import { currentFnName, fnResultType } from "./fn.ts";
 import {
   arithmeticResult,
   inferType,
@@ -322,7 +322,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             if (lacksMember) continue;
             const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
             if (fits && e.method === "sort-by" && i === 0) {
-              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+              checkSortKey(fnResultType(a.name, sym), a.pos, recvType, sym, errors);
             }
             const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
             if (fits && declared !== null) checkFragmentFnResult(a, declared, sym, errors);
