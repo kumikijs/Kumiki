@@ -7,6 +7,7 @@ import type {
 } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { httpError } from "../src/effects-http.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
 
@@ -211,7 +212,7 @@ function backoffApp(opts: BackoffOptions) {
         ...(opts.errText ? { errText: opts.errText } : {}),
         invoke: async (input) => {
           attempts.push({ at: Date.now(), input });
-          return { kind: "err", value: opts.fail ?? { status: 503, message: "busy", body: "" } };
+          return { kind: "err", value: opts.fail ?? httpError(503, "busy") };
         },
       },
       cancel: {
@@ -237,7 +238,7 @@ function backoffApp(opts: BackoffOptions) {
   return { attempts, errs, dispatch, dispose };
 }
 
-const ABORTED_HTTP = { status: 0, message: "aborted", body: "" };
+const ABORTED_HTTP = httpError(0, "aborted");
 
 describe("a request waiting between retry attempts", () => {
   let disposeApp: (() => void) | undefined;
