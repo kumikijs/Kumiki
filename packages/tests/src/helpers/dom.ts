@@ -1,4 +1,4 @@
-import { type AppShape, mount } from "@kumikijs/runtime";
+import { type AppShape, mount, renderToString } from "@kumikijs/runtime";
 
 type MountOptions = NonNullable<Parameters<typeof mount>[2]>;
 type MountHandle = ReturnType<typeof mount>;
@@ -29,6 +29,13 @@ export function mountApp(
   return { root, handle: mount(app, root, options) };
 }
 
+/** The page `renderToString` serves for `app`, parsed under a detached element. */
+export async function served(app: AppShape): Promise<HTMLElement> {
+  const page = document.createElement("div");
+  page.innerHTML = (await renderToString(app)).html;
+  return page;
+}
+
 /** Mount `app`, run `body` against its root, and tear both down whatever happens. */
 export async function withMounted<T>(
   app: AppShape,
@@ -52,6 +59,20 @@ export function textAt(app: AppShape, path: string): string {
   handle.dispose();
   root.remove();
   return text;
+}
+
+/** The text `html` renders, as `textContent` reads it. */
+export function textOf(html: string): string {
+  const el = document.createElement("div");
+  el.innerHTML = html;
+  return el.textContent ?? "";
+}
+
+/** The text of each element under `root` that has no child elements, in document order. */
+export function texts(root: ParentNode): string[] {
+  return Array.from(root.querySelectorAll("*"))
+    .filter((el) => el.children.length === 0)
+    .map((el) => el.textContent ?? "");
 }
 
 export const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -134,6 +155,19 @@ export function find<T extends Element = HTMLElement>(root: ParentNode, selector
 export function typeInto(field: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   field.value = value;
   field.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** Pick `file` in `input` as the browser's file chooser would. */
+export function pickFile(input: HTMLInputElement, file: File): void {
+  try {
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file] as unknown as FileList,
+    });
+  } catch {
+    (input as unknown as { files: File[] }).files = [file];
+  }
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 /** `typeInto` the field matching `selector`. */

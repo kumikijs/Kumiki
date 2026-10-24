@@ -1,16 +1,10 @@
 import { app, feature } from "@kumikijs/examples";
 import { renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { textAt } from "./helpers/dom.ts";
+import { textAt, textOf } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("154-ssr-redirect");
-
-function textOf(html: string): string {
-  const el = document.createElement("div");
-  el.innerHTML = html;
-  return el.textContent ?? "";
-}
 
 describe("renderToString resolves static redirects", () => {
   it.each([

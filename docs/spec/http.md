@@ -163,7 +163,7 @@ reducer added
 
 ### 6.3.1 Injecting Global Headers
 
-In `app.http` you can declare headers that are automatically applied to all HTTP effects:
+In `app.http` you can declare headers that are automatically applied to all HTTP effects (under a `base-url`, to those on its origin — see below):
 
 ```kumiki fragment
 app App
@@ -182,12 +182,25 @@ app App
 | http field | Meaning | Evaluated |
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
-| `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
+| `headers` | Applied to every request (under a `base-url`, only to its origin — below) — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
 | `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
-| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
+| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings); under a `base-url`, only to its origin — below) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
 | `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
+
+`base-url` and a request's `url` ([§6.1.2](#_6-1-2-standard-effect)) make the URL that is fetched:
+
+- With no `base-url`, or an empty one, every url is fetched as written.
+- A base that carries a `?` or a `#` has the url appended to it as written, whatever the url: `https://api.example.com/search?q=` with `term` fetches `https://api.example.com/search?q=term`, and `https://proxy.example.com/?url=` with `https://target/x` fetches `https://proxy.example.com/?url=https://target/x`.
+- Under any other base, an **absolute** url is fetched as written. A url is absolute when it starts with a scheme — an ASCII letter, then zero or more ASCII letters, digits, `+`, `-` or `.`, then `:` (`https:`, `data:`) — or with `//` (protocol-relative). A first segment of that shape up to its `:` reads as a scheme, so a path like `users:search` is written `/users:search`; `1a:b` and `a_b:c` are not of that shape, and are relative.
+- Any other url is **relative**. Unless it is empty or starts with `?` or `#` (below), it is joined to the base with exactly one `/` between them, whether the base ends in `/` and whether the url starts with one: under `https://api.example.com` and under `https://api.example.com/`, both `/items/1` and `items/1` fetch `https://api.example.com/items/1`.
+- A base that carries a path is a **prefix**: `https://api.example.com/v1` with `/users` fetches `https://api.example.com/v1/users`. The url is not resolved against the base the way a browser resolves a link (`new URL("/users", base)`), which would drop `/v1`; a request for another path on the host writes its whole URL. A base that is only a path is joined the same way: `/api` with `users` fetches `/api/users`.
+- An empty url, or one that starts with `?` or `#`, is appended to the base as written: `https://api.example.com/items` with `?page=2` fetches `https://api.example.com/items?page=2`.
+
+`query` is appended to the URL this gives ([§6.1.2](#_6-1-2-standard-effect)).
+
+With a `base-url`, `headers` and `credentials` go only with a request to the base's origin — its scheme, host and port: a url joined to the base, or an absolute url on that origin. A request to any other origin carries no global header and the default `credentials` ([§6.9](#_6-9-default-settings)), so a token in `headers` never leaves the base's origin; such a request names what it needs in its own `headers`. A path-only base and a relative url are on the page's origin, and a base that cannot be read as a URL has no origin a request is on. With no `base-url`, both go with every request.
 
 Every field that takes a value takes an **expression**, and may read a slot. All
 four are evaluated **when a request is made**, not when the app is built: a
@@ -303,6 +316,8 @@ effect loadCritical cap=http.get
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
 Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON or whose value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
+
+A request waiting between attempts stops waiting at once when it is cancelled: by `http.cancel` ([6.4](#_6-4-cancellation)), by a newer emit under `policy=latest`, or by a newer emit for the same key under `policy=latest-per-key`. Its `.err` fires right away, before any request emitted later can deliver its own result, and no further attempt is made; under `policy=queue`, the next entry starts at once instead of after the rest of the interval. That err is the `aborted` `HttpError` of [6.4.1](#_6-4-1-behavior) on an `http.*` effect, the `Text` `"aborted"` on a capability that fails with `Text` ([6.7](#_6-7-storage-effects)), and `{message: "aborted"}`, the shape an invoke that throws delivers ([stdlib §2.5](./stdlib.md#_2-5-standard-capabilities)), on any other capability. Unmounting the app ends the wait too, with no further attempt; nothing is delivered, as no reducer runs once the app is unmounted. A request that is neither cancelled nor unmounted waits out every interval in full.
 
 ---
 

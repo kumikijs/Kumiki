@@ -218,6 +218,40 @@ test round-trips =
 `;
       expect(refsOf(src, "test.round-trips")).toContain("reducer.inc@8:33");
     });
+
+    it("reads a call to a declared fn run-reducer as a call to the fn", () => {
+      // A declared fn wins over the builtin of its name, so the argument is a value, not a reducer.
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := run-reducer(count)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.inc")).toEqual([
+        "tile.B@3:25",
+        "slot.count@3:32",
+        "fn.run-reducer@3:41",
+        "slot.count@3:53",
+      ]);
+    });
+
+    it("reads the chained `.run-reducer(r)` as no reducer once a fn has the name", () => {
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+      // The receiver is the fn's call, and `inc` is a value the walker finds no definition for.
+      expect(refsOf(src, "test.chain")).toEqual([
+        "slot.count@-",
+        "tile.B@8:73",
+        "fn.run-reducer@9:21",
+      ]);
+    });
   });
 
   describe("the app definition", () => {

@@ -1,4 +1,5 @@
 import type { TilePatcher, TileProps, TileRenderer } from "../../core.ts";
+import { attrValue } from "../../core.ts";
 import {
   applyControlState,
   bindDataset,
@@ -14,6 +15,24 @@ import {
 } from "./_shared.ts";
 
 const RADIO_VALUE = new WeakMap<HTMLElement, unknown>();
+
+/** The text after the box as a trailing `<span>`, by check.ts's `boxLabelText` rule; spelled out here because each tile module ships on its own. */
+function syncLabel(wrap: HTMLElement, props: TileProps | undefined): void {
+  const label = attrValue(props?.label);
+  const text = label === undefined ? "" : String(label);
+  const span = wrap.querySelector("span");
+  if (!text) {
+    span?.remove();
+    return;
+  }
+  if (!span) {
+    const s = document.createElement("span");
+    s.textContent = text;
+    wrap.appendChild(s);
+  } else if (span.textContent !== text) {
+    span.textContent = text;
+  }
+}
 
 // The bind writes the value itself; the attribute carries its key, which the served
 // radio carries too, since a radio's `value` reflects into the markup.
@@ -37,13 +56,8 @@ export const radioTile: TileRenderer<"radio"> = (node) => {
   inp.type = "radio";
   if (node.group) inp.name = String(node.group);
   inp.checked = !!node.selected;
-  const labelText = (node.props?.label as string | undefined) ?? "";
   wrap.appendChild(inp);
-  if (labelText) {
-    const span = document.createElement("span");
-    span.textContent = labelText;
-    wrap.appendChild(span);
-  }
+  syncLabel(wrap, node.props);
   if (node.bind) bindDataset(inp, node.bind, node.bindPath);
   setHandlers(inp, inputHandlers(node));
   setRadioValue(inp, node.value);
@@ -74,18 +88,6 @@ export const radioPatcher: TilePatcher<"radio"> = (el, _oldNode, newNode) => {
     setHandlers(inp, inputHandlers(newNode));
     setRadioValue(inp, newNode.value);
   }
-  const nextLabel = (newNode.props?.label as string | undefined) ?? "";
-  const span = wrap.querySelector("span");
-  if (nextLabel) {
-    if (span) {
-      if (span.textContent !== nextLabel) span.textContent = nextLabel;
-    } else {
-      const s = document.createElement("span");
-      s.textContent = nextLabel;
-      wrap.appendChild(s);
-    }
-  } else if (span) {
-    wrap.removeChild(span);
-  }
+  syncLabel(wrap, newNode.props);
   applyControlState(el.querySelector("input") ?? el, (newNode as { props?: TileProps }).props);
 };

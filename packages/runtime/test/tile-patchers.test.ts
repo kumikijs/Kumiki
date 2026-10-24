@@ -1,7 +1,7 @@
 import type { AppShape, MountedApp, TileCtx, TileNode } from "@kumikijs/runtime";
 import { inputPatchers, inputTiles, mount, textPatchers, textTiles } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { bareApp, mountApp } from "./helpers/app.ts";
+import { appOf, bareApp, mountApp } from "./helpers/app.ts";
 import { defined } from "./helpers/defined.ts";
 import { freshRoot } from "./helpers/dom.ts";
 
@@ -113,6 +113,23 @@ describe("radio", () => {
     const after: Of<"radio"> = { kind: "radio", group: "g", value: to };
     defined(inputPatchers.radio, "radio patcher")(el, before, after, ctx);
     expect(el.querySelector("input")?.getAttribute("value") ?? null).toBe(shown);
+  });
+});
+
+describe("slider", () => {
+  it("moves an unbound slider to the value a pass gives it, though the slider has focus", () => {
+    let vol = 10;
+    const app = mountApp(appOf(() => ({ kind: "slider", value: vol, min: 0, max: 100 })));
+    const slider = defined(
+      document.body.querySelector<HTMLInputElement>("input[type='range']"),
+      "the slider",
+    );
+    // The user let go at 80 and a reducer clamped the slot to 50; a slider keeps focus after a drag.
+    slider.focus();
+    slider.value = "80";
+    vol = 50;
+    app._rerender?.();
+    expect(slider.value).toBe("50");
   });
 });
 
