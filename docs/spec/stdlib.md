@@ -62,6 +62,20 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 
 ## 2.2 Collection Methods
 
+**An argument has its parameter's type.** In the signatures of §2.2.1–§2.2.3, `K` and `V` are a `Map(K, V)`'s key and value types and `T` is a `Set(T)`'s or a `List(T)`'s element type. A parameter of one of those types takes a value of it, and the `other` of `merge` / `union` / `intersect` / `diff` / `concat` is another container of the receiver's type:
+
+| Receiver | Parameter | Members |
+|---|---|---|
+| `Map(K, V)` | the key, `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
+| | the value, `V` | `insert`, and the expression of `update`, which answers the entry's new value; a `fn` passed there by name answers its declared return type |
+| | `other`, a `Map(K, V)` | `merge` |
+| `Set(T)` | the element, `T` | `has` / `add` / `remove` / `toggle` |
+| | `other`, a `Set(T)` | `union` / `intersect` / `diff` |
+| `List(T)` | the element, `T` | `push` / `prepend` / `contains` |
+| | `other`, a `List(T)` | `concat` |
+
+An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the index of `List.get`, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of `fold`, a `fn` result with no `->`, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
+
 ### 2.2.1 Map(K, V)
 
 ```
@@ -121,7 +135,7 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, the argument of `List.contains` / `push` / `prepend` or the value of `Map.insert` / `update` on such a container, and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
+**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, an argument whose parameter is a `Set` type ([§2.2](#_2-2-collection-methods)) — the element of `List.push` / `contains` on a `List(Set(T))`, a key or value of `Map.insert` on a `Map` of Sets — and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
 
 Where the checker cannot decide the receiver's type, neither rule applies: the accumulator `$1` of `fold` — `nums.fold({}, $1.union([2]))` — has no type, so the argument is neither checked nor built as a Set, and stays an array. A fragment over a `List(Set(T))` is not such a place: there `$1` is the element, typed `Set(T)` ([§2.2.3](#_2-2-3-list-t)), so `groups.map($1.union([2]).to-list)` builds the argument as a Set and reads its keys back as `T`. That is a gap in what the checker resolves, not a rule a program may rely on. A member is keyed the way `add` keys it, so a literal of records or variants holds exactly what the `add` chain of the same members holds, keyed as the paragraphs below say.
 
@@ -130,6 +144,8 @@ Where the checker cannot decide the receiver's type, neither rule applies: the a
 **One key per value.** Every member that writes, finds or removes an entry — `add` / `remove` / `toggle` / `has`, `get` / `get-or` / `insert` / `remove` / `update`, the index read `m[k]` and the index write `m[k] := v` — stores and looks up a key the same way, so two keys are one entry exactly when they are equal by `==` ([language §1.9.4](./language.md#_1-9-4-operator-types)). `picked.add(Red).has(Blue)` is `false`; `votes[Red] := 1` and `votes.insert(Green, 1)` write two entries; `m.remove(1)` on a `Map(Int, V)` removes the entry at `1`.
 
 What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
+
+**A key spelled like an `Object.prototype` member is an ordinary key.** Such a key — for example `constructor`, `toString`, `valueOf`, `hasOwnProperty` or `__proto__` — is held only once it is written, as any other key is: on an empty `Map(Text, Int)`, `has("constructor")` is `false`, `get("constructor")` is `None` and `get-or("constructor", 0)` is `0`, and `toggle("toString")` on an empty `Set(Text)` adds it. Once written, such an entry reads back through every member, and `remove` of another key, `intersect`, `diff`, `filter` and `map` keep it as they keep any other.
 
 ### 2.2.3 List(T)
 
@@ -259,14 +275,16 @@ An argument outside a function's domain produces what the platform produces — 
 ### 2.2.8 Time
 
 ```
-Time.now                    : Time
+Time.now                    : Time            ; the current time — the builtin now (§2.4.2)
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
-diff(other)                 : Duration
+diff(other)                 : Duration        ; the receiver minus other
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 to-ms                       : Int             ; milliseconds since the Unix epoch
 ```
+
+`a.diff(b)` is `a` minus `b`, the time from `b` to `a`, so `b.plus(a.diff(b))` is `a` whichever of the two comes first. It is positive when `a` is the later instant, negative when it is the earlier one, and zero when both are the same instant. `due.diff(now)` is negative once `due` has passed, and `now.diff(start)` is the time elapsed since `start` ([§2.2.9](#_2-2-9-duration)). The distance between two instants, whichever is the later, is `a.diff(b).to-ms.abs`.
 
 `format` replaces each of these tokens with that field of the instant and copies the rest of the pattern through verbatim, so `"dd/MM/yyyy"` and `"[on] dd"` are both patterns:
 
@@ -313,7 +331,7 @@ Duration.d(n)               : Duration   ; days is also valid
 to-ms                       : Int
 ```
 
-Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition.
+Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition. A `Duration` is signed: `a.diff(b)` is negative when `a` is the earlier instant ([§2.2.8](#_2-2-8-time)).
 
 Every constructor takes its magnitude, and dropping the parentheses does not make one a value: `Duration.h` is read as a call given no argument, which is the same [E0213](./errors.md#e0213-call-arity-mismatch) as `Duration.h()`. `Bytes.*` below is read the same way. Before that, the bare spelling was a field read that evaluated to nothing at all — and a duration of nothing is a duration of zero, which nothing reported.
 
@@ -390,13 +408,15 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `input` | text input | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | multi-line input | `bind`, `rows`, `placeholder` |
 | `check` | checkbox | `value`, `onClick`, `onChange`, `label` |
-| `radio` | radio button | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | radio button | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | slider | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
 
 `button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
+
+`check` `label` and `radio` `label` are the text beside the box: a `<span>` after the `<input>`, inside the `<label>` that wraps both, on the client and in server rendering alike, and nothing when the label is empty. `radio` `group` is the `name` attribute of its `<input>`, which is what makes the radios sharing it one set ([Forms §5.5.2](./forms.md#_5-5-2-radio)). `slider` `value` is the one-way value of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements): the slider shows it and follows it when a reducer changes it, and a `bind` beside it is read instead ([W0216](./errors.md#w0216-selection-beside-bind-warning)). Both `group` and `value` may be written as an argument or in the props block.
 
 ### 2.3.5 Forms
 
@@ -406,6 +426,8 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `label` | label | `for` |
 | `fieldset` | field set | `legend` |
 | `error` | validation error display | `field` |
+
+`fieldset` `legend` is the caption of the group: a `<legend>` ahead of its children, on the client and in server rendering alike, and none when the legend is empty.
 
 ### 2.3.6 Lists / Tables
 
@@ -493,6 +515,8 @@ The id is a uuid `Text`, so `TypeName` is a type a `Text` goes into: `Text` itse
 ```
 now                        : Time          ; the current time
 ```
+
+`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and a replay answers it from that entry ([§10.5.3](./runtime.md#_10-5-3-replay)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so on a type declared over `Time` (`type Stamp = nominal Time`) `Stamp.now()` is an [E0116](./errors.md#e0116-undef-call). A bare `Stamp.now` is still a field read that passes `check` and evaluates to nothing, a known gap that E0116 describes.
 
 ### 2.4.3 Type Conversion
 
