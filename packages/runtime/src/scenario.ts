@@ -396,12 +396,13 @@ function snapshotState(app: AppShape): Record<string, unknown> {
 function sanitize(v: unknown): unknown {
   if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
   if (Array.isArray(v)) return v.map(sanitize);
-  const out: Record<string, unknown> = {};
-  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof val === "function") continue;
-    out[k] = sanitize(val);
-  }
-  return out;
+  // Object.fromEntries defines each key as an own entry, so a Map's "__proto__" key stays an entry
+  // rather than going to the inherited __proto__ setter.
+  return Object.fromEntries(
+    Object.entries(v as Record<string, unknown>)
+      .filter(([, val]) => typeof val !== "function")
+      .map(([k, val]) => [k, sanitize(val)]),
+  );
 }
 
 function errStr(e: unknown): string {

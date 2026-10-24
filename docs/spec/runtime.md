@@ -183,7 +183,8 @@ reducer clear on=ui.click(Btn) do= name := ""    # rejected — not allowed
 ### 10.3.4 Invariants of DOM Rendering
 
 - **null/undefined child nodes are skipped**. A false branch like `when(false, X)` passes `null` as a child, but `renderTile` ignores it and renders only the siblings
-- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll` / `fieldset`** are all `<div>`-based containers. `stack` is equivalent to `column` (vertical stack)
+- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll`** are all `<div>`-based containers. `stack` is equivalent to `column` (vertical stack)
+- **`fieldset`** is a `<fieldset>`, with the border, padding, margin and min-width a browser gives one reset to `0` so it lays out as the `<div>` containers do; a prop that sets one of them still wins. A `fieldset` with a non-empty `legend` puts it ahead of its children as a `<legend>`, which names the group for assistive technology
 - **`grid`** is `display: grid` + a `cols` prop yielding `grid-template-columns: repeat(N, 1fr)` (numeric) or a direct CSS value (string)
 - **`divider`** is a standalone `<hr>` element (no children)
 - **timer reducer** fires via `setInterval`, and stops via `clearInterval` on the app's `dispose`
@@ -243,7 +244,7 @@ leaves.
 It maintains the focus and cursor position of an input/textarea being edited even after re-rendering:
 - Elements with `bind=`: re-identified by the `data-kumiki-bind` attribute (a nested path is a full path string)
 - Elements with `id=`: re-identified by id
-- Neither (e.g. a search box with only `value=`): re-identified positionally by a **DOM child-index path**
+- Neither (e.g. a search box with only `value=`): the focused element itself while the pass kept it in the view, and only an element the pass rebuilt is re-identified positionally by a **DOM child-index path**. So an element that is not a tile coming or going in front of the control, such as a `fieldset`'s `<legend>`, does not hand focus to a sibling
 - `<select>` is included in the snapshot set so the reorder / bailout paths can restore focus on the picker (its native open-dropdown state is unrecoverable here — that guarantee comes from the patch path in [§10.3.11](#_10-3-11-identity-preserving-reconciliation-190))
 
 ### 10.3.10 Stable tile identity
@@ -929,7 +930,7 @@ kumiki replay <input.kumiki> --from-log <log> --until-step 5  # stop after the 5
 
 - HTML generation renders the tile of the initial route once on the **server-side** via `renderToString(app, options)` from `@kumikijs/runtime`.
   - The initial route is where the requested path **lands**: a static redirect ([Routing §3.10](./routing.md#_3-10-redirects-static)), top-level or inside the matched parent's `sub-routes`, is resolved first, through the same lookup `mount` uses, and the target is rendered. `route` reads the target while the tiles render, and the snapshot's `route` and the bootstrap episode's `trigger.target` ([§10.5.1.1](#_10-5-1-1-bootstrap-episode-ssr-hydration)) name it.
-  - The requested path may carry a query and a hash (a request's URL passed through as is). It is split the way the client's router reads a location, and its pathname is matched **as written**: `//foo` and `/a/../b` are not normalized, because a browser's `location.pathname` keeps them, and the server has to land where the client would.
+  - The requested path may carry a query and a hash (a request's URL passed through as is). It is held the way a browser's `location` holds that URL, so the server lands where the client would: `/a/../b` is `/b`, a space or a non-ASCII character is percent-encoded (`/ja/概要` is `/ja/%E6%A6%82%E8%A6%81`), and `//foo` stays a path of its own. It is then split the way the client's router reads a location. A redirect's target resolves against the requested path, as the client's does ([Routing §3.10](./routing.md#_3-10-redirects-static)).
 - The slot initial values may include the results of the effects emitted in `app.init` (not re-executed at hydration).
 - **The served HTML carries the same inline style the client would paint**: a tile's element, its kind's own layout (a `column`'s flex axis, a `card`'s box metrics, a `grid`'s tracks), and the declarations its props map to (`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`, and a text tile's `color` / `size` / `weight` / `strike`). Without them the first paint lays every container out as a block and the page reflows the moment hydration finishes, which is the shift SSR exists to remove.
   - A **responsive** value (`{base, sm, md, …}`) collapses to its `base`: a breakpoint is a question about the viewport and the server has none.
@@ -1164,7 +1165,7 @@ For the built-ins enumerated in [Standard Library](./stdlib.md), the runtime imp
 | Feature | Guarantee |
 |---|---|
 | `Map`, `Set`, `List` | pure (no in-place mutation) |
-| `Option`, `Result` | exhaustiveness check for pattern matching |
+| `Option`, `Result` | exhaustiveness check for a value `match` ([E0227](./errors.md#e0227-non-exhaustive-match)); a value no arm matches panics |
 | `now`, `random()` | callable wherever an expression is. A read **inside a reducer body** has the value it returned recorded on that episode's step as `env-reads` ([§10.5.1](#_10-5-1-structure-of-an-episode)), so a replay reproduces it rather than drawing a new value; a read anywhere else (a tile expression, a render) is not recorded, and nothing replays those |
 | `*.fresh()` | generates UUIDv7; recorded as an `env-reads` entry like `now` / `random()` under the same reducer-body scope, so a replayed episode stamps the ids the run actually stamped |
 | `panic(message)` | puts the episode into the `panic` state and rolls back slots |
