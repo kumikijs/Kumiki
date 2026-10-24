@@ -640,7 +640,7 @@ The value's type is read through an alias, a `nominal` and a `let`, so a `type H
 A value that holds a handle without being one is not read through: an `Option(EffectId)` renders its tag, `Some` or `None`, and a record does not render its fields. But these show the representation and are not reported — known gaps, not rules:
 
 - a `List` or a tuple with handles in it, rendered whole or joined with `.join(…)`: `text(hs)`, `text((h, 1))`, `text(m.entries)` on a `Map(Text, EffectId)`;
-- a handle given to another named argument or prop that renders text: `tooltip(…, text=h)`, `details(…, summary=h)`, a `title=` on `modal` / `drawer` / `popover`, `input(value=h)`, `textarea(bind=h)`, `link(…, to=h)`, `input(placeholder=h)`, `image(…, alt=h)`, `{aria-label: h}`;
+- a handle given to another named argument or prop that renders text, such as `tooltip(…, text=h)`, `details(…, summary=h)`, a `title=` on `modal` / `drawer` / `popover`, `toast(…, text=h)`, `input(value=h)`, `textarea(value=h)`, `textarea(bind=h)`, `link(…, to=h)`, `input(placeholder=h)`, `image(…, alt=h)`, `{aria-label: h}` and `{title: h}`;
 - `panic(h)`.
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`

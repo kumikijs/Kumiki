@@ -618,7 +618,7 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 ハンドルを保持するだけでハンドルそのものではない値は、中まで読まれない：`Option(EffectId)` はタグ（`Some` か `None`）を描画し、record はフィールドを描画しない。ただし次のものは表現をそのまま表示し、報告もされない。これは規則ではなく既知のギャップである：
 
 - ハンドルを含む `List` やタプルを、そのまま描画したり `.join(…)` で連結したりしたもの：`text(hs)`、`text((h, 1))`、`Map(Text, EffectId)` に対する `text(m.entries)`。
-- テキストを描画する、上記以外の名前付き引数や prop に渡したハンドル：`tooltip(…, text=h)`、`details(…, summary=h)`、`modal` / `drawer` / `popover` の `title=`、`input(value=h)`、`textarea(bind=h)`、`link(…, to=h)`、`input(placeholder=h)`、`image(…, alt=h)`、`{aria-label: h}`。
+- テキストを描画する、上記以外の名前付き引数や prop に渡したハンドル。例えば `tooltip(…, text=h)`、`details(…, summary=h)`、`modal` / `drawer` / `popover` の `title=`、`toast(…, text=h)`、`input(value=h)`、`textarea(value=h)`、`textarea(bind=h)`、`link(…, to=h)`、`input(placeholder=h)`、`image(…, alt=h)`、`{aria-label: h}`、`{title: h}`。
 - `panic(h)`。
 
 `run-reducer` は候補に含まれない。生成された property-test の trial 内でしか lowering されず、property-test の invariant は本検査ではなく専用の走査で解決されるためである。`fn run-reducer` を宣言していないプログラム（[言語 §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)）では、それ以外の場所に書けば E0116 になる。テスト本体の中では専用の文面を持つ——誤っているのは名前ではなく位置だからである：
