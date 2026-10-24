@@ -62,6 +62,20 @@ let id = emit fetchQuote()
 
 ## 2.2 コレクションメソッド
 
+**引数はそのパラメータの型を持つ**。§2.2.1〜§2.2.3 のシグネチャでは、`K` と `V` は `Map(K, V)` のキーと値の型、`T` は `Set(T)` や `List(T)` の要素型である。これらの型のパラメータはその型の値を取り、`merge` / `union` / `intersect` / `diff` / `concat` の `other` はレシーバと同じ型の別のコンテナである：
+
+| レシーバ | パラメータ | メンバー |
+|---|---|---|
+| `Map(K, V)` | キー `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
+| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式（名前で渡した `fn` は宣言された戻り値型を返す） |
+| | `other`（`Map(K, V)`） | `merge` |
+| `Set(T)` | 要素 `T` | `has` / `add` / `remove` / `toggle` |
+| | `other`（`Set(T)`） | `union` / `intersect` / `diff` |
+| `List(T)` | 要素 `T` | `push` / `prepend` / `contains` |
+| | `other`（`List(T)`） | `concat` |
+
+引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：`update` 以外のフラグメント、`List.get` の添字、`slice` / `chunk` の数値、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所では、どの引数もパラメータの型と照合されない（各引数の式そのものは検査される）。そうした場所は `fold` のアキュムレータ `$1`、`->` のない `fn` の結果、そして型検査器が結果の型を推論しないメンバーの結果 — `List.map` / `fold` / `zip`、`Map.map`、`Option.map` / `Result.map` — である。したがって `List(Int)` に対する `xs.map($1 * 2).push("w")` は `check` を通る。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。
+
 ### 2.2.1 Map(K, V)
 
 ```
@@ -121,7 +135,7 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置ならどこでもリストリテラルで書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。「宣言された位置」とはチェッカーが型に照らして読む位置すべてを指す——たとえば slot、レコードのフィールド、`fn` の引数や戻り値、reducer の書き込み、`let … in` の本体、`List(Set(T))` の要素や `Map(K, Set(T))` の値、そうしたコンテナに対する `List.contains` / `push` / `prepend` の引数や `Map.insert` / `update` の値、テストの slot の値・期待する effect の引数・モックの結果。`union` / `intersect` / `diff` の引数はレシーバと同じ型の `Set(T)` なので、そこに `List`、要素型の違う `Set`、`Option(Set(T))` を渡すと [E0201](./errors.md#e0201-type-mismatch)。
+**Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置ならどこでもリストリテラルで書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。「宣言された位置」とはチェッカーが型に照らして読む位置すべてを指す——たとえば slot、レコードのフィールド、`fn` の引数や戻り値、reducer の書き込み、`let … in` の本体、`List(Set(T))` の要素や `Map(K, Set(T))` の値、パラメータが `Set` 型である引数（[§2.2](#_2-2-コレクションメソッド)。`List(Set(T))` に対する `List.push` / `contains` の要素、Set を持つ `Map` に対する `Map.insert` のキーや値）、テストの slot の値・期待する effect の引数・モックの結果。`union` / `intersect` / `diff` の引数はレシーバと同じ型の `Set(T)` なので、そこに `List`、要素型の違う `Set`、`Option(Set(T))` を渡すと [E0201](./errors.md#e0201-type-mismatch)。
 
 チェッカーがレシーバの型を決められない位置では、どちらの規則も適用されない：`fold` のアキュムレータ `$1`——`nums.fold({}, $1.union([2]))`——には型がないので、引数は検査されず Set としても組み立てられず、配列のままである。`List(Set(T))` に対するフラグメントはそうした位置ではない：そこでの `$1` は `Set(T)` 型の要素であり（[§2.2.3](#_2-2-3-list-t)）、`groups.map($1.union([2]).to-list)` は引数を Set として組み立て、キーを `T` として読み戻す。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。要素は `add` と同じ方法でキー化されるので、レコードやバリアントのリテラルは同じ要素の `add` 連鎖とちょうど同じものを保持する。それらのキー化は以下の段落のとおりである。
 
@@ -130,6 +144,8 @@ to-list                     : List(T)
 **値ごとに一つのキー**。エントリを書き込み・探し・取り除くすべてのメンバー — `add` / `remove` / `toggle` / `has`、`get` / `get-or` / `insert` / `remove` / `update`、インデックス読み取り `m[k]`、インデックス書き込み `m[k] := v` — はキーを同じ方法で保存し検索する。したがって二つのキーが一つのエントリになるのは、それらが `==` で等しいときに限る（[language §1.9.4](./language.md#_1-9-4-演算子の型)）。`picked.add(Red).has(Blue)` は `false` であり、`votes[Red] := 1` と `votes.insert(Green, 1)` は二つのエントリを書き、`Map(Int, V)` に対する `m.remove(1)` は `1` のエントリを取り除く。
 
 何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` / `Map.map` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
+
+**`Object.prototype` のメンバーと同じ綴りのキーも普通のキーである**。そうしたキー — `constructor` / `toString` / `valueOf` / `hasOwnProperty` / `__proto__` など — も、ほかのキーと同じく書き込まれてはじめて保持される：空の `Map(Text, Int)` では `has("constructor")` は `false`、`get("constructor")` は `None`、`get-or("constructor", 0)` は `0` であり、空の `Set(Text)` への `toggle("toString")` はそれを加える。書き込まれたそのエントリはどのメンバーからも読み戻せ、別のキーの `remove`、`intersect`、`diff`、`filter`、`map` はほかのエントリと同じくそれを残す。
 
 ### 2.2.3 List(T)
 
@@ -259,14 +275,16 @@ Kumiki の算術はこれで全部である。`math` 名前空間は存在しな
 ### 2.2.8 Time
 
 ```
-Time.now                    : Time
+Time.now                    : Time            ; 現在時刻 — 組み込みの now（§2.4.2）
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
-diff(other)                 : Duration
+diff(other)                 : Duration        ; レシーバから other を引いた値
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 to-ms                       : Int             ; Unix エポックからのミリ秒
 ```
+
+`a.diff(b)` は `a` から `b` を引いたもの、すなわち `b` から `a` までの時間なので、どちらが先でも `b.plus(a.diff(b))` は `a` である。`a` の方が後の時刻なら正、前の時刻なら負、同じ時刻なら 0 になる。`due.diff(now)` は `due` を過ぎると負になり、`now.diff(start)` は `start` からの経過時間である（[§2.2.9](#_2-2-9-duration)）。どちらが後かを問わない 2 つの時刻の隔たりは `a.diff(b).to-ms.abs` である。
 
 `format` は以下のトークンをその時刻のフィールドに置き換え、パターンの残りはそのまま出力する。したがって `"dd/MM/yyyy"` も `"[on] dd"` もパターンである。
 
@@ -313,7 +331,7 @@ Duration.d(n)               : Duration   ; days と書いても可
 to-ms                       : Int
 ```
 
-Time / Duration はランタイム上では **raw ミリ秒数**として表現される。`time.plus(Duration.h(72))` のような演算は単なる ms 加算に展開される。
+Time / Duration はランタイム上では **raw ミリ秒数**として表現される。`time.plus(Duration.h(72))` のような演算は単なる ms 加算に展開される。`Duration` は符号を持ち、`a` の方が前の時刻なら `a.diff(b)` は負になる（[§2.2.8](#_2-2-8-time)）。
 
 構築子はいずれも大きさを引数に取り、括弧を落としても値にはならない。`Duration.h` は引数のない呼び出しとして読まれ、`Duration.h()` と同じ [E0213](./errors.md#e0213-call-arity-mismatch) になる。下の `Bytes.*` も同じ読み方をする。それ以前は括弧なしの表記はフィールド読みで、何も持たない値に評価されていた——そして何も無い duration は 0 の duration であり、それを報告するものは何もなかった。
 
@@ -390,12 +408,14 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `input` | テキスト入力 | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | 複数行入力 | `bind`, `rows`, `placeholder` |
 | `check` | チェックボックス | `value`, `onClick`, `onChange`, `label` |
-| `radio` | ラジオボタン | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | ラジオボタン | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | セレクト | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | スライダー | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | スライダー | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | トグル | `value`, `onClick`, `onChange` |
 
 `button` の `loading` はボタンを無効化し、`aria-busy` を付け、ラベルの手前にスピナーを置く（[フォーム §5.8](./forms.md#_5-8-ui-during-submission)）。`disabled` は単独で無効化する。`variant` は `data-kumiki-variant` 属性になる——`class` やテーマのスタイルシートが選択するためのフックである。Kumiki はどの variant 名にも見た目を同梱しない：「ghost」ボタンがどう見えるべきかはデザインの決定であり、ここで発明すればそれは言語機能になってしまう。
+
+`check` の `label` と `radio` の `label` はボックスの横に出るテキストで、両者を包む `<label>` の中、`<input>` の後ろの `<span>` になる。クライアントでもサーバーレンダリングでも同じで、ラベルが空なら何も出さない。`radio` の `group` はその `<input>` の `name` 属性であり、それを共有するラジオが 1 つの組になるのはこのためである（[フォーム §5.5.2](./forms.md#_5-5-2-radio)）。`slider` の `value` は[フォーム §5.3](./forms.md#_5-3-入力要素の共通-props) の一方向の値である：スライダーはそれを表示し、reducer が変えればそれに追従する。`bind` が併記されていればそちらが読まれる（[W0216](./errors.md#w0216-selection-beside-bind-warning)）。`group` も `value` も、引数としても props ブロックにも書ける。
 
 ### 2.3.5 フォーム
 
@@ -405,6 +425,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `label` | ラベル | `for` |
 | `fieldset` | フィールド集合 | `legend` |
 | `error` | バリデーションエラー表示 | `field` |
+
+`fieldset` の `legend` はグループの見出しで、子の前に置かれる `<legend>` になる。クライアントでもサーバーレンダリングでも同じで、legend が空なら何も出さない。
 
 ### 2.3.6 リスト・表
 
@@ -492,6 +514,8 @@ id は uuid の `Text` なので、`TypeName` は `Text` が入る型である�
 ```
 now                        : Time          ; 現在時刻
 ```
+
+`Time.now`（[§2.2.8](#_2-2-8-time)）はこの組み込みを型の名前で書いたものであり、`Time.now()` は括弧を書いた同じ呼び出しである。どちらも同じ `Time` で、評価された場所で時計から読まれ、環境読み取りとしても同じである——それを読む reducer は `now` の記録を残し（[ランタイム §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）、リプレイはその記録から答える（[§10.5.3](./runtime.md#_10-5-3-replay)）。`now` 自体はキーワードであり、括弧を取らない。qualifier は `Time` そのものである：`now` はあらゆる型名が持つメンバ（[§2.4.1](#_2-4-1-id-生成)・[§2.4.3](#_2-4-3-型変換)）ではないため、`Time` の上に宣言された型（`type Stamp = nominal Time`）では `Stamp.now()` は [E0116](./errors.md#e0116-undef-call) になる。括弧なしの `Stamp.now` はフィールド読みのまま `check` を通り何も持たない値に評価される。これは E0116 が述べる既知のギャップである。
 
 ### 2.4.3 型変換
 
