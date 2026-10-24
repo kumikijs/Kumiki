@@ -70,12 +70,6 @@ slot c : Cents = 5`,
     ).toEqual([]);
   });
 
-  it("timeout refuses a Text under a program's own type Duration = Text", () => {
-    expect(diagnostics(app(`type Duration = Text`, `timeout: "soon"`))).toEqual([
-      "E0201 7:24 Expected Int but got Text",
-    ]);
-  });
-
   it("timeout refuses a Float: 5.5 is not an Int, by choice", () => {
     expect(diagnostics(app("", `timeout: 5.5`))).toEqual(["E0201 7:24 Expected Int but got Float"]);
   });

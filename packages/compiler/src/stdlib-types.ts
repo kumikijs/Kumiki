@@ -83,6 +83,23 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   }),
 ];
 
+// The runtime or the standard library builds or reads values of these, so a
+// program's own definition would be what the checker reasoned about while the
+// runtime kept to the entry above. The other entries name types only a program
+// builds values of, and a program may declare its own.
+export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+  "PanicInfo",
+  "Route",
+  "HttpError",
+  "HttpStatus",
+  "Duration",
+  "FormValue",
+]);
+
+export function isReservedTypeName(name: string): boolean {
+  return RESERVED_TYPE_NAMES.has(name);
+}
+
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
 // delivers cannot hold them; they are not a field. `File` stays a `TypePrim` with this
 // side table, not a record in `STDLIB_TYPES` like `Route`: a record type would accept any
