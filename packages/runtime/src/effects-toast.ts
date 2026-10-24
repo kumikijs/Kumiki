@@ -1,4 +1,4 @@
-import { type BuiltinInstaller, overridableInvoke } from "./core.ts";
+import { type BuiltinEffects, type BuiltinInstaller, overridableInvoke } from "./core.ts";
 
 const DEFAULT_MS: Record<string, number> = {
   info: 3000,
@@ -16,7 +16,8 @@ function durationMs(raw: unknown, kind: string | undefined): number {
 }
 
 export const installToast: BuiltinInstaller = (app) => {
-  app.effects.toast = {
+  const effects: BuiltinEffects = app.effects;
+  effects.toast = {
     name: "toast",
     cap: "notification.show",
     invoke: overridableInvoke("notification.show", async (input) => {

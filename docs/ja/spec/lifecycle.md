@@ -282,6 +282,8 @@ reducer doDelete on=ui.click(_) do= ...     # ※ 実装上は別名 reducer を
 reducer noop     on=ui.click(_) do= ()
 ```
 
+`confirm` は[標準 effect](./stdlib.md#_2-6-標準-effect)である：`effect` の行はそのシグネチャであり、プログラムはそれを宣言せずに emit する（[E0234](./errors.md#e0234-reserved-effect-name)）。
+
 ランタイム実装ではこれは **モーダルダイアログ tile** として描画される（ネイティブ `confirm` ではない）。これにより UI スタイルが揃い、テストも容易になる。
 
 ダイアログは常にランタイム自身のものである。`notification.show` に登録したホスト provider はトースト（[§7.7](#_7-7-トースト)）を置き換えるが、`confirm` を受け取ることはない。答えは `onYes` または `onNo` を dispatch することで届けられ、provider の `EffectResult` にはそれができないからである（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。`route.leave` ガードから emit されたダイアログは、答えが出るか、別のナビゲーションがそれを置き換えるまで遷移を保留する（[ルーティング §3.5.2](./routing.md#_3-5-2-leave-ガード)）。
@@ -299,6 +301,8 @@ reducer notifySave
     on=persist.ok(_, _)
     do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.s(3))})
 ```
+
+`toast` も標準 effect である：`effect` の行はそのシグネチャであり、プログラムはそれを宣言せずに emit する。
 
 `kind` は `info` / `success` / `warn` / `error` のいずれかで、DOM には `data-level` として載る — ランタイムは見た目を与えない。`duration` 未指定なら kind 別のデフォルト（info 3s, success 3s, warn 5s, error 0 = 閉じるまで残る）。`Some(Duration.ms(0))` は同じことを明示的に頼む書き方。
 
