@@ -29,8 +29,8 @@ function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles 
   return outer.includes(name) ? outer : [...outer, name];
 }
 
-// The marker the runtime diffs `tile.mount` / `tile.unmount` against; one rule for every position a
-// user tile renders in, so a fallback mounts like a call site or a route target.
+// A node carries one `_tile`; an outer `_named` overwrites an inner one, so of nested whole-body
+// tiles only the outermost fires `tile.mount` / `tile.unmount`.
 function namedJs(tree: string, tile: TileDef): string {
   return `_named(${tree}, ${JSON.stringify(tile.name)})`;
 }

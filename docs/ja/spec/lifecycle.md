@@ -110,7 +110,9 @@ reducer trackPageView
 
 複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
 
-`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、境界がどこに宣言されていても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が、fallback が消えたとき —— tile が panic せずに描画し直されたとき、あるいはその tile 自体が消えたとき —— に `tile.unmount(<fallback>)` が発火する。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。panic した tile は描画されたものではないので、fallback がその代わりに表示されている間はその tile 自身の `tile.mount` は発火せず、マウント済みの tile が panic し始めるとその `tile.unmount` が発火する。
+どちらのイベントもインスタンスごとではなく tile 名ごとに数える。`tile.mount(X)` は画面上に `X` がひとつもないときに `X` が現れると発火し、`tile.unmount(X)` は画面上の最後の `X` が消えたときに発火する。すでにある `X` の横に別の `X` が現れても、2 つのうち 1 つが消えても、何も発火しない。
+
+`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、それを宣言した tile がどこに描画されても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が発火し、fallback が消えたとき、つまり宣言した tile が panic せずに描画し直されたとき、あるいは宣言した tile 自体が消えたときに `tile.unmount(<fallback>)` が発火する。上の名前ごとの規則により、2 つの境界が同時に表示している fallback は、どちらの境界も表示しなくなったときに初めて消える。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。fallback は宣言した tile の本体の代わりに描画されるので、fallback が表示されている間は、宣言した tile もその下のどの tile も `tile.mount` を発火しない。マウント済みの宣言した tile が panic し始めると、その tile と下の tile の `tile.unmount` が発火する。
 
 ---
 
