@@ -15,6 +15,12 @@ app Types
 const diagnostics = (src: string) =>
   checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
+const notPositive = (literal: string): string =>
+  `timeout ${literal} is not a positive number of milliseconds; every request is aborted before it can answer`;
+
+const BOGUS_MODE =
+  'credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request';
+
 describe("app.http value fields are checked against their types", () => {
   it("reports each field at its own position, in the order they are written", () => {
     expect(
@@ -56,6 +62,7 @@ slot label : Text = "5s"`,
       "E0201 7:24 Expected Int but got Text",
     ]);
     expect(diagnostics(app("", `timeout: 5000`))).toEqual([]);
+    expect(diagnostics(app("", `timeout: Duration.s(5)`))).toEqual([]);
   });
 
   it("timeout takes a user nominal Int, since the boundary is assignable to Int", () => {
@@ -80,9 +87,16 @@ slot c : Cents = 5`,
     expect(diagnostics(app("", `timeout: 5.5`))).toEqual(["E0201 7:24 Expected Int but got Float"]);
   });
 
-  it("timeout does not check the value domain yet: 0 and a negative Int are accepted", () => {
-    expect(diagnostics(app("", `timeout: 0`))).toEqual([]);
-    expect(diagnostics(app("", `timeout: -1`))).toEqual([]);
+  it("timeout refuses a literal that is not positive: 0 and a negative Int", () => {
+    expect(diagnostics(app("", `timeout: 0`))).toEqual([`E0201 7:24 ${notPositive("0")}`]);
+    expect(diagnostics(app("", `timeout: -1`))).toEqual([`E0201 7:24 ${notPositive("-1")}`]);
+    expect(diagnostics(app("", `timeout: 1`))).toEqual([]);
+  });
+
+  it("timeout holds a literal to Int before holding it to positive: -5.5 is one report", () => {
+    expect(diagnostics(app("", `timeout: -5.5`))).toEqual([
+      "E0201 7:24 Expected Int but got Float",
+    ]);
   });
 
   it("timeout reports a wrong branch of an if, and a bare union tag, at the value", () => {
@@ -238,5 +252,37 @@ slot tokens : Map(Text, Token) = {}`;
     );
     expect(diagnostics(app(pre, `headers: urls`))).toEqual([]);
     expect(diagnostics(app(pre, `headers: tokens`))).toEqual([]);
+  });
+});
+
+describe("the literals that reach timeout and credentials", () => {
+  const pre = `slot fast : Bool = true
+type Speed = Quick | Slow
+slot speed : Speed = Quick`;
+  const shapes = [
+    `X`,
+    `if fast then Y else X`,
+    `if fast then X else Y`,
+    `if fast then (if fast then Y else X) else Y`,
+    `match speed with | Quick -> Y | Slow -> X`,
+    `let n = 1 in X`,
+  ];
+  const fields = [
+    { field: "timeout", bad: "0", good: "5000", message: notPositive("0") },
+    { field: "credentials", bad: `"bogus"`, good: `"omit"`, message: BOGUS_MODE },
+  ];
+  const cases = shapes.flatMap((shape) => fields.map((f) => ({ shape, ...f })));
+
+  it.each(cases)("$field reports the bad literal in `$shape` where it is written", ({
+    shape,
+    field,
+    bad,
+    good,
+    message,
+  }) => {
+    const before = shape.slice(0, shape.indexOf("X")).replaceAll("Y", good);
+    const value = shape.replaceAll("Y", good).replace("X", bad);
+    const col = `    http   = {${field}: ${before}`.length + 1;
+    expect(diagnostics(app(pre, `${field}: ${value}`))).toEqual([`E0201 9:${col} ${message}`]);
   });
 });
