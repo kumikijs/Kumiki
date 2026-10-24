@@ -933,13 +933,25 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 ### W0216 `selection-beside-bind` (warning)
 
-bind していないトグルが選択状態を読む引数 — `check` / `switch` の `value=`、`radio` の `selected=` — が `bind=` の隣に書かれている。
+bind していないコントロールが選択状態を読む引数 — `check` / `switch` / `slider` の `value=`、`radio` の `selected=` — が `bind=` の隣に書かれている。`slider` では props ブロックの `value` も数える。
 
 > `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md)`
+>
+> `"value" on slider() is not read beside bind= — the bound value is what it shows. Remove it (see docs/spec/forms.md)`
 
-`bind=` があれば、ボックスにチェックが入るか、radio が選ばれるかは bind した値だけが決める（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。もう一方の引数は同じ問いへの 2 つめの答えであり、読まれない。[W0214](#w0214-fmt-placeholder-argument-mismatch-warning) が報告する引数と同じく、それは何の痕跡も残さない — 引数が何を言っても、コントロールは bind の言うとおりに表示される — ので、最初から渡していないプログラムとどの層も区別できない。radio 自身の `value=` はこの引数ではない：選ばれたときに書き込む値であり、読まれる。
+`bind=` があれば、ボックスにチェックが入るか、radio が選ばれるかは bind した値だけが決める（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。もう一方の引数は同じ問いへの 2 つめの答えであり、読まれない。[W0214](#w0214-fmt-placeholder-argument-mismatch-warning) が報告する引数と同じく、それは何の痕跡も残さない — 引数が何を言っても、コントロールは bind の言うとおりに表示される — ので、最初から渡していないプログラムとどの層も区別できない。radio 自身の `value=` はこの引数ではない：選ばれたときに書き込む値であり、読まれる。slider の `value=` はこの引数である：bind していない slider が表示する一方向の値であり（[フォーム §5.3](./forms.md#_5-3-入力要素の共通-props)）、bind した slider は代わりに bind した値を表示する。
 
-**修正**：その引数を取り除く。書き戻す slot ではなく式からボックスのチェックを決めたいなら、代わりに `bind=` を外し、`value=` と `onClick` / `onChange` の reducer を使う。
+**修正**：その引数を取り除く。書き戻す slot ではなく式からボックスのチェックやつまみの位置を決めたいなら、代わりに `bind=` を外し、`value=` と `onClick` / `onChange` の reducer を使う。
+
+### W0217 `name-beside-group` (warning)
+
+`radio` が `group` と `name` の両方を、引数または props ブロックに書いている。
+
+> `"name" on radio() is not read beside group= — group= names the set the radio is in. Remove one (see docs/spec/forms.md)`
+
+`name` は radio の `group` の別の書き方である。グループはその `<input>` の `name` 属性だからである（[フォーム §5.5.2](./forms.md#_5-5-2-radio)）。両方あれば読まれるのは `group` なので、`name` はラジオがどの組に入るかという問いへの 2 つめの答えであり、[W0216](#w0216-selection-beside-bind-warning) が報告する引数と同じく何の痕跡も残さない。
+
+**修正**：どちらかを取り除く。この仕様が使う書き方は `group` である。
 
 ## E03xx — ケイパビリティと純粋性
 

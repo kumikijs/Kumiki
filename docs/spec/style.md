@@ -199,7 +199,7 @@ overlay(Content, when(modalOpen, Modal())) {align: "center"}
 | `panel` | A grouping box. Has a visual boundary (border) or heading |
 | `region` | A named a11y region. A landmark for screen readers |
 | `scroll` | A container with overflow auto. Specify `h` for fixed-height scrolling |
-| `fieldset` | A field group within a form. Equivalent to `<fieldset>` |
+| `fieldset` | A field group within a form. Renders a `<fieldset>` with the browser's border, padding, margin and min-width reset ([Runtime §10.3.4](./runtime.md#_10-3-4-invariants-of-dom-rendering)) |
 
 ```kumiki snippet
 panel(heading("Settings"), settingsForm) {bg: "surface", pad: "md"}

@@ -955,13 +955,25 @@ Only a literal template is checked. `fmt(tpl, x)` over a slot or a field has no 
 
 ### W0216 `selection-beside-bind` (warning)
 
-The argument a toggle reads for its selection when it is unbound — `value=` on a `check` or `switch`, `selected=` on a `radio` — is written beside a `bind=`.
+The argument a control reads for its selection when it is unbound — `value=` on a `check`, `switch` or `slider`, `selected=` on a `radio` — is written beside a `bind=`. On a `slider`, a `value` in the props block counts too.
 
 > `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md)`
+>
+> `"value" on slider() is not read beside bind= — the bound value is what it shows. Remove it (see docs/spec/forms.md)`
 
-With a `bind=`, the bound value alone decides whether a box is ticked or a radio chosen ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), so the other argument is a second answer to the same question and is not read. Like the argument [W0214](#w0214-fmt-placeholder-argument-mismatch-warning) reports, it leaves nothing behind — the control shows what the bind says, whatever the argument said — so no tier can tell it from a program that never passed it. A radio's own `value=` is not this argument: it is what the radio writes when chosen, and is read.
+With a `bind=`, the bound value alone decides whether a box is ticked or a radio chosen ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), so the other argument is a second answer to the same question and is not read. Like the argument [W0214](#w0214-fmt-placeholder-argument-mismatch-warning) reports, it leaves nothing behind — the control shows what the bind says, whatever the argument said — so no tier can tell it from a program that never passed it. A radio's own `value=` is not this argument: it is what the radio writes when chosen, and is read. A slider's `value=` is: it is the one-way value an unbound slider shows ([Forms §5.3](./forms.md#_5-3-common-props-for-input-elements)), and a bound slider shows the bound value instead.
 
-**Fix**: Remove the argument. To tick the box from an expression rather than from a slot it writes, drop the `bind=` instead and keep `value=` with an `onClick` / `onChange` reducer.
+**Fix**: Remove the argument. To tick the box or place the thumb from an expression rather than from a slot it writes, drop the `bind=` instead and keep `value=` with an `onClick` / `onChange` reducer.
+
+### W0217 `name-beside-group` (warning)
+
+A `radio` writes both `group` and `name`, as arguments or in its props block.
+
+> `"name" on radio() is not read beside group= — group= names the set the radio is in. Remove one (see docs/spec/forms.md)`
+
+`name` spells a radio's `group`, because the group is the `name` attribute of its `<input>` ([Forms §5.5.2](./forms.md#_5-5-2-radio)). With both, `group` is the one read, so `name` is a second answer to which set the radio is in, and like the argument [W0216](#w0216-selection-beside-bind-warning) reports, it leaves nothing behind.
+
+**Fix**: Remove one of them. `group` is the spelling this spec uses.
 
 ## E03xx — Capabilities and Purity
 
