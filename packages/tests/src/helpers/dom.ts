@@ -54,6 +54,13 @@ export function textAt(app: AppShape, path: string): string {
   return text;
 }
 
+/** The text `html` renders, as `textContent` reads it. */
+export function textOf(html: string): string {
+  const el = document.createElement("div");
+  el.innerHTML = html;
+  return el.textContent ?? "";
+}
+
 /** The text of each element under `root` that has no child elements, in document order. */
 export function texts(root: ParentNode): string[] {
   return Array.from(root.querySelectorAll("*"))
