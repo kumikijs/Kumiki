@@ -126,6 +126,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 - インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
 - 読み取り `m[k]` が `Map` の持たないキーを指した
 - `Result.get` で Err
+- 値として使う `match` に、scrutinee の値に一致する arm がなかった（[言語 §1.9](./language.md#_1-9-式言語)）
 - `panic(msg)` の明示呼び出し
 
 これらは **panic** と呼ばれる例外。panic は episode log に記録され、現在の reducer は中断される。`slot` の変更は **トランザクション的にロールバック**される。
@@ -282,6 +283,8 @@ reducer noop     on=ui.click(_) do= ()
 ```
 
 ランタイム実装ではこれは **モーダルダイアログ tile** として描画される（ネイティブ `confirm` ではない）。これにより UI スタイルが揃い、テストも容易になる。
+
+ダイアログは常にランタイム自身のものである。`notification.show` に登録したホスト provider はトースト（[§7.7](#_7-7-トースト)）を置き換えるが、`confirm` を受け取ることはない。答えは `onYes` または `onNo` を dispatch することで届けられ、provider の `EffectResult` にはそれができないからである（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。`route.leave` ガードから emit されたダイアログは、答えが出るか、別のナビゲーションがそれを置き換えるまで遷移を保留する（[ルーティング §3.5.2](./routing.md#_3-5-2-leave-ガード)）。
 
 ---
 
