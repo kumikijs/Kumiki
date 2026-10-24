@@ -59,6 +59,7 @@ describe("kumiki build ships only the runtime modules an app uses", () => {
       "tiles-input.js",
       "tiles-input-select.js",
       "tiles-input-textarea.js",
+      "tiles-input-fieldset.js",
       "tiles-collection.js",
       "tiles-overlay.js",
       "tiles-media.js",

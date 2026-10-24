@@ -1,0 +1,24 @@
+{
+  "steps": [
+    {
+      "label": "an infinity sorts past every finite value, and the finite values sort as numbers",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "sorted: 1.5,9,10",
+          "with Infinity: 1.5,9,10,Infinity",
+          "with -Infinity: -Infinity,1.5,9,10",
+          "with NaN: 1.5,9,10,NaN"
+        ]
+      }
+    },
+    {
+      "label": "NaN sorts after every other value, Infinity included",
+      "do": { "click": "#add-edges" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["sorted: -Infinity,1.5,9,10,Infinity,NaN"]
+      }
+    }
+  ]
+}
