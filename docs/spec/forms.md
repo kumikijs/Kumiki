@@ -23,7 +23,7 @@ tile Compose = column(
 
 A `bind=` target names the place the control writes back to: a slot, or a path into one whose steps are the ones an assignment writes through ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field (`bind=form.email`), `.get` through the payload of an `Option` or a `Result` (`bind=draft.get.title`), and an index (`bind=rows[i].title`). Its root has to be a slot where the target is written. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are values, not places — a local named like a slot hides the slot, as it does for any read — and a literal or any other expression names no place at all. Each is reported by `kumiki check` ([E0229](./errors.md#e0229-bind-target-not-slot)).
 
-An index step names what it names on the left of `:=`: the element of a `List` at an `Int` position, the entry of a `Map` at a key. The control shows what the read `rows[i].title` reads and writes what `rows[i].title := v` writes, through the same setter, so the element is replaced in a new `List` of the same length and the other elements are left as they are. The key is any expression, read again on every render as a read of it is: when the slot `i` changes, the control shows and writes the element `i` then names. An index that names no element — a position past the end of the `List`, a key the `Map` does not hold — panics the render, as the read does ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). A `Set` has members and no places, so `bind=tags[x]` is [E0602](./errors.md#e0602-unassignable-member), as `tags[x] := v` is; so is a step written as a call, such as `bind=rows.get(0)`.
+An index step names what it names on the left of `:=`: the element of a `List` at an `Int` position, the entry of a `Map` at a key. The control shows what the read `rows[i].title` reads and writes what `rows[i].title := v` writes, through the same setter, so the element is replaced in a new `List` of the same length and the other elements are left as they are. The key is any expression, read again on every render as a read of it is: when the slot `i` changes, the control shows and writes the element `i` then names. An index that names no element — a position past the end of the `List`, a key the `Map` does not hold — panics the render, as the read does ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). Nothing but a `Map` and a `List` has places to index (a `Set` has members, a record has fields), so `bind=tags[x]` on a `Set` is [E0602](./errors.md#e0602-unassignable-member), as `tags[x] := v` is; so is a step written as a call, such as `bind=rows.get(0)`.
 
 So a row of a list is not bound through its loop variable but through the slot, by its key or its index. A `for` over a Map's keys binds each entry where it shows it:
 
@@ -234,7 +234,7 @@ In addition to updating a slot via `bind=`, input/textarea can also fire via the
 
 ### 5.5.2 radio
 
-radio has a `group` prop for grouping (corresponding to CSS's `name` attribute):
+radio has a `group` prop for grouping. It is the HTML `name` attribute of the radio's `<input>`, so the radios that share a `group` are one set, of which at most one is checked at a time:
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -258,6 +258,8 @@ tile FilterRadioGroup = column(
 ```
 
 This is the recommended approach.
+
+A radio written with `name` instead of `group`, as an argument or in its props block, is grouped by it the same way. With both, `group` is the one read, and `kumiki check` warns about the `name` ([W0217](./errors.md#w0217-name-beside-group-warning)).
 
 ---
 

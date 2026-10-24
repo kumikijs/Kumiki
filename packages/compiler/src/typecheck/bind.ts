@@ -1,5 +1,5 @@
 import { assignable, typeToString, unaliasType } from "../assignable.ts";
-import { type Expr, isTileExpr, type TileExpr } from "../ast.ts";
+import { type Expr, isTileExpr, type Pos, type TileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst } from "./against.ts";
@@ -29,8 +29,7 @@ export function checkBindTargetSteps(
   if (!bind || isTileExpr(bind.value)) return;
   for (const step of bindTarget(bind.value).steps) {
     if (step.kind === "Index") {
-      const base = unaliasType(inferType(step.base, sym, ctx), sym);
-      checkIndexIsPlace(base, "bind", step.pos, sym, errors);
+      checkIndexIsPlace(inferType(step.base, sym, ctx), step.index, "bind", step.pos, sym, errors);
     }
     if (step.kind !== "MethodCall") continue;
     const hint =
@@ -136,6 +135,46 @@ export function checkBindStrictProp(
       message: `"strict" is not a prop of ${t.name}: a value its refinement refuses is always refused, and error(field=…) shows why (see docs/spec/forms.md)`,
       pos,
     });
+  }
+}
+
+/** Where `t` writes `name`, as a named argument or in its props block. */
+function writtenAt(t: TileExpr & { kind: "TileCall" }, name: string): Pos[] {
+  return [
+    ...t.args.flatMap((a) => (a.name === name ? [a.namePos] : [])),
+    ...t.props.flatMap((p) => (p.name === name ? [p.pos] : [])),
+  ];
+}
+
+/**
+ * A slider's `value` is the value an unbound slider shows, so beside `bind=` it is a second answer to what the slider shows (W0216, as on a toggle).
+ * A radio's `name` spells its `group`, so beside `group` it is a second answer to which set the radio is in (W0217).
+ */
+export function checkSecondSpelling(
+  t: TileExpr & { kind: "TileCall" },
+  errors: KumikiError[],
+): void {
+  if (t.name === "slider" && t.args.some((a) => a.name === "bind")) {
+    for (const pos of writtenAt(t, "value")) {
+      errors.push({
+        code: "W0216",
+        kind: "selection-beside-bind",
+        severity: "warning",
+        message: `"value" on slider() is not read beside bind= — the bound value is what it shows. Remove it (see docs/spec/forms.md)`,
+        pos,
+      });
+    }
+  }
+  if (t.name === "radio" && writtenAt(t, "group").length > 0) {
+    for (const pos of writtenAt(t, "name")) {
+      errors.push({
+        code: "W0217",
+        kind: "name-beside-group",
+        severity: "warning",
+        message: `"name" on radio() is not read beside group= — group= names the set the radio is in. Remove one (see docs/spec/forms.md)`,
+        pos,
+      });
+    }
   }
 }
 

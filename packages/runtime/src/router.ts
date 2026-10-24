@@ -181,13 +181,22 @@ function matchPattern(pattern: string, path: string): Record<string, string> | n
     const s = pathSegs[i];
     if (s === undefined) return null;
     if (p.startsWith(":")) {
-      params[p.slice(1)] = decodeURIComponent(s);
+      params[p.slice(1)] = decodeParam(s);
     } else if (p !== s) {
       return null;
     }
   }
   if (pathSegs.length !== patSegs.length) return null;
   return params;
+}
+
+// A path is user input, so an escape that does not decode is kept as written rather than thrown.
+function decodeParam(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }
 
 function buildPath(x: {

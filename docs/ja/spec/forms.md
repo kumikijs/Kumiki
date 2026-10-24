@@ -23,7 +23,7 @@ tile Compose = column(
 
 `bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのパスであり、そのステップは代入が書き込みに通るステップと同じである（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）— フィールド（`bind=form.email`）、`Option` / `Result` のペイロードを通る `.get`（`bind=draft.get.title`）、そしてインデックス（`bind=rows[i].title`）。その根は、ターゲットを書いた位置で slot でなければならない。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
 
-インデックスのステップは、`:=` の左辺で指すものと同じものを指す：`List` なら `Int` の位置にある要素、`Map` ならキーにあるエントリである。コントロールは読み出し `rows[i].title` が読むものを表示し、`rows[i].title := v` が書くものを同じ setter を通して書く。したがって要素は同じ長さの新しい `List` の中で置き換えられ、他の要素はそのまま残る。キーは任意の式で、その読み出しと同じく描画のたびに読み直される：slot `i` が変われば、コントロールはそのとき `i` が指す要素を表示し、そこへ書く。どの要素も指さないインデックス — `List` の末尾を越えた位置、`Map` が持たないキー — は、読み出しと同じく描画を panic させる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。`Set` はメンバーを持つだけで場所を持たないので、`tags[x] := v` と同じく `bind=tags[x]` は [E0602](./errors.md#e0602-unassignable-member) である。`bind=rows.get(0)` のように呼び出しとして書いたステップも同様である。
+インデックスのステップは、`:=` の左辺で指すものと同じものを指す：`List` なら `Int` の位置にある要素、`Map` ならキーにあるエントリである。コントロールは読み出し `rows[i].title` が読むものを表示し、`rows[i].title := v` が書くものを同じ setter を通して書く。したがって要素は同じ長さの新しい `List` の中で置き換えられ、他の要素はそのまま残る。キーは任意の式で、その読み出しと同じく描画のたびに読み直される：slot `i` が変われば、コントロールはそのとき `i` が指す要素を表示し、そこへ書く。どの要素も指さないインデックス — `List` の末尾を越えた位置、`Map` が持たないキー — は、読み出しと同じく描画を panic させる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。インデックスで指せる場所を持つのは `Map` と `List` だけ（`Set` が持つのはメンバー、レコードが持つのはフィールド）なので、`tags[x] := v` と同じく、`Set` に対する `bind=tags[x]` は [E0602](./errors.md#e0602-unassignable-member) である。`bind=rows.get(0)` のように呼び出しとして書いたステップも同様である。
 
 したがって、リストの行はループ変数を通してではなく、slot を通して、そのキーまたはインデックスで bind する。Map のキーに対する `for` は、各エントリをそれを表示する場所で bind する：
 
@@ -234,7 +234,7 @@ input/textarea も `bind=` で slot を更新するほか、`ui.change(InputTile
 
 ### 5.5.2 radio
 
-radio はグループ化のため `group` prop を持つ（CSS の `name` 属性に対応）：
+radio はグループ化のため `group` prop を持つ。これは radio の `<input>` の HTML `name` 属性であり、同じ `group` を共有するラジオが 1 つの組になって、一度にチェックされるのは多くとも 1 つである：
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -258,6 +258,8 @@ tile FilterRadioGroup = column(
 ```
 
 こちらが推奨。
+
+`group` の代わりに `name` を引数または props ブロックに書いた radio も、同じようにそれでグループ化される。両方あれば読まれるのは `group` で、`kumiki check` は `name` について警告する（[W0217](./errors.md#w0217-name-beside-group-warning)）。
 
 ---
 

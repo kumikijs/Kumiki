@@ -35,10 +35,11 @@ binds takes one — `input`, `textarea`, `select`, `slider`, `check`, `switch`,
 `radio`, `editable` — and a number field reads its text as the element's
 `Int` / `Float` / `Time`.
 
-A `Set` has no places, so an index into one is **E0602**, with the sentence
-`s[x] := v` gets:
+Only a `Map` and a `List` have places to index, so an index into anything
+else is **E0602**, with the sentence the same step gets on the left of `:=`
+(`bind` for `assign`). On `slot s : Set(Text)`, `bind=s["a"]` gets:
 
-> `Cannot bind through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
+> `Cannot bind through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`
 
 E0229's message says a bind writes back to "a slot or a path into one" (it
 said "a field path"). The `data-kumiki-bind` marker spells an index step as

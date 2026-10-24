@@ -72,7 +72,18 @@ tile App = column(B)`);
       pos: { line: 12, col: 30 },
     });
     expect(bound?.message).toBe(
-      `Cannot bind through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`,
+      `Cannot bind through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`,
+    );
+    expect(bound?.message.replace("bind", "assign")).toBe(assigned?.message);
+  });
+
+  it("is what it asks of the step on the left of :=, for a record: E0602 naming the field step", () => {
+    const [bound] = diagnostics(`tile App = column(input(bind=draft.get["title"]))`);
+    const [assigned] = diagnostics(`reducer r on=ui.click(B) do= draft.get["title"] := "x"
+tile App = column(B)`);
+    expect(bound).toMatchObject({ code: "E0602", kind: "unassignable-member" });
+    expect(bound?.message).toBe(
+      `Cannot bind through an index into "D": an index names a place only in a Map or a List — write the field step ".title"`,
     );
     expect(bound?.message.replace("bind", "assign")).toBe(assigned?.message);
   });

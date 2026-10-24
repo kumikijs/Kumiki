@@ -29,6 +29,8 @@ app TodoApp
 | `/*` | Wildcard (everything remaining) |
 | `/?query` | Note: queries are handled separately. Do not write them in the path |
 
+A parameter's value is its segment percent-decoded: `/todos/a%2Fb` gives `id = "a/b"`, and `/todos/%E3%81%82` gives `id = "あ"`. A segment that is not valid percent-encoding, such as one with a `%` not followed by two hex digits (`/todos/100%`) or with escapes that do not spell UTF-8, still matches the parameter and is kept as written, none of its escapes decoded: `id` is `"100%"`. A URL is user input, so such a path renders its route; it does not fall to `/404`. The query is decoded escape by escape instead ([§3.7](#_3-7-query-parameters)), so `?q=%41%` gives `q = "A%"` where the segment `%41%` stays `"%41%"`, and an escape there that does not spell UTF-8 becomes `�` (U+FFFD). `route.path` ([§3.2](#_3-2-current-route-state)) is the path the router read, never decoded: under `history` that is `location.pathname`, which the browser has already percent-encoded; under `memory` it is the path as pushed.
+
 ### 3.1.2 Match Order
 
 1. More specific routes take precedence (static > parameter > wildcard)
@@ -136,7 +138,7 @@ In an **embedded or sandboxed host** — the docs playground `<iframe srcdoc san
 mount(app, el, { router: "memory", initialPath: "/" }); // initialPath optional, defaults to "/"
 ```
 
-The memory router holds the current path in memory: the initial route resolves from `initialPath` (not `location`), and `navigate` / `navigate-replace` / `navigate-back` / link clicks update that in-memory path and re-render without touching `history.*`. Path params, query, redirects (`->>`), and the `/404` fallback all behave identically — only the *source* of the location changes. `router: "history"` remains the default, so apps served at a real origin are unaffected. The embedding seams expose it: the auto-mounting bundle reads `globalThis.__kumikiMount` (e.g. `{ router: "memory" }`) before mounting, and `defineKumikiElement(tag, app, { router: "memory" })` forwards it to the Web Component.
+The memory router holds the current path in memory: the initial route resolves from `initialPath` (not `location`), and `navigate` / `navigate-replace` / `navigate-back` / link clicks update that in-memory path and re-render without touching `history.*`. Path params, query, redirects (`->>`), and the `/404` fallback all behave identically — only the *source* of the location changes. That holds for a URL-safe path. A path with a space or a non-ASCII character is held as the browser percent-encoded it under `history` and as pushed under `memory`, so the route it matches or a parameter's value can differ between the two. That is a gap in the router, not a rule a program may rely on. `router: "history"` remains the default, so apps served at a real origin are unaffected. The embedding seams expose it: the auto-mounting bundle reads `globalThis.__kumikiMount` (e.g. `{ router: "memory" }`) before mounting, and `defineKumikiElement(tag, app, { router: "memory" })` forwards it to the Web Component.
 
 ---
 
@@ -202,6 +204,10 @@ reducer guardEdit
 ```
 
 `confirm` is a standard effect (→ [Standard Library](./stdlib.md)) that delivers the answer to a separate reducer. See [Lifecycle](./lifecycle.md) for details.
+
+While the dialog is open the move is **held**: the route being left stays on screen, and the `route` slot and `route.enter` wait. The answer's reducer runs first; then Yes completes the move, and No puts the URL back to the route still shown. Only a dialog the route's leave guards open settles the move, not a `confirm` another reducer opens meanwhile. When two guards each open one, the first answer settles the move and the other dialog closes unanswered. The dialog is the runtime's own even when the host has registered a `notification.show` provider ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)).
+
+A navigation that arrives while a move is held replaces it: the held move is dropped, and a dialog still open closes unanswered (neither `onYes` nor `onNo` runs). To another path, the new navigation leaves the route still shown, so that route's leave guards run again. Back to the location still shown (its path, query and hash), as browser Back does while the dialog is open, it only withdraws the held move: the route was never left, so no guard runs and `route.enter` does not run again. A navigation the answer's own reducer emits replaces the move the same way, after that reducer has run, and the answer then settles nothing. A held move therefore never blocks the next navigation, whether or not its dialog is ever answered. Unmounting the app closes a held move's dialogs unanswered too.
 
 ---
 
@@ -289,7 +295,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`.
+`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer.
 
 ---
 

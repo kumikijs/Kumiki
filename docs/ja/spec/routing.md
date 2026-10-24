@@ -29,6 +29,8 @@ app TodoApp
 | `/*` | ワイルドカード（残り全部） |
 | `/?query` | ※ クエリは別途。パスには書かない |
 
+パラメータの値はそのセグメントをパーセントデコードしたものである。`/todos/a%2Fb` なら `id = "a/b"`、`/todos/%E3%81%82` なら `id = "あ"` になる。正しいパーセントエンコーディングでないセグメント、たとえば `%` の後に 16 進 2 桁が続かないもの（`/todos/100%`）や UTF-8 にならないエスケープを含むものも、パラメータにマッチし、エスケープを 1 つもデコードせず書かれたままの値になる。`id` は `"100%"` である。URL はユーザー入力なので、そうしたパスも自分のルートを描画し、`/404` には落ちない。クエリ（[§3.7](#_3-7-query-parameters)）はこれと違い、エスケープを 1 つずつデコードする。そのため `?q=%41%` は `q = "A%"` になり（セグメントの `%41%` は `"%41%"` のまま）、UTF-8 にならないエスケープはそこでは `�`（U+FFFD）になる。`route.path`（[§3.2](#_3-2-current-route-state)）はルータが読んだパスで、デコードはしない：`history` ではブラウザがパーセントエンコード済みの `location.pathname`、`memory` では push されたままのパスである。
+
 ### 3.1.2 マッチ順序
 
 1. より具体的なルートが優先（静的 > パラメータ > ワイルドカード）
@@ -136,7 +138,7 @@ emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 mount(app, el, { router: "memory", initialPath: "/" }); // initialPath は任意、デフォルト "/"
 ```
 
-memory ルータは現在のパスをメモリに保持する：初期ルートは（`location` ではなく）`initialPath` から解決され、`navigate` / `navigate-replace` / `navigate-back` / link クリックはそのメモリ内パスを更新して再描画し、`history.*` には触れない。パスパラメータ・query・リダイレクト（`->>`）・`/404` フォールバックはすべて同一に振る舞う——変わるのは location の*ソース*だけ。`router: "history"` がデフォルトのままなので、実 origin で配信されるアプリは影響を受けない。埋め込みシームが公開する：自動マウントするバンドルはマウント前に `globalThis.__kumikiMount`（例 `{ router: "memory" }`）を読み、`defineKumikiElement(tag, app, { router: "memory" })` は Web Component へ転送する。
+memory ルータは現在のパスをメモリに保持する：初期ルートは（`location` ではなく）`initialPath` から解決され、`navigate` / `navigate-replace` / `navigate-back` / link クリックはそのメモリ内パスを更新して再描画し、`history.*` には触れない。パスパラメータ・query・リダイレクト（`->>`）・`/404` フォールバックはすべて同一に振る舞う——変わるのは location の*ソース*だけ。これは URL に安全なパスについて成り立つ。空白や ASCII 以外の文字を含むパスは、`history` ではブラウザがパーセントエンコードした形で、`memory` では push されたままの形で保持されるので、マッチするルートやパラメータの値が両者で食い違うことがある。これはルータの欠落であって、プログラムが頼ってよい規則ではない。`router: "history"` がデフォルトのままなので、実 origin で配信されるアプリは影響を受けない。埋め込みシームが公開する：自動マウントするバンドルはマウント前に `globalThis.__kumikiMount`（例 `{ router: "memory" }`）を読み、`defineKumikiElement(tag, app, { router: "memory" })` は Web Component へ転送する。
 
 ---
 
@@ -202,6 +204,10 @@ reducer guardEdit
 ```
 
 `confirm` は標準 effect（→ [標準ライブラリ](./stdlib.md)）で、回答を別 reducer に届ける。詳細は [ライフサイクル](./lifecycle.md)。
+
+ダイアログが開いている間、遷移は**保留**される：離れようとしているルートが画面に残り、`route` slot と `route.enter` は答えを待つ。答えの reducer が先に走り、そのあと Yes なら遷移を完了し、No なら URL を表示中のルートへ戻す。遷移を確定するのはそのルートの leave ガードが開いたダイアログだけで、その間に別の reducer が開いた `confirm` ではない。2 つのガードがそれぞれダイアログを開いたときは、先に出た答えが遷移を確定し、もう一方のダイアログは答えのないまま閉じる。ホストが `notification.show` の provider を登録していても、ダイアログはランタイム自身のものである（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。
+
+遷移が保留されている間に届いたナビゲーションは、その遷移を置き換える：保留中の遷移は破棄され、開いたままのダイアログは答えのないまま閉じる（`onYes` も `onNo` も走らない）。別のパスへのナビゲーションは表示中のルートから離れるので、そのルートの leave ガードがもう一度走る。表示中の位置（パス・クエリ・ハッシュ）へ戻るナビゲーション — ダイアログが開いている間のブラウザの「戻る」がそれにあたる — は保留中の遷移を取り下げるだけである：ルートから離れていないので、ガードは走らず、`route.enter` も再び走らない。答えの reducer 自身が emit したナビゲーションも、その reducer が走ったあとで同じように遷移を置き換え、その答えはもう何も確定しない。したがって保留中の遷移は、そのダイアログに答えが出るかどうかにかかわらず、次のナビゲーションを妨げることはない。アプリをアンマウントしたときも、保留中の遷移のダイアログは答えのないまま閉じる。
 
 ---
 
@@ -289,7 +295,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。
+`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。reducer 名は上のように裸の識別子で書くほか、文字列リテラルでも書ける：`prefetch: "loadTodo"` も同じ reducer を指す。
 
 ---
 
