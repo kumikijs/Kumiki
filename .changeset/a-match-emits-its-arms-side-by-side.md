@@ -18,9 +18,9 @@ expression, or a tile body — returns from each arm:
 
 ```js
 // before
-((_v) => { if (_s.variantIs(_v, "Red")) { return "stop"; } else if (_s.variantIs(_v, "Amber")) { … } else { return undefined; } })(l)
+((_v) => { if (_s.variantIs(_v, "Red")) { return "stop"; } else if (_s.variantIs(_v, "Amber")) { … } else { return _s.panic("No arm of the match at 3:9 matches its value"); } })(l)
 // after
-((_v) => { if (_s.variantIs(_v, "Red")) { return "stop"; } if (_s.variantIs(_v, "Amber")) { … } return undefined; })(l)
+((_v) => { if (_s.variantIs(_v, "Red")) { return "stop"; } if (_s.variantIs(_v, "Amber")) { … } return _s.panic("No arm of the match at 3:9 matches its value"); })(l)
 ```
 
 and a match statement in a reducer body breaks out of a block labelled around
@@ -35,5 +35,6 @@ _m0: { const _v = …; if (_s.variantIs(_v, "Red")) { …; break _m0; } if (_s.v
 ```
 
 What a match does is unchanged: the first arm whose pattern holds is the only
-one that runs, and when none holds an expression answers `undefined`, a
-statement writes nothing and a tile body renders an empty `text`.
+one that runs, and when none holds an expression panics (a value match that
+can miss is E0227 at check), a statement writes nothing and a tile body renders
+an empty `text`.

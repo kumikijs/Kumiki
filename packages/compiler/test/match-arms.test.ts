@@ -173,6 +173,8 @@ slot subject : Tuple(Light, Light) = (Red, Red)`;
   });
 });
 
+// A match used as a value has an arm for every value of its scrutinee (E0227), so only a statement
+// and a tile body reach the end of their arms.
 describe("a match no arm of which holds", () => {
   const decls = `type Light = Red | Amber | Green
 slot subject : Light = Red`;
@@ -182,7 +184,6 @@ slot subject : Light = Red`;
   ];
 
   it.each<[keyof typeof POSITIONS, string, unknown]>([
-    ["an expression", "answers undefined, which the assignment writes", undefined],
     ["a reducer statement", "writes nothing", NO_WRITE],
     ["a tile body", "renders an empty text", ""],
   ])("as %s, %s", LOADS, async (name, _does, outcome) => {
