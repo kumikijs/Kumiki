@@ -126,6 +126,7 @@ Expressed via the `Result(T, E)` type. When an effect's return value is `Result.
 - An index `xs[i]`, read or written, named no element of a `List` (past the end, or negative)
 - A read `m[k]` named a key the `Map` does not hold
 - `Result.get` was an Err
+- A `match` used as a value had no arm for its scrutinee's value ([Language §1.9](./language.md#_1-9-expression-language))
 - An explicit call to `panic(msg)`
 
 These are exceptions called **panics**. A panic is recorded in the episode log, and the current reducer is interrupted. `slot` changes are **transactionally rolled back**.
