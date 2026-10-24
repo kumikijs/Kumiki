@@ -55,6 +55,7 @@ export function checkApp(
     localTypes: new Map(),
     capsAvailable: new Set(app.caps),
     routeBind: "unbound",
+    endedScopes: new Map(),
   };
   for (const e of app.init) {
     if (e.kind !== "Call") {

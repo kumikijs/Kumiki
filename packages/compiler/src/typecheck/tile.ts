@@ -18,7 +18,14 @@ import {
   checkSecondSpelling,
   checkToggleBind,
 } from "./bind.ts";
-import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import {
+  bindLocal,
+  type Ctx,
+  endScope,
+  innerScope,
+  type KumikiError,
+  type SymbolTable,
+} from "./context.ts";
 import {
   checkCondition,
   checkExpr,
@@ -38,6 +45,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
@@ -88,6 +96,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     undeclaredInputReads: seen,
   };
   checkTileExpr(tile.body, sym, [], ctx);
@@ -208,6 +217,7 @@ export function checkTileExpr(
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
       checkTileExpr(t.body, sym, errors, inner);
+      endScope("for-expr", inner, ctx);
       return;
     }
     case "TileWhen":
@@ -229,6 +239,7 @@ export function checkTileExpr(
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
+        endScope("match-expr", inner, ctx);
       }
       return;
     }
