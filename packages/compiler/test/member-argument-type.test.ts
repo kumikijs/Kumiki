@@ -68,7 +68,7 @@ reducer go on=ui.click(Btn) do=
       "Map.update's value, a fn named",
       `m := m.update("k", toText)`,
       "toText)",
-      'Expected Int but "toText" answers Text',
+      "Expected Int but got Text",
     ],
     ["Map.merge", "m := m.merge(mi)", "mi)", "Expected Map(Text, Int) but got Map(Int, Text)"],
     ["a nominal key", "byId := byId.insert(post, 1)", "post, 1)", "Expected TodoId but got PostId"],
