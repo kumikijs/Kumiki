@@ -655,10 +655,12 @@ pattern      ::= identifier
 - 親 tile が `column(A, when(c, B), C)` の場合、`c=false` なら `[A, C]` がレンダリングされる
 - ランタイムは null/undefined 子を skip するため、`when` で「空欄」を生む安全な手段
 
-**`match` の値文脈 vs tile 文脈**:
-- `text/heading/markdown/label/link/image/icon` builtin の **位置引数内** での `match` は値式（`MatchExpr`）として扱われる。各 arm は値（Text, Int, etc.）を返す
-- それ以外の tile 引数内（`column`, `row`, `card` 等）の `match` は tile 式（`TileMatch`）として扱われる。各 arm は tile を返す
+**`if` と `match` の値文脈 vs tile 文脈**:
+- tile 引数が tile になるのは、**値 builtin 以外の builtin の位置引数**（`column`, `row`, `card`, `box` 等）だけである —— tile が描画される唯一の位置。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
+- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
+- 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
 - 例: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
 
 ### 1.7.2 不変条件
@@ -681,7 +683,7 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
 
-名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。大文字始まりの名前は、tile を取る builtin（`box` / `button` / `input` / `modal` / `form`）の名前付き引数では *tile call* に、それ以外——props ブロック、`link` のような値引数 builtin の名前付き引数、user tile の名前付き引数——では variant タグになる。
+名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。イベントハンドラ（`onClick=` / `onChange=` 等）として書いた大文字始まりの名前は、値 builtin 以外の builtin（`box` / `button` / `check` / `radio` / `column` 等）では *tile call* に、それ以外——props ブロック、`link` のような値 builtin、user tile——では variant タグになる。
 
 これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
 
@@ -760,7 +762,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
        | _                    -> false
 ```
 
-### 1.8.5 tile / reducer からの呼び出し
+### 1.8.5 tile / reducer からの呼び出し {#_1-8-5-calling-from-tile-reducer}
 
 ```kumiki fragment
 tile TodoList = column(
@@ -776,6 +778,12 @@ reducer normalize
 fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
    = ts.map($2.copy(text=$2.text.trim))
 ```
+
+**宣言した `fn` は同名のビルトイン関数に優先する。** 呼び出し `name(…)` は、プログラムがその名前で `fn` を宣言していればその `fn` の呼び出しであり、していなければ[ビルトイン関数](./stdlib.md#_2-4-builtin-functions)の呼び出しである。qualifier を付けずに呼び出すビルトインすべてがこれに従う：`random`、`fmt`、`panic`、`file-url`、`prefers-dark`、`trace`、そして [property-test の invariant](./testing.md#_8-3-property-tests) における `run-reducer`。`now` は予約語なので、その名前の `fn` は宣言できない。`fn` を宣言すると、その名前の呼び出しはすべて `fn` のシグネチャで検査され、`fn` の本体を実行する：tile、reducer、別の `fn`、テスト本体、そして `fn` を名指す式断片の位置（[§1.8.6](#_1-8-6-部分適用と高階関数)）のいずれでも同じである。連鎖して書く `….run-reducer(r)` もビルトインではなくなり、どの型にも無いメソッドになる（[E0801](./errors.md#e0801-unimplemented-method)）。下の reducer 文を除けば、そのプログラムからビルトインには届かなくなるので、両方が要るプログラムは `fn` に別の名前を付ける。
+
+effect や型は事情が異なる。標準の effect や型の値はランタイム自身が供給するので、その名前でプログラムが宣言しても、`fn` のようには効力を持てない。ビルトイン関数は検査も lowering もコンパイラが受け持つので宣言を尊重でき、後から加わったビルトインが、その名前の `fn` を既に持つプログラムを壊すこともない。
+
+reducer の文として単独で書いた `panic(message)` は呼び出しではなく文の形である。そこでは `fn` の値の行き先が無いからである。プログラムが何を宣言していても、reducer を停止する。
 
 ### 1.8.6 部分適用と高階関数
 
