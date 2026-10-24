@@ -3,6 +3,7 @@ import { type DefIndex, referencesIn } from "../references.ts";
 import { checkAgainst } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import {
   type RouteChainResolver,
   routeInSlotInitMessage,
@@ -104,7 +105,7 @@ export function checkSlot(
     localBinds: new Set(),
     localTypes: new Map(),
     routeBind: "no-payload",
-    endedScopes: new Map(),
+    nestedScopes: nestedScopes(slot.init),
   };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);

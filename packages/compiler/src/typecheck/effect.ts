@@ -75,11 +75,13 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+  if (eff.mapRequest) {
+    checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"], eff.mapRequest));
+  }
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey")
-    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"], eff.policy.key));
 }
 
 function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {

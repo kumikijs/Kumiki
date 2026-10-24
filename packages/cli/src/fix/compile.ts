@@ -111,14 +111,21 @@ function variantTag(prefix: string, anchored: boolean): Planner {
   });
 }
 
+/**
+ * A read outside the nested scope that declares the name, after it ended or before it begins, is
+ * out of scope, not misspelled: the renamed read would type-check and read a different value.
+ */
+function outOfScopeReason(err: KumikiError): string | undefined {
+  if (err.endedScope !== undefined) return "e0103-read-after-scope-ended";
+  if (err.laterScope !== undefined) return "e0103-read-before-scope-begins";
+  return undefined;
+}
+
 const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    // A read after the scope that declared it ended is out of scope, not misspelled: the renamed
-    // read would type-check and read a different value.
-    (err, store) =>
-      err.endedScope !== undefined ? "e0103-read-after-scope-ended" : anyDefinition(err, store),
+    (err, store) => outOfScopeReason(err) ?? anyDefinition(err, store),
   ],
   ["E0105", anyDefinition], // undef-tile
   ["E0107", anyDefinition], // undef-motion
