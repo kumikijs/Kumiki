@@ -1,8 +1,10 @@
 import { typeToString, unaliasType } from "../assignable.ts";
-import type { EffectDef, TypeExpr } from "../ast.ts";
+import type { EffectDef, Expr, TypeExpr } from "../ast.ts";
 import { declaresNoInput, failsWithText } from "../capabilities.ts";
+import { type UnkeyedPart, unkeyedPart } from "../key-representation.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
+import { inferType } from "./infer.ts";
 import { resolveType } from "./types.ts";
 
 export function effectPayloadType(
@@ -78,8 +80,32 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
   if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
-  if (eff.policy?.kind === "PolLatestKey")
-    checkExpr(eff.policy.key, sym, errors, effectScope(eff, sym));
+  if (eff.policy?.kind === "PolLatestKey") {
+    const scope = effectScope(eff, sym);
+    checkExpr(eff.policy.key, sym, errors, scope);
+    checkPolicyKeyType(eff.policy.key, sym, scope, errors);
+  }
+}
+
+const UNKEYED_PART_REASON: Record<UnkeyedPart["part"], string> = {
+  Float:
+    "a Float, whose NaN is not == to itself and whose NaN, Infinity and -Infinity are one key inside a record, tuple, List or variant",
+  File: "a File, and every File is one key",
+  Set: "a Set, whose == depends on how it was built",
+};
+
+// The dispatcher aborts an in-flight request when another starts under the same key, so a key
+// that is one key for two values `==` calls different aborts a request it has no reason to.
+function checkPolicyKeyType(key: Expr, sym: SymbolTable, scope: Ctx, errors: KumikiError[]): void {
+  const type = inferType(key, sym, scope);
+  const unkeyed = unkeyedPart(type, sym);
+  if (!type || !unkeyed) return;
+  errors.push({
+    code: "E0233",
+    kind: "policy-key-type",
+    message: `A latest-per-key key of type ${typeToString(type)} is not keyed by its value: ${unkeyed.whole ? "it is" : "it holds"} ${UNKEYED_PART_REASON[unkeyed.part]} (see docs/spec/language.md)`,
+    pos: key.pos,
+  });
 }
 
 /** `$1` is the effect's input, and an effect declared `in=Unit` is emitted with none. */

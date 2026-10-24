@@ -708,7 +708,7 @@ export function reducerEmitJs(
 
 export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): string {
   const keyCtx = makeEvalCtx(gen, ["$1"], reducerScope);
-  return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
+  return `((${bindRef(keyCtx, "$1")}) => _s.entryKey(${jsOfExpr(key, keyCtx)}))`;
 }
 
 /** A value `match` has to evaluate to one of its arms, so a miss panics rather than let `undefined` reach a slot or a render. */
