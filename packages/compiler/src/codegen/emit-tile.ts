@@ -433,7 +433,9 @@ function tileCallJs(
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
         const bindInfo = extractBindPath(prop("bind"));
-        field(fields, "group");
+        // The group is the `<input>`'s `name`, so `name` spells it too; `group` wins when both are written (W0217).
+        const group = propJs("group") ?? propJs("name");
+        if (group !== undefined) fields.push(`group: ${group}`);
         if (!bindInfo) field(fields, "selected", "selected", truthy);
         const valueJs = propJs("value");
         if (valueJs !== undefined) {
@@ -569,6 +571,7 @@ function tileCallJs(
         field(fields, "max");
         field(fields, "step");
         if (bindInfo) fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
+        else field(fields, "value");
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }

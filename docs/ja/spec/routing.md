@@ -29,6 +29,8 @@ app TodoApp
 | `/*` | ワイルドカード（残り全部） |
 | `/?query` | ※ クエリは別途。パスには書かない |
 
+パラメータの値はそのセグメントをパーセントデコードしたものである。`/todos/a%2Fb` なら `id = "a/b"`、`/todos/%E3%81%82` なら `id = "あ"` になる。正しいパーセントエンコーディングでないセグメント、たとえば `%` の後に 16 進 2 桁が続かないもの（`/todos/100%`）や UTF-8 にならないエスケープを含むものも、パラメータにマッチし、エスケープを 1 つもデコードせず書かれたままの値になる。`id` は `"100%"` である。URL はユーザー入力なので、そうしたパスも自分のルートを描画し、`/404` には落ちない。クエリ（[§3.7](#_3-7-query-parameters)）はこれと違い、エスケープを 1 つずつデコードする。そのため `?q=%41%` は `q = "A%"` になり（セグメントの `%41%` は `"%41%"` のまま）、UTF-8 にならないエスケープはそこでは `�`（U+FFFD）になる。`route.path`（[§3.2](#_3-2-current-route-state)）はルータが読んだパスで、デコードはしない：`history` ではブラウザがパーセントエンコード済みの `location.pathname`、`memory` では push されたままのパスである。
+
 ### 3.1.2 マッチ順序
 
 1. より具体的なルートが優先（静的 > パラメータ > ワイルドカード）
@@ -136,7 +138,7 @@ emit navigate({path: "/todos/{id}", params: {"id": todo.id.show}})
 mount(app, el, { router: "memory", initialPath: "/" }); // initialPath は任意、デフォルト "/"
 ```
 
-memory ルータは現在のパスをメモリに保持する：初期ルートは（`location` ではなく）`initialPath` から解決され、`navigate` / `navigate-replace` / `navigate-back` / link クリックはそのメモリ内パスを更新して再描画し、`history.*` には触れない。パスパラメータ・query・リダイレクト（`->>`）・`/404` フォールバックはすべて同一に振る舞う——変わるのは location の*ソース*だけ。`router: "history"` がデフォルトのままなので、実 origin で配信されるアプリは影響を受けない。埋め込みシームが公開する：自動マウントするバンドルはマウント前に `globalThis.__kumikiMount`（例 `{ router: "memory" }`）を読み、`defineKumikiElement(tag, app, { router: "memory" })` は Web Component へ転送する。
+memory ルータは現在のパスをメモリに保持する：初期ルートは（`location` ではなく）`initialPath` から解決され、`navigate` / `navigate-replace` / `navigate-back` / link クリックはそのメモリ内パスを更新して再描画し、`history.*` には触れない。パスパラメータ・query・リダイレクト（`->>`）・`/404` フォールバックはすべて同一に振る舞う——変わるのは location の*ソース*だけ。これは URL に安全なパスについて成り立つ。空白や ASCII 以外の文字を含むパスは、`history` ではブラウザがパーセントエンコードした形で、`memory` では push されたままの形で保持されるので、マッチするルートやパラメータの値が両者で食い違うことがある。これはルータの欠落であって、プログラムが頼ってよい規則ではない。`router: "history"` がデフォルトのままなので、実 origin で配信されるアプリは影響を受けない。埋め込みシームが公開する：自動マウントするバンドルはマウント前に `globalThis.__kumikiMount`（例 `{ router: "memory" }`）を読み、`defineKumikiElement(tag, app, { router: "memory" })` は Web Component へ転送する。
 
 ---
 

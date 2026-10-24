@@ -16,6 +16,7 @@ import {
   checkBindStrictProp,
   checkBindTargetSteps,
   checkInputBindType,
+  checkSecondSpelling,
   checkToggleBind,
 } from "./bind.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
@@ -348,6 +349,7 @@ function checkTileCall(
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, errors);
   checkToggleBind(t, sym, errors, ctx);
+  checkSecondSpelling(t, errors);
   checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindVal = writtenProp(t, "bind")?.value;
