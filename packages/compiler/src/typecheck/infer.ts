@@ -310,6 +310,8 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "Unit":
       return prim("Unit", e.pos);
     case "Ref": {
+      // A bind with no type still shadows a slot of its name.
+      if (ctx.localBinds.has(e.name) && !ctx.localTypes.has(e.name)) return null;
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
       return sym.slots.get(e.name)?.type ?? null;

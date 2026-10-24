@@ -861,6 +861,8 @@ Since a `match` evaluates to one of its arms, it needs **an arm for every value 
 
 A `match` statement in a reducer body ([§1.6.1](#_1-6-1-syntax)) and a `match` in tile position ([§1.7.1](#_1-7-1-syntax)) are not values, and are not held to this: a statement `match` that no arm matches runs none of its arms, as an `if` statement without `else` runs nothing on a false condition, and a tile `match` that no arm matches renders an empty `text`.
 
+A `let x = v in body` evaluates to its body, read with `x` bound to `v`'s type, so the body is what lands where the expression is written: `fn label(n: Int) -> Text = let m = n + 1 in m` is [E0201](./errors.md#e0201-type-mismatch) at `m`, and `… in m.show` checks. Where nothing declares a type, the expression has its body's type, and a member read off it is that type's member: `(let b = box in b).size` on a record with a `size` field reads the field. `x` shadows a slot or binding of its name in the body even when `v`'s type cannot be decided; `x` is then undecidable, and nothing is reported against what reads it.
+
 ### 1.9.1 Prohibitions
 
 - **Lambda expressions prohibited**

@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "the slots start at their initial values",
+      "expect": { "noErrors": true, "domIncludes": ["name: START", "size: 0"] }
+    },
+    {
+      "label": "go writes the Text label returns",
+      "do": { "click": "#go" },
+      "expect": { "noErrors": true, "domIncludes": ["name: 42"], "state": { "name": "42" } }
+    },
+    {
+      "label": "measure reads the label's length, the record's size field and the map's Int keys",
+      "do": { "click": "#measure" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["size: 2", "boxed: 7", "sum: 21"],
+        "state": { "size": 2, "boxed": 7, "sum": 21 }
+      }
+    }
+  ]
+}
