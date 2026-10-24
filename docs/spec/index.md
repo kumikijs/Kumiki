@@ -111,6 +111,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
+| [W0217](./errors.md#w0217-name-beside-group-warning) | `name-beside-group` | tile | forms |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
@@ -298,5 +299,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `171-property-test-count.kumiki` | slot, reducer, tile | testing | [§8.3.1](./testing.md#_8-3-1-syntax) |
+| `204-input-props-rendered.kumiki` | slot, reducer, tile | stdlib | [§2.3.4](./stdlib.md#_2-3-4-input-elements) [§2.3.5](./stdlib.md#_2-3-5-forms) |
 <!-- examples:end -->
 :::
