@@ -711,7 +711,7 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
   return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
 }
 
-/** A value no arm matches panics rather than answering `undefined`; E0227 leaves only a scrutinee whose type the checker cannot decide. */
+/** A value `match` has to evaluate to one of its arms, so a miss panics rather than let `undefined` reach a slot or a render. */
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
   const sc = jsOfExpr(e.scrutinee, ctx);
   const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");

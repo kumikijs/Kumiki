@@ -1,6 +1,6 @@
-import { codegen, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
+import { pointedErrorsOf, posOf, summariesOf } from "./helpers/diagnostics.ts";
+import { loadReducer } from "./helpers/module.ts";
 import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
 const DEFS = `type Color = Red | Green | Blue
@@ -34,12 +34,10 @@ describe("a value match whose arms leave a value out", () => {
   it("names the variant of a union it has no arm for, in a reducer and in a tile", () => {
     const reducer = `reducer r on=ui.click(B) do= n := match c with | Red -> 1 | Green -> 2`;
     const tile = `tile Name = text("name: " + (match c with | Red -> "r" | Green -> "g"))`;
-    const src = withButtonApp(`${DEFS}\n${reducer}\n${tile}`);
-    const lines = src.split("\n");
     const message = missing("Color", "Blue").slice("E0227 ".length);
-    expect(checkSource(src).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
-      ["E0227", message, lines.indexOf(reducer) + 1, reducer.indexOf("match") + 1],
-      ["E0227", message, lines.indexOf(tile) + 1, tile.indexOf("match") + 1],
+    expect(pointedErrorsOf(withButtonApp(`${DEFS}\n${reducer}\n${tile}`))).toEqual([
+      { code: "E0227", message, text: "match c with | Red -> 1 | Green -> 2" },
+      { code: "E0227", message, text: 'match c with | Red -> "r" | Green -> "g"))' },
     ]);
   });
 
@@ -89,10 +87,49 @@ describe("a value match whose arms leave a value out", () => {
       inReducer(
         `n := match (o, c) with | (Some(v), Red) -> v | (None, Red) -> 1 | (_, Green) -> 2`,
       ),
-    ).toEqual([missing("Tuple(Option(Int), Color)", "(Some(_), Blue), (None, Blue)")]);
+    ).toEqual([missing("Tuple(Option(Int), Color)", "(None, Blue), (Some(_), Blue)")]);
     expect(inReducer(`n := match (o, c) with | (Some(v), _) -> v`)).toEqual([
       missing("Tuple(Option(Int), Color)", "(None, _)"),
     ]);
+  });
+
+  it("names None before Some, as Option declares them", () => {
+    expect(inReducer(`n := match (o, c) with | (_, Red) -> 1`)).toEqual([
+      missing(
+        "Tuple(Option(Int), Color)",
+        "(None, Green), (None, Blue), (Some(_), Green), (Some(_), Blue)",
+      ),
+    ]);
+  });
+
+  it("names the first eight values it leaves out, and says there are others", () => {
+    // No arm takes a tuple without a Red, and there are 2^20 of those.
+    const width = 20;
+    const scrutinee = `(${Array.from({ length: width }, () => "c").join(", ")})`;
+    const arms = Array.from(
+      { length: width },
+      (_, i) =>
+        `| (${Array.from({ length: width }, (_, j) => (j === i ? "Red" : "_")).join(", ")}) -> ${i}`,
+    ).join(" ");
+    const witness = (last: string) =>
+      `(${[...Array.from({ length: width - 3 }, () => "Green"), last].join(", ")})`;
+    const firstEight = ["Green", "Blue"]
+      .flatMap((a) =>
+        ["Green", "Blue"].flatMap((b) => ["Green", "Blue"].map((d) => `${a}, ${b}, ${d}`)),
+      )
+      .map(witness);
+    expect(inReducer(`n := match ${scrutinee} with ${arms}`)).toEqual([
+      missing(
+        `Tuple(${Array.from({ length: width }, () => "Color").join(", ")})`,
+        `${firstEight.join(", ")}, among others`,
+      ),
+    ]);
+  });
+
+  it("names the values it can decide beside an arm that hinges on an undecidable item", () => {
+    expect(
+      inReducer(`n := match (c, cs.fold(c, $2)) with | (Red, Green) -> 1 | (Green, _) -> 2`),
+    ).toEqual([missing("Tuple(Color, ?)", "(Blue, _)")]);
   });
 
   it("reaches into a tuple nested in a tuple", () => {
@@ -165,7 +202,7 @@ describe("the forms the rule leaves to another diagnostic or another construct",
     ).toEqual(["E0209"]);
   });
 
-  it("does not reach a statement match, which runs no arm when none matches", () => {
+  it("does not reach a statement match", () => {
     expect(inReducer(`match c with | Red -> n := 1 | Green -> n := 2`)).toEqual([]);
   });
 
@@ -196,12 +233,13 @@ describe("the forms the rule leaves to another diagnostic or another construct",
 });
 
 describe("a value match that no arm matches at run time", () => {
-  it("lowers its fall-through to a panic naming where the match is, never to undefined", () => {
-    const line = `reducer r on=ui.click(B) do= n := match c with | Red -> 1 | Green -> 2`;
-    const src = withButtonApp(`${DEFS}\n${line}`);
-    const { js } = codegen(parse(lex(src)), { runtimeSpecifier: "./runtime.js" });
-    const at = `${src.split("\n").indexOf(line) + 1}:${line.indexOf("match") + 1}`;
-    expect(js).not.toContain("return undefined");
-    expect(js).toContain(`_s.panic("No arm of the match at ${at} matches its value")`);
+  it("panics, naming where the match is", async () => {
+    const src = withReducer(DEFS, `n := match cs.fold(c, $2) with | Red -> 1`);
+    const reducer = await loadReducer(src, "r");
+    const { line, col } = posOf(src, "match cs.fold");
+    const live = { c: { _tag: "Red" }, cs: [{ _tag: "Red" }, { _tag: "Blue" }], n: 0 };
+    expect(() => reducer.apply(live, {})).toThrow(
+      `No arm of the match at ${line}:${col} matches its value`,
+    );
   });
 });

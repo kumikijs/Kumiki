@@ -7,11 +7,12 @@
 #   match (picked, color) with | (Some(n), Blue) -> … | (Some(n), _) -> … | (None, _) -> …
 #
 # A value `match` evaluates to one of its arms, so the arms cover each variant
-# of a union, both arms of an `Option` or a `Result`, and each combination of a
-# tuple's items — `_` or a name covers whatever the other arms leave out. A
-# `match` whose arms leave a value out is E0227, which names each value it
-# leaves out: dropping the `Blue` arm below reports `Blue`, and dropping the
-# `None` arm reports `None`.
+# of a union, both variants of an `Option` or a `Result`, and each combination
+# of a tuple's items — `_` or a name covers whatever the other arms leave out.
+# A `match` whose arms leave a value out is E0227, pinned in
+# packages/compiler/test/match-exhaustive.test.ts. Where the checker cannot
+# decide the scrutinee's type, a value no arm matches panics at run time,
+# pinned in packages/tests/src/match-exhaustive.test.ts.
 
 type Color = Red | Green | Blue
 

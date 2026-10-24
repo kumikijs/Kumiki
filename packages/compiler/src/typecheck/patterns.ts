@@ -198,7 +198,10 @@ function lookupVariantPayloads(
 
 type VariantShape = { readonly name: string; readonly payloads: readonly TypeExpr[] };
 
-/** In declaration order; `null` when the type is undecidable. */
+/**
+ * In declaration order, the built-ins included: `Option(T) ; None | Some(T)` and
+ * `Result(T, E) ; Ok(T) | Err(E)` (language.md). `null` when the type is undecidable.
+ */
 function variantsOf(
   scrut: TypeExpr | null,
   sym: SymbolTable,
@@ -210,8 +213,8 @@ function variantsOf(
   if (t.name === "Option") {
     const inner = t.args[0];
     return [
-      { name: "Some", payloads: inner ? [inner] : [] },
       { name: "None", payloads: [] },
+      { name: "Some", payloads: inner ? [inner] : [] },
     ];
   }
   if (t.name === "Result") {
@@ -237,7 +240,13 @@ function resolveToTuple(
   return isTuple(t) ? t : "not-a-tuple";
 }
 
-/** Only once every arm's pattern fits: a pattern that does not is E0207 / E0208 / E0209 already, and coverage counted against it would repeat that. */
+/** How many of the values a match leaves out E0227 names; the rest are summed up as "among others". */
+const WITNESSES_SHOWN = 8;
+
+/**
+ * Callers run this only once every arm's pattern fits: a pattern that does not is E0207 / E0208 /
+ * E0209 already, and coverage counted against it would repeat that.
+ */
 export function checkMatchCovers(
   e: Expr & { kind: "MatchExpr" },
   scrutType: TypeExpr | null,
@@ -245,19 +254,23 @@ export function checkMatchCovers(
   errors: KumikiError[],
 ): void {
   if (scrutType === null) return;
+  // One past what is shown, so the message knows whether there are others.
   const uncovered = uncoveredRows(
     e.arms.map((arm) => [arm.pattern]),
     [scrutType],
     sym,
+    WITNESSES_SHOWN + 1,
   );
   if (uncovered === null || uncovered.length === 0) return;
+  const shown = uncovered.slice(0, WITNESSES_SHOWN).map((w) => w.join(", "));
+  const others = uncovered.length > WITNESSES_SHOWN ? ", among others" : "";
   errors.push({
     code: "E0227",
     kind: "non-exhaustive-match",
     message:
-      `This match on "${typeToString(scrutType)}" has no arm for ` +
-      `${uncovered.map((w) => w.join(", ")).join(", ")}, and a match used as a value has to ` +
-      "evaluate to one of its arms. Add the missing arms, or end with `_ -> …`",
+      `This match on "${typeToString(scrutType)}" has no arm for ${shown.join(", ")}${others}, ` +
+      "and a match used as a value has to evaluate to one of its arms. Add the missing arms, " +
+      "or end with `_ -> …`",
     pos: e.pos,
   });
 }
@@ -265,17 +278,21 @@ export function checkMatchCovers(
 const isIrrefutable = (p: Pattern): boolean => p.kind === "PWildcard" || p.kind === "PBind";
 
 /**
- * The values no row matches, one pattern per column of `types`; `[]` when the rows cover every
- * value, `null` when a type leaves that undecided. A variant pattern's payloads are binds, so a
- * variant arm covers its whole variant, and with no literal patterns a type that is neither a
- * union nor a tuple is matched only by `_` or a name. An undecidable type answers `null` unless
- * its `_`-or-name rows cover the rest on their own, since nothing says which values a variant or
- * tuple pattern of an unknown type leaves out.
+ * Up to `limit` of the values no row matches, one pattern per column of `types`, in the order the
+ * types declare their variants; `[]` when the rows cover every value, `null` when every value they
+ * miss hinges on an undecidable type. A variant pattern's payloads are binds, so a variant arm
+ * covers its whole variant, and with no literal patterns a type that is neither a union nor a
+ * tuple is matched only by `_` or a name. An undecidable type whose column holds a variant or
+ * tuple pattern answers `null` unless its `_`-or-name rows cover the rest on their own, since
+ * nothing says which values such a pattern leaves out; a column of only `_` or names is matched
+ * as `_`. A variant that answers `null` is passed over when another one has values to name, and
+ * the search stops at `limit`, so the work is bounded by the values named, not by all of them.
  */
 function uncoveredRows(
   rows: readonly (readonly Pattern[])[],
   types: readonly (TypeExpr | null)[],
   sym: SymbolTable,
+  limit: number,
 ): string[][] | null {
   if (rows.some((row) => row.every(isIrrefutable))) return [];
   if (rows.length === 0) return [types.map(() => "_")];
@@ -291,20 +308,26 @@ function uncoveredRows(
   const variants = variantsOf(head, sym);
   if (variants !== null && variants !== "not-a-union") {
     const out: string[][] = [];
+    let undecided = false;
     for (const v of variants) {
+      if (out.length >= limit) break;
       const sub = uncoveredRows(
         narrow((p) =>
           isIrrefutable(p) || (p.kind === "PVariant" && p.name === v.name) ? [] : null,
         ),
         rest,
         sym,
+        limit - out.length,
       );
-      if (sub === null) return null;
+      if (sub === null) {
+        undecided = true;
+        continue;
+      }
       const shown =
         v.payloads.length === 0 ? v.name : `${v.name}(${v.payloads.map(() => "_").join(", ")})`;
       for (const w of sub) out.push([shown, ...w]);
     }
-    return out;
+    return out.length === 0 && undecided ? null : out;
   }
 
   const tuple = resolveToTuple(head, sym);
@@ -319,6 +342,7 @@ function uncoveredRows(
       }),
       [...tuple.args, ...rest],
       sym,
+      limit,
     );
     if (sub === null) return null;
     return sub.map((w) => [`(${w.slice(0, n).join(", ")})`, ...w.slice(n)]);
@@ -328,6 +352,7 @@ function uncoveredRows(
     narrow((p) => (isIrrefutable(p) ? [] : null)),
     rest,
     sym,
+    limit,
   );
   if (sub === null || sub.length === 0) return sub;
   if (variants === null && rows.some((row) => row[0] !== undefined && !isIrrefutable(row[0]))) {
