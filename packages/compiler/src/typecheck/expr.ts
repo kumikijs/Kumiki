@@ -31,11 +31,13 @@ import { currentFnName, fnResultType } from "./fn.ts";
 import {
   arithmeticResult,
   inferType,
+  isEffectId,
   isKnown,
   isNumeric,
   isPrimNamed,
   KNOWN_TOKEN_GROUPS,
   prim,
+  qualifiedMember,
 } from "./infer.ts";
 import {
   classifyFieldAccess,
@@ -46,7 +48,11 @@ import {
   keyKindOfReader,
   undefMemberError,
 } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import {
+  checkMatchCovers,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+} from "./patterns.ts";
 import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
@@ -74,7 +80,41 @@ export function checkIterationTarget(
   });
 }
 
+/** A handle's text is whatever the runtime represents it as, so a page that showed it would change when that does. */
+export function refuseRenderedEffectId(
+  value: Expr,
+  renderer: string,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!isEffectId(inferType(value, sym, ctx), sym)) return;
+  errors.push({
+    code: "E0204",
+    kind: "effect-id-misuse",
+    message: `${renderer} cannot render EffectId — it is an opaque handle`,
+    pos: value.pos,
+  });
+}
+
+/** `v.show`, `v.show()` and `T.show(v)`, whose qualifier is discarded: codegen lowers all three to `_s.show(v)`. */
+function shownValue(e: Expr): Expr | undefined {
+  switch (e.kind) {
+    case "FieldAccess":
+      return e.field === "show" ? e.base : undefined;
+    case "MethodCall":
+      return e.method === "show" ? e.receiver : undefined;
+    case "Call":
+      return qualifiedMember(e.callee) === "show" && e.args.length === 1 ? e.args[0] : undefined;
+    default:
+      return undefined;
+  }
+}
+
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  // Asked before the three spellings of `show` part company in the switch, so the exception is made once.
+  const shown = shownValue(e);
+  if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
     case "Num":
     case "Str":
@@ -168,13 +208,11 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
     case "BinOp": {
-      const isEffectId = (t: TypeExpr | null): boolean =>
-        !!t && t.kind === "TypePrim" && t.name === "EffectId";
       let effectIdMisuse = false;
       if (e.op !== "==" && e.op !== "!=") {
         const lt = inferType(e.lhs, sym, ctx);
         const rt = inferType(e.rhs, sym, ctx);
-        if (isEffectId(lt) || isEffectId(rt)) {
+        if (isEffectId(lt, sym) || isEffectId(rt, sym)) {
           effectIdMisuse = true;
           errors.push({
             code: "E0204",
@@ -343,12 +381,16 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = inferType(e.scrutinee, sym, ctx);
+      let patternsFit = true;
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
       }
+      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }
     case "IfExpr":
