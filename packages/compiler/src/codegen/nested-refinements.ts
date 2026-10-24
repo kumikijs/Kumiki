@@ -35,6 +35,31 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       : `if ((!o?.length || ${onPath}) && (f = ${named$(check)}(${valueJs}, o?.slice(1)))) ${found}`;
   };
 
+  let indexDeclared = false;
+
+  /**
+   * A focus whose next step is not an index names nothing here, so the position
+   * is checked whole, as `at` checks one no step can name. A Map key (`keyJs`
+   * `null`) is named by no index, so it sits beside every index step.
+   */
+  const atIndex = (
+    stepJs: string,
+    check: string,
+    valueJs: string,
+    keyJs: string | null,
+  ): string => {
+    if (!indexDeclared) {
+      indexDeclared = true;
+      decls.push(
+        `const _rqAt = (o) => typeof o?.[0] === "object" && o[0] !== null && "at" in o[0];`,
+      );
+    }
+    const found = `return { ...f, path: [${stepJs}, ...f.path] };`;
+    return keyJs === null
+      ? `if (!_rqAt(o) && (f = ${named$(check)}(${valueJs}))) ${found}`
+      : `if ((!_rqAt(o) || o[0].at === ${keyJs}) && (f = ${named$(check)}(${valueJs}, _rqAt(o) ? o.slice(1) : undefined))) ${found}`;
+  };
+
   /** `check` as a helper's name, declaring it first when it is an arrow. */
   const named$ = (check: string): string => (isHelper(check) ? check : hoist(check));
 
@@ -161,7 +186,7 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         return walk(
           t,
           "Array.isArray(v)",
-          check ? [`for (const [i, e] of v.entries()) { ${at("i", check, "e")} }`] : [],
+          check ? [`for (const [i, e] of v.entries()) { ${atIndex("i", check, "e", "i")} }`] : [],
         );
       }
       case "Set": {
@@ -175,17 +200,19 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       }
       case "Map": {
         const steps: string[] = [];
+        const read = keyJs(a0, "k");
+        const bind = read === "k" ? "" : `const kk = ${read}; `;
+        const kk = read === "k" ? "k" : "kk";
         const key = sub(a0);
         if (key) {
-          const read = keyJs(a0, "k");
-          const bind = read === "k" ? "" : `const kk = ${read}; `;
-          const kk = read === "k" ? "k" : "kk";
-          steps.push(`for (const k of Object.keys(v)) { ${bind}${at(`{ key: ${kk} }`, key, kk)} }`);
+          steps.push(
+            `for (const k of Object.keys(v)) { ${bind}${atIndex(`{ key: ${kk} }`, key, kk, null)} }`,
+          );
         }
         const val = sub(a1);
         if (val) {
           steps.push(
-            `for (const [k, e] of Object.entries(v)) { ${at(`{ entry: ${keyJs(a0, "k")} }`, val, "e")} }`,
+            `for (const [k, e] of Object.entries(v)) { ${bind}${atIndex(`{ entry: ${kk} }`, val, "e", kk)} }`,
           );
         }
         return walk(t, `${object} && !Array.isArray(v)`, steps);
