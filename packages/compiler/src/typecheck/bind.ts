@@ -219,15 +219,8 @@ export function checkErrorField(
   const arg = t.args.find((a) => a.name === "field");
   if (!arg) return;
   const see = "(see docs/spec/forms.md)";
-  if (isTileExpr(arg.value)) {
-    errors.push({
-      code: "E0230",
-      kind: "error-field-not-path",
-      message: `error(field=…) cannot show the failure of a tile: a tile is not a slot. field= names a slot, or a path into one ${see}`,
-      pos: arg.value.pos,
-    });
-    return;
-  }
+  // A named argument is a value (language.md §1.7.1), so a tile call there is E0116 already.
+  if (isTileExpr(arg.value)) return;
   const field = errorField(arg.value);
   const { root } = field;
   const notASlot = errorFieldRootProblem(root, sym, ctx);

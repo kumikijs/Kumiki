@@ -43,11 +43,6 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot show the failure of this expression: it computes a value, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
     [
-      "a tile",
-      `tile App = error(field=text("form"))`,
-      `error(field=…) cannot show the failure of a tile: a tile is not a slot. ${ROOT_TAIL} ${SEE}`,
-    ],
-    [
       "the variable of a for",
       `tile App = column(for x in xs error(field=x))`,
       `error(field=…) cannot show the failure of "x": it is a local name, not a slot. ${ROOT_TAIL} ${SEE}`,
@@ -119,6 +114,11 @@ describe("a path another code reports is not E0230 as well", () => {
     ["a field the record lacks", `tile App = error(field=form.emial)`, "E0108"],
     ["a name that resolves to nothing", `tile App = error(field=nope)`, "E0103"],
     ["a List index that is not an Int", `tile App = error(field=xs["a"])`, "E0201"],
+    [
+      "a tile, which a named argument does not hold",
+      `tile App = error(field=text("form"))`,
+      "E0116",
+    ],
   ])("leaves %s to %s", (_label, tile, code) => {
     expect(codesOf(program(tile))).toEqual([code]);
   });

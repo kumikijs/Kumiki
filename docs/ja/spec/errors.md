@@ -905,9 +905,9 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 > `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
 > `error(field=…) cannot step through an index into "<T>": an index names a List element or a Map entry (see docs/spec/forms.md)`
 
-この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、`route` のようにランタイムが与える名前、tile、あるいは値を計算する式。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`）、呼び出し、キーがリテラルでないインデックス、`List` でも `Map` でもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。
+この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、`route` のようにランタイムが与える名前、あるいは値を計算する式。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`）、呼び出し、キーがリテラルでないインデックス、`List` でも `Map` でもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。
 
-計算されたインデックス — `error(field=rows[i].email)` — は 4 つ目の形になる：パスは要素をリテラルのキーで指す（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、レコードにないフィールドは [E0108](#e0108-undef-member)、`Int` でない `List` のインデックスは [E0201](#e0201-type-mismatch) である。
+計算されたインデックス — `error(field=rows[i].email)` — は 4 つ目の形になる：パスは要素をリテラルのキーで指す（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、レコードにないフィールドは [E0108](#e0108-undef-member)、`Int` でない `List` のインデックスは [E0201](#e0201-type-mismatch)、名前付き引数が持てない tile（`error(field=text("form"))`）は [E0116](#e0116-undef-call) である。
 
 **修正**：slot か、メッセージをここに出したいそのフィールドを指す — `form` のどこかの失敗なら `error(field=form)`、email の失敗だけなら `error(field=form.email)`。要素はリテラルのキーで書く：`error(field=rows[0].email)`。
 
