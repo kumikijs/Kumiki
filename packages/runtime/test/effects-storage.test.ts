@@ -87,10 +87,98 @@ describe("storageWrite: the key", () => {
 });
 
 describe("storageWrite: the value", () => {
-  it("answers err for a value JSON cannot encode, and stores nothing", async () => {
+  it("answers err for a value with no stored form, and stores nothing", async () => {
     const m = message(await storageWrite({ key: "t", value: undefined }));
     expect(m).toMatch(/^storage\.write: .*"t"/);
     expect(snapshot(localStorage)).toEqual(SEEDED);
+  });
+});
+
+const HANDLERS = [
+  ["storage", storageWrite, storageRead, () => localStorage],
+  ["session", sessionWrite, sessionRead, () => sessionStorage],
+] as const;
+
+describe.each(HANDLERS)("%s: a written value reads back as the value it was", (_, write, read) => {
+  it.each<[string, unknown]>([
+    ["a Bytes", new Uint8Array([104, 105])],
+    ["an empty Bytes", new Uint8Array()],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["-Infinity", Number.NEGATIVE_INFINITY],
+    ["NaN", Number.NaN],
+    ["-0", -0],
+    ["a record holding both", { data: new Uint8Array([0, 128, 255]), ratio: Number.NaN }],
+    ["a List of Floats", [Number.NEGATIVE_INFINITY, 2.5, Number.NaN, -0]],
+    ["a variant", { _tag: "Some", _0: new Uint8Array([7]) }],
+    [
+      "a Map whose keys start with $, beside a Bytes",
+      { $bytes: "aGk=", $float: "NaN", $$j: 1, $: 2, k: new Uint8Array([7]) },
+    ],
+    ["a Map whose one key is $bytes, beside a NaN", [{ $bytes: "aGk=" }, Number.NaN]],
+    ["a Set(Text) whose member starts with $, beside a -0", [{ $a: true, b: true }, -0]],
+  ])("%s", async (_, value) => {
+    expect(await write({ key: "v", value })).toEqual({ kind: "ok", value: null });
+    expect(await read({ key: "v" })).toStrictEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: value },
+    });
+  });
+
+  // A wrong read puts a million-key object here, and a diff of that never finishes, so this
+  // row compares the bytes without one.
+  it("a 1 MiB Bytes", async () => {
+    const value = Uint8Array.from({ length: 1 << 20 }, (_, i) => i % 251);
+    expect(await write({ key: "v", value })).toEqual({ kind: "ok", value: null });
+    const got = ((await read({ key: "v" })).value as { _0?: unknown })._0;
+    const same = got instanceof Uint8Array && got.length === value.length;
+    expect(same && got.every((b, i) => b === value[i])).toBe(true);
+  });
+});
+
+describe.each(HANDLERS)("%s: the stored text", (_, write, read, storage) => {
+  it("is the JSON text for a value JSON holds, a Map key that starts with $ included", async () => {
+    const value = { $bytes: "aGk=", n: [1, 2.5], o: { _tag: "None" } };
+    await write({ key: "m", value });
+    expect(storage().getItem("m")).toBe(JSON.stringify(value));
+  });
+
+  it("is ~ and the tagged JSON for a value holding a Bytes, a non-finite number or -0", async () => {
+    const value = {
+      data: new Uint8Array([104, 105]),
+      edge: new Uint8Array([251, 255]),
+      m: { $k: Number.NaN, $$j: -0.5, z: -0 },
+    };
+    await write({ key: "t", value });
+    expect(storage().getItem("t")).toBe(
+      '~{"data":{"$bytes":"aGk="},"edge":{"$bytes":"+/8="},"m":{"$$k":{"$float":"NaN"},"$$$j":-0.5,"z":{"$float":"-0"}}}',
+    );
+  });
+
+  it("reads a stored JSON text as that JSON, whichever build wrote it", async () => {
+    storage().setItem("old", '{"$bytes":"aGk="}');
+    expect(await read({ key: "old" })).toStrictEqual({
+      kind: "ok",
+      value: { _tag: "Some", _0: { $bytes: "aGk=" } },
+    });
+  });
+
+  it.each([
+    ["a Bytes that is not base64", '~{"$bytes":"not base64!"}'],
+    ["a Bytes that is not a text", '~{"$bytes":5}'],
+    ["a Bytes without its padding", '~{"$bytes":"aGk"}'],
+    ["a Bytes with spaces in it", '~{"$bytes":" a G k = "}'],
+    ["a tag beside another key", '~{"$bytes":"aGk=","x":1}'],
+    ["an unknown tag", '~{"$x":1}'],
+    ["a single-$ key beside its unescaped twin", '~{"$a":1,"a":2}'],
+    ["an empty Float", '~{"$float":""}'],
+    ["a finite Float", '~{"$float":"1.5"}'],
+    ["a hex Float", '~{"$float":"0x10"}'],
+    ["a Float that is no number", '~{"$float":"abc"}'],
+    ["a text that is not JSON", "~{"],
+    ["a plain text that is not JSON", "{"],
+  ])("answers decode failed, naming the key, for %s", async (_, text) => {
+    storage().setItem("bad", text);
+    expect(message(await read({ key: "bad" }))).toMatch(/^decode failed: the text under "bad" in /);
   });
 });
 
