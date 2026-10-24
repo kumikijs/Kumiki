@@ -929,6 +929,18 @@ Coverage is judged once every arm's pattern fits the scrutinee: an arm that does
 
 **Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
 
+### E0232 `index-into-set`
+
+An index is read from a receiver whose type is known to be a `Set` — declared directly, through an alias or `nominal`, or reached through a field, a `List` element, a `Map` value or `.get`.
+
+> `Cannot read through an index into "Set": a Set has members, not places — use .has`
+
+An index names a place — an entry of a `Map`, a position of a `List` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — and a Set has membership and no places, so `tags[x]` has no value to answer. It is the step [E0602](#e0602-unassignable-member) refuses on the left of `:=`, taken by a read. What a Set says about a value is whether it holds it, and `tags.has(x)` is the read that asks.
+
+The read has no type, so the one mistake is reported once: a position that expects a type — `n := tags[x]`, `if tags[x] then …`, a `fn` body against its `->` — and a step after it, such as `tags[x].foo`, add nothing beside it. A `bind=` target shows the value at the target before it writes one, so `input(bind=tags[x])` and `check(bind=tags[x])` are this code too. A receiver whose type cannot be decided — such as the accumulator `$1` of a `fold` from `{}` — is not reported.
+
+**Fix**: Ask for membership — `tags.has(x)` is a `Bool`. A `check` shows it with `value=tags.has(x)`, and a reducer on its click writes `tags := tags.toggle(x)` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For a value stored under a key, declare a `Map(K, V)` instead.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
@@ -1113,6 +1125,8 @@ Nor do a record, a scalar, an `Option`, a `Result`, a `Tuple` or a union:
 Both messages name the receiver's type as the program writes it: a slot declared `Tags`, on `type Tags = Set(Text)`, is `"Tags"`, and one declared `Set(Int)` is `"Set(Int)"`.
 
 A union is judged here although a member on one is not: the member table has no row for a union, but whichever variant a union value holds, it is neither a `Map` nor a `List`. The error is at the step, with no type mismatch behind it: past a step that names no place the path has no type, so neither the steps after it nor the right-hand side is checked against one. Without this check the write passed silently: `r["a"] := "oops"` on `type R = {a: Int}` passed `check` and stored the Text in the Int field, while `r.a := "oops"` is [E0201](#e0201-type-mismatch), and on an `Int` or a `Text`, `n[0] := v` panicked at run time while `n["a"] := v` replaced the slot with the record `{"a": v}`, as a member write did. On a record, a key written as a literal that names one of its fields is answered with that field's step, `— write the field step ".a"`. A receiver whose type is not known — a type name that resolves to nothing — raises nothing; the name is [E0117](#e0117-undef-type) where it is written.
+
+The read `tags[x]` takes the same step and has nothing to answer either; it is [E0232](#e0232-index-into-set).
 
 A **`bind=` target** is written through the same way — it is the place the control writes to ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)) — and its steps are a path's, written without parentheses. A step written as a call names the value the call answers, not a place, so it is E0602 at the call, on any receiver:
 

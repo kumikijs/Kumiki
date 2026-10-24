@@ -1,5 +1,5 @@
 import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
@@ -14,7 +14,7 @@ import {
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim } from "./infer.ts";
+import { inferType, prim, typeName } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
 import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
@@ -271,7 +271,7 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   if (lv.kind === "LSlot") return;
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
-    checkIndexLvalue(lv, sym, errors, ctx);
+    checkIndexStep(lvalueType(lv.base, sym), lv.index, "write", lv.pos, sym, errors, ctx);
   } else {
     const raw = lvalueType(lv.base, sym);
     const base = unaliasType(raw, sym);
@@ -283,21 +283,35 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   checkLvalue(lv.base, sym, errors, ctx);
 }
 
-function checkIndexLvalue(
-  lv: Lvalue & { kind: "LIndex" },
+/** An index step on either side of `:=`; `raw` is the receiver's type as written. */
+export function checkIndexStep(
+  raw: TypeExpr | null,
+  index: Expr,
+  side: "read" | "write",
+  pos: Pos,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const raw = lvalueType(lv.base, sym);
-  checkListIndex(unaliasType(raw, sym), lv.index, sym, errors, ctx);
-  const step = indexStep(raw, sym);
-  if (step.kind !== "no-place") return;
+  checkListIndex(unaliasType(raw, sym), index, sym, errors, ctx);
+  if (side === "write") {
+    const step = indexStep(raw, sym);
+    if (step.kind !== "no-place") return;
+    errors.push({
+      code: "E0602",
+      kind: "unassignable-member",
+      message: noPlaceMessage(step, index),
+      pos,
+    });
+    return;
+  }
+  const base = unaliasType(raw, sym);
+  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
   errors.push({
-    code: "E0602",
-    kind: "unassignable-member",
-    message: noPlaceMessage(step, lv.index),
-    pos: lv.pos,
+    code: "E0232",
+    kind: "index-into-set",
+    message: `Cannot read through an index into "${typeName(base, sym)}": a Set has members, not places — use .has`,
+    pos,
   });
 }
 
