@@ -119,7 +119,6 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   panel: "layout",
   divider: "layout",
   scroll: "layout",
-  fieldset: "layout",
   "route-outlet": "layout",
   // tiles-text
   text: "text",
@@ -139,6 +138,7 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   slider: "input",
   switch: "input",
   form: "input",
+  fieldset: "input",
   editable: "input",
   // tiles-collection
   list: "collection",
