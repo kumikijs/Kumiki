@@ -13,6 +13,7 @@ import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
 import {
   checkBindStrictProp,
+  checkBindTargetRoot,
   checkBindTargetSteps,
   checkInputBindType,
   checkSecondSpelling,
@@ -31,12 +32,12 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    ctx.localBinds.add("$1");
-    ctx.localTypes.set("$1", tile.in);
+    bindLocal(ctx, "$1", tile.in, "input");
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
@@ -200,7 +201,7 @@ export function checkTileExpr(
       checkExpr(t.iter, sym, errors, ctx);
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
-      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
+      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
       checkTileExpr(t.body, sym, errors, inner);
       return;
     }
@@ -347,6 +348,7 @@ function checkTileCall(
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, errors);
+  checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
   checkSecondSpelling(t, errors);
   checkInputBindType(t, sym, errors, ctx);

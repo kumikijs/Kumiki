@@ -24,6 +24,7 @@ import {
   innerScope,
   isBuiltinCall,
   type KumikiError,
+  RUNTIME_NAMES,
   type SymbolTable,
   wildcardText,
 } from "./context.ts";
@@ -137,7 +138,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      if (e.name === "route" || e.name === "now" || e.name === "self") return;
+      if (RUNTIME_NAMES.has(e.name)) return;
       if (e.name === "$1" && ctx.kind === "tile") {
         ctx.undeclaredInputReads?.push(e.pos);
         errors.push({
@@ -609,6 +610,7 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
     ...ctx,
     localBinds: new Set(ctx.localBinds),
     localTypes: new Map(ctx.localTypes),
+    ...(ctx.localBinders ? { localBinders: new Map(ctx.localBinders) } : {}),
   };
   bindLocal(inner, e.name, inferType(e.value, sym, ctx));
   return inner;
