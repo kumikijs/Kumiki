@@ -646,12 +646,30 @@ Argument *count* is [E0213](#e0213-call-arity-mismatch), not this code.
 
 ### E0204 `effect-id-misuse`
 
-A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and `text(...)` rendering are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and rendering as text are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+
+A handle is refused where these render it as text:
+
+- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements));
+- `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable` binds;
+- an argument of `fmt(...)`, the template included;
+- `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on an `EffectId` it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). An `EffectId` has no other member, so `h.upper` is E0108.
+
+The value's type is read through an alias, a `nominal` and a `let`, so a `type Handle = EffectId` is a handle on both counts, operators and rendering, and so is `let x = h in x`. An operator applied to a handle is reported once, at the operator: what it yields — a `Text`, a number or a `Bool` — is not a handle.
+
+A value that holds a handle without being one is not read through: an `Option(EffectId)` renders its tag, `Some` or `None`, and a record does not render its fields. But these show the representation and are not reported — known gaps, not rules:
+
+- a `List` or a tuple with handles in it, rendered whole or joined with `.join(…)`: `text(hs)`, `text((h, 1))`, `text(m.entries)` on a `Map(Text, EffectId)`;
+- a handle given to another named argument or prop that renders text, such as `tooltip(…, text=h)`, `details(…, summary=h)`, a `title=` on `modal` / `drawer` / `popover`, `toast(…, text=h)`, `input(value=h)`, `textarea(value=h)`, `textarea(bind=h)`, `link(…, to=h)`, `input(placeholder=h)`, `image(…, alt=h)`, `{aria-label: h}` and `{title: h}`;
+- `panic(h)`.
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
-> `text(...) cannot render EffectId — it is an opaque handle`
+> `<builtin>(...) cannot render EffectId — it is an opaque handle`
+> `.show cannot render EffectId — it is an opaque handle`
 
-**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
+`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`.
+
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
 
 ### E0205 `bind-on-file-input`
 

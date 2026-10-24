@@ -7,7 +7,7 @@ import {
   type TileExpr,
   type TypeExpr,
 } from "../ast.ts";
-import { BUILTIN_TILES, contentReading, positionalIsTile } from "../builtins.ts";
+import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "../builtins.ts";
 import {
   type RouteMapEntry,
   redirectCycles,
@@ -25,7 +25,13 @@ import {
   checkToggleBind,
 } from "./bind.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
-import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
+import {
+  checkCondition,
+  checkExpr,
+  checkIterationTarget,
+  elementTypeOf,
+  refuseRenderedEffectId,
+} from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
 import { collectTileBuiltinKinds } from "./tile-collect.ts";
@@ -356,6 +362,22 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
   });
 }
 
+/**
+ * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
+ * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
+ */
+function renderedText(t: TileExpr & { kind: "TileCall" }): Expr[] {
+  const named = (name: string) => t.args.find((a) => a.name === name)?.value;
+  const content = contentArg(t)?.value;
+  const values = [
+    content,
+    t.name === "button" ? named("text") : undefined,
+    t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
+    t.name === "editable" ? named("bind") : undefined,
+  ];
+  return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -375,6 +397,9 @@ function checkTileCall(
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
   checkContentArgs(t, errors);
+  for (const value of renderedText(t)) {
+    refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
+  }
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
