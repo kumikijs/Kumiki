@@ -51,6 +51,8 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
+  /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
+  noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
 };
 
@@ -65,8 +67,7 @@ export function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
 }
 
-/** Each bind's type is `null` when it is in scope with no type to read. */
-export function pureScope(binds: readonly { name: string; type: TypeExpr | null }[]): Ctx {
+export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
   const ctx: Ctx = {
     kind: "slot-init",
     localBinds: new Set(),

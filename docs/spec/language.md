@@ -364,8 +364,9 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - `$1` there has the type the effect's `in=` declares, as a tile's `$1` has the
   type of the tile's `in=`: on `in=UserQuery` with `type UserQuery = {id: Text}`,
   `$1.id` reads the field and `$1.idd` is
-  [E0108](./errors.md#e0108-undef-member). An effect on `in=Unit` is emitted with
-  no argument, so its `$1` has no type
+  [E0108](./errors.md#e0108-undef-member). An effect declared `in=Unit` is emitted
+  with no argument, so `$1` is not bound there and reading it is
+  [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads

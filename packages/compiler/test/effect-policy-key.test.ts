@@ -185,25 +185,99 @@ describe("`$1` in an effect's own expressions has the effect's in= type", () => 
     expect(textAt(source, at)).toMatch(/^\$1 [*-]/);
   });
 
-  it("leaves a member of a union in= unjudged", () => {
+  it("leaves a member of a union in= undecided", () => {
     expect(codesOf(urlApp("Shape", `"/u/" + $1.idd`))).toEqual([]);
     expect(codesOf(urlApp("Shape", `"/u/" + ($1 * 2).show`))).toEqual(["E0201"]);
   });
 
-  // `in=Unit` is emitted with no argument, so `$1` holds no value to type.
+  // `in=Unit` is emitted with no argument, so there is no `$1` to read.
   it.each([
-    ["Unit", "Unit", []],
-    ["a type that does not exist", "Nope", ["E0117"]],
-  ])("leaves the input undecided on %s", (_what, input, expected) => {
-    const clauses = `policy=latest-per-key($1.idd)
-            map-request={url: "/u/" + $1.idd + ($1 * 2).show, decode: Decoder.Text}`;
-    expect(codesOf(inputApp(input, clauses))).toEqual(expected);
+    ["Unit", ""],
+    ["an alias of Unit", "type Nothing = Unit"],
+    ["a nominal over Unit", "type Nothing = nominal Unit"],
+  ])("reports each read of the input as E0103 on an effect declared in=%s", (_what, decl) => {
+    const source = `${decl}
+${inputApp(decl === "" ? "Unit" : "Nothing", READS_OF_ONE)}`;
+    const found = locatedOf(source);
+    expect(found.map((d) => [d.code, d.message])).toEqual(
+      Array(3).fill([
+        "E0103",
+        '"$1" is undefined here — effect "load" declares in=Unit, so it is emitted with no argument',
+      ]),
+    );
+    for (const d of found) expect(textAt(source, d)).toMatch(/^\$1/);
   });
 
-  it("leaves the input undecided on Unit through an alias", () => {
-    const source = `type Nothing = Unit
-${inputApp("Nothing", `map-request={url: "/u/" + $1.idd + ($1 * 2).show, decode: Decoder.Text}`)}`;
-    expect(codesOf(source)).toEqual([]);
+  // The in= is E0117, and a type that names nothing leaves `$1` undecided rather than adding a
+  // diagnostic at each read.
+  it("reports an in= naming no type once, at the type", () => {
+    expect(codesOf(inputApp("Nope", READS_OF_ONE))).toEqual(["E0117"]);
+  });
+});
+
+/** A member read, an operator and a key on `$1`: three reads. */
+const READS_OF_ONE = `policy=latest-per-key($1.idd)
+            map-request={url: "/u/" + $1.idd + ($1 * 2).show, decode: Decoder.Text}`;
+
+type EffectShape = {
+  invoke: (
+    input: unknown,
+    caps: { provider: () => (req: unknown) => { kind: string; value: unknown } },
+    signal: AbortSignal | undefined,
+  ) => Promise<{ kind: string; value: unknown }>;
+};
+
+/** The request `map-request` builds from `input`, as a provider that answers with it receives it. */
+async function requestOf(decls: string, input: string, mapRequest: string, value: unknown) {
+  const app = await loadApp<{ effects: Record<string, EffectShape> }>(
+    `${decls}
+effect send cap=http.post in=${input} out=Result(Text, HttpError)
+            map-request=${mapRequest}
+tile B = button(text="b")
+tile Home = column(B)
+app M caps=[http.post] routes={"/" -> Home, "/404" -> Home} init=[]`,
+    "effect-input",
+  );
+  const caps = { provider: () => (req: unknown) => ({ kind: "ok", value: req }) };
+  return (await app.effects.send?.invoke(value, caps, undefined))?.value;
+}
+
+describe("a member read on `$1` in map-request follows the effect's in= type", () => {
+  it.each([
+    [
+      "a record field named like a stdlib member, as the field",
+      "type Page = {get: Text, keys: Text, size: Int}",
+      "Page",
+      `{url: "/u/" + $1.get + $1.keys + $1.size.show, decode: Decoder.Text}`,
+      { get: "g", keys: "k", size: 20 },
+      { url: "/u/gk20", decode: "text" },
+    ],
+    [
+      "the keys of a Map(Int, …), as Ints",
+      "",
+      "Map(Int, Text)",
+      `{url: "/m", body: Json($1.keys), decode: Decoder.Text}`,
+      { "1": "a" },
+      { url: "/m", body: { _tag: "Json", _0: [1] }, decode: "text" },
+    ],
+    [
+      "the entries of a Map(Int, …), with Int keys",
+      "",
+      "Map(Int, Text)",
+      `{url: "/m", body: Json($1.entries), decode: Decoder.Text}`,
+      { "1": "a" },
+      { url: "/m", body: { _tag: "Json", _0: [[1, "a"]] }, decode: "text" },
+    ],
+    [
+      "the elements of a Set(Int), as Ints",
+      "",
+      "Set(Int)",
+      `{url: "/s", body: Json($1.to-list), decode: Decoder.Text}`,
+      { "1": true, "2": true },
+      { url: "/s", body: { _tag: "Json", _0: [1, 2] }, decode: "text" },
+    ],
+  ])("reads %s", { timeout: 30_000 }, async (_what, decls, input, mapRequest, value, sent) => {
+    expect(await requestOf(decls, input, mapRequest, value)).toEqual(sent);
   });
 });
 
@@ -223,13 +297,15 @@ async function load(source: string): Promise<LoadedApp> {
   return loadApp<LoadedApp>(source, "policy-key");
 }
 
-/** A `latest-per-key(noteKey)` effect and one reducer `go` whose body is `body`. */
-function keyedApp(body: string[]): string {
+const KEYED_ON_SLOT = `effect load cap=http.get in=Text out=Result(Text, HttpError)
+            policy=latest-per-key(noteKey)`;
+
+/** A `latest-per-key` effect (on the slot `noteKey` unless `effect` says otherwise) and one reducer `go` whose body is `body`. */
+function keyedApp(body: string[], effect = KEYED_ON_SLOT): string {
   const [first, ...rest] = body;
   return `slot noteKey : Text     = "a"
 slot lastId  : EffectId = EffectId.none
-effect load cap=http.get in=Text out=Result(Text, HttpError)
-            policy=latest-per-key(noteKey)
+${effect}
 reducer go on=ui.click(B) do= ${first}
 ${rest.map((s) => `                              ${s}`).join("\n")}
 tile B = button(text="b", onClick=go)
@@ -238,8 +314,8 @@ app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
 }
 
 /** Run `go` once against the declared defaults: the id it kept, and the key its emit record carries. */
-async function runGo(body: string[]): Promise<{ id: unknown; key: unknown }> {
-  const app = await load(keyedApp(body));
+async function runGo(body: string[], effect?: string): Promise<{ id: unknown; key: unknown }> {
+  const app = await load(keyedApp(body, effect));
   const go = app.reducers.find((r) => r.name === "go");
   if (!go) expect.fail("no reducer named go");
   const { slots, emits } = go.apply(app.live, {});
@@ -267,5 +343,16 @@ describe("a `latest-per-key` key is evaluated at the emit", () => {
     const { id, key } = await runGo(body);
     expect(key).toBe(expected);
     expect(id).toBe(`load:${expected}`);
+  });
+
+  it("keys on a record field named like a stdlib member, as the field", {
+    timeout: 30_000,
+  }, async () => {
+    const effect = `type Page = {id: Text, size: Int}
+effect load cap=http.get in=Page out=Result(Text, HttpError)
+            policy=latest-per-key($1.size)`;
+    const { id, key } = await runGo([`lastId := emit load({id: "x", size: 20})`], effect);
+    expect(key).toBe("20");
+    expect(id).toBe("load:20");
   });
 });

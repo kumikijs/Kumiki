@@ -8,10 +8,15 @@ import {
 } from "../assignable.ts";
 import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
 import { numberLiteral } from "../ast.ts";
-import { BUILTIN_EFFECTS, builtinFieldOmittable, REDUCER_REF } from "../capabilities.ts";
+import {
+  BUILTIN_EFFECTS,
+  builtinFieldOmittable,
+  declaresNoInput,
+  REDUCER_REF,
+} from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
-import { declaresNoInput, inferType, isKnown, isPrimNamed } from "./infer.ts";
+import { inferType, isKnown, isPrimNamed } from "./infer.ts";
 import { armScope } from "./patterns.ts";
 
 export function checkAgainst(

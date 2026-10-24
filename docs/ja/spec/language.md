@@ -364,8 +364,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - そこでの `$1` は effect の `in=` が宣言する型を持つ。tile の `$1` がその tile の
   `in=` の型を持つのと同じである：`type UserQuery = {id: Text}` に対する
   `in=UserQuery` では、`$1.id` はフィールドを読み、`$1.idd` は
-  [E0108](./errors.md#e0108-undef-member) になる。`in=Unit` の effect は引数なしで
-  放出されるため、その `$1` は型を持たない
+  [E0108](./errors.md#e0108-undef-member) になる。`in=Unit` と宣言された effect は
+  引数なしで放出されるため、そこでは `$1` は束縛されず、読むと
+  [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は

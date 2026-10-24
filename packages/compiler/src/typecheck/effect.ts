@@ -1,9 +1,8 @@
 import { typeToString, unaliasType } from "../assignable.ts";
 import type { EffectDef, TypeExpr } from "../ast.ts";
-import { failsWithText } from "../capabilities.ts";
-import { type KumikiError, pureScope, type SymbolTable } from "./context.ts";
+import { declaresNoInput, failsWithText } from "../capabilities.ts";
+import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
-import { declaresNoInput } from "./infer.ts";
 import { resolveType } from "./types.ts";
 
 export function effectPayloadType(
@@ -76,16 +75,17 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  const input = [{ name: "$1", type: effectInputType(eff, sym) }];
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(input));
+  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
-  if (eff.policy?.kind === "PolLatestKey") checkExpr(eff.policy.key, sym, errors, pureScope(input));
+  if (eff.policy?.kind === "PolLatestKey")
+    checkExpr(eff.policy.key, sym, errors, effectScope(eff, sym));
 }
 
-// An effect emitted with no argument has no `$1` value for a type to describe.
-function effectInputType(eff: EffectDef, sym: SymbolTable): TypeExpr | null {
-  return declaresNoInput(eff.inType, sym) ? null : eff.inType;
+/** `$1` is the effect's input, and an effect declared `in=Unit` is emitted with none. */
+function effectScope(eff: EffectDef, sym: SymbolTable): Ctx {
+  if (declaresNoInput(eff.inType, sym)) return { ...pureScope([]), noInputEffect: eff.name };
+  return pureScope([{ name: "$1", type: eff.inType }]);
 }
 
 function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
