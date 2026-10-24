@@ -1,10 +1,10 @@
 import {
   assertNever,
-  type Expr,
   isTileExpr,
   type ReducerDef,
   type TileDef,
   type TileExpr,
+  writtenProp,
 } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
 import { expansionTargets } from "../def-graph.ts";
@@ -106,13 +106,6 @@ export function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
   }
 }
 
-export function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
-  const fromProp = t.props.find((p) => p.name === name)?.value;
-  if (fromProp !== undefined) return fromProp;
-  const fromArg = t.args.find((a) => a.name === name)?.value;
-  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
-}
-
 export function collectElementIds(expr: TileExpr, out: Set<string>): void {
   switch (expr.kind) {
     case "TileFor":
@@ -127,7 +120,7 @@ export function collectElementIds(expr: TileExpr, out: Set<string>): void {
       for (const arm of expr.arms) collectElementIds(arm.body, out);
       return;
     case "TileCall": {
-      const id = writtenValue(expr, "id");
+      const id = writtenProp(expr, "id")?.value;
       if (id?.kind === "Str") out.add(id.value);
       for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;

@@ -108,4 +108,16 @@ describe("an input's field kind has to go with the bound type (E0226)", () => {
   it("still judges a bound type that no field kind goes with beside a type= expression", () => {
     expect(e0226(`input(bind=b, type=k)`)).toHaveLength(1);
   });
+
+  // The check is of the field the lowering renders, which is the block's when both are written.
+  it.each([
+    [`input(bind=n) {type: "number"}`, 0],
+    [`input(type="number") {bind: n}`, 0],
+    [`input(bind=t) {type: "time"}`, 1],
+    [`input() {bind: n}`, 1],
+    [`input(bind=n, type="text") {type: "number"}`, 0],
+    [`input(bind=n, type="number") {type: "text"}`, 1],
+  ])("reads the bind and the field kind of %s from the {…} block as from the arguments", (input, n) => {
+    expect(e0226(input)).toHaveLength(n);
+  });
 });

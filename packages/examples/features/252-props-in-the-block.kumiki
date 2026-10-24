@@ -1,0 +1,45 @@
+# Feature (language.md): a named argument and a `{…}` entry of the
+# same name are one prop. That includes the props a builtin lifts onto its
+# own node rather than leaving in the props bag — a modal's `open`, a
+# select's `options`, a list's `ordered` — so each call below renders from
+# its block exactly as it would from `open=…`, `options=…`, `ordered=…`: the
+# note starts closed and opens when `showing` does, the select offers both
+# fruits, and the steps are an `<ol>`.
+#
+# The scenario chooses "Pear" from the options the block supplies. Whether
+# the note is shown and which list element renders are not in a headless
+# scenario's view (it reads text, not styles or tag names);
+# `packages/tests/src/prop-spellings.test.ts` mounts this example and reads them
+# from the DOM.
+
+slot pick    : Text = "a"
+slot showing : Bool = false
+
+reducer show on=ui.click(ShowBtn) do= showing := true
+reducer hide on=ui.click(HideBtn) do= showing := false
+
+tile ShowBtn = button(text="Show the note") {id: "show"}
+tile HideBtn = button(text="Hide the note") {id: "hide"}
+
+tile Note = modal(text("A note in a modal"), HideBtn) {open: showing, id: "note"}
+
+tile Fruit = select(bind=pick)
+               {options: [{label: "Apple", value: "a"}, {label: "Pear", value: "p"}], id: "fruit"}
+
+tile Steps = list(list-item(text("Pick a fruit")), list-item(text("Read the note")))
+               {ordered: true, id: "steps"}
+
+tile App
+    = column(
+        heading("Props in the block"),
+        Fruit,
+        text("picked: " + pick),
+        Steps,
+        ShowBtn,
+        Note)
+      {pad: "lg", gap: "md"}
+
+app PropsInTheBlock
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
