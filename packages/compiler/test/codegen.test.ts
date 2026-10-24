@@ -4,7 +4,7 @@ import { app } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { compileOrFail, importModule, loweredOf } from "./helpers/module.ts";
+import { compileOrFail, importModule, LOADABLE, loweredOf } from "./helpers/module.ts";
 import { withRoot } from "./helpers/programs.ts";
 
 const COUNTER_PATH = app("01-counter");
@@ -19,6 +19,57 @@ describe("codegen", () => {
     expect(js).toContain('_h("inc")');
     expect(js).toContain("App._dispatch(n, el)");
     expect(js).toContain("globalThis.__kumikiApp = App;");
+  });
+
+  describe("the test globals", () => {
+    const NO_TESTS = `
+      slot n : Int = 0
+      reducer inc on=ui.click(B) do= n := n + 1
+      tile B = button(text="+", onClick=inc)
+      tile App = column(B, text(n.show))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    type Host = { __kumikiTests?: unknown; __kumikiCoverage?: unknown };
+    type Loaded = { default: { _tests?: unknown; _coverage?: unknown } };
+    const EARLIER_TESTS = ["from an earlier program"];
+    const EARLIER_COVERAGE = { from: "an earlier program" };
+
+    /** Import `js` with both globals preset to an earlier program's, then clear them. */
+    async function importOver(js: string, check: (mod: Loaded, host: Host) => void): Promise<void> {
+      const host = globalThis as Host;
+      host.__kumikiTests = EARLIER_TESTS;
+      host.__kumikiCoverage = EARLIER_COVERAGE;
+      try {
+        check(await importModule<Loaded>(js, "codegen"), host);
+      } finally {
+        delete host.__kumikiTests;
+        delete host.__kumikiCoverage;
+      }
+    }
+
+    it("are the program's own when tests are included: no tests, and its definitions with none used", async () => {
+      await importOver(
+        compileOrFail(NO_TESTS, { ...LOADABLE, includeTests: true }),
+        (mod, host) => {
+          expect(host.__kumikiTests).toEqual([]);
+          expect(host.__kumikiTests).toBe(mod.default._tests);
+          expect(host.__kumikiCoverage).toEqual({
+            reducers: { total: ["inc"], used: [] },
+            tiles: { total: ["B", "App"], used: [] },
+            effects: { total: [], used: [] },
+          });
+        },
+      );
+    });
+
+    it("are left alone by a module compiled without tests", async () => {
+      await importOver(compileOrFail(NO_TESTS, LOADABLE), (mod, host) => {
+        expect(host.__kumikiTests).toBe(EARLIER_TESTS);
+        expect(host.__kumikiCoverage).toBe(EARLIER_COVERAGE);
+        expect(mod.default._tests).toBeUndefined();
+        expect(mod.default._coverage).toBeUndefined();
+      });
+    });
   });
 
   it("compiles a program that uses .concat", () => {
@@ -337,8 +388,9 @@ describe("codegen", () => {
       app A caps=[http.get] routes={"/" -> App, "/404" -> App} init=[]
     `;
     const js = compileOrFail(src);
-    expect(js).toContain('_emits.push({ effect: "search"');
-    expect(js).toContain('return "search:_";');
+    expect(js).toContain(
+      'const __e = { effect: "search", args: ["q"] }; _emits.push(__e); return (__e.id = _s.emitId(_effects["search"], __e));',
+    );
     expect(js).toContain('"stored": { value: "" }');
   });
 
@@ -358,8 +410,9 @@ describe("codegen", () => {
     const js = compileOrFail(src);
     expect(js).toMatch(/const __a0 = _s\.now\(\);/);
     expect(js).toMatch(/const __k = \(\(\w+\) => String\(\w+\)\)\(__a0\);/);
-    expect(js).toContain('_emits.push({ effect: "search", args: [__a0], key: __k })');
-    expect(js).toContain('return "search:" + __k;');
+    expect(js).toContain(
+      'const __e = { effect: "search", args: [__a0], key: __k }; _emits.push(__e); return (__e.id = _s.emitId(_effects["search"], __e));',
+    );
     const occurrences = (js.match(/_s\.now\(\)/g) ?? []).length;
     expect(occurrences).toBe(1);
   });

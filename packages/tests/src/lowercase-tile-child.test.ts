@@ -1,22 +1,7 @@
 import { renderToString, routing } from "@kumikijs/runtime";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { click, mountApp, tick } from "./helpers/dom.ts";
+import { describe, expect, it } from "vitest";
+import { mountSource, press } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-async function start(src: string) {
-  const app = await loadSource(src);
-  const { root, handle } = mountApp(app, { router: "memory" });
-  onTestFinished(() => {
-    handle.dispose();
-    root.remove();
-  });
-  await tick(0);
-  const press = async (label: string): Promise<void> => {
-    click(root, label);
-    await tick(0);
-  };
-  return { app, root, press };
-}
 
 const APP = `app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
@@ -42,7 +27,7 @@ describe("a lower-cased tile, which shares its name with a slot", () => {
     ["as a form's bare child", "form(leaf)"],
     ["in a when arm", "when(show, leaf)"],
   ])("fires tile.mount %s", async (_, child) => {
-    const { app, root } = await start(`slot leaf : Text = "hello"
+    const { app, root } = await mountSource(`slot leaf : Text = "hello"
 slot show : Bool = true
 slot seen : Int = 0
 reducer sawLeaf on=tile.mount(leaf) do= seen := seen + 1
@@ -56,7 +41,7 @@ ${APP}
   });
 
   it("fires tile.unmount when it leaves", async () => {
-    const { app, root, press } = await start(`slot leaf : Text = "hello"
+    const { app, root } = await mountSource(`slot leaf : Text = "hello"
 slot show : Bool = true
 slot log : List(Text) = []
 reducer sawMount on=tile.mount(leaf) do= log := log.push("+leaf")
@@ -70,7 +55,7 @@ ${APP}
     expect(root.textContent).toContain("tile body");
     expect(app.live?.log).toEqual(["+leaf"]);
 
-    await press("hide");
+    await press(root, "hide");
     expect(root.textContent).not.toContain("tile body");
     expect(app.live?.log).toEqual(["+leaf", "-leaf"]);
   });
@@ -80,13 +65,13 @@ ${APP}
     ["in a when arm", `slot show : Bool = true\ntile App = column(when(show, leaf))\n${APP}`],
     ["on a route target", `app M caps=[] routes={"/" -> leaf, "/404" -> leaf} init=[]`],
   ])("catches a panic with its own error-boundary %s", async (_, rest) => {
-    const { root } = await start(`${ALWAYS_PANICKING}\n${rest}\n`);
+    const { root } = await mountSource(`${ALWAYS_PANICKING}\n${rest}\n`);
     expect(root.textContent).toContain("caught: bang");
     expect(root.querySelector("[data-kumiki-panic]")).toBeNull();
   });
 
   it("mounts the fallback while the tile panics, and the tile once it renders", async () => {
-    const { app, root, press } = await start(`${PANICKING}
+    const { app, root } = await mountSource(`${PANICKING}
 slot oopsShown : Int = 0
 slot oopsGone : Int = 0
 slot leafShown : Int = 0
@@ -100,7 +85,7 @@ ${APP}
     expect(root.textContent).toContain("caught: get called on None");
     expect(counts()).toEqual([1, 0, 0]);
 
-    await press("load");
+    await press(root, "load");
     expect(root.textContent).toContain("data: 42");
     expect(root.textContent).not.toContain("caught:");
     expect(counts()).toEqual([1, 1, 1]);
@@ -117,7 +102,7 @@ ${APP}
 
   it("reads the slots in its body, not the bindings where it is written", async () => {
     // `leaf` is checked on its own, where `name` is the slot, so the loop's `name` must not reach it.
-    const { root } = await start(`slot leaf : Text = "hello"
+    const { root } = await mountSource(`slot leaf : Text = "hello"
 slot name : Text = "the slot"
 slot names : List(Text) = ["the loop"]
 tile leaf = text("name: " + name)

@@ -1,18 +1,7 @@
 import { renderToString, routing } from "@kumikijs/runtime";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { mountApp, tick } from "./helpers/dom.ts";
+import { describe, expect, it } from "vitest";
+import { mountSource } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-async function start(src: string) {
-  const app = await loadSource(src);
-  const { root, handle } = mountApp(app, { router: "memory" });
-  onTestFinished(() => {
-    handle.dispose();
-    root.remove();
-  });
-  await tick(0);
-  return { app, root };
-}
 
 /** `Boom` panics, its fallback `Oops` panics, and `Oops`'s fallback `Last` renders. */
 const CHAIN = `slot xs : List(Int) = []
@@ -33,13 +22,13 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
 app M caps=[] routes={"/" -> Boom, "/404" -> Other} init=[]`,
     },
   ])("renders the fallback's fallback at $where", async ({ tail }) => {
-    const { root } = await start(`${CHAIN}\n${tail}\n`);
+    const { root } = await mountSource(`${CHAIN}\n${tail}\n`);
     expect(root.textContent).toContain("last resort: get called on None at Oops");
     expect(root.querySelector("[data-kumiki-panic]")).toBeNull();
   });
 
   it("follows a chain three fallbacks deep, naming the fallback that panicked", async () => {
-    const { root } = await start(`slot xs : List(Int) = []
+    const { root } = await mountSource(`slot xs : List(Int) = []
 slot names : Map(Text, Int) = {}
 tile Last in=PanicInfo = text("last resort: " + $1.message + " at " + $1.location)
 tile Mid in=PanicInfo error-boundary=Last = column(text(names["k"].show))
@@ -54,7 +43,7 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("prefers the fallback's own boundary to one around the tile that panicked", async () => {
-    const { root } = await start(`${CHAIN}
+    const { root } = await mountSource(`${CHAIN}
 tile Outer in=PanicInfo = text("outer: " + $1.message)
 tile Shell error-boundary=Outer = column(text("frame"), Boom)
 tile App = column(Shell)
@@ -66,7 +55,7 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("leaves a panic in a fallback with no boundary of its own to the boundaries around", async () => {
-    const { root } = await start(`slot xs : List(Int) = []
+    const { root } = await mountSource(`slot xs : List(Int) = []
 tile Outer in=PanicInfo = text("outer: " + $1.message + " at " + $1.location)
 tile Oops in=PanicInfo = column(text(xs.head.get.show))
 tile Boom error-boundary=Oops = column(text(panic("bang")))
@@ -79,7 +68,7 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("mounts the fallback that rendered, not the one that panicked", async () => {
-    const { app, root } = await start(`${CHAIN}
+    const { app, root } = await mountSource(`${CHAIN}
 slot oopsMounts : Int = 0
 slot lastMounts : Int = 0
 reducer sawOops on=tile.mount(Oops) do= oopsMounts := oopsMounts + 1

@@ -5,7 +5,7 @@
 # boundary shows `ChartFallback` in its place: `tile.mount(ChartFallback)`
 # fires, and `tile.mount(Chart)` does not — the tile that panicked is not what
 # rendered. "retry" re-renders the fallback with the panic still there, which
-# is not a new appearance, so nothing fires. "load" fills `data`: `Chart`
+# is not a new appearance, so no mount or unmount fires. "load" fills `data`: `Chart`
 # renders its own body, the fallback leaves, and `tile.unmount(ChartFallback)`
 # fires beside `tile.mount(Chart)`.
 
