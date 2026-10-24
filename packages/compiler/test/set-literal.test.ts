@@ -75,6 +75,36 @@ reducer go on=ui.click(Btn) do= w := w.union(["a"])`);
       'slot m : Map(Text, Set(Int)) = {}\nreducer go on=ui.click(Btn) do= m := m.update("a", [1])',
       "=> (_s.setOf([1]))",
     ],
+    [
+      "the argument of Set.has",
+      "slot ss : Set(Set(Int)) = []\nslot b : Bool = false\nreducer go on=ui.click(Btn) do= b := ss.has([1])",
+      ", _s.setOf([1]));",
+    ],
+    [
+      "the argument of Set.add",
+      "slot ss : Set(Set(Int)) = []\nreducer go on=ui.click(Btn) do= ss := ss.add([1])",
+      ", _s.setOf([1]));",
+    ],
+    [
+      "the key of Map.insert",
+      'slot m : Map(Set(Int), Text) = {}\nreducer go on=ui.click(Btn) do= m := m.insert([1], "a")',
+      '_s.setOf([1]), "a")',
+    ],
+    [
+      "the key of Map.get-or",
+      'slot m : Map(Set(Int), Text) = {}\nslot t : Text = ""\nreducer go on=ui.click(Btn) do= t := m.get-or([1], "-")',
+      '_s.setOf([1]), "-")',
+    ],
+    [
+      "an item of List.concat's argument",
+      "slot ls : List(Set(Int)) = []\nreducer go on=ui.click(Btn) do= ls := ls.concat([[1]])",
+      "[_s.setOf([1])]",
+    ],
+    [
+      "a value of Map.merge's argument",
+      'slot m : Map(Text, Set(Int)) = {}\nreducer go on=ui.click(Btn) do= m := m.merge({"a": [1]})',
+      '[_s.entryKey("a")]: _s.setOf([1])',
+    ],
   ])("in %s", (_position, defs, want) => {
     const out = js(defs);
     expect(out).toContain(want);

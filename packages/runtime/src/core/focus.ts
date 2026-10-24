@@ -1,5 +1,6 @@
 /** Where focus and the caret were inside a view before a pass that may rebuild its controls. */
 export type FocusSnapshot = {
+  el: Element;
   bind: string | undefined;
   id: string | undefined;
   path: number[];
@@ -20,6 +21,7 @@ export function snapshotFocus(view: HTMLElement): FocusSnapshot | null {
   const el = active as HTMLInputElement;
   const hasSelection = el.tagName === "INPUT" || el.tagName === "TEXTAREA";
   return {
+    el,
     bind: el.dataset.kumikiBind ?? undefined,
     id: el.id || undefined,
     path: domPath(el, view),
@@ -29,7 +31,10 @@ export function snapshotFocus(view: HTMLElement): FocusSnapshot | null {
   };
 }
 
-/** Refocus the control the snapshot names: by bind, then by id, then by its position. */
+/**
+ * Refocus the control the snapshot names: by bind, then by id, then the focused element itself while the pass kept it in the view, and only then by its position.
+ * The position is the last resort because an element that is not a tile, such as a fieldset's `<legend>`, can come and go in front of the control.
+ */
 export function restoreFocus(snap: FocusSnapshot, view: HTMLElement): void {
   const byBind = snap.bind ? view.querySelectorAll(`[data-kumiki-bind="${snap.bind}"]`) : null;
   let found: Element | null =
@@ -38,7 +43,7 @@ export function restoreFocus(snap: FocusSnapshot, view: HTMLElement): void {
       : snap.id
         ? view.querySelector(`#${CSS.escape(snap.id)}`)
         : null;
-  found ??= elementAtPath(snap.path, view);
+  found ??= view.contains(snap.el) ? snap.el : elementAtPath(snap.path, view);
   if (!found || !holdsFocusState(found)) return;
   const el = found as HTMLElement;
   el.focus();
