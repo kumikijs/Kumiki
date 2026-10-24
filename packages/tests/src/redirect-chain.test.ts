@@ -39,6 +39,8 @@ app Redirects
         "/p/:id"     ->> "/q/:id",
         "/q/:id"     ->> "/p/:id",
         "/g/*"       ->> "/g/x/*",
+        "/rel/old"   ->> "moved",
+        "/rel/moved" ->> "/v1",
         "/"          -> Home,
         "/items/:id" -> Item,
         "/help/*"    -> Help,
@@ -126,6 +128,13 @@ describe("a redirect target names what its source binds", () => {
   });
 });
 
+describe("a target that is not a path", () => {
+  it("resolves against the path it redirects from, and is redirected in turn from there", async () => {
+    expect(await landed("/", nav("/rel/old"))).toContain("[at /]");
+    expect(await landed("/rel/old")).toContain("[at /]");
+  });
+});
+
 describe("redirects in a sub-routes map", () => {
   it("follow a chain and substitute a parameter", async () => {
     const text = await landed("/", nav("/account/u/5"));
@@ -197,6 +206,7 @@ describe("renderToString serves where a chain lands", () => {
     ["/v1", "/", "[at /]"],
     ["/old/42", "/items/42", "[id 42]"],
     ["/account/u/5", "/account/users/5", "[at /account/users/5]"],
+    ["/rel/old", "/", "[at /]"],
   ])("%s is served %s", async (from, to, shown) => {
     const app = await loadSource(SRC, ["nav.push", "nav.back"]);
     const out = await renderToString(app, { route: from, routing });
@@ -204,9 +214,12 @@ describe("renderToString serves where a chain lands", () => {
     expect(out.html).toContain(shown);
   });
 
-  it("follows a chain of literal redirects without a routing module", async () => {
+  it.each([
+    "/v1",
+    "/rel/old",
+  ])("follows a chain of literal redirects from %s without a routing module", async (from) => {
     const app = await loadSource(SRC, ["nav.push", "nav.back"]);
-    const out = await renderToString(app, { route: "/v1" });
+    const out = await renderToString(app, { route: from });
     expect(out.snapshot.route).toBe("/");
     expect(out.html).toContain("Home page");
   });

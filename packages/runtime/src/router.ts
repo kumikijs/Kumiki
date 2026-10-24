@@ -188,7 +188,9 @@ function redirectStep(routes: RouteList, path: string): string | null {
     owner && !("redirectTo" in owner) && owner.subRoutes?.length
       ? firstMatch(owner.subRoutes, path)
       : owner;
-  return entry && "redirectTo" in entry ? landing(entry, path) : null;
+  if (!entry || !("redirectTo" in entry)) return null;
+  // Resolved against the path it redirects from, as `navigate-replace` from there would resolve it.
+  return resolveTarget(landing(entry, path), { pathname: path, search: "", hash: "" });
 }
 
 /** A segment is carried as the path has it, so the target's own match decodes it once, as it would the same URL asked for directly. */

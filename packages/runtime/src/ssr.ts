@@ -69,13 +69,12 @@ export async function renderToString(
   const requested = splitPath(routePath);
   const redirectTo = options.routing
     ? options.routing.findRedirect(app.routes, requested)
-    : followRedirects(
-        requested.pathname,
-        (path) =>
-          declared(normalizeLocation(path)).find((r): r is RedirectEntry => "redirectTo" in r)
-            ?.redirectTo ?? null,
-      );
-  const servedPath = redirectTo === null ? routePath : resolveTarget(redirectTo, requested);
+    : followRedirects(requested.pathname, (path) => {
+        const to = declared(path).find((r): r is RedirectEntry => "redirectTo" in r)?.redirectTo;
+        return to === undefined ? null : resolveTarget(to, splitPath(path));
+      });
+  // Each step of the chain is resolved against the path it redirects from.
+  const servedPath = redirectTo ?? routePath;
 
   const parsedRoute: ParsedRoute =
     options.routing && app.routes && app.routes.length > 0
