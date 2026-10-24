@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CASCADE_HELP, lockDef } from "@kumikijs/cli";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -198,5 +198,51 @@ describe("ownership locks", () => {
     expect(res.body).toMatch(/lock violation: slot\.todosX is locked by agent:a/);
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+});
+
+describe("a tile's name written as a child, beside a slot of the same name", () => {
+  const workdir = useWorkdir();
+  let file: string;
+  const seed = (body: string): void => {
+    file = join(workdir.path, "app.kumiki");
+    writeFileSync(
+      file,
+      `slot leaf : Text = "hello"
+tile leaf = column(text("tile"))
+tile App = ${body}
+app M
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`,
+    );
+  };
+
+  it("is a reference to the tile for kumiki_refs and kumiki_remove", async () => {
+    seed("column(leaf)");
+    await withClient(async (client) => {
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "tile.leaf" })).toBe(
+        "tile.App @ line 3",
+      );
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "slot.leaf" })).toBe(
+        "(no references)",
+      );
+      const out = await callTool(client, "kumiki_remove", {
+        path: file,
+        name: "slot.leaf",
+        cascade: true,
+      });
+      expect(out).toContain("removed slot.leaf");
+      expect(out).not.toContain("cascaded");
+    });
+  });
+
+  it("is renamed with the tile by kumiki_rename, and the slot's read is not", async () => {
+    seed("column(leaf, text(leaf))");
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_rename", { path: file, name: "tile.leaf", newName: "twig" });
+      expect(readFileSync(file, "utf8")).toContain("tile App = column(twig, text(leaf))");
+    });
   });
 });

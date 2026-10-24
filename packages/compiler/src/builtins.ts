@@ -1,4 +1,5 @@
-import type { TileArg, TileExpr } from "./ast.ts";
+import type { Expr, TileArg, TileExpr } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 
 export const BUILTIN_TILES = new Set<string>([
   // Structural
@@ -64,6 +65,18 @@ export const BUILTIN_TILES = new Set<string>([
 
 export function positionalIsTile(name: string): boolean {
   return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
+}
+
+// Codegen renders such a name as the tile; the checker and the reference graph must agree.
+export function tileNamedAt(
+  callee: string,
+  arg: TileArg,
+  isTile: (name: string) => boolean,
+): (Expr & { kind: "Ref" }) | undefined {
+  const v = arg.value;
+  if (arg.name !== undefined || !positionalIsTile(callee)) return undefined;
+  if (isTileExpr(v) || v.kind !== "Ref") return undefined;
+  return isTile(v.name) ? v : undefined;
 }
 
 export type TileFamily =

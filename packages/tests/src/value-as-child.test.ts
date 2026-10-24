@@ -28,6 +28,18 @@ describe("a value as a child is refused before it can render nothing", () => {
   });
 });
 
+describe("the name of a tile as a child mounts the tile", () => {
+  it.each([
+    ["with no other definition of the name", ""],
+    ["beside a fn of the same name", `fn leaf() -> Text = "fn"\n`],
+  ])("%s", async (_, extra) => {
+    const { root } = mountApp(
+      await loadSource(`${extra}tile leaf = text("tile")\n${program("column(leaf)")}`),
+    );
+    expect(root.textContent).toBe("tile");
+  });
+});
+
 describe("a value where a value belongs mounts and shows the value", () => {
   it.each([
     [`column(text(let x = "shown" in x))`, "shown"],
