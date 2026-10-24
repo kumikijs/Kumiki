@@ -90,6 +90,64 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     effective: 255,
     at: (d) => `slot v : Int = ${"-".repeat(d)}1\n${TAIL}`,
   },
+  {
+    // The first `where` is read with the type's atom, before the chain starts charging.
+    name: "where chain",
+    effective: 256,
+    at: (d) => `type T = Int${" where between(0, 10)".repeat(d)}\nslot v : T = 1\n${TAIL}`,
+  },
+  {
+    name: "slot-assignment index path",
+    effective: 255,
+    at: (d) =>
+      `slot s : List(Int) = [1]
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= s${"[0]".repeat(d)} := 1
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  {
+    name: "slot-assignment field path",
+    effective: 255,
+    at: (d) =>
+      `type R = {a: Int}
+slot s : R = {a: 1}
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= s${".a".repeat(d)} := 1
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  {
+    name: "slot-assignment mixed path",
+    effective: 255,
+    at: (d) =>
+      `type R = {a: List(R)}
+slot s : R = {a: []}
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= s${Array.from({ length: d }, (_, i) => (i % 2 === 0 ? ".a" : "[0]")).join("")} := ${d % 2 === 1 ? "[]" : "{a: []}"}
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
+  {
+    name: "where chain on a record field",
+    effective: 255,
+    at: (d) =>
+      `type T = {f: Int${" where between(0, 10)".repeat(d)}}\nslot v : T = {f: 1}\n${TAIL}`,
+  },
+  {
+    name: "slot-assignment path inside an if",
+    effective: 254,
+    at: (d) =>
+      `slot s : List(Int) = [1]
+tile B = button(text="b", onClick=r)
+reducer r on=ui.click(B) do= if true then { s${"[0]".repeat(d)} := 1 }
+tile App = column(B)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`,
+  },
 ];
 
 /** What the whole pipeline does with a source — never a `RangeError`. */

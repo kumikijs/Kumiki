@@ -110,7 +110,9 @@ reducer trackPageView
 
 複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
 
-`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、境界がどこに宣言されていても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が、fallback が消えたとき —— tile が panic せずに描画し直されたとき、あるいはその tile 自体が消えたとき —— に `tile.unmount(<fallback>)` が発火する。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。panic した tile は描画されたものではないので、fallback がその代わりに表示されている間はその tile 自身の `tile.mount` は発火せず、マウント済みの tile が panic し始めるとその `tile.unmount` が発火する。
+どちらのイベントもインスタンスごとではなく tile 名ごとに数える。`tile.mount(X)` は画面上に `X` がひとつもないときに `X` が現れると発火し、`tile.unmount(X)` は画面上の最後の `X` が消えたときに発火する。すでにある `X` の横に別の `X` が現れても、2 つのうち 1 つが消えても、何も発火しない。
+
+`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、それを宣言した tile がどこに描画されても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が発火し、fallback が消えたとき、つまり宣言した tile が panic せずに描画し直されたとき、あるいは宣言した tile 自体が消えたときに `tile.unmount(<fallback>)` が発火する。上の名前ごとの規則により、2 つの境界が同時に表示している fallback は、どちらの境界も表示しなくなったときに初めて消える。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。fallback は宣言した tile の本体の代わりに描画されるので、fallback が表示されている間は、宣言した tile もその下のどの tile も `tile.mount` を発火しない。マウント済みの宣言した tile が panic し始めると、その tile と下の tile の `tile.unmount` が発火する。
 
 ---
 
@@ -128,6 +130,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 - インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
 - 読み取り `m[k]` が `Map` の持たないキーを指した
 - `Result.get` で Err
+- 値として使う `match` に、scrutinee の値に一致する arm がなかった（[言語 §1.9](./language.md#_1-9-式言語)）
 - `panic(msg)` の明示呼び出し
 
 これらは **panic** と呼ばれる例外。panic は episode log に記録され、現在の reducer は中断される。`slot` の変更は **トランザクション的にロールバック**される。
@@ -286,6 +289,8 @@ reducer noop     on=ui.click(_) do= ()
 ```
 
 ランタイム実装ではこれは **モーダルダイアログ tile** として描画される（ネイティブ `confirm` ではない）。これにより UI スタイルが揃い、テストも容易になる。
+
+ダイアログは常にランタイム自身のものである。`notification.show` に登録したホスト provider はトースト（[§7.7](#_7-7-トースト)）を置き換えるが、`confirm` を受け取ることはない。答えは `onYes` または `onNo` を dispatch することで届けられ、provider の `EffectResult` にはそれができないからである（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。`route.leave` ガードから emit されたダイアログは、答えが出るか、別のナビゲーションがそれを置き換えるまで遷移を保留する（[ルーティング §3.5.2](./routing.md#_3-5-2-leave-ガード)）。
 
 ---
 
