@@ -114,6 +114,8 @@ Both events count per tile name, not per instance. `tile.mount(X)` fires when an
 
 An `error-boundary` fallback ([§7.3](#_7-3-error-boundaries-per-tile)) is a tile on screen like any other, wherever the tile that declares it renders. `tile.mount(<fallback>)` fires when the boundary shows it, and `tile.unmount(<fallback>)` fires when it leaves: the declaring tile renders again without panicking, or the declaring tile itself leaves. By the per-name rule above, a fallback that two boundaries show at once leaves only when neither shows it. A fallback that re-renders with the panic still there has not appeared again, and fires nothing. The fallback renders in place of the declaring tile's body, so while it stands in, neither the declaring tile nor any tile under it fires `tile.mount`. When a mounted declaring tile starts panicking, it and the tiles under it fire `tile.unmount`.
 
+A tile whose whole body is another user tile — `tile Outer = Inner` — renders one tree that is all of both, so both are on screen: `tile.mount(Outer)` and `tile.mount(Inner)` both fire, `Outer`'s first, and when that tree leaves, both `tile.unmount`s fire in the same order. The same holds at any depth (`tile A = B` with `tile B = C` fires for `A`, `B` and `C`, in that order), for a body that is a `for`, `when` or `match` whose rows or branch call another user tile, and wherever the outer tile renders: at a call site, as a route or `sub-routes` target, or as an `error-boundary` fallback. By the per-name rule above, an `Inner` also shown on its own stays mounted while either remains.
+
 ---
 
 ## 7.2 Error Handling

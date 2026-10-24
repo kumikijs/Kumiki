@@ -20,7 +20,9 @@ function _named(node, name) {
   if (node === null || node === undefined) return node;
   if (Array.isArray(node)) return node.map((n) => _named(n, name));
   if (typeof node !== "object" || typeof node.kind !== "string") return node;
-  return { ...node, props: { ...(node.props || {}), _tile: name } };
+  const inner = node.props && node.props._tile;
+  const tile = inner === undefined ? name : [name].concat(inner);
+  return { ...node, props: { ...(node.props || {}), _tile: tile } };
 }
 function _wk(node, key) {
   if (node === null || node === undefined) return node;
