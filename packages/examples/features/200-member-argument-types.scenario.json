@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "label": "the slots start as declared",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "prices: 1.5",
+          "counts: a=0 b=false c=0",
+          "todo: false",
+          "tags: 0 x=false z=false",
+          "colors: false false false",
+          "picks: 0 none=false",
+          "byNum: - keys=0"
+        ]
+      }
+    },
+    {
+      "label": "each write keeps its slot's element, key and value types",
+      "do": { "click": "#fill" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "prices: 11",
+          "counts: a=11 b=false c=3",
+          "todo: true",
+          "tags: 2 x=false z=true",
+          "colors: true false true",
+          "picks: 3 none=true",
+          "byNum: two keys=3"
+        ],
+        "state": {
+          "prices": [3, 1.5, 2, 4, 0.5],
+          "counts": { "a": 11, "c": 3 },
+          "todos": { "t1": { "title": "write", "done": true } },
+          "tags": { "y": true, "z": true },
+          "picks": [{ "_tag": "Some", "_0": 2 }, { "_tag": "Some", "_0": 1 }, { "_tag": "None" }],
+          "byNum": { "1": "one", "2": "two" }
+        }
+      }
+    }
+  ]
+}

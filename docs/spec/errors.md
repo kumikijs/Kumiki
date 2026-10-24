@@ -285,6 +285,8 @@ A tile reference, or the target of a route definition, refers to an undefined ti
 > `Route "<path>" targets undefined tile "<name>"`
 > `Tile-test target "<name>" is a built-in tile — a tile-test can only name a tile the program defines`
 
+The positional arguments of a call to an undefined tile are not checked. Whether one is a tile or a value depends on the tile it is passed to ([Language §1.7.1](./language.md#_1-7-1-syntax)), and an undefined name decides neither, so a misspelt `colum(text("a"), heading("b"))` is this one diagnostic; the arguments are checked once the name resolves.
+
 A **`tile-test` target** is held to more than existing: it must be a tile the program defines. Everywhere else a built-in is a tile like any other, but the generated test applies its target through `App._tilesById`, which is built from the user tiles alone — so `tile-test text` was the one naming that could not work whatever it was given. It passed `check`, and the module died with `App._tilesById.text is not a function`; nothing catches that, so every other test in the file lost its result with it.
 
 ### E0107 `undef-motion`
@@ -373,19 +375,23 @@ A call `f(...)` names no function. The candidate set is the program's `fn` defin
 
 | Callee | Where it is specified |
 |---|---|
-| `now`, `random`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
+| `now` (also written `Time.now`), `random`, `fmt`, `panic` | [Standard Library §2.4](./stdlib.md#_2-4-built-in-functions) |
 | `Duration.*`, `Bytes.*`, `<T>.fresh` / `.parse` / `.show` | [Standard Library §2.2](./stdlib.md#_2-2-collection-methods), [§2.4](./stdlib.md#_2-4-built-in-functions) |
 | `Decoder.*`, `EffectId.none` | [HTTP / Storage §6.1.4](./http.md#_6-1-4-the-decoder-type), [Standard Library §2.1.1.1](./stdlib.md#_2-1-1-1-effectid) |
 | `file-url` | [Forms §5.10](./forms.md#_5-10-file-upload) |
 | `prefers-dark` | [Style §4.6.1](./style.md#_4-6-1-following-os-settings) |
 
-A member of `Decoder`, `EffectId`, `Duration` or `Bytes` written **without parentheses** is a call given no arguments, not a value: that is how `Decoder.Text` and `EffectId.none` are written, and `Duration.s` / `Bytes.from-text` are read the same way even though neither of those namespaces has a zero-argument member. So a member such a namespace does not declare is reported here rather than evaluating to nothing — `Duration.nope` is an E0116 — and a real member given no argument is an [E0213](#e0213-call-arity-mismatch). The four are the qualifiers of the built-in calls listed above; a bare `<T>.fresh` / `.parse` / `.show` on any other qualifier is **not** read as a call, and remains a field read that evaluates to nothing with no diagnostic — a known gap, not a rule.
+A member of `Decoder`, `EffectId`, `Duration` or `Bytes` written **without parentheses** is a call given no arguments, not a value: that is how `Decoder.Text` and `EffectId.none` are written, and `Duration.s` / `Bytes.from-text` are read the same way even though neither of those namespaces has a zero-argument member. So a member such a namespace does not declare is reported here rather than evaluating to nothing — `Duration.nope` is an E0116 — and a real member given no argument is an [E0213](#e0213-call-arity-mismatch). The four are namespaces whose every member is a built-in call. `Time` is read the same way, because `Time.now` — the `now` above, written with its type's name ([Standard Library §2.4.2](./stdlib.md#_2-4-2-time)) — is one of its members written without parentheses: `Time.nope` is an E0116 and `Time.parse` with no text an [E0213](#e0213-call-arity-mismatch), with or without parentheses. Unlike the four, `Time` keeps all of the `fresh` / `parse` / `show` every type has, so `fresh` and an argument-less `parse` / `show` get the type member's report ([E0802](#e0802-unimplemented-function), E0213) rather than the E0116 the four give them ([E0117](#e0117-undef-type)). A bare `<Q>.<member>` on any other qualifier is **not** read as a call, and remains a field read that evaluates to nothing with no diagnostic: `Stamp.now` on a `type Stamp = nominal Time`, `T2.now` on a `type T2 = Time`, a parenthesised `(Time).now`, a misspelt `Tim.now`, and a bare `<T>.fresh` / `.parse` / `.show` all pass `check`. That is a known gap, not a rule. Written with parentheses, each is a call and gets its report: `Stamp.now()` is an E0116.
 
-`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. Writing it anywhere else is an E0116, and inside a test body it carries its own sentence, because the position is what is wrong rather than the name:
+`run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. In a program that declares no `fn run-reducer` ([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)), writing it anywhere else is an E0116, and inside a test body it carries its own sentence, because the position is what is wrong rather than the name:
 
 > `Call to "run-reducer" outside a property-test invariant`
 
 The lowering reads `_init` and `_event`, which are bound only inside a trial, so the module a `given` or an `expect` produces dies with `_init is not defined` before a single test reports its result.
+
+A builtin tile's name is not in the set either: a tile is no function, and a call to one is a tile only where a tile renders, as a positional argument of a builtin other than the value builtins ([Language §1.7.1](./language.md#_1-7-1-syntax)). Called anywhere else where no `fn` has that name — a named argument, a user tile's input, a value builtin's content, any expression — it is an E0116 with a sentence of its own, again because the name is right and the position is wrong:
+
+> `"<name>" is a tile, and a tile renders only as a positional argument of a builtin other than the value builtins`
 
 > `Call to undefined function "<name>"`
 
@@ -576,13 +582,13 @@ A value does not have the type its position requires.
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
 
-The shapes it arrives in differ, which is why the handler is asked about before the value is. A lowercase name parses as a reference. A capitalised one parses as a *tile call* when it is a named argument of a builtin that takes tiles (`box(text("x"), onClick=Card)`) and as a variant tag everywhere else — in a props block, on a value-arg builtin such as `link`, and on a user tile. All three are read as the name they carry, so a reducer whose own name is capitalised binds like any other: what the shape records is capitalisation and which tile the argument sits on, and neither is something the author is saying in this position. The argument form used to check the shape first, which is how a tile name there compiled into an element with no listener at all.
+The shapes it arrives in differ, which is why the handler is asked about before the value is. A lowercase name parses as a reference. A capitalised one parses as a *tile call* in the argument form on a builtin other than the value builtins (`box(text("x"), onClick=Card)`), and as a variant tag everywhere else — in a props block, on a value builtin such as `link`, and on a user tile. All three are read as the name they carry, so a reducer whose own name is capitalised binds like any other: what the shape records is capitalisation and which tile the argument sits on, and neither is something the author is saying in this position. The argument form used to check the shape first, which is how a tile name there compiled into an element with no listener at all.
 
 The parser gives the bare name, the argument-less call and the empty brace form one identical node — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are indistinguishable after parsing — so all three name the reducer. There is nothing left to tell them apart by, and no diagnostic can single one out.
 
-So what this error reports is a value that is no name: a literal, a variant tag carrying a payload (`onClick=Some(1)`), a tile call carrying arguments (`onClick=box(text("z"))`) or props (`onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
+So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
@@ -620,12 +626,30 @@ Argument *count* is [E0213](#e0213-call-arity-mismatch), not this code.
 
 ### E0204 `effect-id-misuse`
 
-A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and `text(...)` rendering are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and rendering as text are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+
+A handle is refused where these render it as text:
+
+- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements));
+- `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable` binds;
+- an argument of `fmt(...)`, the template included;
+- `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on an `EffectId` it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). An `EffectId` has no other member, so `h.upper` is E0108.
+
+The value's type is read through an alias, a `nominal` and a `let`, so a `type Handle = EffectId` is a handle on both counts, operators and rendering, and so is `let x = h in x`. An operator applied to a handle is reported once, at the operator: what it yields — a `Text`, a number or a `Bool` — is not a handle.
+
+A value that holds a handle without being one is not read through: an `Option(EffectId)` renders its tag, `Some` or `None`, and a record does not render its fields. But these show the representation and are not reported — known gaps, not rules:
+
+- a `List` or a tuple with handles in it, rendered whole or joined with `.join(…)`: `text(hs)`, `text((h, 1))`, `text(m.entries)` on a `Map(Text, EffectId)`;
+- a handle given to another named argument or prop that renders text, such as `tooltip(…, text=h)`, `details(…, summary=h)`, a `title=` on `modal` / `drawer` / `popover`, `toast(…, text=h)`, `input(value=h)`, `textarea(value=h)`, `textarea(bind=h)`, `link(…, to=h)`, `input(placeholder=h)`, `image(…, alt=h)`, `{aria-label: h}` and `{title: h}`;
+- `panic(h)`.
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
-> `text(...) cannot render EffectId — it is an opaque handle`
+> `<builtin>(...) cannot render EffectId — it is an opaque handle`
+> `.show cannot render EffectId — it is an opaque handle`
 
-**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
+`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`.
+
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
 
 ### E0205 `bind-on-file-input`
 
@@ -905,7 +929,7 @@ A `radio` carries a `bind=` and no `value=`.
 
 > `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md)`
 
-A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while every `match` on the slot falls through and the block it renders disappears without a word.
+A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while a tile `match` on the slot matches no arm and the block it renders disappears without a word.
 
 An error, not a warning: a radio with nothing to write asserts nothing when it is chosen, and no program means that. It is reported whether or not the bound type can be read.
 
@@ -925,6 +949,18 @@ The second form is a bound type with no row in the table at all: a `Bool` (bind 
 The bound type is unaliased first, so `type Qty = Int where positive` and a `nominal Int` are an `Int` here. Only a literal `type=` is judged against it; a `type=` written as an expression is not known here, and only the second form applies beside one. A bind whose type cannot be read is not reported (its own code, such as [E0103](#e0103-undef-ref-undef-slot), names it), and `type="file"` with a bind is [E0205](#e0205-bind-on-file-input).
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
+
+### E0227 `non-exhaustive-match`
+
+A `match` used as a value has no arm for some value of its scrutinee's type ([Language §1.9](./language.md#_1-9-expression-language)). A value `match` evaluates to one of its arms, so a value none of them matches would leave it nothing to evaluate to.
+
+> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …` ``
+
+Each value left out is written as the pattern that would match it, in the order the type declares its variants (`None` before `Some`, `Ok` before `Err`): `Blue` for a variant with no payload, `Some(_)` for one with a payload, and `(None, Green)` for a combination of a tuple's items. `_` stands for every value of an item whose type has no variants, and for the items after the point where no arm applies any more: `(None, _)` when no arm takes a `None` at all. The message names up to eight values; when there are more, the list ends with `, among others`. A variant pattern's binds take any payload, so `Some(v)` covers every `Some`; tuples are the only patterns that nest. `Bool`, `Int`, `Text`, a record and a `List` have no variants, and there are no literal patterns ([Language §1.9.1](./language.md#_1-9-1-prohibitions)), so `_` or a name is the arm that covers one.
+
+Coverage is judged once every arm's pattern fits the scrutinee: an arm that does not is [E0207](#e0207-pat-arity-mismatch), [E0208](#e0208-pat-type-mismatch) or [E0209](#e0209-pat-unknown-variant), reported alone. Where the scrutinee's type cannot be decided, for example `$el`, whose props the checker does not type, the result of a `fold`, `map` or `zip`, or a `map-request`'s `$1`, nothing is reported here, and a value no arm matches is a panic at run time ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). A tuple with one such item is still judged on its other items, and its type is written with `?` in that place: `match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` is reported on `Tuple(?, Color)` for `(_, Blue)`. The values the checker can name are reported even when other values hinge on an undecidable item. A `match` statement in a reducer body and a `match` in tile position are not values, and this code does not reach them.
+
+**Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -948,7 +984,7 @@ When the walk finds no kind at all, nothing is reported — the tile's own root 
 
 ### W0214 `fmt-placeholder-argument-mismatch` (warning)
 
-A `fmt` call whose **literal** template and argument list disagree — a `{n}` with no argument at that index, an argument no placeholder names, or both at once. Neither is a runtime error ([Standard Library §2.4.5](./stdlib.md#_2-4-5-string-formatting)): a placeholder the arguments do not reach is rendered as written, and an argument no placeholder names is dropped.
+A call to the built-in `fmt`, in a program that declares no `fn fmt` ([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)), whose **literal** template and argument list disagree — a `{n}` with no argument at that index, an argument no placeholder names, or both at once. Neither is a runtime error ([Standard Library §2.4.5](./stdlib.md#_2-4-5-string-formatting)): a placeholder the arguments do not reach is rendered as written, and an argument no placeholder names is dropped.
 
 > `fmt template and arguments disagree: {1} has no argument`
 > `fmt template and arguments disagree: argument 3 is named by no placeholder`
@@ -964,13 +1000,25 @@ Only a literal template is checked. `fmt(tpl, x)` over a slot or a field has no 
 
 ### W0216 `selection-beside-bind` (warning)
 
-The argument a toggle reads for its selection when it is unbound — `value=` on a `check` or `switch`, `selected=` on a `radio` — is written beside a `bind=`.
+The argument a control reads for its selection when it is unbound — `value=` on a `check`, `switch` or `slider`, `selected=` on a `radio` — is written beside a `bind=`. On a `slider`, a `value` in the props block counts too.
 
 > `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md)`
+>
+> `"value" on slider() is not read beside bind= — the bound value is what it shows. Remove it (see docs/spec/forms.md)`
 
-With a `bind=`, the bound value alone decides whether a box is ticked or a radio chosen ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), so the other argument is a second answer to the same question and is not read. Like the argument [W0214](#w0214-fmt-placeholder-argument-mismatch-warning) reports, it leaves nothing behind — the control shows what the bind says, whatever the argument said — so no tier can tell it from a program that never passed it. A radio's own `value=` is not this argument: it is what the radio writes when chosen, and is read.
+With a `bind=`, the bound value alone decides whether a box is ticked or a radio chosen ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), so the other argument is a second answer to the same question and is not read. Like the argument [W0214](#w0214-fmt-placeholder-argument-mismatch-warning) reports, it leaves nothing behind — the control shows what the bind says, whatever the argument said — so no tier can tell it from a program that never passed it. A radio's own `value=` is not this argument: it is what the radio writes when chosen, and is read. A slider's `value=` is: it is the one-way value an unbound slider shows ([Forms §5.3](./forms.md#_5-3-common-props-for-input-elements)), and a bound slider shows the bound value instead.
 
-**Fix**: Remove the argument. To tick the box from an expression rather than from a slot it writes, drop the `bind=` instead and keep `value=` with an `onClick` / `onChange` reducer.
+**Fix**: Remove the argument. To tick the box or place the thumb from an expression rather than from a slot it writes, drop the `bind=` instead and keep `value=` with an `onClick` / `onChange` reducer.
+
+### W0217 `name-beside-group` (warning)
+
+A `radio` writes both `group` and `name`, as arguments or in its props block.
+
+> `"name" on radio() is not read beside group= — group= names the set the radio is in. Remove one (see docs/spec/forms.md)`
+
+`name` spells a radio's `group`, because the group is the `name` attribute of its `<input>` ([Forms §5.5.2](./forms.md#_5-5-2-radio)). With both, `group` is the one read, so `name` is a second answer to which set the radio is in, and like the argument [W0216](#w0216-selection-beside-bind-warning) reports, it leaves nothing behind.
+
+**Fix**: Remove one of them. `group` is the spelling this spec uses.
 
 ## E03xx — Capabilities and Purity
 
@@ -1077,7 +1125,7 @@ Within the same reducer, the same slot path shape (lvalue shape) is written more
 
 ### E0602 `unassignable-member`
 
-An lvalue step names no place in its receiver: a **stdlib member** where a field was expected, or an **index into a `Set`**. The lvalue step set is closed ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field, an index into a `Map` or a `List`, and `.get` on an `Option` / `Result` — so neither can be written through. A member segment would become a literal key and the write would replace the slot with a record: `name.length := 9` on a `Text` left the slot holding `{"length": 9}`.
+An lvalue step names no place in its receiver: a **stdlib member** where a field was expected, or an **index into a receiver that is neither a `Map` nor a `List`**. The lvalue step set is closed ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — a field, an index into a `Map` or a `List`, and `.get` on an `Option` / `Result` — so neither can be written through. A member segment would become a literal key and the write would replace the slot with a record: `name.length := 9` on a `Text` left the slot holding `{"length": 9}`.
 
 > `Cannot assign through ".<member>": it is a member of "<T>", not a field`
 
@@ -1087,9 +1135,17 @@ The name is dispatched, not reserved: a record that declares a field named `leng
 
 For a member, E0602 says the name **is** a member of this receiver, so it is only raised when that sentence is true. A name that is not a member here is [E0108](#e0108-undef-member) instead, on both sides of `:=` alike: one the receiver simply does not have (`name.frist`), and one that belongs to another receiver — `.abs` is a method of `Int` / `Float`, so on a `Text` it is undefined rather than unassignable. A receiver whose type cannot be decided — a union, an opaque type parameter — raises neither, exactly as on the read side: a false error on a dynamic receiver is worse than the silence.
 
-For an index, E0602 is raised when the receiver's type is known to be a `Set` — declared directly, through an alias or `nominal`, or reached through a field, a `List` element, a `Map` value or `.get`. An index names a place — an entry of a `Map`, a position of a `List` — and a Set has membership and no places, so `tags[x] := v` has nowhere to land:
+For an index, E0602 is raised when the receiver's type is known and is neither a `Map` nor a `List` — declared directly, through an alias or `nominal`, or reached through a field, a `List` element, a `Map` value or `.get`. An index names a place — an entry of a `Map`, a position of a `List` — and nothing else has one. A Set has membership and no places, so `tags[x] := v` has nowhere to land:
 
-> `Cannot assign through an index into "Set": a Set has members, not places — use .add / .remove / .toggle`
+> `Cannot assign through an index into "<T>": a Set has members, not places — use .add / .remove / .toggle`
+
+Nor do a record, a scalar, an `Option`, a `Result`, a `Tuple` or a union:
+
+> `Cannot assign through an index into "<T>": an index names a place only in a Map or a List`
+
+Both messages name the receiver's type as the program writes it: a slot declared `Tags`, on `type Tags = Set(Text)`, is `"Tags"`, and one declared `Set(Int)` is `"Set(Int)"`.
+
+A union is judged here although a member on one is not: the member table has no row for a union, but whichever variant a union value holds, it is neither a `Map` nor a `List`. The error is at the step, with no type mismatch behind it: past a step that names no place the path has no type, so neither the steps after it nor the right-hand side is checked against one. Without this check the write passed silently: `r["a"] := "oops"` on `type R = {a: Int}` passed `check` and stored the Text in the Int field, while `r.a := "oops"` is [E0201](#e0201-type-mismatch), and on an `Int` or a `Text`, `n[0] := v` panicked at run time while `n["a"] := v` replaced the slot with the record `{"a": v}`, as a member write did. On a record, a key written as a literal that names one of its fields is answered with that field's step, `— write the field step ".a"`. A receiver whose type is not known — a type name that resolves to nothing — raises nothing; the name is [E0117](#e0117-undef-type) where it is written.
 
 A **`bind=` target** is written through the same way — it is the place the control writes to ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)) — and its steps are a path's, written without parentheses. A step written as a call names the value the call answers, not a place, so it is E0602 at the call, on any receiver:
 
@@ -1097,7 +1153,7 @@ A **`bind=` target** is written through the same way — it is the place the con
 
 Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
 
-**Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+**Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For an index into anything else, write the step that names a place: a record's field as `r.a := v`, an `Option` / `Result` payload through `.get` (`o.get := v`, which writes nothing on a `None` or an `Err`), and any other value whole (`n := v`). To write an `Option` / `Result` value whatever it holds, replace it whole: `o := Some(v)`, `res := Ok(v)`.
 
 ## E07xx — Opt-in Checks (a11y, strict-icons, testing-DSL invariants)
 
@@ -1223,7 +1279,7 @@ A call names a function this document describes and the toolchain has no lowerin
 > `"<T>" has no reading of a text — parse into Int, Float, Time, Bool, Text or Bytes and build it in a fn`
 > `"<T>" is not a Text, and fresh mints a uuid Text — declare the id nominal Text`
 
-Currently three calls are in this state, one for each message. The first is `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
+Currently three calls are in this state, one for each message. The first is `trace(label, value)` ([Standard Library §2.4.6](./stdlib.md#_2-4-6-debugging-aids)), in a program that declares no `fn trace` ([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)). Its specified behaviour is to record into the episode log, and there is no seam from a lowered expression to the mount's episode logger — the fix is a runtime change, not a code-generation case. Reporting it here is what keeps the diagnostic honest in the meantime: without it the call lowers to an undefined global and the program breaks where it is evaluated, with nothing pointing back at the spec.
 
 The second is `T.parse(text)` on a type whose base has no reading of a text — a record, a union, a container, `File`, `EffectId`, `Unit`, or a `nominal` over one of them. [Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion) lists the bases that do. Unlike `trace`, this is not a gap waiting on an implementation: there is no text a record is spelt as, so there is nothing for any lowering to produce, and the message says so rather than calling it unimplemented. The call's type is `Option(T)`, and the lowering used to wrap the raw text in `Some`, so the value a `T` reader unwrapped was a string. A `T` that names no type is [E0117](#e0117-undef-type) instead, a type constructor written without its arguments (`List.parse(t)`, `Box.parse(t)` for a `type Box(T) = …`) is [E0124](#e0124-type-constructor-qualifier) — it is not a type at all, so whether it has a reading never comes up — a `T` whose definition resolves to nothing (an alias of an undefined name, a cycle) is left to the report at that definition, and a `nominal` is judged by its base — `type Cents = nominal Int` parses the way `Int` does.
 
