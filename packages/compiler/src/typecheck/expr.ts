@@ -16,6 +16,7 @@ import {
   checkGetOrArity,
   checkRecordUpdate,
   getOrResultType,
+  indexStep,
 } from "./against.ts";
 import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
 import {
@@ -51,7 +52,6 @@ import {
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
 } from "./patterns.ts";
-import { indexType } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
@@ -214,8 +214,8 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      checkAgainst(e.index, indexType(base, e.index.pos), sym, errors, ctx);
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      if (step.kind === "place" && step.key) checkAgainst(e.index, step.key, sym, errors, ctx);
       return;
     }
     case "Call":

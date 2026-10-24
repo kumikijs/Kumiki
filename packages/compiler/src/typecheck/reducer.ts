@@ -1,5 +1,5 @@
 import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
@@ -269,6 +269,8 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
+  // The base is written first, so its diagnostics come first, as in a read.
+  checkLvalue(lv.base, sym, errors, ctx);
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
     checkIndexLvalue(lv, sym, errors, ctx);
@@ -280,7 +282,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-  checkLvalue(lv.base, sym, errors, ctx);
 }
 
 function checkIndexLvalue(
@@ -289,9 +290,8 @@ function checkIndexLvalue(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const raw = lvalueType(lv.base, sym);
-  checkAgainst(lv.index, indexType(unaliasType(raw, sym), lv.index.pos), sym, errors, ctx);
-  const step = indexStep(raw, sym);
+  const step = indexStep(lvalueType(lv.base, sym), sym);
+  if (step.kind === "place" && step.key) checkAgainst(lv.index, step.key, sym, errors, ctx);
   if (step.kind !== "no-place") return;
   errors.push({
     code: "E0602",
@@ -299,14 +299,6 @@ function checkIndexLvalue(
     message: noPlaceMessage(step, lv.index),
     pos: lv.pos,
   });
-}
-
-// The same on either side of `:=`, since the read and the write name the same place.
-export function indexType(base: TypeExpr | null, at: Pos): TypeExpr | null {
-  if (base?.kind !== "TypeApp") return null;
-  if (base.name === "List") return prim("Int", at);
-  if (base.name === "Map") return base.args[0] ?? null;
-  return null;
 }
 
 function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {

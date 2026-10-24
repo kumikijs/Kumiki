@@ -1,14 +1,15 @@
 # Feature (language.md): the index of a `Map(K, V)` is a `K`.
 #
 # An index step into a Map names the entry at the key, so the key has the
-# Map's key type, on both sides of `:=`: the read `m[k]`, the write
+# Map's key type, in a read as in a write: the read `m[k]`, the write
 # `m[k] := v` and the write through an entry `m[k].f := v`. It is the rule a
 # List index follows, where the position is an `Int`.
 #
 # A key is accepted the way a value is where its type is declared. Two
-# nominal types over one base do not accept each other, so on
-# `notes : Map(TodoId, Text)` the key `post : PostId` is E0201
-# `Expected TodoId but got PostId` in each of the three forms, and on
+# nominal types over one base do not accept each other, so the key
+# `post : PostId` is E0201 `Expected TodoId but got PostId` in each of the
+# three forms (on `notes : Map(TodoId, Text)` for the read and the write,
+# on `todos : Map(TodoId, Todo)` for the write through an entry), and on
 # `counts : Map(Text, Int)` the key `1` is `Expected Text but got Int`. A
 # value with no nominal name of its own meets the nominal declared over it,
 # so the literal "t2" is a `TodoId` key, as it is a `TodoId` slot's value.
