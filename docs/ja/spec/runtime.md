@@ -183,7 +183,8 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 ### 10.3.4 DOM レンダリングの不変条件
 
 - **null/undefined 子ノードは skip される**。`when(false, X)` のような偽分岐は `null` を子に渡すが、`renderTile` はそれを無視して兄弟だけを描画する
-- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll` / `fieldset`** はすべて `<div>` ベースのコンテナ。`stack` は `column` 相当（vertical stack）
+- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll`** はすべて `<div>` ベースのコンテナ。`stack` は `column` 相当（vertical stack）
+- **`fieldset`** は `<fieldset>` である。ブラウザが与える枠線・パディング・マージン・最小幅は `0` にリセットされ、`<div>` のコンテナと同じように配置される。それらを設定する prop があればそちらが勝つ。空でない `legend` を持つ `fieldset` はそれを `<legend>` として子の前に置き、支援技術にはそれがグループの名前になる
 - **`grid`** は `display: grid` + `cols` prop で `grid-template-columns: repeat(N, 1fr)` （数値）または直接 CSS 値（文字列）
 - **`divider`** は `<hr>` 単独要素（children なし）
 - **timer reducer** は `setInterval` で発火、app の `dispose` 時に `clearInterval` で停止
@@ -241,7 +242,7 @@ pass は動かす必要のある子だけを配置するので（[§10.3.10](#_1
 再レンダリング後も入力中の input/textarea の focus とカーソル位置を維持する:
 - `bind=` がある要素: `data-kumiki-bind` 属性（nested path は full path 文字列）で再特定
 - `id=` がある要素: id で再特定
-- どちらもない（`value=` のみの検索ボックス等）: **DOM child-index path** で位置ベースに再特定
+- どちらもない（`value=` のみの検索ボックス等）: pass がその要素を view に残していればその要素自体。pass が作り直した要素だけを **DOM child-index path** で位置ベースに再特定する。そのため、タイルでない要素（`fieldset` の `<legend>` など）がコントロールの前に現れたり消えたりしても、focus が兄弟に移らない
 - `<select>` も snapshot 対象に含まれるので、reorder / bailout パスでもピッカーへの focus は復元される（open dropdown の状態は復元不能で、それは [§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190) の patch パス側の保証）
 
 ### 10.3.10 安定タイル identity
@@ -834,7 +835,7 @@ kumiki replay --until-step 5                # 途中まで
 
 - HTML 生成は **server-side** で初期 route の tile を 1 回描画
   - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`mount` と同じ解決で先に処理され、その行き先が描画される。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、行き先を指す。
-  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。クライアントのルーターがロケーションを読むのと同じ方法で分割され、pathname は**書かれたとおりに**照合される：`//foo` や `/a/../b` は正規化されない。ブラウザの `location.pathname` がそれらを保つためであり、サーバーはクライアントと同じ場所に行き着かなければならない。
+  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。サーバーがクライアントと同じ場所に行き着くよう、ブラウザの `location` がその URL を保持するのと同じ形で保持される：`/a/../b` は `/b` になり、空白や ASCII 以外の文字はパーセントエンコードされ（`/ja/概要` は `/ja/%E6%A6%82%E8%A6%81`）、`//foo` はそれ自体のパスのままである。そのうえで、クライアントのルーターがロケーションを読むのと同じ方法で分割される。リダイレクトの宛先は、クライアントと同じく要求されたパスに対して解決される（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
 - **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` のボックス寸法、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
   - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
@@ -1020,7 +1021,7 @@ again.env.live;                                 // その一覧では答えら�
 | 機能 | 保証 |
 |---|---|
 | `Map`, `Set`, `List` | 純粋（in-place mutation なし） |
-| `Option`, `Result` | パターンマッチ網羅検査 |
+| `Option`, `Result` | 値としての `match` の網羅検査（[E0227](./errors.md#e0227-non-exhaustive-match)）。どの arm にも一致しない値は panic になる |
 | `now`, `random()` | 式が書ける場所ならどこでも呼べる。**reducer 本体の中で**読んだ値は、その episode の step に `env-reads` として記録される（[§10.5.1](#_10-5-1-structure-of-an-episode)）ため、replay は新しい値を引かずに同じ値を再現する。それ以外の場所（tile の式、描画）での読みは記録されず、それらを replay するものも無い |
 | `*.fresh()` | UUIDv7 を生成。`now` / `random()` と同じ reducer 本体スコープで `env-reads` として記録されるため、replay した episode は実行が実際に刻んだ ID を刻む |
 | `panic(message)` | episode を `panic` 状態にして slot をロールバック |
