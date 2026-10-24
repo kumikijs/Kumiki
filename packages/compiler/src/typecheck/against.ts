@@ -8,7 +8,12 @@ import {
 } from "../assignable.ts";
 import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
 import { numberLiteral } from "../ast.ts";
-import { BUILTIN_EFFECTS, builtinFieldOmittable, REDUCER_REF } from "../capabilities.ts";
+import {
+  BUILTIN_EFFECTS,
+  builtinFieldOmittable,
+  declaresNoInput,
+  REDUCER_REF,
+} from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
 import { inferType, isKnown, isPrimNamed } from "./infer.ts";
@@ -410,7 +415,7 @@ export function checkEmitTarget(
       pos,
     });
   }
-  const wants = isPrimNamed(inType, sym, "Unit") ? 0 : 1;
+  const wants = declaresNoInput(inType, sym) ? 0 : 1;
   if (args.length !== wants) {
     errors.push({
       code: "E0213",
