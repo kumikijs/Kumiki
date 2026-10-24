@@ -7,15 +7,16 @@
 #   given  = {slots: {count: "5"}, …}     E0201 Expected Int but got Text
 #   expect = {slots: {count: "51"}, …}    E0201 Expected Int but got Text
 #
-# rather than a test that runs `"5" + 1` and agrees with the "51" it makes.
+# rather than a seed that runs `"5" + 1` and an expectation that agrees with
+# the "51" it makes.
 #
 # `route` is the runtime's slot, of the standard `Route` (routing.md). A
 # seed names only the fields it needs, and each is a value of that field's
 # type: `hash: Some("top")`, where `hash: "top"` is
 # `Expected Option(Text) but got Text`.
 #
-# An `expect` wildcard stands for any value, so it has no type to
-# disagree with.
+# A wildcard in a reducer-test `expect` has no type, so it is not checked
+# against the slot's.
 
 slot count  : Int         = 0
 slot last   : Option(Int) = None
@@ -63,14 +64,15 @@ test inc-from-five =
         given  = {slots: {count: 5, last: None}, event: {type: ui.click, target: IncBtn}}
         expect = {slots: {count: 6, last: Some(5)}, effects: []}
 
-# A wildcard stands for whatever the slot holds.
+# `<any-id>` has no type, so it is not held to `last`'s `Option(Int)`.
 test inc-sets-last =
     reducer-test inc
         given  = {slots: {count: 5}, event: {type: ui.click, target: IncBtn}}
         expect = {slots: {count: 6, last: <any-id>}, effects: []}
 
-# The multi-step form seeds and compares the same slots: `save` is mocked to
-# fail, and its `.err` reducer runs from the seeded state.
+# The multi-step form's seed and expectation are checked as the single-step
+# form's are: `save` is mocked to fail, and its `.err` reducer runs from the
+# seeded state.
 test save-failure-sets-status =
     reducer-test persist
         given  = {slots: {count: 3, status: ""},
@@ -78,7 +80,7 @@ test save-failure-sets-status =
                   mocks: {save: err("disk full")}}
         expect = {slots: {status: "disk full"}, effects: []}
 
-# A route seed names two of the five fields, each of its own type.
+# A route seed names only the fields `locate` reads, each of its own type.
 test locate-reads-the-seeded-route =
     reducer-test locate
         given  = {slots: {at: "", route: {params: {"id": "7"}, hash: Some("top")}},

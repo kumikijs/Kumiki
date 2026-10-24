@@ -4,28 +4,18 @@ import { compile } from "@kumikijs/compiler";
 import { resolveCapabilities } from "@kumikijs/compiler/node";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
+import { editedIn } from "./helpers/source.ts";
 
 const EXAMPLE = feature("211-test-slot-seed-type");
 const SOURCE = readFileSync(EXAMPLE, "utf8");
 
 /**
  * The example with the first `before + value` in test `test` rewritten as
- * `before + typo`, and the 1-based line and column the typo starts at.
+ * `before + wrong`, and the 1-based line and column `wrong` starts at.
  */
-function rewritten(
-  test: string,
-  before: string,
-  value: string,
-  typo: string,
-): { source: string; line: number; col: number } {
-  const start = SOURCE.indexOf(`test ${test} =`);
-  if (start === -1) throw new Error(`the example has no test ${test}`);
-  const hit = SOURCE.indexOf(before + value, start);
-  if (hit === -1) throw new Error(`test ${test} has no ${before}${value}`);
-  const at = hit + before.length;
-  const source = SOURCE.slice(0, at) + typo + SOURCE.slice(at + value.length);
-  const line = source.slice(0, at).split("\n").length;
-  return { source, line, col: at - source.lastIndexOf("\n", at - 1) };
+function rewritten(test: string, before: string, value: string, wrong: string) {
+  const edit = editedIn(SOURCE, [`test ${test} =`], before + value, before + wrong);
+  return { ...edit, col: edit.col + before.length };
 }
 
 const build = (source: string) =>
@@ -47,6 +37,13 @@ describe("a slot value in a test is a value of the slot's type", () => {
       ["inc-adds-one", true],
       ["replay-two-clicks", true],
     ]);
+  });
+
+  it("rewrites only inside the named test", () => {
+    // `inc-adds-one`, a later test, is where `{slots: {count: n` is written.
+    expect(() => rewritten("count-renders-the-seed", "{slots: {count: ", "n", "5")).toThrow(
+      "test count-renders-the-seed = has no {slots: {count: n there",
+    );
   });
 
   it.each([
@@ -100,8 +97,8 @@ describe("a slot value in a test is a value of the slot's type", () => {
       "Text",
       "Int",
     ],
-  ])("stops the build at %s of the wrong type", (_, test, before, value, typo, want, got) => {
-    const { source, line, col } = rewritten(test, before, value, typo);
+  ])("stops the build at %s of the wrong type", (_, test, before, value, wrong, want, got) => {
+    const { source, line, col } = rewritten(test, before, value, wrong);
     const r = build(source);
     expect(r.kind).toBe("fail");
     if (r.kind !== "fail") return;

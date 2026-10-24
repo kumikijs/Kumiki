@@ -20,10 +20,9 @@ export function isTestSlot(name: string, sym: SymbolTable): boolean {
   return sym.slots.has(name) || RESERVED_SLOT_NAMES.has(name);
 }
 
-/** Must equal the keys of the runtime's `emptyRoute()`, or a test's `route` seed is refused or left partly undefined. */
 export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set(ROUTE_TYPE.fields.map((f) => f.name));
 
-/** Fields are typed by the runtime's `Route`, not by name: the slot holds the runtime's route whatever a program's own `type Route` says. */
+/** Fields are checked against `ROUTE_TYPE`, not the program's `Route`: a program's own `type Route` does not change what the runtime keeps in the slot. */
 export function checkRouteSeed(
   value: Expr,
   sym: SymbolTable,
