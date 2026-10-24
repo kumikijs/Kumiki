@@ -16,6 +16,7 @@ import {
   checkGetOrArity,
   checkRecordUpdate,
   getOrResultType,
+  indexStep,
 } from "./against.ts";
 import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
 import {
@@ -51,7 +52,6 @@ import {
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
 } from "./patterns.ts";
-import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
@@ -211,11 +211,13 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
       return;
-    case "Index":
+    case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      if (step.kind === "place" && step.key) checkAgainst(e.index, step.key, sym, errors, ctx);
       return;
+    }
     case "Call":
       if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
