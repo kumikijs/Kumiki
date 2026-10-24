@@ -37,8 +37,12 @@ outermost first, and the runtime reads each one. `tile.mount(Outer)` and
 `tile B = C`), through keyed `for` rows, a `when` or `match` branch, a route or
 `sub-routes` target, and an `error-boundary` fallback: `tile Oops in=PanicInfo
 = Inner` fires `tile.mount(Oops)` and `tile.mount(Inner)`, where it fired only
-`Oops`. A tile on screen in several places is still one tile on screen, so an
-`Inner` also shown on its own stays mounted while either remains.
+`Oops`. A fallback also mounts and unmounts when the tile that declares its
+boundary is itself another tile's whole body (`tile Outer = Boom`, a route
+target `tile Page = Boom`, a row `tile Row in=Int = Cell($1)`), where the outer
+name overwrote the fallback's and `tile.mount(Oops)` never fired. A tile on
+screen in several places is still one tile on screen, so an `Inner` also shown
+on its own stays mounted while either remains.
 
 Unchanged: the server's HTML (the marker is not rendered), a re-render keeps
 the element and fires nothing, and a reconcile diagnostic's `tile` still names

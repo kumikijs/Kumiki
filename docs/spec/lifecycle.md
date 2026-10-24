@@ -110,9 +110,11 @@ reducer trackPageView
 
 When you want to target multiple tiles at once, define multiple reducers with the same name (executed in definition order).
 
-An `error-boundary` fallback ([§7.3](#_7-3-error-boundaries-per-tile)) is a tile on screen like any other, wherever the boundary is declared: `tile.mount(<fallback>)` fires when the boundary shows it, and `tile.unmount(<fallback>)` when it leaves — the tile renders again without panicking, or that tile itself leaves. A fallback that re-renders with the panic still there has not appeared again, and fires nothing. The tile that panicked is not what rendered, so its own `tile.mount` does not fire while the fallback stands in for it, and a mounted tile that starts panicking fires its `tile.unmount`.
+Both events count per tile name, not per instance. `tile.mount(X)` fires when an `X` appears while no `X` is on screen, and `tile.unmount(X)` when the last `X` on screen leaves. A second `X` appearing beside the first fires nothing, and neither does one of two leaving.
 
-A tile whose whole body is another user tile — `tile Outer = Inner` — renders one tree that is all of both, so both are on screen: `tile.mount(Outer)` and `tile.mount(Inner)` both fire, `Outer`'s first, and when that tree leaves, both `tile.unmount`s fire in the same order. The same holds at any depth (`tile A = B` with `tile B = C` fires for `A`, `B` and `C`, in that order), for a body that is a `for`, `when` or `match` whose rows or branch call another user tile, and wherever the outer tile renders: at a call site, as a route or `sub-routes` target, or as an `error-boundary` fallback. A tile on screen in several places is one tile on screen: it mounts when the first appears and unmounts when the last leaves, so an `Inner` also shown on its own stays mounted while either remains.
+An `error-boundary` fallback ([§7.3](#_7-3-error-boundaries-per-tile)) is a tile on screen like any other, wherever the tile that declares it renders. `tile.mount(<fallback>)` fires when the boundary shows it, and `tile.unmount(<fallback>)` fires when it leaves: the declaring tile renders again without panicking, or the declaring tile itself leaves. By the per-name rule above, a fallback that two boundaries show at once leaves only when neither shows it. A fallback that re-renders with the panic still there has not appeared again, and fires nothing. The fallback renders in place of the declaring tile's body, so while it stands in, neither the declaring tile nor any tile under it fires `tile.mount`. When a mounted declaring tile starts panicking, it and the tiles under it fire `tile.unmount`.
+
+A tile whose whole body is another user tile — `tile Outer = Inner` — renders one tree that is all of both, so both are on screen: `tile.mount(Outer)` and `tile.mount(Inner)` both fire, `Outer`'s first, and when that tree leaves, both `tile.unmount`s fire in the same order. The same holds at any depth (`tile A = B` with `tile B = C` fires for `A`, `B` and `C`, in that order), for a body that is a `for`, `when` or `match` whose rows or branch call another user tile, and wherever the outer tile renders: at a call site, as a route or `sub-routes` target, or as an `error-boundary` fallback. By the per-name rule above, an `Inner` also shown on its own stays mounted while either remains.
 
 ---
 
@@ -130,6 +132,7 @@ Expressed via the `Result(T, E)` type. When an effect's return value is `Result.
 - An index `xs[i]`, read or written, named no element of a `List` (past the end, or negative)
 - A read `m[k]` named a key the `Map` does not hold
 - `Result.get` was an Err
+- A `match` used as a value had no arm for its scrutinee's value ([Language §1.9](./language.md#_1-9-expression-language))
 - An explicit call to `panic(msg)`
 
 These are exceptions called **panics**. A panic is recorded in the episode log, and the current reducer is interrupted. `slot` changes are **transactionally rolled back**.
@@ -288,6 +291,8 @@ reducer noop     on=ui.click(_) do= ()
 ```
 
 In the runtime implementation, this is rendered as a **modal dialog tile** (not the native `confirm`). This keeps the UI style consistent and makes testing easier.
+
+The dialog is always the runtime's own. A host provider registered for `notification.show` replaces the toast ([§7.7](#_7-7-toasts)) and is never handed a `confirm`, because the answer is delivered by dispatching `onYes` or `onNo`, which a provider's `EffectResult` cannot do ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)). Emitted from a `route.leave` guard, the dialog holds the move until it is answered or another navigation replaces it ([Routing §3.5.2](./routing.md#_3-5-2-leave-guard)).
 
 ---
 

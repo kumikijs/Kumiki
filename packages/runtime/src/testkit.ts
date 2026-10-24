@@ -1,8 +1,10 @@
 import {
   batchRejections,
+  type EmitSpec,
   type ReducerSpec,
   type RefinementRejection,
   reportRejectedBatch,
+  standInValue,
 } from "./core.ts";
 import { valueEqual } from "./stdlib.ts";
 import type {
@@ -23,18 +25,25 @@ import {
   genValue,
   shrinkCounterexample,
 } from "./testkit/generate.ts";
-import {
-  type EnvDrift,
-  executeEpisode,
-  type ReplayApp,
-  type ReplayObserver,
-  resetLiveFromSlots,
-  type SlotMetaLike,
-  seedRoute,
-  standInValue,
-} from "./testkit/replay.ts";
+import { type ReplayApp, replayEpisodes, type SlotMetaLike, seedRoute } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
+
+// `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
+// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree.
+function settleBatch(
+  reducer: string,
+  before: Record<string, unknown>,
+  result: Partial<ReturnType<ReducerSpec["apply"]>> | null | undefined,
+  slotMetas: Record<string, SlotMetaLike>,
+): { slots: Record<string, unknown>; emits: EmitSpec[] } {
+  const rejected = batchRejections(result, slotMetas);
+  if (rejected.length > 0) {
+    reportRejectedBatch(reducer, rejected);
+    return { slots: { ...before }, emits: [] };
+  }
+  return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
+}
 
 export const _stdlibTest = {
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
@@ -63,19 +72,11 @@ export const _stdlibTest = {
     name: string,
     event: Record<string, unknown>,
   ): { slots: Record<string, unknown> } {
-    const slots = state?.slots ?? {};
-    this.resetLive(app.live, app.slots, slots);
+    this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
     const res = r.apply(app.live, { $el: event, $event: event });
-    const rejected = batchRejections(res, app.slots);
-    if (rejected.length > 0) {
-      reportRejectedBatch(name, rejected);
-      return { slots: { ...slots } };
-    }
-    const next: Record<string, unknown> = { ...slots };
-    for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
-    return { slots: next };
+    return { slots: settleBatch(name, app.live, res, app.slots).slots };
   },
   runPropertyTest(input: {
     name: string;
@@ -150,13 +151,8 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
-    const rejected = batchRejections(result, slotMetas);
-    if (rejected.length > 0) {
-      reportRejectedBatch(target, rejected);
-      return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
-    }
-    const finalSlots = { ...givenSlots, ...(result?.slots ?? {}) };
-    return compareReducerExpect(name, finalSlots, result?.emits ?? [], panic, expect);
+    const after = settleBatch(target, givenSlots, result, slotMetas);
+    return compareReducerExpect(name, after.slots, after.emits, panic, expect);
   },
   runReducerTestFlow(input: {
     name: string;
@@ -237,18 +233,19 @@ export const _stdlibTest = {
     };
   }): TestResult {
     const { name, app, episodes, mocks, expect } = input;
-    resetLiveFromSlots(app);
+    const report = replayEpisodes({ app, episodes, mocks, observer: () => "continue" });
 
-    const panics: { episodeId: string; message: string }[] = [];
-    const unhandledErrors: string[] = [];
-    const stepCounter = { n: 0 };
-    const observer: ReplayObserver = () => "continue";
-    const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
-
-    for (const ep of episodes) {
-      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
-      for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
-      for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
+    // Ahead of every `expect`: an episode that was not replayed moved no slot and raised
+    // nothing, so each expectation would be judged on its absence, and a slot mismatch
+    // would name the symptom rather than the missing reducer.
+    if (report.entryReducersMissing.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "every episode replayed",
+        actual: report.entryReducersMissing.map((m) => `${m.episodeId}: ${m.message}`).join("; "),
+        diffAt: "episodes",
+      };
     }
 
     let expectedSlots: Record<string, unknown> | null = null;
@@ -281,21 +278,21 @@ export const _stdlibTest = {
         }
       }
     }
-    if (expect.noPanics && panics.length > 0) {
+    if (expect.noPanics && report.panics.length > 0) {
       return {
         name,
         pass: false,
         expected: "no panics",
-        actual: panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
+        actual: report.panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
         diffAt: "panics",
       };
     }
-    if (expect.noErrors && unhandledErrors.length > 0) {
+    if (expect.noErrors && report.unhandledErrors.length > 0) {
       return {
         name,
         pass: false,
         expected: "no unhandled effect errors",
-        actual: unhandledErrors.join(", "),
+        actual: report.unhandledErrors.map((u) => u.effect).join(", "),
         diffAt: "errors",
       };
     }
@@ -326,5 +323,4 @@ export {
   type ReplayObserver,
   type ReplayReport,
   replayEpisodes,
-  standInValue,
 } from "./testkit/replay.ts";

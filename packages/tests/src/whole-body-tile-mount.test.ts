@@ -1,22 +1,7 @@
-import { hydrate, renderToString, routing } from "@kumikijs/runtime";
+import { type AppShape, hydrate, renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { click, freshRoot, mountApp, navigate, tick } from "./helpers/dom.ts";
+import { freshRoot, mountSource, navigate, press, tick } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-async function start(src: string, initialPath = "/") {
-  const app = await loadSource(src);
-  const { root, handle } = mountApp(app, { router: "memory", initialPath });
-  onTestFinished(() => {
-    handle.dispose();
-    root.remove();
-  });
-  await tick(0);
-  const press = async (label: string): Promise<void> => {
-    click(root, label);
-    await tick(0);
-  };
-  return { app, root, press };
-}
 
 /** A `log` slot, and a reducer per name that records `+Name` on mount and `-Name` on unmount. */
 const logging = (...names: string[]): string =>
@@ -55,7 +40,7 @@ tile A = B`,
       left: ["-A", "-B", "-C"],
     },
   ])("fires mount for $fires, and unmount for each when it leaves", async (row) => {
-    const { app, press } = await start(`${logging(...row.names)}
+    const { app, root } = await mountSource(`${logging(...row.names)}
 ${HIDE}
 ${row.tiles}
 tile App = column(HideBtn, when(show, ${row.top}))
@@ -63,13 +48,13 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `);
     expect(app.live?.log).toEqual(row.shown);
 
-    await press("hide");
+    await press(root, "hide");
     expect(app.live?.log).toEqual([...row.shown, ...row.left]);
   });
 
   it("fires for both through keyed rows of an in= tile whose body calls another", async () => {
     // Losing one row leaves both tiles on screen in the others; clearing the list takes the last.
-    const { app, root, press } = await start(`${logging("Row", "Cell")}
+    const { app, root } = await mountSource(`${logging("Row", "Cell")}
 slot items : List(Int) = [1, 2, 3]
 reducer drop on=ui.click(DropBtn) do= items := [1, 3]
 reducer clear on=ui.click(ClearBtn) do= items := []
@@ -83,16 +68,16 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(root.textContent).toContain("cell 2");
     expect(app.live?.log).toEqual(["+Row", "+Cell"]);
 
-    await press("drop");
+    await press(root, "drop");
     expect(root.textContent).not.toContain("cell 2");
     expect(app.live?.log).toEqual(["+Row", "+Cell"]);
 
-    await press("clear");
+    await press(root, "clear");
     expect(app.live?.log).toEqual(["+Row", "+Cell", "-Row", "-Cell"]);
   });
 
   it("fires for both when the whole body is a for over calls of another tile", async () => {
-    const { app, press } = await start(`${logging("Outer", "Inner")}
+    const { app, root } = await mountSource(`${logging("Outer", "Inner")}
 slot items : List(Int) = [1, 2]
 reducer clear on=ui.click(ClearBtn) do= items := []
 tile ClearBtn = button(text="clear", onClick=clear)
@@ -103,14 +88,14 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `);
     expect(app.live?.log).toEqual(["+Outer", "+Inner"]);
 
-    await press("clear");
+    await press(root, "clear");
     expect(app.live?.log).toEqual(["+Outer", "+Inner", "-Outer", "-Inner"]);
   });
 
   it("follows the branch a when or a match picks", async () => {
     // A `match` arm that is a builtin keeps `Outer` on screen, so only `Inner` leaves; a `when` that
     // turns off leaves `Outer` nothing to render, so both leave.
-    const { app, root, press } = await start(`${logging("Outer", "Inner", "Gate")}
+    const { app, root } = await mountSource(`${logging("Outer", "Inner", "Gate")}
 ${HIDE}
 slot sel : Option(Int) = Some(1)
 reducer clr on=ui.click(ClrBtn) do= sel := None
@@ -125,16 +110,16 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `);
     expect(app.live?.log).toEqual(["+Gate", "+Outer", "+Inner"]);
 
-    await press("clear");
+    await press(root, "clear");
     expect(root.textContent).toContain("none");
     expect(app.live?.log).toEqual(["+Gate", "+Outer", "+Inner", "-Inner"]);
 
-    await press("hide");
+    await press(root, "hide");
     expect(app.live?.log).toEqual(["+Gate", "+Outer", "+Inner", "-Inner", "-Gate", "-Outer"]);
   });
 
   it("keeps a tile mounted while it is still another tile's whole body", async () => {
-    const { app, root, press } = await start(`${logging("Outer", "Inner")}
+    const { app, root } = await mountSource(`${logging("Outer", "Inner")}
 ${HIDE}
 tile Inner = text("inner")
 tile Outer = Inner
@@ -143,7 +128,7 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `);
     expect(app.live?.log).toEqual(["+Outer", "+Inner"]);
 
-    await press("hide");
+    await press(root, "hide");
     expect(root.textContent).toContain("inner");
     expect(app.live?.log).toEqual(["+Outer", "+Inner"]);
   });
@@ -175,7 +160,7 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> Other} init=[]`,
       after: ["+Shell", "+Panel", "+Inner", "+Other", "-Panel", "-Inner"],
     },
   ])("fires for both $where", async ({ src, from, to, shown, after }) => {
-    const { app } = await start(`${src}\n`, from);
+    const { app } = await mountSource(`${src}\n`, from);
     expect(app.live?.log).toEqual(shown);
 
     await navigate(app, to);
@@ -183,7 +168,7 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> Other} init=[]`,
   });
 
   it("fires for both when an error-boundary fallback's body is a user tile", async () => {
-    const { app, root, press } = await start(`${logging("Oops", "Inner", "Boom")}
+    const { app, root } = await mountSource(`${logging("Oops", "Inner", "Boom")}
 slot broken : Bool = true
 reducer fix on=ui.click(FixBtn) do= broken := false
 tile FixBtn = button(text="fix", onClick=fix)
@@ -196,13 +181,60 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(root.textContent).toContain("inner");
     expect(app.live?.log).toEqual(["+Oops", "+Inner"]);
 
-    await press("fix");
+    await press(root, "fix");
     expect(root.textContent).toContain("boom ok");
     expect(app.live?.log).toEqual(["+Oops", "+Inner", "+Boom", "-Oops", "-Inner"]);
   });
 
+  it.each([
+    {
+      where: "at a call site",
+      src: `slot broken : Bool = true
+reducer fix on=ui.click(FixBtn) do= broken := false
+tile FixBtn = button(text="fix", onClick=fix)
+tile Oops in=PanicInfo = text("oops")
+tile Boom error-boundary=Oops = column(when(broken, text(panic("bang"))), text("boom ok"))
+tile Outer = Boom
+tile App = column(FixBtn, Outer)
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+      leave: (_app: AppShape, root: HTMLElement) => press(root, "fix"),
+    },
+    {
+      where: "as a route target",
+      src: `tile Oops in=PanicInfo = text("oops")
+tile Boom error-boundary=Oops = column(text(panic("bang")))
+tile Page = Boom
+tile Other = text("other")
+app M caps=[] routes={"/" -> Page, "/other" -> Other, "/404" -> Other} init=[]`,
+      leave: (app: AppShape) => navigate(app, "/other"),
+    },
+    {
+      where: "as a for row",
+      src: `slot items : List(Int) = [1, 2, 3]
+reducer drop on=ui.click(DropBtn) do= items := [1, 3]
+tile DropBtn = button(text="drop", onClick=drop)
+tile Oops in=PanicInfo = text("oops")
+tile Cell in=Int error-boundary=Oops = column(when($1 == 2, text(panic("two"))), text("cell " + $1.show))
+tile Row in=Int = Cell($1)
+tile App = column(DropBtn, column(for i in items Row(i)))
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+      leave: (_app: AppShape, root: HTMLElement) => press(root, "drop"),
+    },
+  ])("fires a fallback's mount and unmount when the tile declaring the boundary is another tile's whole body, $where", async ({
+    src,
+    leave,
+  }) => {
+    const { app, root } = await mountSource(`${logging("Oops")}\n${src}\n`);
+    expect(root.textContent).toContain("oops");
+    expect(app.live?.log).toEqual(["+Oops"]);
+
+    await leave(app, root);
+    expect(root.textContent).not.toContain("oops");
+    expect(app.live?.log).toEqual(["+Oops", "-Oops"]);
+  });
+
   it("keeps the element and fires nothing again when the tree re-renders", async () => {
-    const { app, root, press } = await start(`${logging("Outer", "Inner")}
+    const { app, root } = await mountSource(`${logging("Outer", "Inner")}
 slot n : Int = 0
 reducer bump on=ui.click(BumpBtn) do= n := n + 1
 tile BumpBtn = button(text="bump", onClick=bump)
@@ -214,8 +246,8 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     const before = root.querySelector('[data-kumiki-test="inner"]');
     expect(before?.textContent).toBe("inner 0");
 
-    await press("bump");
-    await press("bump");
+    await press(root, "bump");
+    await press(root, "bump");
     const after = root.querySelector('[data-kumiki-test="inner"]');
     expect(after?.textContent).toBe("inner 2");
     expect(after).toBe(before);
