@@ -50,6 +50,14 @@ describe("E0125: a redirect target names only what its source binds", () => {
     expect(locatedOf(app('"/docs/*" ->> "/"'))).toEqual([]);
   });
 
+  it.each([
+    '"/old/:id" ->> "/items/:id?ref=x"',
+    '"/old/:id" ->> "/items/:id#top"',
+    '"/old/:id" ->> "/items/:id?ref=:key"',
+  ])("does not read the query or the hash of %s for names", (entry) => {
+    expect(locatedOf(app(`${entry}, "/items/:id" -> Item`))).toEqual([]);
+  });
+
   it("reports a target parameter the source does not bind, at the redirect entry", () => {
     const src = app('"/old/:id" ->> "/items/:key", "/items/:key" -> Item');
     const found = locatedOf(src);
@@ -161,6 +169,41 @@ describe("E0010: a chain of static redirects reaches a page", () => {
     expect(locatedOf(app('"/b" -> Item, "/a" ->> "/b", "/b" ->> "/a"')).map((d) => d.code)).toEqual(
       ["E0008"],
     );
+  });
+
+  it.each([
+    [
+      "a trailing slash names the path without it",
+      '"/a" ->> "/b/", "/b" ->> "/a"',
+      "/a ->> /b ->> /a",
+    ],
+    [
+      "a relative target resolves against the path it redirects from",
+      '"/docs/a" ->> "b", "/docs/b" ->> "a"',
+      "/docs/a ->> /docs/b ->> /docs/a",
+    ],
+    ["a query in a target plays no part", '"/a" ->> "/b?x=1", "/b" ->> "/a"', "/a ->> /b ->> /a"],
+  ])("compares paths as the runtime matches them: %s", (_rule, entries, loop) => {
+    const [first] = loop.split(" ");
+    expect(locatedOf(app(entries)).map((d) => d.message)).toEqual([
+      `Redirect "${first}" comes back to itself (${loop})`,
+    ]);
+  });
+
+  it("gives a path with a trailing slash to the entry declared first for it", () => {
+    expect(locatedOf(app('"/a/" -> Home, "/a" ->> "/b", "/b" ->> "/a"'))).toEqual([]);
+  });
+
+  it("ends a chain in a sub-routes map at a path a top-level static route owns", () => {
+    const src = nested(
+      '"/s/a" ->> "/s/b", "/s/b" ->> "/s/a"',
+      '"/items/:id" -> Item, "/s/b" -> Item',
+    );
+    expect(locatedOf(src)).toEqual([]);
+  });
+
+  it("accepts a chain that ends at the path /404 beside a catch-all redirect", () => {
+    expect(locatedOf(app('"/gone" ->> "/404", "/*" ->> "/"'))).toEqual([]);
   });
 
   it("leaves a loop through a parameter to the runtime", () => {

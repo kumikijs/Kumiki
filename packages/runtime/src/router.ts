@@ -155,7 +155,7 @@ function parentBare(pattern: string): string | null {
   return pattern.endsWith("/*") ? pattern.slice(0, -2) || "/" : null;
 }
 
-/** A redirect does what a `navigate-replace` to its target would, so a redirected target is redirected again, and the caller replaces the URL once with where the chain lands. */
+/** A redirect does what a `navigate-replace` to its target would, so a redirected target is redirected again; the router replaces the URL once with where the chain lands, and `renderToString` serves that path. */
 function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
   if (!routes) return null;
   return followRedirects(loc.pathname || "/", (path) => redirectStep(routes, path));
@@ -164,20 +164,30 @@ function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | n
 /** The limit browsers put on an HTTP redirect chain. */
 const MAX_REDIRECTS = 20;
 
-/** A chain that loops or runs past `MAX_REDIRECTS` is reported and applies no redirect, since it would never end. */
+/**
+ * Each step is taken from a target's path, as a `navigate-replace` to it would match it, and the
+ * chain lands on the last target, query and hash included. It ends at the path `/404`, where the
+ * router shows the not-found page. A chain that comes back to a path, or runs past
+ * `MAX_REDIRECTS`, is reported and applies no redirect.
+ */
 export function followRedirects(
   start: string,
   step: (path: string) => string | null,
 ): string | null {
   const chain = [start];
-  for (let next = step(start); next !== null; next = step(next)) {
-    const looped = chain.includes(next);
+  const paths = [splitPath(start).pathname];
+  let next = step(paths[0] ?? "/");
+  while (next !== null) {
+    const path = splitPath(next).pathname;
+    const looped = paths.includes(path);
     chain.push(next);
+    paths.push(path);
     if (looped || chain.length > MAX_REDIRECTS + 1) {
       const what = looped ? "redirect loop" : `more than ${MAX_REDIRECTS} redirects`;
       console.error(`[kumiki] ${what}: ${chain.join(" ->> ")} — stopped, no redirect applied`);
       return null;
     }
+    next = path === "/404" ? null : step(path);
   }
   return chain.length > 1 ? (chain[chain.length - 1] ?? null) : null;
 }
@@ -193,8 +203,12 @@ function redirectStep(routes: RouteList, path: string): string | null {
   return resolveTarget(landing(entry, path), { pathname: path, search: "", hash: "" });
 }
 
-/** A segment is carried as the path has it, so the target's own match decodes it once, as it would the same URL asked for directly. */
+/** A segment is carried as the path has it, so the target's own match decodes it once, as it would the same URL asked for directly. A query or a hash the target writes is kept as written. */
 function landing(r: RedirectEntry, path: string): string {
+  const cut = r.redirectTo.search(/[?#]/);
+  const to = cut === -1 ? r.redirectTo : r.redirectTo.slice(0, cut);
+  const rest = cut === -1 ? "" : r.redirectTo.slice(cut);
+  if (to === "") return rest;
   const segs = path.split("/").filter(Boolean);
   const bound = new Map<string, string>();
   for (const [i, p] of r.pattern.split("/").filter(Boolean).entries()) {
@@ -204,11 +218,11 @@ function landing(r: RedirectEntry, path: string): string {
     }
     if (p.startsWith(":")) bound.set(p, segs[i] ?? "");
   }
-  const out = r.redirectTo.split("/").flatMap((s) => {
+  const out = to.split("/").flatMap((s) => {
     const v = bound.get(s);
     return v === undefined ? [s] : v === "" ? [] : [v];
   });
-  return out.join("/") || "/";
+  return (out.join("/") || "/") + rest;
 }
 
 /** The entry of `list` that owns `path`: its first match in specificity order. */

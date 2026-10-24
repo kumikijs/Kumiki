@@ -26,7 +26,11 @@ source's wildcard matched (`/docs/a/b` lands on `/help/a/b`, `/docs` on
 `sub-routes` map, across the app's routes and a `sub-routes` map, on the path
 the app mounts at, and in `renderToString`, which follows a chain of literal
 redirects without a routing module too. The query and hash of the requested URL
-are still not carried over.
+are still not carried over. A query or a hash written in a target is kept where
+the chain lands, and each step looks up the target's path alone, so
+`"/a" ->> "/b?x=1"` with `"/b" ->> "/c"` lands on `/c`. A chain ends where a
+target is the path `/404`, so `"/gone" ->> "/404"` still shows the 404 tile
+beside a `"/*" ->> "/"` catch-all.
 
 A chain that never reaches a page is stopped instead of followed forever: when
 a path comes back, the runtime reports
@@ -41,7 +45,9 @@ Check reports the two mistakes it can see from the route table, in the app's
   does not bind, which would reach the URL as written.
   `Redirect "/old/:id" ->> "/items/:key" names ":key", which "/old/:id" does not bind`
 - **E0010 `redirect-cycle`**: redirects written for static paths send a path
-  back to itself. `Redirect "/a" comes back to itself (/a ->> /b ->> /a)`. A
+  back to itself. `Redirect "/a" comes back to itself (/a ->> /b ->> /a)`.
+  Paths are compared as the runtime matches them: `"/a/"` and `"/a"` are one
+  path, and a relative target resolves against the path it redirects from. A
   loop through a parameter or a wildcard is the runtime's to stop.
 
 Both passed `check` before. `packages/examples/features/208-redirect-chain-params.kumiki`
