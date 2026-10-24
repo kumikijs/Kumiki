@@ -4,7 +4,14 @@
       "label": "the route slot reads the path the app landed on",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["path: /", "id: -", "depth: 0", "entered: -", "last: none / none"]
+        "domIncludes": [
+          "path: /",
+          "id: -",
+          "depth: 0",
+          "entered: -",
+          "last: none / none",
+          "kept: no"
+        ]
       }
     },
     {
@@ -35,10 +42,10 @@
       }
     },
     {
-      "label": "a render panic reaches route.error with the matched pattern",
+      "label": "a render panic reaches route.error as a RouteErrorInfo with the matched pattern",
       "do": { "navigate": "/broken" },
       "expect": {
-        "domIncludes": ["caught: /broken (tile-render)", "path: /broken"],
+        "domIncludes": ["caught: /broken (tile-render)", "kept: yes", "path: /broken"],
         "domExcludes": ["undefined", "secret:"],
         "errorIncludes": ["panic in render"]
       }

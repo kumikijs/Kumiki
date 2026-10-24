@@ -2,7 +2,7 @@ import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { PANIC_INFO_TYPE, ROUTE_ERROR_EVENT_TYPE } from "../stdlib-types.ts";
+import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import {
   checkAgainst,
@@ -15,7 +15,7 @@ import {
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim } from "./infer.ts";
+import { inferType, prim, runtimeBuilt } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
 import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
@@ -26,7 +26,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
-    routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
+    routeBind: routeBindOf(r, sym),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -128,18 +128,25 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   ctx.localBinds.add("$el");
-  bindLocal(ctx, "$event", eventPayloadType(r.on));
+  bindLocal(ctx, "$event", eventPayloadType(r.on, sym));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// Taken from the standard library's definition rather than looked up by name, because the
-// runtime builds the value whatever a program's own `type PanicInfo` says.
-function eventPayloadType(on: ReducerDef["on"]): TypeExpr | null {
+// A route trigger hands `$route` the route on every firing; a prefetch target on another trigger
+// is handed one only when the prefetch fires it.
+function routeBindOf(r: ReducerDef, sym: SymbolTable): Ctx["routeBind"] {
+  if (r.on.kind === "LifecycleEvent" && r.on.name.startsWith("route.")) return "bound";
+  return bindsRoute(r, sym) ? "prefetch" : "unbound";
+}
+
+function eventPayloadType(on: ReducerDef["on"], sym: SymbolTable): TypeExpr | null {
   if (on.kind !== "LifecycleEvent") return null;
-  if (on.name === "app.error") return PANIC_INFO_TYPE;
-  if (on.name.startsWith("route.error(")) return ROUTE_ERROR_EVENT_TYPE;
+  if (on.name === "app.error") return runtimeBuilt("PanicInfo", PANIC_INFO_TYPE, sym);
+  if (on.name.startsWith("route.error(")) {
+    return runtimeBuilt("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE, sym);
+  }
   return null;
 }
 

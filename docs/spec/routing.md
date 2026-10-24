@@ -85,7 +85,7 @@ tile TodoDetail = column(
                     ...)
 ```
 
-The slot has this type wherever it is read — a tile, a reducer, a `fn`, a test — and so does [`$route`](#_3-4-route-lifecycle) where a trigger binds one. A field the type does not have, such as `route.parms`, is [E0108](./errors.md#e0108-undef-member), and `depth := route.path` into an `Int` slot is [E0201](./errors.md#e0201-type-mismatch). It is the standard library's `Route` whatever the program declares: the runtime builds this value either way, so a program's own `type Route` names a type of its own and does not change what `route` is.
+The slot has this type wherever it is read — a tile, a reducer, a `fn`, a test, and the `slots` that `run-reducer` answers — and so does [`$route`](#_3-4-route-lifecycle) in a `route.enter` / `route.leave` / `route.error` reducer. A field the type does not have, such as `route.parms`, is [E0108](./errors.md#e0108-undef-member), and `depth := route.path` into an `Int` slot is [E0201](./errors.md#e0201-type-mismatch). The checker types both from the standard library's definition of `Route`. A [prefetch](#_3-8-prefetch) target on another trigger reads `$route` with no declared type: on its own trigger it is empty ([§3.4](#_3-4-route-lifecycle)).
 
 ---
 
@@ -301,7 +301,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer.
+`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer. `prefetch-args` is what the reducer reads as `$route.params`, so it is a `Map(Text, Text)`, and `{"id": 7}` is [E0201](./errors.md#e0201-type-mismatch).
 
 ---
 
