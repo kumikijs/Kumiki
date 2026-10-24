@@ -79,11 +79,13 @@ and an expectation of one asserts a state it can never reach: on
 checker does not infer is not yet held to the slot's: an empty `{}` written for
 a type that is not a collection, or the result of a `.map` / `.fold` / `.zip` /
 `.flat-map`, checks `ok` whatever the slot's type, in a test as in an
-initializer (`slot at : Text = {}` does). That is a known gap, not a rule. A
-wildcard in a `reducer-test` `expect` ([§8.2.2](#_8-2-2-wildcards)) has no
-type, so it is not held to the slot's. The `route` slot is the runtime's, of
-the standard `Route`; a seed of it names only the fields it needs, and a
-wildcard may stand for one of those fields but not for the whole route
+initializer (`slot at : Text = {}` does). That is a known gap, not a rule
+([#514](https://github.com/kumikijs/Kumiki/issues/514),
+[#959](https://github.com/kumikijs/Kumiki/issues/959)). A wildcard in a
+`reducer-test` `expect` ([§8.2.2](#_8-2-2-wildcards)) has no type, so it is not
+held to the slot's. The `route` slot is the runtime's, of the standard
+`Route`; a seed of it names only the fields it needs, and a wildcard may stand
+for one of those fields but not for the whole route
 ([§8.2.5](#_8-2-5-the-route-slot)).
 
 A slot is *readable* in a test body — the value is the one the slot holds — and
