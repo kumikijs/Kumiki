@@ -1,11 +1,11 @@
 {
   "steps": [
     {
-      "label": "mounting Account runs each tile's reducer once, Profile's first",
+      "label": "mounting Account runs each tile's reducer once, in tree order: Account, Settings, Profile",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["seen: Profile Settings"],
-        "state": { "seen": "Profile Settings " }
+        "domIncludes": ["seen: Account Settings Profile"],
+        "state": { "seen": "Account Settings Profile " }
       }
     }
   ]

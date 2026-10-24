@@ -115,18 +115,19 @@ slot seen : Text = ""
 
 tile Profile  = text("Profile")
 tile Settings = text("Settings")
-tile Account  = page(Profile, Settings, text(seen))
+tile Account  = page(Settings, Profile, text("seen: " + seen))
 
 reducer seeProfile  on=tile.mount(Profile)  do= seen := seen + "Profile "
 reducer seeSettings on=tile.mount(Settings) do= seen := seen + "Settings "
+reducer seeAccount  on=tile.mount(Account)  do= seen := seen + "Account "
 
-app Accounts
-    caps   = []
-    routes = {"/" -> Account, "/404" -> Account}
-    init   = []
+app TileMountSeveralTiles
+  caps   = []
+  routes = {"/" -> Account, "/404" -> Account}
+  init   = []
 ```
 
-各 reducer は自分の tile がマウントされたときに発火する：`Account` を描画すると `seeProfile`、続いて `seeSettings` がそれぞれ 1 回ずつ実行される。同じ描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer は tile が描画ツリーに現れる順に発火する。1 つの tile に対する複数の reducer は 1 つのイベントへの複数の subscription であり、定義順で発火する（[§1.6.1](./language.md#_1-6-1-構文)）。
+各 reducer は対象の tile がマウントされたときに発火する：`Account` を描画すると `seeAccount`、`seeSettings`、続いて `seeProfile` がそれぞれ 1 回ずつ実行される。1 回の描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer はツリー順に発火する：外側の tile がその内側の tile より先、兄弟どうしは前から順に。その描画で複数回描画される tile も 1 つの tile であり、1 回だけ発火する。1 つの tile に対する複数の `tile.mount` reducer はどれもその tile のマウントという 1 つのイベントにマッチするので、定義順で発火する（[§1.6.4](./language.md#_1-6-4-不変条件) Invariant 3）。
 
 ---
 
