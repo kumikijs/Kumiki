@@ -162,6 +162,8 @@ Result(T, E)      ; Ok(T) | Err(E)
 Tuple(T1, ..., Tn)
 ```
 
+A program's own union may name a variant `Some`, `None`, `Ok` or `Err`. Variant names are identifiers ([§1.3.1](#_1-3-1-syntax)) and none of the four is reserved ([§1.2.2](#_1-2-2-reserved-words)), so `type Health = Ok | Degraded | Down` is a union like any other. Where a type is declared — a slot, a record field, a parameter — that type decides which tag a value is. Where nothing declares one — a `let`, an item of a list literal — one of these four is read as an `Option` or a `Result` tag unless a variant of the program's own could hold the value: a variant of the same name with as many payloads, each one's type admitting the payload written. Then the expression alone does not say which type the value is, and the place it lands decides, as it does for every tag of a user union. So `let next = Ok` followed by `health := next` writes `Health`'s `Ok`, exactly as `health := Ok` does. `Health`'s `Ok` carries nothing, so `let r = Ok(1)` in the same program is a `Result`; beside `type Outcome = Ok(Int) | Fail` it lands in an `Outcome` slot and a `Result(Int, Text)` slot alike.
+
 ### 1.3.3 Registered Refinement Predicates
 
 ```
