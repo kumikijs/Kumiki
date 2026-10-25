@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "label": "the reducer the property-tests run adds one per click",
+      "do": { "click": "button" },
+      "expect": {
+        "noErrors": true,
+        "state": { "clicks": 1 },
+        "domIncludes": ["clicks=1"]
+      }
+    }
+  ]
+}

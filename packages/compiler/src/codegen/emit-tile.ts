@@ -4,6 +4,7 @@ import { isTileExpr } from "../ast.ts";
 import { BUILTIN_TILES, contentArg, positionalIsTile } from "../builtins.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
+import { writtenValue } from "../typecheck/tile-collect.ts";
 import {
   addBind,
   bindRef,
@@ -28,6 +29,12 @@ function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles 
   return outer.includes(name) ? outer : [...outer, name];
 }
 
+// A node carries one `_tile`; an outer `_named` overwrites an inner one, so of nested whole-body
+// tiles only the outermost fires `tile.mount` / `tile.unmount`.
+function namedJs(tree: string, tile: TileDef): string {
+  return `_named(${tree}, ${JSON.stringify(tile.name)})`;
+}
+
 function boundaryJs(
   def: TileDef,
   body: string,
@@ -42,12 +49,12 @@ function boundaryJs(
     );
   const fbCtx = makeEvalCtx(gen, ["$1"]);
   const fbBody = tileExprJs(fb.body, gen, fbCtx, under(enclosingTiles, fb.name));
-  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${fbBody}; } })())`;
+  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${namedJs(fbBody, fb)}; } })())`;
 }
 
 export function genRouteTile(tile: TileDef, gen: GenCtx, where: string, fill?: string): string {
   if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
-  const named = `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`;
+  const named = namedJs(genTile(tile, gen), tile);
   return boundaryJs(tile, fill ? `${fill}(${named})` : named, gen);
 }
 
@@ -285,7 +292,6 @@ function tileCallJs(
     const inner = makeEvalCtx(gen, new Set<string>());
     const arg1 = firstPositional(t);
     const wrapBoundary = (body: string): string => boundaryJs(def, body, gen, enclosingTiles);
-    const nameLit = JSON.stringify(def.name);
     const handlers = explicitHandlers(t, rootHandlers);
     const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
     const bodyHandlers = handlers.size > 0 ? handlers : undefined;
@@ -307,7 +313,7 @@ function tileCallJs(
       );
       return wrap(
         wrapBoundary(
-          `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
+          `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${namedJs(`_attachProps(${bodyJs}, _propsOuter)`, def)}; })(${oneJs}, ${propsJs})`,
         ),
       );
     }
@@ -320,7 +326,7 @@ function tileCallJs(
       undefined,
       bodyHandlers,
     );
-    return wrap(wrapBoundary(`_named(_attachProps(${bodyJs}, ${propsJs}), ${nameLit})`));
+    return wrap(wrapBoundary(namedJs(`_attachProps(${bodyJs}, ${propsJs})`, def)));
   }
 
   gen.usedTiles.add(name);
@@ -437,12 +443,14 @@ function tileCallJs(
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
         const bindInfo = extractBindPath(t.args);
+        // The group is the `<input>`'s `name`, so `name` spells it too; `group` wins when both are written (W0217).
+        const group = writtenValue(t, "group") ?? writtenValue(t, "name");
+        if (group) fields.push(`group: ${jsOfExpr(group, ctx)}`);
         let valueJs: string | undefined;
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
-          if (arg.name === "group") fields.push(`group: ${valJs}`);
-          else if (arg.name === "value") valueJs = valJs;
+          if (arg.name === "value") valueJs = valJs;
           else if (arg.name === "selected" && !bindInfo) fields.push(`selected: !!(${valJs})`);
         }
         if (valueJs !== undefined) {
@@ -590,7 +598,12 @@ function tileCallJs(
           else if (arg.name === "max") fields.push(`max: ${valJs}`);
           else if (arg.name === "step") fields.push(`step: ${valJs}`);
         }
-        if (bindInfo) fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
+        if (bindInfo) {
+          fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
+        } else {
+          const value = writtenValue(t, "value");
+          if (value) fields.push(`value: ${jsOfExpr(value, ctx)}`);
+        }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }

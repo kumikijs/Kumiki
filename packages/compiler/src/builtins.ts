@@ -62,10 +62,12 @@ export const BUILTIN_TILES = new Set<string>([
   "route-outlet",
 ]);
 
-// Every builtin is one of three kinds by what it does with a positional argument: a container
-// (here), a value builtin (`VALUE_BUILTIN_CONTENT`), or one that renders none
-// (`SHOWN_IN_PLACE_OF_POSITIONAL`).
-const CHILD_BUILTINS: ReadonlySet<string> = new Set([
+/**
+ * The builtins codegen renders a positional tile argument of, as a child; the rest drop it. Every
+ * builtin is one of three kinds by what it does with a positional argument: a container (here), a
+ * value builtin (`VALUE_BUILTIN_CONTENT`), or one that renders none (`SHOWN_IN_PLACE_OF_POSITIONAL`).
+ */
+export const CHILD_RENDERING_BUILTINS: ReadonlySet<string> = new Set([
   "page",
   "region",
   "row",
@@ -96,7 +98,7 @@ const CHILD_BUILTINS: ReadonlySet<string> = new Set([
 // Codegen lowers a builtin's positional arguments into its children exactly when this holds, so
 // what the checker accepts there is what renders.
 export function positionalIsTile(name: string): boolean {
-  return CHILD_BUILTINS.has(name);
+  return CHILD_RENDERING_BUILTINS.has(name);
 }
 
 // The named arguments each builtin's lowering reads what it renders from, in place of a positional.
@@ -167,7 +169,6 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   panel: "layout",
   divider: "layout",
   scroll: "layout",
-  fieldset: "layout",
   "route-outlet": "layout",
   // tiles-text
   text: "text",
@@ -187,6 +188,7 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   slider: "input",
   switch: "input",
   form: "input",
+  fieldset: "input",
   editable: "input",
   // tiles-collection
   list: "collection",

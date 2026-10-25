@@ -1,0 +1,33 @@
+# Feature (testing.md): a property-test's `count` is how many cases it
+# generates — a whole number, 1 or more — and leaving it out asks for 100.
+#
+# `once` asks for the fewest cases a property can run, `hundred` for the
+# default. A `count` of 0 would run no case and report the property as holding
+# having checked nothing, and `0.5` is not a number of cases, so `count = 0`,
+# `count = 0.5` and `count = -3` are each a parse error at the literal.
+
+slot clicks : Int = 0
+
+reducer inc on=ui.click(IncBtn) do= clicks := clicks + 1
+
+tile IncBtn = button(text="+1")
+
+tile App = column(IncBtn, text("clicks=" + clicks.show)) {pad: "lg", gap: "md"}
+
+app PropertyTestCount
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test once =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {clicks: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.clicks == n + 1
+        count     = 1
+
+test hundred =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {clicks: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.clicks == n + 1

@@ -15,6 +15,13 @@ import {
   positionalIsTile,
   shownInPlaceOfPositional,
 } from "../builtins.ts";
+import {
+  type RouteMapEntry,
+  redirectCycles,
+  staticPaths,
+  unboundRedirectNames,
+} from "../redirects.ts";
+import { appType, primType } from "../stdlib-types.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -22,14 +29,26 @@ import {
   checkBindStrictProp,
   checkBindTargetSteps,
   checkInputBindType,
+  checkSecondSpelling,
   checkToggleBind,
 } from "./bind.ts";
 import { checkCallee } from "./callee.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
-import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
+import {
+  checkCondition,
+  checkExpr,
+  checkIterationTarget,
+  elementTypeOf,
+  refuseRenderedEffectId,
+} from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { armScope, checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { collectTileBuiltinKinds } from "./tile-collect.ts";
+import {
+  armScope,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+  matchedType,
+} from "./patterns.ts";
+import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
@@ -42,8 +61,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    ctx.localBinds.add("$1");
-    ctx.localTypes.set("$1", tile.in);
+    bindLocal(ctx, "$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx, { kind: "body" });
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
@@ -111,6 +129,30 @@ export function checkRouteTargetArity(
   });
 }
 
+/** A loop through a parameter or a wildcard is not visible in the table, and is the runtime's to stop. */
+export function checkRedirects(
+  entries: readonly RouteMapEntry[],
+  errors: KumikiError[],
+  ownedElsewhere: ReadonlySet<string> = new Set(),
+): void {
+  for (const { entry, target, name } of unboundRedirectNames(entries)) {
+    errors.push({
+      code: "E0125",
+      kind: "redirect-unbound-param",
+      message: `Redirect "${entry.path}" ->> "${target}" names "${name}", which "${entry.path}" does not bind`,
+      pos: entry.pathPos,
+    });
+  }
+  for (const { first, loop } of redirectCycles(entries, ownedElsewhere)) {
+    errors.push({
+      code: "E0010",
+      kind: "redirect-cycle",
+      message: `Redirect "${first.path}" comes back to itself (${loop.join(" ->> ")})`,
+      pos: first.pathPos,
+    });
+  }
+}
+
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
@@ -135,6 +177,8 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: dup.pos,
     });
   }
+  // A top-level static route owns its path ahead of the parent's `/*`, so the map never sees it.
+  checkRedirects(subRoutes, errors, staticPaths(sym.app?.routes ?? []));
   const app = sym.app;
   if (!app) return;
   const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
@@ -157,42 +201,15 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  if (!tileBodyUsesRouteOutlet(tile.body)) {
+  // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
+  // a layout helper counts, and one a builtin drops does not.
+  if (!collectRenderedBuiltinKinds(tile.name, sym).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
-      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      message: `Tile "${tile.name}" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`,
       pos: tile.pos,
     });
-  }
-}
-
-/** True if any sub-tree of the tile body is a `route-outlet` call. */
-function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
-  switch (t.kind) {
-    case "TileCall": {
-      if (t.name === "route-outlet") return true;
-      for (const arg of t.args) {
-        const v = arg.value as TileExpr;
-        if (
-          v.kind === "TileCall" ||
-          v.kind === "TileFor" ||
-          v.kind === "TileWhen" ||
-          v.kind === "TileIf" ||
-          v.kind === "TileMatch"
-        ) {
-          if (tileBodyUsesRouteOutlet(v)) return true;
-        }
-      }
-      return false;
-    }
-    case "TileFor":
-    case "TileWhen":
-      return tileBodyUsesRouteOutlet(t.body);
-    case "TileIf":
-      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
-    case "TileMatch":
-      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
   }
 }
 
@@ -317,7 +334,7 @@ export function checkTileExpr(
       return;
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(t.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
@@ -477,7 +494,7 @@ function tilesInContent(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): (Expr |
     case "IfExpr":
       return [...tilesInContent(v.consequent, sym, ctx), ...tilesInContent(v.alternate, sym, ctx)];
     case "MatchExpr": {
-      const scrutType = inferType(v.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(v.scrutinee, sym, ctx), v.arms, sym);
       return v.arms.flatMap((arm) =>
         tilesInContent(arm.body, sym, armScope(arm, scrutType, sym, ctx)),
       );
@@ -524,6 +541,22 @@ function isUnionTag(name: string, sym: SymbolTable): boolean {
   return written.some(declares);
 }
 
+/**
+ * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
+ * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
+ */
+function renderedText(t: TileExpr & { kind: "TileCall" }): Expr[] {
+  const named = (name: string) => t.args.find((a) => a.name === name)?.value;
+  const content = contentArg(t)?.value;
+  const values = [
+    content,
+    t.name === "button" ? named("text") : undefined,
+    t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
+    t.name === "editable" ? named("bind") : undefined,
+  ];
+  return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));
+}
+
 function checkTileCall(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
@@ -531,8 +564,9 @@ function checkTileCall(
   ctx: Ctx,
   place: TilePlace | null,
 ): void {
+  const unknown = !namesTile(t.name, sym);
   if (place === null) {
-    if (!namesTile(t.name, sym)) errors.push(undefinedTile(t.name, t.pos));
+    if (unknown) errors.push(undefinedTile(t.name, t.pos));
   } else {
     const found = occupantOf(t, sym, ctx);
     if (found.kind !== "tile") errors.push(notATile(found, place, t.pos));
@@ -544,11 +578,16 @@ function checkTileCall(
   checkA11y(t, sym, errors);
   checkUnrenderedArgs(t, errors);
   const tileContent = checkTileAsContent(t, sym, errors, ctx);
+  for (const value of renderedText(t)) {
+    if (value === tileContent?.value) continue;
+    refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
+  }
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, errors);
   checkToggleBind(t, sym, errors, ctx);
+  checkSecondSpelling(t, errors);
   checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
     const bindArg = t.args.find((a) => a.name === "bind");
@@ -587,6 +626,9 @@ function checkTileCall(
 
   for (const arg of t.args) {
     const v = arg.value;
+    // Whether a positional argument is a tile or a value depends on the tile it is passed to,
+    // so an undefined one leaves nothing to check it as.
+    if (unknown && arg.name === undefined) continue;
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
@@ -641,11 +683,17 @@ function checkTileCall(
           pos: ref.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch-args") {
+      // Handed on as the prefetch target's `$route.params`.
+      checkExpr(prop.value, sym, errors, ctx);
+      checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
 }
+
+const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));
 
 function checkHandlerBinding(
   tileName: string,

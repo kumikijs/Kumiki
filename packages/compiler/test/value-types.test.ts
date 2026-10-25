@@ -1,5 +1,6 @@
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
 import { withButtonApp, withReducer, withRoot } from "./helpers/programs.ts";
 
 const appCodes = (defs: string) => codesOf(withButtonApp(defs));
@@ -173,16 +174,53 @@ describe("Int literal precision (E0217)", () => {
     expect(appCodes(`slot s : Int = 123456789012345678901234567890`)).toEqual(["E0217"]);
   });
 
-  it("reports the first integer past the safe range", () => {
+  it("reports an integer past the safe range that rounds to its neighbour", () => {
     expect(appCodes(`slot s : Int = 9007199254740993`)).toEqual(["E0217"]);
   });
 
-  it("accepts the largest safe integer", () => {
-    expect(appCodes(`slot s : Int = 9007199254740991`)).toEqual([]);
+  it.each<[string, string[]]>([
+    ["9007199254740991", []],
+    ["-9007199254740991", []],
+    ["9007199254740992", ["E0217"]],
+    ["-9007199254740992", ["E0217"]],
+  ])("holds %s to the safe range", (literal, codes) => {
+    expect(appCodes(`slot s : Int = ${literal}`)).toEqual(codes);
   });
 
   it("reports a fractional literal as a type mismatch, not a precision loss", () => {
     expect(appCodes(`slot s : Int = 0.5`)).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["a slot", `slot s : Int = -9007199254740993`],
+    ["a list item", `slot xs : List(Int) = [-9007199254740993]`],
+    ["a record field", `type R = {a: Int}\nslot r : R = {a: -9007199254740993}`],
+    ["a variant payload", `slot o : Option(Int) = Some(-9007199254740993)`],
+    ["a fn argument", `fn id(x: Int) -> Int = x\nslot n : Int = id(-9007199254740993)`],
+    ["a reducer write", `slot n : Int = 0\nreducer w on=ui.click(B) do= n := -9007199254740993`],
+    ["a map key", `slot m : Map(Int, Int) = {-9007199254740993: 0}`],
+  ])("reports a negative literal past the bound in %s, signed, at its sign", (_, defs) => {
+    expect(pointedErrorsOf(withButtonApp(defs))).toEqual([
+      {
+        code: "E0217",
+        message:
+          "Int literal -9007199254740993 is not exactly representable and was rounded to -9007199254740992",
+        text: expect.stringMatching(/^-9007199254740993/),
+      },
+    ]);
+  });
+
+  it("folds one sign into the literal, so `- -N` negates the literal `-N` and is not checked", () => {
+    expect(appCodes("slot s : Int = - -9007199254740993")).toEqual([]);
+  });
+
+  it("refuses to build a negative literal past the bound", () => {
+    const r = compile(withButtonApp(`slot s : Int = -9007199254740993`), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    expect(r.kind).toBe("fail");
+    if (r.kind !== "fail") return;
+    expect(r.errors.map((e) => e.code)).toEqual(["E0217"]);
   });
 });
 

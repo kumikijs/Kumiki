@@ -1,6 +1,6 @@
 import type { AppDef, Pos, Program, Token } from "@kumikijs/compiler";
 import { LexError, lex, ParseError, parse, servesNotFound } from "@kumikijs/compiler";
-import type { Store } from "../store.ts";
+import { lineSpan, type Store } from "../store.ts";
 import { escapeRegExp } from "../text.ts";
 
 const OPENING = new Set(["(", "[", "{"]);
@@ -16,18 +16,6 @@ export function identifierAt(store: Store, pos: Pos): string | null {
   const after = rest.slice(m[0].length);
   if (/^[.([]/.test(after)) return null;
   return m[0];
-}
-
-export function lineSpan(text: string, line: number): { start: number; end: number } | null {
-  let start = 0;
-  for (let n = 1; n < line; n++) {
-    const nl = text.indexOf("\n", start);
-    if (nl === -1) return null;
-    start = nl + 1;
-  }
-  if (start > text.length) return null;
-  const nl = text.indexOf("\n", start);
-  return { start, end: nl === -1 ? text.length : nl };
 }
 
 export function replaceAt(text: string, pos: Pos, missing: string, replacement: string): string {
