@@ -224,6 +224,16 @@ A name that denotes no `type` definition ends the chain rather than closing it: 
 
 **Fix**: Give one name on the chain a body. A type that was meant to be recursive wants a record or a union at the point it names itself (`type A = {next: A}`); a type that was meant to be an alias wants the definition it was aliasing.
 
+### E0010 `redirect-cycle`
+
+Redirects send a path back to itself ([Routing §3.10](./routing.md#_3-10-redirects-static)): followed from target to target within one route map — the app's `routes`, or one tile's `sub-routes` — they return to a path the chain has already left. `"/a" ->> "/b"` with `"/b" ->> "/a"` is the shape, and `"/a" ->> "/a"` the shortest. The runtime follows a target that is redirected in turn, as a `navigate-replace` to it would be, so such a chain never reaches a page: the runtime would stop it with a `[kumiki] redirect loop` report and render the requested path as if no redirect matched it. Reported once per cycle, at the entry on it declared first — the one the message names, with the cycle read from there.
+
+> `Redirect "<path>" comes back to itself (<a> ->> <b> ->> <a>)`
+
+Check follows a target only where the table alone decides which entry owns it: a static path (no `:name`, no `*`) that a redirect in the same map is written for. Paths are compared as the runtime matches them, segment by segment, so `"/a/"` and `"/a"` name one path, and a relative target is resolved against the path it redirects from: `"/docs/a" ->> "b"` with `"/docs/b" ->> "a"` is a cycle. A query or a hash in a target plays no part. A static pattern outranks every parameter and wildcard that matches the same path ([Routing §3.1.2](./routing.md#_3-1-2-match-order)), so within one map that redirect is the one that applies; of two entries for one path ([E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) / [E0112](#e0112-duplicate-sub-route)) the first owns it, as at run time. A `sub-routes` map never sees a path that a static route in the app's `routes` owns, because that route outranks the parent's `/*`: a `sub-routes` redirect written for such a path never applies, and a chain in the map ends where it reaches one. An entry written at `/404` owns nothing, since the `/404` entry is the fallback and is never matched, and a chain ends where a target is the path `/404` ([Routing §3.10](./routing.md#_3-10-redirects-static)), so no cycle passes through it. A loop that runs through a parameter or a wildcard (`"/p/:x" ->> "/q/:x"` with `"/q/:x" ->> "/p/:x"`), or between the app's `routes` and a `sub-routes` map, depends on which entry owns a URL, and is the runtime's to stop.
+
+**Fix**: Point one redirect on the cycle at a path a route renders.
+
 ## E01xx — Name Resolution
 
 ### E0102 `undef-reducer`
@@ -518,6 +528,16 @@ The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee i
 
 **Fix**: Name the application as a type and qualify the call with that — `type OrderId = Tagged(Int)` for a `type Tagged(T) = nominal Text`, then `OrderId.fresh()`. For `fresh`, the applied type has to be one a `Text` goes into ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation)): `type IntBox = Box(Int)` for a `type Box(T) = nominal List(T)` names a type, and `IntBox.fresh()` is then [E0802](#e0802-unimplemented-function). For `parse`, the applied type also needs a base with a reading of a text ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)): `type Tagged(T) = nominal Text` then `type OrderId = Tagged(Int)` reads by `Text`, but a container never has one — `type IntList = List(Int)` then `IntList.parse(t)` is [E0802](#e0802-unimplemented-function) — so for `List.parse`, `Map.parse` and the like, parse the parts into `Int`, `Text`, … and build the value in a `fn`. `kumiki fix` does not repair this: which arguments to apply is the author's choice, and the skip reason says so.
 
+### E0125 `redirect-unbound-param`
+
+A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike.
+
+> `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
+
+A source binds each `:name` segment it writes, and `*` when it has a wildcard. Nothing written after a `*` binds: the wildcard has taken the rest of the path by then. Names are compared as written, so `"/old/:id" ->> "/items/:key"` is this error although the source binds a parameter — not the one the target asks for. A query or a hash in the target is not read for names: `"/old/:id" ->> "/items/:id?ref=old"` names `:id` alone.
+
+**Fix**: Name in the target what the source binds (`"/old/:id" ->> "/items/:id"`), or bind in the source what the target needs — a `*` in the target wants a wildcard source (`"/docs/*" ->> "/help/*"`). A target meant to be the same for every path the source matches names nothing: `"/old/:id" ->> "/items"`.
+
 ### E0127 `fn-as-value`
 
 A `fn` name is written without its parentheses where a value goes. A `fn` is not a value — there are no lambdas ([Language §1.9.1](./language.md#_1-9-1-prohibitions)) — so the bare name is always the same mistake: the call is missing.
@@ -601,6 +621,8 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
 The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+
+An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
 
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
