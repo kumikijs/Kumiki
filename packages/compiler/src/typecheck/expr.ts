@@ -62,7 +62,8 @@ export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr 
   return elementType(inferType(iter, sym, ctx), sym);
 }
 
-// Silent on a target that already has a diagnostic: a broken expression has no type to judge.
+// Checks the expression itself, so callers don't. An error reported at the expression is one
+// mistake, reported once; one inside it leaves the type decided, and E0218 is reported beside it.
 export function checkIterationTarget(
   iter: Expr,
   sym: SymbolTable,
@@ -71,7 +72,8 @@ export function checkIterationTarget(
 ): void {
   const before = errors.length;
   checkExpr(iter, sym, errors, ctx);
-  if (errors.slice(before).some((e) => e.severity !== "warning")) return;
+  const atTarget = (p: Pos) => p.line === iter.pos.line && p.col === iter.pos.col;
+  if (errors.slice(before).some((e) => e.severity !== "warning" && atTarget(e.pos))) return;
   const written = inferType(iter, sym, ctx);
   const target = written && nonListTarget(written, sym);
   if (!target) return;
@@ -87,15 +89,18 @@ export function checkIterationTarget(
 type NonListTarget = {
   shown: string;
   remedy: string | null;
-  accessor?: "keys" | "to-list";
+  accessor?: KumikiError["accessor"];
 };
 
 // The message names the type as written, so an alias reads as the author's name for it; the
-// remedy is chosen from what the alias stands for.
+// remedy is chosen from what the alias stands for. A `Map` or a `Set` written as one reads
+// "a Map" / "a Set".
 function nonListTarget(written: TypeExpr, sym: SymbolTable): NonListTarget | null {
   const t = unaliasType(written, sym);
   if (t === null || t.kind === "TypeRef") return null;
   const shown = typeToString(written);
+  const asWritten = (name: string) =>
+    written.kind === "TypeApp" && written.name === name ? `a ${name}` : shown;
   if (t.kind === "TypeApp") {
     switch (t.name) {
       case "List":
@@ -103,12 +108,12 @@ function nonListTarget(written: TypeExpr, sym: SymbolTable): NonListTarget | nul
       // A `Map` has two lists and they bind different things, so the message names both.
       case "Map":
         return {
-          shown: "a Map",
+          shown: asWritten("Map"),
           remedy: "iterate its .keys (or .values, which binds the value)",
           accessor: "keys",
         };
       case "Set":
-        return { shown: "a Set", remedy: "iterate its .to-list", accessor: "to-list" };
+        return { shown: asWritten("Set"), remedy: "iterate its .to-list", accessor: "to-list" };
       case "Option":
         return { shown, remedy: unwrapRemedy(t, "Some / None", sym) };
       case "Result":

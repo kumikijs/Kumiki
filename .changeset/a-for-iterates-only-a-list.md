@@ -27,6 +27,9 @@ $ kumiki smoke app.kumiki
 The reducer form threw `object is not iterable` at the first dispatch, and a
 `Text` in a reducer was walked character by character.
 
+A `for` over a `Tuple`, which ran as an array, and a reducer `for` over a
+`Text`, which walked its characters, are now E0218 too.
+
 After, both forms are E0218, with a remedy that fits the type:
 
 ```
@@ -37,11 +40,19 @@ E0218 for-over-non-list at 2:28: "for" iterates a List, but this is Option(List(
 - any other `Option` / `Result`: a `match`
 - `Text`: `.split(sep)`
 - `Int`, `Bool`, a record, a union, a `Tuple`, …: the message names the type
-- `Map` / `Set`: unchanged — `.keys` (or `.values`) / `.to-list`
+- `Map` / `Set`: unchanged — `.keys` (or `.values`) / `.to-list`; an alias of
+  one now reads as its name (`Index`), where it read "a Map"
 
 A target whose type cannot be decided (a `fn` with no `->`, an untyped
-payload, a type that names nothing) and one that already has a diagnostic of
-its own stay unreported.
+payload, a type that names nothing) and one with an error reported at it stay
+unreported. An error inside the target, such as `idx(rws)`, still leaves E0218
+beside it, so `kumiki fix` renaming `rws` is not rolled back for the E0218 that
+remains.
+
+A local whose type is undecided now hides the slot of its name. A
+`let t = $event.rows` over a `Text` slot `t` was judged as that `Text`, and a
+`for` over it was refused; before this change that happened only to a `Map` or
+a `Set` slot.
 
 `kumiki fix` reads the accessor to append from the diagnostic's new `accessor`
 field (`keys` / `to-list`) rather than from its message, and skips every other

@@ -906,13 +906,14 @@ A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — th
 
 A `for` iterates something whose type is decided and is not a `List`. The iteration target of `for` is a list ([Tile Layer Invariants](./language.md#_1-7-2-invariants), inv. 5) — `Map.keys`, `Set.to-list`, or any expression whose type is a `List`, after aliases, generics and `nominal` are followed. Anything else goes wrong where the loop runs: a tile's `for` calls `.map` on the value and a reducer's walks it with `for … of`, so a `Map`, a `Set`, an `Option` or a record throws (`.map is not a function` in a tile, `object is not iterable` in a reducer), and a `Text` in a reducer is walked character by character.
 
-> `"for" iterates a List, but this is a <Map|Set> — iterate its .<keys|to-list>`
+> `"for" iterates a List, but this is <a Map|type> — iterate its .keys (or .values, which binds the value)`
+> `"for" iterates a List, but this is <a Set|type> — iterate its .to-list`
 > `"for" iterates a List, but this is <type> — iterate its .get-or([]), or match on <Some / None|Ok / Err>`
 > `"for" iterates a List, but this is <type> — match on <Some / None|Ok / Err> to take out its value`
 > `"for" iterates a List, but this is <type> — .split(sep) breaks it into a List(Text)`
 > `"for" iterates a List, but this is <type>`
 
-The type is named as the program writes it, so an alias reads as its name (`Box`, not what it stands for); the remedy is chosen from what it stands for:
+The type is named as the program writes it, so an alias reads as its name (`Box`, not what it stands for), and a `Map` or a `Set` written as one reads *a Map* / *a Set*; the remedy is chosen from what it stands for:
 
 | Target | Remedy |
 |---|---|
@@ -923,9 +924,9 @@ The type is named as the program writes it, so an alias reads as its name (`Box`
 | `Text` | `.split(sep)` |
 | `Int`, `Float`, `Bool`, `Time`, `Bytes`, a record, a union, a `Tuple`, … | none — the message names the type |
 
-A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted. `.get-or([])` iterates nothing for a `None` or an `Err`; a `match` is the form that does something else there.
+A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted. For a `Map` or a `Set` the diagnostic's `accessor` field names the member `kumiki fix` appends (`keys` / `to-list`); no other target carries it. `.get-or([])` iterates nothing for a `None` or an `Err`; a `match` is the form that does something else there.
 
-Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: a `fn` result with no `->`, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has a diagnostic of its own — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once.
+Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: a `fn` result with no `->`, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has an error reported at it — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once. An error inside the target, such as a misspelt argument in `idx(rws)`, leaves the target's type decided, and E0218 is reported beside it.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set` — `kumiki fix` proposes the suffix. Unwrap an `Option` or a `Result` first: `xs.get-or([])` when its `None` / `Err` should iterate nothing, otherwise `match xs with | Some(ys) -> for y in ys … | None -> …`. Iterate `t.split(sep)` for a `Text`. For any other type, iterate the List the program meant — a field of the record, say.
 

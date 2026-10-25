@@ -580,6 +580,17 @@ ${APP_A}`);
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
+  it("a rename inside a for target keeps the E0218 that remains, not blocked (E0103)", () => {
+    const file = seed(`slot rows : List(Int) = [1]
+fn idx(ys: List(Int)) -> Map(Text, Int) = {"k": 1}
+tile App = column(for x in idx(rws) text("row"))
+${APP_A}`);
+    const result = applyFixPlan(file, "E0103");
+    expect(result.regressionBlocked).toBeFalsy();
+    expect(result.applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain("for x in idx(rows) text");
+  });
+
   it("no resolutions: rolled back even when nothing new is introduced", () => {
     const file = seed(`slot count : Int = 0
 reducer bad on=ui.click(B) do=
