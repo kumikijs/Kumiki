@@ -14,6 +14,7 @@ import {
   staticPaths,
   unboundRedirectNames,
 } from "../redirects.ts";
+import { appType, primType } from "../stdlib-types.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -502,11 +503,17 @@ function checkTileCall(
           pos: ref.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch-args") {
+      // Handed on as the prefetch target's `$route.params`.
+      checkExpr(prop.value, sym, errors, ctx);
+      checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
 }
+
+const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));
 
 function checkHandlerBinding(
   tileName: string,

@@ -188,6 +188,8 @@ Every field is supplied on every path a panic reaches a program: an `app.error` 
 
 The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
 
+The checker types `$event` from the standard library's definitions: in an `app.error` reducer it is a `PanicInfo`, and in a `route.error(<pattern>)` reducer a `RouteErrorInfo`, the same fields with `pattern: Text` added ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). A field it does not have — a misspelling, `stack`, or `pattern` in an `app.error` reducer — is [E0108](./errors.md#e0108-undef-member), and a field written into a slot of another type is [E0201](./errors.md#e0201-type-mismatch). A `RouteErrorInfo` is not a `PanicInfo` — a record type matches only its own field set — so a slot that keeps an `app.error` panic whole is an `Option(PanicInfo)`, and one that keeps a `route.error` panic whole is an `Option(RouteErrorInfo)`.
+
 ---
 
 ## 7.3 Error Boundaries (per tile)

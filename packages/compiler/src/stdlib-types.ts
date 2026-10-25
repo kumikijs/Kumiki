@@ -36,7 +36,12 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
   pos: NO_POS,
 });
 
-/** The record the runtime keeps in the `route` slot; its field names must be `emptyRoute()`'s keys, or a test's `route` seed is refused or left partly undefined. */
+/**
+ * The record the runtime keeps in the `route` slot; its field names must be `emptyRoute()`'s keys,
+ * or a test's `route` seed is refused or left partly undefined. The runtime's `ParsedRoute` also
+ * carries an optional `childPattern` for `route-outlet`; that is runtime bookkeeping, not part of
+ * the type.
+ */
 export const ROUTE_TYPE: RecordType = record({
   path: prim("Text"),
   pattern: prim("Text"),
@@ -45,6 +50,26 @@ export const ROUTE_TYPE: RecordType = record({
   hash: app("Option", prim("Text")),
 });
 
+const PANIC_INFO_FIELDS = {
+  message: prim("Text"),
+  location: prim("Text"),
+  "episode-id": app("Option", prim("Text")),
+  cause: app("Option", prim("Text")),
+  category: prim("Text"),
+};
+
+export const PANIC_INFO_TYPE: RecordType = record(PANIC_INFO_FIELDS);
+
+// What a `route.error(<pattern>)` reducer is handed as `$event`: a `PanicInfo`'s fields and the
+// matched `pattern`. It is not a `PanicInfo`, because a record type matches only its own field set.
+export const ROUTE_ERROR_INFO_TYPE: RecordType = record({
+  ...PANIC_INFO_FIELDS,
+  pattern: prim("Text"),
+});
+
+// A program's own `type Route`, `type PanicInfo` or `type RouteErrorInfo` shadows the entry here.
+// The values the runtime builds (`route`, `$route`, a panic reducer's `$event`) are typed from the
+// exports above instead, because the runtime builds them whatever the program declares.
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
@@ -61,16 +86,8 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Duration", nominal(prim("Int"))),
   def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
-  def(
-    "PanicInfo",
-    record({
-      message: prim("Text"),
-      location: prim("Text"),
-      "episode-id": app("Option", prim("Text")),
-      cause: app("Option", prim("Text")),
-      category: prim("Text"),
-    }),
-  ),
+  def("PanicInfo", PANIC_INFO_TYPE),
+  def("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE),
   def("FormValue", {
     kind: "TypeUnion",
     variants: [
