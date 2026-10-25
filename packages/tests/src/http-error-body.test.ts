@@ -4,7 +4,7 @@ import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { click, mountApp, waitUntil } from "./helpers/dom.ts";
-import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import { type FetchCall, type FetchDouble, holdEach, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("229-http-error-body");
@@ -38,14 +38,6 @@ app ErrorBody
     init   = []
 `;
 
-/** A fetch that answers nothing until the request is aborted, then rejects as fetch does. */
-const hangsUntilAborted = (init: RequestInit): Promise<Response> =>
-  new Promise((_, reject) => {
-    init.signal?.addEventListener("abort", () => {
-      reject(new DOMException("The operation was aborted.", "AbortError"));
-    });
-  });
-
 describe("$e.body on an http effect's .err", () => {
   let double: FetchDouble | undefined;
 
@@ -56,10 +48,10 @@ describe("$e.body on an http effect's .err", () => {
 
   /** Click Go (then Halt, when `halt`), and return what `.err` stored. */
   async function failWith(
-    respond: (init: RequestInit) => Response | Promise<Response>,
+    respond: (call: FetchCall) => Response | Promise<Response>,
     halt = false,
   ): Promise<{ hasBody: unknown; body: unknown }> {
-    double = stubFetch((call) => respond(call.init));
+    double = stubFetch(respond);
     const app = await loadSource(PROGRAM);
     const { root, handle } = mountApp(app);
     try {
@@ -88,7 +80,7 @@ describe("$e.body on an http effect's .err", () => {
   });
 
   it("is None for a request aborted in flight, which got no response", async () => {
-    const got = await failWith(hangsUntilAborted, true);
+    const got = await failWith(holdEach(), true);
     expect(got).toEqual({ hasBody: false, body: "<none>" });
   });
 
@@ -128,7 +120,7 @@ describe("the http-error-body example matches on the body", () => {
   });
 
   it("says there was no response when Cancel aborts the request", async () => {
-    double = stubFetch((call) => hangsUntilAborted(call.init));
+    double = stubFetch(holdEach());
     const text = await shown(await loadApp(EXAMPLE), async (root) => {
       click(root, "Load");
       await waitUntil(() => double?.calls.length === 1);

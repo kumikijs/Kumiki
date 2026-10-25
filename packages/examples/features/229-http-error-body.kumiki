@@ -1,7 +1,6 @@
 # Feature (stdlib.md / http.md): an `HttpError`'s `body` is an
-# `Option(Text)`. It is `Some` of the body the server sent with its status —
-# `Some("")` when that body is empty — and `None` when no response arrived: an
-# abort, a timeout, a network failure.
+# `Option(Text)`: `Some` of the response's body when one arrived and was read
+# (`Some("")` if empty), `None` otherwise.
 #
 # Load asks for a report the server no longer has. The 404 carries the
 # server's reason, and `.err` shows it. Cancel aborts a request that is still
@@ -9,9 +8,10 @@
 #
 # `smoke` makes the request through the real HTTP path against
 # `229-http-error-body.http.json`, which answers the 404 with its reason. A
-# scenario scripts each `.err` value, so the body the real path delivers — on
-# that 404, an empty one, an abort and a network failure — is pinned in
-# `packages/tests`.
+# scenario scripts each `.err` value and cannot hold a request in flight for
+# Cancel, so its second Load is answered with the aborted error itself. The
+# body the real path delivers — on that 404, an empty one, an abort and a
+# network failure — is pinned in `packages/tests`.
 
 slot report  : Text     = "none"
 slot problem : Text     = ""

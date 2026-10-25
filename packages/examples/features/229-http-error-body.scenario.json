@@ -30,7 +30,7 @@
       }
     },
     {
-      "label": "an aborted request got no response, so its body is None and .err says so",
+      "label": "a second Load, scripted as the aborted error, got no response: its body is None and .err says so",
       "do": { "click": "#load" },
       "expect": {
         "noErrors": true,
