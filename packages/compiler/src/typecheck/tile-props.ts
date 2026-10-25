@@ -55,7 +55,7 @@ export function checkA11y(
   }
   if (t.name === "button") {
     const hasText = t.args.some((a) => a.name === "text");
-    if (!hasText && writtenValue(t, "aria-label") === undefined) {
+    if (!hasText && writtenProp(t, "aria-label") === undefined) {
       errors.push({
         code: "E0701",
         kind: "a11y-button",
@@ -65,7 +65,7 @@ export function checkA11y(
     }
   }
   if (t.name === "image") {
-    if (writtenValue(t, "alt") === undefined) {
+    if (writtenProp(t, "alt") === undefined) {
       errors.push({
         code: "E0702",
         kind: "a11y-image",
@@ -76,7 +76,7 @@ export function checkA11y(
   }
   if (t.name === "link") {
     const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
-    if (!hasText && writtenValue(t, "aria-label") === undefined) {
+    if (!hasText && writtenProp(t, "aria-label") === undefined) {
       errors.push({
         code: "E0703",
         kind: "a11y-link",
