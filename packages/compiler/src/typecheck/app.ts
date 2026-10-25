@@ -10,7 +10,7 @@ import {
   routeInAppInitMessage,
   routeReachedThroughCalls,
 } from "./route-chain.ts";
-import { checkRouteTargetArity } from "./tile.ts";
+import { checkRedirects, checkRouteTargetArity } from "./tile.ts";
 
 export function checkApp(
   app: AppDef,
@@ -41,6 +41,7 @@ export function checkApp(
     }
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
   }
+  checkRedirects(app.routes, errors);
   const notFound = notFoundEntry(app.routes);
   if (notFound === undefined) {
     errors.push({

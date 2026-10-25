@@ -8,7 +8,7 @@ export type EpisodeTrigger = {
 
 export type SlotDiff = { name: string; before: unknown; after: unknown };
 
-export type EnvReadKind = "now" | "random" | "fresh-id" | "prefers-dark";
+export type EnvReadKind = "now" | "random" | "fresh-id" | "effect-id" | "prefers-dark";
 
 /** One environment read and what it answered. */
 export type EnvRead = { kind: EnvReadKind; value: unknown };
