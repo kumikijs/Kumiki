@@ -1,14 +1,9 @@
-import {
-  assertNever,
-  type Expr,
-  isTileExpr,
-  type Pos,
-  type TestDef,
-  type TileExpr,
-} from "../ast.ts";
+import { assertNever, type Expr, type Pos, type TestDef, type TileExpr } from "../ast.ts";
+import { RUN_REDUCER } from "../builtin-calls.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
 import {
   bareNameAt,
+  eventParts,
   fitsRecordPosition,
   type GivenSection,
   givenSection,
@@ -17,15 +12,18 @@ import {
   nearestSection,
   notARecordMessage,
   type RecordPosition,
+  recordFieldsOf,
   type SectionName,
   sectionNames,
   type TestKind,
   type TestPart,
+  testSections,
 } from "../test-sections.ts";
 import { checkAgainst, effectInput } from "./against.ts";
 import {
   bindLocal,
   type Ctx,
+  isBuiltinCall,
   type KumikiError,
   type SymbolTable,
   wildcardText,
@@ -129,9 +127,11 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
         });
       }
     };
+    // With a `fn run-reducer` declared, neither spelling is the built-in (Language §1.8.5).
+    if (!isBuiltinCall(RUN_REDUCER, sym)) return;
     walkExpr(t.invariant, (n) => {
-      if (n.kind === "Call" && n.callee === "run-reducer") checkRunReducer(n.args, n.pos);
-      if (n.kind === "MethodCall" && n.method === "run-reducer") checkRunReducer(n.args, n.pos);
+      if (n.kind === "Call" && n.callee === RUN_REDUCER) checkRunReducer(n.args, n.pos);
+      if (n.kind === "MethodCall" && n.method === RUN_REDUCER) checkRunReducer(n.args, n.pos);
     });
     return;
   }
@@ -318,20 +318,14 @@ function sectionsOf<K extends TestKind, P extends TestPart>(
   part: P,
   errors: KumikiError[],
 ): { section: SectionName<K, P>; value: Expr }[] {
-  const out: { section: SectionName<K, P>; value: Expr }[] = [];
-  for (const f of recordFieldsOf(part === "given" ? t.given : t.expect)) {
-    if (isSectionName(kind, part, f.name)) {
-      out.push({ section: f.name, value: f.value });
-      continue;
-    }
+  return testSections(t, kind, part, (f) => {
     errors.push({
       code: "E0714",
       kind: "test-section-unknown",
       message: unknownSectionMessage(kind, part, f.name),
       pos: f.pos,
     });
-  }
-  return out;
+  });
 }
 
 function unknownSectionMessage(kind: TestKind, part: TestPart, written: string): string {
@@ -366,58 +360,35 @@ function requireRecord(
   return false;
 }
 
-/** The fields of `e` when it is a record literal, and none when it is not. */
-function recordFieldsOf(e: Expr | TileExpr | undefined): { name: string; value: Expr; pos: Pos }[] {
-  if (e === undefined || isTileExpr(e) || e.kind !== "RecordLit") return [];
-  return e.fields;
-}
-
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   for (const f of recordFieldsOf(rec)) {
-    if (!isTestSlot(f.name, sym)) {
+    const known = isTestSlot(f.name, sym);
+    if (!known) {
       errors.push({
         code: "E0103",
         kind: "undef-slot",
         message: `Reference to undefined slot "${f.name}"`,
         pos: f.pos,
       });
-    } else if (!sym.slots.has(f.name)) {
-      checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
     const slot = sym.slots.get(f.name);
     if (slot) checkAgainst(f.value, slot.type, sym, errors, ctx);
+    else if (known) checkRouteSeed(f.value, sym, errors, ctx);
   }
 }
 
 function checkTestEvent(event: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  const uiEvent = isUiEventType(recordFieldsOf(event).find((f) => f.name === "type")?.value);
-  for (const f of recordFieldsOf(event)) {
-    if (f.name === "type") continue;
-    if (f.name === "target") {
-      const target = f.value;
-      const name =
-        target.kind === "Variant" ? target.name : target.kind === "Ref" ? target.name : undefined;
-      if (uiEvent && name !== undefined && !BUILTIN_TILES.has(name) && !sym.tiles.has(name)) {
-        errors.push({
-          code: "E0105",
-          kind: "undef-tile",
-          message: `Reference to undefined tile "${name}"`,
-          pos: target.pos,
-        });
-      }
-      continue;
-    }
-    checkExpr(f.value, sym, errors, ctx);
+  const { tile, payload } = eventParts(event);
+  if (tile && !BUILTIN_TILES.has(tile.name) && !sym.tiles.has(tile.name)) {
+    errors.push({
+      code: "E0105",
+      kind: "undef-tile",
+      message: `Reference to undefined tile "${tile.name}"`,
+      pos: tile.pos,
+    });
   }
-}
-
-/** Whether `given.event.type` names a `ui.*` trigger — the ones aimed at a tile. */
-function isUiEventType(type: Expr | undefined): boolean {
-  if (type === undefined) return false;
-  // `ui.click` parses as a field read on the name `ui`.
-  if (type.kind === "FieldAccess") return type.base.kind === "Ref" && type.base.name === "ui";
-  return false;
+  for (const f of payload) checkExpr(f.value, sym, errors, ctx);
 }
 
 /** `[persist(x), other]` — the effects a reducer-test expects to have been emitted. */

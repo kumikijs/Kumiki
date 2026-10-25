@@ -1,13 +1,21 @@
-import { unaliasType } from "../assignable.ts";
+import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
+import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
-import { checkAgainst, checkEmitTarget, lvalueType, unwrappedType } from "./against.ts";
+import {
+  checkAgainst,
+  checkEmitTarget,
+  type IndexStep,
+  indexStep,
+  lvalueType,
+  unwrappedType,
+} from "./against.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim, typeName } from "./infer.ts";
+import { inferType, prim, runtimeBuilt } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
 import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
@@ -18,7 +26,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
-    routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
+    routeBind: routeBindOf(r, sym),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -120,10 +128,26 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   ctx.localBinds.add("$el");
-  ctx.localBinds.add("$event");
+  bindLocal(ctx, "$event", eventPayloadType(r.on, sym));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+// A route trigger hands `$route` the route on every firing; a prefetch target on another trigger
+// is handed one only when the prefetch fires it.
+function routeBindOf(r: ReducerDef, sym: SymbolTable): Ctx["routeBind"] {
+  if (r.on.kind === "LifecycleEvent" && r.on.name.startsWith("route.")) return "bound";
+  return bindsRoute(r, sym) ? "prefetch" : "unbound";
+}
+
+function eventPayloadType(on: ReducerDef["on"], sym: SymbolTable): TypeExpr | null {
+  if (on.kind !== "LifecycleEvent") return null;
+  if (on.name === "app.error") return runtimeBuilt("PanicInfo", PANIC_INFO_TYPE, sym);
+  if (on.name.startsWith("route.error(")) {
+    return runtimeBuilt("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE, sym);
+  }
+  return null;
 }
 
 function checkStmt(
@@ -262,6 +286,8 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
+  // The base is written first, so its diagnostics come first, as in a read.
+  checkLvalue(lv.base, sym, errors, ctx);
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
     checkIndexLvalue(lv, sym, errors, ctx);
@@ -273,7 +299,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-  checkLvalue(lv.base, sym, errors, ctx);
 }
 
 function checkIndexLvalue(
@@ -282,26 +307,28 @@ function checkIndexLvalue(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const base = unaliasType(lvalueType(lv.base, sym), sym);
-  checkListIndex(base, lv.index, sym, errors, ctx);
-  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
+  const step = indexStep(lvalueType(lv.base, sym), sym);
+  if (step.kind === "place" && step.key) checkAgainst(lv.index, step.key, sym, errors, ctx);
+  if (step.kind !== "no-place") return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
-    message: `Cannot assign through an index into "${typeName(base, sym)}": a Set has members, not places — use .add / .remove / .toggle`,
+    message: noPlaceMessage(step, lv.index),
     pos: lv.pos,
   });
 }
 
-export function checkListIndex(
-  base: TypeExpr | null,
-  index: Expr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  if (base?.kind !== "TypeApp" || base.name !== "List") return;
-  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
+function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
+  const { raw, base } = step;
+  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
+  if (base.kind === "TypeApp" && base.name === "Set") {
+    return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
+  }
+  const field =
+    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
+      ? ` — write the field step ".${index.value}"`
+      : "";
+  return `${into}: an index names a place only in a Map or a List${field}`;
 }
 
 function checkMemberLvalue(
