@@ -25,7 +25,6 @@ import {
   innerScope,
   isBuiltinCall,
   type KumikiError,
-  RUNTIME_NAMES,
   type SymbolTable,
   wildcardText,
 } from "./context.ts";
@@ -54,6 +53,7 @@ import {
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
+  matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
@@ -174,7 +174,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      if (RUNTIME_NAMES.has(e.name)) return;
+      if (e.name === "route" || e.name === "now" || e.name === "self") return;
       if (e.name === "$1" && ctx.kind === "tile") {
         ctx.undeclaredInputReads?.push(e.pos);
         errors.push({
@@ -392,7 +392,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(e.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
@@ -651,12 +651,7 @@ export function pushMismatch(
 
 /** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
 export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
-  const inner: Ctx = {
-    ...ctx,
-    localBinds: new Set(ctx.localBinds),
-    localTypes: new Map(ctx.localTypes),
-    ...(ctx.localBinders ? { localBinders: new Map(ctx.localBinders) } : {}),
-  };
+  const inner = innerScope(ctx);
   bindLocal(inner, e.name, inferType(e.value, sym, ctx));
   return inner;
 }

@@ -2,6 +2,7 @@ import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, Lvalue, Pos, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
+import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import {
   checkAgainst,
@@ -14,18 +15,19 @@ import {
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim } from "./infer.ts";
+import { inferType, prim, runtimeBuilt } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
-    routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
+    routeBind: routeBindOf(r, sym),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -91,16 +93,20 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   }
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
     const def = sym.tiles.get(r.on.selector.tile);
-    if (def !== undefined) {
-      const decl = collectTileDeclaredIds(def);
-      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
-        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+    if (def !== undefined && !namedByHandler(r.name, sym)) {
+      const wired = subscriptionIds(def, r.on.ev, sym);
+      if (wired.known && wired.ids.size > 0 && !wired.ids.has(r.on.selector.id)) {
+        const actual = [...wired.ids]
+          .sort()
+          .map((v) => `"${v}"`)
+          .join(" | ");
         errors.push({
           code: "E0212",
           kind: "selector-id-mismatch",
           message:
             `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
-            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+            `but every element of tile "${r.on.selector.tile}" that fires "${r.on.ev}" has id ${actual} ` +
+            `— this selector can never match`,
           pos: r.on.pos,
         });
       }
@@ -109,7 +115,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
     const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
     if (allowed != null) {
-      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const descendants = subscribedKinds(r.on.selector.tile, sym);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         errors.push({
@@ -127,10 +133,26 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   ctx.localBinds.add("$el");
-  ctx.localBinds.add("$event");
+  bindLocal(ctx, "$event", eventPayloadType(r.on, sym));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+// A route trigger hands `$route` the route on every firing; a prefetch target on another trigger
+// is handed one only when the prefetch fires it.
+function routeBindOf(r: ReducerDef, sym: SymbolTable): Ctx["routeBind"] {
+  if (r.on.kind === "LifecycleEvent" && r.on.name.startsWith("route.")) return "bound";
+  return bindsRoute(r, sym) ? "prefetch" : "unbound";
+}
+
+function eventPayloadType(on: ReducerDef["on"], sym: SymbolTable): TypeExpr | null {
+  if (on.kind !== "LifecycleEvent") return null;
+  if (on.name === "app.error") return runtimeBuilt("PanicInfo", PANIC_INFO_TYPE, sym);
+  if (on.name.startsWith("route.error(")) {
+    return runtimeBuilt("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE, sym);
+  }
+  return null;
 }
 
 function checkStmt(
@@ -165,7 +187,7 @@ function checkStmt(
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
-    const scrutType = inferType(s.scrutinee, sym, ctx);
+    const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {

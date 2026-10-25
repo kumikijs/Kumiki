@@ -1,6 +1,7 @@
-import { BUILTIN_TILES, codegen, lex, parse } from "@kumikijs/compiler";
+import { BUILTIN_TILES } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { loweredOf } from "./helpers/module.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const HEAD = `type D = {title: Text}
@@ -15,9 +16,9 @@ fn ident(t: Text) -> Text = t
 const program = (defs: string) => withApp(`${HEAD}${defs}`);
 const e0229 = (defs: string) => checkSource(program(defs)).filter((d) => d.code === "E0229");
 
-/** What E0229 says the root is: the text between "cannot write to " and " —". */
+/** What E0229 says the root is: the text after "cannot write to ", up to the first " — " or ". ". */
 const said = (defs: string): string[] =>
-  e0229(defs).map((d) => d.message.replace(/^.*?cannot write to (.*?) — .*$/, "$1"));
+  e0229(defs).map((d) => d.message.replace(/^.*?cannot write to (.*?)(?: — |\. ).*$/, "$1"));
 
 describe("a bind target whose root is not a slot", () => {
   it("is E0229 at the target, naming the root and what it is", () => {
@@ -83,7 +84,7 @@ tile App error-boundary = Fb = column(text("x"))`,
     [
       "the route",
       "tile App = column(input(bind=route.path))",
-      `"route": it is a name the runtime provides, not a slot`,
+      `"route": it is the route slot, which only navigation writes`,
     ],
     [
       "a text literal that names no slot",
@@ -116,29 +117,96 @@ tile App error-boundary = Fb = column(text("x"))`,
     expect(nameless?.message).not.toContain("without quotes");
     expect(nameless?.message).toContain("Bind a slot");
   });
+
+  it("does not send a literal to a name a local hides", () => {
+    // Unquoted, `title` is the for variable here, which is E0229 again.
+    const [hidden] = e0229(`tile App = column(for title in xs input(bind="title"))`);
+    expect(hidden?.message).not.toContain("without quotes");
+    expect(hidden?.message).toContain("Bind a slot");
+  });
+
+  it("sends a route bind to navigation", () => {
+    expect(e0229("tile App = column(input(bind=route.path))").map((d) => d.message)).toEqual([
+      `input(bind=…) cannot write to "route": it is the route slot, which only navigation writes. Move it with link(to=…) or emit navigate(…) (see docs/spec/routing.md)`,
+    ]);
+  });
+});
+
+describe("what a name was bound by, after a scope that binds it again", () => {
+  // Each inner scope rebinds the name in a copy of its parent's binders, so
+  // the name is what bound it once that scope ends.
+  it.each([
+    [
+      "a for variable, after a let of its name",
+      `tile App = column(for t in xs column(text(let t = "x" in t), input(bind=t)))`,
+      `"t": it is the variable of a for, not a slot`,
+    ],
+    [
+      "a tile's input, after a fragment that rebinds $1",
+      `tile Row in=Text = column(text(xs.map($1).join(",")), input(bind=$1))
+tile App = column(Row(title))`,
+      `"$1": it is this tile's input, not a slot`,
+    ],
+    [
+      "a match binding that hides a for variable of its name",
+      'tile App = column(for s in xs match sel with\n  | Some(s) -> input(bind=s)\n  | None -> text("none"))',
+      `"s": it is a local name, not a slot`,
+    ],
+  ])("%s", (_label, defs, what) => {
+    expect(said(defs)).toEqual([what]);
+  });
 });
 
 describe("a root another code reports", () => {
   it.each([
     ["a name that resolves to nothing", "input(bind=nope.title)", ["E0103"]],
     ["a fn named as a value", "input(bind=ident)", ["E0127"]],
-    ["a call step on a slot", "input(bind=d.get().title)", ["E0602"]],
+    ["a text literal on a file input", `input(type="file", bind="title")`, ["E0205"]],
+    ["a for variable on a file input", `for x in xs input(type="file", bind=x)`, ["E0205"]],
   ])("is not E0229 as well: %s", (_label, call, expected) => {
     expect(codesOf(program(`tile App = column(${call})`))).toEqual(expected);
   });
 });
 
+describe("a call step in a bind target", () => {
+  it("is E0602 alone on a slot root", () => {
+    expect(codesOf(program("tile App = column(input(bind=d.get().title))"))).toEqual(["E0602"]);
+  });
+
+  it("is E0602 at the call, and the root is still asked", () => {
+    expect(codesOf(program("tile App = column(for x in xs input(bind=x.upper()))"))).toEqual([
+      "E0602",
+      "E0229",
+    ]);
+  });
+});
+
+describe("a bind written in the props block", () => {
+  // The block spelling lowers no bind today, so it writes nothing and there is
+  // no root to ask. A lowering that reads `{bind: …}` as a bind writes a for
+  // variable into the slot table from there too, and this then fails until
+  // E0229 reads the target from the block as well.
+  it.each([
+    ["as a named argument", `input(bind=t, id="r")`],
+    ["in the props block", `input(id="r") {bind: t}`],
+  ])("is asked whenever the lowering writes it: %s", (_label, call) => {
+    const defs = `tile App = column(for t in xs ${call})`;
+    const writes = loweredOf(program(defs)).includes(`bind: "t"`);
+    expect(e0229(defs).length > 0).toBe(writes);
+  });
+});
+
 describe("the controls the root is asked of", () => {
   // Found from the lowering rather than from a list: a builtin lowers a bind
-  // when its output carries the slot the target names.
-  const lowersBind = (name: string): boolean => {
-    const src = program(`tile App = column(${name}(bind=title, value="v"))`);
-    const { js } = codegen(parse(lex(src)), { runtimeSpecifier: "./runtime.js" });
-    return js.includes(`bind: "title"`);
-  };
-  const lowering = [...BUILTIN_TILES].filter(lowersBind).sort();
+  // when its output carries the slot the target names. `value="v"` is there
+  // for `radio`, which lowers its bind only beside a value= (E0225).
+  const lowersBind = (name: string): boolean =>
+    loweredOf(program(`tile App = column(${name}(bind=title, value="v"))`)).includes(
+      `bind: "title"`,
+    );
 
   it("are the builtins that lower a bind", () => {
+    const lowering = [...BUILTIN_TILES].filter(lowersBind).sort();
     const asked = [...BUILTIN_TILES]
       .filter(
         (name) => e0229(`tile App = column(for x in xs ${name}(bind=x, value="v"))`).length > 0,
@@ -189,6 +257,14 @@ slot xs : List(Text) = ["a"]
       "a slot named inside a tile that takes an input, called from a for",
       `tile Field in=Text = column(label(text=$1), input(bind=form.email), input(bind=name))
 tile App = column(Field("Email"), for x in xs Field(x))`,
+    ],
+    [
+      "a slot bound after a for that hid it",
+      "tile App = column(for name in xs text(name), input(bind=name))",
+    ],
+    [
+      "a slot bound inside a for over another name",
+      "tile App = column(for x in xs row(text(x), input(bind=name)))",
     ],
   ])("checks clean: %s", (_label, tiles) => {
     expect(checkSource(withApp(`${SLOTS}${tiles}`))).toEqual([]);

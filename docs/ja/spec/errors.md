@@ -335,11 +335,15 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0113 `sub-routes-without-outlet`
 
-`sub-routes` を宣言した tile の body に `route-outlet` 呼び出しが存在しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
+`sub-routes` を宣言した tile が、その body にも、それが描画するどの tile にも `route-outlet` を描画しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
 
-> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+> `Tile "<name>" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`
 
-**修正**：子を表示したい場所に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
+outlet は tile 自身の body に書かれている必要はない。ランタイムは tile が描画する木の中で最初に見つかった `route-outlet` を埋め（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、コード生成はその木を body から組み立てる：body が呼び出す（`Outlet()`）か名前で書く（`Outlet`）tile、`for` / `when` / `if` / `match` の各分岐、そして `column`・`card`・`modal` のように子を描画する builtin の位置引数をインライン展開する。したがってレイアウト用の補助 tile に置いた outlet は何段下であっても数え、body がその補助 tile そのもの（`= Outlet`）であっても数える。自身も `sub-routes` を宣言している tile も数える：この tile にインライン展開されたその outlet は、この tile にマッチした子を映す。入れ子の tile 自身の `sub-routes` が使われるのは、それ自体がルートのターゲットになっている場所だけである。分岐の中の outlet は、body に直接書いた場合と同じく数える。分岐が描画されないときは、捨てた子をランタイムが報告する。
+
+たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
+
+**修正**：子を表示したい場所——tile の body か、それが描画する tile の中——に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
 ### E0114 `sub-routes-without-wildcard-parent`
 
@@ -735,21 +739,30 @@ reducer が宣言されていない tile を指している。tile を名指す�
 
 ### E0212 `selector-id-mismatch`（`--strict-selector-id` で opt-in）
 
-reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、対象 tile のリテラル `{id: "..."}` prop がどう転んでも生成できない。E0211 は tile 名のタイポを捕まえるが、この検査は `#id` 側のタイポを捕まえる — 例えば `tile NewForm = form(...) {id: "new"}` に対する `on=ui.submit(NewForm#nw)`。runtime `_dispatch` のフィルタ（spec [§1.6.2](./language.md#_1-6-2-セレクタ)）は不一致を静かにスキップするため、この検査がなければ reducer は発火せず、開発者はエラーを目にすることができない。`kumiki check --strict-selector-id` または `compile({ strictSelectorId: true })` で opt-in する。
+reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscription が配線される要素のどれも持っていない。E0211 は tile 名のタイポを捕まえるが、この検査は `#id` 側のタイポを捕まえる — 例えば `tile NewForm = form(...) {id: "new"}` に対する `on=ui.submit(NewForm#nw)`。runtime `_dispatch` のフィルタ（spec [§1.6.2](./language.md#_1-6-2-セレクタ)）は不一致を静かにスキップするため、この検査がなければ reducer は発火せず、開発者はエラーを目にすることができない。`kumiki check --strict-selector-id` または `compile({ strictSelectorId: true })` で opt-in する。
 
-> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but tile "<Tile>" is declared with id "<actual>" — this selector can never match`
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but every element of tile "<Tile>" that fires "<ev>" has id "<a>" | "<b>" — this selector can never match`
 
-検査は `for` / `when` / `if` / `match` の 4 種すべての制御フロー body を descend する: `for` / `when` は単一 body へパススルー、`if` は両分岐を merge、`match` は全 arm が観測 id 集合に寄与する。`tile T = if c then button(...) {id: "a"} else button(...) {id: "b"}` は `"a" | "b"` を持ち、`--strict-selector-id` の下では `T#c` セレクタが E0212 を発火する。参照先の user tile は descend しない — 別 tile への `Ref` を含む body は id 集合が unknown になるため、将来 use-site での per-instance id-override 構文を導入する余地を check 時に潰さない。
+`#id` は dispatch した要素と比較される（[§1.6.2](./language.md#_1-6-2-セレクタ)）ので、id 集合は subscription が配線される要素の id である:
+
+- **tile 配下で `<ev>` を発火する種別の要素すべて**（深さを問わない） — 種別は [W0212](#w0212-ui-event-tile-mismatch-warning) の表のもので、W0212 と同じ walk で辿る: 名前で参照された子 tile、`for` / `when` / `if` / `match` の全分岐、そして本体内で呼ばれた tile の `error-boundary` フォールバック（その tile の位置に描画される）。コンテナ自身の id が集合に入るのは、コンテナ自身が発火するイベントの場合だけである: `tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` に対して、`ui.click(Toolbar#toolbar)` は E0212（集合は `"save"`）、`ui.hover(Toolbar#toolbar)` は E0212 にならない — `hover` は row 自身にも配線されるためである。tile 自身のフォールバックは集合に入らない: それは tile が描画した木を tile の外側から置き換える。
+- **id はどちらの書き方でもよい**: `{id: "x"}` と `id="x"` は同じ prop である（[§1.7.1](./language.md#_1-7-1-構文)）。1 つの要素が両方書いた場合は props ブロックの方が dispatch される。
+- **tile の各使用箇所が残したとおりに読む**: user tile の呼び出し側に書いた props は、その tile がルートに描画する要素へマージされる。その tile をルートに描画する tile の連鎖をさらに上った各呼び出し側の props も同じ要素へマージされ、最も外側のものが最後に効く。したがって `Btn(id="b")` や `Btn {id: "b"}` は `Btn` がルートに描画する要素に id `"b"` を与え、`tile Outer = Btn` のもとでは `Outer(id="x")` がその要素に `"x"` を与える。tile のルートに描画されるフォールバックは、その tile より上の呼び出し側の props を受け取るが、自分が置き換える呼び出しの props は受け取らない。要素に書かれた id が数えられるのは、どこかの使用箇所がそれをそのまま残す場合だけである: route がその tile を描画する場合と、連鎖を上ったどの呼び出し側も id を書かない場合。
+
+`tile T = if c then button(...) {id: "a"} else button(...) {id: "b"}` は `"a" | "b"` を持ち、`--strict-selector-id` の下では `T#c` セレクタが E0212 を発火する。
 
 **E0212 が沈黙する場合（runtime フィルタが権威となる）**:
 
-- tile が `{id}` prop をそもそも持たない。
-- tile の `{id}` の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
+- subscription が配線される要素に id がない。
+- その id の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
+- そのような連鎖を上って prop を書く最も外側の呼び出し側が、`id` を書かず、イベントハンドラと `key` 以外の prop を書いている — それが要素の dispatch 内容に何を残すかは追跡しない。
+- ハンドラがその reducer を名指している（どこに書かれていても `onClick=r`）: ハンドラが dispatch する reducer も同じ `#id` でフィルタされ、その対象はハンドラを持つ要素である。
+- tile 配下に `<ev>` を発火する要素がない — それは [W0212](#w0212-ui-event-tile-mismatch-warning) の扱う場合であり、W0212 は走査が要素を 1 つも見つけられない場合を除いて報告する。
 - セレクタに `#id` がない。
 - セレクタがワイルドカード `_`。
 - 対象 tile 自体が未宣言（E0211 が既に発火するので、E0212 は抑制して単一の根本原因を提示する）。
 
-**修正**: セレクタの `#id` を tile の `{id}` リテラルに合わせるか、tile の `{id}` リテラルをセレクタに合わせる。
+**修正**: セレクタの `#id` を reducer を発火させたい要素の id に合わせるか、その要素の id を直す。コンテナの場合、それはコンテナ自身の id ではなく、イベントを発火する子孫の id である。
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
@@ -772,7 +785,7 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 **修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。
 
-検査は `for` / `when` / `if` / `match` の body も descend する: `if` の then/else 両分岐、`match` の全 arm が観測 root 集合に寄与する。したがって `tile Dyn = for n in xs box(...)` は W0212 を発火（到達可能な root は `box` のみ）、一方 `tile T = if c then input(...) else button(...)` は警告しない（両分岐とも allowed root を寄与）。tile body 全体が解決不能（循環、未定義名）の場合は観測集合が空になり、警告は抑制される — 偽陽性より「警告しない」を優先する。
+検査は `for` / `when` / `if` / `match` の body も descend する: `if` の then/else 両分岐、`match` の全 arm が観測 root 集合に寄与する。したがって `tile Dyn = for n in xs box(...)` は W0212 を発火（到達可能な root は `box` のみ）、一方 `tile T = if c then input(...) else button(...)` は警告しない（両分岐とも allowed root を寄与）。本体内で呼ばれた tile の `error-boundary` フォールバックも walk する: それはその tile の位置に描画され、subscription は木の他の部分と同様にそこへ配線される。tile 自身のフォールバックは walk しない — それは tile の木を tile の外側から置き換えるためである。tile body 全体が解決不能（循環、未定義名）の場合は観測集合が空になり、警告は抑制される — 偽陽性より「警告しない」を優先する。
 
 **`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替えるか、親 tile に `onClick=` を配線するのが現状の回避策。この予約は `click` だけの話である：`<a href>` は focusable でタブ順にも入るので、`link` は `key` / `focus` / `blur` に載る。link 上の keydown は、ブラウザがそのキーを処理する**前に** `ui.key` の reducer を実行する。Enter ならその後ブラウザが link を活性化し、router はいつもどおり遷移する。reducer はキーを受け取るが、遷移を取り消すことはできない。
 
@@ -949,17 +962,18 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 ### E0229 `bind-target-not-slot`
 
-`bind=` のターゲットの根が、ターゲットを書いた位置で slot ではない（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛））。
+`bind=` のターゲットの根が、ターゲットを書いた位置で slot ではない（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）。
 
 > `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a path into one. <fix> (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to the literal <v>: a literal is a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to this expression: it computes a value, not a slot — … (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to "route": it is the route slot, which only navigation writes. Move it with link(to=…) or emit navigate(…) (see docs/spec/routing.md)`
 
-コントロールは、ターゲットの根が指す slot へ、根より下のパスを通して書き戻す。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` はローカルであり、その背後に slot はない。この検査がないと、lowering はコントロールの編集をライブの slot テーブルにローカルの名前で書き込み、誰も読まない独立した slot にしてしまう：フィールドはすべての編集を受け付けるが、行の元のリストも、呼び出し側が渡した slot も変わらない。リテラルやその他の式は場所を指さず、bind は捨てられる。どちらもほかの何も報告しない — プログラムは check、build、マウントを通り、どの編集にも耐える。
+コントロールは、ターゲットの根が指す slot へ、根より下のパスを通して書き戻す。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` はローカルであり、その背後に slot はない。この検査がないと、lowering はコントロールの編集をライブの slot テーブルにローカルの名前で書き込み、誰も読まない独立した slot にしてしまう：フィールドはすべての編集を受け付けるが、行の元のリストも、呼び出し側が渡した slot も変わらない。リテラルやその他の式は場所を指さず、bind は捨てられる。根が slot でないことは、ほかのどの検査も報告しない — プログラムは check、build、マウントを通り、どの編集にも耐える。
 
-`<what>` は checker が知っている根の正体である：`the variable of a for`、`this tile's input`（`in=` を宣言した tile の `$1`）、それ以外のローカル（`match` の束縛）には `a local name`、`a name the runtime provides`（`route`）。テキストリテラルは `the text literal "<v>"` と呼ばれる。slot と同名のローカルは、どの読み出しでもそうであるように slot を隠すので、`for title in titles input(bind=title)` は slot `title` があっても報告される。検査されるコントロールは bind から書き戻すもの、つまり `input`、`textarea`、`select`、`slider`、`check`、`switch`、`radio`、`editable` である。
+`<what>` は checker が知っている根の正体である：`the variable of a for`、`this tile's input`（`in=` を宣言した tile の `$1`）、それ以外のローカル（`match` の束縛）には `a local name`。テキストリテラルは `the text literal "<v>"` と呼ばれる。`route` は slot だが、ランタイムが管理し（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）、ナビゲーションだけが動かす。そのためメッセージはそれを route slot と呼び、編集を `link(to=…)` か `navigate` へ向ける。slot と同名のローカルは、どの読み出しでもそうであるように slot を隠すので、`for title in titles input(bind=title)` は slot `title` があっても報告される。検査されるコントロールは bind から書き戻すもの、つまり `input`、`textarea`、`select`、`slider`、`check`、`switch`、`radio`、`editable` である。
 
-ほかのコードが報告する根は重ねて報告しない：何にも解決されない名前は [E0103](#e0103-undef-ref-undef-slot)、`fn` は [E0127](#e0127-fn-as-value) である。呼び出しとして書いたステップはその呼び出しで [E0602](#e0602-unassignable-member) になり、根はここで引き続き検査される。
+ほかのコードが報告する根は重ねて報告しない：何にも解決されない名前は [E0103](#e0103-undef-ref-undef-slot)、`fn` は [E0127](#e0127-fn-as-value) であり、`input(type="file")` はそもそも bind を受け取らないので、ターゲットが何を指していても [E0205](#e0205-bind-on-file-input) になる。呼び出しとして書いたステップはその呼び出しで [E0602](#e0602-unassignable-member) になり、根はここで引き続き検査される。
 
 ```kumiki invalid
 type Todo = {text: Text}
@@ -967,7 +981,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**修正**：slot そのもの、またはその中へのパスを bind する。slot の名前を綴ったテキストリテラルは、その slot を引用符付きで書いたものである：`bind=title` と書く。リストの 1 行を編集するには、リストを通してそのキーかインデックスで bind する — `for k in todos.keys input(bind=todos[k].text)` — か、行を `value=` で表示し、props にキーを持たせ、行のイベントに対する reducer でリストを更新する（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛））：
+**修正**：slot そのもの、またはその中へのパスを bind する。slot の名前を綴ったテキストリテラルは、その slot を引用符付きで書いたものである：`bind=title` と書く。その名前のローカルが slot を隠している位置では、引用符を外した名前はそのローカルを指すので、メッセージは一般的な修正を示す。リストの 1 行を編集するには、リストを通してそのキーかインデックスで bind する — `for k in todos.keys input(bind=todos[k].text)` — か、行を `value=` で表示し、props にキーを持たせ、行のイベントに対する reducer でリストを更新する（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）：
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -989,7 +1003,7 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 
 > `"<handler>" on <tile>() is dropped — <tile> renders nothing that fires it (observed in body: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
-`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。報告するのは、そのツリーのどこにも発火する種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。逆に、報告するものはすべて確実に捨てられる。
+`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにも発火する種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。逆に、報告するものはすべて確実に捨てられる。
 
 走査が種類を 1 つも見つけられなかった場合は報告しない — その tile の root 自体が、builtin でも宣言済み tile でもない名前である場合（`tile Inner = Nope()`、あるいは循環 `tile Inner = Inner()`）で、走査は何も学べていない。W0212 も同じ空の答えを前にして黙る。これらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。解決できない名前が解決可能な body の**内側**にある場合（`tile Inner = box(Nope())`）は別の話で、その周囲の種類は root についての正しい答えなので、W0213 は解決できない部分を名指す符号と並んで報告される。
 
