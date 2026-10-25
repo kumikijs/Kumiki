@@ -361,6 +361,12 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - `policy=latest-per-key(<expr>)` and `map-request` are the effect's own
   expressions: both are applied to the effect's input, so `$1` is the only bind,
   a slot and a `fn` are readable, and `$route` is not a name here
+- `$1` there has the type the effect's `in=` declares, as a tile's `$1` has the
+  type of the tile's `in=`: on `in=UserQuery` with `type UserQuery = {id: Text}`,
+  `$1.id` reads the field and `$1.idd` is
+  [E0108](./errors.md#e0108-undef-member). An effect declared `in=Unit` is emitted
+  with no argument, so `$1` is not bound there and reading it is
+  [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
@@ -550,7 +556,7 @@ issue.copy(status=Done, priority=High)
 
 | Syntax | Meaning |
 |---|---|
-| `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument) |
+| `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument); within an effect's `map-request` and `latest-per-key` key, the effect's `in=` input (`$1` only, [§1.5.2](#_1-5-2-semantics)) |
 | `$el` | the `{...}` props of the tile that fired the event |
 | `$event` | the event payload |
 | `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |
@@ -561,6 +567,8 @@ issue.copy(status=Done, priority=High)
 > **A bind list's names must be distinct.** A bind list names the payload's positionals in order, so two binds naming one thing leaves the other positional with no name to read it by — `on=load.ok(dup, dup)` is **E0123**. `_` is exempt however often it is written, and occupies a position rather than skipping one: it is the spelling for a positional the reducer does not read.
 
 > **The first bind has the type the effect's `out=` declares.** On `out=Result(T, E)`, `load.ok($v, _)` binds `$v : T`; any other `out=` is the whole value on `.ok`. So `session := $v` into a slot of another type is **E0201**, and a member call on `$v` answers from `T` as it would on a slot of that type. On `.err`, an effect on a storage / session / indexed capability binds `$e : Text`: those effects deliver the failure's message, also when the `map-request` or a host provider throws ([Storage Effects](./http.md#_6-7-storage-effects)), so `problem := $e` stores it and `$e.message` is **E0108**. Their `out=` must say so — `Result(T, Text)`; any other `E` is **E0306**. `.err` on any other capability is not typed from `out=`: an HTTP handler delivers its `{status, message, body}` record and a custom capability's value is its provider's ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), so reads of `$e` there are not checked. The second bind (the request key) and a built-in effect's result have no declared type either.
+
+> **`$route` is a `Route`, and a panic's `$event` is typed.** In a `route.enter` / `route.leave` / `route.error` reducer, `$route` has the standard `Route` type, as the `route` slot does everywhere ([Routing §3.2](./routing.md#_3-2-current-route-state)). A [prefetch](./routing.md#_3-8-prefetch) target on any other trigger reads it with no declared type, because on its own trigger it is empty. An `app.error` reducer's `$event` is the standard `PanicInfo`, and a `route.error(<pattern>)` reducer's is a `RouteErrorInfo`, the same fields with the matched `pattern` on top ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). So `n := $route.path` into an `Int` slot is **E0201**, and `$event.mesage` is **E0108**. Every other trigger's `$event` has no declared type.
 
 > **In a `fn`, a positional is a parameter.** `$1` is the first parameter and `$2` the second — the same value, with the type the parameter declares — so `fn plus(a: Int, b: Int) -> Int = $1 + $2` is `a + b`. There is one positional per parameter: `$1` in a `fn` with none, or `$2` in a one-parameter `fn`, is an undefined reference (**E0103**). A fragment inside the body binds its own `$1` / `$2`, which shadow the `fn`'s: in `fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` the receiver is `xs` and the fragment's `$1` is each element.
 
