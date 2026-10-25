@@ -11,7 +11,8 @@ import { BUILTIN_TILES } from "../builtins.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import { type Ctx, isBuiltinCall, type KumikiError, type SymbolTable } from "./context.ts";
+import { refuseRenderedEffectId } from "./expr.ts";
 import { freshResultType, prim } from "./infer.ts";
 
 export function checkCallee(
@@ -98,7 +99,7 @@ export function checkCallee(
       return;
     }
   }
-  const arity = builtinArity(callee);
+  const arity = isBuiltinCall(callee, sym) ? builtinArity(callee) : undefined;
   if (arity !== undefined) {
     if (argCount < arity.min || argCount > arity.max) {
       errors.push({
@@ -109,7 +110,10 @@ export function checkCallee(
       });
       return;
     }
-    if (callee === "fmt") reportFmtPlaceholders(args, pos, errors);
+    if (callee === "fmt") {
+      reportFmtPlaceholders(args, pos, errors);
+      for (const a of args) refuseRenderedEffectId(a, "fmt(...)", sym, errors, ctx);
+    }
     const text = args[0];
     if (dot > 0 && callee.slice(dot + 1) === "parse" && text) {
       checkAgainst(text, prim("Text", pos), sym, errors, ctx);
