@@ -19,8 +19,8 @@ function chain(n: number, from = 0): string[] {
 const program = (lines: readonly string[], head = ""): string =>
   `${head}${lines.join("\n")}\n${TAIL}`;
 
-const build = (source: string) =>
-  compile(source, { runtimeSpecifier: "@kumikijs/runtime", capabilities: [] });
+const build = (source: string, opts: { strictSelectorId?: boolean } = {}) =>
+  compile(source, { runtimeSpecifier: "@kumikijs/runtime", capabilities: [], ...opts });
 
 const depthErrors = (source: string) => checkSource(source).filter((e) => e.code === "E0237");
 
@@ -154,6 +154,33 @@ describe("a check that follows tiles into the tiles they inline reaches the repo
     const answers = new Set(result.warnings.map(observed));
     expect([...answers]).toEqual(["W0213 observed in body: column, text"]);
     expect(result.warnings).toHaveLength(LONG - 1);
+  });
+
+  it("answers a ui.click(T0#id) reducer, reading the ids down the chain", () => {
+    const links = chain(LONG).map((l) => l.replace('text("leaf")', 'button(text="go", id="leaf")'));
+    const result = build(
+      program([...links, "reducer r on=ui.click(T0#other) do= c := c + 1"], head),
+      { strictSelectorId: true },
+    );
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0212", "E0237"]);
+    expect(result.errors[0]?.message).toContain('has id "leaf"');
+  });
+
+  it("answers a ui.click(Tile#id) reducer on the last tile, reading its ids up to the route", () => {
+    // Each link renders the next at its root, so every call up the chain could give the leaf an id.
+    const links = Array.from({ length: LONG }, (_, i) =>
+      i === LONG - 1 ? `tile T${i} = button(text="go", id="leaf")` : `tile T${i} = T${i + 1}()`,
+    );
+    const result = build(
+      program([...links, `reducer r on=ui.click(T${LONG - 1}#other) do= c := c + 1`], head),
+      { strictSelectorId: true },
+    );
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0212", "E0237"]);
+    expect(result.errors[0]?.message).toContain('has id "leaf"');
   });
 });
 

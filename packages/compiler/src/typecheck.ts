@@ -26,6 +26,7 @@ import {
   collectElementIds,
   collectPrefetchTargets,
   collectTileBuiltinKinds,
+  subscribedKinds,
 } from "./typecheck/tile-collect.ts";
 import { checkTypeDef } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
@@ -107,6 +108,7 @@ function checkAll(
     elementIds: new Set(),
     // Read as the definitions are checked, by which point every tile has been registered.
     builtinKindsIn: collectTileBuiltinKinds(tiles),
+    subscribedKindsIn: subscribedKinds(tiles),
   };
 
   for (const def of program.defs) {

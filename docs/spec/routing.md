@@ -36,7 +36,7 @@ A parameter's value is its segment percent-decoded: `/todos/a%2Fb` gives `id = "
 1. More specific routes take precedence (static > parameter > wildcard)
 2. At equal specificity, **definition order** wins (so behavior does not change under parallel development)
 
-Specificity is compared segment by segment from the left: at the first segment where two patterns differ in kind, the static one beats the parameter, and the parameter beats the wildcard. `"/todos/new"` therefore takes `/todos/new` even when `"/todos/:id"` is written above it, and `"/todos/:id"` takes `/todos/42` ahead of an earlier `"/todos/*"`. Redirect entries ([§3.10](#_3-10-redirects-static)) are ranked in the same table as the routes that render: the first entry in this order that matches the path owns it, so `"/todos/new" -> NewTodo` renders even when `"/todos/*" ->> "/"` is written above it. The same order picks the entry inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), redirects included. Server rendering (`renderToString`) picks the rendered route by this order only when it is handed the routing module; without it, the path is compared to each declared pattern as the URL parser writes that pattern in a path (§3.1.1). It never follows a `->>`.
+Specificity is compared segment by segment from the left: at the first segment where two patterns differ in kind, the static one beats the parameter, and the parameter beats the wildcard. `"/todos/new"` therefore takes `/todos/new` even when `"/todos/:id"` is written above it, and `"/todos/:id"` takes `/todos/42` ahead of an earlier `"/todos/*"`. Redirect entries ([§3.10](#_3-10-redirects-static)) are ranked in the same table as the routes that render: the first entry in this order that matches the path owns it, so `"/todos/new" -> NewTodo` renders even when `"/todos/*" ->> "/"` is written above it. The same order picks the entry inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), redirects included. Server rendering (`renderToString`) picks the rendered route by this order only when it is handed the routing module; without it, the path is compared to each declared pattern as the URL parser writes that pattern in a path (§3.1.1). The redirects are resolved before the route is picked ([Runtime §10.6.1](./runtime.md#_10-6-1-ssr)): with the routing module, every redirect [§3.10](#_3-10-redirects-static) describes; without it, only a redirect whose pattern is the path as written, so a parameter, a wildcard or a `sub-routes` redirect does not apply there.
 
 ### 3.1.3 `/404` Is Reserved
 
@@ -84,6 +84,8 @@ tile TodoDetail = column(
                     heading("Todo " + route.params.get-or("id", "?")),
                     ...)
 ```
+
+The slot has this type wherever it is read — a tile, a reducer, a `fn`, a test, and the `slots` that `run-reducer` answers — and so does [`$route`](#_3-4-route-lifecycle) in a `route.enter` / `route.leave` / `route.error` reducer. A field the type does not have, such as `route.parms`, is [E0108](./errors.md#e0108-undef-member), and `depth := route.path` into an `Int` slot is [E0201](./errors.md#e0201-type-mismatch). The checker types both from the standard library's definition of `Route`. A [prefetch](#_3-8-prefetch) target on another trigger reads `$route` with no declared type: on its own trigger it is empty ([§3.4](#_3-4-route-lifecycle)).
 
 ---
 
@@ -299,7 +301,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer.
+`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer. `prefetch-args` is what the reducer reads as `$route.params`, so it is a `Map(Text, Text)`, and `{"id": 7}` is [E0201](./errors.md#e0201-type-mismatch).
 
 ---
 
@@ -341,6 +343,20 @@ app App
 ```
 
 `->>` is a **static redirect**. The moment it matches, it performs the equivalent of `navigate-replace`. It applies only when it is the entry that owns the path under [§3.1.2](#_3-1-2-match-order): a more specific rendering route declared anywhere in the table wins over it. A target that is not a path resolves against the path it redirects from, as a link's does ([§3.3.1](#_3-3-1-the-link-element-recommended)): `"/docs/old" ->> "moved"` goes to `/docs/moved`.
+
+The target is written in terms of what the source binds:
+
+- A **parameter** of the source is put into the target by name: `"/old/:id" ->> "/items/:id"` sends `/old/42` to `/items/42`, where `route.params.id` is `"42"`. The segment is carried as the URL has it, so `/old/a%20b` lands on `/items/a%20b` and `id` is `"a b"`, as if that URL had been asked for directly.
+- A **wildcard** source binds the rest of the path, and a `*` segment in the target puts it back: `"/docs/*" ->> "/help/*"` sends `/docs/a/b` to `/help/a/b`, and `/docs` itself to `/help`. A target with no `*` drops the rest: `"/docs/*" ->> "/help"` sends every path under `/docs` to `/help`.
+- A `:name` or `*` in the target that the source does not bind is [E0125](./errors.md#e0125-redirect-unbound-param), reported at the entry. Nothing else in the target is touched.
+- The target replaces the whole URL. A query or a hash on the requested URL is not carried over, as a `navigate-replace` to the target would not carry it. A query or a hash written in the target is kept, and a parameter is put into the path before it: `"/old/:id" ->> "/items/:id?ref=old"` sends `/old/42` to `/items/42?ref=old`.
+
+A target that is itself redirected is redirected again, as a `navigate-replace` to it would be: the runtime follows the chain until it reaches a path no redirect owns, and replaces the URL **once**, with the last target, its query and hash included, as the last `navigate-replace` would leave them. Each step looks up the target's path alone, so `"/a" ->> "/b?x=1"` with `"/b" ->> "/c"` lands on `/c`. A chain ends where a target is the path `/404`, whatever entry would match that path, so `"/gone" ->> "/404"` shows the `/404` tile even beside a `"/*" ->> "/"` that matches every other path. With `"/v1" ->> "/v2"` and `"/v2" ->> "/"`, a request for `/v1` lands on `/`, and history holds `/` where `/v1` was asked for, so `navigate-back` returns to the page before it. The same holds for a redirect inside a `sub-routes` map ([§3.6.3](#_3-6-3-matching-rules)), for a chain that passes between the app's `routes` and a `sub-routes` map, for the path the app mounts at, and for server rendering when it is handed the routing module ([Runtime §10.6.1](./runtime.md#_10-6-1-ssr)). Without the routing module, server rendering follows only redirects whose pattern is the path as written.
+
+A chain that never reaches a page — one that comes back to a path it has already visited, or one that keeps reaching new ones (`"/g/*" ->> "/g/x/*"`) — is caught:
+
+- When it is a cycle of redirects each written for a static path and naming a static path, in one route map (the app's `routes`, or one tile's `sub-routes`), check reports it as [E0010](./errors.md#e0010-redirect-cycle): `"/a" ->> "/b"` with `"/b" ->> "/a"`. Paths are compared as the runtime matches them, segment by segment, with a relative target resolved against the path it redirects from.
+- Any other is stopped at run time — a loop through a parameter or a wildcard (`"/p/:x" ->> "/q/:x"` with `"/q/:x" ->> "/p/:x"`), one that crosses between route maps, or one that never repeats a path. The runtime gives up when a path comes back, or when a chain would take a 21st redirect, reports it on `console.error` (`[kumiki] redirect loop: /p/1 ->> /q/1 ->> /p/1 — stopped, no redirect applied`, or `[kumiki] more than 20 redirects: …` with the 22 paths), and applies no redirect: the requested path stays in the URL and renders as if no redirect matched it — the `/404` tile, unless a route that renders matches it.
 
 ---
 

@@ -21,23 +21,38 @@ export type Cycle = {
   readonly pos: Pos;
 };
 
-export function expansionTargets(body: TileExpr): readonly PlacedEdge[] {
-  const edges: PlacedEdge[] = [];
-  walkTileBody(body, 1, edges);
+/**
+ * `root`: the node is one the body renders at its top, reached through `for` / `when` / `if` /
+ * `match` alone, so a call site of the tile merges its props onto it (`_attachProps`). `call`
+ * is absent for an identifier argument standing in for a tile.
+ */
+export type TileEdge = PlacedEdge & {
+  readonly root: boolean;
+  readonly call?: TileExpr & { kind: "TileCall" };
+};
+
+export function expansionTargets(body: TileExpr): readonly TileEdge[] {
+  const edges: TileEdge[] = [];
+  walkTileBody(body, 1, edges, true);
   return edges;
 }
 
 // An `error-boundary` is a level of its own: codegen wraps every call of the tile in its `try`, so
 // the tile's body and the fallback's both hang beneath it.
 export function tileExpansion(def: TileDef): TileExpansion {
-  const edges: PlacedEdge[] = [];
-  const depth = walkTileBody(def.body, 1, edges);
-  if (!def.errorBoundary) return { depth, edges };
-  const boundary = { to: def.errorBoundary, pos: def.errorBoundaryPos ?? def.pos, level: 1 };
+  const edges: TileEdge[] = [];
+  const depth = walkTileBody(def.body, 1, edges, true);
+  const boundary = boundaryTarget(def);
+  if (!boundary) return { depth, edges };
   return {
     depth: depth + 1,
-    edges: [...edges.map((e) => ({ ...e, level: e.level + 1 })), boundary],
+    edges: [...edges.map((e) => ({ ...e, level: e.level + 1 })), { ...boundary, level: 1 }],
   };
+}
+
+export function boundaryTarget(def: TileDef): GraphEdge | null {
+  if (!def.errorBoundary) return null;
+  return { to: def.errorBoundary, pos: def.errorBoundaryPos ?? def.pos };
 }
 
 type AliasHead =
@@ -154,33 +169,35 @@ export function aliasTarget(
   return null;
 }
 
-function walkTileBody(t: TileExpr, level: number, out: PlacedEdge[]): number {
+function walkTileBody(t: TileExpr, level: number, out: TileEdge[], root: boolean): number {
   switch (t.kind) {
     case "TileFor":
     case "TileWhen":
-      return walkTileBody(t.body, level + 1, out);
+      return walkTileBody(t.body, level + 1, out, root);
     case "TileIf":
       return Math.max(
-        walkTileBody(t.consequent, level + 1, out),
-        walkTileBody(t.alternate, level + 1, out),
+        walkTileBody(t.consequent, level + 1, out, root),
+        walkTileBody(t.alternate, level + 1, out, root),
       );
     case "TileMatch": {
       let deepest = level;
-      for (const arm of t.arms) deepest = Math.max(deepest, walkTileBody(arm.body, level + 1, out));
+      for (const arm of t.arms) {
+        deepest = Math.max(deepest, walkTileBody(arm.body, level + 1, out, root));
+      }
       return deepest;
     }
     case "TileCall": {
-      out.push({ to: t.name, pos: t.pos, level });
+      out.push({ to: t.name, pos: t.pos, level, root, call: t });
       let deepest = level;
       for (const a of t.args) {
         const v = a.value;
         if (a.name !== undefined) continue;
-        if (isTileExpr(v)) deepest = Math.max(deepest, walkTileBody(v, level + 1, out));
+        if (isTileExpr(v)) deepest = Math.max(deepest, walkTileBody(v, level + 1, out, false));
         else if ((v as Expr).kind === "Ref") {
           // Not counted in this body's own depth, since the name may be a value; its edge
           // counts it if it names a tile.
           const ref = v as Expr & { kind: "Ref" };
-          out.push({ to: ref.name, pos: ref.pos, level: level + 1 });
+          out.push({ to: ref.name, pos: ref.pos, level: level + 1, root: false });
         }
       }
       return deepest;
