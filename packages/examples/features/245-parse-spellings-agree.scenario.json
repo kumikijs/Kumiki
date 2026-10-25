@@ -1,0 +1,57 @@
+{
+  "steps": [
+    {
+      "label": "decimal digits read as the same Int and Float by either spelling",
+      "expect": {
+        "noErrors": true,
+        "state": { "typed": "12" },
+        "domIncludes": ["Int.parse 12", "parse-int 12", "Float.parse 12", "parse-float 12"]
+      }
+    },
+    {
+      "label": "a fraction is no Int by either spelling, and truncates only through a Float",
+      "do": { "fill": "#typed", "value": "3.7" },
+      "expect": {
+        "noErrors": true,
+        "state": { "typed": "3.7" },
+        "domIncludes": [
+          "Int.parse none",
+          "parse-int none",
+          "Float.parse 3.7",
+          "parse-float 3.7",
+          "truncated 3"
+        ]
+      }
+    },
+    {
+      "label": "an exponent is a Float and no Int, by either spelling",
+      "do": { "fill": "#typed", "value": "1e3" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Int.parse none", "parse-int none", "Float.parse 1000", "parse-float 1000"]
+      }
+    },
+    {
+      "label": "a hex prefix is neither, by either spelling",
+      "do": { "fill": "#typed", "value": "0x10" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Int.parse none", "parse-int none", "Float.parse none", "parse-float none"]
+      }
+    },
+    {
+      "label": "blanks are not read past, by either spelling; trimmed first, the digits read",
+      "do": { "fill": "#typed", "value": " 12 " },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "Int.parse none",
+          "parse-int none",
+          "Float.parse none",
+          "parse-float none",
+          "trimmed 12"
+        ]
+      }
+    }
+  ]
+}
