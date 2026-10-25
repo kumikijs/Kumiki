@@ -309,7 +309,7 @@ function unlisted(_member: never): null {
 /**
  * A value the runtime builds, named by its standard-library type while the program declares no
  * type of that name, so a diagnostic prints `Route` rather than the record; the record itself
- * once the program's own declaration has taken the name.
+ * should a program's own declaration take the name, which E0231 refuses for every name here.
  */
 export function runtimeBuilt(name: string, record: TypeExpr, sym: SymbolTable): TypeExpr {
   return sym.types.get(name)?.body === record ? refType(name) : record;

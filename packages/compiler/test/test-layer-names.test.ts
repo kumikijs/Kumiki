@@ -334,7 +334,13 @@ describe("a slot value is a value of the slot's type", () => {
     ],
   ])("%s, whatever a program's own `type Route` declares", (_label, declared, route, errors) => {
     const src = `type Route = ${declared}\n${reducerTest(`{slots: {route: ${route}}}`, EXPECT)}`;
-    expect(pointedErrorsOf(src)).toEqual(errors);
+    // `Route` is reserved, so the declaration is E0231 and the field types stay the runtime's.
+    const reserved = {
+      code: "E0231",
+      message: `Type "Route" collides with the standard library's Route; uses of it never see this type`,
+      text: `type Route = ${declared}`,
+    };
+    expect(pointedErrorsOf(src)).toEqual([reserved, ...errors]);
   });
 });
 

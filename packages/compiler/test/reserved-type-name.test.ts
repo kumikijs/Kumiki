@@ -8,7 +8,15 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 const diagnostics = (src: string) =>
   checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-const RESERVED = ["PanicInfo", "Route", "HttpError", "HttpStatus", "Duration", "FormValue"];
+const RESERVED = [
+  "PanicInfo",
+  "RouteErrorInfo",
+  "Route",
+  "HttpError",
+  "HttpStatus",
+  "Duration",
+  "FormValue",
+];
 
 // Each use is one the standard library's definition would refuse, so a row
 // fails if the name is reserved, and again if the use read the stdlib type.

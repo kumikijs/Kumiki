@@ -1045,6 +1045,7 @@ A `type` is declared under the name of a standard-library domain type whose valu
 | Name | What supplies or reads its values |
 |---|---|
 | `PanicInfo` | the runtime: the record an `error-boundary` fallback's `$1` and an `app.error` reducer's `$event` are bound to |
+| `RouteErrorInfo` | the runtime: the record a `route.error(<pattern>)` reducer's `$event` is bound to |
 | `Route` | the runtime: the `route` slot it maintains |
 | `HttpError` | the runtime: the record a failed `http.*` effect delivers |
 | `HttpStatus` | the runtime: that record's `status`, which `HttpError` names |

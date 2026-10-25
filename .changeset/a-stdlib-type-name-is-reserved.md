@@ -40,8 +40,9 @@ E0231 reserved-type-name at 1:1: Type "PanicInfo" collides with the standard lib
 ```
 
 **E0231 `reserved-type-name`** is reported at each declaration under one of the
-six names the runtime or the standard library supplies or reads values of:
-`PanicInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue`.
+seven names the runtime or the standard library supplies or reads values of:
+`PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration`
+and `FormValue`.
 The name keeps the standard library's definition, so every use of it is checked
 against the value the runtime supplies, and `type Route = Route` is E0231 alone
 rather than also a cycle (E0009). Writing those names is unchanged: an
@@ -55,6 +56,6 @@ the standard library's and its uses mean the program's type.
 
 **Migration**: rename the program's type — `type AppPanic = …` instead of
 `type PanicInfo = …` — along with every use that meant it. A program that
-redeclared one of the six identically (`type HttpStatus = nominal Int where
+redeclared one of the seven identically (`type HttpStatus = nominal Int where
 between(0, 599)`) can delete the declaration: the standard library's is the
 same type.

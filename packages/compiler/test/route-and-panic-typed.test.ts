@@ -206,7 +206,14 @@ ${TAIL}`;
   });
 });
 
+// The names are reserved (E0231), so the declaration is refused and the name keeps its meaning.
 describe("a program's own type of the same name does not change them", () => {
+  const reserved = (name: string, text: string) => ({
+    code: "E0231",
+    message: `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`,
+    text,
+  });
+
   it("type Route", () => {
     const src = `type Route = {path: Int}
 slot n : Int = 0
@@ -217,12 +224,13 @@ reducer ok    on=ui.click(Go) do= t := route.params.get-or("id", "?")
 tile App = column(Go, text(t))
 ${TAIL}`;
     expect(pointedErrorsOf(src)).toMatchObject([
+      reserved("Route", "type Route = {path: Int}"),
       { code: "E0201", message: "Expected Int but got Text", text: "route.path" },
       { code: "E0201", message: "Expected Int but got Text", text: "$route.path" },
     ]);
   });
 
-  it("type PanicInfo, whose name is the program's: a mismatch prints the record", () => {
+  it("type PanicInfo", () => {
     const src = `type PanicInfo = Text
 slot t : Text = ""
 reducer whole on=app.error do= t := $event
@@ -231,12 +239,21 @@ reducer onErr on=route.error("/") do= t := $event.message + $event.pattern
 tile App = column(Go, text(t))
 ${TAIL}`;
     expect(pointedErrorsOf(src)).toEqual([
-      {
-        code: "E0201",
-        message:
-          "Expected Text but got {message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}",
-        text: "$event",
-      },
+      reserved("PanicInfo", "type PanicInfo = Text"),
+      { code: "E0201", message: "Expected Text but got PanicInfo", text: "$event" },
+    ]);
+  });
+
+  it("type RouteErrorInfo", () => {
+    const src = `type RouteErrorInfo = Text
+slot t : Text = ""
+reducer whole on=route.error("/") do= t := $event
+reducer field on=route.error("/") do= t := $event.message + $event.pattern
+tile App = column(Go, text(t))
+${TAIL}`;
+    expect(pointedErrorsOf(src)).toEqual([
+      reserved("RouteErrorInfo", "type RouteErrorInfo = Text"),
+      { code: "E0201", message: "Expected Text but got RouteErrorInfo", text: "$event" },
     ]);
   });
 });

@@ -1023,6 +1023,7 @@ bind していないコントロールが選択状態を読む引数 — `check`
 | 名前 | その値を供給する、あるいは読むもの |
 |---|---|
 | `PanicInfo` | ランタイム：`error-boundary` フォールバックの `$1` と `app.error` reducer の `$event` に束縛されるレコード |
+| `RouteErrorInfo` | ランタイム：`route.error(<pattern>)` reducer の `$event` に束縛されるレコード |
 | `Route` | ランタイム：ランタイムが管理する `route` slot |
 | `HttpError` | ランタイム：失敗した `http.*` effect が届けるレコード |
 | `HttpStatus` | ランタイム：そのレコードの `status`。`HttpError` がこの名前を名指す |
