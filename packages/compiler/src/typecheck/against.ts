@@ -11,7 +11,7 @@ import { numberLiteral } from "../ast.ts";
 import { BUILTIN_EFFECTS, builtinFieldOmittable, REDUCER_REF } from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
-import { inferType, isKnown, isPrimNamed } from "./infer.ts";
+import { inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
 import { armScope } from "./patterns.ts";
 
 export function checkAgainst(
@@ -365,8 +365,12 @@ export function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
 // One answer for both questions the left of `:=` asks of an index step (can it be written
 // through, and what is the right-hand side checked against). It takes the receiver's type as
 // written and unaliases it here, so every caller asks about the same type.
+/**
+ * What an index into `raw` is: in a List or a Map, a place of type `type` whose index is checked
+ * against `key`, the same in a read as in a write. `key` is `null` when the key type names nothing.
+ */
 export type IndexStep =
-  | { kind: "place"; type: TypeExpr }
+  | { kind: "place"; key: TypeExpr | null; type: TypeExpr }
   | { kind: "no-place"; raw: TypeExpr; base: TypeExpr }
   | { kind: "undecidable" };
 
@@ -376,11 +380,21 @@ export function indexStep(raw: TypeExpr | null, sym: SymbolTable): IndexStep {
   // An applied name that resolves to nothing is E0117 where it is written; what it would have
   // named may well be a Map.
   if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return { kind: "undecidable" };
-  if (base.kind === "TypeApp" && (base.name === "List" || base.name === "Map")) {
-    const type = base.args[base.name === "List" ? 0 : 1];
-    return type ? { kind: "place", type } : { kind: "undecidable" };
+  if (base.kind === "TypeApp" && base.name === "List") {
+    const [type] = base.args;
+    return type ? { kind: "place", key: prim("Int", base.pos), type } : { kind: "undecidable" };
+  }
+  if (base.kind === "TypeApp" && base.name === "Map") {
+    const [key, type] = base.args;
+    if (!type) return { kind: "undecidable" };
+    return { kind: "place", key: key && !namesNothing(key, sym) ? key : null, type };
   }
   return { kind: "no-place", raw, base };
+}
+
+/** A type name that resolves to nothing is E0117 where it is written, and judges no value. */
+function namesNothing(t: TypeExpr, sym: SymbolTable): boolean {
+  return (t.kind === "TypeApp" || t.kind === "TypeRef") && !isKnownTypeName(t.name, sym);
 }
 
 export function checkEmitTarget(
