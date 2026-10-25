@@ -163,6 +163,16 @@ app A
 `;
     expect(codesOf(src)).toEqual(["W0213"]);
   });
+
+  it("reports a user tile whose only firing kind is a nested tile's fallback", () => {
+    // The fallback is rendered without the handlers written at `Outer`'s call site.
+    const src = withApp(`${REDUCER}
+tile Fb in=PanicInfo = button(text="Retry")
+tile Risky error-boundary = Fb = text("ok")
+tile Outer = Risky
+tile App = column(Outer(onClick=open), InBtn, text(n.show))`);
+    expect(codesOf(src)).toEqual(["W0213"]);
+  });
 });
 
 describe("known gap: W0213 does not see a firing kind that is not the root", () => {
