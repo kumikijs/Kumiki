@@ -109,7 +109,9 @@ app A
 
   it("leaves the question to E0003 when there is no app to declare routes", () => {
     const src = `slot n : Int = 0\nreducer r on=route.enter("/x") do= n := 1\n`;
-    expect(codesOf(src, { requireApp: false })).not.toContain("E0228");
+    const codes = codesOf(src);
+    expect(codes).toContain("E0003");
+    expect(codes).not.toContain("E0228");
   });
 });
 

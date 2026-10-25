@@ -319,8 +319,17 @@ export function mountCore(
     return out;
   }
 
-  function fireRouteEvent(kind: "enter" | "leave", route: ParsedRoute): void {
-    for (const { reducer } of routeReducers(kind, route)) applyReducer(reducer, { $route: route });
+  // `current` turns false once a navigation one of these reducers emitted has superseded the move,
+  // so the rest of the chain does not run against a route the app has already left.
+  function fireRouteEvent(
+    kind: "enter" | "leave",
+    route: ParsedRoute,
+    current: () => boolean,
+  ): void {
+    for (const { reducer } of routeReducers(kind, route)) {
+      if (!current()) return;
+      applyReducer(reducer, { $route: route });
+    }
   }
 
   function fireRouteError(rec: PanicRecord): boolean {
@@ -578,7 +587,10 @@ export function mountCore(
       else anonTimers.push(handle);
     }
   }
-  if (app.routes && app.routes.length > 0) fireRouteEvent("enter", slotValues.route as ParsedRoute);
+  if (app.routes && app.routes.length > 0) {
+    const initial = slotValues.route as ParsedRoute;
+    fireRouteEvent("enter", initial, () => slotValues.route === initial);
+  }
 
   render();
   mountedShapes.set(app, { attach });

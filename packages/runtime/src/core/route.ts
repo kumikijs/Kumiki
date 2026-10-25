@@ -14,7 +14,9 @@ export function emptyRoute(): ParsedRoute {
 
 /** The patterns a route lifecycle reducer can name while `route` is shown, outermost first. */
 export function routeChain(route: ParsedRoute): string[] {
-  return route.childPattern === undefined ? [route.pattern] : [route.pattern, route.childPattern];
+  const child = route.childPattern;
+  // A sub-route keyed like its parent names the parent's own pattern, which the chain holds once.
+  return child === undefined || child === route.pattern ? [route.pattern] : [route.pattern, child];
 }
 
 function injectRouteOutlet(node: TileNode, child: TileNode): boolean {

@@ -30,7 +30,8 @@ export function createNavigation(deps: {
   router: Router | null;
   /** Where an in-page jump looks up the element its hash names. */
   root: Node;
-  fireRouteEvent: (kind: "enter" | "leave", route: ParsedRoute) => void;
+  /** Runs the event's reducers for `route`'s chain while `current()` holds. */
+  fireRouteEvent: (kind: "enter" | "leave", route: ParsedRoute, current: () => boolean) => void;
   render: () => void;
 }): Navigation {
   const { app, slots, routing, router, root, fireRouteEvent, render } = deps;
@@ -44,7 +45,7 @@ export function createNavigation(deps: {
 
   const enter = (route: ParsedRoute): void => {
     slots.route = route;
-    fireRouteEvent("enter", route);
+    fireRouteEvent("enter", route, () => slots.route === route);
     applyScrollFor(route);
     render();
   };
@@ -88,7 +89,7 @@ export function createNavigation(deps: {
       const move: HeldMove = { oldRoute, newRoute, closes: [] };
       leaving = move;
       try {
-        fireRouteEvent("leave", oldRoute);
+        fireRouteEvent("leave", oldRoute, () => gen === generation);
       } finally {
         leaving = null;
       }
