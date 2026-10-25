@@ -8,7 +8,7 @@ import {
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
-import { constructorTags, qualifierCandidates } from "./symbols.ts";
+import { constructorTags, qualifierCandidates, unionsByTag } from "./symbols.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
@@ -101,6 +101,7 @@ function checkAll(
     qualifiers: new Set(qualifierCandidates(program)),
     judgedVariants: new WeakSet(),
     undefinedVariants: new Map(),
+    unionsByTag: unionsByTag(program.defs),
   };
 
   for (const def of program.defs) {

@@ -1,3 +1,4 @@
+import { paramSubstitution, substituteType, unknownType } from "./assignable.ts";
 import type { Def, Program, TypeDef, TypeExpr } from "./ast.ts";
 import { assertNever } from "./ast.ts";
 import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
@@ -12,11 +13,7 @@ import {
 // between a constructor and a record nothing reads. The checker and `kumiki fix`
 // both read it, so the name a diagnostic suggests is the one `fix` writes.
 export function constructorTags(program: Program): string[] {
-  const tags = new Set<string>();
-  for (const def of program.defs) {
-    for (const t of typesWrittenIn(def)) collectUnionTags(t, tags);
-  }
-  for (const def of STDLIB_TYPES) collectUnionTags(def.body, tags);
+  const tags = new Set(unionsByTag([...program.defs, ...STDLIB_TYPES]).keys());
   for (const builtin of BUILTIN_UNION_TAGS.values()) for (const tag of builtin) tags.add(tag);
   return [...tags];
 }
@@ -26,6 +23,57 @@ export function constructorTags(program: Program): string[] {
 export function qualifierCandidates(program: Program): string[] {
   const userTypes = program.defs.filter((d) => d.kind === "TypeDef").map((d) => d.name);
   return [...constructorTags(program), ...QUALIFIED_CALL_NAMESPACES, ...typeCandidates(userTypes)];
+}
+
+/**
+ * The unions `defs` write, by each tag they declare. A union is a union wherever it is written —
+ * a `type` body, or the type of a slot, a fn's parameter or result, an effect, a tile's `in=` or a
+ * property test's `for-all` — and at any depth inside one. Each is listed as the type a value of
+ * it is read as: the `type` by name where the union is its whole body, its parameters undecided,
+ * and the union itself anywhere else.
+ */
+export function unionsByTag(defs: readonly Def[]): Map<string, TypeExpr[]> {
+  const unions = new Map<string, TypeExpr[]>();
+  const add = (union: TypeExpr, t: TypeExpr & { kind: "TypeUnion" }): void => {
+    for (const v of t.variants) {
+      unions.set(v.name, [...(unions.get(v.name) ?? []), union]);
+      for (const p of v.payloads) walk(p);
+    }
+  };
+  const walk = (t: TypeExpr): void => {
+    switch (t.kind) {
+      case "TypeUnion":
+        add(t, t);
+        return;
+      case "TypeApp":
+        for (const a of t.args) walk(a);
+        return;
+      case "TypeRecord":
+        for (const f of t.fields) walk(f.type);
+        return;
+      case "TypeNominal":
+      case "TypeRefinement":
+        walk(t.inner);
+        return;
+      case "TypePrim":
+      case "TypeRef":
+        return;
+      default:
+        assertNever(t);
+    }
+  };
+  for (const def of defs) {
+    if (def.kind !== "TypeDef") {
+      for (const t of typesWrittenIn(def)) walk(t);
+      continue;
+    }
+    const open = def.params.map(() => unknownType(def.pos));
+    const body = substituteType(def.body, paramSubstitution(def.params, open));
+    if (body.kind !== "TypeUnion") walk(body);
+    else if (open.length === 0) add({ kind: "TypeRef", name: def.name, pos: def.pos }, body);
+    else add({ kind: "TypeApp", name: def.name, args: open, pos: def.pos }, body);
+  }
+  return unions;
 }
 
 function typesWrittenIn(def: Def): TypeExpr[] {
@@ -50,32 +98,6 @@ function typesWrittenIn(def: Def): TypeExpr[] {
     default:
       assertNever(def);
       return [];
-  }
-}
-
-function collectUnionTags(t: TypeExpr, out: Set<string>): void {
-  switch (t.kind) {
-    case "TypeUnion":
-      for (const v of t.variants) {
-        out.add(v.name);
-        for (const p of v.payloads) collectUnionTags(p, out);
-      }
-      return;
-    case "TypeApp":
-      for (const a of t.args) collectUnionTags(a, out);
-      return;
-    case "TypeRecord":
-      for (const f of t.fields) collectUnionTags(f.type, out);
-      return;
-    case "TypeNominal":
-    case "TypeRefinement":
-      collectUnionTags(t.inner, out);
-      return;
-    case "TypePrim":
-    case "TypeRef":
-      return;
-    default:
-      assertNever(t);
   }
 }
 

@@ -27,7 +27,7 @@ let id = emit fetchQuote()
 
 Two emits of one effect yield two different ids, and cancelling the request one of them starts leaves the other's as it is; the id of an emit the policy drops names the request that absorbed it. The exception is `policy=latest` / `policy=latest-per-key(...)`, which run one request per key: every emit under a key yields that key's id, which names the request currently running under it ([HTTP §6.4](./http.md#_6-4-cancellation)).
 
-The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
+The only operations defined on `EffectId` are equality (`==`, `!=`), storage in a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering, and rendering as text are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse), which lists where): the content of every value builtin (`text(h)`, `heading(h)`, …), `button(text=h)`, `fmt(…)` with `h` among its arguments, and `.show`. `show` is the member every value has ([§2.2.7](#_2-2-7-int-float)), and on an `EffectId` it is E0204 in each spelling: `h.show`, `h.show()` and `T.show(h)` alike. An `EffectId` has no other member. To show whether a handle is held, render what the comparison answers: `text(if h == EffectId.none then "idle" else "loading")`.
 
 `EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
 
@@ -56,7 +56,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)) |
-| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error`, of `route.error(<pattern>)` (which adds `pattern`), and of an `error-boundary` tile's `in=` |
+| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
+| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the matched `pattern` |
 
 ---
 
@@ -135,7 +136,7 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, an argument whose parameter is a `Set` type ([§2.2](#_2-2-collection-methods)) — the element of `List.push` / `contains` on a `List(Set(T))`, a key or value of `Map.insert` on a `Map` of Sets — and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
+**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))`, a value of a `Map(K, Set(T))` or the index of a `Map(Set(T), V)`, an argument whose parameter is a `Set` type ([§2.2](#_2-2-collection-methods)) — the element of `List.push` / `contains` on a `List(Set(T))`, a key or value of `Map.insert` on a `Map` of Sets — and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
 
 Where the checker cannot decide the receiver's type, neither rule applies: the accumulator `$1` of `fold` — `nums.fold({}, $1.union([2]))` — has no type, so the argument is neither checked nor built as a Set, and stays an array. A fragment over a `List(Set(T))` is not such a place: there `$1` is the element, typed `Set(T)` ([§2.2.3](#_2-2-3-list-t)), so `groups.map($1.union([2]).to-list)` builds the argument as a Set and reads its keys back as `T`. That is a gap in what the checker resolves, not a rule a program may rely on. A member is keyed the way `add` keys it, so a literal of records or variants holds exactly what the `add` chain of the same members holds, keyed as the paragraphs below say.
 
@@ -144,6 +145,8 @@ Where the checker cannot decide the receiver's type, neither rule applies: the a
 **One key per value.** Every member that writes, finds or removes an entry — `add` / `remove` / `toggle` / `has`, `get` / `get-or` / `insert` / `remove` / `update`, the index read `m[k]` and the index write `m[k] := v` — stores and looks up a key the same way, so two keys are one entry exactly when they are equal by `==` ([language §1.9.4](./language.md#_1-9-4-operator-types)). `picked.add(Red).has(Blue)` is `false`; `votes[Red] := 1` and `votes.insert(Green, 1)` write two entries; `m.remove(1)` on a `Map(Int, V)` removes the entry at `1`.
 
 What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
+
+**A key spelled like an `Object.prototype` member is an ordinary key.** Such a key — for example `constructor`, `toString`, `valueOf`, `hasOwnProperty` or `__proto__` — is held only once it is written, as any other key is: on an empty `Map(Text, Int)`, `has("constructor")` is `false`, `get("constructor")` is `None` and `get-or("constructor", 0)` is `0`, and `toggle("toString")` on an empty `Set(Text)` adds it. Once written, such an entry reads back through every member, and `remove` of another key, `intersect`, `diff`, `filter` and `map` keep it as they keep any other.
 
 ### 2.2.3 List(T)
 
@@ -186,7 +189,7 @@ fn empty() -> Bool = todos.is-empty           # same as above
 fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
-> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
+> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has — on an `EffectId` it is [E0204](./errors.md#e0204-effect-id-misuse), not E0108, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
 
 **The lambda arguments of `map` / `filter` / `find` / `sort-by`** are decided by the receiver's **type**, not by the value at run time:
 - An element that is a `Tuple(A, B)` — the `[k, v]` pair `.entries` produces — is taken apart: `$1` is its first half, `$2` its second. Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`. An `Option` / `Result` holding a `Tuple(A, B)` is taken apart the same way.
@@ -268,7 +271,7 @@ These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier i
 
 An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Non-finite `Float` values — what these functions give outside their domain, and what `/` gives for a zero divisor (`1.0 / 0.0` is `Infinity`; [language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `sort` puts `-Infinity` before every finite value, `Infinity` after, and `NaN` after every other element ([§2.2.3](#_2-2-3-list-t)). Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
-`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
+`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`. On an `EffectId`, an opaque handle whose text is the runtime's to choose, `.show` is [E0204](./errors.md#e0204-effect-id-misuse) ([§2.1.1.1](#_2-1-1-1-effectid)).
 
 ### 2.2.8 Time
 
@@ -406,13 +409,15 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `input` | text input | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | multi-line input | `bind`, `rows`, `placeholder` |
 | `check` | checkbox | `value`, `onClick`, `onChange`, `label` |
-| `radio` | radio button | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | radio button | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | slider | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
 
 `button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
+
+`check` `label` and `radio` `label` are the text beside the box: a `<span>` after the `<input>`, inside the `<label>` that wraps both, on the client and in server rendering alike, and nothing when the label is empty. `radio` `group` is the `name` attribute of its `<input>`, which is what makes the radios sharing it one set ([Forms §5.5.2](./forms.md#_5-5-2-radio)). `slider` `value` is the one-way value of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements): the slider shows it and follows it when a reducer changes it, and a `bind` beside it is read instead ([W0216](./errors.md#w0216-selection-beside-bind-warning)). Both `group` and `value` may be written as an argument or in the props block.
 
 ### 2.3.5 Forms
 
@@ -422,6 +427,8 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `label` | label | `for` |
 | `fieldset` | field set | `legend` |
 | `error` | validation error display | `field` |
+
+`fieldset` `legend` is the caption of the group: a `<legend>` ahead of its children, on the client and in server rendering alike, and none when the legend is empty.
 
 ### 2.3.6 Lists / Tables
 

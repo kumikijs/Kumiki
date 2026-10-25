@@ -27,7 +27,7 @@ let id = emit fetchQuote()
 
 同じ effect の 2 回の emit は異なる 2 つの id を返し、一方が開始したリクエストを cancel しても、他方のリクエストはそのままである。policy が捨てた emit の id は、それを吸収したリクエストを指す。例外は key ごとに 1 つのリクエストを実行する `policy=latest` / `policy=latest-per-key(...)` で、ある key の emit はすべてその key の id を返し、その id はその key で現在実行中のリクエストを指す（[HTTP §6.4](./http.md#_6-4-cancellation)）。
 
-`EffectId` 上で定義されている操作は等価比較（`==` / `!=`）と `EffectId` 型 slot への代入のみ。算術・順序比較・`text(...)` での描画はコンパイル時に拒否される（[E0204](./errors.md#e0204-effect-id-misuse)）。
+`EffectId` 上で定義されている操作は等価比較（`==` / `!=`）、`EffectId` 型 slot への代入、`in` 型が `EffectId` の effect への引数渡しのみ。算術・順序比較・テキストとしての描画はコンパイル時に拒否される（場所は [E0204](./errors.md#e0204-effect-id-misuse) が列挙している）：すべての値 builtin の内容（`text(h)`、`heading(h)`、…）、`button(text=h)`、引数に `h` を含む `fmt(…)`、そして `.show`。`show` はすべての値が持つメンバーだが（[§2.2.7](#_2-2-7-int-float)）、`EffectId` に対してはどの書き方でも E0204 になる：`h.show`・`h.show()`・`T.show(h)` のいずれも。`EffectId` はほかにメンバーを持たない。ハンドルを保持しているかどうかを表示するには、比較の答えを描画する：`text(if h == EffectId.none then "idle" else "loading")`。
 
 `EffectId.none` はセンチネル値（空ハンドル）。`EffectId` 型 slot の安全な初期値で、`emit cancel(...)` に渡しても実行時エラーではなく no-op になる。slot を実 `EffectId` で上書きしたあとは、その slot を `cap=http.cancel` の effect に渡すことで対応 effect をキャンセルできる（[HTTP §6.4](./http.md#_6-4-cancellation) 参照）。
 
@@ -56,7 +56,8 @@ let id = emit fetchQuote()
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)） |
-| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error`、`route.error(<pattern>)`（`pattern` が加わる）、および `error-boundary` tile の `in=` に渡る値 |
+| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
+| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドとマッチした `pattern` |
 
 ---
 
@@ -135,7 +136,7 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置ならどこでもリストリテラルで書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。「宣言された位置」とはチェッカーが型に照らして読む位置すべてを指す——たとえば slot、レコードのフィールド、`fn` の引数や戻り値、reducer の書き込み、`let … in` の本体、`List(Set(T))` の要素や `Map(K, Set(T))` の値、パラメータが `Set` 型である引数（[§2.2](#_2-2-コレクションメソッド)。`List(Set(T))` に対する `List.push` / `contains` の要素、Set を持つ `Map` に対する `Map.insert` のキーや値）、テストの slot の値・期待する effect の引数・モックの結果。`union` / `intersect` / `diff` の引数はレシーバと同じ型の `Set(T)` なので、そこに `List`、要素型の違う `Set`、`Option(Set(T))` を渡すと [E0201](./errors.md#e0201-type-mismatch)。
+**Set リテラルは Set である**。Set は空なら `{}` と書き、`Set` が宣言された位置ならどこでもリストリテラルで書ける：`slot s : Set(Int) = [5, 5]` は要素 `5` 一つの Set である。これは `{}.add(5).add(5)` が作るのと同じ値なので、`s.has(5)` は `true`、`s.size` は `1`、`s.add(5)` の要素も一つのままである。「宣言された位置」とはチェッカーが型に照らして読む位置すべてを指す——たとえば slot、レコードのフィールド、`fn` の引数や戻り値、reducer の書き込み、`let … in` の本体、`List(Set(T))` の要素、`Map(K, Set(T))` の値や `Map(Set(T), V)` のインデックス、パラメータが `Set` 型である引数（[§2.2](#_2-2-コレクションメソッド)。`List(Set(T))` に対する `List.push` / `contains` の要素、Set を持つ `Map` に対する `Map.insert` のキーや値）、テストの slot の値・期待する effect の引数・モックの結果。`union` / `intersect` / `diff` の引数はレシーバと同じ型の `Set(T)` なので、そこに `List`、要素型の違う `Set`、`Option(Set(T))` を渡すと [E0201](./errors.md#e0201-type-mismatch)。
 
 チェッカーがレシーバの型を決められない位置では、どちらの規則も適用されない：`fold` のアキュムレータ `$1`——`nums.fold({}, $1.union([2]))`——には型がないので、引数は検査されず Set としても組み立てられず、配列のままである。`List(Set(T))` に対するフラグメントはそうした位置ではない：そこでの `$1` は `Set(T)` 型の要素であり（[§2.2.3](#_2-2-3-list-t)）、`groups.map($1.union([2]).to-list)` は引数を Set として組み立て、キーを `T` として読み戻す。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。要素は `add` と同じ方法でキー化されるので、レコードやバリアントのリテラルは同じ要素の `add` 連鎖とちょうど同じものを保持する。それらのキー化は以下の段落のとおりである。
 
@@ -144,6 +145,8 @@ to-list                     : List(T)
 **値ごとに一つのキー**。エントリを書き込み・探し・取り除くすべてのメンバー — `add` / `remove` / `toggle` / `has`、`get` / `get-or` / `insert` / `remove` / `update`、インデックス読み取り `m[k]`、インデックス書き込み `m[k] := v` — はキーを同じ方法で保存し検索する。したがって二つのキーが一つのエントリになるのは、それらが `==` で等しいときに限る（[language §1.9.4](./language.md#_1-9-4-演算子の型)）。`picked.add(Red).has(Blue)` は `false` であり、`votes[Red] := 1` と `votes.insert(Green, 1)` は二つのエントリを書き、`Map(Int, V)` に対する `m.remove(1)` は `1` のエントリを取り除く。
 
 何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` / `Map.map` のキーと値、`Map.update` の値）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
+
+**`Object.prototype` のメンバーと同じ綴りのキーも普通のキーである**。そうしたキー — `constructor` / `toString` / `valueOf` / `hasOwnProperty` / `__proto__` など — も、ほかのキーと同じく書き込まれてはじめて保持される：空の `Map(Text, Int)` では `has("constructor")` は `false`、`get("constructor")` は `None`、`get-or("constructor", 0)` は `0` であり、空の `Set(Text)` への `toggle("toString")` はそれを加える。書き込まれたそのエントリはどのメンバーからも読み戻せ、別のキーの `remove`、`intersect`、`diff`、`filter`、`map` はほかのエントリと同じくそれを残す。
 
 ### 2.2.3 List(T)
 
@@ -186,7 +189,7 @@ fn empty() -> Bool = todos.is-empty           # 同上
 fn norm() -> List(Todo) = todos.reverse       # 同上
 ```
 
-> **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。メンバーとは §2.2.1–§2.2.10 で**その**受け手に列挙された名前（と、すべての値が持つ `show`、§2.2.7）であり、別の受け手に列挙された名前はメンバーではない：`List` にあるのは `length` で `size` ではなく、`Map` に `filter` があっても `Result` に `filter` はない。`Duration` は `nominal Int` なので、`Int` のメンバーと `to-ms` を持つ。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
+> **dispatch 規則.** `recv.m` は名前ではなく `recv` の**推論型**で dispatch される：`recv` が `m` という名のフィールドを持つ record ならフィールドを読み、`m` メソッドを持つ stdlib 型ならショートカットを使う。よってメソッドと同名の record フィールド（`{head, …}` への `node.head`）はフィールドとして読まれ、shadow されない。受け手型が**既知**で `m` がフィールドでもメンバーでもないときはコンパイルエラー（[エラー E0108](./errors.md#e0108-undef-member)）。メンバーとは §2.2.1–§2.2.10 で**その**受け手に列挙された名前（と、すべての値が持つ `show`。ただし `EffectId` に対しては E0108 ではなく [E0204](./errors.md#e0204-effect-id-misuse) になる、§2.2.7）であり、別の受け手に列挙された名前はメンバーではない：`List` にあるのは `length` で `size` ではなく、`Map` に `filter` があっても `Result` に `filter` はない。`Duration` は `nominal Int` なので、`Int` のメンバーと `to-ms` を持つ。受け手型が推論できないとき（例：型のない reducer payload）は従来の名前ベース dispatch を使う。
 
 **`map` / `filter` / `find` / `sort-by` の lambda 引数**は、実行時の値ではなく受信側の**型**で決まる：
 - `Tuple(A, B)` である要素 — `.entries` が作る `[k, v]` ペア — は分解される：`$1` が前半、`$2` が後半。例: `m.entries.sort-by($2.createdAt).map($1)` で `$1=key`, `$2=value`。`Tuple(A, B)` を持つ `Option` / `Result` も同じく分解される。
@@ -268,7 +271,7 @@ Kumiki の算術はこれで全部である。`math` 名前空間は存在しな
 
 定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。有限でない `Float` の値——これらの関数が定義域の外で与える値と、`/` が 0 の除数に与える値（`1.0 / 0.0` は `Infinity`。[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）——もほかと同じ数値である：`sort` は `-Infinity` をすべての有限値の前に、`Infinity` を後ろに、`NaN` を他のすべての要素の後ろに並べる（[§2.2.3](#_2-2-3-list-t)）。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
 
-`x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。
+`x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。`EffectId` に対する `.show` は [E0204](./errors.md#e0204-effect-id-misuse) になる。不透明なハンドルであり、その文字列表現はランタイムが決めるからである（[§2.1.1.1](#_2-1-1-1-effectid)）。
 
 ### 2.2.8 Time
 
@@ -406,12 +409,14 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `input` | テキスト入力 | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | 複数行入力 | `bind`, `rows`, `placeholder` |
 | `check` | チェックボックス | `value`, `onClick`, `onChange`, `label` |
-| `radio` | ラジオボタン | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | ラジオボタン | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | セレクト | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | スライダー | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | スライダー | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | トグル | `value`, `onClick`, `onChange` |
 
 `button` の `loading` はボタンを無効化し、`aria-busy` を付け、ラベルの手前にスピナーを置く（[フォーム §5.8](./forms.md#_5-8-ui-during-submission)）。`disabled` は単独で無効化する。`variant` は `data-kumiki-variant` 属性になる——`class` やテーマのスタイルシートが選択するためのフックである。Kumiki はどの variant 名にも見た目を同梱しない：「ghost」ボタンがどう見えるべきかはデザインの決定であり、ここで発明すればそれは言語機能になってしまう。
+
+`check` の `label` と `radio` の `label` はボックスの横に出るテキストで、両者を包む `<label>` の中、`<input>` の後ろの `<span>` になる。クライアントでもサーバーレンダリングでも同じで、ラベルが空なら何も出さない。`radio` の `group` はその `<input>` の `name` 属性であり、それを共有するラジオが 1 つの組になるのはこのためである（[フォーム §5.5.2](./forms.md#_5-5-2-radio)）。`slider` の `value` は[フォーム §5.3](./forms.md#_5-3-入力要素の共通-props) の一方向の値である：スライダーはそれを表示し、reducer が変えればそれに追従する。`bind` が併記されていればそちらが読まれる（[W0216](./errors.md#w0216-selection-beside-bind-warning)）。`group` も `value` も、引数としても props ブロックにも書ける。
 
 ### 2.3.5 フォーム
 
@@ -421,6 +426,8 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `label` | ラベル | `for` |
 | `fieldset` | フィールド集合 | `legend` |
 | `error` | バリデーションエラー表示 | `field` |
+
+`fieldset` の `legend` はグループの見出しで、子の前に置かれる `<legend>` になる。クライアントでもサーバーレンダリングでも同じで、legend が空なら何も出さない。
 
 ### 2.3.6 リスト・表
 
