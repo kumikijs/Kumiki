@@ -75,8 +75,7 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest)
-    checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym, eff.mapRequest));
+  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym, eff.mapRequest));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey")
