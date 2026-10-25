@@ -14,6 +14,7 @@ import {
   staticPaths,
   unboundRedirectNames,
 } from "../redirects.ts";
+import { appType, primType } from "../stdlib-types.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -47,8 +48,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    ctx.localBinds.add("$1");
-    ctx.localTypes.set("$1", tile.in);
+    bindLocal(ctx, "$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
@@ -503,11 +503,17 @@ function checkTileCall(
           pos: ref.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch-args") {
+      // Handed on as the prefetch target's `$route.params`.
+      checkExpr(prop.value, sym, errors, ctx);
+      checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
 }
+
+const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));
 
 function checkHandlerBinding(
   tileName: string,
