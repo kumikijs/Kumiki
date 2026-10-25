@@ -65,7 +65,7 @@ export class TypeParser extends TokenStream {
 
   private notAVariant(form: string, pos: Pos): ParseError {
     return new ParseError(
-      `Unsupported variant form: a union alternative is a name, optionally with a payload (\`Name\` or \`Name(T, …)\`), not ${form}`,
+      `Unsupported variant form: a variant is a name, optionally with a payload (\`Name\` or \`Name(T, …)\`), not ${form}`,
       pos,
     );
   }

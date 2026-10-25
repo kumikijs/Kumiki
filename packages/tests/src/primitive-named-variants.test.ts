@@ -27,18 +27,24 @@ function lines(root: HTMLElement): string[] {
 
 const PRIMITIVES = ["Int", "Text", "Bool", "Unit", "Float", "Time", "Bytes", "File", "EffectId"];
 
-/** A union holding `p` beside `Other`, with `p` in every position a nullary variant has. */
+/**
+ * A union holding `p` beside `Other`, with `p` as a slot initialiser, an assigned value, a `fn`'s
+ * result, a pattern, an operand of `==`, and in `if` / `when`, and `v.show` naming it.
+ */
 const program = (union: string, p: string): string => `
 type V = ${union}
 slot v : V = ${p}
 fn back(x: V) -> V = match x with | ${p} -> Other | Other -> ${p}
 reducer toOther on=ui.click(ToOther) do= v := Other
 reducer toBack on=ui.click(ToBack) do= v := back(v)
+reducer toP on=ui.click(ToP) do= v := ${p}
 tile ToOther = button(text="other")
 tile ToBack = button(text="back")
+tile ToP = button(text="set")
 tile App = column(
   ToOther,
   ToBack,
+  ToP,
   text(match v with | ${p} -> "match ${p}" | Other -> "match Other"),
   text("eq " + (v == ${p}).show),
   text("show " + v.show),
@@ -62,6 +68,11 @@ describe("a nullary variant named after a primitive type", () => {
     expect(live()).toMatchObject({ v: { _tag: "Other" } });
 
     click(root, "back");
+    expect(lines(root)).toEqual(atP);
+    expect(live()).toMatchObject({ v: { _tag: p } });
+
+    click(root, "other");
+    click(root, "set");
     expect(lines(root)).toEqual(atP);
     expect(live()).toMatchObject({ v: { _tag: p } });
   });
@@ -92,11 +103,13 @@ type Mark = Unset | Marked(Time)
 type Entry = {t: Time, label: Text}
 slot sort    : SortBy       = Time
 slot started : Stamp        = now
+slot at      : Time         = now
 slot mark    : Mark         = Unset
 slot entry   : Entry        = {t: now.plus(Duration.h(1)), label: "e"}
 slot parsed  : Option(Time) = None
 slot names   : List(Text)   = ["a"]
 slot counts  : Map(Text, Int) = {"a": 1}
+fn same(t: Time) -> Time = t
 reducer read on=ui.click(Read)
     do= parsed := Time.parse("2026-02-28")
         mark := Marked(started)
@@ -107,18 +120,24 @@ tile App = column(Read,
   text(match parsed with | Some(t) -> "parsed " + t.format("yyyy-MM-dd") | None -> "parsed none"),
   text(match mark with | Marked(t) -> "mark " + (t == started).show | Unset -> "mark unset"),
   text("entry " + (entry.t == started).show),
-  text("names " + names.length.show + " counts " + counts.size.show))`;
+  text("names " + names.length.show + " counts " + counts.size.show),
+  text("started " + started.format("yyyy")),
+  text("at " + at.format("yyyy") + " same " + (same(at) == at).show))`;
 
   it("reads every other Time as the primitive and Time.parse as the stdlib call", async () => {
-    const { root, live } = await mounted(defs);
+    const { root } = await mounted(defs);
+    const asTimes = [
+      expect.stringMatching(/^started \d{4}$/),
+      expect.stringMatching(/^at \d{4} same true$/),
+    ];
     expect(lines(root)).toEqual([
       "sort time",
       "parsed none",
       "mark unset",
       "entry false",
       "names 1 counts 1",
+      ...asTimes,
     ]);
-    expect(typeof (live() as { started: unknown }).started).toBe("number");
 
     click(root, "read");
     expect(lines(root)).toEqual([
@@ -127,6 +146,7 @@ tile App = column(Read,
       "mark true",
       "entry true",
       "names 1 counts 1",
+      ...asTimes,
     ]);
   });
 });

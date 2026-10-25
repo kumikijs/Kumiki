@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -141,7 +141,7 @@ refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
 
-`variant` は識別子であり、プリミティブ型の名前もその 1 つである：`type SortBy = Name | Time | Size` の `Time` はペイロードを持たない `SortBy` のバリアントであり、`Name` と同じく値・パターン・`==` のオペランドとして書ける。単独で型として読まれるプリミティブの名前は、そのプログラムでもプリミティブを指す — `type Stamp = Time` はその別名であり、スロットの型・ペイロード（`At(Time)`）・レコードのフィールド・型引数（`Option(Time)`）としての `Time` も同様である — また、`Time` という名前のバリアントがあっても、`Time.parse(t)` は [stdlib §2.4.3](./stdlib.md#_2-4-3-型変換) の変換である。
+`variant` は識別子であり、プリミティブ型の名前もその 1 つである：`type SortBy = Name | Time | Size` の `Time` はペイロードを持たない `SortBy` のバリアントであり、`Name` と同じく値・パターン・`==` のオペランドとして書ける。単独で型として読まれるプリミティブの名前は、そのプログラムでもプリミティブを指す：`type Stamp = Time` はプリミティブの別名であり、スロットの型・ペイロード（`At(Time)`）・レコードのフィールドの型・型引数（`Option(Time)`）としての `Time` はプリミティブそのものである。`Time` という名前のバリアントがあっても、`Time.parse(t)` は [stdlib §2.4.3](./stdlib.md#_2-4-3-型変換) の変換である。ユニオンをどこに書いても選択肢はバリアントなので、`Int | Text` はペイロードを持たない 2 つのバリアントであり、「Int または Text」ではない。値を持たせるには、それぞれにペイロードを与える：`I(Int) | T(Text)`。
 
 `refinement-type` は再帰的なので、1 つの型が `where` を **2 つ以上**持てる。そのとき述語は**連言**であり、すべてが成り立つ値だけが受理される。
 

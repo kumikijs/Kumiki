@@ -39,6 +39,17 @@ tile App = column(
   text("is time: " + (sort == Time).show),
   text(if sort == Time then "parsed " + day(parsed) else "not by time"))
 
+# A reducer-test names the variant in `given` and `expect` as a value too.
+test by-time-sets-the-time-variant =
+    reducer-test byTime
+        given  = {slots: {sort: Name}, event: {type: ui.click, target: ByTime}}
+        expect = {slots: {sort: Time}, effects: []}
+
+test by-size-leaves-the-time-variant =
+    reducer-test bySize
+        given  = {slots: {sort: Time}, event: {type: ui.click, target: BySize}}
+        expect = {slots: {sort: Size}, effects: []}
+
 app PrimitiveNamedVariants
   caps   = []
   routes = {"/" -> App, "/404" -> App}
