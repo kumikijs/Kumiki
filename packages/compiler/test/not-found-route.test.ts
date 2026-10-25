@@ -15,10 +15,13 @@ const APP_REDIRECT =
   'and has to render a tile — write "/404" -> <Tile>';
 
 describe('a redirect at "/404" in app.routes', () => {
+  // `"/items/:id"` and `"/docs/*"` name what `/404` does not bind, which elsewhere is E0125.
   it.each([
     '"/"',
     '"/home"',
     '"/nowhere"',
+    '"/items/:id"',
+    '"/docs/*"',
   ])("is reported as a redirect, not as a missing /404, whatever it redirects to (%s)", (target) => {
     expect(checkSource(app(`{"/" -> Home, "/404" ->> ${target}}`))).toMatchObject([
       { code: "E0001", kind: "404-is-redirect", message: APP_REDIRECT },
@@ -82,6 +85,15 @@ describe('an entry at "/404" in a sub-routes map', () => {
 tile Panel in=Text = column(text($1))
 tile Settings sub-routes={"/settings" -> Home, "/404" -> ${target}} = column(route-outlet())`,
     );
+    expect(checkSource(src).map((d) => [d.code, d.kind])).toEqual([["E0001", "404-in-sub-routes"]]);
+  });
+
+  // Elsewhere a redirect naming a `:name` or `*` its source does not bind is E0125.
+  it.each([
+    '"/settings/:id"',
+    '"/help/*"',
+  ])("is the entry's one report, so its redirect target %s is not checked as well", (target) => {
+    const src = app(WITH_404, LAYOUT(`{"/settings" -> Home, "/404" ->> ${target}}`));
     expect(checkSource(src).map((d) => [d.code, d.kind])).toEqual([["E0001", "404-in-sub-routes"]]);
   });
 

@@ -21,6 +21,6 @@ before: (no diagnostic)
 after:  E0001 404-in-sub-routes at 3:48: Tile "Settings" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"
 ```
 
-It is the entry's one report, whatever it targets: an undefined tile or one that declares `in=` there is not also E0105 or E0213.
+It is the entry's one report, whatever it targets: an undefined tile or one that declares `in=` there is not also E0105 or E0213, and a redirect target naming a `:name` or `*` that `/404` does not bind is not also E0125. The same holds for a `/404` redirect in `app.routes`.
 
 `kumiki fix` offers no patch for either kind, and reads that from the diagnostic's kind rather than scanning the routes a second time. The skip reasons are `e0001-404-is-a-redirect`, as before, and `e0001-404-in-sub-routes`.
