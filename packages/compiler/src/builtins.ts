@@ -79,6 +79,36 @@ export function tileNamedAt(
   return isTile(v.name) ? v : undefined;
 }
 
+/** The builtins codegen renders a positional tile argument of, as a child; the rest drop it. */
+export const CHILD_RENDERING_BUILTINS: ReadonlySet<string> = new Set([
+  "page",
+  "region",
+  "row",
+  "column",
+  "stack",
+  "overlay",
+  "grid",
+  "box",
+  "card",
+  "panel",
+  "divider",
+  "scroll",
+  "form",
+  "fieldset",
+  "list",
+  "list-item",
+  "table",
+  "table-head",
+  "table-body",
+  "table-row",
+  "table-cell",
+  "modal",
+  "drawer",
+  "tooltip",
+  "popover",
+  "details",
+]);
+
 export type TileFamily =
   | "layout"
   | "text"

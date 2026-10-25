@@ -20,6 +20,7 @@ import {
   staticPaths,
   unboundRedirectNames,
 } from "../redirects.ts";
+import { appType, primType } from "../stdlib-types.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -39,8 +40,8 @@ import {
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { collectTileBuiltinKinds } from "./tile-collect.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
@@ -53,8 +54,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    ctx.localBinds.add("$1");
-    ctx.localTypes.set("$1", tile.in);
+    bindLocal(ctx, "$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
@@ -194,42 +194,15 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  if (!tileBodyUsesRouteOutlet(tile.body)) {
+  // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
+  // a layout helper counts, and one a builtin drops does not.
+  if (!collectRenderedBuiltinKinds(tile.name, sym).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
-      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      message: `Tile "${tile.name}" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`,
       pos: tile.pos,
     });
-  }
-}
-
-/** True if any sub-tree of the tile body is a `route-outlet` call. */
-function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
-  switch (t.kind) {
-    case "TileCall": {
-      if (t.name === "route-outlet") return true;
-      for (const arg of t.args) {
-        const v = arg.value as TileExpr;
-        if (
-          v.kind === "TileCall" ||
-          v.kind === "TileFor" ||
-          v.kind === "TileWhen" ||
-          v.kind === "TileIf" ||
-          v.kind === "TileMatch"
-        ) {
-          if (tileBodyUsesRouteOutlet(v)) return true;
-        }
-      }
-      return false;
-    }
-    case "TileFor":
-    case "TileWhen":
-      return tileBodyUsesRouteOutlet(t.body);
-    case "TileIf":
-      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
-    case "TileMatch":
-      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
   }
 }
 
@@ -261,7 +234,7 @@ export function checkTileExpr(
       return;
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(t.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
@@ -518,11 +491,17 @@ function checkTileCall(
           pos: ref.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch-args") {
+      // Handed on as the prefetch target's `$route.params`.
+      checkExpr(prop.value, sym, errors, ctx);
+      checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
 }
+
+const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));
 
 function checkHandlerBinding(
   tileName: string,
