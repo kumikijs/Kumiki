@@ -335,11 +335,15 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0113 `sub-routes-without-outlet`
 
-`sub-routes` を宣言した tile の body に `route-outlet` 呼び出しが存在しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
+`sub-routes` を宣言した tile が、その body にも、それが描画するどの tile にも `route-outlet` を描画しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
 
-> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+> `Tile "<name>" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`
 
-**修正**：子を表示したい場所に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
+outlet は tile 自身の body に書かれている必要はない。ランタイムは tile が描画する木の中で最初に見つかった `route-outlet` を埋め（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、コード生成はその木を body から組み立てる：body が呼び出す（`Outlet()`）か名前で書く（`Outlet`）tile、`for` / `when` / `if` / `match` の各分岐、そして `column`・`card`・`modal` のように子を描画する builtin の位置引数をインライン展開する。したがってレイアウト用の補助 tile に置いた outlet は何段下であっても数え、body がその補助 tile そのもの（`= Outlet`）であっても数える。自身も `sub-routes` を宣言している tile も数える：この tile にインライン展開されたその outlet は、この tile にマッチした子を映す。入れ子の tile 自身の `sub-routes` が使われるのは、それ自体がルートのターゲットになっている場所だけである。分岐の中の outlet は、body に直接書いた場合と同じく数える。分岐が描画されないときは、捨てた子をランタイムが報告する。
+
+たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
+
+**修正**：子を表示したい場所——tile の body か、それが描画する tile の中——に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
 ### E0114 `sub-routes-without-wildcard-parent`
 
