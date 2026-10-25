@@ -366,19 +366,19 @@ function requireRecord(
 
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   for (const f of recordFieldsOf(rec)) {
-    if (!isTestSlot(f.name, sym)) {
+    const known = isTestSlot(f.name, sym);
+    if (!known) {
       errors.push({
         code: "E0103",
         kind: "undef-slot",
         message: `Reference to undefined slot "${f.name}"`,
         pos: f.pos,
       });
-    } else if (!sym.slots.has(f.name)) {
-      checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
     const slot = sym.slots.get(f.name);
     if (slot) checkAgainst(f.value, slot.type, sym, errors, ctx);
+    else if (known) checkRouteSeed(f.value, sym, errors, ctx);
   }
 }
 

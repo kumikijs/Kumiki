@@ -11,7 +11,7 @@ import {
   routeReachedThroughCalls,
   servesNotFound,
 } from "./route-chain.ts";
-import { checkRouteTargetArity } from "./tile.ts";
+import { checkRedirects, checkRouteTargetArity } from "./tile.ts";
 
 export function checkApp(
   app: AppDef,
@@ -42,6 +42,7 @@ export function checkApp(
     }
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
   }
+  checkRedirects(app.routes, errors);
   if (!servesNotFound(app.routes)) {
     errors.push({
       code: "E0001",

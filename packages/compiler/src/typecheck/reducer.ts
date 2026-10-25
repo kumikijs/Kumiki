@@ -271,6 +271,8 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
+  // The base is written first, so its diagnostics come first, as in a read.
+  checkLvalue(lv.base, sym, errors, ctx);
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
     checkIndexLvalue(lv, sym, errors, ctx);
@@ -282,7 +284,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-  checkLvalue(lv.base, sym, errors, ctx);
 }
 
 function checkIndexLvalue(
@@ -291,9 +292,8 @@ function checkIndexLvalue(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const raw = lvalueType(lv.base, sym);
-  checkListIndex(unaliasType(raw, sym), lv.index, sym, errors, ctx);
-  const step = indexStep(raw, sym);
+  const step = indexStep(lvalueType(lv.base, sym), sym);
+  if (step.kind === "place" && step.key) checkAgainst(lv.index, step.key, sym, errors, ctx);
   if (step.kind !== "no-place") return;
   errors.push({
     code: "E0602",
@@ -314,17 +314,6 @@ function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): st
       ? ` — write the field step ".${index.value}"`
       : "";
   return `${into}: an index names a place only in a Map or a List${field}`;
-}
-
-export function checkListIndex(
-  base: TypeExpr | null,
-  index: Expr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  if (base?.kind !== "TypeApp" || base.name !== "List") return;
-  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
 }
 
 function checkMemberLvalue(

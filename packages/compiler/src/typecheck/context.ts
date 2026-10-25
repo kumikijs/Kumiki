@@ -64,6 +64,8 @@ export type Ctx = {
   undeclaredInputReads?: Pos[];
   /** Built before the check, so a read before a scope is answered as surely as one after it. */
   nestedScopes: NestedScopes;
+  /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
+  noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
 };
 
@@ -79,14 +81,19 @@ export function innerScope(ctx: Ctx): Ctx {
 }
 
 /** `exprs` are the expressions checked in this scope, whose nested scopes it knows. */
-export function pureScope(binds: string[], ...exprs: (Expr | undefined)[]): Ctx {
-  return {
+export function pureScope(
+  binds: readonly { name: string; type: TypeExpr }[],
+  ...exprs: (Expr | undefined)[]
+): Ctx {
+  const ctx: Ctx = {
     kind: "slot-init",
-    localBinds: new Set(binds),
+    localBinds: new Set(),
     routeBind: "no-payload",
     nestedScopes: nestedScopes(...exprs),
     localTypes: new Map(),
   };
+  for (const b of binds) bindLocal(ctx, b.name, b.type);
+  return ctx;
 }
 
 export function wildcardText(e: Expr & { kind: "Wildcard" }): string {
