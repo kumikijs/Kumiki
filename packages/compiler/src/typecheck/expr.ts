@@ -318,7 +318,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             if (i < listIndexArgs(e.method, e.args.length)) {
-              checkListIndex(unaliasType(recvType, sym), a, sym, errors, ctx);
+              const list = unaliasType(recvType, sym);
+              if (list?.kind === "TypeApp" && list.name === "List") {
+                checkAgainst(a, prim("Int", a.pos), sym, errors, ctx);
+              }
             }
             continue;
           }
