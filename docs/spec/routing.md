@@ -252,7 +252,7 @@ tile SettingsLayout
 
 `route-outlet()` is a primitive that specifies where children are rendered within the parent route tile.
 
-It need not be written in the parent's own body. A tile the body renders — a layout helper, any number of tiles down — is inlined into the parent's tree, so its outlet is the parent's outlet. That includes a tile that declares `sub-routes` of its own: rendered inside this parent, its outlet shows this parent's child, and its own `sub-routes` apply where it is the route target. A parent with no `route-outlet` anywhere in that expansion is [E0113](./errors.md#e0113-sub-routes-without-outlet).
+It need not be written in the parent's own body. A tile the body renders — a layout helper, any number of tiles down — is inlined into the parent's tree, so its outlet is the parent's outlet. That includes a tile that declares `sub-routes` of its own: rendered inside this parent, its outlet shows this parent's child, and its own `sub-routes` apply where it is the route target. A parent with no `route-outlet` anywhere in the tree it renders is [E0113](./errors.md#e0113-sub-routes-without-outlet).
 
 ### 3.6.3 Matching Rules
 

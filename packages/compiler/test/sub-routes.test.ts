@@ -67,7 +67,7 @@ describe("sub-routes", () => {
     expect(errors.some((e) => e.code === "E0112" && e.kind === "duplicate-sub-route")).toBe(true);
   });
 
-  it("reports a parent without route-outlet in its body as E0113", () => {
+  it("reports a parent that renders no route-outlet as E0113", () => {
     const src = `
       tile NotFound = page(heading("404"))
       tile Account = page(heading("a"))
@@ -83,7 +83,7 @@ describe("sub-routes", () => {
   });
 });
 
-describe("E0113 reads the tiles the body expands into", () => {
+describe("E0113 reads the tiles the body renders", () => {
   const program = (defs: string, body: string, routes = "") => `
     tile NotFound = page(heading("404"))
     tile Account = page(heading("account"))
@@ -122,26 +122,70 @@ describe("E0113 reads the tiles the body expands into", () => {
       `page(Inner)`,
       `"/y/*" -> Inner, `,
     ],
+    ["that is the whole body, named bare", `tile Outlet = column(route-outlet())`, `Outlet`],
+    ["that is the whole body, called", `tile Outlet = column(route-outlet())`, `Outlet()`],
   ])("accepts an outlet in a tile %s", (_, defs, body, routes) => {
     expect(checkSource(program(defs, body, routes))).toEqual([]);
   });
 
-  it("accepts a helper's outlet under a branch, as it accepts one written inline there", () => {
-    expect(
-      codes(
-        `slot shown : Bool = true
-         tile Outlet = column(when(shown, route-outlet()))`,
-        `page(Outlet)`,
-      ),
-    ).not.toContain("E0113");
+  const SHOWN = `slot shown : Bool = true`;
+  const OPT = `slot o : Option(Int) = None`;
+
+  it.each([
+    ["a when, inline", SHOWN, `page(column(when(shown, route-outlet())))`],
+    [
+      "a when, in a helper",
+      `${SHOWN}\ntile Outlet = column(when(shown, route-outlet()))`,
+      `page(Outlet)`,
+    ],
+    ["an if, inline", SHOWN, `page(if shown then column(route-outlet()) else column(text("x")))`],
+    [
+      "an if, in a helper",
+      `${SHOWN}\ntile Outlet = if shown then column(route-outlet()) else column(text("x"))`,
+      `page(Outlet)`,
+    ],
+    [
+      "a match, inline",
+      OPT,
+      `page(match o with | Some(n) -> column(route-outlet()) | None -> column(text("x")))`,
+    ],
+    [
+      "a match, in a helper",
+      `${OPT}\ntile Outlet = match o with | Some(n) -> column(route-outlet()) | None -> column(text("x"))`,
+      `page(Outlet)`,
+    ],
+    ["a for, inline", ``, `page(column(for i in [1] route-outlet()))`],
+    ["a for, in a helper", `tile Outlet = column(for i in [1] route-outlet())`, `page(Outlet)`],
+  ])("accepts an outlet under %s", (_, defs, body) => {
+    expect(checkSource(program(defs, body))).toEqual([]);
   });
+
+  const OUTLET = `tile Outlet = column(route-outlet())`;
 
   it.each([
     ["a helper with no outlet", `tile Helper = column(text("h"))`, `page(Helper)`],
     // Nothing renders a tile written as a named argument.
-    ["an outlet written as a named argument", ``, `page(column(x=route-outlet()))`],
+    ["an outlet in a named argument", ``, `page(column(x=when(true, route-outlet())))`],
+    ["a helper in a named argument", OUTLET, `page(column(x=Outlet))`],
+    // These builtins drop their positional arguments.
+    ["an outlet under a spinner", ``, `page(spinner(route-outlet()))`],
+    ["a helper under a spinner", OUTLET, `page(heading("s"), spinner(Outlet))`],
+    ["a helper under a button", OUTLET, `page(button(text="go", Outlet))`],
   ])("reports %s as E0113", (_, defs, body) => {
-    expect(codes(defs, body)).toContain("E0113");
+    expect(codes(defs, body)).toEqual(["E0113"]);
+  });
+
+  it("reports an outlet only in the sub-route target as E0113", () => {
+    // The target renders in the parent's outlet; the parent does not render it.
+    const src = `
+      tile NotFound = page(heading("404"))
+      tile Account = page(heading("account"), route-outlet())
+      tile Layout
+        sub-routes = { "/x/a" -> Account }
+        = page(heading("s"))
+      app A caps=[] routes={ "/x/*" -> Layout, "/404" -> NotFound } init=[]
+    `;
+    expect(codesOf(src)).toEqual(["E0113"]);
   });
 
   it("reports an outlet only in the tile's own error-boundary fallback as E0113", () => {
@@ -159,8 +203,17 @@ describe("E0113 reads the tiles the body expands into", () => {
     expect(codesOf(src)).toContain("E0113");
   });
 
+  it("reports an outlet only in a rendered tile's error-boundary fallback as E0113", () => {
+    const fallback = `tile Fb in=PanicInfo = column(route-outlet())
+      tile Helper error-boundary=Fb = column(text("h"))`;
+    expect(codes(fallback, `page(Helper())`)).toEqual(["E0113"]);
+  });
+
   it("terminates on a helper that expands into itself, and still reports E0113", () => {
-    expect(codes(`tile Loop = column(text("x"), Loop)`, `page(Loop)`)).toEqual(["E0113", "E0005"]);
+    expect(codes(`tile Loop = column(text("x"), Loop)`, `page(Loop)`).sort()).toEqual([
+      "E0005",
+      "E0113",
+    ]);
   });
 
   it("says what it looked at", () => {
@@ -168,7 +221,7 @@ describe("E0113 reads the tiles the body expands into", () => {
       (e) => e.code === "E0113",
     );
     expect(err?.message).toBe(
-      `Tile "Layout" declares sub-routes but renders no "route-outlet", in its body or in any tile the body expands into — the matched child would have nowhere to render`,
+      `Tile "Layout" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`,
     );
   });
 });

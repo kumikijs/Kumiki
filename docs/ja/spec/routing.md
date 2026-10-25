@@ -252,7 +252,7 @@ tile SettingsLayout
 
 `route-outlet()` は親ルート tile 内で子の描画位置を指定するプリミティブ。
 
-親自身の body に書かれている必要はない。body が描画する tile——レイアウト用の補助 tile。何段下でもよい——は親の木にインライン展開されるので、その outlet は親の outlet である。自身も `sub-routes` を宣言している tile も同じで、この親の中で描画されればその outlet はこの親の子を映し、その tile 自身の `sub-routes` が使われるのは、それがルートのターゲットになっている場所である。その展開のどこにも `route-outlet` が無い親は [E0113](./errors.md#e0113-sub-routes-without-outlet) になる。
+親自身の body に書かれている必要はない。body が描画する tile——レイアウト用の補助 tile で、何段下にあってもよい——は親の木にインライン展開されるので、その outlet は親の outlet である。自身も `sub-routes` を宣言している tile も同じで、この親の中で描画されればその outlet はこの親の子を映し、その tile 自身の `sub-routes` が使われるのは、それがルートのターゲットになっている場所である。描画する木のどこにも `route-outlet` が無い親は [E0113](./errors.md#e0113-sub-routes-without-outlet) になる。
 
 ### 3.6.3 マッチング規則 {#_3-6-3-matching-rules}
 

@@ -23,20 +23,24 @@ describe("a sub-routes parent whose outlet is in a tile it renders", () => {
     cleanup = undefined;
   });
 
-  const at = async (src: string, path: string) => {
+  /** Mount at `/` and navigate to `path`, or, with `deepLink`, mount at `path` itself. */
+  const at = async (src: string, path: string, { deepLink = false } = {}) => {
     const loaded = await loadSource(src);
-    const errors: unknown[] = [];
+    const errors: unknown[][] = [];
     const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
       errors.push(args);
     });
-    const { root, handle } = mountApp(loaded, { router: "memory" });
+    const { root, handle } = mountApp(loaded, {
+      router: "memory",
+      ...(deepLink && { initialPath: path }),
+    });
     cleanup = () => {
       handle.dispose();
       root.remove();
       spy.mockRestore();
     };
     await tick(0);
-    await navigate(loaded, path);
+    if (!deepLink) await navigate(loaded, path);
     const outlet = root.querySelector('[data-kumiki-tile="route-outlet"]');
     return { root, outlet, errors };
   };
@@ -100,5 +104,61 @@ ${app(`"/settings/*" -> SettingsLayout, "/inner/*" -> Inner, "/404" -> NotFound`
     expect(root.textContent).not.toContain("Settings");
     expect(outlet?.textContent).toBe("Inner child");
     expect(errors).toEqual([]);
+  });
+
+  it.each([
+    ["named bare", "Shell"],
+    ["called", "Shell()"],
+  ])("renders the child, on a deep link, when the parent's body is the helper %s", async (_, body) => {
+    const src = `${HEAD}
+tile Shell = column(heading("Settings"), route-outlet())
+${layout(body)}
+${app(PARENT_ROUTES)}
+`;
+    const { root, outlet, errors } = await at(src, "/settings/account", { deepLink: true });
+    expect(root.textContent).toContain("Settings");
+    expect(outlet?.textContent).toBe("Account settings");
+    expect(errors).toEqual([]);
+  });
+
+  const branch = (shown: boolean) => `${HEAD}
+slot shown : Bool = ${shown}
+tile Outlet = column(when(shown, route-outlet()))
+${layout(`page(heading("Settings"), Outlet)`)}
+${app(PARENT_ROUTES)}
+`;
+
+  it("renders the child in a helper's outlet under a branch that renders", async () => {
+    const { outlet, errors } = await at(branch(true), "/settings/account");
+    expect(outlet?.textContent).toBe("Account settings");
+    expect(errors).toEqual([]);
+  });
+
+  it("reports the discarded child when that branch does not render", async () => {
+    const { root, outlet, errors } = await at(branch(false), "/settings/account");
+    expect(outlet).toBeNull();
+    expect(root.textContent).not.toContain("Account settings");
+    expect(errors.map((args) => String(args[0]))).toEqual([
+      `[kumiki] route "/settings/*" matched sub-route "/settings/account" but tile "SettingsLayout" rendered no route-outlet — the child was discarded`,
+    ]);
+  });
+
+  it("covers the child with the parent's error boundary, not the helper's that holds the outlet", async () => {
+    // The child is filled in after the helper's boundary has returned.
+    const src = `slot xs : List(Int) = []
+tile NotFound = page(heading("404"))
+tile AccountSettings = page(text(xs.head.get.show))
+tile HelperFallback in=PanicInfo = column(text("helper fallback"))
+tile ShellFallback in=PanicInfo = column(text("shell fallback"))
+tile Outlet error-boundary=HelperFallback = column(route-outlet())
+tile SettingsLayout
+    error-boundary = ShellFallback
+    sub-routes = { "/settings/account" -> AccountSettings }
+    = page(heading("Settings"), Outlet())
+${app(PARENT_ROUTES)}
+`;
+    const { root } = await at(src, "/settings/account");
+    expect(root.textContent).toContain("shell fallback");
+    expect(root.textContent).not.toContain("helper fallback");
   });
 });
