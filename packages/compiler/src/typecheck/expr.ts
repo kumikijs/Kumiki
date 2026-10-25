@@ -53,6 +53,7 @@ import {
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
+  matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
@@ -180,6 +181,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           code: "E0103",
           kind: "undef-ref",
           message: `"$1" is undefined here — a tile can only use "$1" if it declares an "in=" argument (e.g. \`tile X in=SomeType = …\`)`,
+          pos: e.pos,
+        });
+        return;
+      }
+      if (e.name === "$1" && ctx.noInputEffect !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `"$1" is undefined here — effect "${ctx.noInputEffect}" declares in=Unit, so it is emitted with no argument`,
           pos: e.pos,
         });
         return;
@@ -389,7 +399,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(e.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
