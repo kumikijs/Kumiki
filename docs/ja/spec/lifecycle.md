@@ -129,6 +129,10 @@ app TileMountSeveralTiles
 
 各 reducer は対象の tile がマウントされたときに発火する：`Account` を描画すると `seeAccount`、`seeSettings`、続いて `seeProfile` がそれぞれ 1 回ずつ実行される。1 回の描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer はツリー順に発火する：外側の tile がその内側の tile より先、兄弟どうしは前から順に。その描画で複数回描画される tile も 1 つの tile であり、1 回だけ発火する。1 つの tile に対する複数の `tile.mount` reducer はどれもその tile のマウントという 1 つのイベントにマッチするので、定義順で発火する（[§1.6.4](./language.md#_1-6-4-不変条件) Invariant 3）。
 
+どちらのイベントもインスタンスごとではなく tile 名ごとに数える。`tile.mount(X)` は画面上に `X` がひとつもないときに `X` が現れると発火し、`tile.unmount(X)` は画面上の最後の `X` が消えたときに発火する。すでにある `X` の横に別の `X` が現れても、2 つのうち 1 つが消えても、何も発火しない。
+
+`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、それを宣言した tile がどこに描画されても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が発火し、fallback が消えたとき、つまり宣言した tile が panic せずに描画し直されたとき、あるいは宣言した tile 自体が消えたときに `tile.unmount(<fallback>)` が発火する。上の名前ごとの規則により、2 つの境界が同時に表示している fallback は、どちらの境界も表示しなくなったときに初めて消える。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。fallback は宣言した tile の本体の代わりに描画されるので、fallback が表示されている間は、宣言した tile もその下のどの tile も `tile.mount` を発火しない。マウント済みの宣言した tile が panic し始めると、その tile と下の tile の `tile.unmount` が発火する。
+
 ---
 
 ## 7.2 エラー処理 {#_7-2-error-handling}

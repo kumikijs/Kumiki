@@ -129,6 +129,10 @@ app TileMountSeveralTiles
 
 Each reducer fires when its tile mounts: rendering `Account` runs `seeAccount`, `seeSettings` and then `seeProfile`, once each. When several tiles mount in the same render, their reducers fire in tree order — an enclosing tile before the tiles inside it, siblings first to last — whatever order the reducers are written in. A tile rendered more than once in that render is one tile and fires once. Several `tile.mount` reducers on one tile all match that tile's one mount event, so they fire in definition order ([§1.6.4](./language.md#_1-6-4-invariants) Invariant 3).
 
+Both events count per tile name, not per instance. `tile.mount(X)` fires when an `X` appears while no `X` is on screen, and `tile.unmount(X)` when the last `X` on screen leaves. A second `X` appearing beside the first fires nothing, and neither does one of two leaving.
+
+An `error-boundary` fallback ([§7.3](#_7-3-error-boundaries-per-tile)) is a tile on screen like any other, wherever the tile that declares it renders. `tile.mount(<fallback>)` fires when the boundary shows it, and `tile.unmount(<fallback>)` fires when it leaves: the declaring tile renders again without panicking, or the declaring tile itself leaves. By the per-name rule above, a fallback that two boundaries show at once leaves only when neither shows it. A fallback that re-renders with the panic still there has not appeared again, and fires nothing. The fallback renders in place of the declaring tile's body, so while it stands in, neither the declaring tile nor any tile under it fires `tile.mount`. When a mounted declaring tile starts panicking, it and the tiles under it fire `tile.unmount`.
+
 ---
 
 ## 7.2 Error Handling
