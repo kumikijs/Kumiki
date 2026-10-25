@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { errorsOf } from "./helpers/diagnostics.ts";
-import { withApp } from "./helpers/programs.ts";
+import { pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
+import { withReducer } from "./helpers/programs.ts";
 
 const DEFS = `slot pair   : Tuple(Int, Text)      = (1, "a")
 slot triple : Tuple(Int, Text, Int) = (0, "z", 9)
@@ -8,15 +8,7 @@ slot flag   : Bool = true
 slot k      : Int  = 0
 slot res    : Text = ""`;
 
-const program = (defs: string, body: string): string =>
-  withApp(`${DEFS}
-${defs}
-reducer go on=ui.click(Go)
-    do= ${body}
-tile Go = button(text="go")
-tile App = column(Go)`);
-
-const errors = (src: string): string[] => errorsOf(src).map((e) => `${e.code} ${e.message}`);
+const program = (defs: string, body: string): string => withReducer(`${DEFS}\n${defs}`, body);
 
 const LISTS = `slot a : List(Tuple(Int, Int))      = []
 slot b : List(Tuple(Int, Int, Int)) = []`;
@@ -100,8 +92,36 @@ describe("a tuple of another length is a type mismatch", () => {
       "Tuple(Int, Text)",
       "Tuple(Int, Text, Int)",
     ],
+    [
+      "a generic alias of a tuple",
+      'type Pair(A, B) = Tuple(A, B)\nslot pp : Pair(Int, Text) = (1, "a")',
+      "pp := triple",
+      "Pair(Int, Text)",
+      "Tuple(Int, Text, Int)",
+    ],
+    [
+      "a nominal tuple",
+      'type P = nominal Tuple(Int, Text)\nslot p : P = (1, "a")',
+      "p := triple",
+      "P",
+      "Tuple(Int, Text, Int)",
+    ],
   ])("%s", (_what, defs, body, declared, actual) => {
-    expect(errors(program(defs, body))).toEqual([`E0201 Expected ${declared} but got ${actual}`]);
+    expect(summariesOf(program(defs, body))).toEqual([
+      `E0201 Expected ${declared} but got ${actual}`,
+    ]);
+  });
+});
+
+describe("a tuple literal of another length", () => {
+  it("is reported once, at the literal", () => {
+    expect(pointedErrorsOf(program("", 'triple := (1, "a")'))).toEqual([
+      {
+        code: "E0201",
+        message: "Expected Tuple(Int, Text, Int) but got a tuple of 2 item(s)",
+        text: '(1, "a")',
+      },
+    ]);
   });
 });
 
@@ -123,6 +143,12 @@ describe("what the length rule leaves alone", () => {
     ["a tuple a fn returns", 'fn mk(x: Int) -> Tuple(Int, Text) = (x, "a")', "pair := mk(2)"],
     ["a tuple pattern of the scrutinee's length", "", "res := match pair with\n    | (x, y) -> y"],
     [
+      // Its branches share no type, so the `if` has none and nothing is checked against it.
+      "an if of a pair and a triple where nothing declares its type",
+      "",
+      "res := let x = if flag then pair else triple in match x with\n    | (a, b, c) -> b",
+    ],
+    [
       "a List of tuples",
       'slot l : List(Tuple(Int, Text)) = [(1, "a"), (2, "b")]',
       "l := l.push(pair)",
@@ -143,22 +169,22 @@ describe("what the length rule leaves alone", () => {
       "es := m.entries",
     ],
   ])("%s", (_what, defs, body) => {
-    expect(errors(program(defs, body))).toEqual([]);
+    expect(summariesOf(program(defs, body))).toEqual([]);
   });
 
   it("reports an item of the wrong type", () => {
-    expect(errors(program("slot p2 : Tuple(Int, Int) = (1, 2)", "p2 := pair"))).toEqual([
+    expect(summariesOf(program("slot p2 : Tuple(Int, Int) = (1, 2)", "p2 := pair"))).toEqual([
       "E0201 Expected Tuple(Int, Int) but got Tuple(Int, Text)",
     ]);
   });
 
   it("leaves a container written with too few arguments to E0210", () => {
     const box = "type Box(A, B) = {a: A, b: B}\nslot bx : Box(Int) = {a: 1, b: 2}";
-    expect(errors(program(`${box}\nslot by : Box(Int, Int) = {a: 1, b: 2}`, "bx := by"))).toEqual([
-      'E0210 Type "Box" expects 2 type argument(s) but got 1',
-    ]);
+    expect(
+      summariesOf(program(`${box}\nslot by : Box(Int, Int) = {a: 1, b: 2}`, "bx := by")),
+    ).toEqual(['E0210 Type "Box" expects 2 type argument(s) but got 1']);
     const map = "slot m : Map(Text) = {}\nslot m2 : Map(Text, Int) = {}";
-    expect(errors(program(map, "m := m2"))).toEqual([
+    expect(summariesOf(program(map, "m := m2"))).toEqual([
       'E0210 Type "Map" expects 2 type argument(s) but got 1',
     ]);
   });

@@ -51,7 +51,8 @@ export function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && d.name === "Tuple" && e.kind === "TupleLit") {
-    // Every item left undecided, so only the length can disagree, by the relation's own rule.
+    // Items are left unknown, so `assignable` compares the length alone: a literal meets the
+    // same length rule as a tuple-typed value.
     const shape = container(
       "Tuple",
       e.items.map((it) => unknownType(it.pos)),

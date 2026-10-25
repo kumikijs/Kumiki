@@ -2,8 +2,8 @@
 #
 # `Tuple(Int, Text)` and `Tuple(Int, Text, Int)` are two types, and neither is
 # accepted where the other is required: `triple := pair` is E0201
-# `Expected Tuple(Int, Text, Int) but got Tuple(Int, Text)`, and so is the
-# same pair in a fn argument or nested in a List, Map, Option or record.
+# `Expected Tuple(Int, Text, Int) but got Tuple(Int, Text)`. The same pair is
+# E0201 too in a fn argument or nested in a List, Map, Option or record.
 #
 # A pair widens to a triple by building the triple: `widen` takes the pair
 # apart and writes all three items. What it returns is a three-item value, so

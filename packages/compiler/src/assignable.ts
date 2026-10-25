@@ -244,7 +244,8 @@ function relate(
 
     case "TypeApp": {
       if (a.kind !== "TypeApp" || a.name !== d.name) return false;
-      // `Tuple` has no fixed arity: its length is part of the type.
+      // A short `List` / `Map` / generic is already E0210, so a missing argument agrees below;
+      // `Tuple` takes any number of arguments, and a different number is a different type.
       if (d.name === "Tuple" && a.args.length !== d.args.length) return false;
       return d.args.every((darg, i) => {
         const aarg = a.args[i];
