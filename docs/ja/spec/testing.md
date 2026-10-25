@@ -127,7 +127,7 @@ test route-seeded-in-part =
         expect = {slots: {at: "/posts/:id#7"}}
 ```
 
-route 自身のフィールド（`path` / `pattern` / `params` / `query` / `hash`）以外の名前は **E0108**、record でない `route` は——route 全体に書いたワイルドカードも含めて——**E0201** である。これらが無ければ、綴り間違いは補完に飲み込まれ、テストは空 route に対して走る — 緑のまま、避けようとした分岐を実行しながら。`route` のレコードが書いたフィールドの値は、seed でも `expect.slots` でも `slots-equal` でも、標準の `Route`（[§3.2](./routing.md#_3-2-current-route-state)）におけるそのフィールドの型の値でなければならず、そうでなければ [§8.1.1](#_8-1-1-the-names-a-test-body-writes) のとおりその位置で型エラーになる — プログラム自身の `type Route` が何と言おうと、この slot が持つのはランタイムの route だからである。補完が埋めるのは書かれなかったフィールドだけなので、`hash: "top"`（`Some("top")` のつもり）や `params: {"id": 7}` は、この検査がなければ書いたとおり reducer に届く: アプリが決して居ることのない route である。
+route 自身のフィールド（`path` / `pattern` / `params` / `query` / `hash`）以外の名前は **E0108**、record でない `route` は——route 全体に書いたワイルドカードも含めて——**E0201** である。これらが無ければ、綴り間違いは補完に飲み込まれ、テストは空 route に対して走る — 緑のまま、避けようとした分岐を実行しながら。`route` のレコードが書いたフィールドの値は、seed でも `expect.slots` でも `slots-equal` でも、標準の `Route`（[§3.2](./routing.md#_3-2-current-route-state)）におけるそのフィールドの型の値でなければならず、そうでなければ [§8.1.1](#_8-1-1-the-names-a-test-body-writes) のとおりその位置で型エラーになる — この slot が持つのはランタイムの route であり、プログラムが独自の `type Route` を宣言することはできない（[E0231](./errors.md#e0231-reserved-type-name)）。補完が埋めるのは書かれなかったフィールドだけなので、`hash: "top"`（`Some("top")` のつもり）や `params: {"id": 7}` は、この検査がなければ書いたとおり reducer に届く: アプリが決して居ることのない route である。
 
 `expect.slots` は比較する slot を列挙するものであり、書かれなかった slot は比較されない。したがって seed した route を毎回書き直す必要はなく、テストの主題であるときは他の slot と同様に表明できる。ただし列挙された slot の値は**完全なキー集合で厳密に照合**される（[§8.2.2](#_8-2-2-wildcards)）ため、`expect` に `route` を書くときは record 全体を書く。
 
