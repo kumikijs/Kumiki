@@ -33,7 +33,10 @@ export class TypeParser extends TokenStream {
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
     let refined = first;
+    let built = 0;
     while (this.matchKw("where")) {
+      built += 1;
+      this.widen(built);
       this.next();
       const ref = this.parseRefinement();
       refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
@@ -153,16 +156,9 @@ export class TypeParser extends TokenStream {
   }
 
   protected parseRefinementArg(): number | string {
+    const n = this.tryEatSignedNumber();
+    if (n !== undefined) return n;
     const t = this.peek();
-    if (t.kind === "op" && t.value === "-" && this.matchTAt(1, "num")) {
-      this.next();
-      const n = this.next() as { value: number };
-      return -n.value;
-    }
-    if (t.kind === "num") {
-      this.next();
-      return t.value;
-    }
     if (t.kind === "str") {
       this.next();
       return t.value;
