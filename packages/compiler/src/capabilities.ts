@@ -1,3 +1,4 @@
+import { type TypeEnv, unaliasType } from "./assignable.ts";
 import type { TypeExpr } from "./ast.ts";
 import { appType, primType, recordType, refType } from "./stdlib-types.ts";
 
@@ -78,6 +79,12 @@ export const REQUEST_FIELDS: ReadonlyMap<string, readonly string[]> = new Map([
 
 export function requestFields(cap: string): readonly string[] | undefined {
   return REQUEST_FIELDS.get(cap);
+}
+
+/** An effect declared `in=Unit`, through any alias or nominal over it, is emitted with no argument. */
+export function declaresNoInput(inType: TypeExpr | null, env: TypeEnv): boolean {
+  const u = unaliasType(inType, env);
+  return u?.kind === "TypePrim" && u.name === "Unit";
 }
 
 export const REDUCER_REF: TypeExpr = refType("ReducerRef");

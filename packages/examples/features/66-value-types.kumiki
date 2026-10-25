@@ -72,7 +72,7 @@ slot status  : Status       = Idle
 slot lastRun : Option(Int)  = None
 # Every element is checked against the declared element type (E0201 at the element).
 slot samples : List(Int)    = [18, 19, 21]
-# An Int literal past 2^53-1 is E0217: it would be rounded on the way in.
+# An Int literal outside ±(2^53-1) is E0217: it may be rounded on the way in.
 slot budget  : Int          = 9007199254740991
 # A base literal needs no wrapping to reach a nominal slot.
 slot forecast : Fahrenheit  = 70

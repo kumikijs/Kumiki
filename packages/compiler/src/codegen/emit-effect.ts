@@ -1,6 +1,6 @@
-import { type TypeEnv, unaliasType } from "../assignable.ts";
+import type { TypeEnv } from "../assignable.ts";
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
-import { failsWithText, requestFields } from "../capabilities.ts";
+import { declaresNoInput, failsWithText, requestFields } from "../capabilities.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
 
@@ -21,8 +21,7 @@ export function storageHandlerOf(eff: EffectDef, env: TypeEnv): StorageHandler |
         : null;
   if (!backend) return null;
   if (eff.cap.endsWith(".read")) return `${backend}Read`;
-  const inType = unaliasType(eff.inType, env);
-  const clears = !eff.mapRequest && inType?.kind === "TypePrim" && inType.name === "Unit";
+  const clears = !eff.mapRequest && declaresNoInput(eff.inType, env);
   return clears ? `${backend}Clear` : `${backend}Write`;
 }
 
