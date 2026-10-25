@@ -4,6 +4,7 @@ import { loadSource, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
 import { lockViolation } from "./locks.ts";
+import { OpLogChanged } from "./op-log.ts";
 
 /** The one order qualified names are listed in, in reports and in checks. */
 export const compareQNames = (a: string, b: string): number => a.localeCompare(b);
@@ -66,11 +67,18 @@ export function commit(path: string, next: string, verb: string, log: () => stri
   try {
     return log();
   } catch (e) {
+    const mayHoldOp = e instanceof OpLogChanged && e.mayHoldOp;
     try {
       atomicWriteFileSync(path, before);
     } catch (r) {
       throw new Error(
-        `${verb} failed: the op could not be logged (${messageOf(e)}), and restoring ${path} failed too (${messageOf(r)}); the file holds an edit the op log does not`,
+        `${verb} failed: the op could not be logged (${messageOf(e)}), and restoring ${path} failed too (${messageOf(r)}); ${mayHoldOp ? "the file holds this op's edit" : "the file holds an edit the op log does not"}`,
+        { cause: e },
+      );
+    }
+    if (e instanceof OpLogChanged) {
+      throw new Error(
+        `${verb} ${mayHoldOp ? "failed" : "rejected"}: the op could not be logged (${e.message}); the file was restored`,
         { cause: e },
       );
     }
