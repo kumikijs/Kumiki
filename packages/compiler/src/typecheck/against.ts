@@ -17,7 +17,7 @@ import {
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
 import { inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
-import { armScope } from "./patterns.ts";
+import { armScope, matchedType } from "./patterns.ts";
 
 export function checkAgainst(
   e: Expr,
@@ -94,7 +94,7 @@ export function checkAgainst(
     return;
   }
   if (e.kind === "MatchExpr") {
-    const scrutType = inferType(e.scrutinee, sym, ctx);
+    const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
     for (const arm of e.arms) {
       const scope = armScope(arm, scrutType, sym, ctx);
       checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
