@@ -27,22 +27,20 @@ type Walk = {
 
 type Forwarded = Readonly<Record<NominalReading, (def: TypeDef) => number | null>>;
 
-/** `build`, run once for each symbol table and kept for as long as the table lives. */
-function perTable<T>(build: (env: TypeEnv) => T): (env: TypeEnv) => T {
-  const built = new WeakMap<TypeEnv["types"], T>();
-  return (env) => {
-    const kept = built.get(env.types);
-    if (kept !== undefined) return kept;
-    const value = build(env);
-    built.set(env.types, value);
-    return value;
-  };
-}
+const forwardedByTable = new WeakMap<TypeEnv["types"], Forwarded>();
 
-const forwardedIn = perTable((env): Forwarded => {
-  const lookup = (name: string) => env.types.get(name);
-  return { through: forwardedParams(lookup, "through"), stop: forwardedParams(lookup, "stop") };
-});
+function forwardedIn(env: TypeEnv): Forwarded {
+  let forwarded = forwardedByTable.get(env.types);
+  if (!forwarded) {
+    const lookup = (name: string) => env.types.get(name);
+    forwarded = {
+      through: forwardedParams(lookup, "through"),
+      stop: forwardedParams(lookup, "stop"),
+    };
+    forwardedByTable.set(env.types, forwarded);
+  }
+  return forwarded;
+}
 
 function newWalk(env: TypeEnv): Walk {
   return { env, origins: new WeakMap(), forwarded: forwardedIn(env) };
@@ -399,6 +397,18 @@ function typeSize(t: TypeExpr | null): number {
     case "TypeRefinement":
       return 1 + typeSize(t.inner);
   }
+}
+
+/** `build`, run once for each symbol table and kept for as long as the table lives. */
+function perTable<T>(build: (env: TypeEnv) => T): (env: TypeEnv) => T {
+  const built = new WeakMap<TypeEnv["types"], T>();
+  return (env) => {
+    const kept = built.get(env.types);
+    if (kept !== undefined) return kept;
+    const value = build(env);
+    built.set(env.types, value);
+    return value;
+  };
 }
 
 // The least fixed point, passing over every generic until nothing changes: every answer starts
