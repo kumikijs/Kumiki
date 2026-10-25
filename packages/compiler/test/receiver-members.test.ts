@@ -23,6 +23,7 @@ const PARAMS: Record<Receiver, string> = {
   Duration: "d: Duration",
   Bytes: "by: Bytes",
   File: "fl: File",
+  EffectId: "h: EffectId",
 };
 
 const WRAPPED: [param: string, reads: Receiver][] = [

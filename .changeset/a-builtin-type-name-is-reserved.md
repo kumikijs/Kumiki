@@ -38,7 +38,7 @@ E0231 reserved-type-name at 1:1: Type "Option" collides with the built-in type c
 **E0231 `reserved-type-name`** now covers three groups, read from the checker's
 own tables: the primitives (`Text`, `Int`, `Float`, `Bool`, `Unit`, `Bytes`,
 `Time`, `File`, `EffectId`), the built-in type constructors (`List`, `Set`,
-`Map`, `Option`, `Result`, `Tuple`), and the six runtime-supplied names it
+`Map`, `Option`, `Result`, `Tuple`), and the seven runtime-supplied names it
 already reserved. The message names the group. The declaration is never seeded,
 so every use of the name keeps its built-in meaning: `Option(Int) = None` and
 `List(Int) = [1, 2]` check, `l.length` is the List's member, and

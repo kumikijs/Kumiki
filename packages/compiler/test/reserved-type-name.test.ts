@@ -23,7 +23,15 @@ const RUNTIME = "the standard library's";
 const reservedMessage = (name: string, meaning: string) =>
   `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
 
-const RUNTIME_SUPPLIED = ["PanicInfo", "Route", "HttpError", "HttpStatus", "Duration", "FormValue"];
+const RUNTIME_SUPPLIED = [
+  "PanicInfo",
+  "RouteErrorInfo",
+  "Route",
+  "HttpError",
+  "HttpStatus",
+  "Duration",
+  "FormValue",
+];
 
 const RESERVED: [name: string, meaning: string][] = [
   ...PRIM_TYPE_NAMES.map((n): [string, string] => [n, PRIMITIVE]),
@@ -52,7 +60,7 @@ const DECLARABLE: [string, string][] = [
 ];
 
 describe("the reserved names", () => {
-  it("are the primitives, the built-in constructors and six standard library entries", () => {
+  it("are the primitives, the built-in constructors and seven standard library entries", () => {
     for (const row of SPOT) expect(RESERVED).toContainEqual(row);
     const stdlib = STDLIB_TYPES.map((t) => t.name);
     for (const name of RUNTIME_SUPPLIED_TYPE_NAMES) expect(stdlib).toContain(name);
