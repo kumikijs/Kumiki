@@ -303,5 +303,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `171-property-test-count.kumiki` | slot, reducer, tile | テスト | [§8.3.1](./testing.md#_8-3-1-構文) |
 | `204-input-props-rendered.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.3.4](./stdlib.md#_2-3-4-入力要素) [§2.3.5](./stdlib.md#_2-3-5-フォーム) |
+| `216-selector-id-descendants.kumiki` | slot, reducer, tile | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
 <!-- examples:end -->
 :::

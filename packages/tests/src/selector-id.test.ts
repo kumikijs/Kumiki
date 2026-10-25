@@ -191,7 +191,9 @@ tile App = column(Btn(id="x"), row(Btn), text("log=" + log))`,
     const shape = await loadSource(source);
     const report = await withRoot((root) => runScenario(shape, root, { steps }));
     expect(report.ok, failureDetail(report)).toBe(true);
-    const fired = String(shape.live?.log ?? "").split(";").filter(Boolean);
+    const fired = String(shape.live?.log ?? "")
+      .split(";")
+      .filter(Boolean);
     expect(fired.sort()).toEqual([...fires].sort());
     expect(accepted.sort()).toEqual([...fires].sort());
   });
