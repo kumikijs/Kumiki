@@ -108,7 +108,30 @@ reducer trackPageView
     do= emit track({event: "settings_view", props: {}})
 ```
 
-複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
+複数の tile を対象にしたい場合は、tile ごとに reducer を 1 つずつ、それぞれ別の名前で宣言する。reducer の名前は一度しか宣言できない：同じ名前の 2 つ目の `reducer` は、トリガが何であれ [E0007](./errors.md#e0007-duplicate-definition) になる。
+
+```kumiki
+slot seen : Text = ""
+
+tile Profile  = text("Profile")
+tile Settings = text("Settings")
+tile Account  = page(Settings, Profile, text("seen: " + seen))
+
+reducer seeProfile  on=tile.mount(Profile)  do= seen := seen + "Profile "
+reducer seeSettings on=tile.mount(Settings) do= seen := seen + "Settings "
+reducer seeAccount  on=tile.mount(Account)  do= seen := seen + "Account "
+
+app TileMountSeveralTiles
+  caps   = []
+  routes = {"/" -> Account, "/404" -> Account}
+  init   = []
+```
+
+各 reducer は対象の tile がマウントされたときに発火する：`Account` を描画すると `seeAccount`、`seeSettings`、続いて `seeProfile` がそれぞれ 1 回ずつ実行される。1 回の描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer はツリー順に発火する：外側の tile がその内側の tile より先、兄弟どうしは前から順に。その描画で複数回描画される tile も 1 つの tile であり、1 回だけ発火する。1 つの tile に対する複数の `tile.mount` reducer はどれもその tile のマウントという 1 つのイベントにマッチするので、定義順で発火する（[§1.6.4](./language.md#_1-6-4-不変条件) Invariant 3）。
+
+どちらのイベントもインスタンスごとではなく tile 名ごとに数える。`tile.mount(X)` は画面上に `X` がひとつもないときに `X` が現れると発火し、`tile.unmount(X)` は画面上の最後の `X` が消えたときに発火する。すでにある `X` の横に別の `X` が現れても、2 つのうち 1 つが消えても、何も発火しない。
+
+`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、それを宣言した tile がどこに描画されても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が発火し、fallback が消えたとき、つまり宣言した tile が panic せずに描画し直されたとき、あるいは宣言した tile 自体が消えたときに `tile.unmount(<fallback>)` が発火する。上の名前ごとの規則により、2 つの境界が同時に表示している fallback は、どちらの境界も表示しなくなったときに初めて消える。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。fallback は宣言した tile の本体の代わりに描画されるので、fallback が表示されている間は、宣言した tile もその下のどの tile も `tile.mount` を発火しない。マウント済みの宣言した tile が panic し始めると、その tile と下の tile の `tile.unmount` が発火する。
 
 ---
 
@@ -126,6 +149,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 - インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
 - 読み取り `m[k]` が `Map` の持たないキーを指した
 - `Result.get` で Err
+- 値として使う `match` に、scrutinee の値に一致する arm がなかった（[言語 §1.9](./language.md#_1-9-式言語)）
 - `panic(msg)` の明示呼び出し
 
 これらは **panic** と呼ばれる例外。panic は episode log に記録され、現在の reducer は中断される。`slot` の変更は **トランザクション的にロールバック**される。
@@ -163,6 +187,8 @@ type PanicInfo = {
 panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。`route.error` だけはその上に、マッチした `pattern` が乗る。`episode-id` は、名指すべき開いた episode が無い箇所ではすべて `None` である —— 境界経路ではどの dispatch の内側でもない描画が、サーバー側ではすべての描画がそれに当たる（`renderToString` は描画より前に bootstrap episode を commit する）。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
 
 開発ツール向けのフィールドである `stack`（JS の `Error.stack`）と機械可読な `Error.cause` チェーンは episode log（`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）に記録されるが、ユーザー向けの `$event` には意図的に**公開しない** —— 生のスタックを本番 UI に漏らすのは footgun だからである。参照するには `kumiki replay` / `kumiki_episode_tail` を使う。
+
+検査器は `$event` を標準ライブラリの定義から型付けする：`app.error` reducer では `PanicInfo`、`route.error(<pattern>)` reducer では `RouteErrorInfo` —— 同じフィールドに `pattern: Text` を加えたもの —— である（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。持たないフィールド —— 綴り誤り、`stack`、`app.error` reducer での `pattern` —— は [E0108](./errors.md#e0108-undef-member) であり、別の型の slot へ書き込むフィールドは [E0201](./errors.md#e0201-type-mismatch) である。`RouteErrorInfo` は `PanicInfo` ではない —— レコード型は自分と同じフィールド集合にしか一致しない —— ので、`app.error` の panic を丸ごと保持する slot は `Option(PanicInfo)`、`route.error` の panic を丸ごと保持する slot は `Option(RouteErrorInfo)` である。
 
 ---
 

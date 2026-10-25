@@ -162,6 +162,8 @@ Result(T, E)      ; Ok(T) | Err(E)
 Tuple(T1, ..., Tn)
 ```
 
+プログラム自身の union は、variant に `Some`・`None`・`Ok`・`Err` と名付けてよい。variant 名は識別子であり（[§1.3.1](#_1-3-1-構文)）、この 4 つはどれも予約語ではない（[§1.2.2](#_1-2-2-予約語)）ので、`type Health = Ok | Degraded | Down` も他と変わらない union である。型が宣言されている場所——slot、引数、`fn` の結果、そしてそこに書かれたリテラルの各フィールドと各要素——では、値がどのタグかはその型が決める。何も型を宣言しない場所——`let` と、それが束縛するリテラル——では、この 4 つは `Option` か `Result` であり、その型のメンバー・演算子・fragment を持つ。同時にその値は、プログラムが書く union——`type` に書かれたものでも、どの型の中にインラインで書かれたものでも——のうち、同じ名前で payload の数が同じであり、書かれた payload をそれぞれの型が受け入れる variant を持つものの値でもある。generic の型引数はどんな payload も受け入れ、値が着地する場所で `Box(Int)` のような適用後の型がそれを検査する。値は、どちらかの読み方が合えば着地できる。`let next = Ok` のあとに `health := next` と書けば、`health := Ok` とまったく同じく `Health` の `Ok` が書き込まれ、同じ `next` を `Int` の slot に書けば E0201 になる。`Health` の `Ok` は何も持たないので、`let r = Ok(1)` が着地できるのは `Result` が着地できる場所だけである。`type Outcome = Ok(Int) | Fail` と並んでいれば、`Outcome` の slot にも `Result(Int, Text)` の slot にも着地できる。`if` や `match` がそのような union に着地するのは、どの分岐もその union が保持するタグであるときに限る。そのような値に対する `match` は、値を `Option` か `Result` として読む。ただし、その型にないタグをいずれかの arm が名指す場合は、すべての arm のタグを宣言し値を保持する union のうちプログラムが最初に書くものとして読み、arm はその union を網羅しなければならない。
+
 ### 1.3.3 登録済み refinement 述語
 
 ```
@@ -362,6 +364,12 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - `policy=latest-per-key(<expr>)` と `map-request` は effect 自身の式。どちらも
   effect の入力に適用されるため、`$1` が唯一の束縛であり、slot と `fn` は読めるが
   `$route` はここでは名前ではない
+- そこでの `$1` は effect の `in=` が宣言する型を持つ。tile の `$1` がその tile の
+  `in=` の型を持つのと同じである：`type UserQuery = {id: Text}` に対する
+  `in=UserQuery` では、`$1.id` はフィールドを読み、`$1.idd` は
+  [E0108](./errors.md#e0108-undef-member) になる。`in=Unit` と宣言された effect は
+  引数なしで放出されるため、そこでは `$1` は束縛されず、読むと
+  [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
@@ -470,6 +478,8 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 
 **コンテナへのセレクタは、そのイベントを発火できる子孫に届く。** コンテナ種別の多くは自分自身では何も発火しない（`box` に `keydown` も `focus` も `submit` もない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
 
+**コンテナに付けた `#id` は、発火する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身が発火するイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — `row` は click を dispatch しないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
+
 **子孫の書き方は結果を変えない。** 子 tile を名前で参照する本体も、インラインの本体とまったく同じように（何段でも）辿られる。したがって次の 2 つは同じプログラムである:
 
 ```kumiki snippet
@@ -506,7 +516,7 @@ editor := editor.map($1.copy(body="Body"))
 
 **インデックスのステップはレシーバ内の場所を指し**、何を指すかはレシーバによって決まる：
 
-- **`Map(K, V)`** — そのキーのエントリ。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
+- **`Map(K, V)`** — そのキーのエントリで、インデックスは読み取りでも書き込みでも `K` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。キーは `K` の値と同じように受け入れられる（[§1.3.5](#_1-3-5-型の一意化)）：`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`PostId` は `Map(TodoId, V)` のキーではなく、`TodoId`、`Text`、リテラル `"t1"` はキーである。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
 - **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
 - **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member) である。所属は `.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
 - **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。
@@ -547,7 +557,7 @@ issue.copy(status=Done, priority=High)
 
 | 構文 | 意味 |
 |---|---|
-| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順 |
+| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順、**tile 内ではその tile の `in=` 引数**（`$1` のみ — tile が取る positional 引数は1つ）、effect の `map-request` と `latest-per-key` の key 内ではその effect の `in=` の入力（`$1` のみ、[§1.5.2](#_1-5-2-意味)） |
 | `$el` | イベント発火元 tile の `{...}` props |
 | `$event` | イベントペイロード |
 | `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
@@ -558,6 +568,8 @@ issue.copy(status=Done, priority=High)
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
 > **最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` では `.ok` の値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` では、storage / session / indexed の capability の effect が `$e : Text` を束縛する。これらの effect は失敗のメッセージを渡す（`map-request` やホストの provider が例外を投げた場合も同じ。[ストレージ Effect](./http.md#_6-7-storage-effects)）ので、`problem := $e` はそれを格納し、`$e.message` は **E0108** になる。その `out=` もそう宣言しなければならない — `Result(T, Text)` であり、それ以外の `E` は **E0306** である。それ以外の capability の `.err` は `out=` から型付けされない。HTTP ハンドラは `{status, message, body}` レコードを渡し、カスタム capability の値はその provider が決める（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、そこでの `$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
+> **`$route` は `Route` であり、panic の `$event` は型を持つ。** `route.enter` / `route.leave` / `route.error` の reducer では、`$route` は標準の `Route` 型を持つ —— `route` slot がどこでもそうであるように（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。それ以外のトリガの[プリフェッチ](./routing.md#_3-8-prefetch)対象は、それを宣言された型なしで読む：自分のトリガで発火したときは空だからだ。`app.error` reducer の `$event` は標準の `PanicInfo` であり、`route.error(<pattern>)` reducer のものは `RouteErrorInfo` —— 同じフィールドにマッチした `pattern` が乗ったもの —— である（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。したがって `Int` の slot への `n := $route.path` は **E0201** であり、`$event.mesage` は **E0108** である。それ以外のトリガの `$event` は宣言された型を持たない。
 
 > **`fn` 内の positional は引数である。** `$1` は1番目の引数、`$2` は2番目の引数で、値も型もその引数が宣言するものと同じである。したがって `fn plus(a: Int, b: Int) -> Int = $1 + $2` は `a + b` である。positional は引数1つにつき1つだけあり、引数を持たない `fn` の `$1` や、引数が1つの `fn` の `$2` は未定義参照（**E0103**）になる。body 内のフラグメントは自分の `$1` / `$2` を束縛し、それが `fn` のものを隠す：`fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` では、レシーバは `xs` で、フラグメントの `$1` は各要素である。
 
@@ -759,7 +771,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
        | _                    -> false
 ```
 
-### 1.8.5 tile / reducer からの呼び出し
+### 1.8.5 tile / reducer からの呼び出し {#_1-8-5-calling-from-tile-reducer}
 
 ```kumiki fragment
 tile TodoList = column(
@@ -775,6 +787,12 @@ reducer normalize
 fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
    = ts.map($2.copy(text=$2.text.trim))
 ```
+
+**宣言した `fn` は同名のビルトイン関数に優先する。** 呼び出し `name(…)` は、プログラムがその名前で `fn` を宣言していればその `fn` の呼び出しであり、していなければ[ビルトイン関数](./stdlib.md#_2-4-builtin-functions)の呼び出しである。qualifier を付けずに呼び出すビルトインすべてがこれに従う：`random`、`fmt`、`panic`、`file-url`、`prefers-dark`、`trace`、そして [property-test の invariant](./testing.md#_8-3-property-tests) における `run-reducer`。`now` は予約語なので、その名前の `fn` は宣言できない。`fn` を宣言すると、その名前の呼び出しはすべて `fn` のシグネチャで検査され、`fn` の本体を実行する：tile、reducer、別の `fn`、テスト本体、そして `fn` を名指す式断片の位置（[§1.8.6](#_1-8-6-部分適用と高階関数)）のいずれでも同じである。連鎖して書く `….run-reducer(r)` もビルトインではなくなり、どの型にも無いメソッドになる（[E0801](./errors.md#e0801-unimplemented-method)）。下の reducer 文を除けば、そのプログラムからビルトインには届かなくなるので、両方が要るプログラムは `fn` に別の名前を付ける。
+
+effect や型は事情が異なる。標準の effect や型の値はランタイム自身が供給するので、その名前でプログラムが宣言しても、`fn` のようには効力を持てない。ビルトイン関数は検査も lowering もコンパイラが受け持つので宣言を尊重でき、後から加わったビルトインが、その名前の `fn` を既に持つプログラムを壊すこともない。
+
+reducer の文として単独で書いた `panic(message)` は呼び出しではなく文の形である。そこでは `fn` の値の行き先が無いからである。プログラムが何を宣言していても、reducer を停止する。
 
 ### 1.8.6 部分適用と高階関数
 
@@ -839,6 +857,10 @@ unop        ::= '-' | '!'
 **`{ … }` リテラルは、最初のキーがフィールド名ならレコード、そうでなければ Map である。** フィールド名は識別子か予約語なので `{type: ui.click, target: Go}` や `{for: "name"}` はレコードだが、単独で値になる予約語 `true`・`false`・`now` はフィールド名ではない。これらはキーである。`{true: "on", false: "off"}` は `Map(Bool, Text)` で、`{(true): "on", false: "off"}` が書くのと同じ Map になり、`{now: "start"}` は `Map(Time, Text)` になる。それ以外の最初のキー — 文字列、数値、`Some(1)`、括弧で囲んだ名前 `(k)` — もリテラルを Map にする。リテラル全体の読み方は最初のキーが決める。`{a: 1, true: 2}` は `true` の位置で構文エラーになる。`true` は値であり、レコードのフィールド名ではないからである。`{true}` や `{true = 1}` も同じ構文エラーになる。Map のキーには `:` が続くので、`,`・`=`・`}` が続く `true` はフィールド名の位置にある。
 
 `if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
+
+`match` はいずれかの arm の値に評価されるので、**scrutinee の型のすべての値に arm がいる**。union の各 variant（`Option` なら `None` と `Some`、`Result` なら `Ok` と `Err`）と、tuple の要素の組み合わせのそれぞれに arm がいる。variant パターンの bind はどのペイロードも受けるので `Some(v)` はすべての `Some` を覆い、`_` と名前はすべてを覆う。`Bool`・`Int`・`Text`・レコード・リストには名指せる variant がなく、リテラルパターンもない（[§1.9.1](#_1-9-1-禁止事項)）ので、これらを覆うのは `_` か名前である。arm が値を取りこぼす `match` は [E0227](./errors.md#e0227-non-exhaustive-match) になり、取りこぼした値をそれぞれ、それに一致するパターンとして挙げる（`Blue`、`None`、`(Some(_), Green)`）。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el` や、`fold` の結果）、どの arm にも一致しない値は **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。reducer の中なら、その書き込みはロールバックされ `app.error` が走る。描画の中なら、いちばん近い `error-boundary` が受け取る。それがなければ、アプリはページの代わりに panic を表示し、`app.error` は走らない。値としての `match` が、いずれかの arm の値以外に評価されることはない。
+
+reducer 本体の `match` 文（[§1.6.1](#_1-6-1-構文)）とタイル位置の `match`（[§1.7.1](#_1-7-1-構文)）は値ではなく、この規則の対象外である。どの arm にも一致しない `match` 文は、条件が偽のときの `else` なし `if` 文と同じく何も実行せず、どの arm にも一致しないタイルの `match` は空の `text` を描画する。
 
 ### 1.9.1 禁止事項
 
