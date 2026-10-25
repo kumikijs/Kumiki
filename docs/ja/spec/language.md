@@ -174,6 +174,8 @@ Result(T, E)      ; Ok(T) | Err(E)
 Tuple(T1, ..., Tn)
 ```
 
+プログラム自身の union は、variant に `Some`・`None`・`Ok`・`Err` と名付けてよい。variant 名は識別子であり（[§1.3.1](#_1-3-1-構文)）、この 4 つはどれも予約語ではない（[§1.2.2](#_1-2-2-予約語)）ので、`type Health = Ok | Degraded | Down` も他と変わらない union である。型が宣言されている場所——slot、引数、`fn` の結果、そしてそこに書かれたリテラルの各フィールドと各要素——では、値がどのタグかはその型が決める。何も型を宣言しない場所——`let` と、それが束縛するリテラル——では、この 4 つは `Option` か `Result` であり、その型のメンバー・演算子・fragment を持つ。同時にその値は、プログラムが書く union——`type` に書かれたものでも、どの型の中にインラインで書かれたものでも——のうち、同じ名前で payload の数が同じであり、書かれた payload をそれぞれの型が受け入れる variant を持つものの値でもある。generic の型引数はどんな payload も受け入れ、値が着地する場所で `Box(Int)` のような適用後の型がそれを検査する。値は、どちらかの読み方が合えば着地できる。`let next = Ok` のあとに `health := next` と書けば、`health := Ok` とまったく同じく `Health` の `Ok` が書き込まれ、同じ `next` を `Int` の slot に書けば E0201 になる。`Health` の `Ok` は何も持たないので、`let r = Ok(1)` が着地できるのは `Result` が着地できる場所だけである。`type Outcome = Ok(Int) | Fail` と並んでいれば、`Outcome` の slot にも `Result(Int, Text)` の slot にも着地できる。`if` や `match` がそのような union に着地するのは、どの分岐もその union が保持するタグであるときに限る。そのような値に対する `match` は、値を `Option` か `Result` として読む。ただし、その型にないタグをいずれかの arm が名指す場合は、すべての arm のタグを宣言し値を保持する union のうちプログラムが最初に書くものとして読み、arm はその union を網羅しなければならない。
+
 ### 1.3.3 登録済み refinement 述語
 
 ```

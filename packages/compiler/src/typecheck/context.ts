@@ -41,6 +41,8 @@ export type SymbolTable = {
   builtinKindsIn: (tileName: string) => ReadonlySet<string>;
   /** The kinds a subscription on the tile is wired onto (W0212). */
   subscribedKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** The program's own unions, by each tag they declare: `unionsByTag`. */
+  unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
 };
 
