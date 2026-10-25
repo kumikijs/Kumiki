@@ -52,6 +52,7 @@ import {
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
+  matchedType,
 } from "./patterns.ts";
 import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
@@ -380,7 +381,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(e.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
       for (const arm of e.arms) {
         const inner = innerScope(ctx);

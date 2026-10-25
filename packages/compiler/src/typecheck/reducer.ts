@@ -16,7 +16,7 @@ import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
 
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -165,7 +165,7 @@ function checkStmt(
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
-    const scrutType = inferType(s.scrutinee, sym, ctx);
+    const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {

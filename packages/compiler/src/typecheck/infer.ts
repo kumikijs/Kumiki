@@ -1,4 +1,12 @@
-import { assignable, isOpaque, recordFieldType, unaliasType, unknownType } from "../assignable.ts";
+import {
+  assignable,
+  asWritten,
+  isOpaque,
+  recordFieldType,
+  unaliasType,
+  unknownType,
+  writtenVariants,
+} from "../assignable.ts";
 import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
@@ -8,7 +16,7 @@ import { getOrResultType, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
 import { memberReceivers } from "./members.ts";
-import { armScope } from "./patterns.ts";
+import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
 
 export const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
@@ -25,15 +33,6 @@ export function primFieldType(primName: PrimName, field: string): TypeExpr | nul
 }
 
 export const prim = (name: PrimName, pos: Pos): TypeExpr => ({ kind: "TypePrim", name, pos });
-
-// An undecidable payload could be anything, so it fits.
-function userVariantHolds(tag: string, payloads: TypeExpr[], sym: SymbolTable): boolean {
-  return (sym.unionVariants.get(tag) ?? []).some(
-    (declared) =>
-      declared.length === payloads.length &&
-      declared.every((d, i) => assignable(payloads[i] ?? null, d, sym)),
-  );
-}
 
 export const container = (name: string, args: TypeExpr[], pos: Pos): TypeExpr => ({
   kind: "TypeApp",
@@ -398,16 +397,12 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return container("Map", [k ?? unknownType(e.pos), v ?? unknownType(e.pos)], e.pos);
     }
     case "Variant": {
-      // A union may declare `Ok` or `None` too, so a built-in tag that a variant of the
-      // program's own could hold is undecidable from the expression alone, like any user tag.
       const payloads = e.payload.map((p) => inferType(p, sym, ctx) ?? unknownType(e.pos));
-      if (userVariantHolds(e.name, payloads, sym)) return null;
-      const inner = payloads[0] ?? unknownType(e.pos);
-      if (e.name === "Some") return container("Option", [inner], e.pos);
-      if (e.name === "None") return container("Option", [unknownType(e.pos)], e.pos);
-      if (e.name === "Ok") return container("Result", [inner, unknownType(e.pos)], e.pos);
-      if (e.name === "Err") return container("Result", [unknownType(e.pos), inner], e.pos);
-      return null;
+      const builtin = builtinTagType(e.name, payloads[0] ?? unknownType(e.pos), e.pos);
+      if (builtin === null || !sym.unionsByTag.has(e.name)) return builtin;
+      // A union of the program's own declares the tag too, so the value is as much that union's:
+      // it keeps the built-in type's members, and lands in a union whose variant holds it.
+      return asWritten(builtin, [{ tag: e.name, payloads }]);
     }
     case "BinOp":
       return binOpResult(e, sym, ctx);
@@ -420,7 +415,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return commonType([inferType(e.consequent, sym, ctx), inferType(e.alternate, sym, ctx)], sym);
     }
     case "MatchExpr": {
-      const scrutType = inferType(e.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       return commonType(
         e.arms.map((arm) => inferType(arm.body, sym, armScope(arm, scrutType, sym, ctx))),
         sym,
@@ -456,6 +451,14 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
   }
 }
 
+function builtinTagType(tag: string, inner: TypeExpr, pos: Pos): TypeExpr | null {
+  if (tag === "Some") return container("Option", [inner], pos);
+  if (tag === "None") return container("Option", [unknownType(pos)], pos);
+  if (tag === "Ok") return container("Result", [inner, unknownType(pos)], pos);
+  if (tag === "Err") return container("Result", [unknownType(pos), inner], pos);
+  return null;
+}
+
 function runReducerState(sym: SymbolTable, pos: Pos): TypeExpr {
   const declared = [...sym.slots.values()].map((s) => ({ name: s.name, type: s.type, pos: s.pos }));
   // The runtime's own slots (`route`) are in the state too, with a type the
@@ -473,9 +476,19 @@ function commonType(types: (TypeExpr | null)[], sym: SymbolTable): TypeExpr | nu
   for (const t of types.slice(1)) {
     if (!t) return null;
     if (!assignable(t, first, sym) || !assignable(first, t, sym))
-      return sharedBase(types, first, sym);
+      return keepWritten(sharedBase(types, first, sym), types);
   }
-  return first;
+  return keepWritten(first, types);
+}
+
+// The value is one of `types`' values, so it lands in a union only when each of them was written
+// as a tag that union holds.
+function keepWritten(common: TypeExpr | null, types: (TypeExpr | null)[]): TypeExpr | null {
+  if (common === null) return null;
+  const each = types.map(writtenVariants);
+  const kept = each.every((w) => w !== undefined) ? each.flatMap((w) => w ?? []) : null;
+  if (kept !== null) return asWritten({ ...common }, kept);
+  return writtenVariants(common) === undefined ? common : { ...common };
 }
 
 function sharedBase(

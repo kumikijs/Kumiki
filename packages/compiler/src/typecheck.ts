@@ -1,13 +1,4 @@
-import { paramSubstitution, substituteType, unknownType } from "./assignable.ts";
-import {
-  type AppDef,
-  assertNever,
-  type FnDef,
-  type Program,
-  type TileDef,
-  type TypeDef,
-  type TypeExpr,
-} from "./ast.ts";
+import type { AppDef, FnDef, Program, TileDef, TypeDef } from "./ast.ts";
 import {
   aliasTarget,
   boundaryTarget,
@@ -17,6 +8,7 @@ import {
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
+import { unionsByTag } from "./symbols.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
@@ -105,7 +97,7 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
-    unionVariants: unionVariantsOf(program),
+    unionsByTag: unionsByTag(program.defs),
   };
 
   for (const def of program.defs) {
@@ -174,50 +166,6 @@ function checkAll(
   checkDuplicateNames(program, errors);
 
   return errors;
-}
-
-// A union is a union wherever it is written, not only in a `type` body, and a generic's
-// parameter stands for whatever its application supplies, so it is read as undecided.
-function unionVariantsOf(program: Program): Map<string, TypeExpr[][]> {
-  const variants = new Map<string, TypeExpr[][]>();
-  const walk = (t: TypeExpr | undefined): void => {
-    if (!t) return;
-    switch (t.kind) {
-      case "TypePrim":
-      case "TypeRef":
-        return;
-      case "TypeApp":
-        for (const a of t.args) walk(a);
-        return;
-      case "TypeRecord":
-        for (const f of t.fields) walk(f.type);
-        return;
-      case "TypeUnion":
-        for (const v of t.variants) {
-          variants.set(v.name, [...(variants.get(v.name) ?? []), v.payloads]);
-          for (const p of v.payloads) walk(p);
-        }
-        return;
-      case "TypeNominal":
-      case "TypeRefinement":
-        walk(t.inner);
-        return;
-      default:
-        assertNever(t);
-    }
-  };
-  for (const def of program.defs) {
-    if (def.kind === "TypeDef") {
-      const open = def.params.map(() => unknownType(def.pos));
-      walk(substituteType(def.body, paramSubstitution(def.params, open)));
-    }
-    if (def.kind === "SlotDef") walk(def.type);
-    if (def.kind === "TileDef") walk(def.in);
-    if (def.kind === "EffectDef") for (const t of [def.inType, def.outType]) walk(t);
-    if (def.kind === "FnDef") for (const t of [...def.params.map((p) => p.type), def.ret]) walk(t);
-    if (def.kind === "TestDef") for (const f of def.forAll ?? []) walk(f.type);
-  }
-  return variants;
 }
 
 /** A definition declared twice (`E0007`), and a name written twice (`E0008`). */

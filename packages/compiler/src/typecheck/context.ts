@@ -37,8 +37,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
-  /** The payload types of every variant a union of the program's own declares, by tag. */
-  unionVariants: ReadonlyMap<string, readonly (readonly TypeExpr[])[]>;
+  /** The program's own unions, by each tag they declare: `unionsByTag`. */
+  unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
 };
 
