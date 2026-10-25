@@ -14,6 +14,12 @@ import {
   positionalIsTile,
   tileNamedAt,
 } from "../builtins.ts";
+import {
+  type RouteMapEntry,
+  redirectCycles,
+  staticPaths,
+  unboundRedirectNames,
+} from "../redirects.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -116,6 +122,30 @@ export function checkRouteTargetArity(
   });
 }
 
+/** A loop through a parameter or a wildcard is not visible in the table, and is the runtime's to stop. */
+export function checkRedirects(
+  entries: readonly RouteMapEntry[],
+  errors: KumikiError[],
+  ownedElsewhere: ReadonlySet<string> = new Set(),
+): void {
+  for (const { entry, target, name } of unboundRedirectNames(entries)) {
+    errors.push({
+      code: "E0125",
+      kind: "redirect-unbound-param",
+      message: `Redirect "${entry.path}" ->> "${target}" names "${name}", which "${entry.path}" does not bind`,
+      pos: entry.pathPos,
+    });
+  }
+  for (const { first, loop } of redirectCycles(entries, ownedElsewhere)) {
+    errors.push({
+      code: "E0010",
+      kind: "redirect-cycle",
+      message: `Redirect "${first.path}" comes back to itself (${loop.join(" ->> ")})`,
+      pos: first.pathPos,
+    });
+  }
+}
+
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
@@ -140,6 +170,8 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: dup.pos,
     });
   }
+  // A top-level static route owns its path ahead of the parent's `/*`, so the map never sees it.
+  checkRedirects(subRoutes, errors, staticPaths(sym.app?.routes ?? []));
   const app = sym.app;
   if (!app) return;
   const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
