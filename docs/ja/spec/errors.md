@@ -335,11 +335,15 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 ### E0113 `sub-routes-without-outlet`
 
-`sub-routes` を宣言した tile の body に `route-outlet` 呼び出しが存在しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
+`sub-routes` を宣言した tile が、その body にも、それが描画するどの tile にも `route-outlet` を描画しない。コンパイルは通るが、マッチした子ルートをどこにも描画できないので「ビルドは成功するが何も起きない」という Kumiki が一番嫌う失敗モードになる。
 
-> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+> `Tile "<name>" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`
 
-**修正**：子を表示したい場所に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
+outlet は tile 自身の body に書かれている必要はない。ランタイムは tile が描画する木の中で最初に見つかった `route-outlet` を埋め（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、コード生成はその木を body から組み立てる：body が呼び出す（`Outlet()`）か名前で書く（`Outlet`）tile、`for` / `when` / `if` / `match` の各分岐、そして `column`・`card`・`modal` のように子を描画する builtin の位置引数をインライン展開する。したがってレイアウト用の補助 tile に置いた outlet は何段下であっても数え、body がその補助 tile そのもの（`= Outlet`）であっても数える。自身も `sub-routes` を宣言している tile も数える：この tile にインライン展開されたその outlet は、この tile にマッチした子を映す。入れ子の tile 自身の `sub-routes` が使われるのは、それ自体がルートのターゲットになっている場所だけである。分岐の中の outlet は、body に直接書いた場合と同じく数える。分岐が描画されないときは、捨てた子をランタイムが報告する。
+
+たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
+
+**修正**：子を表示したい場所——tile の body か、それが描画する tile の中——に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
 ### E0114 `sub-routes-without-wildcard-parent`
 
@@ -587,7 +591,7 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、呼び出し（`onClick=box(text("z"))`）、引数か props を伴う大文字始まりの名前（`onClick=Some(1)`、`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
-照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、`.get-or` のフォールバック、`Map` / `Set` / `List` のメンバーの引数のうち、パラメータがレシーバのキー・値・要素の型か、レシーバと同じ型の別のコンテナであるもの（`xs.push(x)`、`m.insert(k, v)`、`s.add(x)`、`xs.concat(ys)`。[stdlib §2.2](./stdlib.md#_2-2-コレクションメソッド)）、`app.http` の `base-url` / `headers` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、`List(T).sort-by` のキー（`<` が順序を与える数値・`Text`・`Time` のいずれかでなければならない。fragment で書いても、名前で渡した `fn` でもよく、後者はその `fn` の結果の型がキーの型になる。[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、[stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) が型を与える builtin tile の prop（`modal(open=…)`、`select(options=…)` — builtin 自身の呼び出しに、名前付き引数でも `{…}` ブロックでも書いたもの）、`.get-or` のフォールバック、`Map` / `Set` / `List` のメンバーの引数のうち、パラメータがレシーバのキー・値・要素の型か、レシーバと同じ型の別のコンテナであるもの（`xs.push(x)`、`m.insert(k, v)`、`s.add(x)`、`xs.concat(ys)`。[stdlib §2.2](./stdlib.md#_2-2-コレクションメソッド)）、`app.http` の `base-url` / `headers` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、`List(T).sort-by` のキー（`<` が順序を与える数値・`Text`・`Time` のいずれかでなければならない。fragment で書いても、名前で渡した `fn` でもよく、後者はその `fn` の結果の型がキーの型になる。[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
 インデックス `[k]` も、読み取りでも書き込みでも、レシーバがインデックスとして取る型と照合する：`List` では `Int`、`Map(K, V)` ではキー型 `K` である（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`Map(TodoId, Text)` に対する `notes[postId]` は読み取りでも `notes[postId] := v` でも、`Map(TodoId, Todo)` に対する `todos[postId].done := v` も、インデックスの位置で `Expected TodoId but got PostId` を報告する。
 
@@ -1163,15 +1167,17 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label prop`
+> `button must have a text= argument or aria-label`
 
 ### E0702 `a11y-image`
 
-> `image must have an alt prop`
+> `image must have an alt`
 
 ### E0703 `a11y-link`
 
 > `link must have inner text or aria-label`
+
+`aria-label` と `alt` は、名前付き引数（`button(aria-label="Close")`）と props ブロック（`button() {aria-label: "Close"}`）のどちらで書いても数える。名前付き引数はどこに書いても prop であり（[言語 §1.7.1](./language.md#_1-7-1-構文)）、どちらも要素に属性を付けるからである。両方を書いた場合は、描かれるのと同じく props ブロックのほうを読む。検査が見るのは書かれているかどうかで値ではないので、`""` やスロットから読む値も数える。`Text` でない値はここではまだ検査しない：`button(aria-label=Mark)` はバリアント `Mark` を書いたことになり、検査を通って `aria-label="[object Object]"` を描く。引数に `when` / `for` を書いた場合（`button(aria-label=when(c, text("x")))`）はタイルで prop のデータではなく、属性を描かないので数えない。
 
 **修正**：可視テキストか、`aria-label` / `alt` を付与する。フォーム全般の指針は [フォーム](./forms.md)。
 

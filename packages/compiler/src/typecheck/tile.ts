@@ -35,8 +35,8 @@ import {
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { collectTileBuiltinKinds } from "./tile-collect.ts";
-import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
+import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
+import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
 export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -188,42 +188,15 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  if (!tileBodyUsesRouteOutlet(tile.body)) {
+  // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
+  // a layout helper counts, and one a builtin drops does not.
+  if (!collectRenderedBuiltinKinds(tile.name, sym).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
-      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      message: `Tile "${tile.name}" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`,
       pos: tile.pos,
     });
-  }
-}
-
-/** True if any sub-tree of the tile body is a `route-outlet` call. */
-function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
-  switch (t.kind) {
-    case "TileCall": {
-      if (t.name === "route-outlet") return true;
-      for (const arg of t.args) {
-        const v = arg.value as TileExpr;
-        if (
-          v.kind === "TileCall" ||
-          v.kind === "TileFor" ||
-          v.kind === "TileWhen" ||
-          v.kind === "TileIf" ||
-          v.kind === "TileMatch"
-        ) {
-          if (tileBodyUsesRouteOutlet(v)) return true;
-        }
-      }
-      return false;
-    }
-    case "TileFor":
-    case "TileWhen":
-      return tileBodyUsesRouteOutlet(t.body);
-    case "TileIf":
-      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
-    case "TileMatch":
-      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
   }
 }
 
@@ -472,6 +445,7 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
@@ -509,6 +483,7 @@ function checkTileCall(
       checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }
 }
