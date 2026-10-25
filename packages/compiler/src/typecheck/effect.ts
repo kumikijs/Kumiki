@@ -1,7 +1,7 @@
 import { typeToString, unaliasType } from "../assignable.ts";
 import type { EffectDef, TypeExpr } from "../ast.ts";
-import { BUILTIN_EFFECTS, failsWithText } from "../capabilities.ts";
-import { type KumikiError, pureScope, type SymbolTable } from "./context.ts";
+import { BUILTIN_EFFECTS, declaresNoInput, failsWithText } from "../capabilities.ts";
+import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { resolveType } from "./types.ts";
 
@@ -85,11 +85,17 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, pureScope(["$1"]));
+  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey")
-    checkExpr(eff.policy.key, sym, errors, pureScope(["$1"]));
+    checkExpr(eff.policy.key, sym, errors, effectScope(eff, sym));
+}
+
+/** `$1` is the effect's input, and an effect declared `in=Unit` is emitted with none. */
+function effectScope(eff: EffectDef, sym: SymbolTable): Ctx {
+  if (declaresNoInput(eff.inType, sym)) return { ...pureScope([]), noInputEffect: eff.name };
+  return pureScope([{ name: "$1", type: eff.inType }]);
 }
 
 function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {

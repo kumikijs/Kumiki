@@ -361,6 +361,12 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - `policy=latest-per-key(<expr>)` and `map-request` are the effect's own
   expressions: both are applied to the effect's input, so `$1` is the only bind,
   a slot and a `fn` are readable, and `$route` is not a name here
+- `$1` there has the type the effect's `in=` declares, as a tile's `$1` has the
+  type of the tile's `in=`: on `in=UserQuery` with `type UserQuery = {id: Text}`,
+  `$1.id` reads the field and `$1.idd` is
+  [E0108](./errors.md#e0108-undef-member). An effect declared `in=Unit` is emitted
+  with no argument, so `$1` is not bound there and reading it is
+  [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
@@ -514,7 +520,7 @@ editor := editor.map($1.copy(body="Body"))
 
 **An index step names a place in its receiver**, and what it names depends on the receiver:
 
-- **`Map(K, V)`** — the entry at the key. `m[k] := v` inserts or replaces it; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does. A read `m[k]` at an absent `k` is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)), as a List index past the end is: there is no `V` for it to answer. `m.get(k)` is the read that answers `None` there instead. In a tile the read runs during render, so an absent key panics that render, the first one included: the nearest `error-boundary` shows its fallback, and with none the built-in panic display replaces the page ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)). A tile reads a key that may be absent through `m.get(k)` or `m.get-or(k, d)`.
+- **`Map(K, V)`** — the entry at the key, and the index is a `K`, in a read as in a write (anything else is [E0201](./errors.md#e0201-type-mismatch)). A key is accepted the way a value of `K` is ([§1.3.5](#_1-3-5-type-canonicalization)): with `TodoId` and `PostId` both declared `nominal Text`, a `PostId` is no key of a `Map(TodoId, V)`, while a `TodoId`, a `Text` and the literal `"t1"` are. `m[k] := v` inserts or replaces the entry; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does. A read `m[k]` at an absent `k` is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)), as a List index past the end is: there is no `V` for it to answer. `m.get(k)` is the read that answers `None` there instead. In a tile the read runs during render, so an absent key panics that render, the first one included: the nearest `error-boundary` shows its fallback, and with none the built-in panic display replaces the page ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)). A tile reads a key that may be absent through `m.get(k)` or `m.get-or(k, d)`.
 - **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
 - **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
 - **Any other type** — nothing. A record, a scalar (`Int`, `Text`, …), an `Option`, a `Result`, a `Tuple` and a union have no place an index names, so an index step into one is [E0602](./errors.md#e0602-unassignable-member) as well, reported at the step: `r["a"] := v` on a record, `n[0] := v` on an `Int`, and `xs[0][0] := v` on a `List(Int)`, whose element is an `Int`. A record's field is written with a field step (`r.a := v`), the payload of an `Option` / `Result` through `.get`, and anything else is replaced whole (`n := v`).
@@ -555,7 +561,7 @@ issue.copy(status=Done, priority=High)
 
 | Syntax | Meaning |
 |---|---|
-| `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument) |
+| `$1`, `$2`, ... | the bind order of an `effect-event`; within a `fn`, the argument order; **within a tile, the tile's `in=` argument** (`$1` only — a tile takes a single positional argument); within an effect's `map-request` and `latest-per-key` key, the effect's `in=` input (`$1` only, [§1.5.2](#_1-5-2-semantics)) |
 | `$el` | the `{...}` props of the tile that fired the event |
 | `$event` | the event payload |
 | `$route` | the Route at route.enter / route.leave / route.error, and in a link's prefetch target — nowhere else ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Any other reducer reads the `route` slot |

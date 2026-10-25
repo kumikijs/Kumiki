@@ -108,7 +108,26 @@ reducer trackPageView
     do= emit track({event: "settings_view", props: {}})
 ```
 
-When you want to target multiple tiles at once, define multiple reducers with the same name (executed in definition order).
+To target several tiles, declare one reducer per tile, each with its own name. A reducer name can be declared only once: a second `reducer` with the same name is [E0007](./errors.md#e0007-duplicate-definition), whatever its trigger.
+
+```kumiki
+slot seen : Text = ""
+
+tile Profile  = text("Profile")
+tile Settings = text("Settings")
+tile Account  = page(Settings, Profile, text("seen: " + seen))
+
+reducer seeProfile  on=tile.mount(Profile)  do= seen := seen + "Profile "
+reducer seeSettings on=tile.mount(Settings) do= seen := seen + "Settings "
+reducer seeAccount  on=tile.mount(Account)  do= seen := seen + "Account "
+
+app TileMountSeveralTiles
+  caps   = []
+  routes = {"/" -> Account, "/404" -> Account}
+  init   = []
+```
+
+Each reducer fires when its tile mounts: rendering `Account` runs `seeAccount`, `seeSettings` and then `seeProfile`, once each. When several tiles mount in the same render, their reducers fire in tree order — an enclosing tile before the tiles inside it, siblings first to last — whatever order the reducers are written in. A tile rendered more than once in that render is one tile and fires once. Several `tile.mount` reducers on one tile all match that tile's one mount event, so they fire in definition order ([§1.6.4](./language.md#_1-6-4-invariants) Invariant 3).
 
 ---
 
