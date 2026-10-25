@@ -224,6 +224,16 @@ A name that denotes no `type` definition ends the chain rather than closing it: 
 
 **Fix**: Give one name on the chain a body. A type that was meant to be recursive wants a record or a union at the point it names itself (`type A = {next: A}`); a type that was meant to be an alias wants the definition it was aliasing.
 
+### E0010 `redirect-cycle`
+
+Redirects send a path back to itself ([Routing §3.10](./routing.md#_3-10-redirects-static)): followed from target to target within one route map — the app's `routes`, or one tile's `sub-routes` — they return to a path the chain has already left. `"/a" ->> "/b"` with `"/b" ->> "/a"` is the shape, and `"/a" ->> "/a"` the shortest. The runtime follows a target that is redirected in turn, as a `navigate-replace` to it would be, so such a chain never reaches a page: the runtime would stop it with a `[kumiki] redirect loop` report and render the requested path as if no redirect matched it. Reported once per cycle, at the entry on it declared first — the one the message names, with the cycle read from there.
+
+> `Redirect "<path>" comes back to itself (<a> ->> <b> ->> <a>)`
+
+Check follows a target only where the table alone decides which entry owns it: a static path (no `:name`, no `*`) that a redirect in the same map is written for. Paths are compared as the runtime matches them, segment by segment, so `"/a/"` and `"/a"` name one path, and a relative target is resolved against the path it redirects from: `"/docs/a" ->> "b"` with `"/docs/b" ->> "a"` is a cycle. A query or a hash in a target plays no part. A static pattern outranks every parameter and wildcard that matches the same path ([Routing §3.1.2](./routing.md#_3-1-2-match-order)), so within one map that redirect is the one that applies; of two entries for one path ([E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) / [E0112](#e0112-duplicate-sub-route)) the first owns it, as at run time. A `sub-routes` map never sees a path that a static route in the app's `routes` owns, because that route outranks the parent's `/*`: a `sub-routes` redirect written for such a path never applies, and a chain in the map ends where it reaches one. An entry written at `/404` owns nothing, since the `/404` entry is the fallback and is never matched, and a chain ends where a target is the path `/404` ([Routing §3.10](./routing.md#_3-10-redirects-static)), so no cycle passes through it. A loop that runs through a parameter or a wildcard (`"/p/:x" ->> "/q/:x"` with `"/q/:x" ->> "/p/:x"`), or between the app's `routes` and a `sub-routes` map, depends on which entry owns a URL, and is the runtime's to stop.
+
+**Fix**: Point one redirect on the cycle at a path a route renders.
+
 ## E01xx — Name Resolution
 
 ### E0102 `undef-reducer`
@@ -506,6 +516,16 @@ The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee i
 
 **Fix**: Name the application as a type and qualify the call with that — `type OrderId = Tagged(Int)` for a `type Tagged(T) = nominal Text`, then `OrderId.fresh()`. For `fresh`, the applied type has to be one a `Text` goes into ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation)): `type IntBox = Box(Int)` for a `type Box(T) = nominal List(T)` names a type, and `IntBox.fresh()` is then [E0802](#e0802-unimplemented-function). For `parse`, the applied type also needs a base with a reading of a text ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)): `type Tagged(T) = nominal Text` then `type OrderId = Tagged(Int)` reads by `Text`, but a container never has one — `type IntList = List(Int)` then `IntList.parse(t)` is [E0802](#e0802-unimplemented-function) — so for `List.parse`, `Map.parse` and the like, parse the parts into `Int`, `Text`, … and build the value in a `fn`. `kumiki fix` does not repair this: which arguments to apply is the author's choice, and the skip reason says so.
 
+### E0125 `redirect-unbound-param`
+
+A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike.
+
+> `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
+
+A source binds each `:name` segment it writes, and `*` when it has a wildcard. Nothing written after a `*` binds: the wildcard has taken the rest of the path by then. Names are compared as written, so `"/old/:id" ->> "/items/:key"` is this error although the source binds a parameter — not the one the target asks for. A query or a hash in the target is not read for names: `"/old/:id" ->> "/items/:id?ref=old"` names `:id` alone.
+
+**Fix**: Name in the target what the source binds (`"/old/:id" ->> "/items/:id"`), or bind in the source what the target needs — a `*` in the target wants a wildcard source (`"/docs/*" ->> "/help/*"`). A target meant to be the same for every path the source matches names nothing: `"/old/:id" ->> "/items"`.
+
 ### E0127 `fn-as-value`
 
 A `fn` name is written without its parentheses where a value goes. A `fn` is not a value — there are no lambdas ([Language §1.9.1](./language.md#_1-9-1-prohibitions)) — so the bare name is always the same mistake: the call is missing.
@@ -590,6 +610,8 @@ So what this error reports is a value that is no name: a literal, a call (`onCli
 
 The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
+An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
+
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
@@ -626,12 +648,30 @@ Argument *count* is [E0213](#e0213-call-arity-mismatch), not this code.
 
 ### E0204 `effect-id-misuse`
 
-A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and `text(...)` rendering are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and rendering as text are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+
+A handle is refused where these render it as text:
+
+- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements));
+- `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable` binds;
+- an argument of `fmt(...)`, the template included;
+- `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on an `EffectId` it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). An `EffectId` has no other member, so `h.upper` is E0108.
+
+The value's type is read through an alias, a `nominal` and a `let`, so a `type Handle = EffectId` is a handle on both counts, operators and rendering, and so is `let x = h in x`. An operator applied to a handle is reported once, at the operator: what it yields — a `Text`, a number or a `Bool` — is not a handle.
+
+A value that holds a handle without being one is not read through: an `Option(EffectId)` renders its tag, `Some` or `None`, and a record does not render its fields. But these show the representation and are not reported — known gaps, not rules:
+
+- a `List` or a tuple with handles in it, rendered whole or joined with `.join(…)`: `text(hs)`, `text((h, 1))`, `text(m.entries)` on a `Map(Text, EffectId)`;
+- a handle given to another named argument or prop that renders text, such as `tooltip(…, text=h)`, `details(…, summary=h)`, a `title=` on `modal` / `drawer` / `popover`, `toast(…, text=h)`, `input(value=h)`, `textarea(value=h)`, `textarea(bind=h)`, `link(…, to=h)`, `input(placeholder=h)`, `image(…, alt=h)`, `{aria-label: h}` and `{title: h}`;
+- `panic(h)`.
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
-> `text(...) cannot render EffectId — it is an opaque handle`
+> `<builtin>(...) cannot render EffectId — it is an opaque handle`
+> `.show cannot render EffectId — it is an opaque handle`
 
-**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
+`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`.
+
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
 
 ### E0205 `bind-on-file-input`
 
@@ -896,7 +936,7 @@ A `radio` carries a `bind=` and no `value=`.
 
 > `radio(bind=…) has no value= — a bound radio writes its own value when it is chosen, so it needs one (see docs/spec/forms.md)`
 
-A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while every `match` on the slot falls through and the block it renders disappears without a word.
+A bound radio has one thing to say when it is chosen — its own value ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)) — and without a `value=` it has nothing. Nothing else would report it: the checker type-checks a radio's `value=` against the bound slot only when there is one, and the program compiles, mounts and survives a click. What the click did is write `undefined` into the slot, which a slot with no refinement takes whatever its type. The radio is then shown chosen, since it is selected when the slot equals its value and `undefined` equals `undefined`, while a tile `match` on the slot matches no arm and the block it renders disappears without a word.
 
 An error, not a warning: a radio with nothing to write asserts nothing when it is chosen, and no program means that. It is reported whether or not the bound type can be read.
 
@@ -916,6 +956,18 @@ The second form is a bound type with no row in the table at all: a `Bool` (bind 
 The bound type is unaliased first, so `type Qty = Int where positive` and a `nominal Int` are an `Int` here. Only a literal `type=` is judged against it; a `type=` written as an expression is not known here, and only the second form applies beside one. A bind whose type cannot be read is not reported (its own code, such as [E0103](#e0103-undef-ref-undef-slot), names it), and `type="file"` with a bind is [E0205](#e0205-bind-on-file-input).
 
 **Fix**: Give the field the kind its type goes with — `input(bind=age, type="number")`, `input(bind=due, type="date")` — or bind a slot of the type the field holds. For a time of day, keep it as `Text` in a `type="time"` field, or use a `Time` in a `type="datetime-local"` one. For an `Option`, bind its payload with `.get`.
+
+### E0227 `non-exhaustive-match`
+
+A `match` used as a value has no arm for some value of its scrutinee's type ([Language §1.9](./language.md#_1-9-expression-language)). A value `match` evaluates to one of its arms, so a value none of them matches would leave it nothing to evaluate to.
+
+> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …` ``
+
+Each value left out is written as the pattern that would match it, in the order the type declares its variants (`None` before `Some`, `Ok` before `Err`): `Blue` for a variant with no payload, `Some(_)` for one with a payload, and `(None, Green)` for a combination of a tuple's items. `_` stands for every value of an item whose type has no variants, and for the items after the point where no arm applies any more: `(None, _)` when no arm takes a `None` at all. The message names up to eight values; when there are more, the list ends with `, among others`. A variant pattern's binds take any payload, so `Some(v)` covers every `Some`; tuples are the only patterns that nest. `Bool`, `Int`, `Text`, a record and a `List` have no variants, and there are no literal patterns ([Language §1.9.1](./language.md#_1-9-1-prohibitions)), so `_` or a name is the arm that covers one.
+
+Coverage is judged once every arm's pattern fits the scrutinee: an arm that does not is [E0207](#e0207-pat-arity-mismatch), [E0208](#e0208-pat-type-mismatch) or [E0209](#e0209-pat-unknown-variant), reported alone. Where the scrutinee's type cannot be decided, for example `$el`, whose props the checker does not type, the result of a `fold`, `map` or `zip`, or a `map-request`'s `$1`, nothing is reported here, and a value no arm matches is a panic at run time ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). A tuple with one such item is still judged on its other items, and its type is written with `?` in that place: `match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` is reported on `Tuple(?, Color)` for `(_, Blue)`. The values the checker can name are reported even when other values hinge on an undecidable item. A `match` statement in a reducer body and a `match` in tile position are not values, and this code does not reach them.
+
+**Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
 
 ### E0229 `bind-target-not-slot`
 
