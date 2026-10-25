@@ -58,6 +58,8 @@ export type Ctx = {
   undeclaredInputReads?: Pos[];
   /** Names a reducer's ended bodies declared and the enclosing scope does not bind. */
   endedScopes?: Map<string, StatementScope>;
+  /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
+  noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
 };
 
@@ -72,13 +74,15 @@ export function innerScope(ctx: Ctx): Ctx {
   return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
 }
 
-export function pureScope(binds: string[]): Ctx {
-  return {
+export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
+  const ctx: Ctx = {
     kind: "slot-init",
-    localBinds: new Set(binds),
+    localBinds: new Set(),
     routeBind: "no-payload",
     localTypes: new Map(),
   };
+  for (const b of binds) bindLocal(ctx, b.name, b.type);
+  return ctx;
 }
 
 export function wildcardText(e: Expr & { kind: "Wildcard" }): string {
