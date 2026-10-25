@@ -16,6 +16,7 @@ import {
   checkGetOrArity,
   checkRecordUpdate,
   getOrResultType,
+  indexStep,
 } from "./against.ts";
 import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
 import {
@@ -32,11 +33,13 @@ import { currentFnName } from "./fn.ts";
 import {
   arithmeticResult,
   inferType,
+  isEffectId,
   isKnown,
   isNumeric,
   isPrimNamed,
   KNOWN_TOKEN_GROUPS,
   prim,
+  qualifiedMember,
 } from "./infer.ts";
 import {
   classifyFieldAccess,
@@ -52,7 +55,6 @@ import {
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
 } from "./patterns.ts";
-import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
@@ -79,7 +81,41 @@ export function checkIterationTarget(
   });
 }
 
+/** A handle's text is whatever the runtime represents it as, so a page that showed it would change when that does. */
+export function refuseRenderedEffectId(
+  value: Expr,
+  renderer: string,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!isEffectId(inferType(value, sym, ctx), sym)) return;
+  errors.push({
+    code: "E0204",
+    kind: "effect-id-misuse",
+    message: `${renderer} cannot render EffectId — it is an opaque handle`,
+    pos: value.pos,
+  });
+}
+
+/** `v.show`, `v.show()` and `T.show(v)`, whose qualifier is discarded: codegen lowers all three to `_s.show(v)`. */
+function shownValue(e: Expr): Expr | undefined {
+  switch (e.kind) {
+    case "FieldAccess":
+      return e.field === "show" ? e.base : undefined;
+    case "MethodCall":
+      return e.method === "show" ? e.receiver : undefined;
+    case "Call":
+      return qualifiedMember(e.callee) === "show" && e.args.length === 1 ? e.args[0] : undefined;
+    default:
+      return undefined;
+  }
+}
+
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  // Asked before the three spellings of `show` part company in the switch, so the exception is made once.
+  const shown = shownValue(e);
+  if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
     case "Num":
     case "Str":
@@ -149,6 +185,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
+      if (e.name === "$1" && ctx.noInputEffect !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `"$1" is undefined here — effect "${ctx.noInputEffect}" declares in=Unit, so it is emitted with no argument`,
+          pos: e.pos,
+        });
+        return;
+      }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
         const { method, hides } = ctx.oneValueFragment;
         errors.push({
@@ -173,13 +218,11 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
     case "BinOp": {
-      const isEffectId = (t: TypeExpr | null): boolean =>
-        !!t && t.kind === "TypePrim" && t.name === "EffectId";
       let effectIdMisuse = false;
       if (e.op !== "==" && e.op !== "!=") {
         const lt = inferType(e.lhs, sym, ctx);
         const rt = inferType(e.rhs, sym, ctx);
-        if (isEffectId(lt) || isEffectId(rt)) {
+        if (isEffectId(lt, sym) || isEffectId(rt, sym)) {
           effectIdMisuse = true;
           errors.push({
             code: "E0204",
@@ -212,11 +255,13 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
       return;
-    case "Index":
+    case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      if (step.kind === "place" && step.key) checkAgainst(e.index, step.key, sym, errors, ctx);
       return;
+    }
     case "Call":
       if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
