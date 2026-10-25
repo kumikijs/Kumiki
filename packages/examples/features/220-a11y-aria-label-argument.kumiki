@@ -5,8 +5,7 @@
 #   button() {aria-label: "Dismiss"}    the props block
 #
 # A named argument is a prop wherever it is written (language.md), and
-# both spellings put the attribute on the element, so the checks read both:
-# `aria-label` here the way E0702 reads `alt` and E0705 reads `for`.
+# both spellings put the attribute on the element, so E0701 / E0703 read both.
 #
 # None of these controls shows any text. The scenario reaches each one through
 # its `aria-label` attribute, the name a screen reader announces for it.

@@ -72,7 +72,7 @@ export function checkA11y(
       errors.push({
         code: "E0702",
         kind: "a11y-image",
-        message: `image must have an alt prop`,
+        message: `image must have an alt`,
         pos: t.pos,
       });
     }
