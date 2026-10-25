@@ -1,4 +1,6 @@
 import { type AppShape, mount, renderToString } from "@kumikijs/runtime";
+import { onTestFinished } from "vitest";
+import { loadSource } from "./load.ts";
 
 type MountOptions = NonNullable<Parameters<typeof mount>[2]>;
 type MountHandle = ReturnType<typeof mount>;
@@ -27,6 +29,24 @@ export function mountApp(
 ): { root: HTMLElement; handle: MountHandle } {
   const root = freshRoot();
   return { root, handle: mount(app, root, options) };
+}
+
+/**
+ * Compile `src`, mount it under a memory router at `initialPath`, and let the first render settle.
+ * The mount is torn down when the test finishes.
+ */
+export async function mountSource(
+  src: string,
+  initialPath?: string,
+): Promise<{ app: AppShape; root: HTMLElement }> {
+  const app = await loadSource(src);
+  const { root, handle } = mountApp(app, { router: "memory", ...(initialPath && { initialPath }) });
+  onTestFinished(() => {
+    handle.dispose();
+    root.remove();
+  });
+  await tick(0);
+  return { app, root };
 }
 
 /** The page `renderToString` serves for `app`, parsed under a detached element. */

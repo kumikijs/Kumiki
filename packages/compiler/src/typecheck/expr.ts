@@ -185,6 +185,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
+      if (e.name === "$1" && ctx.noInputEffect !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `"$1" is undefined here — effect "${ctx.noInputEffect}" declares in=Unit, so it is emitted with no argument`,
+          pos: e.pos,
+        });
+        return;
+      }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
         const { method, hides } = ctx.oneValueFragment;
         errors.push({

@@ -85,6 +85,8 @@ tile TodoDetail = column(
                     ...)
 ```
 
+この slot はどこで読んでも — tile、reducer、`fn`、テスト、`run-reducer` が返す `slots` — この型を持ち、`route.enter` / `route.leave` / `route.error` の reducer の [`$route`](#_3-4-ルートライフサイクル) も同じである。型に無いフィールド、たとえば `route.parms` は [E0108](./errors.md#e0108-undef-member) であり、`Int` の slot への `depth := route.path` は [E0201](./errors.md#e0201-type-mismatch) である。検査器はどちらも標準ライブラリの `Route` の定義から型付けする。それ以外のトリガの[プリフェッチ](#_3-8-prefetch)対象は `$route` を宣言された型なしで読む：自分のトリガで発火したときは空だからだ（[§3.4](#_3-4-ルートライフサイクル)）。
+
 ---
 
 ## 3.3 ルート遷移
@@ -299,7 +301,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。reducer 名は上のように裸の識別子で書くほか、文字列リテラルでも書ける：`prefetch: "loadTodo"` も同じ reducer を指す。
+`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。reducer 名は上のように裸の識別子で書くほか、文字列リテラルでも書ける：`prefetch: "loadTodo"` も同じ reducer を指す。`prefetch-args` は reducer が `$route.params` として読むものなので `Map(Text, Text)` であり、`{"id": 7}` は [E0201](./errors.md#e0201-type-mismatch) である。
 
 ---
 

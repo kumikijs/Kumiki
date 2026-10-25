@@ -11,7 +11,7 @@ import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
-import { FILE_FIELDS, type PrimName } from "../stdlib-types.ts";
+import { FILE_FIELDS, type PrimName, ROUTE_TYPE, refType } from "../stdlib-types.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
@@ -306,6 +306,26 @@ function unlisted(_member: never): null {
   return null;
 }
 
+/**
+ * A value the runtime builds, named by its standard-library type while the program declares no
+ * type of that name, so a diagnostic prints `Route` rather than the record; the record itself
+ * once the program's own declaration has taken the name.
+ */
+export function runtimeBuilt(name: string, record: TypeExpr, sym: SymbolTable): TypeExpr {
+  return sym.types.get(name)?.body === record ? refType(name) : record;
+}
+
+// A bind of either name is the program's own, typed or not, and a `$route` nothing binds has no
+// value to type. A prefetch target fired by its own trigger is handed no route, so its `$route`
+// is typed only when that trigger is a route one too.
+function routeType(name: string, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
+  if (ctx.localBinds.has(name)) return null;
+  if (name === "route" || (name === "$route" && ctx.routeBind === "bound")) {
+    return runtimeBuilt("Route", ROUTE_TYPE, sym);
+  }
+  return null;
+}
+
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
@@ -320,7 +340,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
-      return sym.slots.get(e.name)?.type ?? null;
+      // The slot table first: a program's own `slot route` is E0115, and its
+      // reads keep the slot's type rather than drawing a second report.
+      return sym.slots.get(e.name)?.type ?? routeType(e.name, sym, ctx) ?? null;
     }
     case "FieldAccess": {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
@@ -461,11 +483,14 @@ function builtinTagType(tag: string, inner: TypeExpr, pos: Pos): TypeExpr | null
 
 function runReducerState(sym: SymbolTable, pos: Pos): TypeExpr {
   const declared = [...sym.slots.values()].map((s) => ({ name: s.name, type: s.type, pos: s.pos }));
-  // The runtime's own slots (`route`) are in the state too, with a type the
-  // program does not declare — present, and undecided.
+  // The runtime's own `route` slot is in the state too, typed as it is everywhere else.
   const reserved = [...RESERVED_SLOT_NAMES.keys()]
     .filter((name) => !sym.slots.has(name))
-    .map((name) => ({ name, type: unknownType(pos), pos }));
+    .map((name) => ({
+      name,
+      type: name === "route" ? runtimeBuilt("Route", ROUTE_TYPE, sym) : unknownType(pos),
+      pos,
+    }));
   const slots: TypeExpr = { kind: "TypeRecord", fields: [...declared, ...reserved], pos };
   return { kind: "TypeRecord", fields: [{ name: "slots", type: slots, pos }], pos };
 }

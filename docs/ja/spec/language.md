@@ -363,6 +363,12 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - `policy=latest-per-key(<expr>)` と `map-request` は effect 自身の式。どちらも
   effect の入力に適用されるため、`$1` が唯一の束縛であり、slot と `fn` は読めるが
   `$route` はここでは名前ではない
+- そこでの `$1` は effect の `in=` が宣言する型を持つ。tile の `$1` がその tile の
+  `in=` の型を持つのと同じである：`type UserQuery = {id: Text}` に対する
+  `in=UserQuery` では、`$1.id` はフィールドを読み、`$1.idd` は
+  [E0108](./errors.md#e0108-undef-member) になる。`in=Unit` と宣言された effect は
+  引数なしで放出されるため、そこでは `$1` は束縛されず、読むと
+  [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
@@ -471,6 +477,8 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 
 **コンテナへのセレクタは、そのイベントを発火できる子孫に届く。** コンテナ種別の多くは自分自身では何も発火しない（`box` に `keydown` も `focus` も `submit` もない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
 
+**コンテナに付けた `#id` は、発火する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身が発火するイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — `row` は click を dispatch しないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
+
 **子孫の書き方は結果を変えない。** 子 tile を名前で参照する本体も、インラインの本体とまったく同じように（何段でも）辿られる。したがって次の 2 つは同じプログラムである:
 
 ```kumiki snippet
@@ -548,7 +556,7 @@ issue.copy(status=Done, priority=High)
 
 | 構文 | 意味 |
 |---|---|
-| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順 |
+| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順、**tile 内ではその tile の `in=` 引数**（`$1` のみ — tile が取る positional 引数は1つ）、effect の `map-request` と `latest-per-key` の key 内ではその effect の `in=` の入力（`$1` のみ、[§1.5.2](#_1-5-2-意味)） |
 | `$el` | イベント発火元 tile の `{...}` props |
 | `$event` | イベントペイロード |
 | `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
@@ -559,6 +567,8 @@ issue.copy(status=Done, priority=High)
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
 > **最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` では `.ok` の値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` では、storage / session / indexed の capability の effect が `$e : Text` を束縛する。これらの effect は失敗のメッセージを渡す（`map-request` やホストの provider が例外を投げた場合も同じ。[ストレージ Effect](./http.md#_6-7-storage-effects)）ので、`problem := $e` はそれを格納し、`$e.message` は **E0108** になる。その `out=` もそう宣言しなければならない — `Result(T, Text)` であり、それ以外の `E` は **E0306** である。それ以外の capability の `.err` は `out=` から型付けされない。HTTP ハンドラは `{status, message, body}` レコードを渡し、カスタム capability の値はその provider が決める（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、そこでの `$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
+> **`$route` は `Route` であり、panic の `$event` は型を持つ。** `route.enter` / `route.leave` / `route.error` の reducer では、`$route` は標準の `Route` 型を持つ —— `route` slot がどこでもそうであるように（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。それ以外のトリガの[プリフェッチ](./routing.md#_3-8-prefetch)対象は、それを宣言された型なしで読む：自分のトリガで発火したときは空だからだ。`app.error` reducer の `$event` は標準の `PanicInfo` であり、`route.error(<pattern>)` reducer のものは `RouteErrorInfo` —— 同じフィールドにマッチした `pattern` が乗ったもの —— である（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。したがって `Int` の slot への `n := $route.path` は **E0201** であり、`$event.mesage` は **E0108** である。それ以外のトリガの `$event` は宣言された型を持たない。
 
 > **`fn` 内の positional は引数である。** `$1` は1番目の引数、`$2` は2番目の引数で、値も型もその引数が宣言するものと同じである。したがって `fn plus(a: Int, b: Int) -> Int = $1 + $2` は `a + b` である。positional は引数1つにつき1つだけあり、引数を持たない `fn` の `$1` や、引数が1つの `fn` の `$2` は未定義参照（**E0103**）になる。body 内のフラグメントは自分の `$1` / `$2` を束縛し、それが `fn` のものを隠す：`fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` では、レシーバは `xs` で、フラグメントの `$1` は各要素である。
 
