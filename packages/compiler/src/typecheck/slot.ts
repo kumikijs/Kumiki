@@ -20,11 +20,15 @@ export function isTestSlot(name: string, sym: SymbolTable): boolean {
   return sym.slots.has(name) || RESERVED_SLOT_NAMES.has(name);
 }
 
-/** Must equal the keys of the runtime's `emptyRoute()`, or a test's `route` seed is refused or left partly undefined. */
 export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set(ROUTE_TYPE.fields.map((f) => f.name));
 
-/** Report a `route` seed that is not a record of route fields. */
-export function checkRouteSeed(value: Expr, errors: KumikiError[]): void {
+/** Fields are checked against `ROUTE_TYPE`, not the program's `Route`: a program's own `type Route` does not change what the runtime keeps in the slot. */
+export function checkRouteSeed(
+  value: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
   if (value.kind !== "RecordLit") {
     errors.push({
       code: "E0201",
@@ -38,7 +42,11 @@ export function checkRouteSeed(value: Expr, errors: KumikiError[]): void {
     return;
   }
   for (const f of value.fields) {
-    if (ROUTE_SLOT_FIELDS.has(f.name)) continue;
+    const field = ROUTE_TYPE.fields.find((d) => d.name === f.name);
+    if (field) {
+      checkAgainst(f.value, field.type, sym, errors, ctx);
+      continue;
+    }
     errors.push({
       code: "E0108",
       kind: "undef-member",

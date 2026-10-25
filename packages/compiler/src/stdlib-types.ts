@@ -36,8 +36,12 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
   pos: NO_POS,
 });
 
-// The runtime's `ParsedRoute` also carries an optional `childPattern` for `route-outlet`; that is
-// runtime bookkeeping, not part of the type.
+/**
+ * The record the runtime keeps in the `route` slot; its field names must be `emptyRoute()`'s keys,
+ * or a test's `route` seed is refused or left partly undefined. The runtime's `ParsedRoute` also
+ * carries an optional `childPattern` for `route-outlet`; that is runtime bookkeeping, not part of
+ * the type.
+ */
 export const ROUTE_TYPE: RecordType = record({
   path: prim("Text"),
   pattern: prim("Text"),
