@@ -16,6 +16,10 @@ describe("a definition declared twice in one layer", () => {
       `slot a : Int = 0\ntile B = button(text="b", onClick=r)\nreducer r on=ui.click(B) do= a := 1\nreducer r on=ui.click(B) do= a := 2`,
     ],
     [
+      "reducer under another trigger",
+      `slot a : Int = 0\ntile B = button(text="b", onClick=r)\nreducer r on=ui.click(B) do= a := 1\nreducer r on=tile.mount(B) do= a := 2`,
+    ],
+    [
       "effect",
       `effect E cap=custom.thing in=Text out=Result(Unit, Text)\neffect E cap=custom.thing in=Text out=Result(Unit, Text)`,
     ],
