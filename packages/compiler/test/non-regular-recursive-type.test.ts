@@ -1,7 +1,7 @@
 import { runInNewContext } from "node:vm";
-import type { KumikiError } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { REENTRY_LIMIT } from "../src/assignable.ts";
+import { summariesOf } from "./helpers/diagnostics.ts";
 import { withRoot } from "./helpers/programs.ts";
 
 const G = "type G(T) = Leaf(T) | Node(G(List(T)))";
@@ -12,16 +12,17 @@ const DEADLINE_MS = 5000;
 // interrupts the call, and a comparison that does not end fails its own test.
 function diags(defs: string): string[] {
   const src = withRoot('text("x")', defs);
-  let errors: KumikiError[];
   try {
-    errors = runInNewContext("run()", { run: () => checkSource(src) }, { timeout: DEADLINE_MS });
+    return runInNewContext("run()", { run: () => summariesOf(src) }, { timeout: DEADLINE_MS });
   } catch (e) {
-    if (e instanceof Error && /timed out/.test(e.message)) {
-      throw new Error(`check did not finish within ${DEADLINE_MS} ms`);
+    // The context's realm makes the timeout error, so it is no `Error` of this one.
+    if (typeof e === "object" && e !== null && "code" in e) {
+      if (e.code === "ERR_SCRIPT_EXECUTION_TIMEOUT") {
+        throw new Error(`check did not finish within ${DEADLINE_MS} ms`);
+      }
     }
     throw e;
   }
-  return errors.map((e) => `${e.code} ${e.message}`);
 }
 
 /** A program whose one reducer performs `write` on a click. */
@@ -29,6 +30,10 @@ const writing = (decls: string, write: string) =>
   `${decls}
 reducer w on=ui.click(B) do= ${write}
 tile B = button(text="b", onClick=w)`;
+
+/** A record of `n` fields typed `each`, then a field `g` typed `last`. */
+const record = (name: string, n: number, each: string, last: string) =>
+  `type ${name} = {${Array.from({ length: n }, (_, i) => `f${i}: ${each}`).join(", ")}, g: ${last}}`;
 
 type Case = [what: string, defs: string, expected: string[]];
 
@@ -167,12 +172,28 @@ fn a(w: W(Yen)) -> W(Cents) = w
 fn b(w: W(Int)) -> W(Text) = w`,
       ["E0201 Expected W(Cents) but got W(Yen)", "E0201 Expected W(Text) but got W(Int)"],
     ],
+    [
+      "is compared with its nominal when a record holds it",
+      `${nominals}
+type Rec(T) = {v: T}
+fn a(r: Rec(Yen)) -> Rec(Cents) = r`,
+      ["E0201 Expected Rec(Cents) but got Rec(Yen)"],
+    ],
+    [
+      "is compared with its nominal when the generic hands it straight back, beside one it ignores",
+      `${nominals}
+type Fst(T, U) = T
+fn a(f: Fst(Int, Int)) -> Fst(Int, Text) = f
+fn b(f: Fst(Yen, Int)) -> Fst(Cents, Int) = f`,
+      ["E0201 Expected Fst(Cents, Int) but got Fst(Yen, Int)"],
+    ],
   ]);
 });
 
-// Two different generics are unfolded rather than compared argument by argument, and stop after a
-// bounded number of re-entries that grew.
+// Two different generics are unfolded rather than compared argument by argument, and a pair of heads
+// that applies a growing generic stops after a bounded number of re-entries that grew.
 describe("two different generics that both grow", () => {
+  const H = "type H(T) = Leaf(T) | Node(H(Option(T)))";
   run([
     [
       "accepts one where the other is required",
@@ -197,34 +218,184 @@ fn a(m: MA(Int)) -> MB(Int) = m
 fn b(m: MA(Int)) -> MB(Text) = m`,
       ["E0201 Expected MB(Text) but got MA(Int)"],
     ],
+    [
+      "finds a mismatch one level down",
+      `${G}\n${H}\nfn g(x: G(Int)) -> H(Int) = x`,
+      ["E0201 Expected H(Int) but got G(Int)"],
+    ],
+    [
+      "finds a mismatch in a field after a field of one growing generic",
+      `${G}
+${H}
+type R1 = {a: G(Int), b: G(Int)}
+type R2 = {a: G(Int), b: H(Int)}
+fn f(r: R1) -> R2 = r`,
+      ["E0201 Expected R2 but got R1"],
+    ],
+    [
+      "accepts a growing generic where one that does not grow is required, and back",
+      `type G2(T) = Leaf(Int) | Node(G2(List(T)))
+type J(T)  = Leaf(Int) | Node(J(T))
+fn a(x: G2(Int)) -> J(Int) = x
+fn b(x: J(Int)) -> G2(Int) = x`,
+      [],
+    ],
+    [
+      "counts each pair of heads on its own, so one that spends its count hides nothing in another",
+      `type G(T)  = Leaf(T) | Node(G(List(T)))
+type H(T)  = Leaf(T) | Node(H(List(T)))
+type H2(T) = Leaf(T) | Node(H2(Set(T)))
+type R1 = {a: G(Int), b: G(Int)}
+type R2 = {a: H(Int), b: H2(Int)}
+type R3 = {b: G(Int), a: G(Int)}
+type R4 = {b: H2(Int), a: H(Int)}
+fn f(r: R1) -> R2 = r
+fn g(r: R3) -> R4 = r`,
+      ["E0201 Expected R2 but got R1", "E0201 Expected R4 but got R3"],
+    ],
+    // The bound is per pair of heads and per comparison, so the order of the fields decides here:
+    // `a` grows forever and spends the count of G ⇒ H, and b's mismatch is one re-entry down.
+    [
+      "answers yes to a mismatch in the same pair of heads once an earlier field spent the count",
+      `type G(T, U) = Leaf(T) | Node(G(List(U), U)) | Grow(G(T, List(U)))
+type H(T, U) = Leaf(T) | Node(H(List(U), U)) | Grow(H(T, List(U)))
+type R1 = {a: G(Int, Int), b: G(Int, Int)}
+type R2 = {a: H(Int, Int), b: H(Int, Text)}
+type R3 = {b: G(Int, Int), a: G(Int, Int)}
+type R4 = {b: H(Int, Text), a: H(Int, Int)}
+fn f(r: R1) -> R2 = r
+fn g(r: R3) -> R4 = r`,
+      ["E0201 Expected R4 but got R3"],
+    ],
   ]);
 });
 
-describe("a generic that swaps its parameters spends nothing", () => {
-  const record = (name: string, n: number, each: string, last: string) =>
-    `type ${name} = {${Array.from({ length: n }, (_, i) => `f${i}: ${each}`).join(", ")}, g: ${last}}`;
+describe("the bound on re-entries that grew", () => {
+  // Each level hands every parameter one place down and the first one, in a `List`, to the last,
+  // so the comparison re-enters with a larger type each time and compares parameter k at the k-th.
+  const n = REENTRY_LIMIT + 2;
+  const params = Array.from({ length: n }, (_, i) => `P${i}`);
+  const shift = (name: string) =>
+    `type ${name}(${params.join(", ")}) = Leaf(P0) | Node(${name}(${params.slice(1).join(", ")}, List(P0)))`;
+  /** Every argument `Int`, except a `Text` at `textAt`. */
+  const args = (textAt?: number) =>
+    params.map((_, i) => (i === textAt ? "Text" : "Int")).join(", ");
+  const defs = `${shift("R")}\n${shift("S")}`;
+  // A rotation re-enters at the same size, and only a re-entry that grew counts: with every argument
+  // a nominal of its own, the rotations are new pairs as written until the last parameter is first.
+  const rotate = (name: string) =>
+    `type ${name}(${params.join(", ")}) = Leaf(P0) | Turn(${name}(${params.slice(1).join(", ")}, P0)) | Grow(${name}(List(P0), ${params.slice(1).join(", ")}))`;
+  const nominals = params.map((_, i) => `type N${i} = nominal Int`).join("\n");
+  const named = (textAt?: number) =>
+    params.map((_, i) => (i === textAt ? "Text" : `N${i}`)).join(", ");
   run([
     [
-      "one generic, in the last of many fields",
+      "finds a mismatch at the last re-entry it counts",
+      `${defs}\nfn a(x: R(${args()})) -> S(${args(REENTRY_LIMIT)}) = x`,
+      [`E0201 Expected S(${args(REENTRY_LIMIT)}) but got R(${args()})`],
+    ],
+    [
+      "answers yes at the re-entry after it",
+      `${defs}\nfn a(x: R(${args()})) -> S(${args(REENTRY_LIMIT + 1)}) = x`,
+      [],
+    ],
+    [
+      "does not bound two applications of one generic, which are compared by their arguments",
+      `${defs}\nfn a(x: R(${args()})) -> R(${args(REENTRY_LIMIT + 1)}) = x`,
+      [`E0201 Expected R(${args(REENTRY_LIMIT + 1)}) but got R(${args()})`],
+    ],
+    [
+      "does not count a re-entry that did not grow",
+      `${rotate("R")}\n${rotate("S")}\n${nominals}
+fn a(x: R(${named()})) -> S(${named(REENTRY_LIMIT + 1)}) = x`,
+      [`E0201 Expected S(${named(REENTRY_LIMIT + 1)}) but got R(${named()})`],
+    ],
+  ]);
+});
+
+// More fields than one pair of heads may re-enter, so charging a generic that only swaps its
+// parameters would accept the last field.
+describe("a generic that swaps its parameters still finds a mismatch in the last of many fields", () => {
+  const fields = REENTRY_LIMIT + 1;
+  run([
+    [
+      "one generic",
       `type Sw(T, U) = SwLeaf(T) | SwNode(Sw(U, T))
-${record("R1", 65, "Sw(Int, Text)", "Sw(Int, Text)")}
-${record("R2", 65, "Sw(Int, Text)", "Sw(Int, Int)")}
+${record("R1", fields, "Sw(Int, Text)", "Sw(Int, Text)")}
+${record("R2", fields, "Sw(Int, Text)", "Sw(Int, Int)")}
 fn f(r: R1) -> R2 = r`,
       ["E0201 Expected R2 but got R1"],
     ],
     [
-      "two generics, in the last of many fields",
+      "two generics",
       `type SA(T, U) = SLeaf(T) | SNode(SA(U, T))
 type SB(T, U) = SLeaf(T) | SNode(SB(U, T))
-${record("R1", 65, "SA(Int, Text)", "SA(Int, Text)")}
-${record("R2", 65, "SB(Int, Text)", "SB(Int, Int)")}
+${record("R1", fields, "SA(Int, Text)", "SA(Int, Text)")}
+${record("R2", fields, "SB(Int, Text)", "SB(Int, Int)")}
 fn f(r: R1) -> R2 = r`,
       ["E0201 Expected R2 but got R1"],
     ],
   ]);
 });
 
-describe("regular generics keep their answers", () => {
+// Two different regular generics are unfolded to the end, however many comparisons come first:
+// each pair below re-enters once or more with a larger type before it repeats.
+describe("two different regular generics are unfolded to the end", () => {
+  const W = `type W(T) = WL(T) | WN(W(Option(Int)))
+type X(T) = WL(T) | WN(X(Option(Int)))
+type Y(T) = WL(T) | WN(Y(Option(Text)))`;
+  const eights = "Int, Int, Int, Int, Int, Int, Int, Int";
+  const shifts = `type R(A, B, C, D, E, F, G, H) = Leaf(A) | Node(R(B, C, D, E, F, G, H, Option(Int)))
+type S(A, B, C, D, E, F, G, H) = Leaf(A) | Node(S(B, C, D, E, F, G, H, Option(Int)))`;
+  // Eight fields of eight re-entries each are as many as one pair of heads may make.
+  const shifted = (head: string, n: number) =>
+    Array.from({ length: n }, (_, i) => `f${i}: ${head}(${eights})`).join(", ");
+  const XY = `${shifts}
+type R2(T) = Leaf2(T) | Node2(R2(Option(Int)))
+type S2(T) = Leaf2(T) | Node2(S2(Option(Text)))
+type X = {${shifted("R", 8)}, z: R2(Int)}
+type Y = {${shifted("S", 8)}, z: S2(Int)}`;
+  run([
+    [
+      "in the last of as many fields as the bound counts",
+      `${W}
+${record("R1", REENTRY_LIMIT, "W(Int)", "W(Int)")}
+${record("R2", REENTRY_LIMIT, "X(Int)", "Y(Int)")}
+fn f(r: R1) -> R2 = r`,
+      ["E0201 Expected R2 but got R1"],
+    ],
+    [
+      "in the last of as many union variants as the bound counts",
+      `${W}
+type U1 = ${Array.from({ length: REENTRY_LIMIT }, (_, i) => `V${i}(W(Int))`).join(" | ")} | Vz(W(Int))
+type U2 = ${Array.from({ length: REENTRY_LIMIT }, (_, i) => `V${i}(X(Int))`).join(" | ")} | Vz(Y(Int))
+fn f(u: U1) -> U2 = u`,
+      ["E0201 Expected U2 but got U1"],
+    ],
+    [
+      "that shift their parameters, in the last of eight fields",
+      `${shifts}
+type T8 = {${shifted("R", 8)}, g: R(${eights})}
+type U8 = {${shifted("S", 8)}, g: S(Int, Int, Int, Int, Int, Int, Int, Text)}
+fn f(r: T8) -> U8 = r`,
+      ["E0201 Expected U8 but got T8"],
+    ],
+    [
+      "in a list literal",
+      `${XY}\nfn h(x: X, y: Y) -> List(X) = [y, x]`,
+      ["E0201 Expected X but got Y"],
+    ],
+    [
+      "where an if joins two types that have no common type",
+      `${XY}
+fn need(r: R2(Int)) -> Int = 0
+fn h(c: Bool, x: X, y: Y) -> Int = need((if c then y else x).z)`,
+      [],
+    ],
+  ]);
+});
+
+describe("regular generics are compared as unfolding compares them", () => {
   run([
     [
       "the recursive types of language.md",

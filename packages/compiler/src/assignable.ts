@@ -27,20 +27,22 @@ type Walk = {
 
 type Forwarded = Readonly<Record<NominalReading, (def: TypeDef) => number | null>>;
 
-const forwardedByTable = new WeakMap<TypeEnv["types"], Forwarded>();
-
-function forwardedIn(env: TypeEnv): Forwarded {
-  let forwarded = forwardedByTable.get(env.types);
-  if (!forwarded) {
-    const lookup = (name: string) => env.types.get(name);
-    forwarded = {
-      through: forwardedParams(lookup, "through"),
-      stop: forwardedParams(lookup, "stop"),
-    };
-    forwardedByTable.set(env.types, forwarded);
-  }
-  return forwarded;
+/** `build`, run once for each symbol table and kept for as long as the table lives. */
+function perTable<T>(build: (env: TypeEnv) => T): (env: TypeEnv) => T {
+  const built = new WeakMap<TypeEnv["types"], T>();
+  return (env) => {
+    const kept = built.get(env.types);
+    if (kept !== undefined) return kept;
+    const value = build(env);
+    built.set(env.types, value);
+    return value;
+  };
 }
+
+const forwardedIn = perTable((env): Forwarded => {
+  const lookup = (name: string) => env.types.get(name);
+  return { through: forwardedParams(lookup, "through"), stop: forwardedParams(lookup, "stop") };
+});
 
 function newWalk(env: TypeEnv): Walk {
   return { env, origins: new WeakMap(), forwarded: forwardedIn(env) };
@@ -215,21 +217,27 @@ export function assignable(
   return relate(actual, declared, env, {
     pairs: new Set(),
     unfolded: new Map(),
-    budget: { reentries: REENTRY_LIMIT },
+    reentries: new Map(),
   });
 }
 
-// `pairs` is keyed on the types as written, which is finite for a regular recursive type; a generic
-// whose recursive occurrence grows its argument (`type G(T) = Leaf(T) | Node(G(List(T)))`) writes a
-// new pair at every level, so `unfolded` remembers each pair of heads unfolded on the way down with
-// its size, and a re-entry that grew is charged to one budget shared by the whole comparison.
+// `pairs` is keyed on the types as written, which is finite for a regular recursive type. A generic
+// that nests its argument deeper at each level (`G` against an identically shaped `H`, with
+// `type G(T) = Leaf(T) | Node(G(List(T)))`) writes a new pair at every level, so for a pair of heads
+// that applies such a generic, `unfolded` keeps the size it was last entered at on the way down. A
+// re-entry that grew counts against its pair of heads in `reentries`, which the whole comparison
+// shares, and past `REENTRY_LIMIT` such a re-entry answers yes, as a repeated pair does.
 type Path = {
   readonly pairs: ReadonlySet<string>;
   readonly unfolded: ReadonlyMap<string, number>;
-  readonly budget: { reentries: number };
+  readonly reentries: Map<string, number>;
 };
 
-const REENTRY_LIMIT = 64;
+/**
+ * How many re-entries that grew one pair of heads may make in one comparison; every re-entry past
+ * that answers yes.
+ */
+export const REENTRY_LIMIT = 64;
 
 function relate(
   actual: TypeExpr | null,
@@ -254,11 +262,15 @@ function relate(
       return uses.every((use, i) => relateArgument(use, as[i] ?? null, ds[i] ?? null, env, path));
     }
   }
-  if (isGenericApplication(actual, env) || isGenericApplication(declared, env)) {
-    const heads = `${headName(actual)} ⇒ ${headName(declared)}`;
+  const heads = nestingHeads(actual, declared, env);
+  if (heads !== null) {
     const size = typeSize(actual) + typeSize(declared);
     const last = path.unfolded.get(heads);
-    if (last !== undefined && size > last && --path.budget.reentries < 0) return true;
+    if (last !== undefined && size > last) {
+      const spent = (path.reentries.get(heads) ?? 0) + 1;
+      path.reentries.set(heads, spent);
+      if (spent > REENTRY_LIMIT) return true;
+    }
     path = { ...path, unfolded: new Map(path.unfolded).set(heads, size) };
   }
   const a = unaliasType(actual, env);
@@ -305,17 +317,19 @@ function relate(
 }
 
 /**
- * What comparing two applications of one generic reads of an argument, as unfolding both bodies
- * would: `unread` when the parameter is only handed back to its own position in the recursion or
- * to a generic that ignores it; `normal` under a `nominal`, which normalising strips; `written`,
- * nominal identity included, everywhere else.
+ * How comparing two applications of one generic reads an argument, as unfolding both bodies would:
+ * `unread` when no comparison reaches the parameter (it is not named, or only as an argument the
+ * applied generic, its own recursion included, leaves `unread`); `normal` where the parameter is
+ * itself a `nominal`'s inner type, compared past every nominal the argument has; `written`, nominal
+ * identity included, everywhere else. The strictest reading wins.
  */
 type ArgumentUse = "unread" | "normal" | "written";
 
 const STRICTNESS: Readonly<Record<ArgumentUse, number>> = { unread: 0, normal: 1, written: 2 };
 
-const stricter = (a: ArgumentUse, b: ArgumentUse): ArgumentUse =>
-  STRICTNESS[a] >= STRICTNESS[b] ? a : b;
+/** The strictest of `reads`, or `unread` when there are none. */
+const strictest = (reads: readonly ArgumentUse[]): ArgumentUse =>
+  reads.reduce<ArgumentUse>((a, b) => (STRICTNESS[b] > STRICTNESS[a] ? b : a), "unread");
 
 function relateArgument(
   use: ArgumentUse,
@@ -334,11 +348,6 @@ function relateArgument(
   }
 }
 
-const argumentUsesByTable = new WeakMap<
-  TypeEnv["types"],
-  ReadonlyMap<string, readonly ArgumentUse[]>
->();
-
 // A generic applied to the wrong number of arguments is E0210's, and is unfolded like any other.
 function sharedGeneric(
   actual: TypeExpr & { kind: "TypeApp" },
@@ -346,12 +355,7 @@ function sharedGeneric(
   env: TypeEnv,
 ): readonly ArgumentUse[] | null {
   if (actual.name !== declared.name || !isGenericApplication(actual, env)) return null;
-  let table = argumentUsesByTable.get(env.types);
-  if (!table) {
-    table = argumentUses(env);
-    argumentUsesByTable.set(env.types, table);
-  }
-  const uses = table.get(actual.name);
+  const uses = argumentUsesIn(env).get(actual.name);
   if (!uses || actual.args.length !== uses.length || declared.args.length !== uses.length) {
     return null;
   }
@@ -362,9 +366,21 @@ function isGenericApplication(t: TypeExpr | null, env: TypeEnv): boolean {
   return t?.kind === "TypeApp" && (env.types.get(t.name)?.params.length ?? 0) > 0;
 }
 
+/** The key of the two heads, when either side applies a generic that nests its argument deeper. */
+function nestingHeads(
+  actual: TypeExpr | null,
+  declared: TypeExpr | null,
+  env: TypeEnv,
+): string | null {
+  const nesting = nestingGenericsIn(env);
+  const nests = (t: TypeExpr | null) => t?.kind === "TypeApp" && nesting.has(t.name);
+  return nests(actual) || nests(declared) ? `${headName(actual)} ⇒ ${headName(declared)}` : null;
+}
+
+// A structural type is keyed on its kind, after a `#` that no type name can start with.
 function headName(t: TypeExpr | null): string {
   if (t === null) return "";
-  return t.kind === "TypeRef" || t.kind === "TypeApp" ? t.name : t.kind;
+  return t.kind === "TypeRef" || t.kind === "TypeApp" ? t.name : `#${t.kind}`;
 }
 
 function typeSize(t: TypeExpr | null): number {
@@ -385,15 +401,15 @@ function typeSize(t: TypeExpr | null): number {
   }
 }
 
-// The least fixed point: every answer starts `unread` and only rises, which keeps a parameter that is
-// only handed back into the recursion `unread`, as the co-inductive guard answers when bodies unfold.
-function argumentUses(env: TypeEnv): ReadonlyMap<string, readonly ArgumentUse[]> {
+// The least fixed point, passing over every generic until nothing changes: every answer starts
+// `unread` and is only ever joined with a stricter one, which keeps a parameter that is only handed
+// back into the recursion `unread`, as the co-inductive guard answers when bodies unfold.
+const argumentUsesIn = perTable((env): ReadonlyMap<string, readonly ArgumentUse[]> => {
   const { stop, through } = forwardedIn(env);
   const generics = [...env.types.values()].filter((d) => d.params.length > 0);
   const uses = new Map<string, readonly ArgumentUse[]>(
     generics.map((d) => [d.name, d.params.map((): ArgumentUse => "unread")]),
   );
-  const strictest = (reads: ArgumentUse[]): ArgumentUse => reads.reduce(stricter, "unread");
 
   const readOf = (t: TypeExpr, p: string, as: ArgumentUse): ArgumentUse => {
     switch (t.kind) {
@@ -437,52 +453,118 @@ function argumentUses(env: TypeEnv): ReadonlyMap<string, readonly ArgumentUse[]>
     return d.params.map((p) => readOf(d.body, p, "normal"));
   };
 
-  const readers = new Map<string, TypeDef[]>();
-  for (const d of generics) {
-    for (const name of appliedNames(d.body)) {
-      if (!uses.has(name)) continue;
-      const list = readers.get(name);
-      if (list) list.push(d);
-      else readers.set(name, [d]);
-    }
-  }
-  const pending = [...generics];
-  const queued = new Set(generics.map((d) => d.name));
-  for (let d = pending.pop(); d !== undefined; d = pending.pop()) {
-    queued.delete(d.name);
-    const next = classify(d);
-    const prev = uses.get(d.name);
-    if (prev && next.every((u, i) => u === prev[i])) continue;
-    uses.set(d.name, next);
-    for (const r of readers.get(d.name) ?? []) {
-      if (queued.has(r.name)) continue;
-      queued.add(r.name);
-      pending.push(r);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const d of generics) {
+      const prev = uses.get(d.name) ?? [];
+      const next = classify(d).map((u, i) => strictest([u, prev[i] ?? "unread"]));
+      if (next.every((u, i) => u === prev[i])) continue;
+      uses.set(d.name, next);
+      changed = true;
     }
   }
   return uses;
-}
+});
 
-function appliedNames(t: TypeExpr, out: Set<string> = new Set()): Set<string> {
+/**
+ * The generics that nest an argument deeper at each level: following where each parameter is
+ * handed, through the generics its body applies, leads back to a parameter it started from, at
+ * least once inside a larger argument (`Node(G(List(T)))`). Comparing any other generics reaches
+ * finitely many pairs as written, which `pairs` ends.
+ */
+const nestingGenericsIn = perTable((env): ReadonlySet<string> => {
+  const generics = [...env.types.values()].filter((d) => d.params.length > 0);
+  // One node for each parameter of each generic, numbered on from the generic's first.
+  const first = new Map<string, number>();
+  const owner: string[] = [];
+  for (const d of generics) {
+    first.set(d.name, owner.length);
+    owner.push(...d.params.map(() => d.name));
+  }
+  const ahead: number[][] = owner.map(() => []);
+  const behind: number[][] = owner.map(() => []);
+  const deeper: [from: number, to: number][] = [];
+  for (const d of generics) {
+    const base = first.get(d.name) ?? 0;
+    eachPart(d.body, (t) => {
+      if (t.kind !== "TypeApp" || d.params.includes(t.name)) return;
+      const callee = env.types.get(t.name);
+      const to = first.get(t.name);
+      if (!callee || to === undefined) return;
+      t.args.slice(0, callee.params.length).forEach((arg, j) => {
+        const named = new Set<string>();
+        eachPart(arg, (x) => {
+          if (x.kind === "TypeRef") named.add(x.name);
+        });
+        d.params.forEach((p, i) => {
+          if (!named.has(p)) return;
+          ahead[base + i]?.push(to + j);
+          behind[to + j]?.push(base + i);
+          if (arg.kind !== "TypeRef") deeper.push([base + i, to + j]);
+        });
+      });
+    });
+  }
+
+  // Kosaraju: the order the nodes finish in along `ahead`, then one component per tree along
+  // `behind`, latest finished first. An edge that nests deeper inside one component is on a cycle.
+  const finished: number[] = [];
+  const seen = new Set<number>();
+  for (let root = 0; root < owner.length; root++) {
+    if (seen.has(root)) continue;
+    seen.add(root);
+    const stack = [{ node: root, edge: 0 }];
+    for (let top = stack.at(-1); top !== undefined; top = stack.at(-1)) {
+      const next = ahead[top.node]?.[top.edge++];
+      if (next === undefined) {
+        finished.push(top.node);
+        stack.pop();
+      } else if (!seen.has(next)) {
+        seen.add(next);
+        stack.push({ node: next, edge: 0 });
+      }
+    }
+  }
+  const component = new Map<number, number>();
+  for (const root of finished.reverse()) {
+    if (component.has(root)) continue;
+    component.set(root, root);
+    const todo = [root];
+    for (let n = todo.pop(); n !== undefined; n = todo.pop()) {
+      for (const m of behind[n] ?? []) {
+        if (component.has(m)) continue;
+        component.set(m, root);
+        todo.push(m);
+      }
+    }
+  }
+  const cyclic = new Set(
+    deeper.filter(([u, v]) => component.get(u) === component.get(v)).map(([u]) => component.get(u)),
+  );
+  return new Set(owner.filter((_, n) => cyclic.has(component.get(n))));
+});
+
+/** Calls `visit` on `t` and on every type written inside it. */
+function eachPart(t: TypeExpr, visit: (part: TypeExpr) => void): void {
+  visit(t);
   switch (t.kind) {
     case "TypeApp":
-      out.add(t.name);
-      for (const a of t.args) appliedNames(a, out);
+      for (const a of t.args) eachPart(a, visit);
       break;
     case "TypeRecord":
-      for (const f of t.fields) appliedNames(f.type, out);
+      for (const f of t.fields) eachPart(f.type, visit);
       break;
     case "TypeUnion":
-      for (const v of t.variants) for (const x of v.payloads) appliedNames(x, out);
+      for (const v of t.variants) for (const x of v.payloads) eachPart(x, visit);
       break;
     case "TypeNominal":
     case "TypeRefinement":
-      appliedNames(t.inner, out);
+      eachPart(t.inner, visit);
       break;
     default:
       break;
   }
-  return out;
 }
 
 export function typeToString(t: TypeExpr): string {
