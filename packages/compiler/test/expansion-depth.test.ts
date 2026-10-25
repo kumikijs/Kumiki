@@ -182,6 +182,30 @@ describe("a check that follows tiles into the tiles they inline reaches the repo
     expect(result.errors.map((e) => e.code)).toEqual(["E0212", "E0237"]);
     expect(result.errors[0]?.message).toContain('has id "leaf"');
   });
+
+  // A sub-routes tile may hold its outlet in any tile it renders, so E0113 follows the chain.
+  const routed = (leaf: string) =>
+    [
+      ...chain(LONG).map((l) => l.replace('text("leaf")', leaf)),
+      'tile Child = text("child")',
+      'tile Shell sub-routes = { "/x/a" -> Child } = column(T0)',
+      'app M caps=[] routes={"/x/*" -> Shell, "/404" -> Child} init=[]',
+      "",
+    ].join("\n");
+
+  it("finds the route-outlet at the end of the chain a sub-routes tile renders", () => {
+    const result = build(routed("route-outlet()"));
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0237"]);
+  });
+
+  it("answers E0113 for a sub-routes tile whose chain renders no route-outlet", () => {
+    const result = build(routed('text("leaf")'));
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0113", "E0237"]);
+  });
 });
 
 describe("what counts as a level", () => {

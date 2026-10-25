@@ -26,6 +26,7 @@ import { checkTile } from "./typecheck/tile.ts";
 import {
   collectElementIds,
   collectPrefetchTargets,
+  collectRenderedBuiltinKinds,
   collectTileBuiltinKinds,
   subscribedKinds,
 } from "./typecheck/tile-collect.ts";
@@ -111,6 +112,7 @@ function checkAll(
     // Read as the definitions are checked, by which point every tile has been registered.
     builtinKindsIn: collectTileBuiltinKinds(tiles),
     subscribedKindsIn: subscribedKinds(tiles),
+    renderedKindsIn: collectRenderedBuiltinKinds(tiles),
   };
 
   for (const def of program.defs) {

@@ -6,8 +6,8 @@ import {
   type TileDef,
   type TileExpr,
 } from "../ast.ts";
-import { BUILTIN_TILES } from "../builtins.ts";
-import { boundaryTarget, expansionTargets, reachedFrom } from "../def-graph.ts";
+import { BUILTIN_TILES, CHILD_RENDERING_BUILTINS } from "../builtins.ts";
+import { boundaryTarget, expansionTargets, type GraphEdge, reachedFrom } from "../def-graph.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import type { SymbolTable } from "./context.ts";
 
@@ -232,6 +232,53 @@ function imposedIds(
     if (out.size === 0) out.add(undefined);
     return out;
   });
+}
+
+/**
+ * The builtin kinds a tile renders: the tiles codegen inlines into its tree (E0113). Unlike
+ * `collectTileBuiltinKinds`, a positional argument counts only where its builtin renders it.
+ */
+export function collectRenderedBuiltinKinds(
+  tiles: ReadonlyMap<string, TileDef>,
+): (tileName: string) => ReadonlySet<string> {
+  return reachedFrom(
+    (name) => {
+      const def = BUILTIN_TILES.has(name) ? undefined : tiles.get(name);
+      return def ? renderedTiles(def.body, tiles) : [];
+    },
+    (name) => (BUILTIN_TILES.has(name) ? [name] : []),
+  );
+}
+
+function renderedTiles(
+  t: TileExpr,
+  tiles: ReadonlyMap<string, TileDef>,
+  out: GraphEdge[] = [],
+): GraphEdge[] {
+  switch (t.kind) {
+    case "TileFor":
+    case "TileWhen":
+      return renderedTiles(t.body, tiles, out);
+    case "TileIf":
+      renderedTiles(t.consequent, tiles, out);
+      return renderedTiles(t.alternate, tiles, out);
+    case "TileMatch":
+      for (const arm of t.arms) renderedTiles(arm.body, tiles, out);
+      return out;
+    case "TileCall":
+      out.push({ to: t.name, pos: t.pos });
+      if (!CHILD_RENDERING_BUILTINS.has(t.name)) return out;
+      for (const arg of t.args) {
+        if (arg.name !== undefined) continue;
+        const v = arg.value;
+        if (isTileExpr(v)) renderedTiles(v, tiles, out);
+        else if (v.kind === "Ref" && tiles.has(v.name)) out.push({ to: v.name, pos: v.pos });
+      }
+      return out;
+    default:
+      assertNever(t);
+      return out;
+  }
 }
 
 type TileIdCollection =

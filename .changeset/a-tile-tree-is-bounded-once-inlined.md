@@ -43,7 +43,9 @@ call to `T0`, made `check()` throw `RangeError: Maximum call stack size
 exceeded`, and a handler prop on every link took time quadratic in the chain
 (about 8 s at 6,000 tiles). Now each tile is walked once however many positions
 ask about it, so a 20,000-tile chain gets its E0237 and its warnings in well
-under a second.
+under a second. So is the walk E0113 takes to find a `sub-routes` tile's
+`route-outlet` in the tiles it renders, which threw the same `RangeError` on a
+20,000-tile chain.
 
 A chain `tile Tn = column(Tn+1)` is two levels a link, so 128 links compile and
 the 129th is refused — a chain of 129 to about 250 tiles, which compiled and
