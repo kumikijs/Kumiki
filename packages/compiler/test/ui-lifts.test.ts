@@ -258,7 +258,8 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
       for (const [what, value] of [
         ["a variant tag with a payload", "Some(1)"],
-        ["a tile call with arguments", 'box(text("z"))'],
+        ["a call with arguments", 'box(text("z"))'],
+        ["a builtin called with no arguments", "divider()"],
       ] as const) {
         it(`${handler} (${form}) = ${what} reports exactly E0201`, () => {
           const errors = errorsForNeighbour(bind(handler, value));
