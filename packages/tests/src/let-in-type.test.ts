@@ -5,20 +5,16 @@ import { loadSource } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
 import { withApp } from "./helpers/source.ts";
 
-describe("a member read off a `let … in` is lowered by its type", () => {
-  // Undecided, a member is lowered by its name: `.size` counts a record's fields, `.keys` are text.
-  it("reads a record field and a map's Int keys", async () => {
+describe("a bind with no type of its own, over a slot of its name", () => {
+  // Typed as the slot `m : Box`, `.size` was lowered as `Box`'s field and wrote `undefined`.
+  // `.map` with a fragment is what answers no type here.
+  it("reads the member off the bound value, not off the slot's type", async () => {
     const src = withApp(`type Box = {size: Int, label: Text}
-fn sizeOf(b: Box) -> Int = (let inner = b in inner).size
-slot box    : Box            = {size: 7, label: "seven"}
-slot counts : Map(Int, Text) = {1: "one", 20: "twenty"}
-slot got    : Int            = 0
-slot keys   : List(Int)      = []
-slot sum    : Int            = 0
+slot m   : Box       = {size: 7, label: "seven"}
+slot xs  : List(Int) = [1, 2, 3]
+slot got : Int       = 0
 reducer go on=ui.click(B)
-    do= got := sizeOf(box)
-        keys := (let m = counts in m).keys
-        sum := (let m = counts in m).keys.fold(0, $1 + $2)
+    do= got := let m = xs.map($1 * 2) in m.size
 tile B = button(text="x")
 tile App = column(B)`);
     const app = await loadSource(src);
@@ -26,6 +22,6 @@ tile App = column(B)`);
       runScenario(app, root, { steps: [{ do: { click: "button" }, expect: { noErrors: true } }] }),
     );
     expect(report.ok, failureDetail(report)).toBe(true);
-    expect(report.steps.at(-1)?.state).toMatchObject({ got: 7, keys: [1, 20], sum: 21 });
+    expect(report.steps.at(-1)?.state).toMatchObject({ got: 3 });
   });
 });

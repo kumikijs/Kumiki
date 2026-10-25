@@ -10,12 +10,12 @@
       "expect": { "noErrors": true, "domIncludes": ["name: 42"], "state": { "name": "42" } }
     },
     {
-      "label": "measure reads the label's length, the record's size field and the map's Int keys",
+      "label": "measure reads the label's length, the record's size field, the map's Int keys, and the size of the list a bind over the slot box names",
       "do": { "click": "#measure" },
       "expect": {
         "noErrors": true,
-        "domIncludes": ["size: 2", "boxed: 7", "sum: 21"],
-        "state": { "size": 2, "boxed": 7, "sum": 21 }
+        "domIncludes": ["size: 2", "boxed: 7", "sum: 21", "doubled: 3"],
+        "state": { "size": 2, "boxed": 7, "sum": 21, "doubled": 3 }
       }
     }
   ]

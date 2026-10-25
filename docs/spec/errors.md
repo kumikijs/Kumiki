@@ -616,7 +616,7 @@ The positions with a declared type to check against are: a `slot`'s initial valu
 
 An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
 
-Against a declared type, a value written as an `if`, a `match` or a `let … in` is checked, and reported, at what it evaluates to: each branch, each arm, the `let`'s body ([Language §1.9](./language.md#_1-9-expression-language)).
+Against a declared type, a value written as an `if`, a `match` or a `let … in` is checked, and reported, at what it evaluates to: each branch, each arm, the `let`'s body ([Language §1.9](./language.md#_1-9-expression-language)). An operator's operand is the exception: it is reported at the operator expression or at the operand as a whole, so `n := 1 + (let m = t in m)` is reported at `1 + …`, not at `m`.
 
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 

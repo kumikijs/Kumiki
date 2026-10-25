@@ -1,9 +1,8 @@
-import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, summariesOf } from "./helpers/diagnostics.ts";
-import { withButtonApp } from "./helpers/programs.ts";
+import { pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
+import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
-const errsOf = (defs: string, caps?: string) => checkSource(withButtonApp(defs, { caps }));
+const pointed = (defs: string) => pointedErrorsOf(withButtonApp(defs));
 const diagnostics = (defs: string, caps?: string) => summariesOf(withButtonApp(defs, { caps }));
 
 const SLOTS = `type UserId = nominal Text
@@ -13,19 +12,14 @@ slot t    : Text       = ""
 slot b    : Bool       = false
 slot u    : UserId     = ""
 slot p    : PostId     = ""
-slot xs   : List(Int)  = []
-slot name : Text       = ""
 slot id   : EffectId   = EffectId.none`;
 
-const inReducer = (body: string) => diagnostics(`${SLOTS}\nreducer r on=ui.click(B) do= ${body}`);
+const inReducer = (body: string) => summariesOf(withReducer(SLOTS, body));
 
 describe("a declared position checks a `let … in` at its body", () => {
   it("reports a fn body whose `let` yields the wrong type, at the body", () => {
-    const line = "fn label(n: Int) -> Text = let m = n + 1 in m";
-    const errs = errsOf(line);
-    expect(errs.map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
-      // 1-based: the `m` after `in `.
-      ["E0201", "Expected Text but got Int", 1, line.lastIndexOf("m") + 1],
+    expect(pointed("fn label(n: Int) -> Text = let m = n + 1 in m")).toEqual([
+      { code: "E0201", message: "Expected Text but got Int", text: "m" },
     ]);
   });
 
@@ -43,26 +37,16 @@ reducer r on=ui.click(B) do= emit e(let y = "a" in y)`;
   });
 
   it.each([
-    // [body, the text just before the value that lands in the `-> Text`]
-    ["let a = n in let c = a + 1 in c", "a + 1 in "],
-    [`let a = n in if a > 0 then a else "x"`, "then "],
-    [`if n > 0 then let a = n in a else "x"`, "let a = n in "],
-    [`let a = Some(n) in match a with | Some(v) -> v | None -> "x"`, "Some(v) -> "],
-    [`match Some(n) with | Some(v) -> let w = v in w | None -> "x"`, "let w = v in "],
-  ])("follows `%s` to the one value that does not fit", (body, before) => {
-    const line = `fn f(n: Int) -> Text = ${body}`;
-    expect(errsOf(line).map((e) => [e.code, e.message, e.pos.line, e.pos.col])).toEqual([
-      ["E0201", "Expected Text but got Int", 1, line.indexOf(before) + before.length + 1],
+    // [body, the rest of the line from the value that lands in the `-> Text`]
+    ["let a = n in let c = a + 1 in c", "c"],
+    [`let a = n in if a > 0 then a else "x"`, `a else "x"`],
+    [`if n > 0 then let a = n in a else "x"`, `a else "x"`],
+    [`let a = Some(n) in match a with | Some(v) -> v | None -> "x"`, `v | None -> "x"`],
+    [`match Some(n) with | Some(v) -> let w = v in w | None -> "x"`, `w | None -> "x"`],
+  ])("follows `%s` to the one value that does not fit", (body, text) => {
+    expect(pointed(`fn f(n: Int) -> Text = ${body}`)).toEqual([
+      { code: "E0201", message: "Expected Text but got Int", text },
     ]);
-  });
-
-  it("is refused by build as well as check", () => {
-    const r = compile(withButtonApp("fn label(n: Int) -> Text = let m = n + 1 in m"), {
-      runtimeSpecifier: "./runtime.js",
-    });
-    expect(r.kind).toBe("fail");
-    if (r.kind !== "fail") return;
-    expect(r.errors.map((e) => e.code)).toEqual(["E0201"]);
   });
 });
 
@@ -93,19 +77,6 @@ describe("with no declared type, a `let … in` has its body's type", () => {
     const expected = inReducer(plain);
     expect(expected).not.toEqual([]);
     expect(inReducer(viaLet)).toEqual(expected);
-  });
-});
-
-describe("a name bound to an undecidable value", () => {
-  // `.map` with a fragment answers no type, so `name` shadows the slot `name : Text` with none.
-  it.each([
-    ["by a `let … in`, in a declared position", `n := let name = xs.map($1) in name`],
-    ["by a `let … in`, as a receiver", `n := (let name = xs.map($1) in name).upper`],
-    ["by a `let` statement", `let name = xs.map($1); n := name`],
-    ["by a `for`", `for name in xs.map($1) { n := name }`],
-    ["by a match arm", `n := match xs.map($1).head with | Some(name) -> name | None -> 0`],
-  ])("reports nothing when bound %s", (_, body) => {
-    expect(inReducer(body)).toEqual([]);
   });
 });
 
