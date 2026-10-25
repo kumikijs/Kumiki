@@ -47,7 +47,8 @@ export type Ctx = {
   localTypes: Map<string, TypeExpr>;
   runReducerScope?: boolean;
   wildcardsReportedElsewhere?: boolean;
-  routeBind: "bound" | "unbound" | "no-payload";
+  /** `prefetch`: bound only when a link's prefetch fires the reducer, and `{}` on its own trigger. */
+  routeBind: "bound" | "prefetch" | "unbound" | "no-payload";
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];

@@ -203,3 +203,41 @@ describe("what the rule does not touch", () => {
     expect(codesOf(src)).toEqual(["E0103"]);
   });
 });
+
+describe("the type $route has", () => {
+  const AHEAD =
+    'slot n : Int = 0\ntile Ahead = link(to="/posts/7") {text: "7", prefetch: subject, prefetch-args: {"id": "7"}}\n';
+  const withAhead = (src: string): string =>
+    src.replace("tile Page = column(Btn, Other)", "tile Page = column(Btn, Other, Ahead)");
+
+  describe.each([
+    'route.enter("/posts/:id")',
+    'route.leave("/posts/:id")',
+    'route.error("/posts/:id")',
+  ])("on %s, which hands it the route every time", (trigger) => {
+    it("is a Route, so a field read as another type is E0201", () => {
+      const [d, ...rest] = locatedOf(program(trigger, "n := $route.path", "slot n : Int = 0\n"));
+      expect(rest).toEqual([]);
+      expect([d?.code, d?.message]).toEqual(["E0201", "Expected Int but got Text"]);
+    });
+
+    it("reports a field a Route does not have", () => {
+      expect(codesOf(program(trigger, 'seen := $route.parms.get-or("id", "")'))).toEqual(["E0108"]);
+    });
+  });
+
+  it("is none where nothing binds it, so the read is E0119 alone", () => {
+    expect(codesOf(program("ui.click(Other)", "n := $route.path", "slot n : Int = 0\n"))).toEqual([
+      "E0119",
+    ]);
+  });
+
+  it("is untyped in a prefetch target on another trigger, which hands it {}", () => {
+    expect(codesOf(withAhead(program("ui.click(Other)", "n := $route.path", AHEAD)))).toEqual([]);
+  });
+
+  it("is a Route in a prefetch target whose own trigger is a route one", () => {
+    const src = withAhead(program('route.enter("/posts/:id")', "n := $route.path", AHEAD));
+    expect(codesOf(src)).toEqual(["E0201"]);
+  });
+});

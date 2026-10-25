@@ -129,6 +129,10 @@ app TileMountSeveralTiles
 
 Each reducer fires when its tile mounts: rendering `Account` runs `seeAccount`, `seeSettings` and then `seeProfile`, once each. When several tiles mount in the same render, their reducers fire in tree order — an enclosing tile before the tiles inside it, siblings first to last — whatever order the reducers are written in. A tile rendered more than once in that render is one tile and fires once. Several `tile.mount` reducers on one tile all match that tile's one mount event, so they fire in definition order ([§1.6.4](./language.md#_1-6-4-invariants) Invariant 3).
 
+Both events count per tile name, not per instance. `tile.mount(X)` fires when an `X` appears while no `X` is on screen, and `tile.unmount(X)` when the last `X` on screen leaves. A second `X` appearing beside the first fires nothing, and neither does one of two leaving.
+
+An `error-boundary` fallback ([§7.3](#_7-3-error-boundaries-per-tile)) is a tile on screen like any other, wherever the tile that declares it renders. `tile.mount(<fallback>)` fires when the boundary shows it, and `tile.unmount(<fallback>)` fires when it leaves: the declaring tile renders again without panicking, or the declaring tile itself leaves. By the per-name rule above, a fallback that two boundaries show at once leaves only when neither shows it. A fallback that re-renders with the panic still there has not appeared again, and fires nothing. The fallback renders in place of the declaring tile's body, so while it stands in, neither the declaring tile nor any tile under it fires `tile.mount`. When a mounted declaring tile starts panicking, it and the tiles under it fire `tile.unmount`.
+
 ---
 
 ## 7.2 Error Handling
@@ -183,6 +187,8 @@ type PanicInfo = {
 Every field is supplied on every path a panic reaches a program: an `app.error` reducer, a `route.error` reducer, and an `error-boundary` fallback are handed the same record, built once — `route.error` carries the matched `pattern` on top of it, and nothing else differs. `episode-id` is `None` wherever there is no open episode to name, which on the boundary path includes a render that no dispatch is inside, and on the server includes every render: `renderToString` commits its bootstrap episode before it renders. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime emits `reducer "foo"` / `render`.
 
 The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
+
+The checker types `$event` from the standard library's definitions: in an `app.error` reducer it is a `PanicInfo`, and in a `route.error(<pattern>)` reducer a `RouteErrorInfo`, the same fields with `pattern: Text` added ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). A field it does not have — a misspelling, `stack`, or `pattern` in an `app.error` reducer — is [E0108](./errors.md#e0108-undef-member), and a field written into a slot of another type is [E0201](./errors.md#e0201-type-mismatch). A `RouteErrorInfo` is not a `PanicInfo` — a record type matches only its own field set — so a slot that keeps an `app.error` panic whole is an `Option(PanicInfo)`, and one that keeps a `route.error` panic whole is an `Option(RouteErrorInfo)`.
 
 ---
 
