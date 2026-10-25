@@ -10,7 +10,7 @@ import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "
 import { inferType, prim, typeName } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { bindsRoute, collectTileBuiltinKinds, subscriptionIds } from "./tile-collect.ts";
+import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
@@ -84,7 +84,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   }
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
     const def = sym.tiles.get(r.on.selector.tile);
-    if (def !== undefined) {
+    if (def !== undefined && !namedByHandler(r.name, sym)) {
       const wired = subscriptionIds(def, r.on.ev, sym);
       if (wired.known && wired.ids.size > 0 && !wired.ids.has(r.on.selector.id)) {
         const actual = [...wired.ids]
@@ -106,7 +106,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
     const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
     if (allowed != null) {
-      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const descendants = subscribedKinds(r.on.selector.tile, sym);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         errors.push({

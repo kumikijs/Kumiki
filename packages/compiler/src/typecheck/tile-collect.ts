@@ -8,15 +8,27 @@ import {
 } from "../ast.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
 import { boundaryTarget, expansionTargets } from "../def-graph.ts";
-import { HANDLER_NAMES, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
+import { HANDLER_NAMES, handlerReducerName, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import type { SymbolTable } from "./context.ts";
 
+/**
+ * The kinds a handler written at the tile's call site can land on (W0213). A nested tile's
+ * `error-boundary` fallback is rendered without that call site's handlers, so it is left out.
+ */
 export function collectTileBuiltinKinds(tileName: string, sym: SymbolTable): Set<string> {
-  const tree = renderedTree(tileName, sym);
+  return kindsIn(renderedTree(tileName, sym, false));
+}
+
+/** The kinds a subscription on the tile is wired onto (W0212), a nested tile's fallback included. */
+export function subscribedKinds(tileName: string, sym: SymbolTable): Set<string> {
+  return kindsIn(renderedTree(tileName, sym, true));
+}
+
+function kindsIn(tree: RenderedTree): Set<string> {
   return new Set([...tree.root.values(), ...tree.inner.values()].map((e) => e.kind));
 }
 
-/** `id` is `null` when there is no literal to read: computed, absent, or decided by a call site. */
+/** `id` is `null` when there is no literal to read: computed, absent, or unknown at a call site. */
 type RenderedElement = { readonly kind: string; readonly id: string | null };
 
 /**
@@ -35,12 +47,13 @@ function addElement(into: Map<string, RenderedElement>, el: RenderedElement): vo
   into.set(JSON.stringify([el.kind, el.id]), el);
 }
 
-// The edges codegen lowers a tile by: its body's expansion, plus the error-boundary
-// fallback of each tile called in it, which renders in that call's place. The tile's own
-// fallback replaces its tree and renders outside it, so it is not included.
+// The edges codegen lowers a tile by: its body's expansion, plus, with `fallbacks`, the
+// error-boundary fallback of each tile called in it, which renders in that call's place. The
+// tile's own fallback replaces its tree and renders outside it, so it is not included.
 function renderedTree(
   tileName: string,
   sym: SymbolTable,
+  fallbacks: boolean,
   memo: Map<string, RenderedTree> = new Map(),
 ): RenderedTree {
   const known = memo.get(tileName);
@@ -62,7 +75,7 @@ function renderedTree(
     }
     const callee = sym.tiles.get(edge.to);
     if (!callee) continue;
-    const sub = renderedTree(callee.name, sym, memo);
+    const sub = renderedTree(callee.name, sym, fallbacks, memo);
     const decided = edge.call ? callSiteId(edge.call) : undefined;
     for (const el of sub.root.values()) {
       addElement(here, decided === undefined ? el : { kind: el.kind, id: decided });
@@ -70,9 +83,9 @@ function renderedTree(
     for (const el of sub.inner.values()) addElement(inner, el);
     // Only a call is lowered with its callee's boundary; an identifier
     // argument standing in for the tile inlines the body alone.
-    const boundary = edge.call ? boundaryTarget(callee) : null;
+    const boundary = fallbacks && edge.call ? boundaryTarget(callee) : null;
     if (boundary && sym.tiles.has(boundary.to)) {
-      const fallback = renderedTree(boundary.to, sym, memo);
+      const fallback = renderedTree(boundary.to, sym, fallbacks, memo);
       for (const el of fallback.root.values()) addElement(here, el);
       for (const el of fallback.inner.values()) addElement(inner, el);
     }
@@ -82,10 +95,16 @@ function renderedTree(
   return tree;
 }
 
-// A call site's props are merged onto its tile's root elements, so an id written there
-// replaces theirs. What any other prop leaves the dispatch payload holding is not followed,
-// so the id is unknown then too. Handlers and `key` are not props.
-function callSiteId(call: TileExpr & { kind: "TileCall" }): string | null | undefined {
+/**
+ * What one use of a tile leaves the elements it renders at its root with: a literal `id`, `null`
+ * where the id is unknown, or `undefined` where the use writes none, so they keep their own.
+ */
+type Imposed = string | null | undefined;
+
+// A call site's props are merged onto its tile's root elements, so a literal id written there
+// replaces theirs. What a call site that writes no id but another prop leaves the dispatch
+// payload holding is not followed, so the id is unknown then. Handlers and `key` are not props.
+function callSiteId(call: TileExpr & { kind: "TileCall" }): Imposed {
   const id = writtenValue(call, "id");
   if (id !== undefined) return id.kind === "Str" ? id.value : null;
   const names = [...call.props.map((p) => p.name), ...call.args.map((a) => a.name)];
@@ -93,22 +112,78 @@ function callSiteId(call: TileExpr & { kind: "TileCall" }): string | null | unde
   return writesProp ? null : undefined;
 }
 
+/** A place the tile renders from: the tile whose body renders it, at its root or not, and what that call site imposes. */
+type Use = { readonly by: string; readonly root: boolean; readonly id: Imposed };
+
+function usesByTile(sym: SymbolTable): Map<string, Use[]> {
+  const uses = new Map<string, Use[]>();
+  const add = (tile: string, use: Use): void => {
+    uses.set(tile, [...(uses.get(tile) ?? []), use]);
+  };
+  for (const def of sym.tiles.values()) {
+    for (const edge of expansionTargets(def.body)) {
+      const id = edge.call ? callSiteId(edge.call) : undefined;
+      add(edge.to, { by: def.name, root: edge.root, id });
+      // A call's fallback renders in its place, outside the props the call writes.
+      const callee = edge.call ? sym.tiles.get(edge.to) : undefined;
+      const boundary = callee ? boundaryTarget(callee) : null;
+      if (boundary) add(boundary.to, { by: def.name, root: edge.root, id: undefined });
+    }
+  }
+  return uses;
+}
+
+// A route renders its tile, or that tile's fallback, with no call site at all.
+function routeTargets(sym: SymbolTable): Set<string> {
+  const targets = [
+    ...(sym.app?.routes ?? []),
+    ...[...sym.tiles.values()].flatMap((t) => t.subRoutes ?? []),
+  ].flatMap((r) => (r.tile.startsWith(">>") ? [] : [r.tile]));
+  const fallbacks = targets.flatMap((name) => {
+    const def = sym.tiles.get(name);
+    const boundary = def ? boundaryTarget(def) : null;
+    return boundary ? [boundary.to] : [];
+  });
+  return new Set([...targets, ...fallbacks]);
+}
+
+// Each call site up a chain of tiles that render the tile at their root merges its props onto
+// the same elements, the outermost last (`_attachProps`), so a use is followed up that chain.
+function imposedIds(
+  tile: string,
+  uses: ReadonlyMap<string, readonly Use[]>,
+  routes: ReadonlySet<string>,
+  memo: Map<string, ReadonlySet<Imposed>>,
+): ReadonlySet<Imposed> {
+  const known = memo.get(tile);
+  if (known) return known;
+  memo.set(tile, new Set([undefined]));
+  const out = new Set<Imposed>();
+  if (routes.has(tile)) out.add(undefined);
+  for (const use of uses.get(tile) ?? []) {
+    if (!use.root) {
+      out.add(use.id);
+      continue;
+    }
+    for (const above of imposedIds(use.by, uses, routes, memo)) {
+      out.add(above === undefined ? use.id : above);
+    }
+  }
+  // A tile nothing renders keeps its own ids, as it would wherever it rendered.
+  if (out.size === 0) out.add(undefined);
+  memo.set(tile, out);
+  return out;
+}
+
 type TileIdCollection =
   | { readonly known: true; readonly ids: ReadonlySet<string> }
   | { readonly known: false };
 
-// The subscription reaches the tile wherever it is called, so its root elements count
-// as each call site leaves them as well as as they render.
+// The subscription reaches the tile wherever it renders, so each element at its root has
+// the id each use leaves it with.
 export function subscriptionIds(tile: TileDef, ev: string, sym: SymbolTable): TileIdCollection {
-  const tree = renderedTree(tile.name, sym);
-  const decided: (string | null)[] = [];
-  for (const def of sym.tiles.values()) {
-    for (const edge of expansionTargets(def.body)) {
-      if (edge.to !== tile.name || !edge.call) continue;
-      const id = callSiteId(edge.call);
-      if (id !== undefined) decided.push(id);
-    }
-  }
+  const tree = renderedTree(tile.name, sym, true);
+  const imposed = imposedIds(tile.name, usesByTile(sym), routeTargets(sym), new Map());
   const fires = UI_EVENT_TILE_KINDS[ev];
   const ids = new Set<string>();
   let known = true;
@@ -118,14 +193,52 @@ export function subscriptionIds(tile: TileDef, ev: string, sym: SymbolTable): Ti
   };
   for (const el of tree.root.values()) {
     if (fires && !fires.has(el.kind)) continue;
-    read(el.id);
-    for (const id of decided) read(id);
+    for (const id of imposed) read(id === undefined ? el.id : id);
   }
   for (const el of tree.inner.values()) {
     if (fires && !fires.has(el.kind)) continue;
     read(el.id);
   }
   return known ? { known: true, ids } : { known: false };
+}
+
+/**
+ * Whether a handler anywhere names the reducer. `onClick=r` is filtered by `r`'s `#id` too, on
+ * whatever element carries it, so E0212 cannot tell which ids reach it.
+ */
+export function namedByHandler(reducer: string, sym: SymbolTable): boolean {
+  const named = new Set<string>();
+  for (const def of sym.tiles.values()) collectHandlerReducers(def.body, named);
+  return named.has(reducer);
+}
+
+function collectHandlerReducers(expr: TileExpr, out: Set<string>): void {
+  const add = (value: Expr | TileExpr): void => {
+    const name = handlerReducerName(value);
+    if (name !== null) out.add(name);
+  };
+  switch (expr.kind) {
+    case "TileFor":
+    case "TileWhen":
+      collectHandlerReducers(expr.body, out);
+      return;
+    case "TileIf":
+      collectHandlerReducers(expr.consequent, out);
+      collectHandlerReducers(expr.alternate, out);
+      return;
+    case "TileMatch":
+      for (const arm of expr.arms) collectHandlerReducers(arm.body, out);
+      return;
+    case "TileCall":
+      for (const p of expr.props) if (HANDLER_NAMES.has(p.name)) add(p.value);
+      for (const a of expr.args) {
+        if (a.name !== undefined && HANDLER_NAMES.has(a.name)) add(a.value);
+        else if (isTileExpr(a.value)) collectHandlerReducers(a.value, out);
+      }
+      return;
+    default:
+      assertNever(expr);
+  }
 }
 
 export function bindsRoute(r: ReducerDef, sym: SymbolTable): boolean {
