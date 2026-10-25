@@ -8,6 +8,13 @@ import {
   type TypeExpr,
 } from "../ast.ts";
 import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "../builtins.ts";
+import {
+  type RouteMapEntry,
+  redirectCycles,
+  staticPaths,
+  unboundRedirectNames,
+} from "../redirects.ts";
+import { appType, primType } from "../stdlib-types.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
@@ -27,7 +34,7 @@ import {
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
@@ -41,8 +48,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    ctx.localBinds.add("$1");
-    ctx.localTypes.set("$1", tile.in);
+    bindLocal(ctx, "$1", tile.in);
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
@@ -110,6 +116,30 @@ export function checkRouteTargetArity(
   });
 }
 
+/** A loop through a parameter or a wildcard is not visible in the table, and is the runtime's to stop. */
+export function checkRedirects(
+  entries: readonly RouteMapEntry[],
+  errors: KumikiError[],
+  ownedElsewhere: ReadonlySet<string> = new Set(),
+): void {
+  for (const { entry, target, name } of unboundRedirectNames(entries)) {
+    errors.push({
+      code: "E0125",
+      kind: "redirect-unbound-param",
+      message: `Redirect "${entry.path}" ->> "${target}" names "${name}", which "${entry.path}" does not bind`,
+      pos: entry.pathPos,
+    });
+  }
+  for (const { first, loop } of redirectCycles(entries, ownedElsewhere)) {
+    errors.push({
+      code: "E0010",
+      kind: "redirect-cycle",
+      message: `Redirect "${first.path}" comes back to itself (${loop.join(" ->> ")})`,
+      pos: first.pathPos,
+    });
+  }
+}
+
 function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
@@ -134,6 +164,8 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: dup.pos,
     });
   }
+  // A top-level static route owns its path ahead of the parent's `/*`, so the map never sees it.
+  checkRedirects(subRoutes, errors, staticPaths(sym.app?.routes ?? []));
   const app = sym.app;
   if (!app) return;
   const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
@@ -223,7 +255,7 @@ export function checkTileExpr(
       return;
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(t.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
@@ -471,11 +503,17 @@ function checkTileCall(
           pos: ref.pos,
         });
       }
+    } else if (t.name === "link" && prop.name === "prefetch-args") {
+      // Handed on as the prefetch target's `$route.params`.
+      checkExpr(prop.value, sym, errors, ctx);
+      checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
     }
   }
 }
+
+const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));
 
 function checkHandlerBinding(
   tileName: string,
