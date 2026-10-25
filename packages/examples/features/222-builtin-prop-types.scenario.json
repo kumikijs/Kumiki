@@ -1,7 +1,7 @@
 {
   "steps": [
     {
-      "label": "the select shows each option's label, and the modal starts closed",
+      "label": "the select shows each option's label, and the slot the modal's open reads starts false",
       "expect": {
         "noErrors": true,
         "state": {
@@ -55,7 +55,7 @@
       }
     },
     {
-      "label": "Close inside the modal clears it again",
+      "label": "Close inside the modal clears that slot again",
       "do": {
         "click": "#close"
       },

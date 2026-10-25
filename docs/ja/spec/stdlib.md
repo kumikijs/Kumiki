@@ -496,7 +496,7 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 
 ### 2.3.11 props の型 {#_2-3-11-prop-types}
 
-下表の各 prop は表が与える型の値を取り、その型を持ちえない値は [E0201](./errors.md#e0201-type-mismatch) である。prop を名前付き引数で書いても `{…}` ブロックに書いても、その値の位置で報告する：名前付き引数はどこに書かれても prop である（[言語 §1.7.1](./language.md#_1-7-1-構文)）。テキストはそれが綴る値としては読まれない——`"false"` は `Bool` ではなく、`"2"` は数値ではない——うえ、選択肢は `label` と `value` だけで読まれるので、別の型の値は失敗せずに別のものを描画する：`open="false"` は空でないテキストなのでモーダルを開いた状態で描画し、`disabled="true"` は `true` ではないのでボタンを有効のままにし、`level="2"` は数値ではないので `<h1>` になる。
+下表の各 prop は表が与える型の値を取り、その型を持ちえない値は [E0201](./errors.md#e0201-type-mismatch) である。builtin 自身の呼び出しに prop を名前付き引数で書いても `{…}` ブロックに書いても、その値の位置で報告する：名前付き引数はどこに書かれても prop である（[言語 §1.7.1](./language.md#_1-7-1-構文)）。user tile に書いた prop は、その tile が描画するノードにマージされるが（[言語 §1.7.3](./language.md#_1-7-3-event-handler-props)）、この表に照らしては検査しない。テキストはそれが綴る値としては読まれない——`"false"` は `Bool` ではなく、`"2"` は数値ではない——うえ、選択肢は `label` と `value` だけで読まれるので、別の型の値は失敗せずに別のものを描画する：`open="false"` は空でないテキストなのでモーダルを開いた状態で描画し、`disabled="true"` は `true` ではないのでボタンを有効のままにし、`level="2"` は数値ではないので `<h1>` になる。
 
 | prop | 型 | 要素 |
 |---|---|---|
@@ -506,9 +506,10 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `multiple` | `Bool` | `input` |
 | `value` | `Bool` | `check`, `switch` |
 | `selected` | `Bool` | `radio` |
-| `options` | `List({label, value})` | `select` |
+| `options` | `List({label: Text, value})` | `select` |
 | `value`, `min`, `max`, `step` | `Float` | `slider` |
-| `auto-complete`, `novalidate` | `Bool` | `form` |
+| `auto-complete` | `Text` | `form` |
+| `novalidate` | `Bool` | `form` |
 | `level` | `Float` | `heading` |
 | `external` | `Bool` | `link` |
 | `controls`, `autoplay` | `Bool` | `video` |
@@ -516,9 +517,9 @@ Kumiki の組み込みタイル。**意味タグ**であり HTML タグの直訳
 | `open` | `Bool` | `modal`, `drawer`, `popover`, `details` |
 | `value`, `max` | `Float` | `progress` |
 
-最初の 2 行は [フォーム §5.3](./forms.md#_5-3-入力要素の共通-props) がすべての入力要素に与える props であり、`form` の行は [フォーム §5.2.1](./forms.md#_5-2-1-form-props) である。`check` / `switch` の `value` と `radio` の `selected` は、`bind=` なしで書かれたコントロールの選択状態である（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。`Float` の prop は、あらゆる `Float` の位置と同じく `Int` も取る（[E0201](./errors.md#e0201-type-mismatch)）。`List({label, value})` は、選択肢が表示するテキストである `label` と、選んだときに書き込まれる `value` をそれぞれ持つレコードの `List` である。レコードはほかのフィールドを持ってもよく、それらは読まれない。したがって `options=["apple", "pear"]` は各要素で拒否され、`value` の無い要素も同様に拒否される。
+最初の 2 行は [フォーム §5.3](./forms.md#_5-3-入力要素の共通-props) の共通 props を、その行が挙げる各要素について型付けするものであり、`form` の 2 行は [フォーム §5.2.1](./forms.md#_5-2-1-form-props) である。`check` / `switch` の `value` と `radio` の `selected` は、`bind=` なしで書かれたコントロールの選択状態である（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）。`Float` の prop は、あらゆる `Float` の位置と同じく `Int` も取る（[E0201](./errors.md#e0201-type-mismatch)）。`List({label: Text, value})` は、選択肢が表示する `Text` である `label` と、選んだときに書き込まれる `value` をそれぞれ持つレコードの `List` である。レコードはほかのフィールドを持ってもよく、それらは読まれない。したがって `options=["apple", "pear"]` は各要素で拒否され、`label` か `value` の無い要素や、`label` が `Text` でない要素（`{label: 7, value: "a"}`。数値は `.show` で表示する）も同様に拒否される。`if`・`match`・`let` で書いた値は分岐ごとに、リテラルは要素ごとに判定するので、報告は誤っている分岐や要素の位置に出る。
 
-表に無い prop は型に照らして検査しない：`title`・`text`・`summary` はどの値も `show` と同じく表示し、`rows` や `colspan` のような属性はその値のテキストを取る。
+この表もほかの節も型を与えない prop は、型に照らして検査しない：`title`・`text`・`summary` はどの値も `show` と同じく表示し、`rows` や `colspan` のような属性はその値のテキストを取る。
 
 ---
 

@@ -1,11 +1,12 @@
-import { isOpaque, recordFieldType, typeToString, unaliasType } from "../assignable.ts";
+import { assignable, isOpaque, recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, TileExpr, TypeExpr } from "../ast.ts";
-import { builtinPropType, OPTION_SPELLING, PROP_TYPE_SPELLING } from "../builtin-props.ts";
+import { builtinPropType } from "../builtin-props.ts";
 import { contentArg } from "../builtins.ts";
 import { checkAgainst } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
-import { pushMismatch } from "./expr.ts";
+import { letInScope, pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
+import { armScope } from "./patterns.ts";
 import { writtenValue } from "./tile-collect.ts";
 
 const BUTTON_TYPES = new Set(["submit", "button", "reset"]);
@@ -98,7 +99,7 @@ export function checkA11y(
   }
 }
 
-// Asked of the named argument and the `{…}` block alike: `modal(open=…)` and `modal() {open: …}` are one prop.
+// The checker reads the named argument and the `{…}` block as one prop.
 export function checkBuiltinProp(
   tile: string,
   prop: string,
@@ -116,42 +117,72 @@ export function checkBuiltinProp(
   checkAgainst(value, prim(want, value.pos), sym, errors, ctx);
 }
 
+const OPTION_SPELLING = "{label: Text, value}";
+const OPTIONS_SPELLING = `List(${OPTION_SPELLING})`;
+
 // Not `checkAgainst` against a record type: an option may carry fields beyond `label` and `value`,
-// which a record type would refuse. A literal is judged entry by entry, so the report lands on the
-// entry that is wrong.
+// which a record type would refuse. Each branch, and each entry of a literal, is judged on its own,
+// so the report lands on the value that is wrong.
 function checkSelectOptions(value: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (value.kind === "ListLit") {
-    for (const item of value.items) {
-      const t = inferType(item, sym, ctx);
-      if (t === null || isOpaque(t, sym) || isOptionRecord(t, sym)) continue;
-      pushMismatch(
-        errors,
-        "E0201",
-        `Expected ${OPTION_SPELLING} but got ${typeToString(t)}`,
-        item.pos,
-      );
+  forEachBranch(value, sym, ctx, (options, scope) => {
+    if (options.kind === "ListLit") {
+      for (const item of options.items) {
+        forEachBranch(item, sym, scope, (entry, at) => checkOption(entry, sym, errors, at));
+      }
+      return;
     }
-    return;
-  }
-  const t = inferType(value, sym, ctx);
-  if (t === null || isOpaque(t, sym)) return;
-  const list = unaliasType(t, sym);
-  const elem =
-    list?.kind === "TypeApp" && list.name === "List" ? (list.args[0] ?? null) : undefined;
-  if (elem !== undefined && (isOpaque(elem, sym) || isOptionRecord(elem, sym))) return;
+    const t = inferType(options, sym, scope);
+    if (t === null || isOpaque(t, sym)) return;
+    const list = unaliasType(t, sym);
+    const elem =
+      list?.kind === "TypeApp" && list.name === "List" ? (list.args[0] ?? null) : undefined;
+    if (elem !== undefined && (isOpaque(elem, sym) || isOptionRecord(elem, sym))) return;
+    pushMismatch(
+      errors,
+      "E0201",
+      `Expected ${OPTIONS_SPELLING} but got ${typeToString(t)}`,
+      options.pos,
+    );
+  });
+}
+
+function checkOption(entry: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  const t = inferType(entry, sym, ctx);
+  if (t === null || isOpaque(t, sym) || isOptionRecord(t, sym)) return;
   pushMismatch(
     errors,
     "E0201",
-    `Expected ${PROP_TYPE_SPELLING.Options} but got ${typeToString(t)}`,
-    value.pos,
+    `Expected ${OPTION_SPELLING} but got ${typeToString(t)}`,
+    entry.pos,
   );
+}
+
+// An `if`, `match` or `let` lands one of its branches, read in that branch's scope, as `checkAgainst`
+// reads them.
+function forEachBranch(
+  e: Expr,
+  sym: SymbolTable,
+  ctx: Ctx,
+  visit: (branch: Expr, scope: Ctx) => void,
+): void {
+  if (e.kind === "IfExpr") {
+    forEachBranch(e.consequent, sym, ctx, visit);
+    forEachBranch(e.alternate, sym, ctx, visit);
+  } else if (e.kind === "LetIn") {
+    forEachBranch(e.body, sym, letInScope(e, sym, ctx), visit);
+  } else if (e.kind === "MatchExpr") {
+    const scrutType = inferType(e.scrutinee, sym, ctx);
+    for (const arm of e.arms)
+      forEachBranch(arm.body, sym, armScope(arm, scrutType, sym, ctx), visit);
+  } else {
+    visit(e, ctx);
+  }
 }
 
 function isOptionRecord(t: TypeExpr | null, sym: SymbolTable): boolean {
   const u = unaliasType(t, sym);
-  return (
-    u?.kind === "TypeRecord" &&
-    recordFieldType(u, "label") !== null &&
-    recordFieldType(u, "value") !== null
-  );
+  if (u?.kind !== "TypeRecord") return false;
+  const label = recordFieldType(u, "label");
+  if (label === null || recordFieldType(u, "value") === null) return false;
+  return isOpaque(label, sym) || assignable(label, prim("Text", u.pos), sym);
 }

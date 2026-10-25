@@ -497,7 +497,7 @@ Both rendering paths write them: what a mounted element carries, a served page c
 
 ### 2.3.11 Prop Types
 
-Each prop below takes a value of the type the table gives it, and a value that cannot have that type is [E0201](./errors.md#e0201-type-mismatch), reported at the value, whether the prop is written as a named argument or in the `{…}` block: a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)). No text is read as the value it spells — `"false"` is not a `Bool`, and `"2"` is not a number — and an option is read by its `label` and `value` alone, so a value of another type renders something else rather than failing: `open="false"` is a non-empty text and renders the modal open, `disabled="true"` is not `true` and leaves the button enabled, and `level="2"` is no number and renders an `<h1>`.
+Each prop below takes a value of the type the table gives it, and a value that cannot have that type is [E0201](./errors.md#e0201-type-mismatch), reported at the value, whether the prop is written on the builtin's own call as a named argument or in the `{…}` block: a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)). A prop written on a user tile, which is merged onto the node that tile renders ([Language §1.7.3](./language.md#_1-7-3-event-handler-props)), is not checked against the table. No text is read as the value it spells — `"false"` is not a `Bool`, and `"2"` is not a number — and an option is read by its `label` and `value` alone, so a value of another type renders something else rather than failing: `open="false"` is a non-empty text and renders the modal open, `disabled="true"` is not `true` and leaves the button enabled, and `level="2"` is no number and renders an `<h1>`.
 
 | prop | Type | Elements |
 |---|---|---|
@@ -507,9 +507,10 @@ Each prop below takes a value of the type the table gives it, and a value that c
 | `multiple` | `Bool` | `input` |
 | `value` | `Bool` | `check`, `switch` |
 | `selected` | `Bool` | `radio` |
-| `options` | `List({label, value})` | `select` |
+| `options` | `List({label: Text, value})` | `select` |
 | `value`, `min`, `max`, `step` | `Float` | `slider` |
-| `auto-complete`, `novalidate` | `Bool` | `form` |
+| `auto-complete` | `Text` | `form` |
+| `novalidate` | `Bool` | `form` |
 | `level` | `Float` | `heading` |
 | `external` | `Bool` | `link` |
 | `controls`, `autoplay` | `Bool` | `video` |
@@ -517,9 +518,9 @@ Each prop below takes a value of the type the table gives it, and a value that c
 | `open` | `Bool` | `modal`, `drawer`, `popover`, `details` |
 | `value`, `max` | `Float` | `progress` |
 
-The first two rows are the props [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements) gives every input element, and the `form` row is [Forms §5.2.1](./forms.md#_5-2-1-form-props). `value` on `check` / `switch` and `selected` on `radio` are the selection of a control written without `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)). A `Float` prop takes an `Int` too, as every `Float` position does ([E0201](./errors.md#e0201-type-mismatch)). `List({label, value})` is a `List` of records that each carry a `label`, the text the option shows, and a `value`, what choosing it writes; a record may carry other fields as well, which are not read. So `options=["apple", "pear"]` is refused at each entry, and so is an entry with no `value`.
+The first two rows type the common props of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements) on each element the row lists, and the two `form` rows are [Forms §5.2.1](./forms.md#_5-2-1-form-props). `value` on `check` / `switch` and `selected` on `radio` are the selection of a control written without `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)). A `Float` prop takes an `Int` too, as every `Float` position does ([E0201](./errors.md#e0201-type-mismatch)). `List({label: Text, value})` is a `List` of records that each carry a `label`, the `Text` the option shows, and a `value`, what choosing it writes; a record may carry other fields as well, which are not read. So `options=["apple", "pear"]` is refused at each entry, and so is an entry with no `label` or no `value`, or one whose `label` is not a `Text` (`{label: 7, value: "a"}`; a number is shown with `.show`). A value written as an `if`, `match` or `let` is judged branch by branch, and a literal entry by entry, so the report lands on the branch or entry that is wrong.
 
-A prop the table does not list is not checked against a type: `title`, `text` and `summary` show any value as `show` does, and an attribute such as `rows` or `colspan` takes its value's text.
+A prop that neither this table nor another section types is not checked against one: `title`, `text` and `summary` show any value as `show` does, and an attribute such as `rows` or `colspan` takes its value's text.
 
 ---
 

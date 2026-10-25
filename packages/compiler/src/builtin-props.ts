@@ -1,21 +1,12 @@
-// The renderers convert none of these props: `open="false"` is a non-empty text and renders the
-// modal open, `disabled="true"` leaves the button enabled, and a `List(Text)` of options renders an
-// "undefined" option per entry. So the checker holds each value to its type (E0201). The table is
+// No renderer reads a text as the value it spells: `open="false"` is a non-empty text and renders
+// the modal open, `disabled="true"` leaves the button enabled, and a `List(Text)` of options renders
+// an "undefined" option per entry. So the checker holds each value to its type (E0201). The table is
 // published in stdlib.md.
 
-/** `Options` is a `select`'s option list: records with a `label` and a `value`, and maybe more. */
+/** `Options` is a `select`'s option list: records with a `Text` `label` and a `value`, and maybe more. */
 export type BuiltinPropType = "Bool" | "Text" | "Float" | "Options";
 
-export const PROP_TYPE_SPELLING: Readonly<Record<BuiltinPropType, string>> = {
-  Bool: "Bool",
-  Text: "Text",
-  Float: "Float",
-  Options: "List({label, value})",
-};
-
-export const OPTION_SPELLING = "{label, value}";
-
-export type BuiltinPropRow = {
+type BuiltinPropRow = {
   readonly props: readonly string[];
   readonly type: BuiltinPropType;
   readonly tiles: readonly string[];
@@ -33,7 +24,7 @@ const INPUT_ELEMENTS: readonly string[] = [
   "editable",
 ];
 
-export const BUILTIN_PROP_ROWS: readonly BuiltinPropRow[] = [
+const BUILTIN_PROP_ROWS: readonly BuiltinPropRow[] = [
   {
     props: ["disabled", "readonly", "required", "auto-focus"],
     type: "Bool",
@@ -47,7 +38,8 @@ export const BUILTIN_PROP_ROWS: readonly BuiltinPropRow[] = [
   { props: ["selected"], type: "Bool", tiles: ["radio"] },
   { props: ["options"], type: "Options", tiles: ["select"] },
   { props: ["value", "min", "max", "step"], type: "Float", tiles: ["slider"] },
-  { props: ["auto-complete", "novalidate"], type: "Bool", tiles: ["form"] },
+  { props: ["auto-complete"], type: "Text", tiles: ["form"] },
+  { props: ["novalidate"], type: "Bool", tiles: ["form"] },
   { props: ["level"], type: "Float", tiles: ["heading"] },
   { props: ["external"], type: "Bool", tiles: ["link"] },
   { props: ["controls", "autoplay"], type: "Bool", tiles: ["video"] },

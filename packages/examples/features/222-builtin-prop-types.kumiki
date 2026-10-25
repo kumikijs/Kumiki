@@ -1,15 +1,15 @@
 # Feature (stdlib.md): a builtin tile's prop takes a value of the type
 # the stdlib table gives it, and each value here is one:
 #
-#   select(options=[{label: "Apple", value: "apple"}, …])   List({label, value})
+#   select(options=[{label: "Apple", value: "apple"}, …])   List({label: Text, value})
 #   modal(open=shown, …)                                    Bool
 #   button(text="Save", disabled=true)                      Bool
 #
 # The select shows each label and writes the value chosen, the modal starts
 # closed and opens when `Open` sets `shown`, and the disabled button refuses
-# the click. The renderers read these props with their type and convert
-# nothing, so `kumiki check` refuses a value that cannot have it (E0201),
-# written as a named argument or in the `{…}` block alike:
+# the click. No renderer reads a text as the value it spells, so `kumiki
+# check` refuses a value that cannot have the prop's type (E0201), written as
+# a named argument or in the `{…}` block alike:
 # `options=["apple", "pear"]` is entries with no label and no value,
 # `open="false"` is a non-empty text, which reads as open, and
 # `disabled="true"` is not `true`, which leaves the button enabled.
