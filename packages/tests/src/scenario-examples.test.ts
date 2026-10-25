@@ -1,6 +1,8 @@
-import { feature } from "@kumikijs/examples";
-import { runScenario } from "@kumikijs/runtime";
+import { readFileSync } from "node:fs";
+import { feature, scenarioCases } from "@kumikijs/examples";
+import { runScenario, type Scenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
@@ -52,6 +54,18 @@ describe("examples driven by a scenario", () => {
 });
 
 describe("examples driven by a scenario under a memory router", () => {
+  it("resolves a relative target against the in-memory location (206-memory-router-relative-link)", async () => {
+    const label = "206-memory-router-relative-link";
+    const s = defined(
+      scenarioCases().find((c) => c.label === label),
+      `the scenario of ${label}`,
+    );
+    const app = await loadApp(s.kumiki);
+    const scenario = JSON.parse(readFileSync(s.scenario, "utf8")) as Scenario;
+    const report = await runScenario(app, freshRoot(), scenario, { router: "memory" });
+    expect(report.ok, failureDetail(report)).toBe(true);
+  });
+
   it("routes the initial path, a link, and path params (18-routing)", async () => {
     const app = await loadApp(feature("18-routing"));
     const report = await runScenario(

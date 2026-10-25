@@ -27,7 +27,7 @@ let id = emit fetchQuote()
 
 Two emits of one effect yield two different ids, and cancelling the request one of them starts leaves the other's as it is; the id of an emit the policy drops names the request that absorbed it. The exception is `policy=latest` / `policy=latest-per-key(...)`, which run one request per key: every emit under a key yields that key's id, which names the request currently running under it ([HTTP §6.4](./http.md#_6-4-cancellation)).
 
-The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
+The only operations defined on `EffectId` are equality (`==`, `!=`), storage in a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering, and rendering as text are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse), which lists where): the content of every value builtin (`text(h)`, `heading(h)`, …), `button(text=h)`, `fmt(…)` with `h` among its arguments, and `.show`. `show` is the member every value has ([§2.2.7](#_2-2-7-int-float)), and on an `EffectId` it is E0204 in each spelling: `h.show`, `h.show()` and `T.show(h)` alike. An `EffectId` has no other member. To show whether a handle is held, render what the comparison answers: `text(if h == EffectId.none then "idle" else "loading")`.
 
 `EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
 
@@ -145,6 +145,8 @@ Where the checker cannot decide the receiver's type, neither rule applies: the a
 
 What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
 
+**A key spelled like an `Object.prototype` member is an ordinary key.** Such a key — for example `constructor`, `toString`, `valueOf`, `hasOwnProperty` or `__proto__` — is held only once it is written, as any other key is: on an empty `Map(Text, Int)`, `has("constructor")` is `false`, `get("constructor")` is `None` and `get-or("constructor", 0)` is `0`, and `toggle("toString")` on an empty `Set(Text)` adds it. Once written, such an entry reads back through every member, and `remove` of another key, `intersect`, `diff`, `filter` and `map` keep it as they keep any other.
+
 ### 2.2.3 List(T)
 
 ```
@@ -186,7 +188,7 @@ fn empty() -> Bool = todos.is-empty           # same as above
 fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
-> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
+> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has — on an `EffectId` it is [E0204](./errors.md#e0204-effect-id-misuse), not E0108, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
 
 **The lambda arguments of `map` / `filter` / `find` / `sort-by`** are decided by the receiver's **type**, not by the value at run time:
 - An element that is a `Tuple(A, B)` — the `[k, v]` pair `.entries` produces — is taken apart: `$1` is its first half, `$2` its second. Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`. An `Option` / `Result` holding a `Tuple(A, B)` is taken apart the same way.
@@ -268,12 +270,12 @@ These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier i
 
 An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Non-finite `Float` values — what these functions give outside their domain, and what `/` gives for a zero divisor (`1.0 / 0.0` is `Infinity`; [language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `sort` puts `-Infinity` before every finite value, `Infinity` after, and `NaN` after every other element ([§2.2.3](#_2-2-3-list-t)). Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
-`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
+`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`. On an `EffectId`, an opaque handle whose text is the runtime's to choose, `.show` is [E0204](./errors.md#e0204-effect-id-misuse) ([§2.1.1.1](#_2-1-1-1-effectid)).
 
 ### 2.2.8 Time
 
 ```
-Time.now                    : Time
+Time.now                    : Time            ; the current time — the builtin now (§2.4.2)
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
@@ -406,13 +408,15 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `input` | text input | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | multi-line input | `bind`, `rows`, `placeholder` |
 | `check` | checkbox | `value`, `onClick`, `onChange`, `label` |
-| `radio` | radio button | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | radio button | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | slider | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
 
 `button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
+
+`check` `label` and `radio` `label` are the text beside the box: a `<span>` after the `<input>`, inside the `<label>` that wraps both, on the client and in server rendering alike, and nothing when the label is empty. `radio` `group` is the `name` attribute of its `<input>`, which is what makes the radios sharing it one set ([Forms §5.5.2](./forms.md#_5-5-2-radio)). `slider` `value` is the one-way value of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements): the slider shows it and follows it when a reducer changes it, and a `bind` beside it is read instead ([W0216](./errors.md#w0216-selection-beside-bind-warning)). Both `group` and `value` may be written as an argument or in the props block.
 
 ### 2.3.5 Forms
 
@@ -422,6 +426,8 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `label` | label | `for` |
 | `fieldset` | field set | `legend` |
 | `error` | validation error display | `field` |
+
+`fieldset` `legend` is the caption of the group: a `<legend>` ahead of its children, on the client and in server rendering alike, and none when the legend is empty.
 
 ### 2.3.6 Lists / Tables
 
@@ -509,6 +515,8 @@ The id is a uuid `Text`, so `TypeName` is a type a `Text` goes into: `Text` itse
 ```
 now                        : Time          ; the current time
 ```
+
+`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and a replay answers it from that entry ([§10.5.3](./runtime.md#_10-5-3-replay)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so on a type declared over `Time` (`type Stamp = nominal Time`) `Stamp.now()` is an [E0116](./errors.md#e0116-undef-call). A bare `Stamp.now` is still a field read that passes `check` and evaluates to nothing, a known gap that E0116 describes.
 
 ### 2.4.3 Type Conversion
 
