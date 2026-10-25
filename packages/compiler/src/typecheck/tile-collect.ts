@@ -1,5 +1,6 @@
 import {
   assertNever,
+  type Expr,
   isTileExpr,
   type ReducerDef,
   type TileDef,
