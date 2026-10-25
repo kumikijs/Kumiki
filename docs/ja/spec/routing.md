@@ -96,6 +96,8 @@ tile TodoDetail = column(
                     ...)
 ```
 
+この slot はどこで読んでも — tile、reducer、`fn`、テスト、`run-reducer` が返す `slots` — この型を持ち、`route.enter` / `route.leave` / `route.error` の reducer の [`$route`](#_3-4-ルートライフサイクル) も同じである。型に無いフィールド、たとえば `route.parms` は [E0108](./errors.md#e0108-undef-member) であり、`Int` の slot への `depth := route.path` は [E0201](./errors.md#e0201-type-mismatch) である。検査器はどちらも標準ライブラリの `Route` の定義から型付けする。それ以外のトリガの[プリフェッチ](#_3-8-prefetch)対象は `$route` を宣言された型なしで読む：自分のトリガで発火したときは空だからだ（[§3.4](#_3-4-ルートライフサイクル)）。
+
 ---
 
 ## 3.3 ルート遷移
@@ -263,13 +265,15 @@ tile SettingsLayout
 
 `route-outlet()` は親ルート tile 内で子の描画位置を指定するプリミティブ。
 
+親自身の body に書かれている必要はない。body が描画する tile——レイアウト用の補助 tile で、何段下にあってもよい——は親の木にインライン展開されるので、その outlet は親の outlet である。自身も `sub-routes` を宣言している tile も同じで、この親の中で描画されればその outlet はこの親の子を映し、その tile 自身の `sub-routes` が使われるのは、それがルートのターゲットになっている場所である。描画する木のどこにも `route-outlet` が無い親は [E0113](./errors.md#e0113-sub-routes-without-outlet) になる。
+
 ### 3.6.3 マッチング規則 {#_3-6-3-matching-rules}
 
 - 親の `sub-routes` マップが使われるのは、[§3.1.2](#_3-1-2-マッチ順序) がそのパスに親を選んだときだけ。より具体的な兄弟（`"/settings/*"` と並ぶ `"/settings/:section"`）があればそちらがパスを取り、親を介さず自分のターゲットを描画する
 - 子ルートは親パターン `/settings/*` の中で再マッチング
 - 子ルートにマッチしなければ親の `/settings` (デフォルト) を使う
 - それも無ければグローバル `/404`、つまり `app.routes` のものへ（[§3.1.3](#_3-1-3-404-is-reserved)）
-- 親 tile 内に複数の `route-outlet()` を置いた場合の挙動は **未定義**。ランタイムは最初に見つかった outlet にのみ子を描画し、残りは空のまま放置する。tile 設計では outlet を 1 つに保つこと。
+- 1 つの親 tile が描画する木の中に複数の `route-outlet()` がある場合の挙動は **未定義**。ランタイムは最初に見つかった outlet にのみ子を描画し、残りは空のまま放置する。tile 設計では outlet を 1 つに保つこと。
 - 子は親の**配下**で描画される。親の `error-boundary` は子を覆い、子が自身で宣言した境界があればそちらが勝つ（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。
 
 ---
@@ -310,7 +314,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。reducer 名は上のように裸の識別子で書くほか、文字列リテラルでも書ける：`prefetch: "loadTodo"` も同じ reducer を指す。
+`prefetch` は `IntersectionObserver` を経由してビューポート進入時に発火する標準機能。reducer は `route.enter` のときと同じ引数バインドで呼ばれる。reducer 名は上のように裸の識別子で書くほか、文字列リテラルでも書ける：`prefetch: "loadTodo"` も同じ reducer を指す。`prefetch-args` は reducer が `$route.params` として読むものなので `Map(Text, Text)` であり、`{"id": 7}` は [E0201](./errors.md#e0201-type-mismatch) である。
 
 ---
 

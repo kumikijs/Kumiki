@@ -303,5 +303,6 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `171-property-test-count.kumiki` | slot, reducer, tile | testing | [§8.3.1](./testing.md#_8-3-1-syntax) |
 | `204-input-props-rendered.kumiki` | slot, reducer, tile | stdlib | [§2.3.4](./stdlib.md#_2-3-4-input-elements) [§2.3.5](./stdlib.md#_2-3-5-forms) |
+| `216-selector-id-descendants.kumiki` | slot, reducer, tile | core | [§1.6.2](./language.md#_1-6-2-selectors) |
 <!-- examples:end -->
 :::

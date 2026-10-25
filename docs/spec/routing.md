@@ -96,6 +96,8 @@ tile TodoDetail = column(
                     ...)
 ```
 
+The slot has this type wherever it is read — a tile, a reducer, a `fn`, a test, and the `slots` that `run-reducer` answers — and so does [`$route`](#_3-4-route-lifecycle) in a `route.enter` / `route.leave` / `route.error` reducer. A field the type does not have, such as `route.parms`, is [E0108](./errors.md#e0108-undef-member), and `depth := route.path` into an `Int` slot is [E0201](./errors.md#e0201-type-mismatch). The checker types both from the standard library's definition of `Route`. A [prefetch](#_3-8-prefetch) target on another trigger reads `$route` with no declared type: on its own trigger it is empty ([§3.4](#_3-4-route-lifecycle)).
+
 ---
 
 ## 3.3 Route Transitions
@@ -263,13 +265,15 @@ tile SettingsLayout
 
 `route-outlet()` is a primitive that specifies where children are rendered within the parent route tile.
 
+It need not be written in the parent's own body. A tile the body renders — a layout helper, any number of tiles down — is inlined into the parent's tree, so its outlet is the parent's outlet. That includes a tile that declares `sub-routes` of its own: rendered inside this parent, its outlet shows this parent's child, and its own `sub-routes` apply where it is the route target. A parent with no `route-outlet` anywhere in the tree it renders is [E0113](./errors.md#e0113-sub-routes-without-outlet).
+
 ### 3.6.3 Matching Rules
 
 - A parent's `sub-routes` map applies only when [§3.1.2](#_3-1-2-match-order) selects that parent for the path; a more specific sibling (`"/settings/:section"` beside `"/settings/*"`) takes the path and renders its own target, without the parent
 - Child routes are re-matched within the parent pattern `/settings/*`
 - If no child route matches, the parent's `/settings` (default) is used
 - If that also fails, fall through to the global `/404`, the one in `app.routes` ([§3.1.3](#_3-1-3-404-is-reserved))
-- Multiple `route-outlet()` calls inside a single parent tile are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
+- Multiple `route-outlet()` calls in the tree a single parent tile renders are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
 - The child renders **under** the parent: an `error-boundary` on the parent covers it, and a boundary the child declares itself wins ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)).
 
 ---
@@ -310,7 +314,7 @@ link(to="/todos/abc-123") {
 }
 ```
 
-`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer.
+`prefetch` is a standard feature that fires on viewport entry via `IntersectionObserver`. The reducer is called with the same argument binding as for `route.enter`. The reducer is named bare, as above, or as a string literal: `prefetch: "loadTodo"` names the same reducer. `prefetch-args` is what the reducer reads as `$route.params`, so it is a `Map(Text, Text)`, and `{"id": 7}` is [E0201](./errors.md#e0201-type-mismatch).
 
 ---
 
