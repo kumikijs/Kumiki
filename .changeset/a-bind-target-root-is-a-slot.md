@@ -1,5 +1,5 @@
 ---
-"@kumikijs/compiler": patch
+"@kumikijs/compiler": minor
 ---
 
 Report a `bind=` target whose root is not a slot (E0229)
@@ -42,12 +42,15 @@ checker knows it to be:
 
 A local named like a slot hides it, as for any read, so `for title in xs
 input(bind=title)` is reported beside a slot `title`; so are a `match`
-binding, the `route`, a number or `Bool` literal, and any other expression
-(`bind=f(x)`, `bind=a + b`). Every control that writes back from a bind is
-asked — `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio`,
-`editable`. A slot, a field path into one (`bind=form.email`,
-`bind=form.addr.city`) and an `Option`'s payload (`bind=d.get.title`) check as
-before, and so does a slot bound by name inside a tile that takes an input.
+binding, a number or `Bool` literal, and any other expression (`bind=f(x)`,
+`bind=a + b`). `route` is a slot only navigation moves, so `bind=route.path`
+is reported as the route slot, with `link(to=…)` and `navigate` as the fix. A
+file input is left to E0205, which already rejects any bind on it. Every
+control that writes back from a bind is asked — `input`, `textarea`,
+`select`, `slider`, `check`, `switch`, `radio`, `editable`. A slot, a field
+path into one (`bind=form.email`, `bind=form.addr.city`) and an `Option`'s
+payload (`bind=d.get.title`) check as before, and so does a slot bound by name
+inside a tile that takes an input.
 
 The checker and the lowering read a target through one function, so the root
 the checker asks about is the one the lowering writes. forms.md now says
