@@ -1,5 +1,5 @@
 import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
-import { decodedType } from "../builtin-calls.ts";
+import { callsBuiltin, decodedType, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import {
   addBind,
@@ -63,6 +63,10 @@ function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   const refine = refinementJs({ kind: "TypeRef", name: qualifier, pos }, ctx.gen);
   if (refine === undefined) return read;
   return `((_o) => (_o._tag === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
+}
+
+function fnCallJs(callee: string, args: Expr[], ctx: EvalCtx): string {
+  return `${jsBinding(callee)}(${args.map((a) => jsOfExpr(a, ctx)).join(", ")})`;
 }
 
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
@@ -143,7 +147,10 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     }
     case "Call": {
       const cn = e.callee;
-      if (cn === "run-reducer") {
+      if (!callsBuiltin(cn, (name) => ctx.gen.fns.some((f) => f.name === name))) {
+        return fnCallJs(cn, e.args, ctx);
+      }
+      if (cn === RUN_REDUCER) {
         return `_s.runReducerStep(App, _init, ${JSON.stringify(reducerNameArg(e.args[0]))}, _event)`;
       }
       if (cn === "now") return `_s.now()`;
@@ -183,8 +190,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "prefers-dark") return `_s.prefersDark()`;
       if (cn === "random") return "_s.random()";
       if (cn === "file-url") return `_s.fileUrl(${requiredArg(cn, e.args, e.pos, ctx)})`;
-      const args = e.args.map((a) => jsOfExpr(a, ctx)).join(", ");
-      return `${jsBinding(cn)}(${args})`;
+      return fnCallJs(cn, e.args, ctx);
     }
     case "MethodCall": {
       return methodCallJs(e.receiver, e.method, e.args, ctx, e.keyKind, e.fragmentShape);
@@ -454,7 +460,10 @@ export function methodCallJs(
   keyKind?: KeyKind,
   shape?: FragmentShape,
 ): string {
-  if (method === "run-reducer") {
+  if (
+    method === RUN_REDUCER &&
+    callsBuiltin(method, (name) => ctx.gen.fns.some((f) => f.name === name))
+  ) {
     return `_s.runReducerStep(App, ${jsOfExpr(recv, ctx)}, ${JSON.stringify(reducerNameArg(written[0]))}, _event)`;
   }
   const args = written.map((a, i) => fragmentFnCall(method, i, a, ctx) ?? a);
@@ -550,12 +559,12 @@ export function methodCallJs(
     case "format":
       return `_s.formatTime(${recvJs}, ${argRaw(args[0]!)})`;
     case "plus":
-      // Time.plus(durationMs) / Duration.plus — both stored as raw ms numbers.
+      // Time.plus(duration): a Time and a Duration are both stored as raw ms numbers.
       return `((${recvJs}) + (${argRaw(args[0]!)}))`;
     case "minus":
       return `((${recvJs}) - (${argRaw(args[0]!)}))`;
     case "diff":
-      // Polymorphic: Time/Duration → numeric magnitude; Set(T) → set difference.
+      // Polymorphic: Time → the receiver minus the argument; Set(T) → set difference.
       return `_s.diff(${recvJs}, ${argRaw(args[0]!)})`;
     case "concat":
       return `[...((${recvJs}) ?? []), ...((${argRaw(args[0]!)}) ?? [])]`;
@@ -582,8 +591,10 @@ export function methodCallJs(
       // Within expr, $1 is the current Err payload.
       return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
     case "replace":
-      // Every occurrence, not only the first.
-      return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ${argRaw(args[1]!)})`;
+      // `replaceAll` reads a string replacement as a pattern (`$$`, `$&`) but inserts a replacer's
+      // return as written. `to` is read once, before the scan: a thunk would re-read it per match.
+      // Inline rather than an `_s` helper, which every app would ship.
+      return `String((${recvJs}) ?? "").replaceAll(${argRaw(args[0]!)}, ((__to) => () => __to)(String(${argRaw(args[1]!)})))`;
     case "min":
       return `Math.min((${recvJs}), (${argRaw(args[0]!)}))`;
     case "max":
@@ -662,8 +673,9 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
 }
 
 export function emitExprJs(e: Expr & { kind: "EmitExpr" }, ctx: EvalCtx): string {
-  const { stmts, idJs } = reducerEmitJs(e.effect, e.args, ctx);
-  return `((() => { ${stmts} return ${idJs}; })())`;
+  const { binds, record } = reducerEmitJs(e.effect, e.args, ctx);
+  const spec = `_effects[${JSON.stringify(e.effect)}]`;
+  return `((() => { ${binds}const __e = ${record}; _emits.push(__e); return (__e.id = _s.emitId(${spec}, __e)); })())`;
 }
 
 export function slotReadJs(name: string, reducerScope: boolean | undefined): string {
@@ -677,23 +689,20 @@ export function reducerEmitJs(
   effect: string,
   args: Expr[],
   ctx: EvalCtx,
-): { stmts: string; idJs: string } {
+): { binds: string; record: string } {
   const effectJson = JSON.stringify(effect);
   const policy = ctx.gen.effects.find((d) => d.name === effect)?.policy;
   if (policy?.kind !== "PolLatestKey") {
     const argsJs = args.map((a) => jsOfExpr(a, ctx)).join(", ");
-    return {
-      stmts: `_emits.push({ effect: ${effectJson}, args: [${argsJs}] });`,
-      idJs: JSON.stringify(`${effect}:_`),
-    };
+    return { binds: "", record: `{ effect: ${effectJson}, args: [${argsJs}] }` };
   }
   const argBinds = args.map((a, i) => `const __a${i} = ${jsOfExpr(a, ctx)};`).join(" ");
   const argRefs = args.map((_, i) => `__a${i}`).join(", ");
   const inputRef = args[0] ? "__a0" : "null";
   const keyJs = `${policyKeyOfJs(policy.key, ctx.gen, true)}(${inputRef})`;
   return {
-    stmts: `${argBinds} const __k = ${keyJs}; _emits.push({ effect: ${effectJson}, args: [${argRefs}], key: __k });`,
-    idJs: `${JSON.stringify(`${effect}:`)} + __k`,
+    binds: `${argBinds} const __k = ${keyJs}; `,
+    record: `{ effect: ${effectJson}, args: [${argRefs}], key: __k }`,
   };
 }
 
@@ -702,10 +711,14 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
   return `((${bindRef(keyCtx, "$1")}) => String(${jsOfExpr(key, keyCtx)}))`;
 }
 
+/** A value `match` has to evaluate to one of its arms, so a miss panics rather than let `undefined` reach a slot or a render. */
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
   const sc = jsOfExpr(e.scrutinee, ctx);
   const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
-  return `((_v) => { ${armsJs} else { return undefined; } })(${sc})`;
+  const miss = JSON.stringify(
+    `No arm of the match at ${e.pos.line}:${e.pos.col} matches its value`,
+  );
+  return `((_v) => { ${armsJs} else { return _s.panic(${miss}); } })(${sc})`;
 }
 
 function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string {
