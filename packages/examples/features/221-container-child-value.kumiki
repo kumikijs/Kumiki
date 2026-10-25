@@ -1,0 +1,33 @@
+# Feature (language.md): a value shown in a container.
+#
+# A container's positional arguments are child tiles (`column(A, B)`). A
+# value is shown by a tile that renders it, so a label and its value side by
+# side are two tiles in a row:
+#
+#   row(text("Sum: "), text(total.show))
+#
+# Written bare, a value is not a tile and renders nothing:
+# `row(text("Sum: "), total.show)`, `column(total)`, `column("Total items")`
+# and `column(greeting())` are each E0128 at the value. The name of a tile the
+# program defines is a tile, so `Add` below is a child as written.
+
+slot total : Int = 42
+
+fn greeting() -> Text = "hello"
+
+reducer add on=ui.click(Add) do= total := total + 1
+
+tile Add = button(text="add") {id: "add"}
+
+tile Summary = column(
+  heading("Summary"),
+  text(total.show),
+  text("Total items"),
+  text(greeting()),
+  row(text("Sum: "), text(total.show)),
+  Add)
+
+app ContainerChildValue
+  caps   = []
+  routes = {"/" -> Summary, "/404" -> Summary}
+  init   = []
