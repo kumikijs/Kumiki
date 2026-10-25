@@ -37,6 +37,7 @@ import { applyInitialTheme, maybeReapplyTheme, resolvedThemeName } from "./theme
 import { makeMappingTileCtx, type TileElementMap } from "./tile-ctx.ts";
 import {
   type AppShape,
+  type HoldLeave,
   type MountedApp,
   type MountHandle,
   type MountOptions,
@@ -484,7 +485,9 @@ export function mountCore(
           }
         }
       }
-      if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
+      // Once the app is unmounted no reducer runs, so an err has nothing to go unhandled by.
+      if (outcome === "err" && matched === 0 && !disposed)
+        reportUnhandledEffectError(effect, value);
     } finally {
       exitScope?.();
     }
@@ -496,6 +499,7 @@ export function mountCore(
     slots: slotValues,
     routing,
     router,
+    root: target,
     fireLifecycle,
     render,
   });
@@ -507,7 +511,7 @@ export function mountCore(
 
   navigation.start();
 
-  const seams = app as MountedApp & { _resolveLeave?: (outcome: "yes" | "no") => void };
+  const seams = app as MountedApp & { _holdLeave?: HoldLeave };
   seams._rerender = render;
   seams._episodeId = safeEpisodeId;
   seams._dispatch = (reducerName, el) => {
@@ -536,7 +540,7 @@ export function mountCore(
     return true;
   };
   seams._navigate = (path, replace) => navigation.navigate(path, !!replace);
-  seams._resolveLeave = navigation.resolveLeave;
+  seams._holdLeave = navigation.holdLeave;
   seams._submitHeldBy = submitHeldBy;
 
   if (options.hydrate) {
