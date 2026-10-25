@@ -37,6 +37,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The program's own unions, by each tag they declare: `unionsByTag`. */
+  unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
 };
 
@@ -54,7 +56,8 @@ export type Ctx = {
   localBinders?: Map<string, LocalBinder>;
   runReducerScope?: boolean;
   wildcardsReportedElsewhere?: boolean;
-  routeBind: "bound" | "unbound" | "no-payload";
+  /** `prefetch`: bound only when a link's prefetch fires the reducer, and `{}` on its own trigger. */
+  routeBind: "bound" | "prefetch" | "unbound" | "no-payload";
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
