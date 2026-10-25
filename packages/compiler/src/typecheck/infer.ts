@@ -1,11 +1,12 @@
 import { assignable, isOpaque, recordFieldType, unaliasType, unknownType } from "../assignable.ts";
 import type { Expr, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName } from "../builtin-calls.ts";
+import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
+import { FILE_FIELDS, type PrimName } from "../stdlib-types.ts";
 import { getOrResultType, unwrappedType } from "./against.ts";
-import type { Ctx, SymbolTable } from "./context.ts";
-import { binOpResult } from "./expr.ts";
+import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
+import { binOpResult, letInScope } from "./expr.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -19,14 +20,8 @@ export const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
   "breakpoints",
 ]);
 
-export const PRIM_FIELDS: Record<string, Record<string, "Text" | "Int">> = {
-  File: { name: "Text", size: "Int", type: "Text" },
-};
-
-function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | null {
-  const name = PRIM_FIELDS[primName]?.[field];
-  if (!name) return null;
-  return { kind: "TypePrim", name, pos };
+export function primFieldType(primName: PrimName, field: string): TypeExpr | null {
+  return primName === "File" ? recordFieldType(FILE_FIELDS, field) : null;
 }
 
 export const prim = (name: PrimName, pos: Pos): TypeExpr => ({ kind: "TypePrim", name, pos });
@@ -46,8 +41,6 @@ export const container = (name: string, args: TypeExpr[], pos: Pos): TypeExpr =>
   args,
   pos,
 });
-
-type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
 
 /** True when `t` is a number — the operand family arithmetic is defined on. */
 export function isNumeric(t: TypeExpr | null, sym: SymbolTable): boolean {
@@ -73,6 +66,17 @@ export function typeName(t: TypeExpr | null, sym: SymbolTable): string {
 export function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName): boolean {
   const u = unaliasType(t, sym);
   return u?.kind === "TypePrim" && u.name === name;
+}
+
+/** Through an alias or a `nominal` too: one answer for both halves of E0204, the operators and rendering. */
+export function isEffectId(t: TypeExpr | null, sym: SymbolTable): boolean {
+  return isPrimNamed(t, sym, "EffectId");
+}
+
+/** The member a qualified call names (`show` in `Int.show(v)`), by the spelling rule codegen and `builtinArity` apply. */
+export function qualifiedMember(callee: string): string | null {
+  const dot = callee.indexOf(".");
+  return dot > 0 && isQualifierName(callee.slice(0, dot)) ? callee.slice(dot + 1) : null;
 }
 
 const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
@@ -324,7 +328,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (!base) return null;
       if (base.kind === "TypeRecord") return recordFieldType(base, e.field);
       if (base.kind === "TypePrim") {
-        const t = primFieldType(base.name, e.field, e.pos);
+        const t = primFieldType(base.name, e.field);
         if (t) return t;
       }
       const decided = receiverMemberResult(base, e.field, 0, sym, e.pos);
@@ -344,7 +348,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     }
     case "MethodCall": {
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
-      if (e.method === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
+      if (e.method === RUN_REDUCER && ctx.runReducerScope && isBuiltinCall(e.method, sym)) {
+        return runReducerState(sym, e.pos);
+      }
       const decided = receiverMemberResult(
         inferType(e.receiver, sym, ctx),
         e.method,
@@ -420,16 +426,21 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
         sym,
       );
     }
+    case "LetIn":
+      // The body is the value, read with the name bound.
+      return inferType(e.body, sym, letInScope(e, sym, ctx));
     case "EmitExpr":
       return prim("EffectId", e.pos);
     case "Call": {
-      if (e.callee === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
-      const fixed = CALL_RESULT.get(e.callee);
+      const builtin = isBuiltinCall(e.callee, sym);
+      if (builtin && e.callee === RUN_REDUCER && ctx.runReducerScope) {
+        return runReducerState(sym, e.pos);
+      }
+      const fixed = builtin ? CALL_RESULT.get(e.callee) : undefined;
       if (fixed) return prim(fixed, e.pos);
       const dot = e.callee.indexOf(".");
       const qualifier = dot > 0 ? e.callee.slice(0, dot) : null;
-      const member =
-        qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
+      const member = qualifiedMember(e.callee);
       if (member === "show") return prim("Text", e.pos);
       if (qualifier !== null && member === "parse") {
         const named = qualifierType(qualifier, e.pos, sym);
