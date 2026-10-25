@@ -34,7 +34,7 @@ import {
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
@@ -228,7 +228,7 @@ export function checkTileExpr(
       return;
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(t.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
