@@ -49,14 +49,15 @@ describe("the container-child-value example's values, written bare, are each ref
     [`  row(text("Sum: "), text(total.show)),`, `  row(text("Sum: "), total.show),`],
   ];
   const shown = readFileSync(feature("221-container-child-value"), "utf8").split("\n");
+  for (const [from] of bare) {
+    if (shown.filter((l) => l === from).length !== 1) {
+      throw new Error(`the example does not have exactly one line ${from}`);
+    }
+  }
   const lines = shown.map((l) => bare.find(([from]) => from === l)?.[1] ?? l);
   const source = lines.join("\n");
   const at = (line: string, value: string) =>
     `${lines.indexOf(line) + 1}:${line.indexOf(value) + 1}`;
-
-  it("takes each text(…) off one line of the example", () => {
-    for (const [from] of bare) expect(shown.filter((l) => l === from)).toHaveLength(1);
-  });
 
   it("is E0128 at each value, naming its container and text(…)", () => {
     const diagnostics = check(parse(lex(source)));

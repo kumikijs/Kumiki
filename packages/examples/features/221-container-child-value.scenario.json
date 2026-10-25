@@ -10,6 +10,7 @@
       "expect": {
         "noErrors": true,
         "domIncludes": ["Summary43Total itemshelloSum: 43add"],
+        "domExcludes": ["42"],
         "state": { "total": 43 }
       }
     }
