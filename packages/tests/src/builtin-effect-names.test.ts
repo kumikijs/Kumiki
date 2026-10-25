@@ -12,7 +12,7 @@ effect log cap=http.get in=Text out=Result(Text, HttpError)
            map-request={url: "/api/" + $1, decode: Decoder.Text}
 reducer go on=ui.click(B) do= lastId := emit log("x")
 tile B = button(text="b", onClick=go)
-tile Home = column(B, text(lastId.show))
+tile Home = column(B)
 app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]
 `,
       { runtimeSpecifier: "./runtime.js" },
