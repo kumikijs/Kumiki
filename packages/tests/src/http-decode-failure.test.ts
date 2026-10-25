@@ -105,7 +105,7 @@ describe("a 2xx whose body does not decode", () => {
     expect(double?.calls).toHaveLength(3);
   });
 
-  it("still retries a body stream that fails mid-read, as status 0", async () => {
+  it("sends a 2xx whose body stream fails mid-read once, keeping its status", async () => {
     const app = await loadSource(WHOLE_ERROR);
     await clickBuy(
       app,
@@ -119,10 +119,11 @@ describe("a 2xx whose body does not decode", () => {
           { status: 201 },
         ),
     );
-    expect(double?.calls).toHaveLength(3);
+    expect(double?.calls).toHaveLength(1);
     const err = storedErr(app);
-    expect(err.status).toBe(0);
+    expect(err.status).toBe(201);
     expect(String(err.message)).toMatch(/stream reset/);
+    expect(err.body).toEqual({ _tag: "None" });
   });
 
   it("sends a body-less 204 once and reports status 204", async () => {

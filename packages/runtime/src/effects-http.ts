@@ -1,4 +1,4 @@
-import { abortedHttpError, type EffectResult, NONE, type OptionOf, someOf } from "./core.ts";
+import { abortedHttpError, type EffectResult, type HttpError, NONE, someOf } from "./core.ts";
 import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
@@ -78,11 +78,17 @@ export async function httpFetch(
     else externalSignal.addEventListener("abort", onExternalAbort);
   }
 
+  let res: Response | undefined;
   try {
-    const res = await fetch(url, init);
+    res = await fetch(url, init);
     // 401 / 403 / 5xx too: the dispatcher routes them to `app.http`'s handlers by status.
     if (!res.ok) {
       const body = await res.text().catch(() => undefined);
+      // The dispatcher delivers what this returns, so a cancel or timeout during the read must
+      // not reach `.err` as the status, which would fire `app.http`'s handler for it.
+      if (body === undefined && controller.signal.aborted) {
+        return { kind: "err", value: abortedHttpError() };
+      }
       return { kind: "err", value: httpError(res.status, res.statusText, body) };
     }
     if (decode === "none") return { kind: "ok", value: null };
@@ -100,17 +106,16 @@ export async function httpFetch(
   } catch (e) {
     const aborted = externallyAborted || isAbortError(e);
     if (aborted) return { kind: "err", value: abortedHttpError() };
-    return { kind: "err", value: httpError(0, String(e)) };
+    // A response that arrived keeps its status, so a 2xx whose body read failed is not retried:
+    // the server already took the request.
+    return { kind: "err", value: httpError(res?.status ?? 0, String(e)) };
   } finally {
     clearTimeout(timer);
     if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
 }
 
-/** `HttpError` as `.err` receives it. */
-export type HttpError = { status: number; message: string; body: OptionOf<string> };
-
-/** `body` is `None` when no response arrived (`status` 0) or its body could not be read. */
+/** An omitted `body` is `None`. */
 export function httpError(status: number, message: string, body?: string): HttpError {
   return { status, message, body: body === undefined ? NONE : someOf(body) };
 }

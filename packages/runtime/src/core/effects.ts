@@ -6,8 +6,8 @@ import {
   type EffectResult,
   type EffectSpec,
   type EmitSpec,
+  type HttpError,
   NONE,
-  type OptionOf,
 } from "./types.ts";
 
 export function makeCapabilityRegistry(
@@ -299,7 +299,7 @@ export function readStatus(value: unknown): number | null {
   return typeof s === "number" ? s : null;
 }
 
-export function abortedHttpError(): { status: number; message: string; body: OptionOf<string> } {
+export function abortedHttpError(): HttpError {
   return { status: 0, message: "aborted", body: NONE };
 }
 
