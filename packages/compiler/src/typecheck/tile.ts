@@ -7,7 +7,13 @@ import {
   type TileExpr,
   type TypeExpr,
 } from "../ast.ts";
-import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "../builtins.ts";
+import {
+  BUILTIN_TILES,
+  contentArg,
+  contentReading,
+  positionalIsTile,
+  tileNamedAt,
+} from "../builtins.ts";
 import {
   type RouteMapEntry,
   redirectCycles,
@@ -428,11 +434,20 @@ function checkTileCall(
       checkTileExpr(v, sym, errors, ctx);
       continue;
     }
-    if (
-      arg.name === undefined &&
-      positionalIsTile(t.name) &&
-      !(v.kind === "Ref" && sym.tiles.has(v.name))
-    ) {
+    const named = tileNamedAt(t.name, arg, (name) => sym.tiles.has(name));
+    if (named) {
+      const def = sym.tiles.get(named.name);
+      const call: TileExpr & { kind: "TileCall" } = {
+        kind: "TileCall",
+        name: named.name,
+        args: [],
+        props: [],
+        pos: named.pos,
+      };
+      if (def) checkTileInput(call, def, sym, errors, ctx);
+      continue;
+    }
+    if (arg.name === undefined && positionalIsTile(t.name)) {
       errors.push({
         code: "E0128",
         kind: "value-as-child",

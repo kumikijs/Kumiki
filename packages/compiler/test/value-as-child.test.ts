@@ -88,8 +88,31 @@ describe("what renders in a child position is not reported", () => {
   });
 });
 
-it("the name of a tile in a child position is not E0128", () => {
-  expect(codes("column(lower)")).not.toContain("E0128");
+describe("the name of a tile in a child position is the tile", () => {
+  it("with no other definition of the name", () => {
+    expect(diagnostics("column(lower)")).toEqual([]);
+  });
+
+  it("beside a fn of the same name, which a value position still reads", () => {
+    const src = `fn lower() -> Text = "f"\n${program("column(lower, text(lower))")}`;
+    expect(checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
+      "E0127 3:32",
+    ]);
+  });
+
+  it.each([
+    ["alone", ""],
+    ["beside a slot of the same name", "slot needs : Int = 0\n"],
+  ])("is E0213 for a tile that declares `in=`, %s", (_, extra) => {
+    const src = `${extra}tile needs in=Int = text($1.show)\n${program("column(needs, Card)")}`;
+    const at = extra === "" ? 3 : 4;
+    expect(
+      checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
+    ).toEqual([
+      `E0213 ${at}:20 Tile "needs" expects 1 argument(s) but got 0`,
+      `E0213 ${at}:27 Tile "Card" expects 1 argument(s) but got 0`,
+    ]);
+  });
 });
 
 describe("a value where a value belongs is still a value", () => {
