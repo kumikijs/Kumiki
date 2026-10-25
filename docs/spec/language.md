@@ -162,6 +162,8 @@ Result(T, E)      ; Ok(T) | Err(E)
 Tuple(T1, ..., Tn)
 ```
 
+A program's own union may name a variant `Some`, `None`, `Ok` or `Err`. Variant names are identifiers ([§1.3.1](#_1-3-1-syntax)) and none of the four is reserved ([§1.2.2](#_1-2-2-reserved-words)), so `type Health = Ok | Degraded | Down` is a union like any other. Where a type is declared — a slot, a parameter, a `fn`'s result, and each field or item of a literal written there — that type decides which tag a value is. Where nothing declares one — a `let`, and any literal it binds — one of these four is an `Option` or a `Result`, whose members, operators and fragments it has. It is also a value of each union the program writes, in a `type` or inline in any type, with a variant of the same name and as many payloads, each one's type admitting the payload written. A generic's parameter admits any payload, and the applied type, such as `Box(Int)`, checks it where the value lands. The value fits where it lands if either reading does: `let next = Ok` followed by `health := next` writes `Health`'s `Ok`, exactly as `health := Ok` does, and the same `next` written into an `Int` slot is E0201. `Health`'s `Ok` carries nothing, so `let r = Ok(1)` lands only where a `Result` does; beside `type Outcome = Ok(Int) | Fail` it lands in an `Outcome` slot and a `Result(Int, Text)` slot alike. An `if` or a `match` lands in such a union only when each of its branches is a tag that union holds. A `match` on such a value reads it as its `Option` or `Result` unless an arm names a tag that type lacks. Then it reads the value as the first union the program writes that declares every arm's tag and holds the value, and the arms have to cover that union.
+
 ### 1.3.3 Registered Refinement Predicates
 
 ```
@@ -478,6 +480,8 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # only the "edit" form
 The `{id}` prop is also rendered as the element's native HTML `id` attribute. Multi-reducer rules from [§1.6.4](#_1-6-4-invariants) Invariant 3 apply unchanged: a bare-`TileName` reducer and an `#id`-scoped reducer that both match the same event still run in definition order.
 
 **A selector on a container reaches the descendants that fire the event.** Most container kinds fire nothing themselves — a `box` has no `keydown`, no `focus` and no `submit` of its own — so `ui.<ev>(<Container>)` is wired onto every descendant whose kind is in the allowed set for `<ev>` ([§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) lists them). `ui.hover` is the unrestricted case: it is wired onto the container *and* onto each descendant, because `mouseenter` does not bubble.
+
+**`#id` on a container names the descendant that fires.** The id is compared with the element that dispatched, so it is a descendant's id — written either way, `id="save"` or `{id: "save"}` — and the container's own id only for an event the container fires itself. With `tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}`, `ui.click(Toolbar#save)` fires for the Save button, and `ui.click(Toolbar#toolbar)` never fires, because a `row` dispatches no click; under `--strict-selector-id` that selector is [E0212](./errors.md#e0212-selector-id-mismatch-opt-in-via-strict-selector-id).
 
 **How the descendant is written makes no difference.** A body that names a child tile is walked exactly as an inline one, to any depth, so these two are one program:
 
