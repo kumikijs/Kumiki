@@ -3,7 +3,7 @@ import { type Expr, isTileExpr, type Pos, type TileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst } from "./against.ts";
-import { type Ctx, type KumikiError, RUNTIME_NAMES, type SymbolTable } from "./context.ts";
+import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 
@@ -40,9 +40,9 @@ export function checkBindTargetSteps(
 }
 
 /**
- * The lowering writes a root that is not a slot into the live slot table under
- * its own name, where nothing reads it, so the control would take edits that
- * reach nothing.
+ * A local's name is not in the slot table, so a write lands under it where
+ * nothing reads it; a literal or computed root gives the lowering no name, and
+ * it drops the bind. `route` is a slot, but only navigation moves it.
  */
 export function checkBindTargetRoot(
   t: TileExpr & { kind: "TileCall" },
@@ -53,21 +53,34 @@ export function checkBindTargetRoot(
   if (!BIND_CONTROLS.has(t.name)) return;
   const bindArg = t.args.find((a) => a.name === "bind");
   if (!bindArg || isTileExpr(bindArg.value)) return;
+  // A file input takes no bind at all, and E0205 says so whatever the target names.
+  if (isFileInput(t)) return;
   const root = bindRootNotASlot(bindTarget(bindArg.value).root, sym, ctx);
   if (!root) return;
   errors.push({
     code: "E0229",
     kind: "bind-target-not-slot",
-    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}, not a slot — a bind writes back to a slot or a field path into one. ${root.fix} (see docs/spec/forms.md)`,
+    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}. ${root.fix} (see docs/spec/${root.see})`,
     pos: bindArg.value.pos,
   });
 }
 
-function bindRootNotASlot(
-  root: Expr,
-  sym: SymbolTable,
-  ctx: Ctx,
-): { named: string; is: string; fix: string } | null {
+function isFileInput(t: TileExpr & { kind: "TileCall" }): boolean {
+  if (t.name !== "input") return false;
+  const type = t.args.find((a) => a.name === "type")?.value;
+  return type !== undefined && !isTileExpr(type) && type.kind === "Str" && type.value === "file";
+}
+
+type RootReport = { named: string; is: string; fix: string; see: string };
+
+const notASlot = (named: string, is: string, fix: string): RootReport => ({
+  named,
+  is: `${is}, not a slot — a bind writes back to a slot or a field path into one`,
+  fix,
+  see: "forms.md",
+});
+
+function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | null {
   const fix = "Bind a slot, or show the value with value= and write the slot from a reducer";
   switch (root.kind) {
     case "Ref": {
@@ -75,41 +88,47 @@ function bindRootNotASlot(
       if (ctx.localBinds.has(root.name)) {
         switch (ctx.localBinders?.get(root.name)) {
           case "for":
-            return {
+            return notASlot(
               named,
-              is: "it is the variable of a for",
-              fix: "To edit a row, show it with value= and update the list from a reducer",
-            };
+              "it is the variable of a for",
+              "To edit a row, show it with value= and update the list from a reducer",
+            );
           case "input":
-            return {
+            return notASlot(
               named,
-              is: "it is this tile's input",
-              fix: `Bind the slot by its name, or show ${root.name} with value= and write the slot from a reducer`,
-            };
+              "it is this tile's input",
+              `Bind the slot by its name, or show ${root.name} with value= and write the slot from a reducer`,
+            );
           default:
-            return { named, is: "it is a local name", fix };
+            return notASlot(named, "it is a local name", fix);
         }
       }
-      if (sym.slots.has(root.name) || !RUNTIME_NAMES.has(root.name)) return null;
-      return { named, is: "it is a name the runtime provides", fix };
+      if (sym.slots.has(root.name) || root.name !== "route") return null;
+      return {
+        named,
+        is: "it is the route slot, which only navigation writes",
+        fix: "Move it with link(to=…) or emit navigate(…)",
+        see: "routing.md",
+      };
     }
     case "Str":
-      return {
-        named: `the text literal ${JSON.stringify(root.value)}`,
-        is: "a literal is a value",
-        fix: sym.slots.has(root.value)
+      // Unquoted, a name a local hides is that local, which is no slot either.
+      return notASlot(
+        `the text literal ${JSON.stringify(root.value)}`,
+        "a literal is a value",
+        sym.slots.has(root.value) && !ctx.localBinds.has(root.value)
           ? `Write the slot's name without quotes: bind=${root.value}`
           : fix,
-      };
+      );
     case "Num":
     case "Bool":
-      return {
-        named: `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
-        is: "a literal is a value",
+      return notASlot(
+        `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
+        "a literal is a value",
         fix,
-      };
+      );
     default:
-      return { named: "this expression", is: "it computes a value", fix };
+      return notASlot("this expression", "it computes a value", fix);
   }
 }
 

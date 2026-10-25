@@ -42,9 +42,6 @@ export type SymbolTable = {
   app?: AppDef;
 };
 
-/** Names a program reads without declaring them, because the runtime provides each. */
-export const RUNTIME_NAMES: ReadonlySet<string> = new Set(["route", "now", "self"]);
-
 export type LocalBinder = "input" | "for";
 
 export type Ctx = {

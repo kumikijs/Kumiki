@@ -16,9 +16,9 @@ fn ident(t: Text) -> Text = t
 const program = (defs: string) => withApp(`${HEAD}${defs}`);
 const e0229 = (defs: string) => checkSource(program(defs)).filter((d) => d.code === "E0229");
 
-/** What E0229 says the root is: the text between "cannot write to " and " —". */
+/** What E0229 says the root is: the text after "cannot write to ", up to the first " — " or ". ". */
 const said = (defs: string): string[] =>
-  e0229(defs).map((d) => d.message.replace(/^.*?cannot write to (.*?) — .*$/, "$1"));
+  e0229(defs).map((d) => d.message.replace(/^.*?cannot write to (.*?)(?: — |\. ).*$/, "$1"));
 
 describe("a bind target whose root is not a slot", () => {
   it("is E0229 at the target, naming the root and what it is", () => {
@@ -84,7 +84,7 @@ tile App error-boundary = Fb = column(text("x"))`,
     [
       "the route",
       "tile App = column(input(bind=route.path))",
-      `"route": it is a name the runtime provides, not a slot`,
+      `"route": it is the route slot, which only navigation writes`,
     ],
     [
       "a text literal that names no slot",
@@ -117,6 +117,19 @@ tile App error-boundary = Fb = column(text("x"))`,
     expect(nameless?.message).not.toContain("without quotes");
     expect(nameless?.message).toContain("Bind a slot");
   });
+
+  it("does not send a literal to a name a local hides", () => {
+    // Unquoted, `title` is the for variable here, which is E0229 again.
+    const [hidden] = e0229(`tile App = column(for title in xs input(bind="title"))`);
+    expect(hidden?.message).not.toContain("without quotes");
+    expect(hidden?.message).toContain("Bind a slot");
+  });
+
+  it("sends a route bind to navigation", () => {
+    expect(e0229("tile App = column(input(bind=route.path))").map((d) => d.message)).toEqual([
+      `input(bind=…) cannot write to "route": it is the route slot, which only navigation writes. Move it with link(to=…) or emit navigate(…) (see docs/spec/routing.md)`,
+    ]);
+  });
 });
 
 describe("what a name was bound by, after a scope that binds it again", () => {
@@ -148,6 +161,8 @@ describe("a root another code reports", () => {
   it.each([
     ["a name that resolves to nothing", "input(bind=nope.title)", ["E0103"]],
     ["a fn named as a value", "input(bind=ident)", ["E0127"]],
+    ["a text literal on a file input", `input(type="file", bind="title")`, ["E0205"]],
+    ["a for variable on a file input", `for x in xs input(type="file", bind=x)`, ["E0205"]],
   ])("is not E0229 as well: %s", (_label, call, expected) => {
     expect(codesOf(program(`tile App = column(${call})`))).toEqual(expected);
   });

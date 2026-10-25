@@ -21,7 +21,7 @@ tile Compose = column(
 - ユーザー入力で slot が更新 → tile が再描画
 - 型と refinement は **入力ごとに検査**される
 
-`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのフィールドパスである — `bind=form.email`、あるいは `Option` / `Result` のペイロードを通る `bind=draft.get.title`（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。その根は、ターゲットを書いた位置で slot でなければならない。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
+`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのフィールドパスである — `bind=form.email`、あるいは `Option` / `Result` のペイロードを通る `bind=draft.get.title`（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。その根は、ターゲットを書いた位置で slot でなければならず、ナビゲーションだけが動かす `route` であってはならない（[ルーティング §3.3](./routing.md#_3-3-ルート遷移)）。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
 
 したがって、リストの行はループ変数を通して bind しない。行は `value=` で値を表示し、props にキーを持たせ、行のイベントに対する reducer がそのキーでリストに書き込む：
 

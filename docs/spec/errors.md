@@ -989,12 +989,13 @@ The root of a `bind=` target is not a slot where the target is written ([Forms �
 > `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a field path into one. <fix> (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to the literal <v>: a literal is a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to this expression: it computes a value, not a slot — … (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to "route": it is the route slot, which only navigation writes. Move it with link(to=…) or emit navigate(…) (see docs/spec/routing.md)`
 
-A control writes back to the slot its target's root names, through the field path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Neither is reported by anything else — the program checks, builds, mounts, and survives every edit.
+A control writes back to the slot its target's root names, through the field path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Nothing else reports that the root is not a slot — the program checks, builds, mounts, and survives every edit.
 
-`<what>` is what the checker knows the root to be: `the variable of a for`, `this tile's input` (`$1` in a tile that declares `in=`), `a local name` for any other local (a `match` binding), or `a name the runtime provides` (`route`). A text literal is named `the text literal "<v>"`. A local named like a slot hides the slot, as it does for any read, so `for title in titles input(bind=title)` is reported beside a slot `title`. The controls asked are the ones that write back from a bind: `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio` and `editable`.
+`<what>` is what the checker knows the root to be: `the variable of a for`, `this tile's input` (`$1` in a tile that declares `in=`), or `a local name` for any other local (a `match` binding). A text literal is named `the text literal "<v>"`. `route` is a slot, but the runtime manages it ([Routing §3.2](./routing.md#_3-2-current-route-state)) and only navigation moves it, so its message names it as the route slot and sends the edit to `link(to=…)` or `navigate` instead. A local named like a slot hides the slot, as it does for any read, so `for title in titles input(bind=title)` is reported beside a slot `title`. The controls asked are the ones that write back from a bind: `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio` and `editable`.
 
-A root another code reports is not reported again: a name that resolves to nothing is [E0103](#e0103-undef-ref-undef-slot), and a `fn` is [E0127](#e0127-fn-as-value). A step written as a call is [E0602](#e0602-unassignable-member) at the call, and the root is still asked here.
+A root another code reports is not reported again: a name that resolves to nothing is [E0103](#e0103-undef-ref-undef-slot), a `fn` is [E0127](#e0127-fn-as-value), and an `input(type="file")` takes no bind at all, which is [E0205](#e0205-bind-on-file-input) whatever its target names. A step written as a call is [E0602](#e0602-unassignable-member) at the call, and the root is still asked here.
 
 ```kumiki invalid
 type Todo = {text: Text}
@@ -1002,7 +1003,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**Fix**: Bind the slot itself, or a field path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. To edit one row of a list, show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
+**Fix**: Bind the slot itself, or a field path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row of a list, show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
 
 ```kumiki fragment
 type Todo = {text: Text}

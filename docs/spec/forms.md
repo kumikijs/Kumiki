@@ -21,7 +21,7 @@ tile Compose = column(
 - User input updates the slot → the tile re-renders
 - Type and refinement are **checked on each input**
 
-A `bind=` target names the place the control writes back to: a slot, or a field path into one — `bind=form.email`, or `bind=draft.get.title` through the payload of an `Option` or a `Result` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). Its root has to be a slot where the target is written. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are values, not places — a local named like a slot hides the slot, as it does for any read — and a literal or any other expression names no place at all. Each is reported by `kumiki check` ([E0229](./errors.md#e0229-bind-target-not-slot)).
+A `bind=` target names the place the control writes back to: a slot, or a field path into one — `bind=form.email`, or `bind=draft.get.title` through the payload of an `Option` or a `Result` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). Its root has to be a slot where the target is written, and not `route`, which only navigation moves ([Routing §3.3](./routing.md#_3-3-route-transitions)). A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are values, not places — a local named like a slot hides the slot, as it does for any read — and a literal or any other expression names no place at all. Each is reported by `kumiki check` ([E0229](./errors.md#e0229-bind-target-not-slot)).
 
 So a row of a list is not bound through its loop variable. The row shows its value with `value=` and carries its key in its props, and a reducer on the row's event writes the list at that key:
 

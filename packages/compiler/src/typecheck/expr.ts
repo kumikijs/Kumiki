@@ -25,7 +25,6 @@ import {
   innerScope,
   isBuiltinCall,
   type KumikiError,
-  RUNTIME_NAMES,
   type SymbolTable,
   wildcardText,
 } from "./context.ts";
@@ -175,7 +174,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      if (RUNTIME_NAMES.has(e.name)) return;
+      if (e.name === "route" || e.name === "now" || e.name === "self") return;
       if (e.name === "$1" && ctx.kind === "tile") {
         ctx.undeclaredInputReads?.push(e.pos);
         errors.push({
