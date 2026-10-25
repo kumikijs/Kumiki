@@ -526,7 +526,7 @@ editor := editor.map($1.copy(body="Body"))
 
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
-A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached.
+A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached, and keep binding the slot's path inside the arm: `| Some(_) -> input(bind=draft.get.title)`. The name an arm binds is a value, not a place, so `| Some(d) -> input(bind=d.title)` is [E0229](./errors.md#e0229-bind-target-not-slot).
 
 **`.copy(field=value, ...)`**: a shortcut for an immutable update of a record. It looks like a method call, but internally the named args are collected and expanded into `recordCopy(rec, {field: value, ...})`. You can update multiple fields at once:
 

@@ -651,11 +651,7 @@ export function pushMismatch(
 
 /** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
 export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
-  const inner: Ctx = {
-    ...ctx,
-    localBinds: new Set(ctx.localBinds),
-    localTypes: new Map(ctx.localTypes),
-  };
+  const inner = innerScope(ctx);
   bindLocal(inner, e.name, inferType(e.value, sym, ctx));
   return inner;
 }

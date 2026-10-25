@@ -25,6 +25,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
   };
