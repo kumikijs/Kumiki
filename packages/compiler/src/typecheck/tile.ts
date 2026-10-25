@@ -95,6 +95,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
     undeclaredInputReads: seen,
   };

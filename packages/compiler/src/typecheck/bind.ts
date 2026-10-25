@@ -86,7 +86,7 @@ function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | 
     case "Ref": {
       const named = `"${root.name}"`;
       if (ctx.localBinds.has(root.name)) {
-        switch (ctx.localBinders?.get(root.name)) {
+        switch (ctx.localBinders.get(root.name)) {
           case "for":
             return notASlot(
               named,

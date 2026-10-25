@@ -49,8 +49,11 @@ export type Ctx = {
   localBinds: Set<string>;
   capsAvailable?: Set<string>; // for reducer context
   localTypes: Map<string, TypeExpr>;
-  /** Kept only in a tile's scope, where E0229 reads it to say what a bind target's root is. */
-  localBinders?: Map<string, LocalBinder>;
+  /**
+   * What bound each local a tile reads: its input, or a `for`. Any other local has no entry, and
+   * outside a tile it stays empty. E0229 reads it to say what a bind target's root is.
+   */
+  localBinders: Map<string, LocalBinder>;
   runReducerScope?: boolean;
   wildcardsReportedElsewhere?: boolean;
   /** `prefetch`: bound only when a link's prefetch fires the reducer, and `{}` on its own trigger. */
@@ -72,8 +75,8 @@ export function bindLocal(
   ctx.localBinds.add(name);
   if (type) ctx.localTypes.set(name, type);
   else ctx.localTypes.delete(name);
-  if (binder) ctx.localBinders?.set(name, binder);
-  else ctx.localBinders?.delete(name);
+  if (binder) ctx.localBinders.set(name, binder);
+  else ctx.localBinders.delete(name);
 }
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
@@ -82,7 +85,7 @@ export function innerScope(ctx: Ctx): Ctx {
     ...ctx,
     localBinds: new Set(ctx.localBinds),
     localTypes: new Map(ctx.localTypes),
-    ...(ctx.localBinders ? { localBinders: new Map(ctx.localBinders) } : {}),
+    localBinders: new Map(ctx.localBinders),
   };
 }
 
@@ -92,6 +95,7 @@ export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): C
     localBinds: new Set(),
     routeBind: "no-payload",
     localTypes: new Map(),
+    localBinders: new Map(),
   };
   for (const b of binds) bindLocal(ctx, b.name, b.type);
   return ctx;
