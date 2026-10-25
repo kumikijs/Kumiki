@@ -319,7 +319,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             // Any other count is checkGetArity's E0213, with no argument read as the index.
             if (e.method === "get" && e.args.length === 1) {
-              checkListIndex(unaliasType(recvType, sym), a, sym, errors, ctx);
+              const list = unaliasType(recvType, sym);
+              if (list?.kind === "TypeApp" && list.name === "List") {
+                checkAgainst(a, prim("Int", a.pos), sym, errors, ctx);
+              }
             }
             continue;
           }
