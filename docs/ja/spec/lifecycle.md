@@ -108,7 +108,26 @@ reducer trackPageView
     do= emit track({event: "settings_view", props: {}})
 ```
 
-複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
+複数の tile を対象にしたい場合は、tile ごとに reducer を 1 つずつ、それぞれ別の名前で宣言する。reducer の名前は一度しか宣言できない：同じ名前の 2 つ目の `reducer` は、トリガが何であれ [E0007](./errors.md#e0007-duplicate-definition) になる。
+
+```kumiki
+slot seen : Text = ""
+
+tile Profile  = text("Profile")
+tile Settings = text("Settings")
+tile Account  = page(Settings, Profile, text("seen: " + seen))
+
+reducer seeProfile  on=tile.mount(Profile)  do= seen := seen + "Profile "
+reducer seeSettings on=tile.mount(Settings) do= seen := seen + "Settings "
+reducer seeAccount  on=tile.mount(Account)  do= seen := seen + "Account "
+
+app TileMountSeveralTiles
+  caps   = []
+  routes = {"/" -> Account, "/404" -> Account}
+  init   = []
+```
+
+各 reducer は対象の tile がマウントされたときに発火する：`Account` を描画すると `seeAccount`、`seeSettings`、続いて `seeProfile` がそれぞれ 1 回ずつ実行される。1 回の描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer はツリー順に発火する：外側の tile がその内側の tile より先、兄弟どうしは前から順に。その描画で複数回描画される tile も 1 つの tile であり、1 回だけ発火する。1 つの tile に対する複数の `tile.mount` reducer はどれもその tile のマウントという 1 つのイベントにマッチするので、定義順で発火する（[§1.6.4](./language.md#_1-6-4-不変条件) Invariant 3）。
 
 ---
 
@@ -126,6 +145,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 - インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
 - 読み取り `m[k]` が `Map` の持たないキーを指した
 - `Result.get` で Err
+- 値として使う `match` に、scrutinee の値に一致する arm がなかった（[言語 §1.9](./language.md#_1-9-式言語)）
 - `panic(msg)` の明示呼び出し
 
 これらは **panic** と呼ばれる例外。panic は episode log に記録され、現在の reducer は中断される。`slot` の変更は **トランザクション的にロールバック**される。
@@ -282,6 +302,8 @@ reducer noop     on=ui.click(_) do= ()
 ```
 
 ランタイム実装ではこれは **モーダルダイアログ tile** として描画される（ネイティブ `confirm` ではない）。これにより UI スタイルが揃い、テストも容易になる。
+
+ダイアログは常にランタイム自身のものである。`notification.show` に登録したホスト provider はトースト（[§7.7](#_7-7-トースト)）を置き換えるが、`confirm` を受け取ることはない。答えは `onYes` または `onNo` を dispatch することで届けられ、provider の `EffectResult` にはそれができないからである（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。`route.leave` ガードから emit されたダイアログは、答えが出るか、別のナビゲーションがそれを置き換えるまで遷移を保留する（[ルーティング §3.5.2](./routing.md#_3-5-2-leave-ガード)）。
 
 ---
 

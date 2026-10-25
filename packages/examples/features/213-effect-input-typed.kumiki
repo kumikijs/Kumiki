@@ -1,0 +1,42 @@
+# Feature (language.md): an effect's own expressions — its
+# `map-request` and its `latest-per-key` key — are applied to the effect's
+# input, so their `$1` has the type the effect's `in=` declares, as a tile's
+# `$1` has the type of the tile's own `in=`.
+#
+# Here `$1` is a `UserQuery`. `$1.id` reads its field, and `$1.idd` in either
+# expression is E0108 at the access, as it is on a tile's `$1`. `$1.size` is
+# the record's own field too, not the `size` member of a Map that the name
+# also spells.
+#
+# `smoke` makes the request through the real HTTP path against
+# `213-effect-input-typed.http.json`, which answers only
+# `GET /api/users/7?size=20`: a request built from anything but the record's
+# two fields has no fixture and fails the run.
+
+type UserQuery = {id: Text, size: Int}
+type Load      = Idle | Loaded(Text) | Failed(Text)
+
+slot state : Load = Idle
+
+effect loadUser cap=http.get
+                in=UserQuery
+                out=Result(Text, HttpError)
+                policy=latest-per-key($1.id)
+                map-request={url: "/api/users/" + $1.id, query: {"size": $1.size.show}, decode: Decoder.Text}
+
+reducer go     on=ui.click(Go)        do= emit loadUser({id: "7", size: 20})
+reducer loaded on=loadUser.ok($t, _)  do= state := Loaded($t)
+reducer failed on=loadUser.err(_, _)  do= state := Failed("request failed")
+
+tile Go = button(text="load user 7") {id: "go"}
+
+tile App
+    = column(Go, match state with
+        | Idle      -> text("idle")
+        | Loaded(t) -> text("got " + t)
+        | Failed(m) -> text(m)) {pad: "lg", gap: "md"}
+
+app EffectInputTyped
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
