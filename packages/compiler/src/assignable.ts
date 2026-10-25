@@ -205,6 +205,27 @@ export function elementType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
   return null;
 }
 
+/**
+ * A tag a value was written as, with the types of its payloads: `Ok`, `Some([1, 2])`. Kept on the
+ * `Option` / `Result` the checker reads such a value as when a union of the program's own
+ * declares the same tag, since then the value is that union's too (language.md, Built-in Generic
+ * Types).
+ */
+export type WrittenVariant = { readonly tag: string; readonly payloads: readonly TypeExpr[] };
+
+const writtenAs = new WeakMap<TypeExpr, readonly WrittenVariant[]>();
+
+/** `t`, read also as the variants it may have been written as. */
+export function asWritten(t: TypeExpr, variants: readonly WrittenVariant[]): TypeExpr {
+  writtenAs.set(t, variants);
+  return t;
+}
+
+/** The variants a value of type `t` may have been written as, when it lands in a union. */
+export function writtenVariants(t: TypeExpr | null): readonly WrittenVariant[] | undefined {
+  return t === null ? undefined : writtenAs.get(t);
+}
+
 const widensTo: ReadonlyMap<string, ReadonlySet<string>> = new Map([["Int", new Set(["Float"])]]);
 
 export function assignable(
@@ -261,6 +282,8 @@ function relate(
     }
 
     case "TypeUnion": {
+      const written = writtenAs.get(a);
+      if (written) return written.every((w) => unionHolds(d, w, env, seen));
       if (a.kind !== "TypeUnion") return false;
       return a.variants.every((av) => {
         const dv = d.variants.find((v) => v.name === av.name);
@@ -272,6 +295,20 @@ function relate(
     default:
       return true;
   }
+}
+
+// A variant holds a value written as its tag when it has as many payloads and each one written fits.
+// A payload left to a generic's parameter fits anything while the parameter is undecided (`?`); an
+// applied type such as `Box(Int)` has substituted it before the value is checked.
+function unionHolds(
+  union: TypeExpr & { kind: "TypeUnion" },
+  written: WrittenVariant,
+  env: TypeEnv,
+  seen: ReadonlySet<string>,
+): boolean {
+  const v = union.variants.find((x) => x.name === written.tag);
+  if (!v || v.payloads.length !== written.payloads.length) return false;
+  return written.payloads.every((p, i) => relate(p, v.payloads[i] ?? null, env, seen));
 }
 
 export function typeToString(t: TypeExpr): string {
