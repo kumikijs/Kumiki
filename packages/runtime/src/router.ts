@@ -5,6 +5,7 @@ import {
   NONE,
   overridableInvoke,
   type ParsedRoute,
+  type RedirectEntry,
   type Router,
   type RoutingImpl,
   someOf,
@@ -41,8 +42,41 @@ export function splitPath(p: string): LocationLike {
   return { pathname: rest || "/", search, hash };
 }
 
+/** A router location has no origin of its own, and `.invalid` (RFC 2606) is one no real target can name. */
+const BASE_ORIGIN = "http://router.invalid";
+
+/**
+ * `to` resolved against `at` and written as the URL parser writes it, percent-encoded as
+ * `location` is, so both routers hold one form. A target that names an origin of its own
+ * (`https://…`, `//host`, `mailto:`) is left as written: resolving it would drop that origin.
+ */
+export function resolveTarget(to: string, at: LocationLike): string {
+  try {
+    const url = new URL(to, BASE_ORIGIN + at.pathname + at.search + at.hash);
+    if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
+  } catch {
+    // Not a URL even against `at` (`http://[`).
+  }
+  return to;
+}
+
+/**
+ * A path the app is at, held as a browser's `location` holds that URL: `/a/../b` as `/b`, `/あ`
+ * percent-encoded, and `//foo` kept as a path, since here it is not a target naming a host.
+ */
+export function normalizeLocation(path: string): string {
+  const p = path || "/";
+  try {
+    const url = new URL(p[0] === "/" ? BASE_ORIGIN + p : p, `${BASE_ORIGIN}/`);
+    if (url.origin === BASE_ORIGIN) return url.pathname + url.search + url.hash;
+  } catch {
+    // Not a URL at all (`http://[`).
+  }
+  return p;
+}
+
 function memoryRouter(initialPath = "/"): Router {
-  const stack: string[] = [initialPath || "/"];
+  const stack: string[] = [normalizeLocation(initialPath)];
   const listeners = new Set<() => void>();
   return {
     read: () => splitPath(stack[stack.length - 1] ?? "/"),
@@ -121,15 +155,74 @@ function parentBare(pattern: string): string | null {
   return pattern.endsWith("/*") ? pattern.slice(0, -2) || "/" : null;
 }
 
+/** A redirect does what a `navigate-replace` to its target would, so a redirected target is redirected again; the router replaces the URL once with where the chain lands, and `renderToString` serves that path. */
 function findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null {
   if (!routes) return null;
-  const path = loc.pathname || "/";
+  return followRedirects(loc.pathname || "/", (path) => redirectStep(routes, path));
+}
+
+/** The limit browsers put on an HTTP redirect chain. */
+const MAX_REDIRECTS = 20;
+
+/**
+ * Each step is taken from a target's path, as a `navigate-replace` to it would match it, and the
+ * chain lands on the last target, query and hash included. It ends at the path `/404`, where the
+ * router shows the not-found page. A chain that comes back to a path, or runs past
+ * `MAX_REDIRECTS`, is reported and applies no redirect.
+ */
+export function followRedirects(
+  start: string,
+  step: (path: string) => string | null,
+): string | null {
+  const chain = [start];
+  const paths = [splitPath(start).pathname];
+  let next = step(paths[0] ?? "/");
+  while (next !== null) {
+    const path = splitPath(next).pathname;
+    const looped = paths.includes(path);
+    chain.push(next);
+    paths.push(path);
+    if (looped || chain.length > MAX_REDIRECTS + 1) {
+      const what = looped ? "redirect loop" : `more than ${MAX_REDIRECTS} redirects`;
+      console.error(`[kumiki] ${what}: ${chain.join(" ->> ")} — stopped, no redirect applied`);
+      return null;
+    }
+    next = path === "/404" ? null : step(path);
+  }
+  return chain.length > 1 ? (chain[chain.length - 1] ?? null) : null;
+}
+
+function redirectStep(routes: RouteList, path: string): string | null {
   const owner = firstMatch(routes, path);
-  if (!owner) return null;
-  if ("redirectTo" in owner) return owner.redirectTo;
-  if (!owner.subRoutes || owner.subRoutes.length === 0) return null;
-  const child = firstMatch(owner.subRoutes, path);
-  return child && "redirectTo" in child ? child.redirectTo : null;
+  const entry =
+    owner && !("redirectTo" in owner) && owner.subRoutes?.length
+      ? firstMatch(owner.subRoutes, path)
+      : owner;
+  if (!entry || !("redirectTo" in entry)) return null;
+  // Resolved against the path it redirects from, as `navigate-replace` from there would resolve it.
+  return resolveTarget(landing(entry, path), { pathname: path, search: "", hash: "" });
+}
+
+/** A segment is carried as the path has it, so the target's own match decodes it once, as it would the same URL asked for directly. A query or a hash the target writes is kept as written. */
+function landing(r: RedirectEntry, path: string): string {
+  const cut = r.redirectTo.search(/[?#]/);
+  const to = cut === -1 ? r.redirectTo : r.redirectTo.slice(0, cut);
+  const rest = cut === -1 ? "" : r.redirectTo.slice(cut);
+  if (to === "") return rest;
+  const segs = path.split("/").filter(Boolean);
+  const bound = new Map<string, string>();
+  for (const [i, p] of r.pattern.split("/").filter(Boolean).entries()) {
+    if (p === "*") {
+      bound.set(p, segs.slice(i).join("/"));
+      break;
+    }
+    if (p.startsWith(":")) bound.set(p, segs[i] ?? "");
+  }
+  const out = to.split("/").flatMap((s) => {
+    const v = bound.get(s);
+    return v === undefined ? [s] : v === "" ? [] : [v];
+  });
+  return (out.join("/") || "/") + rest;
 }
 
 /** The entry of `list` that owns `path`: its first match in specificity order. */
@@ -182,12 +275,24 @@ function matchPattern(pattern: string, path: string): Record<string, string> | n
     if (s === undefined) return null;
     if (p.startsWith(":")) {
       params[p.slice(1)] = decodeParam(s);
-    } else if (p !== s) {
+    } else if (p !== s && encodedSegment(p) !== s) {
       return null;
     }
   }
   if (pathSegs.length !== patSegs.length) return null;
   return params;
+}
+
+const encodedSegments = new Map<string, string>();
+
+/** A static segment as the URL parser writes it in a path (`概要` as `%E6%A6%82%E8%A6%81`), never decoded. */
+function encodedSegment(seg: string): string {
+  let out = encodedSegments.get(seg);
+  if (out === undefined) {
+    out = new URL(`/${seg}`, BASE_ORIGIN).pathname.slice(1);
+    encodedSegments.set(seg, out);
+  }
+  return out;
 }
 
 // A path is user input, so an escape that does not decode is kept as written rather than thrown.
@@ -268,17 +373,37 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
   };
 }
 
+function href({ path, query, hash }: ParsedRoute): string {
+  const search = new URLSearchParams(query).toString();
+  return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
+}
+
+/** The element is looked up in the root the app is mounted in, by the hash as written and then percent-decoded. */
+function jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined {
+  if (to.hash._tag !== "Some") return undefined;
+  if (href({ ...from, hash: NONE }) !== href({ ...to, hash: NONE })) return undefined;
+  const id = to.hash._0;
+  return () => {
+    const scope = root.getRootNode() as Partial<Pick<Document, "getElementById">>;
+    const el = scope.getElementById?.(id) ?? scope.getElementById?.(decodeParam(id));
+    el?.scrollIntoView();
+  };
+}
+
 /** The routing module surface consumed by `mountCore` (see core `RoutingImpl`). */
 export const routing: RoutingImpl = {
   createRouter(mode, initialPath) {
-    return mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    const router = mode === "memory" ? memoryRouter(initialPath) : historyRouter();
+    const resolving =
+      (go: (path: string) => void) =>
+      (path: string): void =>
+        go(resolveTarget(path, router.read()));
+    return { ...router, push: resolving(router.push), replace: resolving(router.replace) };
   },
   parseLocation,
   matchPattern,
   findRedirect,
-  href({ path, query, hash }) {
-    const search = new URLSearchParams(query).toString();
-    return path + (search && `?${search}`) + (hash._tag === "Some" ? `#${hash._0}` : "");
-  },
+  href,
+  jump,
   installNavEffects,
 };

@@ -28,6 +28,12 @@ function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles 
   return outer.includes(name) ? outer : [...outer, name];
 }
 
+// A node carries one `_tile`; an outer `_named` overwrites an inner one, so of nested whole-body
+// tiles only the outermost fires `tile.mount` / `tile.unmount`.
+function namedJs(tree: string, tile: TileDef): string {
+  return `_named(${tree}, ${JSON.stringify(tile.name)})`;
+}
+
 function boundaryJs(
   def: TileDef,
   body: string,
@@ -42,12 +48,12 @@ function boundaryJs(
     );
   const fbCtx = makeEvalCtx(gen, ["$1"]);
   const fbBody = tileExprJs(fb.body, gen, fbCtx, under(enclosingTiles, fb.name));
-  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${fbBody}; } })())`;
+  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${namedJs(fbBody, fb)}; } })())`;
 }
 
 export function genRouteTile(tile: TileDef, gen: GenCtx, where: string, fill?: string): string {
   if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
-  const named = `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`;
+  const named = namedJs(genTile(tile, gen), tile);
   return boundaryJs(tile, fill ? `${fill}(${named})` : named, gen);
 }
 
@@ -283,7 +289,6 @@ function tileCallJs(
     const inner = makeEvalCtx(gen, new Set<string>());
     const arg1 = firstPositional(t);
     const wrapBoundary = (body: string): string => boundaryJs(def, body, gen, enclosingTiles);
-    const nameLit = JSON.stringify(def.name);
     const handlers = explicitHandlers(t, rootHandlers);
     const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
     const bodyHandlers = handlers.size > 0 ? handlers : undefined;
@@ -305,7 +310,7 @@ function tileCallJs(
       );
       return wrap(
         wrapBoundary(
-          `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
+          `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${namedJs(`_attachProps(${bodyJs}, _propsOuter)`, def)}; })(${oneJs}, ${propsJs})`,
         ),
       );
     }
@@ -318,7 +323,7 @@ function tileCallJs(
       undefined,
       bodyHandlers,
     );
-    return wrap(wrapBoundary(`_named(_attachProps(${bodyJs}, ${propsJs}), ${nameLit})`));
+    return wrap(wrapBoundary(namedJs(`_attachProps(${bodyJs}, ${propsJs})`, def)));
   }
 
   gen.usedTiles.add(name);
