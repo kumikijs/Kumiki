@@ -228,16 +228,17 @@ describe("policy-deferred effect episode fidelity", () => {
           name: "onInput",
           event: { kind: "ui", ev: "input" },
           selector: { tile: "Q" },
+          // The id an `emit` expression stamps on its record, so `kill` can name it.
           apply: (_l, p) => ({
             slots: { q: p.value as string },
-            emits: [{ effect: "search", args: [{ q: p.value }] }],
+            emits: [{ effect: "search", args: [{ q: p.value }], id: "search#1" }],
           }),
         },
         {
           name: "kill",
           event: { kind: "ui", ev: "click" },
           selector: { tile: "Kill" },
-          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["search:_"] }] }),
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["search#1"] }] }),
         },
       ],
     };
@@ -257,7 +258,7 @@ describe("policy-deferred effect episode fidelity", () => {
     ]);
     const clickEp = eps.find((ep) => ep.trigger.kind === "ui.click");
     expect(cancels(clickEp!.steps)).toEqual([
-      expect.objectContaining({ kind: "effect-cancel", targetId: "search:_" }),
+      expect.objectContaining({ kind: "effect-cancel", targetId: "search#1" }),
     ]);
     dispose();
   });
