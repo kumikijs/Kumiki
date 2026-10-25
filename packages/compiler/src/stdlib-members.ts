@@ -114,13 +114,100 @@ export const RECEIVER_MEMBERS = {
   Duration: ["to-ms"],
   Bytes: [],
   File: [],
+  EffectId: [],
 } as const satisfies Record<string, readonly string[]>;
 
-/** Every value has these, whatever its type. */
+/** Every value has these, whatever its type. `show` on an `EffectId` is E0204, refused where the value is shown rather than by this set. */
 export const UNIVERSAL_MEMBERS: ReadonlySet<string> = new Set(["show"]);
 
 export type Receiver = keyof typeof RECEIVER_MEMBERS;
 export type MemberOf<R extends Receiver> = (typeof RECEIVER_MEMBERS)[R][number];
+
+// `self` is the receiver's own type: the `other` of `Map.merge`, `Set.union` or `List.concat`.
+type MapParam = "K" | "V" | "self";
+type SetParam = "T" | "self";
+type ListParam = "T" | "self";
+
+export type ReceiverParam = MapParam | SetParam | ListParam;
+
+type ParamRow<R extends Receiver, P extends string> = Readonly<
+  Record<MemberOf<R>, readonly (P | null)[]>
+>;
+
+// `null` is a parameter the receiver does not type. `get-or`'s default is one: it is checked
+// against what the call answers. Every member of the three rows is listed, so a member a row
+// gains without a line here is a `tsc` error.
+export const RECEIVER_PARAMS = {
+  Map: {
+    keys: [],
+    values: [],
+    entries: [],
+    size: [],
+    "is-empty": [],
+    has: ["K"],
+    get: ["K"],
+    "get-or": ["K", null],
+    insert: ["K", "V"],
+    remove: ["K"],
+    // The fragment answers the entry's new value.
+    update: ["K", "V"],
+    merge: ["self"],
+    filter: [null],
+    map: [null],
+  },
+  Set: {
+    size: [],
+    has: ["T"],
+    add: ["T"],
+    remove: ["T"],
+    toggle: ["T"],
+    union: ["self"],
+    intersect: ["self"],
+    diff: ["self"],
+    filter: [null],
+    "to-list": [],
+  },
+  List: {
+    length: [],
+    "is-empty": [],
+    get: [null],
+    head: [],
+    tail: [],
+    last: [],
+    push: ["T"],
+    prepend: ["T"],
+    concat: ["self"],
+    slice: [null, null],
+    reverse: [],
+    sort: [],
+    "sort-by": [null],
+    unique: [],
+    map: [null],
+    filter: [null],
+    contains: ["T"],
+    find: [null],
+    fold: [null, null],
+    join: [null],
+    chunk: [null],
+    zip: [null],
+  },
+} as const satisfies {
+  Map: ParamRow<"Map", MapParam>;
+  Set: ParamRow<"Set", SetParam>;
+  List: ParamRow<"List", ListParam>;
+};
+
+const PARAM_ROWS = new Map<string, ReadonlyMap<string, readonly (ReceiverParam | null)[]>>(
+  Object.entries(RECEIVER_PARAMS).map(([r, row]) => [r, new Map(Object.entries(row))]),
+);
+
+/** The parameters of `receiver.member`, or `undefined` when the table has no row for it. */
+export function receiverParams(
+  receiver: string,
+  member: string,
+): readonly (ReceiverParam | null)[] | undefined {
+  return PARAM_ROWS.get(receiver)?.get(member);
+}
 
 const MEMBER_SETS = new Map<string, ReadonlySet<string>>(
   Object.entries(RECEIVER_MEMBERS).map(([r, ms]) => [r, new Set<string>(ms)]),
