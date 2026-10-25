@@ -466,7 +466,11 @@ describe("a union alternative", () => {
       (t) => `fn f(x: ${t}) -> Int = 1`,
       (d) => defined(pick(d, "FnDef").params[0], "a parameter").type,
     ],
-    ["a fn result", (t) => `fn f(x: Int) -> ${t} = Other`, (d) => pick(d, "FnDef").ret],
+    [
+      "a fn result",
+      (t) => `fn f(x: Int) -> ${t} = Other`,
+      (d) => defined(pick(d, "FnDef").ret, "a result"),
+    ],
     ["a record field", (t) => `type R = {t: ${t}}`, (d) => field(pick(d, "TypeDef").body)],
     ["a type argument", (t) => `slot s : Option(${t}) = None`, (d) => arg(pick(d, "SlotDef").type)],
     [
