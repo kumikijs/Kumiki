@@ -166,13 +166,17 @@ describe("E0113 reads the tiles the body renders", () => {
     ["a helper with no outlet", `tile Helper = column(text("h"))`, `page(Helper)`],
     // Nothing renders a tile written as a named argument.
     ["an outlet in a named argument", ``, `page(column(x=when(true, route-outlet())))`],
-    ["a helper in a named argument", OUTLET, `page(column(x=Outlet))`],
     // These builtins drop their positional arguments.
     ["an outlet under a spinner", ``, `page(spinner(route-outlet()))`],
     ["a helper under a spinner", OUTLET, `page(heading("s"), spinner(Outlet))`],
     ["a helper under a button", OUTLET, `page(button(text="go", Outlet))`],
   ])("reports %s as E0113", (_, defs, body) => {
     expect(codes(defs, body)).toEqual(["E0113"]);
+  });
+
+  it("reports a helper in a named argument as E0113, its name as E0116", () => {
+    // Written as a value, a tile's name is a variant tag no union declares.
+    expect(codes(OUTLET, `page(column(x=Outlet))`)).toEqual(["E0116", "E0113"]);
   });
 
   it("reports an outlet only in the sub-route target as E0113", () => {
