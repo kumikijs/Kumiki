@@ -357,11 +357,15 @@ This is the `E0008` rule under an older code: it came first, and a code's meanin
 
 ### E0113 `sub-routes-without-outlet`
 
-A tile declares `sub-routes` but its body never calls `route-outlet`. The matched child route would have nowhere to render — the page would silently miss its child content even though the compile succeeded.
+A tile declares `sub-routes` but renders no `route-outlet`, in its body or in any tile it renders. The matched child route would have nowhere to render — the page would silently miss its child content even though the compile succeeded.
 
-> `Tile "<name>" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`
+> `Tile "<name>" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`
 
-**Fix**: Add a `route-outlet()` somewhere in the tile body where the child should appear, or remove the `sub-routes` block.
+The outlet does not have to be written in the tile's own body. The runtime fills the first `route-outlet` in the tree the tile renders ([Routing §3.6.3](./routing.md#_3-6-3-matching-rules)), and code generation builds that tree from the body: it inlines each tile the body calls (`Outlet()`) or names (`Outlet`), the branches of `for` / `when` / `if` / `match`, and the positional arguments of a builtin that renders children, such as `column`, `card` or `modal`. So an outlet in a layout helper counts, however many tiles down, and so does a body that is the helper itself (`= Outlet`). A tile that declares `sub-routes` of its own counts too: its outlet, inlined into this tile, shows this tile's matched child; the nested tile's own `sub-routes` apply only where it is itself the route target. An outlet under a branch counts as it does when written directly in the body; when the branch does not render, the runtime reports the child it discarded.
+
+Only the tiles the body renders are followed. An outlet passed positionally to a builtin that renders no children does not count: `button`, `input`, `textarea`, `check`, `radio`, `switch`, `select`, `slider`, `spinner`, `progress`, `skeleton`, `toast`, `video`, `error` and `route-outlet` drop their positional arguments, so `spinner(Outlet)` renders no outlet. Nor does an outlet written as a named argument, which nothing renders (`column(x=when(c, route-outlet()))`), or one that appears only in an `error-boundary` fallback, the tile's own or a rendered tile's: a fallback is not part of the body.
+
+**Fix**: Add a `route-outlet()` where the child should appear — in the tile body, or in a tile it renders — or remove the `sub-routes` block.
 
 ### E0114 `sub-routes-without-wildcard-parent`
 
