@@ -24,8 +24,8 @@ import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim, runtimeBuilt } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
@@ -100,16 +100,20 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   }
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
     const def = sym.tiles.get(r.on.selector.tile);
-    if (def !== undefined) {
-      const decl = collectTileDeclaredIds(def);
-      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
-        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+    if (def !== undefined && !namedByHandler(r.name, sym)) {
+      const wired = subscriptionIds(def, r.on.ev, sym);
+      if (wired.known && wired.ids.size > 0 && !wired.ids.has(r.on.selector.id)) {
+        const actual = [...wired.ids]
+          .sort()
+          .map((v) => `"${v}"`)
+          .join(" | ");
         errors.push({
           code: "E0212",
           kind: "selector-id-mismatch",
           message:
             `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
-            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+            `but every element of tile "${r.on.selector.tile}" that fires "${r.on.ev}" has id ${actual} ` +
+            `— this selector can never match`,
           pos: r.on.pos,
         });
       }
@@ -118,7 +122,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
     const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
     if (allowed != null) {
-      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const descendants = subscribedKinds(r.on.selector.tile, sym);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         errors.push({
@@ -166,7 +170,6 @@ function checkStmt(
   writtenRoots: Set<string>,
 ): void {
   if (s.kind === "ForStmt") {
-    checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
     const bodyWrites = new Set<string>(writtenRoots);
     checkBody("for", s.body, sym, errors, ctx, bodyWrites, (inner) =>
@@ -188,7 +191,7 @@ function checkStmt(
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
-    const scrutType = inferType(s.scrutinee, sym, ctx);
+    const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {

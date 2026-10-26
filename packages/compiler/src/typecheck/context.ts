@@ -21,6 +21,8 @@ export type KumikiError = {
   unrendered?: "positional" | "text-prop" | "text-shadowed";
   /** E0103 only: the nested body that declared the name and ended before this read. */
   endedScope?: StatementScope;
+  /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
+  accessor?: "keys" | "to-list";
 };
 
 /** The nested statement bodies of a reducer, each a scope of its own. */
@@ -42,6 +44,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The program's own unions, by each tag they declare: `unionsByTag`. */
+  unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
 };
 
