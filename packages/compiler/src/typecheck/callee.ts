@@ -11,7 +11,13 @@ import { BUILTIN_TILES } from "../builtins.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
-import { type Ctx, isBuiltinCall, type KumikiError, type SymbolTable } from "./context.ts";
+import {
+  type Ctx,
+  isBuiltinCall,
+  type KumikiError,
+  type StatementScope,
+  type SymbolTable,
+} from "./context.ts";
 import { refuseRenderedEffectId } from "./expr.ts";
 import { freshResultType, prim } from "./infer.ts";
 
@@ -196,6 +202,18 @@ export function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string
   if (!resolves) return "";
   if (hasCloseName(name, sym, ctx)) return "";
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
+}
+
+const ENDED_SCOPE_WORDS: Record<StatementScope, { body: string; inside: string }> = {
+  if: { body: 'an "if" branch', inside: "branch" },
+  for: { body: 'a "for" body', inside: "body" },
+  match: { body: "a match arm", inside: "arm" },
+};
+
+/** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
+export function endedScopeHint(scope: StatementScope): string {
+  const { body, inside } = ENDED_SCOPE_WORDS[scope];
+  return ` — it is scoped to ${body}, which ends with it: declare it before the "${scope}", or move the read into the ${inside} (see docs/spec/language.md)`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {
