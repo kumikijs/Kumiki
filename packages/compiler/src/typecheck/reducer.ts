@@ -144,26 +144,28 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A wrapped control's focused element and a kind whose renderer never calls
-// the handler both do fire it, so "no descendant fires it" would be untrue.
+// A wrapped control's focused element, and a kind whose renderer never calls the handler, do fire
+// the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
+// unheard under key, focus or blur, so the two reasons never both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
   const unheard = firesUnheardClauses(ev, kinds);
-  if (unheard.length === 0) {
-    if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
+  if (unheard.length > 0) {
+    return `"${ev}" never reaches a reducer in tile "${tile}": ${unheard.join("; ")}`;
+  }
+  const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
+  if (unreached.length > 0) {
     return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
   }
-  return `"${ev}" never reaches a reducer in tile "${tile}": ${[...unreached, ...unheard].join("; ")}`;
+  return `tile "${tile}" has no descendant that fires "${ev}"`;
 }
 
 function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
   const kinds = kindsPhrase(g.kinds);
-  const around = `the <${g.wrapper}> around its <${g.focused}>`;
   return g.bubbles
-    ? `${kinds} takes no "${ev}" listener on ${around}, ` +
+    ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
         `since one there would also hear every "${ev}" from the tiles inside it`
-    : `${kinds} listens on ${around}, ` +
-        `and the "${ev}" that <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
+    : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
+        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }
 
 // W0212 and W0213 both give these as their reason, so the two say the same of

@@ -17,7 +17,7 @@ After:
 
 > Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.
 
-> "onClick" on link() is dropped — a link fires "click", and its renderer keeps it for navigation, never calling onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)
+> "onClick" on link() is dropped — a link fires "click", and its renderer listens for it only to navigate, never calling onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)
 
 > "onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. Put it on …
 

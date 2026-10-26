@@ -66,6 +66,19 @@
       }
     },
     {
+      "label": "and a key in the radio reaches its ui.key reducer the same way",
+      "do": {
+        "key": "#big input",
+        "value": " "
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": "ac ak wc rc rk "
+        }
+      }
+    },
+    {
       "label": "an input takes focus itself, so its ui.focus reducer runs",
       "do": {
         "focus": "#note"
@@ -73,7 +86,7 @@
       "expect": {
         "noErrors": true,
         "state": {
-          "log": "ac ak wc rc nf "
+          "log": "ac ak wc rc rk nf "
         }
       }
     },
@@ -85,9 +98,9 @@
       "expect": {
         "noErrors": true,
         "state": {
-          "log": "ac ak wc rc nf nb "
+          "log": "ac ak wc rc rk nf nb "
         },
-        "domIncludes": ["log: ac ak wc rc nf nb "]
+        "domIncludes": ["log: ac ak wc rc rk nf nb "]
       }
     }
   ]
