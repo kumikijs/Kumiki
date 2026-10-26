@@ -208,7 +208,6 @@ export function checkTileExpr(
 ): void {
   switch (t.kind) {
     case "TileFor": {
-      checkExpr(t.iter, sym, errors, ctx);
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
