@@ -1,8 +1,14 @@
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { RUN_REDUCER } from "../builtin-calls.ts";
-import { FRAGMENT_ARGUMENTS, fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
-import { receiverParams } from "../stdlib-members.ts";
+import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import {
+  type FragmentArgument,
+  fragmentArgument,
+  fragmentBinds,
+  receiverParams,
+  TYPE_ARGUMENT_OF,
+} from "../stdlib-members.ts";
 import {
   checkAgainst,
   checkEmitTarget,
@@ -312,7 +318,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             : null;
         const kind = keyKindOfReader(recvType, e.method, sym);
         if (kind) e.keyKind = kind;
-        const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+        const fragment = fragmentArgument(e.method);
         const shape =
           fragment?.second === "pair-value" ? fragmentShape(recvType, e, sym, ctx) : undefined;
         if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
@@ -328,10 +334,11 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (isFragmentFnName(a, sym, ctx)) {
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
             if (lacksMember) continue;
-            if (!checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors)) {
+            const arity = sym.fns.get(a.name)?.params.length ?? 0;
+            if (!checkFragmentFnArity(a, arity, e.method, fragment, recvType, shape, errors)) {
               continue;
             }
-            body = fragmentCall(a.name, sym.fns.get(a.name)?.params.length ?? 0, a.pos);
+            body = fragmentCall(a.name, arity, a.pos);
           }
           const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
           const inner = innerScope(ctx);
@@ -340,7 +347,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
             inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
-          } else if (fragment.binds === 2) {
+          } else if (fragmentBinds(fragment) === 2) {
             bindLocal(inner, "$2", p2);
           }
           checkExpr(body, sym, errors, inner);
@@ -443,14 +450,13 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
 
 function checkFragmentFnArity(
   a: Expr & { kind: "Ref" },
+  n: number,
   method: string,
-  fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
+  fragment: FragmentArgument,
   receiver: TypeExpr | null,
   shape: FragmentShape | null | undefined,
-  sym: SymbolTable,
   errors: KumikiError[],
 ): boolean {
-  const n = sym.fns.get(a.name)?.params.length ?? 0;
   const report = (why: string): false => {
     errors.push({
       code: "E0213",
@@ -464,7 +470,9 @@ function checkFragmentFnArity(
     return n === 2 || report(`.${method} supplies exactly 2 — the accumulator and the element`);
   }
   if (n === 0) return report(`.${method} needs at least 1`);
-  if (n > fragment.binds) return report(`.${method} supplies at most ${fragment.binds}`);
+  if (n > fragmentBinds(fragment)) {
+    return report(`.${method} supplies at most ${fragmentBinds(fragment)}`);
+  }
   if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     return report(
@@ -652,12 +660,9 @@ function memberArgType(
   switch (param) {
     case null:
       return null;
-    case "K":
-    case "T":
-      return t.args[0] ?? null;
-    case "V":
-      return t.args[1] ?? null;
     case "self":
       return recv;
+    default:
+      return t.args[TYPE_ARGUMENT_OF[param]] ?? null;
   }
 }

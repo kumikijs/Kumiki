@@ -184,9 +184,9 @@ reducer go on=ui.click(Btn) do= sets := sets.map($1.add("x"))`),
     ).toEqual([{ code: "E0201", message: "Expected Int but got Text", text: '"x"))' }]);
   });
 
-  it("reads no argument against a receiver whose type is undecided", () => {
-    // Neither receiver has a type the checker decides: `fold`'s accumulator `$1` is not the
-    // `List(Int)` the fold walks, and `mk` has no `->`, though its body is a `List(Int)`.
+  it("reads no argument against a receiver whose type, or element type, is undecided", () => {
+    // From `[]`, `fold`'s accumulator `$1` is a List whose element type is not decided, so `push`
+    // reads its argument against nothing; `mk` has no `->`, though its body is a `List(Int)`.
     expect(
       summariesOf(
         app(`slot nums  : List(Int)  = [1]

@@ -299,9 +299,6 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
 
 export {
   FIELD_ACCESS_SHORTCUTS,
-  FRAGMENT_ARGUMENTS,
-  type FragmentArgument,
-  type FragmentPositional,
   fragmentCall,
   KNOWN_MEMBERS,
   KNOWN_METHODS,

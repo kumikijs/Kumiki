@@ -1,18 +1,17 @@
 import { isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, KeyKind, Pos, TypeExpr } from "../ast.ts";
-import {
-  FIELD_ACCESS_SHORTCUTS,
-  FRAGMENT_ARGUMENTS,
-  type FragmentArgument,
-  type FragmentPositional,
-  METHOD_MIN_ARGS,
-} from "../codegen.ts";
+import { FIELD_ACCESS_SHORTCUTS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { keyRepresentation } from "../key-representation.ts";
 import {
+  type FragmentArgument,
+  type FragmentPositional,
+  type FragmentPositionals,
+  fragmentArgument,
   hasMember,
   isReceiver,
   type Receiver,
   receiversOf,
+  TYPE_ARGUMENT_OF,
   UNIVERSAL_MEMBERS,
 } from "../stdlib-members.ts";
 import { STDLIB_TYPES } from "../stdlib-types.ts";
@@ -120,11 +119,15 @@ export function fragmentBindings(
 ): [TypeExpr | null, TypeExpr | null] {
   const found = fragmentRow(recv, call.method, sym);
   if (found === null) return [null, null];
-  const [first = null, second = null] = found.row.map((p) =>
-    positionalType(p, found.app, call, sym, ctx),
-  );
-  if (found.fragment.second !== "pair-value" || found.row.length !== 1) return [first, second];
-  return first === null ? [null, null] : pairOrElement(first, sym);
+  const { row, app } = found;
+  if (row.length === 2) {
+    return [
+      positionalType(row[0], app, call, sym, ctx),
+      positionalType(row[1], app, call, sym, ctx),
+    ];
+  }
+  const only = positionalType(row[0], app, call, sym, ctx);
+  return found.fragment.second === "pair-value" ? pairOrElement(only, sym) : [only, null];
 }
 
 function fragmentRow(
@@ -134,12 +137,12 @@ function fragmentRow(
 ): {
   fragment: FragmentArgument;
   app: TypeExpr & { kind: "TypeApp" };
-  row: readonly FragmentPositional[];
+  row: FragmentPositionals;
 } | null {
-  const fragment = FRAGMENT_ARGUMENTS.get(method);
+  const fragment = fragmentArgument(method);
   const app = unaliasType(recv, sym);
   if (fragment === undefined || app?.kind !== "TypeApp") return null;
-  const rows: Readonly<Record<string, readonly FragmentPositional[] | undefined>> = fragment.on;
+  const rows: Readonly<Record<string, FragmentPositionals | undefined>> = fragment.on;
   const row = Object.hasOwn(rows, app.name) ? rows[app.name] : undefined;
   return row === undefined ? null : { fragment, app, row };
 }
@@ -156,19 +159,17 @@ function positionalType(
   sym: SymbolTable,
   ctx: Ctx,
 ): TypeExpr | null {
-  const [first = null, second = null] = app.args;
   switch (p) {
-    case "T":
-      return first;
-    case "K":
-      return keyRepresentation(first, sym) === null ? null : first;
-    case "V":
-    case "E":
-      return second;
     case "Acc": {
       const init = call.args[0];
       return init === undefined ? null : inferType(init, sym, ctx);
     }
+    case "K": {
+      const key = app.args[TYPE_ARGUMENT_OF.K] ?? null;
+      return keyRepresentation(key, sym) === null ? null : key;
+    }
+    default:
+      return app.args[TYPE_ARGUMENT_OF[p]] ?? null;
   }
 }
 
@@ -181,10 +182,9 @@ export function fragmentShape(
   if (isOpaque(recv, sym)) return "undecided";
   const found = fragmentRow(recv, call.method, sym);
   if (found === null || found.fragment.second !== "pair-value") return null;
-  const [only, more] = found.row;
-  if (only === undefined) return null;
-  if (more !== undefined) return "key-value";
-  return elementShape(positionalType(only, found.app, call, sym, ctx), sym).shape;
+  const { row } = found;
+  if (row.length === 2) return "key-value";
+  return elementShape(positionalType(row[0], found.app, call, sym, ctx), sym).shape;
 }
 
 function elementShape(
@@ -202,7 +202,10 @@ function elementShape(
 }
 
 /** `$1` / `$2` for a fragment handed `elem`, typed the way {@link elementShape} binds them. */
-function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+function pairOrElement(
+  elem: TypeExpr | null,
+  sym: SymbolTable,
+): [TypeExpr | null, TypeExpr | null] {
   const el = elementShape(elem, sym);
   if (el.shape === "pair") return el.halves;
   return el.shape === "value" ? [elem, null] : [null, null];

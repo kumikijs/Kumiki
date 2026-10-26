@@ -1,16 +1,16 @@
 {
   "steps": [
     {
-      "label": "each fn named as a fragment is applied to the positionals the method hands it: the element, a Map's key and value, fold's accumulator and element",
+      "label": "each fn named as a fragment is applied to the positionals the method hands it: the element, a Map's key and value, fold's accumulator and element; a typed accumulator reads its keys back as numbers and builds a list literal as a Set",
       "do": { "click": "#run" },
       "expect": {
         "noErrors": true,
         "state": {
           "labels": ["#3", "#1", "#2"],
-          "onHand": { "apple": 3, "plum": 5 },
+          "onHand": { "apple": 3 },
           "joined": "312"
         },
-        "domIncludes": ["labels: #3,#1,#2", "on hand: apple,plum", "joined: 312"]
+        "domIncludes": ["labels: #3,#1,#2", "on hand: apple", "joined: 312", "kept: 3", "grown: 2"]
       }
     }
   ]
