@@ -2,6 +2,7 @@ import { codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_CALLS,
+  BUILTIN_MEMBERS,
   type BuiltinArity,
   QUALIFIED_BUILTIN_CALLS,
   QUALIFIED_CALL_NAMESPACES,
@@ -26,7 +27,7 @@ type Probe = Text
 }
 
 const inFn = (callSite: string): string => `slot a : Int = 0
-fn probe() -> Text = (${callSite}).show
+fn probe() -> Int = [${callSite}].length
 tile App = column(text(probe()))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 type Probe = Text
@@ -579,7 +580,7 @@ describe("a qualified stdlib member is read the same way without its parentheses
   });
 
   it("reads a keyword member the same way, in either spelling", () => {
-    for (const where of ["Decoder.if", "Duration.if", "Bytes.if"]) {
+    for (const where of ["Decoder.if", "Duration.if", "Bytes.if", "Time.if"]) {
       expect(codesOf(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
     }
     expect(codesOf(inReducer("t := (Decoder.if(a)).show"))).toEqual(["E0116"]);
@@ -632,14 +633,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     if (name !== "Decoder.Json") {
       it(`${name} lowers to ${sentinel} with no parentheses`, () => {
         const body = loweringOf(name);
-        expect(body).toContain(`_s.show(${sentinel})`);
+        expect(body).toContain(`[${sentinel}]`);
         expect(body).not.toContain("_tag:");
       });
     }
 
     it(`${name} lowers the same way written as a call`, () => {
       const body = loweringOf(name === "Decoder.Json" ? `${name}(Text)` : `${name}()`);
-      expect(body).toContain(`_s.show(${sentinel})`);
+      expect(body).toContain(`[${sentinel}]`);
     });
   }
 
@@ -659,7 +660,141 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   it("accepts the constants themselves", () => {
     expect(codesOf(inReducer("t := (Decoder.None).show"))).toEqual([]);
-    expect(codesOf(inReducer("t := (EffectId.none).show"))).toEqual([]);
+    expect(codesOf(inReducer("a := [EffectId.none].length"))).toEqual([]);
+  });
+});
+
+describe("`Time.now` is the builtin `now`", () => {
+  // Asserted against what the bare keyword gets, never against a copy of it.
+  const SPELLINGS = ["Time.now", "Time.now()"];
+
+  const EVERYWHERE = `slot at : Time = NOW
+fn later(t: Time) -> Time = NOW.plus(Duration.s(1))
+reducer stamp on=ui.click(B) do= at := NOW
+tile B = button(text="b")
+tile App = column(B, text(NOW.format("yyyy")), text(later(at).show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test stamps =
+    reducer-test stamp
+        given  = {slots: {at: NOW}, event: {type: ui.click, target: B}}
+        expect = {slots: {}}
+`;
+
+  const moduleWith = (spelling: string): string =>
+    compileOrFail(EVERYWHERE.replaceAll("NOW", spelling), {
+      runtimeSpecifier: "./runtime.js",
+      includeTests: true,
+    });
+
+  it("lowers to the module `now` lowers to, in a slot, fn, reducer, tile and test", () => {
+    // Codegen embeds no source positions, so a byte-identical module is "the same builtin" in
+    // every position at once, the environment read the runtime journals included. Each position's
+    // lowering is looked for, so the comparison cannot hold vacuously.
+    const bare = moduleWith("now");
+    const POSITIONS = [
+      "function later(t) { return ((_s.now())",
+      '"at": { value: _s.now() }',
+      '_next["at"] = _s.now();',
+      '_s.formatTime(_s.now(), "yyyy")',
+      '{ "at": _s.now() }',
+    ];
+    for (const lowered of POSITIONS) expect(bare, lowered).toContain(lowered);
+    // The tile is emitted once per route that mounts `App` and once more for the tests.
+    expect(bare.match(/_s\.now\(\)/g)?.length).toBe(7);
+    for (const spelling of SPELLINGS) expect(moduleWith(spelling), spelling).toBe(bare);
+  });
+
+  it("is a Time, refused where a Bool is declared in the sentence `now` gets", () => {
+    const flag = (body: string) =>
+      checkSource(`fn flag() -> Bool = ${body}
+tile App = column(text(flag().show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`);
+    const bare = flag("now");
+    expect(bare).toEqual([
+      {
+        code: "E0201",
+        kind: "type-mismatch",
+        message: "Expected Bool but got Time",
+        pos: { line: 1, col: 21 },
+      },
+    ]);
+    for (const spelling of SPELLINGS) expect(flag(spelling), spelling).toEqual(bare);
+  });
+
+  it.each(SPELLINGS)("%s is a Time where one is declared, with Time's members", (spelling) => {
+    expect(codesOf(inReducer(`t := ${spelling}.plus(Duration.s(1)).format("yyyy")`))).toEqual([]);
+  });
+
+  it("takes no argument, as `now` takes none", () => {
+    expect(checkSource(inReducer("t := Time.now(1).show"))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "now" expects 0 argument(s) but got 1',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
+  });
+
+  it("reads a member Time does not have as a call to nothing, in either spelling", () => {
+    const bare = checkSource(inReducer("t := (Time.nope).show"));
+    expect(bare).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-call",
+        message: 'Call to undefined function "Time.nope"',
+        pos: { line: 4, col: 36 },
+      },
+    ]);
+    expect(checkSource(inReducer("t := (Time.nope()).show"))).toEqual(bare);
+  });
+
+  const BARE_TYPE_MEMBERS: [string, string][] = [
+    ["parse", "E0213"],
+    ["show", "E0213"],
+    ["fresh", "E0802"],
+  ];
+
+  it("covers every type member", () => {
+    expect(BARE_TYPE_MEMBERS.map(([m]) => m).sort()).toEqual([...TYPE_MEMBER_CALLS.keys()].sort());
+  });
+
+  it.each(
+    BARE_TYPE_MEMBERS,
+  )("reports a bare Time.%s as its called spelling (%s)", (member, code) => {
+    const bare = checkSource(inReducer(`t := (Time.${member}).show`));
+    expect(bare.map((e) => e.code)).toEqual([code]);
+    expect(checkSource(inReducer(`t := (Time.${member}()).show`))).toEqual(bare);
+  });
+
+  it("keeps fresh and an argument-less parse / show as type members, which Decoder / EffectId / Duration / Bytes report as E0116", () => {
+    expect(loweringOf('Time.parse("2026-08-14")')).toContain('_s.parseTime("2026-08-14")');
+    expect(codesOf(inReducer("t := Time.show(a)"))).toEqual([]);
+    expect(checkSource(inReducer("t := (Time.parse()).show"))[0]?.message).toBe(
+      'Function "Time.parse" expects 1 argument(s) but got 0',
+    );
+  });
+
+  it("is the spelling `Time`, not a type whose base is Time", () => {
+    const src = `type Stamp = nominal Time
+slot s : Stamp = Stamp.now()
+tile App = column(text(s.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual(["E0116"]);
+  });
+
+  // A known gap (errors.md E0116): written bare on any qualifier other than Time and the four
+  // namespaces, a member is a field read with no type. This test changes when the gap closes.
+  it("leaves a bare Stamp.now a field read that passes check", () => {
+    const src = `type Stamp = nominal Time
+slot s : Stamp = Stamp.now
+tile App = column(text(s.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual([]);
+    expect(compileOrFail(src)).toContain('"s": { value: (({ _tag: "Stamp" }))["now"] }');
   });
 });
 
@@ -669,8 +804,15 @@ describe("every built-in is held to the count its lowering reads", () => {
   /** `fresh` / `parse` / `show` resolve on any capitalised qualifier. */
   const QUALIFIER = "Probe";
 
+  // `now` is a keyword and takes no parentheses, so its count is written through `Time.now`.
+  const QUALIFIED_SPELLING = new Map(
+    [...BUILTIN_MEMBERS].map(([written, builtin]) => [builtin, written]),
+  );
+
   function callOf(name: string): (n: number) => string {
-    const spelling = TYPE_MEMBER_CALLS.has(name) ? `${QUALIFIER}.${name}` : name;
+    const spelling = TYPE_MEMBER_CALLS.has(name)
+      ? `${QUALIFIER}.${name}`
+      : (QUALIFIED_SPELLING.get(name) ?? name);
     const filler = fillerOf(name);
     return (n) => `${spelling}(${Array.from({ length: n }, () => filler).join(", ")})`;
   }
@@ -681,15 +823,11 @@ describe("every built-in is held to the count its lowering reads", () => {
     ...TYPE_MEMBER_CALLS,
   ];
 
-  const PARSER_FIXED = new Set(["now"]);
-
-  const NAMED = ALL.filter(([name]) => !PARSER_FIXED.has(name));
-
   it("covers all three tables", () => {
     expect(ALL.length).toBe(
       BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size + TYPE_MEMBER_CALLS.size,
     );
-    expect([...PARSER_FIXED].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
+    expect([...QUALIFIED_SPELLING.keys()].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
   });
 
   const EXPECTED: Record<string, string> = {
@@ -727,27 +865,27 @@ describe("every built-in is held to the count its lowering reads", () => {
     expect(Object.fromEntries(ALL.map(spelled))).toEqual(EXPECTED);
   });
 
-  it("does not reach the one the parser spells for you", () => {
+  it("the keyword now takes no parentheses, so its count is checked through Time.now", () => {
     expect(codesOf(inReducer("t := now.show"))).toEqual([]);
     expect(() => parse(lex(inReducer("t := now(1).show")))).toThrow(/Expected/);
   });
 
-  for (const [name, arity] of NAMED) {
+  for (const [name, arity] of ALL) {
     const call = callOf(name);
 
     it(`${name} accepts ${arity.min}`, () => {
-      expect(codesOf(inReducer(`t := (${call(arity.min)}).show`))).toEqual([]);
+      expect(codesOf(inReducer(`a := [${call(arity.min)}].length`))).toEqual([]);
     });
 
     if (arity.min > 0) {
       it(`${name} reports one argument too few`, () => {
-        expect(codesOf(inReducer(`t := (${call(arity.min - 1)}).show`))).toEqual(["E0213"]);
+        expect(codesOf(inReducer(`a := [${call(arity.min - 1)}].length`))).toEqual(["E0213"]);
       });
     }
 
     if (Number.isFinite(arity.max)) {
       it(`${name} reports one argument too many`, () => {
-        expect(codesOf(inReducer(`t := (${call(arity.max + 1)}).show`))).toEqual(["E0213"]);
+        expect(codesOf(inReducer(`a := [${call(arity.max + 1)}].length`))).toEqual(["E0213"]);
       });
     }
   }

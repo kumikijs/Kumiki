@@ -1,18 +1,5 @@
-import type { AppShape } from "@kumikijs/runtime";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { mountApp, navigate, tick } from "./helpers/dom.ts";
-import { loadSource } from "./helpers/load.ts";
-
-async function mountRoute(src: string): Promise<{ app: AppShape; root: HTMLElement }> {
-  const app = await loadSource(src);
-  const { root, handle } = mountApp(app, { router: "memory" });
-  onTestFinished(() => {
-    handle.dispose();
-    root.remove();
-  });
-  await tick(0);
-  return { app, root };
-}
+import { describe, expect, it } from "vitest";
+import { mountSource, navigate, tick } from "./helpers/dom.ts";
 
 const MOUNTS = `slot mounts : Int = 0
 slot unmounts : Int = 0
@@ -23,7 +10,7 @@ tile Other = column(text("other"))`;
 
 describe("a tile named as a route fires tile.mount and tile.unmount", () => {
   it("fires mount for the tile the app lands on", async () => {
-    const { app } = await mountRoute(`${MOUNTS}
+    const { app } = await mountSource(`${MOUNTS}
 app M caps=[] routes={"/" -> Panel, "/404" -> Other} init=[]
 `);
     expect(app.live?.mounts).toBe(1);
@@ -31,7 +18,7 @@ app M caps=[] routes={"/" -> Panel, "/404" -> Other} init=[]
   });
 
   it("fires unmount for the old root and mount for the new one across a navigation", async () => {
-    const { app } = await mountRoute(`${MOUNTS}
+    const { app } = await mountSource(`${MOUNTS}
 app M caps=[] routes={"/" -> Panel, "/other" -> Other, "/404" -> Other} init=[]
 `);
     expect(app.live?.mounts).toBe(1);
@@ -45,7 +32,7 @@ app M caps=[] routes={"/" -> Panel, "/other" -> Other, "/404" -> Other} init=[]
     ["as the route root", '"/" -> Boom'],
     ["as a child", '"/" -> Host'],
   ])("fires no mount for a tile that is showing its fallback, %s", async (_where, home) => {
-    const { app, root } = await mountRoute(`slot xs : List(Int) = []
+    const { app, root } = await mountSource(`slot xs : List(Int) = []
 slot mounts : Int = 0
 reducer sawMount on=tile.mount(Boom) do= mounts := mounts + 1
 tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
@@ -58,7 +45,7 @@ app M caps=[] routes={${home}, "/404" -> Host} init=[]
   });
 
   it("fires unmount when a mounted route root starts panicking", async () => {
-    const { app, root } = await mountRoute(`slot go : Bool = false
+    const { app, root } = await mountSource(`slot go : Bool = false
 slot mounts : Int = 0
 slot unmounts : Int = 0
 reducer sawMount on=tile.mount(Boom) do= mounts := mounts + 1
@@ -81,7 +68,7 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
   });
 
   it("fires for a sub-route child, and for the parent that holds the outlet", async () => {
-    const { app } = await mountRoute(`${MOUNTS}
+    const { app } = await mountSource(`${MOUNTS}
 reducer sawShell on=tile.mount(Shell) do= mounts := mounts + 10
 tile Shell sub-routes={"/shell/a" -> Panel} = column(route-outlet())
 app M caps=[] routes={"/shell/*" -> Shell, "/404" -> Other} init=[]

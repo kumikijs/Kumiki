@@ -92,7 +92,7 @@ effect login    cap=http.post
 
 | prop | Type | Meaning |
 |---|---|---|
-| `auto-complete` | `Bool` | Browser autocomplete |
+| `auto-complete` | `Text` | Browser autocomplete: `on` / `off` |
 | `novalidate` | `Bool` | Suppress HTML5 standard validation |
 
 Do not write `onSubmit` on the form itself. For the submit handler, write `ui.submit(WrapperTile)` in the reducer's `on=`, using **the name of the tile that wraps the form**.
@@ -207,7 +207,7 @@ In addition to updating a slot via `bind=`, input/textarea can also fire via the
 
 ### 5.5.2 radio
 
-radio has a `group` prop for grouping (corresponding to CSS's `name` attribute):
+radio has a `group` prop for grouping. It is the HTML `name` attribute of the radio's `<input>`, so the radios that share a `group` are one set, of which at most one is checked at a time:
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -231,6 +231,8 @@ tile FilterRadioGroup = column(
 ```
 
 This is the recommended approach.
+
+A radio written with `name` instead of `group`, as an argument or in its props block, is grouped by it the same way. With both, `group` is the one read, and `kumiki check` warns about the `name` ([W0217](./errors.md#w0217-name-beside-group-warning)).
 
 ---
 

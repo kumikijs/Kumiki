@@ -92,7 +92,7 @@ effect login    cap=http.post
 
 | prop | 型 | 意味 |
 |---|---|---|
-| `auto-complete` | `Bool` | ブラウザのオートコンプリート |
+| `auto-complete` | `Text` | ブラウザのオートコンプリート（`on` / `off`） |
 | `novalidate` | `Bool` | HTML5 標準バリデーションを抑制 |
 
 form 自体には `onSubmit` を書かない。submit ハンドラは **その form をラップする tile 名**で `ui.submit(WrapperTile)` を reducer の `on=` に書く。
@@ -207,7 +207,7 @@ input/textarea も `bind=` で slot を更新するほか、`ui.change(InputTile
 
 ### 5.5.2 radio
 
-radio はグループ化のため `group` prop を持つ（CSS の `name` 属性に対応）：
+radio はグループ化のため `group` prop を持つ。これは radio の `<input>` の HTML `name` 属性であり、同じ `group` を共有するラジオが 1 つの組になって、一度にチェックされるのは多くとも 1 つである：
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -231,6 +231,8 @@ tile FilterRadioGroup = column(
 ```
 
 こちらが推奨。
+
+`group` の代わりに `name` を引数または props ブロックに書いた radio も、同じようにそれでグループ化される。両方あれば読まれるのは `group` で、`kumiki check` は `name` について警告する（[W0217](./errors.md#w0217-name-beside-group-warning)）。
 
 ---
 
