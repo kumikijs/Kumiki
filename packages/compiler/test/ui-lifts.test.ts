@@ -121,7 +121,7 @@ describe("firesUnheard / firesUnheardIn", () => {
     }
   });
 
-  it("records the absences that are runtime policy: link for click, five kinds for input", () => {
+  it("records the absences that are runtime policy: link for click, and kinds for input", () => {
     const recorded = Object.fromEntries(
       UI_LIFTS.filter((l) => l.firesUnheard).map((l) => [
         l.ev,
@@ -134,6 +134,14 @@ describe("firesUnheard / firesUnheardIn", () => {
     });
   });
 
+  // W0212 gives one reason or the other, so a body could not be given both.
+  it("keeps records off the rows a wrapped control's focused element leaves unreached", () => {
+    for (const lift of UI_LIFTS) {
+      if (wrappedUnreached(lift.ev, ["check", "radio", "switch", "details"]).length === 0) continue;
+      expect(lift.firesUnheard, `the ${lift.ev} row`).toBeUndefined();
+    }
+  });
+
   it("groups the kinds of a body by what their renderer does instead, with the row's handler", () => {
     expect(firesUnheardIn("input", ["text", "switch", "slider", "check"])).toEqual([
       { kinds: ["check", "switch"], instead: 'listens for "change" instead', handler: "onInput" },
@@ -141,7 +149,7 @@ describe("firesUnheard / firesUnheardIn", () => {
     ]);
   });
 
-  it("answers nothing for a kind whose element fires nothing, or a row with no record", () => {
+  it("answers nothing for a kind the row's record does not name, or a row with no record", () => {
     expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
     expect(firesUnheardIn("change", ["editable"])).toEqual([]);
     expect(firesUnheardIn("focus", ["check"])).toEqual([]);

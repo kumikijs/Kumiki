@@ -4,8 +4,11 @@ export type UiLift = {
   readonly ev: UiEventKind;
   readonly handler: string;
   readonly tiles: ReadonlySet<string> | null;
-  // A kind left out of `tiles` although its element fires `ev`, mapped to what
-  // its renderer does with the event instead of calling `handler`.
+  /**
+   * Kinds left out of `tiles` whose element fires `ev` but whose renderer never calls `handler`,
+   * each mapped to the verb phrase W0212 prints after "its renderer". A kind not named here gets
+   * the "no descendant fires it" wording.
+   */
   readonly firesUnheard?: Readonly<Record<string, string>>;
 };
 
@@ -37,7 +40,7 @@ function isWrapped(kind: string): kind is WrappedKind {
   return Object.hasOwn(WRAPPED_CONTROL, kind);
 }
 
-// The events the runtime listens for on the element a renderer returned, and
+// The focus-dependent events the runtime listens for on the element a renderer returned, and
 // whether each bubbles from a wrapped control's focused element to its wrapper.
 const ROOT_LISTENED_BUBBLES = { key: true, focus: false, blur: false } as const;
 
@@ -82,12 +85,15 @@ export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): Wrap
   return [...groups.values()];
 }
 
+// Grouped by this exact text into one clause, so the four kinds share the constant.
+const LISTENS_FOR_CHANGE = 'listens for "change" instead';
+
 export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "click",
     handler: "onClick",
     tiles: new Set(["button", "check", "switch", "radio"]),
-    firesUnheard: { link: "keeps it for navigation" },
+    firesUnheard: { link: "listens for it only to navigate" },
   },
   { ev: "submit", handler: "onSubmit", tiles: new Set(["form"]) },
   {
@@ -101,10 +107,10 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
     tiles: new Set(["input", "textarea", "editable"]),
     firesUnheard: {
       slider: "listens for it only to write the bind",
-      check: 'listens for "change" instead',
-      radio: 'listens for "change" instead',
-      switch: 'listens for "change" instead',
-      select: 'listens for "change" instead',
+      check: LISTENS_FOR_CHANGE,
+      radio: LISTENS_FOR_CHANGE,
+      switch: LISTENS_FOR_CHANGE,
+      select: LISTENS_FOR_CHANGE,
     },
   },
   { ev: "key", handler: "onKeyDown", tiles: rootListenedTiles("key") },

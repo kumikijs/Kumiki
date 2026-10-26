@@ -25,7 +25,7 @@ of saying no descendant fires the event. Its `<summary>` takes focus inside the
 `<details>` the listener would sit on. `focus` and `blur` do not bubble from the
 summary to it:
 
-> Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": a details listens on the <details> around its <summary>, and the "focus" that <summary> fires does not bubble to the <details> (…)
+> Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": the runtime listens for "focus" on a details's <details>, and the "focus" its <summary> fires does not bubble to the <details> (…)
 
 `keydown` does bubble there, and so does the keydown of every tile in the panel.
 A control in the panel that the `key` row lists already carries the subscription
