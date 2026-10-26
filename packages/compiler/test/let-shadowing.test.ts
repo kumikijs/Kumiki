@@ -294,9 +294,9 @@ describe("the checker scopes each `if` branch as codegen does", () => {
   });
 });
 
-describe("an E0103 for a name a nested body declared names the body", () => {
+describe("an E0103 for a name read after its scope ended names the scope", () => {
   // A rename to a close name type-checks and reads another value, so the diagnostic says which
-  // body ended the name: in `endedScope` for `kumiki fix`, in the message for the author.
+  // scope ended the name: in `endedScope` for `kumiki fix`, in the message for the author.
   const undefinedNames = (source: string) =>
     checkSource(source)
       .filter((e) => e.code === "E0103")
@@ -306,7 +306,14 @@ describe("an E0103 for a name a nested body declared names the body", () => {
     for: 'it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body',
     match:
       'it is scoped to a match arm, which ends with it: declare it before the "match", or move the read into the arm',
+    "let-in":
+      'it is scoped to the body of a "let … in", which ends with it: move the read into that body, or bind it where both reads see it',
+    "for-expr": `it is scoped to a tile's "for" body, which ends with it: move the read into the body`,
+    "match-expr":
+      'it is scoped to an arm of a "match" expression, which ends with it: move the read into the arm',
   };
+  /** The program with `tile` as its page's body, beside a reducer that reads nothing. */
+  const page = (tile: string) => program("app.start", "()").replace("column(text(seen))", tile);
   const hinted = (name: string, scope: string) => ({
     endedScope: scope,
     message: `Reference to undefined name "${name}" — ${HINTS[scope]} (see docs/spec/language.md)`,
@@ -380,6 +387,72 @@ describe("an E0103 for a name a nested body declared names the body", () => {
 
   it.each([
     {
+      reads: "a `let … in` name in a later statement",
+      source: program("app.start", 'seen := let n = "a" in n\n        after := n'),
+      name: "n",
+      scope: "let-in",
+    },
+    {
+      reads: "a `let … in` name, not a statement body around it",
+      source: program("app.start", 'for x in [1] { seen := let n = "a" in n }\n        after := n'),
+      name: "n",
+      scope: "let-in",
+    },
+    {
+      reads: "a `let … in` name after it in a `fn`",
+      source: program("app.start", "()").replace(
+        "tile Page",
+        "fn twice(x: Int) -> Int = (let n = x in n) + n\n\ntile Page",
+      ),
+      name: "n",
+      scope: "let-in",
+    },
+    {
+      reads: "a `let … in` name in a slot initializer",
+      source: program("app.start", "()").replace(
+        'slot after : Text = ""',
+        'slot after : Text = (let n = "a" in n) + n',
+      ),
+      name: "n",
+      scope: "let-in",
+    },
+    {
+      reads: "a `match` expression's arm variable in a later statement",
+      source: program(
+        "app.start",
+        'seen := match Some("a") with | Some(v) -> v | None -> ""\n        after := v',
+      ),
+      name: "v",
+      scope: "match-expr",
+    },
+    {
+      reads: "a tile `for` variable in a sibling",
+      source: page("column(for idx in [1] text(idx.show), text(idx.show))"),
+      name: "idx",
+      scope: "for-expr",
+    },
+    {
+      reads: "a tile `match` arm's variable in a sibling",
+      source: page(
+        'column(match Some(1) with | Some(v) -> text(v.show) | None -> text("none"), text(v.show))',
+      ),
+      name: "v",
+      scope: "match-expr",
+    },
+  ])("names the expression for $reads", ({ source, name, scope }) => {
+    expect(undefinedNames(source)).toEqual([hinted(name, scope)]);
+  });
+
+  it("keeps the message of a misspelling beside a sibling's read", () => {
+    const src = page("column(for idx in [1] text(idx.show), text(idx.show), text(sen))");
+    expect(undefinedNames(src)).toEqual([
+      hinted("idx", "for-expr"),
+      { endedScope: undefined, message: 'Reference to undefined name "sen"' },
+    ]);
+  });
+
+  it.each([
+    {
       case: "a misspelling no body declared",
       source: program("app.start", "for x in [1] { () }\n        total := totl"),
       name: "totl",
@@ -389,6 +462,14 @@ describe("an E0103 for a name a nested body declared names the body", () => {
       source: program("app.start", "for idx in [1] { () }").replace(
         "tile Page",
         "reducer other on=app.stop do= total := idx\n\ntile Page",
+      ),
+      name: "idx",
+    },
+    {
+      case: "an expression's name read in another tile",
+      source: page("column(for idx in [1] text(idx.show))").replace(
+        "app A",
+        "tile Other = text(idx.show)\n\napp A",
       ),
       name: "idx",
     },

@@ -52,6 +52,7 @@ function preMountProbe(
     localBinds: new Set(params.map((p) => p.name)),
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     routeReadsSeen: routeReads,
     fragmentFnCallsSeen: fragmentFnCalls,
   };
