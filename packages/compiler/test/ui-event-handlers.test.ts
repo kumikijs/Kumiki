@@ -352,7 +352,7 @@ app A
     const tile = 'details(summary="Question", text(note))';
     const reported = checkSource(source(ev, tile));
     expect(reported.map((e) => e.code)).toEqual(["W0212"]);
-    expect(reported[0]?.message).toContain("around its <summary>");
+    expect(reported[0]?.message).toContain("its <summary>");
     expect(loweredOf(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
   });
 

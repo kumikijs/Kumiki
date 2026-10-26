@@ -14,11 +14,11 @@ The prop form compiled with no diagnostic. Before, for
 
 After:
 
-> "onFocus" on check() is dropped — a check listens on the <label> around its <input>, and the "focus" that <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.<event>(<Tile>)
+> "onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.<event>(<Tile>)
 
 A user tile whose body renders only such controls is reported too:
 
-> "onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: a check listens on the <label> around its <input>, and the "focus" that <input> fires does not bubble to the <label> (observed in body: check). Put it on …
+> "onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed in body: check). Put it on …
 
 The reason is the clause W0212 gives for `ui.focus` / `ui.blur` on the same
 kind, read from the same record in `ui-lifts.ts`. The pairs newly reported are

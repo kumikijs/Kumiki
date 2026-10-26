@@ -142,7 +142,7 @@ describe("firesUnheard / firesUnheardIn", () => {
     }
   });
 
-  it("records the absences whose renderer does something else: link for click, five for input", () => {
+  it("records the absences whose renderer does something else: link for click, and kinds for input", () => {
     const recorded = Object.fromEntries(
       UI_LIFTS.filter((l) => l.firesUnheard).map((l) => [
         l.ev,
@@ -153,6 +153,14 @@ describe("firesUnheard / firesUnheardIn", () => {
       click: ["link"],
       input: ["check", "radio", "select", "slider", "switch"],
     });
+  });
+
+  // W0212 gives one reason or the other, so a body could not be given both.
+  it("answers nothing on the rows a wrapped control's focused element leaves unreached", () => {
+    for (const lift of UI_LIFTS) {
+      if (wrappedUnreached(lift.ev, ["check", "radio", "switch", "details"]).length === 0) continue;
+      expect(firesUnheardIn(lift.ev, BUILTIN_TILES), `the ${lift.ev} row`).toEqual([]);
+    }
   });
 
   it("groups the kinds of a body by what their renderer does instead, naming the row's handler", () => {
@@ -170,11 +178,11 @@ describe("firesUnheard / firesUnheardIn", () => {
     const leftOut = [...BUILTIN_TILES].filter((k) => !UI_EVENT_TILE_KINDS.click?.has(k)).sort();
     expect(firesUnheardIn("click", BUILTIN_TILES)).toEqual([
       { kinds: leftOut.filter((k) => k !== "link"), reason: "never calls onClick" },
-      { kinds: ["link"], reason: "keeps it for navigation, never calling onClick" },
+      { kinds: ["link"], reason: "listens for it only to navigate, never calling onClick" },
     ]);
   });
 
-  it("answers nothing for a kind whose element fires nothing, a lifted kind, or a row with no record", () => {
+  it("answers nothing for a kind the row neither records nor defaults, a lifted kind, or a row with no record", () => {
     expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
     expect(firesUnheardIn("change", ["editable"])).toEqual([]);
     expect(firesUnheardIn("focus", ["box", "text"])).toEqual([]);
