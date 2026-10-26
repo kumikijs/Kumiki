@@ -251,8 +251,8 @@ type FragmentMethod =
 
 /**
  * Where each method's fragment argument is (`index`), and what the checker types its
- * positionals as, `$1` first. The row's length also decides the fragment's shape: two positionals
- * are a Map's key and value, taken apart; one is the element, taken apart only when it is a pair.
+ * positionals as, `$1` first. On a `pair-value` row the length also decides the shape the lowering
+ * takes apart: two positionals are a Map's key and value; one is the element, split if a pair.
  * A receiver that has the method but no row binds them with no type: a `Set`'s `filter` is handed
  * each member as an `[element, true]` entry, which a one-positional row would bind to `$1` whole.
  * A receiver without the method is E0108.
