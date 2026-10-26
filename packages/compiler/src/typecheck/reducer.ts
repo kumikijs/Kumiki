@@ -139,24 +139,26 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A label-wrapped control's <input> and a kind whose renderer keeps the event
-// both do fire it, so "no descendant fires it" would be untrue for them.
+// A label-wrapped control's <input>, and a kind whose renderer never calls the handler, do fire
+// the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
+// unheard under focus or blur, so the two reasons never both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unreached = labelWrappedUnreached(ev, kinds);
   const unheard = firesUnheardIn(ev, kinds);
-  const labelClause =
-    `a ${unreached.join(" / ")} listens on the <label> around its <input>, ` +
-    `and the "${ev}" that <input> fires does not bubble to the <label>`;
-  if (unheard.length === 0) {
-    if (unreached.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
-    return `"${ev}" never reaches a listener in tile "${tile}": ${labelClause}`;
+  if (unheard.length > 0) {
+    const clauses = unheard.map(
+      (g) =>
+        `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
+    );
+    return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
   }
-  const clauses = unheard.map(
-    (g) =>
-      `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
-  );
-  if (unreached.length > 0) clauses.unshift(labelClause);
-  return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
+  const unreached = labelWrappedUnreached(ev, kinds);
+  if (unreached.length > 0) {
+    return (
+      `"${ev}" never reaches a listener in tile "${tile}": the runtime listens for "${ev}" on a ` +
+      `${unreached.join(" / ")}'s <label>, and the "${ev}" its <input> fires does not bubble to the <label>`
+    );
+  }
+  return `tile "${tile}" has no descendant that fires "${ev}"`;
 }
 
 // A route trigger hands `$route` the route on every firing; a prefetch target on another trigger
