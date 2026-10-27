@@ -1,5 +1,5 @@
 import type { Expr, TileArg, TileExpr, TileProp } from "../ast.ts";
-import { BUILTIN_TILES, positionalIsTile } from "../builtins.ts";
+import { BUILTIN_TILES, positionalIsTile, VALUE_ARG_BUILTINS } from "../builtins.ts";
 import { HANDLER_NAMES } from "../ui-lifts.ts";
 import { StatementParser } from "./statements.ts";
 import { ParseError } from "./token-stream.ts";
@@ -91,7 +91,8 @@ export class TileParser extends StatementParser {
       const head = this.peek();
       const value =
         HANDLER_NAMES.has(first.value) &&
-        positionalIsTile(callee) &&
+        BUILTIN_TILES.has(callee) &&
+        !VALUE_ARG_BUILTINS.has(callee) &&
         head.kind === "ident" &&
         isCapitalised(head.value)
           ? this.parseTileCall()

@@ -167,12 +167,17 @@ describe("E0113 reads the tiles the body renders", () => {
     // Nothing renders a tile written as a named argument.
     ["an outlet in a named argument", ``, `page(column(x=when(true, route-outlet())))`],
     ["a helper in a named argument", OUTLET, `page(column(x=Outlet))`],
-    // These builtins drop their positional arguments.
+  ])("reports %s as E0113", (_, defs, body) => {
+    expect(codes(defs, body)).toEqual(["E0113"]);
+  });
+
+  // These builtins drop their positional arguments, which E0129 reports at the argument.
+  it.each([
     ["an outlet under a spinner", ``, `page(spinner(route-outlet()))`],
     ["a helper under a spinner", OUTLET, `page(heading("s"), spinner(Outlet))`],
     ["a helper under a button", OUTLET, `page(button(text="go", Outlet))`],
-  ])("reports %s as E0113", (_, defs, body) => {
-    expect(codes(defs, body)).toEqual(["E0113"]);
+  ])("reports %s as E0113, beside the E0129", (_, defs, body) => {
+    expect(codes(defs, body)).toEqual(["E0129", "E0113"]);
   });
 
   it("reports an outlet only in the sub-route target as E0113", () => {

@@ -343,7 +343,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 outlet は tile 自身の body に書かれている必要はない。ランタイムは tile が描画する木の中で最初に見つかった `route-outlet` を埋め（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、コード生成はその木を body から組み立てる：body が呼び出す（`Outlet()`）か名前で書く（`Outlet`）tile、`for` / `when` / `if` / `match` の各分岐、そして `column`・`card`・`modal` のように子を描画する builtin の位置引数をインライン展開する。したがってレイアウト用の補助 tile に置いた outlet は何段下であっても数え、body がその補助 tile そのもの（`= Outlet`）であっても数える。自身も `sub-routes` を宣言している tile も数える：この tile にインライン展開されたその outlet は、この tile にマッチした子を映す。入れ子の tile 自身の `sub-routes` が使われるのは、それ自体がルートのターゲットになっている場所だけである。分岐の中の outlet は、body に直接書いた場合と同じく数える。分岐が描画されないときは、捨てた子をランタイムが報告する。
 
-たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
+たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`divider`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
 
 **修正**：子を表示したい場所——tile の body か、それが描画する tile の中——に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
@@ -539,7 +539,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 tile が期待される位置に値が書かれている。tile を期待する位置は 2 種類ある（[言語 §1.7.1](./language.md#_1-7-1-構文)）：
 
-- 値 builtin でない builtin —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon` 以外 —— の位置引数。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr` か、プログラムが定義する tile の名前。コンテナ（`column`・`row`・`card` など）はそれを子として描画し、それ以外（`button`・`progress` など）は位置引数をまったく読まない。
+- 位置引数を子として描画する builtin —— コンテナ：`column`・`row`・`card` など（[言語 §1.7.1](./language.md#_1-7-1-構文) が列挙する）—— の位置引数。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr` か、プログラムが定義する tile の名前。値 builtin は位置引数を値として読み、それ以外の builtin（`button`・`progress` など）は位置引数を tile でも値でも描画しない：そこに書いたものは [E0129](#e0129-unrendered-arg) になる。
 - `tile-expr` 全体：`when` / `if` / `for` / `match` の腕、tile 本体、tile-test の `expect`。パーサはそこに書かれた名前を tile 呼び出しとして読むので、そこで名指した値 —— slot、`fn` 呼び出し、ループ変数、`match` の束縛 —— は存在しない tile の呼び出しになる。
 
 どちらの位置でも、tile でも値でもない名前は代わりに [E0105](#e0105-undef-tile) になる。
@@ -558,20 +558,24 @@ codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)`
 
 ### E0129 `unrendered-arg`
 
-値 builtin に、決して描画されない引数が内容として書かれている。それぞれ内容を 1 か所から読む（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）：`text`・`heading`・`code`・`markdown` は最初の位置引数から、`link`・`label`・`editable` は最初の位置引数から、それが無ければ `text=` から、`image`・`icon` は `src=`・`name=` から。内容としてそれ以外に書いたものはどこにも行かない：
+builtin に、決して描画されない引数が書かれている。値 builtin は内容を 1 か所から読む（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）：`text`・`heading`・`code`・`markdown` は最初の位置引数から、`link`・`label`・`editable` は最初の位置引数から、それが無ければ `text=` から、`image`・`icon` は `src=`・`name=` から。それ以外の builtin は、位置引数を子として描画する —— [言語 §1.7.1](./language.md#_1-7-1-構文) が列挙するコンテナ —— か、位置引数をまったく描画しない。それ以外に書いたものはどこにも行かない：
 
-- builtin が読む分を超える位置引数。`text("A", "B")` は `A` を描画し、`B` は捨てられる。位置引数を読まない `image` と `icon` では、すべて捨てられる。
+- 値 builtin が読む分を超える位置引数。`text("A", "B")` は `A` を描画し、`B` は捨てられる。
+- 位置引数を描画しない builtin への位置引数（tile でも値でも）：`image`・`icon`、および値 builtin でもコンテナでもないすべての builtin —— `button`・`input`・`textarea`・`check`・`radio`・`select`・`slider`・`switch`・`video`・`toast`・`progress`・`spinner`・`skeleton`・`error`・`divider`・`route-outlet`。`button(Header, text="Go")` は `Go` と書かれたボタンを描画し、`Header` は描画しない。`progress(text("a"))` はバーを描画し、`a` は描画しない。
 - 位置引数の無い `text` / `heading` / `code` / `markdown` の `text=`。`text=` は `button`・`link`・`label`・`editable` のラベル引数であり、テキスト系 builtin では prop なので、`heading(text=title)` は空の見出しを描画する。
 - `link` / `label` / `editable` で位置引数と並べた `text=`。これらは位置引数が無いときだけ `text=` を読むので、`label(text="A", "B")` は `B` を描画し、`A` は捨てられる。
 
 > `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
-> `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
+> `` <builtin> renders no positional argument, so this one is never rendered. Write it as <args>, or show it beside the <builtin> ``
+> `` <builtin> renders no positional argument, so this one is never rendered. Show it beside the <builtin> ``
 > `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
 > `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
 
-どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを上の順に `positional`・`text-prop`・`text-shadowed` で示す。これらは `check`・`build`・`smoke` のすべてを通っていた：引数はパースされ、型検査され、ページには届かなかった。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
+位置引数を描画しない builtin では、`<args>` はその代わりに表示するものを 1 つの表から名指す：`image` と `video` は `src=`、`icon` は `name=`、`button` と `toast` は `text=`、`input` と `textarea` は `bind=`・`value=`・`placeholder=` のいずれか、`select` は `options=`・`bind=`・`value=`・`placeholder=` のいずれか、`check` と `switch` は `bind=`・`value=` のいずれか、`radio` は `bind=`・`selected=` のいずれか、`slider` は `bind=`、`progress` は `value=`・`max=` のいずれか、`error` は `field=`。`divider`・`spinner`・`skeleton`・`route-outlet` は引数から表示するものが無く、3 つ目の形になる。引数は丸ごと報告し、その中身 —— tile、`let`、綴り違いの名前 —— は検査しない。コンテナの中の値（[E0128](#e0128-value-as-child)）と同じく、その中の診断は引数を描画される位置に移したときに出る。
 
-**修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
+どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを示す：最初の 3 つの形は `positional`、続いて `text-prop`・`text-shadowed`。ほかに報告するものはない：引数はパースされビルドされるがページには届かないので、`smoke` もそれを通す。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
+
+**修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)`、`button(text="Go")` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。位置引数を描画しない builtin には、tile をコンテナの中でその隣に置く：`row(button(text="Go"), Header)`。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
 
 ## E02xx — 型
 
