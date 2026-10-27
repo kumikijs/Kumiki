@@ -46,8 +46,8 @@ let id = emit fetchQuote()
 
 | 型 | 定義 |
 |---|---|
-| `HttpStatus` | `nominal Int where between(0, 599)` — レスポンスのステータス。レスポンスそのものが無かったリクエスト（中断・キャンセル・タイムアウト・ネットワーク障害: [HTTP §6.4.1](./http.md#_6-4-1-挙動)）では `0`。「`0` または `100`〜`599`」を表す述語は無いため、refinement 層で書ける最も狭い範囲をとる |
-| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` |
+| `HttpStatus` | `nominal Int where between(0, 599)` — レスポンスのステータス。レスポンスそのものが無かったリクエスト（中断・キャンセル・タイムアウト・ネットワーク障害・送れないリクエスト本文: [HTTP §6.4.1](./http.md#_6-4-1-挙動)）では `0`。「`0` または `100`〜`599`」を表す述語は無いため、refinement 層で書ける最も狭い範囲をとる |
+| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` — `body` は届いたレスポンスの本文テキストの `Some`（空の本文なら `Some("")`）。レスポンスが届かなかったとき、または本文を読めなかったときは `None`（[HTTP §6.4.1](./http.md#_6-4-1-挙動)） |
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
@@ -57,7 +57,7 @@ let id = emit fetchQuote()
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)） |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
-| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドとマッチした `pattern` |
+| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドと、その reducer が指す `pattern` |
 
 ---
 

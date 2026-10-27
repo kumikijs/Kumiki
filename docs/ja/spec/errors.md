@@ -595,6 +595,8 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 
 インデックス `[k]` も、読み取りでも書き込みでも、レシーバがインデックスとして取る型と照合する：`List` では `Int`、`Map(K, V)` ではキー型 `K` である（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`Map(TodoId, Text)` に対する `notes[postId]` は読み取りでも `notes[postId] := v` でも、`Map(TodoId, Todo)` に対する `todos[postId].done := v` も、インデックスの位置で `Expected TodoId but got PostId` を報告する。
 
+宣言型に照らすとき、`if`・`match`・`let … in` で書いた値は、その値になる式で検査され、そこで報告される：各分岐、各 arm、`let` の本体である（[言語 §1.9](./language.md#_1-9-式言語)）。演算子のオペランドは例外で、演算子の式かオペランド全体で報告される。そのため `n := 1 + (let m = t in m)` は `m` ではなく `1 + …` で報告される。
+
 このコードのメッセージのうち 1 つは型についてのものではない。Fetch のモードを名指さない `credentials` のリテラルは、位置の要求する型 — `Text` — をまさに持っており、誤っているのは値だけである：3 つのモードはそのフィールドの値域の制約であり、同じ位置での同じ誤り — その位置が取れない値 — なのでこのコードで報告する。
 
 `.get-or` のフォールバックはレシーバではなく**呼び出しが返す型**と照合する：空のケースで呼び出しが返す値そのものだから、結果型を担うのはフォールバックである。その結果型はレシーバの型引数から出る — `Option(T)` と `Result(T, E)` は `T`、`Map(K, V)` は `V` — ものであり、だからこそ `Option(S)` の slot に対する `opt := opt.get-or(None)` は 2 回報告される：フォールバックが `S` でないこと、そして `S` は `Option(S)` ではないこと。2 つの読みのどちらを取るかは引数の個数が決める（[Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)）。したがってレシーバに合わない個数の呼び出しは**ここでは**解決せず、照合する相手も持たない。ただし下げは行われる — 与えられたレシーバに対し、個数が名指す方の読みで — ので、これは沈黙ではなくそれ自体が欠陥である。
@@ -978,6 +980,17 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 網羅は、すべての arm のパターンが scrutinee に合っているときに判定する。合わない arm は [E0207](#e0207-pat-arity-mismatch)・[E0208](#e0208-pat-type-mismatch)・[E0209](#e0209-pat-unknown-variant) であり、それだけが報告される。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el`、`fold`・`map`・`zip` の結果、`map-request` の `$1`）、ここでは何も報告せず、どの arm にも一致しない値は実行時に panic になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。そうした要素を 1 つ含む tuple も、ほかの要素では判定され、型のその位置は `?` と書かれる。`match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` は `Tuple(?, Color)` について `(_, Blue)` を報告する。チェッカーが挙げられる値は、ほかの値が決められない要素に左右されるときでも報告する。reducer 本体の `match` 文とタイル位置の `match` は値ではなく、このコードの対象外である。
 
 **修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。
+
+### E0228 `undef-route-pattern`
+
+`route.enter` / `route.leave` / `route.error` の reducer が、アプリが描画するルートではないパターンを指している（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。
+
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but no route is declared at "<pattern>", so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character. Declared routes: "<p>", …`
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but "<pattern>" is a redirect (->>), which the router follows before any route is shown, so the subscription never fires. Declared routes: "<p>", …`
+
+runtime はルートライフサイクルのイベントを、表示中のルートがマッチしたパターン — トップレベルのパターンと、その下でマッチしたサブルートのパターン — ごとに発火し、reducer の引数を書かれたとおりにそれらと比較する。したがって引数は `app.routes` か `sub-routes` マップの中で tile を描画するエントリ（`->>` ではなく `->`）のキーでなければならず、それ以外は何も発火させない購読になる：`route.enter("/*")` が指すのは `"/*"` として宣言されたルートであり、すべてのルートではない。宣言済みの `"/b"` の隣の `route.enter("/bb")` はタイポである。宣言済みの `"/users/:id"` の隣の `route.enter("/users/:userId")` はキーの綴りが違う。`->>` リダイレクトのキーは、ルートが表示される前にルーターが辿るパスである。どれも決して走らない reducer にコンパイルされる — tile 名について [E0211](#e0211-undef-tile-in-selector) が報告するのと同じ、死んだ購読である。位置はパターンの文字列リテラルであり、メッセージは宣言済みのルートを宣言順（`app.routes` が先）に列挙する。`app` の無いプログラムには比較するルートが無い：それは [E0003](#e0003-missing-app) であり、この検査は何も言わない。
+
+**修正**：reducer が対象とするルートのキーを、`app.routes` か `sub-routes` マップに書かれているとおりに書く。すべてのルートで走らせたいなら、トップレベルのパターンをそれぞれ購読するか、処理を行う場所で [`route` slot](./routing.md#_3-2-current-route-state) を読む。
 
 ### E0229 `bind-target-not-slot`
 
