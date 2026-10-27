@@ -15,7 +15,7 @@ function predicate(pred: string, args: (number | string)[] = []): (v: unknown) =
 
 /** The descriptor codegen emits for that refinement over `base`. */
 const descriptor = (base: GenDescData, pred: string, args: (number | string)[] = []): GenDesc =>
-  applyRefine(base, refinement(pred, args)) as unknown as GenDesc;
+  applyRefine(base, refinement(pred, args));
 
 /**
  * 200 generated values, each asserted against the predicate.
@@ -111,5 +111,113 @@ describe("a shrunk value passes the check the generator honoured", () => {
   it.each(["email", "url"])("shrinks a Text where %s through shorter values it accepts", (pred) => {
     const { tried, settled } = shrinkPath(descriptor({ t: "Text" }, pred), predicate(pred));
     expect((settled as string).length).toBeLessThan((tried[0] as string).length);
+  });
+});
+
+describe("a generated value passes every refinement stacked on its type", () => {
+  // Each bound narrows the ones before it, and a shape is built at the length the rest allow.
+  it.each<[GenDescData, [string, (number | string)[]][]]>([
+    [
+      { t: "Int" },
+      [
+        ["positive", []],
+        ["between", [-5, 5]],
+      ],
+    ],
+    [{ t: "Text" }, [["len-gt", [60]]]],
+    [
+      { t: "Text" },
+      [
+        ["len-gt", [3]],
+        ["len-lt", [5]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["email", []],
+        ["len-lt", [6]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["email", []],
+        ["len-gt", [40]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["url", []],
+        ["len-lt", [9]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["url", []],
+        ["len-gt", [8]],
+        ["len-lt", [22]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["url", []],
+        ["len-gt", [21]],
+        ["len-lt", [30]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["uuid", []],
+        ["len-eq", [36]],
+      ],
+    ],
+  ])("generates %o under %j", (base, stack) => {
+    const desc = stack.reduce<GenDesc>(
+      (d, [pred, args]) => applyRefine(d, refinement(pred, args)),
+      base,
+    );
+    const checks = stack.map(([pred, args]) => predicate(pred, args));
+    expect(generatedValuesPass(desc, (v) => checks.every((p) => p(v)))).toBeUndefined();
+  });
+});
+
+describe("a shrunk value passes every refinement stacked on its type", () => {
+  // A shape built at a length shrinks inside the lengths the rest allow, down to the shortest.
+  it.each<[[string, (number | string)[]][], number]>([
+    [
+      [
+        ["email", []],
+        ["len-gt", [10]],
+      ],
+      11,
+    ],
+    [
+      [
+        ["url", []],
+        ["len-lt", [9]],
+      ],
+      5,
+    ],
+    [
+      [
+        ["url", []],
+        ["len-gt", [21]],
+      ],
+      22,
+    ],
+  ])("shrinks a Text under %j through values it accepts, to %i characters", (stack, shortest) => {
+    const desc = stack.reduce<GenDesc>(
+      (d, [pred, args]) => applyRefine(d, refinement(pred, args)),
+      { t: "Text" },
+    );
+    const checks = stack.map(([pred, args]) => predicate(pred, args));
+    const { refused, settled } = shrinkPath(desc, (v) => checks.every((p) => p(v)));
+    expect(refused).toEqual([]);
+    expect((settled as string).length).toBe(shortest);
   });
 });

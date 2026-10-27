@@ -1,6 +1,7 @@
 import {
   batchRejections,
   type EmitSpec,
+  isPanic,
   type ReducerSpec,
   type RefinementRejection,
   rejectedBatchText,
@@ -26,15 +27,7 @@ import {
   genValue,
   shrinkCounterexample,
 } from "./testkit/generate.ts";
-import {
-  type EnvDrift,
-  executeEpisode,
-  type ReplayApp,
-  type ReplayObserver,
-  resetLiveFromSlots,
-  type SlotMetaLike,
-  seedRoute,
-} from "./testkit/replay.ts";
+import { type ReplayApp, replayEpisodes, type SlotMetaLike, seedRoute } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
@@ -42,20 +35,16 @@ import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard
 // seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree
 // on a batch that commits; a `run-reducer` step fails its trial on a rejected one instead.
 function settleBatch(
-  reducer: string,
   before: Record<string, unknown>,
   result: Partial<ReturnType<ReducerSpec["apply"]>> | null | undefined,
   slotMetas: Record<string, SlotMetaLike>,
-): { slots: Record<string, unknown>; emits: EmitSpec[] } {
+): { rejected: RefinementRejection[] } | { slots: Record<string, unknown>; emits: EmitSpec[] } {
   const rejected = batchRejections(result, slotMetas);
-  if (rejected.length > 0) {
-    reportRejectedBatch(reducer, rejected);
-    return { slots: { ...before }, emits: [] };
-  }
+  if (rejected.length > 0) return { rejected };
   return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
 }
 
-/** A `run-reducer` step whose batch a refinement rejected: the reducer did not run, so the trial fails. */
+/** A `run-reducer` step whose batch a refinement rejected: its batch did not commit, so the trial fails. */
 class RejectedStep extends Error {
   /** The reducer and each refusing slot's predicate, not the values written, which differ per input. */
   readonly way: string;
@@ -63,6 +52,19 @@ class RejectedStep extends Error {
     super(rejectedBatchText(reducer, rejected));
     this.way = JSON.stringify([reducer, rejected.map((r) => [r.slot, r.kind, r.args])]);
   }
+}
+
+/** Why a trial that threw failed, with a panic told apart from any other error. */
+function thrownReason(e: unknown): string {
+  if (e instanceof RejectedStep) return e.message;
+  const message = e instanceof Error ? e.message : String(e);
+  return isPanic(e) ? `panicked: ${message}` : `threw: ${message}`;
+}
+
+/** The failure a shrink candidate has to repeat: the same refusal, a panic, or another throw. */
+function failureWay(e: unknown): string {
+  if (e instanceof RejectedStep) return e.way;
+  return isPanic(e) ? "panicked" : "threw";
 }
 
 export const _stdlibTest = {
@@ -95,11 +97,13 @@ export const _stdlibTest = {
     this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
-    const res = r.apply(app.live, { $el: event, $event: event });
-    const rejected = batchRejections(res, app.slots);
-    // Answering the table without the writes would let the invariant hold about a reducer that never ran.
-    if (rejected.length > 0) throw new RejectedStep(name, rejected);
-    return { slots: settleBatch(name, app.live, res, app.slots).slots };
+    const settled = settleBatch(
+      app.live,
+      r.apply(app.live, { $el: event, $event: event }),
+      app.slots,
+    );
+    if ("rejected" in settled) throw new RejectedStep(name, settled.rejected);
+    return { slots: settled.slots };
   },
   runPropertyTest(input: {
     name: string;
@@ -113,11 +117,11 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    const failure = (b: Record<string, unknown>): { refused?: RejectedStep } | undefined => {
+    const failure = (b: Record<string, unknown>): { reason?: string; way: string } | undefined => {
       try {
-        return trial(b) === true ? undefined : {};
+        return trial(b) === true ? undefined : { way: "false" };
       } catch (e) {
-        return e instanceof RejectedStep ? { refused: e } : {};
+        return { reason: thrownReason(e), way: failureWay(e) };
       }
     };
     for (let i = 0; i < count; i++) {
@@ -126,12 +130,9 @@ export const _stdlibTest = {
       const first = failure(binds);
       if (first) {
         // A candidate counts only when it fails the way the generated case did.
-        const sameWay = (b: Record<string, unknown>): boolean => {
-          const f = failure(b);
-          return f !== undefined && f.refused?.way === first.refused?.way;
-        };
+        const sameWay = (b: Record<string, unknown>): boolean => failure(b)?.way === first.way;
         const minimal = doShrink ? shrinkCounterexample(vars, sameWay, binds) : binds;
-        const reason = failure(minimal)?.refused?.message;
+        const reason = failure(minimal)?.reason;
         return {
           name,
           pass: false,
@@ -180,8 +181,12 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
-    const after = settleBatch(target, givenSlots, result, slotMetas);
-    return compareReducerExpect(name, after.slots, after.emits, panic, expect);
+    const settled = settleBatch(givenSlots, result, slotMetas);
+    if (!("rejected" in settled)) {
+      return compareReducerExpect(name, settled.slots, settled.emits, panic, expect);
+    }
+    reportRejectedBatch(target, settled.rejected);
+    return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
   },
   runReducerTestFlow(input: {
     name: string;
@@ -262,18 +267,19 @@ export const _stdlibTest = {
     };
   }): TestResult {
     const { name, app, episodes, mocks, expect } = input;
-    resetLiveFromSlots(app);
+    const report = replayEpisodes({ app, episodes, mocks, observer: () => "continue" });
 
-    const panics: { episodeId: string; message: string }[] = [];
-    const unhandledErrors: string[] = [];
-    const stepCounter = { n: 0 };
-    const observer: ReplayObserver = () => "continue";
-    const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
-
-    for (const ep of episodes) {
-      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
-      for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
-      for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
+    // Ahead of every `expect`: an episode that was not replayed moved no slot and raised
+    // nothing, so each expectation would be judged on its absence, and a slot mismatch
+    // would name the symptom rather than the missing reducer.
+    if (report.entryReducersMissing.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "every episode replayed",
+        actual: report.entryReducersMissing.map((m) => `${m.episodeId}: ${m.message}`).join("; "),
+        diffAt: "episodes",
+      };
     }
 
     let expectedSlots: Record<string, unknown> | null = null;
@@ -306,21 +312,21 @@ export const _stdlibTest = {
         }
       }
     }
-    if (expect.noPanics && panics.length > 0) {
+    if (expect.noPanics && report.panics.length > 0) {
       return {
         name,
         pass: false,
         expected: "no panics",
-        actual: panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
+        actual: report.panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
         diffAt: "panics",
       };
     }
-    if (expect.noErrors && unhandledErrors.length > 0) {
+    if (expect.noErrors && report.unhandledErrors.length > 0) {
       return {
         name,
         pass: false,
         expected: "no unhandled effect errors",
-        actual: unhandledErrors.join(", "),
+        actual: report.unhandledErrors.map((u) => u.effect).join(", "),
         diffAt: "errors",
       };
     }

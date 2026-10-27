@@ -1,0 +1,39 @@
+# Feature (forms.md): a `bind=` target is a slot, or a field path into
+# one. The control writes back to the slot its target's root names, so that
+# root has to be a slot where the target is written: a `for` variable, a
+# tile's `$1` or a `match` binding is a value, not a place, and binding one is
+# E0229.
+#
+# The rows of a list are edited the way forms.md recommends. Each row shows its
+# text with `value=` and carries its key in `{todoId: …}`, and one reducer on
+# `ui.input(TodoText)` writes the row the event came from, reading the key
+# from `$el`. The other controls bind a slot by its name — from the page
+# itself, and from inside `Field`, a tile that takes an input of its own.
+
+type Todo    = {text: Text}
+type Profile = {name: Text, email: Text}
+
+slot todos   : Map(Text, Todo) = {"a": {text: "milk"}, "b": {text: "eggs"}}
+slot profile : Profile         = {name: "Ada", email: "ada@example.com"}
+slot title   : Text            = "groceries"
+
+reducer editTodo
+    on=ui.input(TodoText)
+    do= todos[$el.todoId].text := $event.value
+
+tile TodoText in=Text = input(value=todos[$1].text, id="todo-" + $1) {todoId: $1}
+
+tile Field in=Text = row(label(text=$1), input(bind=profile.email, id="email"))
+
+tile App = column(
+    input(bind=title, id="title"),
+    for k in todos.keys TodoText(k) {key: k},
+    Field("Email"),
+    text("title=" + title),
+    text("todos=" + todos.values.map($1.text).join(",")),
+    text("email=" + profile.email))
+
+app BindRootIsASlot
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

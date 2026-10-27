@@ -1,12 +1,12 @@
-import { _stdlib, type GenDesc, type ReducerSpec } from "@kumikijs/runtime";
+import { _stdlib, type GenDesc, KumikiPanic, type ReducerSpec } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
-/** A seeded stream, so a failure here reproduces. */
+/** A seeded stream in [0, 1), so a failure here reproduces. */
 function rng(seed = 7): () => number {
   let a = seed;
   return () => {
     a = (a * 1103515245 + 12345) & 0x7fffffff;
-    return a / 0x7fffffff;
+    return a / 0x80000000;
   };
 }
 
@@ -371,5 +371,95 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
     expect(generated).toMatch(/— reducer "split" was rejected: slot "low" cannot hold -\d+ \(/);
     expect(generated).not.toContain('slot "high"');
     expect(property(true).actual).toBe(generated);
+  });
+});
+
+describe("a trial that throws fails with what it threw", () => {
+  const thrown = (e: unknown) =>
+    _stdlib.runPropertyTest({
+      name: "throws",
+      vars: { n: { t: "Int", min: 0, max: 0 } },
+      trial: () => {
+        throw e;
+      },
+    }).actual;
+
+  it.each([
+    [
+      "a panic, as a panic",
+      new KumikiPanic("Key 1 is not in the Map"),
+      "panicked: Key 1 is not in the Map",
+    ],
+    [
+      "any other error, as a throw",
+      new TypeError("x.map is not a function"),
+      "threw: x.map is not a function",
+    ],
+    ["a value that is not an error", "boom", "threw: boom"],
+  ])("%s", (_, e, reason) => {
+    expect(thrown(e)).toBe(`counterexample (case 1/100): {"n":0} — ${reason}`);
+  });
+
+  it("shrinks a panic only through trials that panic", () => {
+    // n from 1 to 9 makes the invariant false, a failure of another kind.
+    const property = (shrink: boolean) =>
+      _stdlib.runPropertyTest({
+        name: "index-from-ten-panics",
+        vars: { n: { t: "Int", min: 0, max: 100 } },
+        trial: (b) => {
+          const n = b.n as number;
+          if (n >= 10) throw new KumikiPanic(`Index ${n} is out of range`);
+          return n === 0;
+        },
+        shrink,
+      });
+    const generated = /\{"n":(\d+)\} — panicked: /.exec(property(false).actual ?? "")?.[1];
+    const m = /^counterexample \(case \d+\/100\): \{"n":(\d+)\} — (.*)$/.exec(
+      property(true).actual ?? "",
+    );
+    const n = Number(m?.[1]);
+    expect(n).toBeGreaterThanOrEqual(10);
+    expect(n).toBeLessThan(Number(generated));
+    expect(m?.[2]).toBe(`panicked: Index ${n} is out of range`);
+  });
+
+  it("leaves an invariant that is false without a reason", () => {
+    const r = _stdlib.runPropertyTest({
+      name: "false",
+      vars: { n: { t: "Int", min: 0, max: 0 } },
+      trial: () => false,
+    });
+    expect(r.actual).toBe('counterexample (case 1/100): {"n":0}');
+  });
+});
+
+describe("a value of a type that recurses through two collections at once", () => {
+  /** `type Rose2 = {v: Int, a: List(Rose2), b: List(Rose2)}` */
+  const ROSE2: GenDesc = {
+    t: "Fix",
+    name: "Rose2",
+    body: {
+      t: "Record",
+      fields: [
+        { name: "v", desc: { t: "Int" } },
+        { name: "a", desc: { t: "List", elem: { t: "Rec", name: "Rose2" } } },
+        { name: "b", desc: { t: "List", elem: { t: "Rec", name: "Rose2" } } },
+      ],
+    },
+  };
+
+  /** How many records a `Rose2` holds, itself included. */
+  const size = (v: unknown): number => {
+    const r = v as { a: unknown[]; b: unknown[] };
+    return 1 + [...r.a, ...r.b].reduce<number>((n, kid) => n + size(kid), 0);
+  };
+
+  it("stays small, each step into it generating fewer members", () => {
+    // Ten members a list at every level would allow (1 + 20 + 20² + 20³ + 20⁴) records.
+    const sizes = generate(ROSE2, 50).map(size);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(
+      1 + 20 + 20 * 10 + 20 * 10 * 4 + 20 * 10 * 4 * 2,
+    );
+    expect(Math.max(...sizes)).toBeGreaterThan(20);
   });
 });

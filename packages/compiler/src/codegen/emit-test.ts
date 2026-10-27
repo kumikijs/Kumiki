@@ -2,13 +2,16 @@ import {
   assertNever,
   type EffectDef,
   type Expr,
+  type FnDef,
   type ReducerDef,
   type TestDef,
   type TileDef,
   type TileExpr,
 } from "../ast.ts";
+import { callsBuiltin, RUN_REDUCER } from "../builtin-calls.ts";
 import type { CodegenOptions } from "../codegen.ts";
 import { parseEpisodeLogText } from "../episode-log.ts";
+import { forAllGenerator, noGeneratorMessage } from "../for-all-generator.ts";
 import {
   bareNameAt,
   expectSection,
@@ -17,11 +20,11 @@ import {
   recordFieldsAt,
   recordValueAt,
 } from "../test-sections.ts";
+import { walkExpr } from "../typecheck/expr-walk.ts";
 import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
-import { collectEmits, scanRunReducers } from "./emit-reducer.ts";
+import { collectEmits } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
-import { forAllGenerator, noGeneratorMessage } from "./emit-type.ts";
-import { jsOfExpr } from "./expr.ts";
+import { jsOfExpr, reducerNameArg } from "./expr.ts";
 
 /** The outcome of a mock value `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`. */
 function mockOutcome(v: Expr): "ok" | "err" | undefined {
@@ -40,7 +43,9 @@ export function coverageJs(
   reducers: ReducerDef[],
   tiles: TileDef[],
   effects: EffectDef[],
+  fns: FnDef[],
 ): string {
+  const declaresFn = (name: string) => fns.some((f) => f.name === name);
   const usedReducers = new Set<string>();
   const usedTiles = new Set<string>();
   const usedEffects = new Set<string>();
@@ -73,7 +78,14 @@ export function coverageJs(
     } else if (t.testKind === "tile-test") {
       if (t.target) usedTiles.add(t.target);
     } else if (t.testKind === "property-test") {
-      scanRunReducers(t.invariant, markReducer);
+      // The checker reads the invariant the same way (typecheck/test.ts).
+      if (!callsBuiltin(RUN_REDUCER, declaresFn)) continue;
+      walkExpr(t.invariant, (n) => {
+        if (n.kind === "Call" && n.callee === RUN_REDUCER) markReducer(reducerNameArg(n.args[0]));
+        if (n.kind === "MethodCall" && n.method === RUN_REDUCER) {
+          markReducer(reducerNameArg(n.args[0]));
+        }
+      });
     } else if (t.testKind === "episode-test") {
       // episode-test replays a log: every effect mocked is one the test exercises.
       if (t.mocks?.kind === "RecordLit") {

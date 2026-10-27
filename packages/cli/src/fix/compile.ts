@@ -225,8 +225,9 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   [
     "E0218",
     (err, store) => {
-      const remedy = /iterate its (\.[a-z-]+)/.exec(err.message)?.[1];
-      if (!remedy) return "e0218-remedy-extract-failed";
+      // No suffix alone repairs other targets: what an `Option`'s `None` iterates is the author's call.
+      if (!err.accessor) return "e0218-no-accessor";
+      const remedy = `.${err.accessor}`;
       const name = identifierAt(store, err.pos);
       if (!name) return "e0218-target-not-a-plain-name";
       return {
