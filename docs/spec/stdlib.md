@@ -46,8 +46,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 
 | Type | Definition |
 |---|---|
-| `HttpStatus` | `nominal Int where between(0, 599)` — a response's status, or `0` for a request that got no response at all (an abort, a cancellation, a timeout, a network failure: [HTTP §6.4.1](./http.md#_6-4-1-behavior)). No predicate says "`0` or `100`–`599`", so the range is the tightest one the refinement layer can state |
-| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` |
+| `HttpStatus` | `nominal Int where between(0, 599)` — a response's status, or `0` for a request that got no response at all (an abort, a cancellation, a timeout, a network failure, a request body that cannot be sent: [HTTP §6.4.1](./http.md#_6-4-1-behavior)). No predicate says "`0` or `100`–`599`", so the range is the tightest one the refinement layer can state |
+| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` — `body` is `Some` of the body text of the response that arrived (`Some("")` for an empty one), and `None` when no response arrived or its body could not be read ([HTTP §6.4.1](./http.md#_6-4-1-behavior)) |
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
@@ -57,7 +57,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)) |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
-| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the matched `pattern` |
+| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the `pattern` the reducer names |
 
 ---
 

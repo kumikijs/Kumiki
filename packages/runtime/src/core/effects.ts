@@ -1,11 +1,13 @@
 import { newId, readEnv } from "./env.ts";
-import type {
-  AppShape,
-  CapabilityProvider,
-  CapabilityRegistry,
-  EffectResult,
-  EffectSpec,
-  EmitSpec,
+import {
+  type AppShape,
+  type CapabilityProvider,
+  type CapabilityRegistry,
+  type EffectResult,
+  type EffectSpec,
+  type EmitSpec,
+  type HttpError,
+  NONE,
 } from "./types.ts";
 
 export function makeCapabilityRegistry(
@@ -297,8 +299,8 @@ export function readStatus(value: unknown): number | null {
   return typeof s === "number" ? s : null;
 }
 
-export function abortedHttpError(): { status: number; message: string; body: string } {
-  return { status: 0, message: "aborted", body: "" };
+export function abortedHttpError(): HttpError {
+  return { status: 0, message: "aborted", body: NONE };
 }
 
 // The value `.ok` / `.err` receives from a result that stands in for `eff`'s invoke: an err on
