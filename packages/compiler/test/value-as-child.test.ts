@@ -8,6 +8,7 @@ const program = (home: string) => `tile Card in={label: Text} = text($1.label)
 tile Home = ${home}
 tile lower = text("lower")
 slot n : Int = 0
+fn three() -> Int = 3
 app R
     caps   = []
     routes = {"/" -> Home, "/404" -> Home}
@@ -32,9 +33,18 @@ describe("a value written as a child", () => {
     ["the Unit value", `column(text("a"), ())`, "()"],
     ["a record", `column(text("a"), {label: "x"})`, "{"],
     ["a member read on a slot", `column(text("a"), n.show)`, "n.show"],
+    ["a fn call", `column(text("a"), three())`, "three()"],
+    ["a binary expression", `column(text("a"), n.show + "x")`, "n.show"],
     ["a slot, which lowered to a null child", `column(text("a"), n)`, "n)"],
   ])("is E0128 at the value: %s", (_, home, value) => {
     expect(diagnostics(home)).toEqual([E0128(home, value)]);
+  });
+
+  it.each([
+    ["table-cell", `table-cell(n.show)`, "n.show"],
+    ["list-item", `list-item(n)`, "n)"],
+  ])("is E0128 at the value in a %s", (builtin, home, value) => {
+    expect(diagnostics(home)).toEqual([E0128(home, value, builtin)]);
   });
 
   it.each([
