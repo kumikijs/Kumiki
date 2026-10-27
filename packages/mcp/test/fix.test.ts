@@ -36,6 +36,25 @@ describe("kumiki_fix", () => {
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
+  it("proposes no rename for a read before the scope that declares the name", async () => {
+    // `idx` is one edit from the slot `id`; renamed, the first `text` would read the slot.
+    const file = join(workdir.path, "before-scope.kumiki");
+    const source = [
+      "slot id : Int = 0",
+      "slot xs : List(Int) = [1, 2]",
+      "tile App = column(text(idx.show), for idx in xs text(idx.show))",
+      'app M caps=[] routes={"/" -> App, "/404" -> App} init=[]',
+      "",
+    ].join("\n");
+    writeFileSync(file, source);
+    const res = await callOnce("kumiki_fix", { path: file });
+    expect(res.body.split("\n")).toEqual([
+      "(no auto-patches available)",
+      `E0103 Reference to undefined name "idx" — it is declared later, at 3:35, and scoped to a tile's "for" body: move the read into the body (see docs/spec/language.md)`,
+    ]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
   it("with apply:true writes the patch, returns before/after, and leaves the file clean", async () => {
     const file = typoCopy();
     const res = await callOnce("kumiki_fix", { path: file, apply: true });
