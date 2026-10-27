@@ -32,7 +32,7 @@ import {
   withRenderingApp,
   withRenderingView,
 } from "./rendering.ts";
-import { emptyRoute, pickRootTile } from "./route.ts";
+import { emptyRoute, pickRootTile, routeChain } from "./route.ts";
 import { useStyleRoot } from "./style-root.ts";
 import { applyInitialTheme, maybeReapplyTheme, resolvedThemeName } from "./theme.ts";
 import { makeMappingTileCtx, type TileElementMap } from "./tile-ctx.ts";
@@ -301,25 +301,50 @@ export function mountCore(
     }
   }
 
+  // `leave` walks the chain innermost first: a route is left in the reverse of its entry order.
+  function routeReducers(
+    kind: "enter" | "leave" | "error",
+    route: ParsedRoute,
+  ): { reducer: ReducerSpec; pattern: string }[] {
+    const chain = routeChain(route);
+    if (kind === "leave") chain.reverse();
+    const out: { reducer: ReducerSpec; pattern: string }[] = [];
+    for (const pattern of chain) {
+      const name = `route.${kind}(${JSON.stringify(pattern)})`;
+      for (const reducer of app.reducers) {
+        if (reducer.event.kind === "lifecycle" && reducer.event.name === name) {
+          out.push({ reducer, pattern });
+        }
+      }
+    }
+    return out;
+  }
+
+  // `current` turns false once a navigation one of these reducers emitted has superseded the move,
+  // so the rest of the chain does not run against a route the app has already left.
+  function fireRouteEvent(
+    kind: "enter" | "leave",
+    route: ParsedRoute,
+    current: () => boolean,
+  ): void {
+    for (const { reducer } of routeReducers(kind, route)) {
+      if (!current()) return;
+      applyReducer(reducer, { $route: route });
+    }
+  }
+
   function fireRouteError(rec: PanicRecord): boolean {
     if (!app.routes || app.routes.length === 0) return false;
     const cur = slotValues.route as ParsedRoute | undefined;
-    const pattern = cur?.pattern;
-    if (!pattern) return false;
-    const eventName = `route.error(${JSON.stringify(pattern)})`;
-    const handlers = app.reducers.filter(
-      (r) => r.event.kind === "lifecycle" && r.event.name === eventName,
-    );
+    if (!cur?.pattern) return false;
+    const handlers = routeReducers("error", cur);
     if (handlers.length === 0) return false;
-    const info = {
-      ...userPanicInfo(rec, rec.location ?? "render", safeEpisodeId()),
-      pattern,
-    };
+    const info = userPanicInfo(rec, rec.location ?? "render", safeEpisodeId());
     inRouteErrorHandlers = true;
     try {
-      for (const h of handlers) {
+      for (const { reducer, pattern } of handlers) {
         try {
-          applyReducer(h, { $event: info, $route: cur });
+          applyReducer(reducer, { $event: { ...info, pattern }, $route: cur });
         } catch {
           // applyReducer already reported it; the other handlers still run.
         }
@@ -501,7 +526,7 @@ export function mountCore(
     routing,
     router,
     root: target,
-    fireLifecycle,
+    fireRouteEvent,
     render,
   });
   const nav: NavContext = { navigate: navigation.navigate, back: navigation.back };
@@ -564,8 +589,8 @@ export function mountCore(
     }
   }
   if (app.routes && app.routes.length > 0) {
-    const cur = slotValues.route as ParsedRoute;
-    fireLifecycle(`route.enter(${JSON.stringify(cur.pattern)})`, { $route: cur });
+    const initial = slotValues.route as ParsedRoute;
+    fireRouteEvent("enter", initial, () => slotValues.route === initial);
   }
 
   render();
