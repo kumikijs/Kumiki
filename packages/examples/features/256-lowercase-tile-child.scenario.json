@@ -1,0 +1,35 @@
+{
+  "steps": [
+    {
+      "label": "the badge mounted, and the chart's boundary shows its fallback",
+      "expect": {
+        "noErrors": true,
+        "state": { "mounts": 1, "unmounts": 0 },
+        "domIncludes": [
+          "badge: new",
+          "chart unavailable: get called on None",
+          "badge mounted 1, unmounted 0"
+        ]
+      }
+    },
+    {
+      "label": "hiding the badge unmounts it",
+      "do": { "clickText": "hide" },
+      "expect": {
+        "noErrors": true,
+        "state": { "mounts": 1, "unmounts": 1 },
+        "domIncludes": ["badge mounted 1, unmounted 1"],
+        "domExcludes": ["badge: new"]
+      }
+    },
+    {
+      "label": "with the chart loaded, the tile renders its own body",
+      "do": { "clickText": "load" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["chart: 42"],
+        "domExcludes": ["chart unavailable"]
+      }
+    }
+  ]
+}
