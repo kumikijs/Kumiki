@@ -311,7 +311,7 @@ export function checkErrorField(
   const arg = t.args.find((a) => a.name === "field");
   if (!arg) return;
   const see = "(see docs/spec/forms.md)";
-  // A named argument is a value (language.md §1.7.1), so a tile call there is E0116 already.
+  // A named argument is a value (language.md), so a tile call there is E0116 already.
   if (isTileExpr(arg.value)) return;
   const field = errorField(arg.value);
   const { root } = field;
