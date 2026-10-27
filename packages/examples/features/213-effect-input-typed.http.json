@@ -1,0 +1,3 @@
+{
+  "GET /api/users/7?size=20": { "text": "Ada" }
+}
