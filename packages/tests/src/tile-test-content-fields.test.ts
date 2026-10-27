@@ -3,6 +3,7 @@ import { runFixFromTest, testFile } from "@kumikijs/cli";
 import { feature } from "@kumikijs/examples";
 import { beforeAll, describe, expect, it } from "vitest";
 import { writeSource } from "./helpers/load.ts";
+import { editedIn } from "./helpers/source.ts";
 
 const EXAMPLE = feature("160-tile-test-content-fields");
 const SOURCE = readFileSync(EXAMPLE, "utf8");
@@ -16,27 +17,15 @@ async function runSource(test: string, source: string) {
   return { path, result };
 }
 
-/** The example with the first `from` at or after `start` replaced by `to`. */
-function editedFrom(start: number, from: string, to: string): string {
-  const hit = SOURCE.indexOf(from, start);
-  if (start === -1 || hit === -1) throw new Error(`the example has no ${from} there`);
-  return SOURCE.slice(0, hit) + to + SOURCE.slice(hit + from.length);
-}
-
-/** The example with the first `from` after `at` replaced by `to`. */
-function edited(at: string, from: string, to: string): string {
-  const start = SOURCE.indexOf(at);
-  if (start === -1) throw new Error(`the example has no ${at}`);
-  return editedFrom(start + at.length, from, to);
-}
+/** The example with the first `from` in the definition `at` starts replaced by `to`. */
+const edited = (at: string, from: string, to: string): string =>
+  editedIn(SOURCE, [at], from, to).source;
 
 /** The example with one literal of one test's `expect` replaced. */
 async function runWith(test: string, from: string, to: string) {
-  // Anchored at the test's own `expect =` line, so neither another test's identical line nor this test's `given` is the one edited.
-  const expectAt = SOURCE.indexOf("expect =", SOURCE.indexOf(`test ${test} =`));
-  const line = SOURCE.slice(expectAt, SOURCE.indexOf("\n", expectAt));
-  if (!line.includes(from)) throw new Error(`${test}'s expect has no ${from}`);
-  return (await runSource(test, editedFrom(expectAt, from, to))).result;
+  // Anchored at the test's own `expect =`, so neither another test's identical line nor this test's `given` is the one edited.
+  const source = editedIn(SOURCE, [`test ${test} =`, "expect ="], from, to).source;
+  return (await runSource(test, source)).result;
 }
 
 describe("a tile-test compares the fields its expected node states", () => {

@@ -4,7 +4,7 @@
 # The fixture beside this file accepts the order (201) but answers with an HTML
 # page, so `Decoder.Json(Order)` fails. The request was delivered, so it is
 # neither a 5xx nor a connection error, and `retry=` leaves it alone: one POST,
-# and `.err` sees `status 201` with the undecodable text in `body`.
+# and `.err` sees `status 201` with the undecodable text in `body`, as `Some`.
 #
 # `smoke` makes the request through the real HTTP path against
 # `129-http-decode-failure.http.json`. This file renders a failure either way,

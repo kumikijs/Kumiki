@@ -80,7 +80,7 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-Response decoding is type-safe at compile time; at runtime the JSON syntax is checked, and so is every predicate the declared type carries. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
+Response decoding is type-safe at compile time; at runtime the JSON syntax is checked, and so is every predicate the declared type carries. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body` (`Some(text)`). A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
 
 The decoded value is also checked against `T`: every predicate `T` carries, at every position it is written at — the check a write to a slot of type `T` gets ([§10.3.3](./runtime.md#_10-3-3-batching)). A value it refuses is the same `HttpError`, with a `message` that names the predicate and where the value failed it (`decode failed: uuid at .id`). Only the predicates are checked: a position where `T` carries none is taken as it arrives, so a body that parses but does not match the declared shape is not detected at runtime. A host provider registered for a read capability (`http.*`, `storage.read`, `session.read`, `indexed.read`; [Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)) receives this check as the request's `decode`, a function: given the parsed value it returns `undefined` when `T` accepts it and the failed predicate (`{kind, args, path}`) when `T` refuses it. For a `T` that carries no predicate, `decode` is the string `"json"`.
 
@@ -163,7 +163,7 @@ reducer added
 
 ### 6.3.1 Injecting Global Headers
 
-In `app.http` you can declare headers that are automatically applied to all HTTP effects:
+In `app.http` you can declare headers that are automatically applied to all HTTP effects (under a `base-url`, to those on its origin — see below):
 
 ```kumiki fragment
 app App
@@ -182,12 +182,25 @@ app App
 | http field | Meaning | Evaluated |
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
-| `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
+| `headers` | Applied to every request (under a `base-url`, only to its origin — below) — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
 | `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
-| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
+| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings); under a `base-url`, only to its origin — below) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
 | `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
+
+`base-url` and a request's `url` ([§6.1.2](#_6-1-2-standard-effect)) make the URL that is fetched:
+
+- With no `base-url`, or an empty one, every url is fetched as written.
+- A base that carries a `?` or a `#` has the url appended to it as written, whatever the url: `https://api.example.com/search?q=` with `term` fetches `https://api.example.com/search?q=term`, and `https://proxy.example.com/?url=` with `https://target/x` fetches `https://proxy.example.com/?url=https://target/x`.
+- Under any other base, an **absolute** url is fetched as written. A url is absolute when it starts with a scheme — an ASCII letter, then zero or more ASCII letters, digits, `+`, `-` or `.`, then `:` (`https:`, `data:`) — or with `//` (protocol-relative). A first segment of that shape up to its `:` reads as a scheme, so a path like `users:search` is written `/users:search`; `1a:b` and `a_b:c` are not of that shape, and are relative.
+- Any other url is **relative**. Unless it is empty or starts with `?` or `#` (below), it is joined to the base with exactly one `/` between them, whether the base ends in `/` and whether the url starts with one: under `https://api.example.com` and under `https://api.example.com/`, both `/items/1` and `items/1` fetch `https://api.example.com/items/1`.
+- A base that carries a path is a **prefix**: `https://api.example.com/v1` with `/users` fetches `https://api.example.com/v1/users`. The url is not resolved against the base the way a browser resolves a link (`new URL("/users", base)`), which would drop `/v1`; a request for another path on the host writes its whole URL. A base that is only a path is joined the same way: `/api` with `users` fetches `/api/users`.
+- An empty url, or one that starts with `?` or `#`, is appended to the base as written: `https://api.example.com/items` with `?page=2` fetches `https://api.example.com/items?page=2`.
+
+`query` is appended to the URL this gives ([§6.1.2](#_6-1-2-standard-effect)).
+
+With a `base-url`, `headers` and `credentials` go only with a request to the base's origin — its scheme, host and port: a url joined to the base, or an absolute url on that origin. A request to any other origin carries no global header and the default `credentials` ([§6.9](#_6-9-default-settings)), so a token in `headers` never leaves the base's origin; such a request names what it needs in its own `headers`. A path-only base and a relative url are on the page's origin, and a base that cannot be read as a URL has no origin a request is on. With no `base-url`, both go with every request.
 
 Every field that takes a value takes an **expression**, and may read a slot. All
 four are evaluated **when a request is made**, not when the app is built: a
@@ -279,7 +292,8 @@ An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other s
 ### 6.4.1 Behavior
 
 - A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation), and records no `effect-cancel` step in the episode log ([runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)).
-- The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: ""}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
+- The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: None}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
+- An `HttpError`'s `body` is an `Option(Text)`. It is `Some` of the response's body text whenever a response arrived and its body was read: a status outside 2xx, and a 2xx whose body does not decode ([6.1.4](#_6-1-4-the-decoder-type)). An empty body is `Some("")`, not `None`. `body` is `None` when no response arrived — an abort, a cancellation, a timeout, a network failure, a request body that cannot be sent, all with `status: 0` — and when a response arrived but its body could not be read. That error keeps the response's own `status`, a 2xx's included, so a 2xx is not retried ([6.5](#_6-5-retry)), unless what stopped the read is the request's own cancellation or timeout: that is the `aborted` error above, whatever the status.
 - A cancel acts on the one request its id names. Any other request of the same effect that is in flight keeps running and delivers its own `.ok` / `.err`.
 - Under `queue`, a cancel affects only the entry its id names. An entry still waiting is removed from the queue: its request is never made and no `.err` fires. An entry that is running is aborted like any in-flight request, and the queue goes on with the next entry. Every other entry runs as it would have.
 - A cancel with the id of an emit still waiting on its `debounce` timer, or of an emit that one replaced, clears that timer, so the pending-but-not-yet-issued request never lands and no `.err` fires. A request the timer has already fired is a request of its own: a cancel through the id of a later emit, still waiting on the timer, leaves it running.
@@ -302,7 +316,9 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | Up to N times, retried at ms intervals |
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
-Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON or whose value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
+Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body cannot be read ([6.4.1](#_6-4-1-behavior)), does not parse as JSON, or holds a value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
+
+A request waiting between attempts stops waiting at once when it is cancelled: by `http.cancel` ([6.4](#_6-4-cancellation)), by a newer emit under `policy=latest`, or by a newer emit for the same key under `policy=latest-per-key`. Its `.err` fires right away, before any request emitted later can deliver its own result, and no further attempt is made; under `policy=queue`, the next entry starts at once instead of after the rest of the interval. That err is the `aborted` `HttpError` of [6.4.1](#_6-4-1-behavior) on an `http.*` effect, the `Text` `"aborted"` on a capability that fails with `Text` ([6.7](#_6-7-storage-effects)), and `{message: "aborted"}`, the shape an invoke that throws delivers ([stdlib §2.5](./stdlib.md#_2-5-standard-capabilities)), on any other capability. Unmounting the app ends the wait too, with no further attempt; nothing is delivered, as no reducer runs once the app is unmounted. A request that is neither cancelled nor unmounted waits out every interval in full.
 
 ---
 
