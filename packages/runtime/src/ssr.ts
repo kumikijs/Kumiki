@@ -20,7 +20,7 @@ import {
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
-import { normalizeLocation, resolveTarget, splitPath } from "./router.ts";
+import { followRedirects, normalizeLocation, resolveTarget, splitPath } from "./router.ts";
 import { renderTileToString } from "./ssr-render.ts";
 
 export type RenderToStringOptions = {
@@ -69,9 +69,12 @@ export async function renderToString(
   const requested = splitPath(routePath);
   const redirectTo = options.routing
     ? options.routing.findRedirect(app.routes, requested)
-    : (declared(requested.pathname).find((r): r is RedirectEntry => "redirectTo" in r)
-        ?.redirectTo ?? null);
-  const servedPath = redirectTo === null ? routePath : resolveTarget(redirectTo, requested);
+    : followRedirects(requested.pathname, (path) => {
+        const to = declared(path).find((r): r is RedirectEntry => "redirectTo" in r)?.redirectTo;
+        return to === undefined ? null : resolveTarget(to, splitPath(path));
+      });
+  // Each step of the chain is resolved against the path it redirects from.
+  const servedPath = redirectTo ?? routePath;
 
   const parsedRoute: ParsedRoute =
     options.routing && app.routes && app.routes.length > 0
