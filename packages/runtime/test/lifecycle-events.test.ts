@@ -1,4 +1,4 @@
-import type { AppShape, TileNode } from "@kumikijs/runtime";
+import type { AppShape, ReducerSpec, TileNode } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bareApp, lifecycleReducer } from "./helpers/app.ts";
@@ -49,6 +49,42 @@ describe("runtime: tile.mount / tile.unmount", () => {
     visible = false;
     app._rerender?.();
     expect(events).toEqual(["mount", "unmount"]);
+    dispose();
+  });
+
+  it("fires for each name a node carries, in the order it lists them", () => {
+    const events: string[] = [];
+    let visible = true;
+    const record = (event: string): ReducerSpec =>
+      lifecycleReducer(event, (s) => {
+        events.push(event);
+        return { slots: s, emits: [] };
+      });
+    const app: AppShape = baseApp({
+      reducers: [
+        record('tile.mount("Outer")'),
+        record('tile.mount("Inner")'),
+        record('tile.unmount("Outer")'),
+        record('tile.unmount("Inner")'),
+      ],
+      root: () =>
+        ({
+          kind: "column",
+          children: visible
+            ? [{ kind: "text", text: "p", props: { _tile: ["Outer", "Inner"] } }]
+            : [],
+        }) as TileNode,
+    });
+    const { dispose } = mount(app, root);
+    expect(events).toEqual(['tile.mount("Outer")', 'tile.mount("Inner")']);
+    visible = false;
+    app._rerender?.();
+    expect(events).toEqual([
+      'tile.mount("Outer")',
+      'tile.mount("Inner")',
+      'tile.unmount("Outer")',
+      'tile.unmount("Inner")',
+    ]);
     dispose();
   });
 

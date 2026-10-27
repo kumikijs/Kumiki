@@ -133,6 +133,8 @@ app TileMountSeveralTiles
 
 `error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、それを宣言した tile がどこに描画されても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が発火し、fallback が消えたとき、つまり宣言した tile が panic せずに描画し直されたとき、あるいは宣言した tile 自体が消えたときに `tile.unmount(<fallback>)` が発火する。上の名前ごとの規則により、2 つの境界が同時に表示している fallback は、どちらの境界も表示しなくなったときに初めて消える。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。fallback は宣言した tile の本体の代わりに描画されるので、fallback が表示されている間は、宣言した tile もその下のどの tile も `tile.mount` を発火しない。マウント済みの宣言した tile が panic し始めると、その tile と下の tile の `tile.unmount` が発火する。
 
+本体全体が別のユーザー tile である tile —— `tile Outer = Inner` —— は、両方の全体である 1 つのツリーを描画するので、両方が画面上にある。`tile.mount(Outer)` と `tile.mount(Inner)` がともに `Outer` から順に発火し、そのツリーが消えると両方の `tile.unmount` が同じ順で発火する。これは何段でも同じで（`tile A = B` と `tile B = C` なら `A`、`B`、`C` の順に発火する）、本体が、行や分岐で別のユーザー tile を呼ぶ `for`・`when`・`match` である場合も、外側の tile がどこで描画される場合 —— 呼び出し位置、ルートや `sub-routes` のターゲット、`error-boundary` の fallback —— も同じである。上の名前ごとの規則により、単独でも表示されている `Inner` は、どちらかが残っている間はマウントされたままである。
+
 ---
 
 ## 7.2 エラー処理 {#_7-2-error-handling}

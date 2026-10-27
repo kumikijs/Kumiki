@@ -1,0 +1,41 @@
+{
+  "steps": [
+    {
+      "label": "nothing is open, so neither tile has mounted",
+      "expect": {
+        "noErrors": true,
+        "state": { "log": [] },
+        "domExcludes": ["bumped"]
+      }
+    },
+    {
+      "label": "opening the page mounts both tiles, the outer one first",
+      "do": { "clickText": "open" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": ["mount SettingsPage", "mount Panel"] },
+        "domIncludes": ["Settings", "bumped 0"]
+      }
+    },
+    {
+      "label": "re-rendering the open page keeps the tree, so nothing fires again",
+      "do": { "clickText": "bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "n": 1, "log": ["mount SettingsPage", "mount Panel"] },
+        "domIncludes": ["bumped 1"]
+      }
+    },
+    {
+      "label": "closing the page unmounts both tiles, in the same order",
+      "do": { "clickText": "close" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ["mount SettingsPage", "mount Panel", "unmount SettingsPage", "unmount Panel"]
+        },
+        "domExcludes": ["bumped"]
+      }
+    }
+  ]
+}
