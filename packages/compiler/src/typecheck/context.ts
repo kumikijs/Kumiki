@@ -24,6 +24,8 @@ export type KumikiError = {
   endedScope?: NestedScope;
   /** E0103 only: the scope that declares the name later and begins after this read. */
   laterScope?: NestedScope;
+  /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
+  accessor?: "keys" | "to-list";
 };
 
 /**
@@ -48,6 +50,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The program's own unions, by each tag they declare: `unionsByTag`. */
+  unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
 };
 
@@ -58,7 +62,8 @@ export type Ctx = {
   localTypes: Map<string, TypeExpr>;
   runReducerScope?: boolean;
   wildcardsReportedElsewhere?: boolean;
-  routeBind: "bound" | "unbound" | "no-payload";
+  /** `prefetch`: bound only when a link's prefetch fires the reducer, and `{}` on its own trigger. */
+  routeBind: "bound" | "prefetch" | "unbound" | "no-payload";
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];

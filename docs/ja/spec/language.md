@@ -162,6 +162,8 @@ Result(T, E)      ; Ok(T) | Err(E)
 Tuple(T1, ..., Tn)
 ```
 
+プログラム自身の union は、variant に `Some`・`None`・`Ok`・`Err` と名付けてよい。variant 名は識別子であり（[§1.3.1](#_1-3-1-構文)）、この 4 つはどれも予約語ではない（[§1.2.2](#_1-2-2-予約語)）ので、`type Health = Ok | Degraded | Down` も他と変わらない union である。型が宣言されている場所——slot、引数、`fn` の結果、そしてそこに書かれたリテラルの各フィールドと各要素——では、値がどのタグかはその型が決める。何も型を宣言しない場所——`let` と、それが束縛するリテラル——では、この 4 つは `Option` か `Result` であり、その型のメンバー・演算子・fragment を持つ。同時にその値は、プログラムが書く union——`type` に書かれたものでも、どの型の中にインラインで書かれたものでも——のうち、同じ名前で payload の数が同じであり、書かれた payload をそれぞれの型が受け入れる variant を持つものの値でもある。generic の型引数はどんな payload も受け入れ、値が着地する場所で `Box(Int)` のような適用後の型がそれを検査する。値は、どちらかの読み方が合えば着地できる。`let next = Ok` のあとに `health := next` と書けば、`health := Ok` とまったく同じく `Health` の `Ok` が書き込まれ、同じ `next` を `Int` の slot に書けば E0201 になる。`Health` の `Ok` は何も持たないので、`let r = Ok(1)` が着地できるのは `Result` が着地できる場所だけである。`type Outcome = Ok(Int) | Fail` と並んでいれば、`Outcome` の slot にも `Result(Int, Text)` の slot にも着地できる。`if` や `match` がそのような union に着地するのは、どの分岐もその union が保持するタグであるときに限る。そのような値に対する `match` は、値を `Option` か `Result` として読む。ただし、その型にないタグをいずれかの arm が名指す場合は、すべての arm のタグを宣言し値を保持する union のうちプログラムが最初に書くものとして読み、arm はその union を網羅しなければならない。
+
 ### 1.3.3 登録済み refinement 述語
 
 ```
@@ -283,6 +285,16 @@ type Shape = Leaf | Branch(Shape, Shape)
 ```
 
 いずれも不変条件 3 により、自分自身へ戻るより先に構造的な型へ到達する。2 つを比較したときに停止するのは、この関係が**書かれたとおりの型**に対して**余帰納的**に読まれるからである：比較の途中で同じ組へ再入したら「はい」と答える。これは、比較の有限な部分が下りの途中ですでに検査済みであることから健全である。停止性は値が有限であることには依存しない — 上の `Node` は `next` が optional でもコンテナでもないため値を 1 つも持たないが、それでも合法な型である。
+
+汎化型は、自分の型引数以外のものへ自分自身を適用してもよい：
+
+```kumiki fragment
+type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
+```
+
+これも自分自身へ戻るより先にユニオンへ到達するので、上の 3 つと同じく合法である。ただし書き出すと有限ではない — 段ごとに別の型になる（`Nest(List(Int))`、次に `Nest(List(List(Int)))`）ため、2 つを展開して比較しても同じ組へ再入することがない。そこで**同じ汎化型**の適用どうしは型引数どうしで比較し、各型引数は body を展開したときにその型引数が読まれるとおりに読む：どの比較もその型引数に届かないとき（body がそれを名指さないとき、または適用した汎化型 —— 自分自身も含む —— が読まない型引数としてだけ名指すとき）は読まず、型引数そのものが `nominal` の内側の型であるところでは正規形で、つまり先頭の alias と nominal をすべて剥がして読み（`type Tagged(T) = nominal T` は `Tagged(Yen)` と `Tagged(Cents)` を `Int` と `Int` として比べるが、`type Tag(T) = nominal {v: T}` は `T` を書かれたとおりに比べる）、それ以外では書かれたとおりに読む。複数の読み方で読まれる型引数は、最も厳しい読み方で読む。したがって `Nest(Int)` は `Nest(Int)` や `Nest(Float)` が要求される位置では受理され、`Nest(Text)` が要求される位置では拒否される — `type Box(T) = Empty | Full(T)` のような正則な汎化型で展開が出す答えと同じである。
+
+それ以外で汎化型の適用を展開する比較 —— 異なる汎化型どうし、または汎化型とそうでない型 —— は、両側を展開する。汎化型が**型引数を深く入れ子にする**とは、型引数が渡される先を body が適用する汎化型越しにたどると、より大きな型引数の内側でその型引数のいずれかへ戻ることをいう（`Nest` は `T` を `List(T)` として戻す）。どちらの側もそのような汎化型を適用していなければ、比較が出会う書かれたとおりの組は有限であり、汎化型が型引数をどう入れ替えたり巡回させたりしても、繰り返された組で終わる。どちらかの側が適用しているときは、下りの途中で、展開中の同じ先頭の組（両側で適用されている名前の組）へ、前回入ったときより大きな合計サイズで再入するたびに、その組について 1 回と数える。1 回の比較では、どのフィールドとペイロードも含めて先頭の組ごとに 64 回まで数え、65 回目以降の再入はすべて、繰り返された組と同じく「はい」と答える。大きくならなかった再入は数えない。この上限は不一致を「はい」に変えることしかないが、その答えはフィールドの順序で決まることがある：比較が終わらないフィールドがその組の回数を使い切ると、後のフィールドがその組への再入を経てしか届かない不一致は見逃される。こうした「はい」で分岐を結合した `if`・`match`・リストリテラルは、後の比較が拒否する型を持つことがある。
 
 5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
 
@@ -475,6 +487,8 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 
 **コンテナへのセレクタは、そのイベントを発火できる子孫に届く。** コンテナ種別の多くは自分自身では何も発火しない（`box` に `keydown` も `focus` も `submit` もない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
 
+**コンテナに付けた `#id` は、発火する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身が発火するイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — `row` は click を dispatch しないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
+
 **子孫の書き方は結果を変えない。** 子 tile を名前で参照する本体も、インラインの本体とまったく同じように（何段でも）辿られる。したがって次の 2 つは同じプログラムである:
 
 ```kumiki snippet
@@ -563,6 +577,8 @@ issue.copy(status=Done, priority=High)
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
 > **最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` では `.ok` の値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` では、storage / session / indexed の capability の effect が `$e : Text` を束縛する。これらの effect は失敗のメッセージを渡す（`map-request` やホストの provider が例外を投げた場合も同じ。[ストレージ Effect](./http.md#_6-7-storage-effects)）ので、`problem := $e` はそれを格納し、`$e.message` は **E0108** になる。その `out=` もそう宣言しなければならない — `Result(T, Text)` であり、それ以外の `E` は **E0306** である。それ以外の capability の `.err` は `out=` から型付けされない。HTTP ハンドラは `{status, message, body}` レコードを渡し、カスタム capability の値はその provider が決める（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、そこでの `$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
+> **`$route` は `Route` であり、panic の `$event` は型を持つ。** `route.enter` / `route.leave` / `route.error` の reducer では、`$route` は標準の `Route` 型を持つ —— `route` slot がどこでもそうであるように（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。それ以外のトリガの[プリフェッチ](./routing.md#_3-8-prefetch)対象は、それを宣言された型なしで読む：自分のトリガで発火したときは空だからだ。`app.error` reducer の `$event` は標準の `PanicInfo` であり、`route.error(<pattern>)` reducer のものは `RouteErrorInfo` —— 同じフィールドにマッチした `pattern` が乗ったもの —— である（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。したがって `Int` の slot への `n := $route.path` は **E0201** であり、`$event.mesage` は **E0108** である。それ以外のトリガの `$event` は宣言された型を持たない。
 
 > **`fn` 内の positional は引数である。** `$1` は1番目の引数、`$2` は2番目の引数で、値も型もその引数が宣言するものと同じである。したがって `fn plus(a: Int, b: Int) -> Int = $1 + $2` は `a + b` である。positional は引数1つにつき1つだけあり、引数を持たない `fn` の `$1` や、引数が1つの `fn` の `$2` は未定義参照（**E0103**）になる。body 内のフラグメントは自分の `$1` / `$2` を束縛し、それが `fn` のものを隠す：`fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` では、レシーバは `xs` で、フラグメントの `$1` は各要素である。
 
