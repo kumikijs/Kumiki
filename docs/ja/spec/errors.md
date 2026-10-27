@@ -729,6 +729,10 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
 
+`Tuple` は任意個の型引数を取るが、少なくとも 1 つは要る：裸の `Tuple` はどの型も表さない。
+
+> `Type "Tuple" expects type arguments but got none`
+
 **修正**：呼び出し側で宣言の型引数数に合わせるか、宣言側パラメータリストを変える。
 
 ### E0211 `undef-tile-in-selector`
@@ -1311,13 +1315,14 @@ test typo-section =
 
 ### E0715 `for-all-no-generator`
 
-`property-test` の `for-all` 変数の型が、ジェネレータの作れない型である（[テスト §8.3.2](./testing.md#_8-3-2-generators)）。どの試行も、各 `for-all` 型の値を丸ごと作ってから走る。ジェネレータが値を持たない部分を含む型は、その部分に代用品を入れたまま invariant へ渡ることになり、代用品を抱えたバッチが拒否されて reducer が一度も走らなかった invariant が、全ケースで成功し得る。
+`property-test` の `for-all` 変数の型が、ジェネレータの作れない型である（[テスト §8.3.2](./testing.md#_8-3-2-generators)）。どの試行も、各 `for-all` 型の値を丸ごと作ってから走る。ジェネレータが値を持たない部分を含む型は、その部分に代用品を入れたまま invariant へ渡ることになる：性質はプログラムが決して保持しない値の上で確かめられ、その値の書き込みは、型ではなく代用品を咎める拒否で全試行を失敗させる。
 
 型のどこかに、次のいずれかを含んでいる：
 
 - `File` または `EffectId`。`File` はプラットフォームから、`EffectId` は `emit` から来るものであり、どちらにも作り出せる値が無い。`FormData` は `FileV` バリアントを通じてそれを含む。
 - 有限の値を持たない再帰型——中に自分自身をもう 1 つ入れなければ作れない型。下の `Inf` がそれである。終わり方を持つ再帰型——再帰ペイロードを持たないバリアント、あるいはそれを包む `Option` やコレクション——は、深さを制限して生成する。
-- 自分自身を別の引数に適用するジェネリック（`type Grow(T) = Stop | Deeper(Grow(List(T)))`）。1 段ごとに新しい型になり、戻ってくる先の型が無い。
+- 型引数を深く入れ子にするジェネリック（[言語 §1.3.6](./language.md#_1-3-6-invariants)）。`type Grow(T) = Stop | Deeper(Grow(List(T)))` は `T` を `List(T)` として戻すので、`Grow(Int)` は `Grow(List(Int))` を含み、それは `Grow(List(List(Int)))` を含む。1 段ごとに新しい型になり、戻ってくる先の body が 1 つも無い。型引数を入れ替えたり巡回させたりするだけのジェネリック（`type Alt(A, B) = Nil | Cons(A, Alt(B, A))`）が出会う適用は有限個で、それぞれへ戻ってくる。別の引数で再び出会う適用はそれ自体 1 つの型であり、一度だけ入る。body が保持しない型引数にはジェネレータが要らない：`type Tag(T) = {name: Text}` は `Tag(File)` を作る。
+- 値を残さない refinement。重ねた refinement は互いを狭める——境界は 2 つのうち厳しい方、`one-of` は他が通す値だけを残し、`email` / `url` / `uuid` は他が許す長さで作る——ので、全体を通る値が無い重ね方は拒否される：`Int where positive where negative`、`Text where len-gt(5) where len-lt(3)`、`Text where email where url`、`Text where uuid where len-gt(36)`（uuid は 36 文字、email と url は 5 文字以上）、あるいは列挙したどの値も他の refinement が拒否する `one-of`。
 
 ```kumiki invalid
 type Inf = {v: Int, next: Inf}
@@ -1340,11 +1345,14 @@ test inf-has-no-value =
 
 > `` No generator for `for-all` "<name>": "<type>" has none ``
 > `` No generator for `for-all` "<name>": "<type>" has no finite value ``
-> `` No generator for `for-all` "<name>": "<type>" applies itself to a different argument ``
+> `` No generator for `for-all` "<name>": "<generic>" nests a parameter deeper at every step: "<type>" inside "<type>" ``
+> `` No generator for `for-all` "<name>": the refinements of "<type>" leave no value: <why> ``
 
-報告位置は `for-all` のフィールドである。型の中の名前が何にも解決されない場合はこれではなく [E0117](#e0117-undef-type) であり、そのフィールドについてジェネレータの有無を重ねて問うことはしない。
+`<why>` は `none is at least <m> and at most <n>`、`none is at least <m> and at most <n> characters long`、`none is both <a shape> and <a shape>`、`<a shape> is at least 5 characters long`、`a uuid is 36 characters long`、``no value its `one-of` lists passes the rest`` のいずれかである。
 
-**修正**：性質を述べられる型を生成する——再帰型に終わり方を与える（`next: Option(Inf)`）、あるいは型のうち `File` を含まない部分を使う——か、そのケースを reducer-test として書く。codegen も同じ問いを立てるので、`check` を飛ばした呼び出し元は、穴の開いた記述子ではなくこのコードを throw されたエラーとして受け取る。
+報告位置は `for-all` のフィールドである。型の中、あるいは型がたどり着く定義の中のエラーは、これではなくそれぞれのコードで報告され、そのフィールドについてジェネレータの有無を重ねて問うことはしない：何にも解決されない名前（[E0117](#e0117-undef-type)）、型引数の数の誤り——裸の `Tuple` を含む（[E0210](#e0210-type-arity-mismatch)）——、検査できない refinement（[E0803](#e0803-unimplemented-refinement)、[E0804](#e0804-refinement-args-invalid)）、自分自身に解決される定義（[E0009](#e0009-type-cycle)）。
+
+**修正**：性質を述べられる型を生成する——再帰型に終わり方を与える（`next: Option(Inf)`）、型のうち `File` を含まない部分を使う、あるいはいずれかの値が通る refinement にする——か、そのケースを reducer-test として書く。codegen も同じ問いを立てるので、`check` を飛ばした呼び出し元は、穴の開いた記述子ではなくこのコードを throw されたエラーとして受け取る。
 
 ## E08xx — ランタイムハザード
 

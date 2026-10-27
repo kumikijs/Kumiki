@@ -22,10 +22,10 @@ while a `reducer-test` of the same reducer saw `label: "x"`. The runtime's
 `route` was missing the same way, so `run-reducer(inc).slots.route.path` threw,
 which the runner also reports as a counterexample.
 A chain (`run-reducer(inc).run-reducer(inc).slots.label`) answered `undefined`
-too, and so did a step whose batch a refinement rejected.
+too.
 
 `run-reducer` now answers the whole slot table the reducer ran against — the
 declared defaults and the seeded `route`, then `given.slots` — with the
 reducer's writes over it.
 `reducer-test` and `run-reducer` share that rule, so the two tiers answer the
-same state for the same reducer. testing.md states it.
+same state for a reducer whose batch commits. testing.md states it.
