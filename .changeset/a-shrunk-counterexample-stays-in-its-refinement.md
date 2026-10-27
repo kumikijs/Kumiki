@@ -14,16 +14,19 @@ reads — and covers the refinements it used to leave as generated:
   email}` with `invariant = e.length > 100` reported the address it generated
   (`{"e":"wsciej@bpqrsh.example.com"}`); it now reports
   `{"e":"j@h.example.com"}`. A `uuid`, whose shape fixes its length, is still
-  reported as generated.
+  reported as generated. A shape generated beside a length refinement shrinks
+  inside that length.
 - A `one-of` value moves through the literals listed before it, not only to the
   first. Over `one-of("xs", "sm", "md", "lg")`, a property that holds only on
   `"xs"` reported a generated `"md"` or `"lg"` as it was, because the one
   literal it tried, `"xs"`, holds; it now reports `"sm"`.
 
 Shrinking also keeps the way the generated case failed. A case whose invariant is
-false shrinks only through cases in which every `run-reducer` ran, and a refused
-case only through cases refused the same way — the same reducer, slots and
-predicates — reported with the shrunk case's own rejection. With
+false shrinks only through cases whose invariant is false, in which every
+`run-reducer` committed; a refused case only through cases refused the same way —
+the same reducer, slots and predicates — reported with the shrunk case's own
+rejection; and a case that panics only through cases that panic, one that throws
+anything else only through cases that throw. With
 `count : Int where between(0, 100)`:
 
 ```
@@ -34,13 +37,13 @@ test dec-stays-above-ten =
         invariant = run-reducer(dec).slots.count > 10
 ```
 
-The generated case is one where `dec` ran, and it used to shrink across into the
-one input `dec` refuses:
+The generated case is one where `dec` committed, and it used to shrink across
+into the one input `dec` refuses:
 
 ```
 actual:   counterexample (case 1/100): {"n":0} — reducer "dec" was rejected: slot "count" cannot hold -1 (between(0, 100))
 ```
 
-It now reports `{"n":1}`, the smallest input on which `dec` ran and the invariant
-failed. A refused case no longer shrinks into one that runs, or into one refused
-for a different slot.
+It now reports `{"n":1}`, the smallest input on which `dec` committed and the
+invariant failed. A refused case no longer shrinks into one that commits, or into
+one refused for a different slot.
