@@ -1,6 +1,5 @@
 import {
   _setPathHelper,
-  currentEpisodeId,
   emitId,
   entryKey,
   isEntryOf,
@@ -10,10 +9,10 @@ import {
   listPosition,
   newId,
   type PathSegment,
-  panicInfo,
   type RefinementNaming,
   type RefinementRejection,
   readEnv,
+  recordInRenderPass,
   refinementRejectionOf,
   type SlotGate,
   slotAccepts,
@@ -399,8 +398,8 @@ export const _stdlibCore = {
   },
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
-    const rec = panicInfo(e, "tile-render");
-    return userPanicInfo(rec, rec.location || location, currentEpisodeId());
+    const { rec, episodeId } = recordInRenderPass(e, location);
+    return userPanicInfo(rec, rec.location || location, episodeId);
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {
