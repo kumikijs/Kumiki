@@ -26,6 +26,7 @@ import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
 import {
   checkBindStrictProp,
+  checkBindTargetRoot,
   checkBindTargetSteps,
   checkInputBindType,
   checkSecondSpelling,
@@ -40,10 +41,10 @@ import {
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { firesUnheardClauses, wrappedClause } from "./reducer.ts";
-import { collectTileBuiltinKinds } from "./tile-collect.ts";
-import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
+import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
+import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
 export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -51,11 +52,12 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    bindLocal(ctx, "$1", tile.in);
+    bindLocal(ctx, "$1", tile.in, "input");
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
@@ -100,6 +102,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
     undeclaredInputReads: seen,
   };
@@ -195,42 +198,15 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  if (!tileBodyUsesRouteOutlet(tile.body)) {
+  // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
+  // a layout helper counts, and one a builtin drops does not.
+  if (!collectRenderedBuiltinKinds(tile.name, sym).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
-      message: `Tile "${tile.name}" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render`,
+      message: `Tile "${tile.name}" declares sub-routes but renders no "route-outlet", in its body or in any tile it renders — the matched child would have nowhere to render`,
       pos: tile.pos,
     });
-  }
-}
-
-/** True if any sub-tree of the tile body is a `route-outlet` call. */
-function tileBodyUsesRouteOutlet(t: TileExpr): boolean {
-  switch (t.kind) {
-    case "TileCall": {
-      if (t.name === "route-outlet") return true;
-      for (const arg of t.args) {
-        const v = arg.value as TileExpr;
-        if (
-          v.kind === "TileCall" ||
-          v.kind === "TileFor" ||
-          v.kind === "TileWhen" ||
-          v.kind === "TileIf" ||
-          v.kind === "TileMatch"
-        ) {
-          if (tileBodyUsesRouteOutlet(v)) return true;
-        }
-      }
-      return false;
-    }
-    case "TileFor":
-    case "TileWhen":
-      return tileBodyUsesRouteOutlet(t.body);
-    case "TileIf":
-      return tileBodyUsesRouteOutlet(t.consequent) || tileBodyUsesRouteOutlet(t.alternate);
-    case "TileMatch":
-      return t.arms.some((arm) => tileBodyUsesRouteOutlet(arm.body));
   }
 }
 
@@ -242,10 +218,9 @@ export function checkTileExpr(
 ): void {
   switch (t.kind) {
     case "TileFor": {
-      checkExpr(t.iter, sym, errors, ctx);
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
-      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
+      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
       checkTileExpr(t.body, sym, errors, inner);
       return;
     }
@@ -262,7 +237,7 @@ export function checkTileExpr(
       return;
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(t.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
@@ -411,6 +386,7 @@ function checkTileCall(
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, errors);
+  checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
   checkSecondSpelling(t, errors);
   checkInputBindType(t, sym, errors, ctx);
@@ -479,6 +455,7 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
@@ -516,6 +493,7 @@ function checkTileCall(
       checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }
 }
