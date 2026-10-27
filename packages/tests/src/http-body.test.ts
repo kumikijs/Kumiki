@@ -121,7 +121,7 @@ describe("an HTTP request body is sent as its HttpBody variant names", () => {
 
   it("sends Json of Unit as JSON null, not an empty body under a JSON Content-Type", async () => {
     const app = await loadSource(
-      program(`{url: "/j", body: Json($1), decode: Decoder.Text}`, "Unit"),
+      program(`{url: "/j", body: Json(()), decode: Decoder.Text}`, "Unit"),
     );
     const call = await sent(app, "Go");
     expect(call.init.body).toBe("null");

@@ -27,12 +27,14 @@ slot recs2 : Set(P)              = {}
 slot cs    : Set(C)              = [Red, Blue]
 slot cs2   : Set(C)              = {}
 fn count(x: Set(Text)) -> Int = x.size
+slot bykey : Map(Set(Text), Int) = {}
 reducer go on=ui.click(Go) do=
     w := ["c", "c"]
     seen := count(["p", "p", "q"])
     ls := ls.push([2, 2])
     m := m.insert("k", [1, 1])
     byset := byset.insert(["a", "b"], 1)
+    bykey[["a", "b"]] := 2
     lt := let x = 3 in [x, x]
 tile Go = button(text="go") {id: "go"}`;
 
@@ -82,6 +84,17 @@ describe("the literal is a Set wherever it is written", () => {
       1,
     );
     expect(text).toContain("r=truetrue1 true 1");
+  });
+
+  it("in the index of a Map(Set(T), V), which names the entry a Set of the same members names", async () => {
+    // A read at an absent key panics, so the first render, before the click writes, reads nothing.
+    const text = await render(
+      'if bykey.size == 0 then "-" else "r=" + byset[["b", "a"]].show' +
+        ' + byset[w.add("a").add("b").remove("c")].show' +
+        ' + " " + bykey.get-or(["b", "a"], 0).show + bykey[["b", "a"]].show',
+      1,
+    );
+    expect(text).toContain("r=11 22");
   });
 
   it("in a let … in body", async () => {
