@@ -60,6 +60,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0007](./errors.md#e0007-duplicate-definition) | `duplicate-definition` | all | コア |
 | [E0008](./errors.md#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) | `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant` | all | コア |
 | [E0009](./errors.md#e0009-type-cycle) | `type-cycle` | type | コア |
+| [E0010](./errors.md#e0010-redirect-cycle) | `redirect-cycle` | app | ルーティング |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | コア |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | コア |
 | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | コア |
@@ -83,6 +84,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | コア |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | コア |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | コア |
+| [E0125](./errors.md#e0125-redirect-unbound-param) | `redirect-unbound-param` | app | ルーティング |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | コア |
 | [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | コア |
 | [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | コア |
@@ -108,9 +110,12 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | ライフサイクル |
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
+| [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | コア |
+| [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | フォーム |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
+| [W0217](./errors.md#w0217-name-beside-group-warning) | `name-beside-group` | tile | フォーム |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |
@@ -297,5 +302,8 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | コア | [§1.6.3](./language.md#_1-6-3-lvalue-の意味論) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | コア | [§10.3.10](./runtime.md#_10-3-10-安定タイル-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
+| `171-property-test-count.kumiki` | slot, reducer, tile | テスト | [§8.3.1](./testing.md#_8-3-1-構文) |
+| `204-input-props-rendered.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.3.4](./stdlib.md#_2-3-4-入力要素) [§2.3.5](./stdlib.md#_2-3-5-フォーム) |
+| `216-selector-id-descendants.kumiki` | slot, reducer, tile | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
 <!-- examples:end -->
 :::

@@ -1,16 +1,23 @@
 import {
   assignable,
+  isKnownTypeName,
   recordFieldType,
   typeToString,
   unaliasType,
   unknownType,
 } from "../assignable.ts";
 import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
-import { BUILTIN_EFFECTS, builtinFieldOmittable, REDUCER_REF } from "../capabilities.ts";
+import { numberLiteral } from "../ast.ts";
+import {
+  BUILTIN_EFFECTS,
+  builtinFieldOmittable,
+  declaresNoInput,
+  REDUCER_REF,
+} from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
-import { inferType, isKnown, isPrimNamed } from "./infer.ts";
-import { armScope } from "./patterns.ts";
+import { container, inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
+import { armScope, matchedType } from "./patterns.ts";
 
 export function checkAgainst(
   e: Expr,
@@ -44,7 +51,14 @@ export function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && d.name === "Tuple" && e.kind === "TupleLit") {
-    if (e.items.length !== d.args.length) {
+    // Items are left unknown, so `assignable` compares the length alone: a literal meets the
+    // same length rule as a tuple-typed value.
+    const shape = container(
+      "Tuple",
+      e.items.map((it) => unknownType(it.pos)),
+      e.pos,
+    );
+    if (!assignable(shape, declared, sym)) {
       pushMismatch(
         errors,
         code,
@@ -87,24 +101,25 @@ export function checkAgainst(
     return;
   }
   if (e.kind === "MatchExpr") {
-    const scrutType = inferType(e.scrutinee, sym, ctx);
+    const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
     for (const arm of e.arms) {
       const scope = armScope(arm, scrutType, sym, ctx);
       checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
     }
     return;
   }
+  const literal = numberLiteral(e);
   if (
-    e.kind === "Num" &&
+    literal !== null &&
     d.kind === "TypePrim" &&
     d.name === "Int" &&
-    Number.isInteger(e.value) &&
-    !Number.isSafeInteger(e.value)
+    Number.isInteger(literal.value) &&
+    !Number.isSafeInteger(literal.value)
   ) {
     errors.push({
       code: "E0217",
       kind: "int-literal-precision",
-      message: `Int literal ${e.raw ?? e.value} is not exactly representable and was rounded to ${e.value}`,
+      message: `Int literal ${literal.raw} is not exactly representable and was rounded to ${literal.value}`,
       pos: e.pos,
     });
     return;
@@ -347,20 +362,51 @@ export function getOrResultType(recv: TypeExpr | null, argCount: number): TypeEx
 
 export function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
   if (lv.kind === "LSlot") return sym.slots.get(lv.name)?.type ?? null;
-  const base = unaliasType(lvalueType(lv.base, sym), sym);
+  const raw = lvalueType(lv.base, sym);
+  if (lv.kind === "LIndex") {
+    const step = indexStep(raw, sym);
+    return step.kind === "place" ? step.type : null;
+  }
+  const base = unaliasType(raw, sym);
   if (!base) return null;
-  if (lv.kind === "LField") {
-    if (base.kind === "TypeRecord") return recordFieldType(base, lv.field);
-    if (lv.field === "get") return unwrappedType(base);
-    return null;
-  }
-  if (base.kind === "TypeApp") {
-    // A `Set` index is not a place (`checkIndexLvalue`), so it has no type for
-    // a right-hand side to be checked against.
-    if (base.name === "List") return base.args[0] ?? null;
-    if (base.name === "Map") return base.args[1] ?? null;
-  }
+  if (base.kind === "TypeRecord") return recordFieldType(base, lv.field);
+  if (lv.field === "get") return unwrappedType(base);
   return null;
+}
+
+// One answer for both questions the left of `:=` asks of an index step (can it be written
+// through, and what is the right-hand side checked against). It takes the receiver's type as
+// written and unaliases it here, so every caller asks about the same type.
+/**
+ * What an index into `raw` is: in a List or a Map, a place of type `type` whose index is checked
+ * against `key`, the same in a read as in a write. `key` is `null` when the key type names nothing.
+ */
+export type IndexStep =
+  | { kind: "place"; key: TypeExpr | null; type: TypeExpr }
+  | { kind: "no-place"; raw: TypeExpr; base: TypeExpr }
+  | { kind: "undecidable" };
+
+export function indexStep(raw: TypeExpr | null, sym: SymbolTable): IndexStep {
+  const base = unaliasType(raw, sym);
+  if (raw === null || base === null || base.kind === "TypeRef") return { kind: "undecidable" };
+  // An applied name that resolves to nothing is E0117 where it is written; what it would have
+  // named may well be a Map.
+  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return { kind: "undecidable" };
+  if (base.kind === "TypeApp" && base.name === "List") {
+    const [type] = base.args;
+    return type ? { kind: "place", key: prim("Int", base.pos), type } : { kind: "undecidable" };
+  }
+  if (base.kind === "TypeApp" && base.name === "Map") {
+    const [key, type] = base.args;
+    if (!type) return { kind: "undecidable" };
+    return { kind: "place", key: key && !namesNothing(key, sym) ? key : null, type };
+  }
+  return { kind: "no-place", raw, base };
+}
+
+/** A type name that resolves to nothing is E0117 where it is written, and judges no value. */
+function namesNothing(t: TypeExpr, sym: SymbolTable): boolean {
+  return (t.kind === "TypeApp" || t.kind === "TypeRef") && !isKnownTypeName(t.name, sym);
 }
 
 export function checkEmitTarget(
@@ -390,7 +436,7 @@ export function checkEmitTarget(
       pos,
     });
   }
-  const wants = isPrimNamed(inType, sym, "Unit") ? 0 : 1;
+  const wants = declaresNoInput(inType, sym) ? 0 : 1;
   if (args.length !== wants) {
     errors.push({
       code: "E0213",

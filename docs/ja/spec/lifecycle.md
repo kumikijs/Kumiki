@@ -108,7 +108,30 @@ reducer trackPageView
     do= emit track({event: "settings_view", props: {}})
 ```
 
-複数の tile を一度に対象にしたい場合は同名の reducer を複数定義する（定義順で実行）。
+複数の tile を対象にしたい場合は、tile ごとに reducer を 1 つずつ、それぞれ別の名前で宣言する。reducer の名前は一度しか宣言できない：同じ名前の 2 つ目の `reducer` は、トリガが何であれ [E0007](./errors.md#e0007-duplicate-definition) になる。
+
+```kumiki
+slot seen : Text = ""
+
+tile Profile  = text("Profile")
+tile Settings = text("Settings")
+tile Account  = page(Settings, Profile, text("seen: " + seen))
+
+reducer seeProfile  on=tile.mount(Profile)  do= seen := seen + "Profile "
+reducer seeSettings on=tile.mount(Settings) do= seen := seen + "Settings "
+reducer seeAccount  on=tile.mount(Account)  do= seen := seen + "Account "
+
+app TileMountSeveralTiles
+  caps   = []
+  routes = {"/" -> Account, "/404" -> Account}
+  init   = []
+```
+
+各 reducer は対象の tile がマウントされたときに発火する：`Account` を描画すると `seeAccount`、`seeSettings`、続いて `seeProfile` がそれぞれ 1 回ずつ実行される。1 回の描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer はツリー順に発火する：外側の tile がその内側の tile より先、兄弟どうしは前から順に。その描画で複数回描画される tile も 1 つの tile であり、1 回だけ発火する。1 つの tile に対する複数の `tile.mount` reducer はどれもその tile のマウントという 1 つのイベントにマッチするので、定義順で発火する（[§1.6.4](./language.md#_1-6-4-不変条件) Invariant 3）。
+
+どちらのイベントもインスタンスごとではなく tile 名ごとに数える。`tile.mount(X)` は画面上に `X` がひとつもないときに `X` が現れると発火し、`tile.unmount(X)` は画面上の最後の `X` が消えたときに発火する。すでにある `X` の横に別の `X` が現れても、2 つのうち 1 つが消えても、何も発火しない。
+
+`error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、それを宣言した tile がどこに描画されても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が発火し、fallback が消えたとき、つまり宣言した tile が panic せずに描画し直されたとき、あるいは宣言した tile 自体が消えたときに `tile.unmount(<fallback>)` が発火する。上の名前ごとの規則により、2 つの境界が同時に表示している fallback は、どちらの境界も表示しなくなったときに初めて消える。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。fallback は宣言した tile の本体の代わりに描画されるので、fallback が表示されている間は、宣言した tile もその下のどの tile も `tile.mount` を発火しない。マウント済みの宣言した tile が panic し始めると、その tile と下の tile の `tile.unmount` が発火する。
 
 ---
 
@@ -126,6 +149,7 @@ Kumiki では **try/catch を許可しない**。エラーは次の経路で扱�
 - インデックス `xs[i]`（読み取りでも書き込みでも）が `List` のどの要素も指さない（末尾より先、または負）
 - 読み取り `m[k]` が `Map` の持たないキーを指した
 - `Result.get` で Err
+- 値として使う `match` に、scrutinee の値に一致する arm がなかった（[言語 §1.9](./language.md#_1-9-式言語)）
 - `panic(msg)` の明示呼び出し
 
 これらは **panic** と呼ばれる例外。panic は episode log に記録され、現在の reducer は中断される。`slot` の変更は **トランザクション的にロールバック**される。
@@ -160,9 +184,11 @@ type PanicInfo = {
 
 `cause` は、throw が `Error.cause` を伴っていた場合のその**最も近い**リンクの message であり、そうでなければ `None` である。message が空の cause も `None` として扱う：`.get-or` を通すと `Some("")` は理由が入るべき場所を空白にしてしまい、「理由が無い」ではなく「理由が空である」と読めてしまうからだ。その背後のチェーンと、それに付随するスタックは episode log に留まる —— そこへ辿り着く手段が `episode-id` である。
 
-panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。`route.error` だけはその上に、マッチした `pattern` が乗る。3 つの経路のどれでも、`episode-id` が名指すのはその panic が記録された episode であり、id を辿ればその panic の `panic` step に行き着く。境界が捕捉した panic も同じである：処理済みなので、検証 tier が監視するコンソールにも `app.error` にも届かないが、記録はされる —— `location` が境界を宣言した tile であり、`handled: true` を持つ `tile-render` step として（[runtime.md §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。描画のたびに捕捉する境界は、描画 1 回につき 1 つの step を記録する。`episode-id` は、名指すべき開いた episode が無い箇所ではすべて `None` であり、そこでは何も記録されない —— 境界経路では、初回描画をはじめ、どの dispatch の内側でもない描画がそれに当たる。サーバー側では描画が bootstrap episode の内側で走るので（[runtime.md §10.6.1](./runtime.md#_10-6-1-ssr)）、`renderToString` が配信する fallback はその episode を名指す。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
+panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。`route.error` だけはその上に、その reducer が指す `pattern` が乗る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。3 つの経路のどれでも、`episode-id` が名指すのはその panic が記録された episode であり、id を辿ればその panic の `panic` step に行き着く。境界が捕捉した panic も同じである：処理済みなので、検証 tier が監視するコンソールにも `app.error` にも届かないが、記録はされる —— `location` が境界を宣言した tile であり、`handled: true` を持つ `tile-render` step として（[runtime.md §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。描画のたびに捕捉する境界は、描画 1 回につき 1 つの step を記録する。`episode-id` は、名指すべき開いた episode が無い箇所ではすべて `None` であり、そこでは何も記録されない —— 境界経路では、初回描画をはじめ、どの dispatch の内側でもない描画がそれに当たる。サーバー側では描画が bootstrap episode の内側で走るので（[runtime.md §10.6.1](./runtime.md#_10-6-1-ssr)）、`renderToString` が配信する fallback はその episode を名指す。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
 
 開発ツール向けのフィールドである `stack`（JS の `Error.stack`）と機械可読な `Error.cause` チェーンは episode log（`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）に記録されるが、ユーザー向けの `$event` には意図的に**公開しない** —— 生のスタックを本番 UI に漏らすのは footgun だからである。参照するには `kumiki replay` / `kumiki_episode_tail` を使う。
+
+検査器は `$event` を標準ライブラリの定義から型付けする：`app.error` reducer では `PanicInfo`、`route.error(<pattern>)` reducer では `RouteErrorInfo` —— 同じフィールドに `pattern: Text` を加えたもの —— である（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。持たないフィールド —— 綴り誤り、`stack`、`app.error` reducer での `pattern` —— は [E0108](./errors.md#e0108-undef-member) であり、別の型の slot へ書き込むフィールドは [E0201](./errors.md#e0201-type-mismatch) である。`RouteErrorInfo` は `PanicInfo` ではない —— レコード型は自分と同じフィールド集合にしか一致しない —— ので、`app.error` の panic を丸ごと保持する slot は `Option(PanicInfo)`、`route.error` の panic を丸ごと保持する slot は `Option(RouteErrorInfo)` である。
 
 ---
 
@@ -192,7 +218,7 @@ tile ErrorFallback
 
 境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
 
-境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
+境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。outlet がシェルの描画する tile の中にある場合、その tile の境界は子を覆わない。子はその tile が描画を終えた後で outlet に埋められるので、子の panic は、outlet がシェル自身の body にある場合と同じように捕捉される。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
 
 境界が受け取るのは **panic** —— [§7.2.2](#_7-2-2-unexpected-errors-panic) が定義する制御されたシグナル —— である。fallback が受け取るのは `PanicInfo` の全体であり、[§7.2.3](#_7-2-3-the-app-error-reducer) の `app.error` reducer が受け取るものと同じ payload である —— 同じコードが組み立てるので、両者が食い違うことはない。境界が捕捉した panic は処理済みであり —— コンソールには報告されず、`app.error` も発火しない —— かつ記録される：その `episode-id` は、その `panic` step を持つ episode を名指し、その step は `handled: true` を持つ。それ以外のものが境界に到達した場合、それはプログラムのエラーではなく生成コードまたは runtime の欠陥であり、トップレベル表示のために再送出される：fallback がそれを吸収すると失敗が描画済みページに置き換わり、`smoke` / `scenario` はエラーチャネルで検証するため、見るべきものが何も残らなくなる。
 
@@ -255,7 +281,7 @@ reducer onRouteErr
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
 
-boundary に捕まらない render の panic は、対応する `route.error` reducer を 1 回だけ発火する。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。
+boundary に捕まらない render の panic は、`route.error` reducer を 1 回だけ発火する — 表示中のルートがマッチしたすべてのパターンのもので、親のものがそのサブルートのものより先に走る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。
 
 ---
 
@@ -283,6 +309,8 @@ reducer noop     on=ui.click(_) do= ()
 
 ランタイム実装ではこれは **モーダルダイアログ tile** として描画される（ネイティブ `confirm` ではない）。これにより UI スタイルが揃い、テストも容易になる。
 
+ダイアログは常にランタイム自身のものである。`notification.show` に登録したホスト provider はトースト（[§7.7](#_7-7-トースト)）を置き換えるが、`confirm` を受け取ることはない。答えは `onYes` または `onNo` を dispatch することで届けられ、provider の `EffectResult` にはそれができないからである（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。`route.leave` ガードから emit されたダイアログは、答えが出るか、別のナビゲーションがそれを置き換えるまで遷移を保留する（[ルーティング §3.5.2](./routing.md#_3-5-2-leave-ガード)）。
+
 ---
 
 ## 7.7 トースト
@@ -303,7 +331,7 @@ reducer notifySave
 
 ---
 
-## 7.8 アクセシビリティの最小規約
+## 7.8 アクセシビリティの最小規約 {#_7-8-minimal-accessibility-conventions}
 
 | 規約 | 適用 |
 |---|---|
