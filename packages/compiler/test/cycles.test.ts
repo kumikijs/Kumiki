@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, locatedOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
 `;
@@ -165,6 +165,32 @@ ${TAIL}`;
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0005");
     expect(err?.message).toContain("A → B → A");
+  });
+
+  it.each([
+    {
+      chain: "a fallback that is its own boundary, at that clause",
+      src: `slot xs : List(Int) = []
+tile Oops in=PanicInfo error-boundary=Oops = column(text(xs.head.get.show))
+tile Boom error-boundary=Oops = column(text(panic("bang")))
+tile App = column(Boom)
+${TAIL}`,
+      message: 'Tile "Oops" expands into itself (Oops → Oops)',
+      col: 39,
+    },
+    {
+      chain: "two fallbacks that name each other, at the first clause of the loop",
+      src: `slot xs : List(Int) = []
+tile A in=PanicInfo error-boundary=B = column(text(xs.head.get.show))
+tile B in=PanicInfo error-boundary=A = column(text(xs.head.get.show))
+tile Boom error-boundary=A = column(text(panic("bang")))
+tile App = column(Boom)
+${TAIL}`,
+      message: 'Tile "A" expands into itself (A → B → A)',
+      col: 36,
+    },
+  ])("refuses $chain", ({ src, message, col }) => {
+    expect(locatedOf(src)).toEqual([{ code: "E0005", message, line: 2, col }]);
   });
 
   it("does not follow a tile passed as a named argument, which nothing renders", () => {
