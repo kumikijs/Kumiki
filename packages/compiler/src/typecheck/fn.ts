@@ -15,6 +15,7 @@ export function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): voi
     kind: "fn",
     localBinds: new Set(scope.map((b) => b.name)),
     localTypes: new Map(scope.map((b) => [b.name, b.type])),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;

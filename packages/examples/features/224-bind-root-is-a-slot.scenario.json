@@ -1,0 +1,58 @@
+{
+  "steps": [
+    {
+      "label": "editing a row writes that row of the list",
+      "do": {
+        "fill": "#todo-a",
+        "value": "oat milk"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "todos": {
+            "a": { "text": "oat milk" },
+            "b": { "text": "eggs" }
+          }
+        },
+        "domIncludes": ["todos=oat milk,eggs"]
+      }
+    },
+    {
+      "label": "editing another row leaves the first as it was",
+      "do": {
+        "fill": "#todo-b",
+        "value": "brown eggs"
+      },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["todos=oat milk,brown eggs"]
+      }
+    },
+    {
+      "label": "a control bound by the slot's name writes the slot",
+      "do": {
+        "fill": "#title",
+        "value": "chores"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": { "title": "chores" },
+        "domIncludes": ["title=chores"]
+      }
+    },
+    {
+      "label": "so does one bound from inside a tile that takes an input",
+      "do": {
+        "fill": "#email",
+        "value": "lovelace@example.com"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "profile": { "name": "Ada", "email": "lovelace@example.com" }
+        },
+        "domIncludes": ["email=lovelace@example.com"]
+      }
+    }
+  ]
+}
