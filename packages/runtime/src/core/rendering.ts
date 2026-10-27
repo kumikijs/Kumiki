@@ -69,15 +69,16 @@ export function withRenderingView<T>(view: Element, fn: () => T): T {
 export type RenderPanic = { rec: PanicRecord; episodeId: string | undefined };
 
 /** Where a render pass records a panic caught inside it; `site` becomes the step's `location`. */
-export type RenderPanicSink = (e: unknown, site: string) => RenderPanic;
+export type RenderPanicSink = (e: unknown, site: string, handled?: boolean) => RenderPanic;
 
 export function recordRenderPanic(
   logger: EpisodeLogger | null | undefined,
   e: unknown,
   site: string,
+  handled?: boolean,
 ): RenderPanic {
   const rec = panicInfo(e, "tile-render");
-  return { rec, episodeId: logger?.recordPanic({ ...rec, location: site }) };
+  return { rec, episodeId: logger?.recordPanic({ ...rec, location: site, handled }) };
 }
 
 // On globalThis because a `bundle: true` app carries its own inlined runtime: the
@@ -89,7 +90,7 @@ type RenderPanicHost = {
 
 export function recordInRenderPass(e: unknown, site: string): RenderPanic {
   const sink = (globalThis as RenderPanicHost).__kumikiRenderPanic__;
-  return sink ? sink(e, site) : recordRenderPanic(undefined, e, site);
+  return sink ? sink(e, site, true) : recordRenderPanic(undefined, e, site);
 }
 
 // `panics` is the caller's rather than the app's: one compiled app can be

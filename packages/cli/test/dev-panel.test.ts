@@ -1,7 +1,9 @@
 import type { AppShape } from "@kumikijs/runtime";
-import { createEpisodeLogger } from "@kumikijs/runtime";
-import { beforeEach, describe, expect, it } from "vitest";
+import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installDevPanel } from "../src/dev/panel.ts";
+import { buildAndLoad } from "./helpers/build-and-load.ts";
+import { APP_A, seed } from "./helpers/files.ts";
 
 /** The smallest app the panel can be handed: no slots, no reducers, nothing running. */
 function emptyApp(over: Partial<AppShape> = {}): AppShape {
@@ -172,5 +174,90 @@ describe("installDevPanel", () => {
     panel.onRemount();
     expect(inspector.textContent).toContain("99");
     expect(inspector.textContent).not.toContain("42");
+  });
+});
+
+describe("the panic overlay opens for a panic nothing handled", () => {
+  let quiet: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    setupHost();
+    quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    quiet.mockRestore();
+  });
+
+  /** Compile `source`, mount it with a logger wired to the panel, as `kumiki dev`'s client does, and click `#go`. */
+  async function clickGo(source: string): Promise<void> {
+    const app = await buildAndLoad(seed(`${source}\n${APP_A}`), "app");
+    let panel: ReturnType<typeof installDevPanel> | undefined;
+    const logger = createEpisodeLogger({ onEpisode: () => panel?.push() });
+    panel = installDevPanel({ logger, getApp: () => app });
+    mount(app, document.getElementById("app") as HTMLElement, { episodeLogger: logger });
+    (document.getElementById("go") as HTMLElement).click();
+  }
+
+  it("stays closed for a panic a boundary caught after a reducer that wrote no slot", async () => {
+    await clickGo(`
+slot secret : Option(Text) = None
+slot count  : Int          = 0
+
+tile Risky
+    error-boundary = Fallback
+    = column(text("secret: " + secret.get))
+
+tile Fallback
+    in=PanicInfo
+    = text("recovered: " + $1.message)
+
+tile Go = button(text="go", onClick=noop) {id: "go"}
+
+tile App = column(Risky, Go)
+
+reducer noop on=ui.click(Go) do= if count > 100 then count := 0`);
+    expect(document.getElementById("app")?.textContent).toContain("recovered: get called on None");
+    expect(document.querySelector(".kdp-overlay")).toBeNull();
+
+    (document.querySelector(".kdp-episode-head") as HTMLElement).click();
+    const steps = Array.from(document.querySelectorAll(".kdp-step"), (li) => li.textContent);
+    expect(steps).toEqual(["[reducer] noop", "[panic] get called on None  @ Risky  (handled)"]);
+  });
+
+  it.each([
+    {
+      name: "a render panic no boundary caught, with a signal-update after it",
+      source: `
+slot secret : Option(Text) = None
+slot reveal : Bool         = false
+
+tile Risky = column(when(reveal, text("secret: " + secret.get)))
+
+tile Go = button(text="go", onClick=doReveal) {id: "go"}
+
+tile App = column(Risky, Go)
+
+reducer doReveal on=ui.click(Go) do= reveal := true`,
+      location: "render",
+    },
+    {
+      name: "a reducer panic an app.error reducer was told about",
+      source: `
+slot secret : Option(Text) = None
+slot caught : Text         = "-"
+
+tile Go = button(text="go", onClick=boom) {id: "go"}
+
+tile App = column(text("caught: " + caught), Go)
+
+reducer boom    on=ui.click(Go) do= caught := secret.get
+reducer onPanic on=app.error    do= caught := $event.message`,
+      location: `reducer "boom"`,
+    },
+  ])("opens for $name", async ({ source, location }) => {
+    await clickGo(source);
+    const overlay = document.querySelector(".kdp-overlay");
+    expect(overlay?.textContent).toContain("Kumiki panic");
+    expect(overlay?.textContent).toContain("get called on None");
+    expect(overlay?.querySelector(".kdp-overlay-loc")?.textContent).toBe(location);
   });
 });
