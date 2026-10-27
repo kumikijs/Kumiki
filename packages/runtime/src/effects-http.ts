@@ -96,9 +96,10 @@ export async function httpFetch(
       }
       return { kind: "err", value: httpError(res.status, res.statusText, body) };
     }
+    const response = res;
     const decoded = await decodeRead(decode, {
-      text: () => res.text(),
-      bytes: async () => new Uint8Array(await res.arrayBuffer()),
+      text: () => response.text(),
+      bytes: async () => new Uint8Array(await response.arrayBuffer()),
     });
     if (decoded.ok) return { kind: "ok", value: decoded.value };
     return { kind: "err", value: httpError(res.status, decoded.message, decoded.text) };
