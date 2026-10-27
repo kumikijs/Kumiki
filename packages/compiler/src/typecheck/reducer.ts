@@ -25,6 +25,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
   };
@@ -162,7 +163,6 @@ function checkStmt(
   writtenRoots: Set<string>,
 ): void {
   if (s.kind === "ForStmt") {
-    checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
     const inner = innerScope(ctx);
     bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
