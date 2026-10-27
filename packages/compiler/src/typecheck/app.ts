@@ -54,6 +54,7 @@ export function checkApp(
     kind: "app-init",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     capsAvailable: new Set(app.caps),
     routeBind: "unbound",
   };
