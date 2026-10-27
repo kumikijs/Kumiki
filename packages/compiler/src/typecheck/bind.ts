@@ -1,5 +1,6 @@
 import { assignable, typeToString, unaliasType } from "../assignable.ts";
 import { type Expr, isTileExpr, type Pos, type TileExpr } from "../ast.ts";
+import { bindTarget } from "../bind-target.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
@@ -22,21 +23,112 @@ export function checkBindTargetSteps(
   errors: KumikiError[],
 ): void {
   const bind = t.args.find((a) => a.name === "bind");
-  let cur = bind?.value as Expr | undefined;
-  while (cur && (cur.kind === "FieldAccess" || cur.kind === "MethodCall" || cur.kind === "Index")) {
-    if (cur.kind === "MethodCall") {
-      const hint =
-        cur.method === "get" && cur.args.length === 0
-          ? ' — the unwrap step is written ".get"'
-          : " — a member derives a value, so there is no place in the receiver for the control to write";
-      errors.push({
-        code: "E0602",
-        kind: "unassignable-member",
-        message: `Cannot bind through ".${cur.method}(${cur.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
-        pos: cur.pos,
-      });
+  if (!bind || isTileExpr(bind.value)) return;
+  for (const step of bindTarget(bind.value).steps) {
+    if (step.kind !== "MethodCall") continue;
+    const hint =
+      step.method === "get" && step.args.length === 0
+        ? ' — the unwrap step is written ".get"'
+        : " — a member derives a value, so there is no place in the receiver for the control to write";
+    errors.push({
+      code: "E0602",
+      kind: "unassignable-member",
+      message: `Cannot bind through ".${step.method}(${step.args.length === 0 ? "" : "…"})": a bind target is a path, and a call is not a step of one${hint}`,
+      pos: step.pos,
+    });
+  }
+}
+
+/**
+ * A local's name is not in the slot table, so a write lands under it where
+ * nothing reads it; a literal or computed root gives the lowering no name, and
+ * it drops the bind. `route` is a slot, but only navigation moves it.
+ */
+export function checkBindTargetRoot(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (!BIND_CONTROLS.has(t.name)) return;
+  const bindArg = t.args.find((a) => a.name === "bind");
+  if (!bindArg || isTileExpr(bindArg.value)) return;
+  // A file input takes no bind at all, and E0205 says so whatever the target names.
+  if (isFileInput(t)) return;
+  const root = bindRootNotASlot(bindTarget(bindArg.value).root, sym, ctx);
+  if (!root) return;
+  errors.push({
+    code: "E0229",
+    kind: "bind-target-not-slot",
+    message: `${t.name}(bind=…) cannot write to ${root.named}: ${root.is}. ${root.fix} (see docs/spec/${root.see})`,
+    pos: bindArg.value.pos,
+  });
+}
+
+function isFileInput(t: TileExpr & { kind: "TileCall" }): boolean {
+  if (t.name !== "input") return false;
+  const type = t.args.find((a) => a.name === "type")?.value;
+  return type !== undefined && !isTileExpr(type) && type.kind === "Str" && type.value === "file";
+}
+
+type RootReport = { named: string; is: string; fix: string; see: string };
+
+const notASlot = (named: string, is: string, fix: string): RootReport => ({
+  named,
+  is: `${is}, not a slot — a bind writes back to a slot or a field path into one`,
+  fix,
+  see: "forms.md",
+});
+
+function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | null {
+  const fix = "Bind a slot, or show the value with value= and write the slot from a reducer";
+  switch (root.kind) {
+    case "Ref": {
+      const named = `"${root.name}"`;
+      if (ctx.localBinds.has(root.name)) {
+        switch (ctx.localBinders.get(root.name)) {
+          case "for":
+            return notASlot(
+              named,
+              "it is the variable of a for",
+              "To edit a row, show it with value= and update the list from a reducer",
+            );
+          case "input":
+            return notASlot(
+              named,
+              "it is this tile's input",
+              `Bind the slot by its name, or show ${root.name} with value= and write the slot from a reducer`,
+            );
+          default:
+            return notASlot(named, "it is a local name", fix);
+        }
+      }
+      if (sym.slots.has(root.name) || root.name !== "route") return null;
+      return {
+        named,
+        is: "it is the route slot, which only navigation writes",
+        fix: "Move it with link(to=…) or emit navigate(…)",
+        see: "routing.md",
+      };
     }
-    cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
+    case "Str":
+      // Unquoted, a name a local hides is that local, which is no slot either.
+      return notASlot(
+        `the text literal ${JSON.stringify(root.value)}`,
+        "a literal is a value",
+        sym.slots.has(root.value) && !ctx.localBinds.has(root.value)
+          ? `Write the slot's name without quotes: bind=${root.value}`
+          : fix,
+      );
+    case "Num":
+    case "Bool":
+      return notASlot(
+        `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
+        "a literal is a value",
+        fix,
+      );
+    default:
+      return notASlot("this expression", "it computes a value", fix);
   }
 }
 

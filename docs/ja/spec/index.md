@@ -111,6 +111,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
 | [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | コア |
+| [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | フォーム |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
@@ -303,5 +304,6 @@ Layers はその example が中心に据える定義、Spec は実演してい�
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | テスト | [§8.2.2](./testing.md#_8-2-2-wildcards) |
 | `171-property-test-count.kumiki` | slot, reducer, tile | テスト | [§8.3.1](./testing.md#_8-3-1-構文) |
 | `204-input-props-rendered.kumiki` | slot, reducer, tile | 標準ライブラリ | [§2.3.4](./stdlib.md#_2-3-4-入力要素) [§2.3.5](./stdlib.md#_2-3-5-フォーム) |
+| `216-selector-id-descendants.kumiki` | slot, reducer, tile | コア | [§1.6.2](./language.md#_1-6-2-セレクタ) |
 <!-- examples:end -->
 :::
