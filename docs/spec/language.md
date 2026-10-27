@@ -682,11 +682,12 @@ pattern      ::= identifier
 
 **Value context vs tile context for `if` and `match`**:
 - A tile argument is a tile only as a **positional argument of a builtin other than the value builtins** (`column`, `row`, `card`, `box`, …) — the one place a tile renders. There, `if` and `match` are tile expressions (`TileIf` / `TileMatch`) whose arms return tiles, a builtin's name followed by `(` or `{` is a call to that builtin, and a capitalised name is a user tile.
-- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
+- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call), or [E0236](./errors.md#e0236-tile-as-content) as a value builtin's content), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
 - `when` and `for` have no value form, so they are tiles wherever they are written.
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
 - Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
 - Example: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
+- A value builtin's content is a value, and a tile written there is never rendered: a `when` / `for`, a call or the name of a tile (`text(column(…))`, `text(Header)`), or a tile in an arm of a value `if` / `match` (`text(if c then Header else "b")`) is [E0236](./errors.md#e0236-tile-as-content). Write the tile as a child of a container — `column(when(c, …))` — or show a value — `text(x.show)`
 
 ### 1.7.2 Invariants
 

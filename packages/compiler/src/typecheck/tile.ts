@@ -3,6 +3,7 @@ import {
   type Expr,
   isTileExpr,
   type Pos,
+  type TileArg,
   type TileDef,
   type TileExpr,
   type TypeExpr,
@@ -42,7 +43,12 @@ import {
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import {
+  armScope,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+  matchedType,
+} from "./patterns.ts";
 import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
@@ -455,6 +461,88 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
   });
 }
 
+// Returns the content when it holds a tile: it is moved whole, so nothing else in it is checked.
+function checkTileAsContent(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): TileArg | undefined {
+  const content = contentArg(t);
+  if (!content) return undefined;
+  const tiles = tilesInContent(content.value, sym, ctx);
+  const shown =
+    content.name === undefined ? `${t.name}(x.show)` : `${t.name}(${content.name}=x.show)`;
+  for (const tile of tiles) {
+    errors.push({
+      code: "E0236",
+      kind: "tile-as-content",
+      message:
+        `A tile is not a value: ${t.name} shows a value as its content, so this tile is never ` +
+        `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
+        `value — \`${shown}\``,
+      pos: tile.pos,
+    });
+  }
+  return tiles.length > 0 ? content : undefined;
+}
+
+// The parser reads the content as an expression (but for a `when` or a `for`), so a tile there is
+// told from a value by its name: a value of that name wins, then a tile's call or bare name is a
+// tile. A capitalised name is a variant tag to the parser, a value when a union has that tag.
+function tilesInContent(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): (Expr | TileExpr)[] {
+  if (isTileExpr(v)) return [v];
+  switch (v.kind) {
+    case "IfExpr":
+      return [...tilesInContent(v.consequent, sym, ctx), ...tilesInContent(v.alternate, sym, ctx)];
+    case "MatchExpr": {
+      const scrutType = matchedType(inferType(v.scrutinee, sym, ctx), v.arms, sym);
+      return v.arms.flatMap((arm) =>
+        tilesInContent(arm.body, sym, armScope(arm, scrutType, sym, ctx)),
+      );
+    }
+    case "Call":
+      return namesTile(v.callee, sym) && !namesValue(v.callee, v.pos, sym, ctx) ? [v] : [];
+    case "Ref":
+      return sym.tiles.has(v.name) && !namesValue(v.name, v.pos, sym, ctx) ? [v] : [];
+    case "Variant":
+      return sym.tiles.has(v.name) && !isUnionTag(v.name, sym) ? [v] : [];
+    default:
+      return [];
+  }
+}
+
+function isUnionTag(name: string, sym: SymbolTable): boolean {
+  if (name === "Some" || name === "None" || name === "Ok" || name === "Err") return true;
+  const declares = (t: TypeExpr): boolean => {
+    switch (t.kind) {
+      case "TypeUnion":
+        return t.variants.some((v) => v.name === name || v.payloads.some(declares));
+      case "TypeRecord":
+        return t.fields.some((f) => declares(f.type));
+      case "TypeApp":
+        return t.args.some(declares);
+      case "TypeNominal":
+      case "TypeRefinement":
+        return declares(t.inner);
+      case "TypePrim":
+      case "TypeRef":
+        return false;
+    }
+  };
+  const written: TypeExpr[] = [
+    ...[...sym.types.values()].map((d) => d.body),
+    ...[...sym.slots.values()].map((d) => d.type),
+    ...[...sym.tiles.values()].flatMap((d) => (d.in ? [d.in] : [])),
+    ...[...sym.fns.values()].flatMap((d) => [
+      ...d.params.map((p) => p.type),
+      ...(d.ret ? [d.ret] : []),
+    ]),
+    ...[...sym.effects.values()].flatMap((d) => [d.inType, d.outType]),
+  ];
+  return written.some(declares);
+}
+
 /**
  * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
  * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
@@ -491,7 +579,9 @@ function checkTileCall(
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors);
   checkUnrenderedArgs(t, errors);
+  const tileContent = checkTileAsContent(t, sym, errors, ctx);
   for (const value of renderedText(t)) {
+    if (value === tileContent?.value) continue;
     refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
   }
   checkIconName(t, sym, errors);
@@ -549,6 +639,8 @@ function checkTileCall(
     // E0129 (`checkUnrenderedArgs`), tile or value, and moved or removed whole, so nothing inside
     // it is checked.
     if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
+    // E0236 (`checkTileAsContent`), and moved whole too.
+    if (arg === tileContent) continue;
     const place: TilePlace | null =
       arg.name === undefined && positionalIsTile(t.name) ? { kind: "child", of: t.name } : null;
     if (isTileExpr(v)) {
