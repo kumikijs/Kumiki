@@ -520,9 +520,14 @@ slot parts : List(List(Int)) = []`;
     const src = withApp(
       `slot xs : List(Int) = [1, 2, 3, 4]\ntile App = column(text(xs.slice("1", 2).length.show), text(xs.chunk("2").length.show))`,
     );
-    expect(
-      checkSource(src).map((x) => `${x.code} ${x.pos.line}:${x.pos.col} ${x.message}`),
-    ).toEqual(["E0201 2:33 Expected Int but got Text", "E0201 2:69 Expected Int but got Text"]);
+    expect(pointedErrorsOf(src)).toEqual([
+      {
+        code: "E0201",
+        message: "Expected Int but got Text",
+        text: `"1", 2).length.show), text(xs.chunk("2").length.show))`,
+      },
+      { code: "E0201", message: "Expected Int but got Text", text: `"2").length.show))` },
+    ]);
   });
 
   const positions = [
@@ -617,18 +622,19 @@ tile App = column(text("x"))`);
   });
 
   it.each([
-    ["Text", `slot k : Text = "0"`],
-    ["Float", `slot k : Float = 0.5`],
-    ["Option(Int)", `slot k : Option(Int) = None`],
-    ["Int", `slot k : Int = 0`],
-    ["a nominal Int", `type Idx = nominal Int\nslot k : Idx = 0`],
-    ["a refinement of Int", `type Idx = Int where between(0, 2)\nslot k : Idx = 0`],
-  ])("reads xs[k], the bounds of slice and the size of chunk alike where k is %s", (_n, decl) => {
+    ["Text", `slot k : Text = "0"`, ["E0201"]],
+    ["Float", `slot k : Float = 0.5`, ["E0201"]],
+    ["Option(Int)", `slot k : Option(Int) = None`, ["E0201"]],
+    ["Int", `slot k : Int = 0`, []],
+    ["a nominal Int", `type Idx = nominal Int\nslot k : Idx = 0`, []],
+    ["a refinement of Int", `type Idx = Int where between(0, 2)\nslot k : Idx = 0`, []],
+  ])("reads xs[k], the bounds of slice and the size of chunk alike where k is %s", (_n, decl, want) => {
     const decls = `${list}\nslot picked : Int = 0\n${decl}`;
-    const viaIndex = codesOf(withBody(decls, `picked := xs[k]`));
-    expect(codesOf(withBody(decls, `part := xs.slice(k, 2)`))).toEqual(viaIndex);
-    expect(codesOf(withBody(decls, `part := xs.slice(0, k)`))).toEqual(viaIndex);
-    expect(codesOf(withBody(decls, `parts := xs.chunk(k)`))).toEqual(viaIndex);
+    expect(codesOf(withBody(decls, `picked := xs[k]`))).toEqual(want);
+    expect(codesOf(withBody(decls, `part := xs.slice(k, 2)`))).toEqual(want);
+    expect(codesOf(withBody(decls, `part := xs.slice(0, k)`))).toEqual(want);
+    expect(codesOf(withBody(decls, `part := xs.slice(k)`))).toEqual(want);
+    expect(codesOf(withBody(decls, `parts := xs.chunk(k)`))).toEqual(want);
   });
 });
 
