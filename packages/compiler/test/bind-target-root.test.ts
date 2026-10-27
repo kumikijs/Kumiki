@@ -182,10 +182,8 @@ describe("a call step in a bind target", () => {
 });
 
 describe("a bind written in the props block", () => {
-  // The block spelling lowers no bind today, so it writes nothing and there is
-  // no root to ask. A lowering that reads `{bind: …}` as a bind writes a for
-  // variable into the slot table from there too, and this then fails until
-  // E0229 reads the target from the block as well.
+  // The lowering reads `{bind: …}` as it reads `bind=`, so a for variable written
+  // in either spelling would be written into the slot table, and E0229 asks both.
   it.each([
     ["as a named argument", `input(bind=t, id="r")`],
     ["in the props block", `input(id="r") {bind: t}`],
