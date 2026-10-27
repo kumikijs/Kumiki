@@ -16,7 +16,7 @@ import {
 } from "../capabilities.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
-import { inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
+import { container, inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
 import { armScope, matchedType } from "./patterns.ts";
 
 export function checkAgainst(
@@ -51,7 +51,14 @@ export function checkAgainst(
     return;
   }
   if (d.kind === "TypeApp" && d.name === "Tuple" && e.kind === "TupleLit") {
-    if (e.items.length !== d.args.length) {
+    // Items are left unknown, so `assignable` compares the length alone: a literal meets the
+    // same length rule as a tuple-typed value.
+    const shape = container(
+      "Tuple",
+      e.items.map((it) => unknownType(it.pos)),
+      e.pos,
+    );
+    if (!assignable(shape, declared, sym)) {
       pushMismatch(
         errors,
         code,

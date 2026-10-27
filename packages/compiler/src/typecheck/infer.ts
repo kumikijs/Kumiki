@@ -336,8 +336,10 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "Unit":
       return prim("Unit", e.pos);
     case "Ref": {
-      // A bind resolves before a slot or `route` of its name, typed or not.
-      if (ctx.localBinds.has(e.name)) return ctx.localTypes.get(e.name) ?? null;
+      const bound = ctx.localTypes.get(e.name);
+      if (bound) return bound;
+      // A local whose type is undecided still hides the slot of its name.
+      if (ctx.localBinds.has(e.name)) return null;
       // The slot table first: a program's own `slot route` is E0115, and its
       // reads keep the slot's type rather than drawing a second report.
       return sym.slots.get(e.name)?.type ?? routeType(e.name, sym, ctx) ?? null;
