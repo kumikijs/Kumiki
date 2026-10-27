@@ -1,6 +1,7 @@
 import { unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
+import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
@@ -16,7 +17,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { jsOfExpr, matchValueJs, readingJs } from "./expr.ts";
-import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
+import type { BindSegment } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
 export function genTile(tile: TileDef, gen: GenCtx): string {
@@ -27,6 +28,12 @@ export function genTile(tile: TileDef, gen: GenCtx): string {
 function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles {
   const outer = chain ?? [];
   return outer.includes(name) ? outer : [...outer, name];
+}
+
+// A node carries one `_tile`; an outer `_named` overwrites an inner one, so of nested whole-body
+// tiles only the outermost fires `tile.mount` / `tile.unmount`.
+function namedJs(tree: string, tile: TileDef): string {
+  return `_named(${tree}, ${JSON.stringify(tile.name)})`;
 }
 
 function boundaryJs(
@@ -43,12 +50,12 @@ function boundaryJs(
     );
   const fbCtx = makeEvalCtx(gen, ["$1"]);
   const fbBody = tileExprJs(fb.body, gen, fbCtx, under(enclosingTiles, fb.name));
-  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${fbBody}; } })())`;
+  return `((() => { try { return ${body}; } catch (_err) { const ${bindRef(fbCtx, "$1")} = _s.boundaryPanic(_err, ${JSON.stringify(def.name)}); return ${namedJs(fbBody, fb)}; } })())`;
 }
 
 export function genRouteTile(tile: TileDef, gen: GenCtx, where: string, fill?: string): string {
   if (tile.in) throw new Error(`${where} targets tile "${tile.name}", which declares in=`);
-  const named = `_named(${genTile(tile, gen)}, ${JSON.stringify(tile.name)})`;
+  const named = namedJs(genTile(tile, gen), tile);
   return boundaryJs(tile, fill ? `${fill}(${named})` : named, gen);
 }
 
@@ -158,16 +165,10 @@ export type BindInfo = { root: string; path: BindSegment[]; read: string };
 export function extractBindPath(args: { name?: string; value: unknown }[]): BindInfo | null {
   const bindArg = args.find((a) => a.name === "bind");
   if (!bindArg) return null;
-  let cur = bindArg.value as Expr;
-  const reverseSegments: BindSegment[] = [];
-  while (cur.kind === "FieldAccess") {
-    const fa = cur as Expr & { field: string; accessKind?: "field" | "shortcut" };
-    reverseSegments.push(isUnwrapStep(fa.field, fa.accessKind) ? UNWRAP_SEGMENT : fa.field);
-    cur = (cur as Expr & { base: Expr }).base;
-  }
-  if (cur.kind !== "Ref") return null;
-  const root = (cur as Expr & { name: string }).name;
-  const path = reverseSegments.reverse();
+  const target = bindTarget(bindArg.value as Expr);
+  if (target.root.kind !== "Ref" || target.path === null) return null;
+  const root = target.root.name;
+  const path = target.path;
   // Build a safe reader: `((_live["root"] ?? {})["a"] ?? {})["b"] ...`.
   let readRaw = `_live[${JSON.stringify(root)}]`;
   for (const seg of path) {
@@ -266,7 +267,6 @@ function tileCallJs(
     const inner = makeEvalCtx(gen, new Set<string>());
     const arg1 = firstPositional(t);
     const wrapBoundary = (body: string): string => boundaryJs(def, body, gen, enclosingTiles);
-    const nameLit = JSON.stringify(def.name);
     const handlers = explicitHandlers(t, rootHandlers);
     const callSiteProps = (): string => propsFor(t, ctx, undefined, new Map());
     const bodyHandlers = handlers.size > 0 ? handlers : undefined;
@@ -288,7 +288,7 @@ function tileCallJs(
       );
       return wrap(
         wrapBoundary(
-          `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return _named(_attachProps(${bodyJs}, _propsOuter), ${nameLit}); })(${oneJs}, ${propsJs})`,
+          `((_arg, _propsOuter) => { const ${bindRef(bodyCtx, "$1")} = _arg; return ${namedJs(`_attachProps(${bodyJs}, _propsOuter)`, def)}; })(${oneJs}, ${propsJs})`,
         ),
       );
     }
@@ -301,7 +301,7 @@ function tileCallJs(
       undefined,
       bodyHandlers,
     );
-    return wrap(wrapBoundary(`_named(_attachProps(${bodyJs}, ${propsJs}), ${nameLit})`));
+    return wrap(wrapBoundary(namedJs(`_attachProps(${bodyJs}, ${propsJs})`, def)));
   }
 
   gen.usedTiles.add(name);
