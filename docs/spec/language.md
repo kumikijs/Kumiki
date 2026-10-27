@@ -286,6 +286,16 @@ type Shape = Leaf | Branch(Shape, Shape)
 
 Each reaches a structural type before it reaches itself, by invariant 3. Comparing two of them terminates because the relation is read **co-inductively** over the types *as written*: re-entering a pair already being compared answers yes, which is sound because the finite part of the comparison has been checked on the way down. Termination does not depend on the values being finite — `Node` above has none, its `next` being neither optional nor a container — and it is still a legal type.
 
+A generic may apply itself to something other than its own parameters:
+
+```kumiki fragment
+type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
+```
+
+It reaches a union before it reaches itself, so it is as legal as the three above. Written out it is not finite — each level is a type of its own, `Nest(List(Int))`, then `Nest(List(List(Int)))` — so unfolding two of them never re-enters a pair. Two applications of **one generic** are compared by their arguments instead, each read the way unfolding the body would read that parameter: not at all when no comparison reaches it (the body never names it, or names it only as an argument that the applied generic, itself included, leaves unread); by its normal form, every alias and nominal at its head stripped, where the parameter is itself the inner type of a `nominal` (`type Tagged(T) = nominal T` compares `Tagged(Yen)` with `Tagged(Cents)` as `Int` with `Int`, while `type Tag(T) = nominal {v: T}` compares `T` as written); and as written otherwise. A parameter read in more than one way is read the strictest way. So `Nest(Int)` is accepted where `Nest(Int)` or `Nest(Float)` is required and refused where `Nest(Text)` is — the answers unfolding gives for a regular generic such as `type Box(T) = Empty | Full(T)`.
+
+Every other comparison that unfolds an application of a generic — two different generics, or a generic against a type that is not one — unfolds both sides. A generic **nests a parameter deeper** when following where its parameters are handed, through the generics its body applies, leads back to one of them inside a larger argument, as `Nest` hands `T` back as `List(T)`. Unless a side applies such a generic, the comparison reaches finitely many pairs as written and ends at a repeated pair, however its generics swap or rotate their parameters. Where a side does, re-entering that pair of heads (the names applied on the two sides) on the way down, with a larger combined size than when it was last entered, counts once against the pair. One comparison, every field and payload included, counts at most 64 such re-entries for each pair of heads, and every re-entry past the 64th answers yes, as a repeated pair does; a re-entry that did not grow never counts. The bound only ever turns a mismatch into a yes, and the order of the fields can decide it: a field whose comparison never ends spends its pair's count, and a mismatch that a later field reaches only by re-entering that pair is let past. An `if`, a `match` or a list literal whose branches are joined by such a yes takes a type that a later comparison can refuse.
+
 5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
 
 ---
@@ -528,7 +538,7 @@ A **record** read through an index whose key is a literal — `cfg["label"]` —
 
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
-A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached.
+A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached, and keep binding the slot's path inside the arm: `| Some(_) -> input(bind=draft.get.title)`. The name an arm binds is a value, not a place, so `| Some(d) -> input(bind=d.title)` is [E0229](./errors.md#e0229-bind-target-not-slot).
 
 **`.copy(field=value, ...)`**: a shortcut for an immutable update of a record. It looks like a method call, but internally the named args are collected and expanded into `recordCopy(rec, {field: value, ...})`. You can update multiple fields at once:
 

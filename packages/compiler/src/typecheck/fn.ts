@@ -18,6 +18,7 @@ function fnBodyScope(fn: FnDef): Ctx {
     kind: "fn",
     localBinds: new Set(scope.map((b) => b.name)),
     localTypes: new Map(scope.map((b) => [b.name, b.type])),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
