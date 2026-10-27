@@ -444,7 +444,6 @@ export async function testCmd(
       }
     };
     await runSafe();
-    console.log("\nwatching for changes… (Ctrl-C to stop)");
     const { watch } = await import("node:fs");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const watcher = watch(path, () => {
@@ -454,6 +453,8 @@ export async function testCmd(
         void runSafe();
       }, 100);
     });
+    // Only once the watcher is in place: a change saved after this line is seen.
+    console.log("\nwatching for changes… (Ctrl-C to stop)");
     process.on("SIGINT", () => {
       watcher.close();
       console.log("\nwatch stopped");
