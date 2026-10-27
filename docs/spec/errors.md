@@ -1003,6 +1003,17 @@ Coverage is judged once every arm's pattern fits the scrutinee: an arm that does
 
 **Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
 
+### E0228 `undef-route-pattern`
+
+A `route.enter` / `route.leave` / `route.error` reducer names a pattern that is not a route the app renders ([Routing §3.4](./routing.md#_3-4-route-lifecycle)).
+
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but no route is declared at "<pattern>", so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character. Declared routes: "<p>", …`
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but "<pattern>" is a redirect (->>), which the router follows before any route is shown, so the subscription never fires. Declared routes: "<p>", …`
+
+The runtime fires a route lifecycle event for each pattern the route being shown is matched under — its top-level pattern, and the sub-route pattern it matched below it — and compares the reducer's argument to those as written. So the argument has to be the key of an entry that renders a tile (`->`, not `->>`), in `app.routes` or a `sub-routes` map, and anything else is a subscription nothing fires: `route.enter("/*")` names a route declared as `"/*"`, not every route; `route.enter("/bb")` beside a declared `"/b"` is a typo; `route.enter("/users/:userId")` beside a declared `"/users/:id"` spells the key differently; and the key of a `->>` redirect is a path the router follows before any route is shown. Each compiles to a reducer that never runs — the same dead subscription [E0211](#e0211-undef-tile-in-selector) reports for a tile name. The position is the pattern's string literal, and the message lists the declared routes in declaration order, `app.routes` first. A program with no `app` has no routes to compare against: it is [E0003](#e0003-missing-app), and this check says nothing.
+
+**Fix**: Write the key of the route the reducer is for, as it appears in `app.routes` or in the `sub-routes` map. To run on every route, subscribe to each top-level pattern, or read the [`route` slot](./routing.md#_3-2-current-route-state) where the work is done.
+
 ### E0229 `bind-target-not-slot`
 
 The root of a `bind=` target is not a slot where the target is written ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)).
