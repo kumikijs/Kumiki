@@ -1,7 +1,7 @@
 import { assertNever, type Expr, type Pos, type TestDef, type TileExpr } from "../ast.ts";
 import { RUN_REDUCER } from "../builtin-calls.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
-import { forAllGenerator, noGeneratorMessage } from "../codegen/emit-type.ts";
+import { forAllGenerator, noGeneratorMessage } from "../for-all-generator.ts";
 import {
   bareNameAt,
   eventParts,
@@ -34,7 +34,7 @@ import { checkExpr } from "./expr.ts";
 import { walkExpr } from "./expr-walk.ts";
 import { checkRouteSeed, isTestSlot } from "./slot.ts";
 import { checkTileExpr } from "./tile.ts";
-import { resolveType } from "./types.ts";
+import { reachesBrokenDefinition, resolveType } from "./types.ts";
 
 function checkWildcardsInKeys(expect: Expr, errors: KumikiError[]): void {
   const reported = new Set<Expr>();
@@ -100,8 +100,10 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     for (const f of t.forAll ?? []) {
       const before = errors.length;
       resolveType(f.type, sym, errors);
-      // A name that resolves to nothing is E0117's to report.
-      if (errors.length > before) continue;
+      // An error in the type, or in a definition it reaches, is reported by its own code alone:
+      // a name that resolves to nothing (E0117), an arity (E0210), a refinement (E0803, E0804),
+      // an alias that resolves to itself (E0009).
+      if (errors.length > before || reachesBrokenDefinition(f.type, sym)) continue;
       const g = forAllGenerator(f.type, sym);
       if ("refused" in g) {
         errors.push({

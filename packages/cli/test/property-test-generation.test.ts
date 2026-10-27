@@ -9,39 +9,60 @@ const run = async (source: string) =>
     ...(r.pass ? {} : { actual: r.actual }),
   }));
 
-describe("a for-all over a Tuple", () => {
-  // The pair is refined inside its type, so a trial handed any other pair would have its batch rejected.
-  const SOURCE = `slot pair : Tuple(Text, Int where negative) = ("a", -1)
-slot hits : Int = 0
-reducer put on=ui.click(PutBtn) do= hits := hits + 1
-                                    pair := pair
+const DECLS = `type Box(T)    = {v: T}
+type Seq(T)    = End | More(T, Seq(T))
+type Chain     = {v: Int, next: Option(Chain)}
+type Rose      = {v: Int, kids: List(Rose)}
+type Expr      = Lit(Int) | Neg(Term)
+type Term      = {e: Expr, note: Option(Term)}
+type Steps     = Result(Int, Steps)
+type Pos       = Int where positive
+type Annot(T)  = {value: T, comments: List(Comment)}
+type Comment   = {text: Text, replies: List(Annot(Comment))}
+type Alt(A, B) = Nil | Cons(A, Alt(B, A))
+type Ranked(T) = {v: T, kids: List(Ranked(T)), other: List(Rank)}
+type Rank      = {k: List(Ranked(Int where positive))}`;
+
+/** A slot of `type`, a reducer that writes it back, and a property that the write commits. */
+const roundTrip = (type: string, init: string) => `${DECLS}
+slot v : ${type} = ${init}
+reducer put on=ui.click(PutBtn) do= v := v
 tile PutBtn = button(text="put")
 app A caps=[] routes={"/" -> PutBtn, "/404" -> PutBtn} init=[]
 
-test pair-never-moves =
+test round-trips =
     property-test
-        for-all   = {p: Tuple(Text, Int where negative)}
-        given     = {slots: {pair: p, hits: 0}, event: {type: ui.click, target: PutBtn}}
-        invariant = run-reducer(put).slots.pair == p
+        for-all   = {x: ${type}}
+        given     = {slots: {v: x}, event: {type: ui.click, target: PutBtn}}
+        invariant = run-reducer(put).slots.v == x`;
 
-test put-counts-once =
-    property-test
-        for-all   = {p: Tuple(Text, Int where negative)}
-        given     = {slots: {pair: p, hits: 0}, event: {type: ui.click, target: PutBtn}}
-        invariant = run-reducer(put).slots.hits == 1
-
-test second-half-is-negative =
-    property-test
-        for-all   = {p: Tuple(Text, Int where negative)}
-        given     = {slots: {}, event: {type: ui.click, target: PutBtn}}
-        invariant = match p with
-                      | (_, n) -> n < 0`;
-
-  it("generates each pair element by element, so the reducer runs on every trial", async () => {
-    expect(await run(SOURCE)).toEqual([
-      { name: "pair-never-moves", pass: true, cases: 100 },
-      { name: "put-counts-once", pass: true, cases: 100 },
-      { name: "second-half-is-negative", pass: true, cases: 100 },
+describe("a generated value is one the slot of its type holds", () => {
+  // The write is checked against the slot's type, every refinement inside it included, so a
+  // generated value outside the type fails the trial with the rejection.
+  it.each([
+    ["a tuple with a refined member", "Tuple(Text, Int where negative)", '("a", -1)'],
+    ["a generic", "Box(Int)", "{v: 1}"],
+    ["a generic that recurses", "Seq(Text)", "End"],
+    ["a generic inside itself", "Seq(Seq(Int))", "End"],
+    ["Unit", "Unit", "()"],
+    ["a record that recurses through an Option", "Chain", "{v: 1, next: None}"],
+    ["a record that recurses through a List", "Rose", "{v: 1, kids: []}"],
+    ["two types that recurse through each other", "Expr", "Lit(1)"],
+    ["a Result that recurses", "Steps", "Ok(1)"],
+    ["a Map keyed by a tuple", "Map(Tuple(Int, Int), Text)", "{}"],
+    ["stacked refinements", "Pos where between(-5, 5)", "1"],
+    ["a least length past the default", "Text where len-gt(60)", `"${"a".repeat(61)}"`],
+    ["a shape with a length", "Text where email where len-lt(20)", '"a@b.co"'],
+    ["a generic reached again under another argument", "Annot(Int)", "{value: 1, comments: []}"],
+    ["a generic that swaps its arguments", "Alt(Int, Text)", "Nil"],
+    [
+      "two instantiations that read alike but refine apart",
+      "Ranked(Int)",
+      "{v: 1, kids: [], other: []}",
+    ],
+  ])("%s: %s", async (_, type, init) => {
+    expect(await run(roundTrip(type, init))).toEqual([
+      { name: "round-trips", pass: true, cases: 100 },
     ]);
   });
 });
@@ -99,6 +120,27 @@ test inc-stays-in-range =
     expect(result).toMatchObject({ name: "inc-stays-in-range", pass: false });
     expect(result?.actual).toMatch(
       /^counterexample \(case \d+\/100\): \{"n":3\} — reducer "inc" was rejected: slot "count" cannot hold 4 \(between\(0, 3\)\)$/,
+    );
+  });
+});
+
+describe("a trial that panics", () => {
+  const SOURCE = `slot n : Int = 0
+reducer inc on=ui.click(IncBtn) do= n := n + 1
+tile IncBtn = button(text="+1")
+app A caps=[] routes={"/" -> IncBtn, "/404" -> IncBtn} init=[]
+
+test first-is-large =
+    property-test
+        for-all   = {xs: List(Int)}
+        given     = {slots: {}, event: {type: ui.click, target: IncBtn}}
+        invariant = xs[0] >= -1000`;
+
+  it("fails with the panic, told apart from an invariant that is false", async () => {
+    const [result] = await run(SOURCE);
+    expect(result).toMatchObject({ name: "first-is-large", pass: false });
+    expect(result?.actual).toMatch(
+      /^counterexample \(case \d+\/100\): \{"xs":\[\]\} — panicked: Index 0 is out of range for a List of length 0$/,
     );
   });
 });

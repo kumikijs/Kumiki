@@ -11,6 +11,7 @@ import {
 import { callsBuiltin, RUN_REDUCER } from "../builtin-calls.ts";
 import type { CodegenOptions } from "../codegen.ts";
 import { parseEpisodeLogText } from "../episode-log.ts";
+import { forAllGenerator, noGeneratorMessage } from "../for-all-generator.ts";
 import {
   bareNameAt,
   expectSection,
@@ -23,7 +24,6 @@ import { walkExpr } from "../typecheck/expr-walk.ts";
 import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
-import { forAllGenerator, noGeneratorMessage } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg } from "./expr.ts";
 
 /** The outcome of a mock value `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`. */

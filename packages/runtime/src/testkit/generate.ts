@@ -51,8 +51,19 @@ export function _hashStr(s: string): number {
 
 const _GEN_ASCII = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
 
-/** A value of one of the shapes `email` / `url` / `uuid` refine to. */
-function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
+/** How much longer than its shortest a generated text may be when nothing caps it. */
+const GEN_TEXT_SPAN = 50;
+
+/**
+ * A value of one of the shapes `email` / `url` / `uuid` refine to, within the lengths given. The
+ * compiler refuses lengths no instance has (an email or url shorter than 5, a uuid other than 36).
+ */
+function genForm(
+  form: "email" | "url" | "uuid",
+  rng: () => number,
+  minLen: number | undefined,
+  maxLen: number | undefined,
+): string {
   const hex = (n: number): string => {
     let s = "";
     for (let i = 0; i < n; i++) s += "0123456789abcdef"[Math.floor(rng() * 16)];
@@ -64,8 +75,25 @@ function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
     return s;
   };
   if (form === "uuid") return `${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-${hex(12)}`;
-  if (form === "email") return `${word(6)}@${word(6)}.example.com`;
-  return `https://${word(6)}.example.com/${word(4)}`;
+  if (minLen === undefined && maxLen === undefined) {
+    if (form === "email") return `${word(6)}@${word(6)}.example.com`;
+    return `https://${word(6)}.example.com/${word(4)}`;
+  }
+  const lo = Math.max(minLen ?? 0, 5);
+  const hi = maxLen ?? lo + GEN_TEXT_SPAN;
+  const len = lo + Math.floor(rng() * (hi - lo + 1));
+  if (form === "email") {
+    const tld = Math.min(3, len - 4);
+    const rest = len - 2 - tld;
+    const local = 1 + Math.floor(rng() * (rest - 1));
+    return `${word(local)}@${word(rest - local)}.${word(tld)}`;
+  }
+  if (len >= 22) {
+    const host = 1 + Math.floor(rng() * (len - 21));
+    return `https://${word(host)}.example.com/${word(len - 21 - host)}`;
+  }
+  if (len >= 9) return `https://${word(len - 8)}`;
+  return `${word(len - 4)}://${word(1)}`;
 }
 
 /**
@@ -73,6 +101,13 @@ function genForm(form: "email" | "url" | "uuid", rng: () => number): string {
  * that ends soonest (a `base` choice, `None`, an empty collection), so the value ends.
  */
 const GEN_DEPTH = 4;
+
+/**
+ * The most members a collection is generated with, halved at each step into a recursive type: a
+ * type that recurses through two collections at once would otherwise grow by their product at
+ * every step.
+ */
+const genSize = (depth: number): number => (depth >= GEN_DEPTH ? 0 : Math.floor(10 / 2 ** depth));
 
 /** The recursive types entered on the way to a descriptor, by name, and how many steps deep. */
 type GenScope = { types: ReadonlyMap<string, GenDesc>; depth: number };
@@ -86,6 +121,10 @@ export function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN
   }
   const gen = (d: GenDesc): unknown => genValue(d, rng, scope);
   const ending = scope.depth >= GEN_DEPTH;
+  const size = (): number => {
+    const most = genSize(scope.depth);
+    return most === 0 ? 0 : Math.floor(rng() * (most + 1));
+  };
   switch (desc.t) {
     case "Int": {
       const lo = desc.min ?? -1000;
@@ -98,9 +137,9 @@ export function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN
       return lo + rng() * (hi - lo);
     }
     case "Text": {
-      if (desc.form) return genForm(desc.form, rng);
+      if (desc.form) return genForm(desc.form, rng, desc.minLen, desc.maxLen);
       const minLen = desc.minLen ?? 0;
-      const maxLen = desc.maxLen ?? 50;
+      const maxLen = desc.maxLen ?? minLen + GEN_TEXT_SPAN;
       const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
       let s = "";
       for (let i = 0; i < len; i++) s += _GEN_ASCII[Math.floor(rng() * _GEN_ASCII.length)];
@@ -111,20 +150,20 @@ export function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN
     case "Unit":
       return null;
     case "List": {
-      const n = ending ? 0 : Math.floor(rng() * 11);
+      const n = size();
       const a: unknown[] = [];
       for (let i = 0; i < n; i++) a.push(gen(desc.elem));
       return a;
     }
     // Keyed the way `add` / `insert` key a member, so a lookup in the program under test finds it.
     case "Set": {
-      const n = ending ? 0 : Math.floor(rng() * 11);
+      const n = size();
       const o: Record<string, true> = {};
       for (let i = 0; i < n; i++) o[entryKey(gen(desc.elem))] = true;
       return o;
     }
     case "Map": {
-      const n = ending ? 0 : Math.floor(rng() * 11);
+      const n = size();
       const o: Record<string, unknown> = {};
       for (let i = 0; i < n; i++) o[entryKey(gen(desc.key))] = gen(desc.val);
       return o;
