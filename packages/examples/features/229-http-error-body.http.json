@@ -1,0 +1,3 @@
+{
+  "GET /reports/7": { "status": 404, "text": "report 7 was archived" }
+}
