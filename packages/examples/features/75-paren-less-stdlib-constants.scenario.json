@@ -8,7 +8,7 @@
       }
     },
     {
-      "label": "the click reaches both reducers (this tier scripts the effects, so no decoding happens here)",
+      "label": "the click reaches the note and ping reducers (this tier scripts the effects, so no decoding happens here)",
       "do": { "clickText": "Load" },
       "expect": {
         "noErrors": true,

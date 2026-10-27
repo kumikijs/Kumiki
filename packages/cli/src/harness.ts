@@ -7,7 +7,7 @@ export type HttpResponseFixture = {
   status?: number;
   /** Serialized as the body, with `content-type: application/json`. */
   json?: unknown;
-  /** Body verbatim, for `Decoder.Text()` / `Decoder.None`. */
+  /** Body verbatim (UTF-8), for `Decoder.Text` / `Decoder.Bytes` / `Decoder.None`. */
   text?: string;
   headers?: Record<string, string>;
 };
