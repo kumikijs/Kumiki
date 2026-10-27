@@ -1,4 +1,11 @@
-import { paramSubstitution, substituteType, typeToString, unaliasType } from "../assignable.ts";
+import {
+  assignable,
+  paramSubstitution,
+  substituteType,
+  typeToString,
+  unaliasType,
+  writtenVariants,
+} from "../assignable.ts";
 import type { Expr, MatchArm, Pattern, Pos, TypeExpr } from "../ast.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 
@@ -11,6 +18,61 @@ export function armScope(
   const inner = innerScope(ctx);
   checkPatternAgainstType(arm.pattern, scrutType, sym, [], inner);
   return inner;
+}
+
+const BUILTIN_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["Option", ["Some", "None"]],
+  ["Result", ["Ok", "Err"]],
+]);
+
+/**
+ * The type a match with these `arms` reads a scrutinee of type `t` as. A value written as a tag a
+ * union of the program's own declares too is its `Option` / `Result` unless an arm names a tag
+ * that type lacks; then it is the first such union that has every arm's tag and a variant holding
+ * the value (language.md, Built-in Generic Types).
+ */
+export function matchedType(
+  t: TypeExpr | null,
+  arms: readonly { readonly pattern: Pattern }[],
+  sym: SymbolTable,
+): TypeExpr | null {
+  return readAs(
+    t,
+    arms.map((arm) => arm.pattern),
+    sym,
+  );
+}
+
+function readAs(
+  t: TypeExpr | null,
+  patterns: readonly Pattern[],
+  sym: SymbolTable,
+): TypeExpr | null {
+  if (t?.kind !== "TypeApp") return t;
+  if (t.name === "Tuple") {
+    const columns = patterns.flatMap((p) =>
+      p.kind === "PTuple" && p.items.length === t.args.length ? [p.items] : [],
+    );
+    if (columns.length === 0) return t;
+    const args = t.args.map(
+      (a, i) =>
+        readAs(
+          a,
+          columns.map((items) => items[i] as Pattern),
+          sym,
+        ) ?? a,
+    );
+    return args.every((a, i) => a === t.args[i]) ? t : { ...t, args };
+  }
+  const written = writtenVariants(t)?.[0];
+  const builtin = BUILTIN_TAGS.get(t.name);
+  if (written === undefined || builtin === undefined) return t;
+  const tags = patterns.flatMap((p) => (p.kind === "PVariant" ? [p.name] : []));
+  if (tags.every((tag) => builtin.includes(tag))) return t;
+  const hasEveryTag = (u: TypeExpr | null): boolean =>
+    u?.kind === "TypeUnion" && tags.every((tag) => u.variants.some((v) => v.name === tag));
+  const unions = sym.unionsByTag.get(written.tag) ?? [];
+  return unions.find((u) => hasEveryTag(unaliasType(u, sym)) && assignable(t, u, sym)) ?? t;
 }
 
 export function checkPatternBindsAreDistinct(pat: Pattern, errors: KumikiError[]): void {
