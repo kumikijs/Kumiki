@@ -56,7 +56,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
 | `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)) |
-| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error`, of `route.error(<pattern>)` (which adds `pattern`), and of an `error-boundary` tile's `in=` |
+| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
+| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the matched `pattern` |
 
 ---
 
@@ -135,7 +136,7 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, an argument whose parameter is a `Set` type ([§2.2](#_2-2-collection-methods)) — the element of `List.push` / `contains` on a `List(Set(T))`, a key or value of `Map.insert` on a `Map` of Sets — and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
+**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))`, a value of a `Map(K, Set(T))` or the index of a `Map(Set(T), V)`, an argument whose parameter is a `Set` type ([§2.2](#_2-2-collection-methods)) — the element of `List.push` / `contains` on a `List(Set(T))`, a key or value of `Map.insert` on a `Map` of Sets — and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
 
 Where the checker cannot decide the receiver's type, neither rule applies: the accumulator `$1` of `fold` — `nums.fold({}, $1.union([2]))` — has no type, so the argument is neither checked nor built as a Set, and stays an array. A fragment over a `List(Set(T))` is not such a place: there `$1` is the element, typed `Set(T)` ([§2.2.3](#_2-2-3-list-t)), so `groups.map($1.union([2]).to-list)` builds the argument as a Set and reads its keys back as `T`. That is a gap in what the checker resolves, not a rule a program may rely on. A member is keyed the way `add` keys it, so a literal of records or variants holds exactly what the `add` chain of the same members holds, keyed as the paragraphs below say.
 
@@ -493,6 +494,33 @@ Every tile accepts the following common props (built-in):
 A kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size` picks the size of the thing rather than a typography token, and a `skeleton`'s `h` is its placeholder height.
 
 Both rendering paths write them: what a mounted element carries, a served page carries. The exception is the class-backed layers (`transition`, the `hover:` / `focus:` / `active:` blocks, `motion`), which are injected CSS and exist only after hydration.
+
+### 2.3.11 Prop Types
+
+Each prop below takes a value of the type the table gives it, and a value that cannot have that type is [E0201](./errors.md#e0201-type-mismatch), reported at the value, whether the prop is written on the builtin's own call as a named argument or in the `{…}` block: a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)). A prop written on a user tile, which is merged onto the node that tile renders ([Language §1.7.3](./language.md#_1-7-3-event-handler-props)), is not checked against the table. No text is read as the value it spells — `"false"` is not a `Bool`, and `"2"` is not a number — and an option is read by its `label` and `value` alone, so a value of another type renders something else rather than failing: `open="false"` is a non-empty text and renders the modal open, `disabled="true"` is not `true` and leaves the button enabled, and `level="2"` is no number and renders an `<h1>`.
+
+| prop | Type | Elements |
+|---|---|---|
+| `disabled`, `readonly`, `required`, `auto-focus` | `Bool` | `button`, `input`, `textarea`, `check`, `radio`, `select`, `slider`, `switch`, `editable` |
+| `placeholder`, `auto-complete` | `Text` | `button`, `input`, `textarea`, `check`, `radio`, `select`, `slider`, `switch`, `editable` |
+| `loading` | `Bool` | `button` |
+| `multiple` | `Bool` | `input` |
+| `value` | `Bool` | `check`, `switch` |
+| `selected` | `Bool` | `radio` |
+| `options` | `List({label: Text, value})` | `select` |
+| `value`, `min`, `max`, `step` | `Float` | `slider` |
+| `auto-complete` | `Text` | `form` |
+| `novalidate` | `Bool` | `form` |
+| `level` | `Float` | `heading` |
+| `external` | `Bool` | `link` |
+| `controls`, `autoplay` | `Bool` | `video` |
+| `ordered` | `Bool` | `list` |
+| `open` | `Bool` | `modal`, `drawer`, `popover`, `details` |
+| `value`, `max` | `Float` | `progress` |
+
+The first two rows type the common props of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements) on each element the row lists, and the two `form` rows are [Forms §5.2.1](./forms.md#_5-2-1-form-props). `value` on `check` / `switch` and `selected` on `radio` are the selection of a control written without `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)). A `Float` prop takes an `Int` too, as every `Float` position does ([E0201](./errors.md#e0201-type-mismatch)). `List({label: Text, value})` is a `List` of records that each carry a `label`, the `Text` the option shows, and a `value`, what choosing it writes; a record may carry other fields as well, which are not read. So `options=["apple", "pear"]` is refused at each entry, and so is an entry with no `label` or no `value`, or one whose `label` is not a `Text` (`{label: 7, value: "a"}`; a number is shown with `.show`). A value written as an `if`, `match` or `let` is judged branch by branch, and a literal entry by entry, so the report lands on the branch or entry that is wrong.
+
+A prop that neither this table nor another section types is not checked against one: `title`, `text` and `summary` show any value as `show` does, and an attribute such as `rows` or `colspan` takes its value's text.
 
 ---
 
