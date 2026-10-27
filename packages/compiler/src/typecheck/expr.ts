@@ -327,13 +327,6 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             checkExpr(a, sym, errors, ctx);
             const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
-            // Any other count is checkGetArity's E0213, with no argument read as the index.
-            if (e.method === "get" && e.args.length === 1) {
-              const list = unaliasType(recvType, sym);
-              if (list?.kind === "TypeApp" && list.name === "List") {
-                checkAgainst(a, prim("Int", a.pos), sym, errors, ctx);
-              }
-            }
             continue;
           }
           if (isFragmentFnName(a, sym, ctx)) {
@@ -691,5 +684,7 @@ function memberArgType(
       return t.args[1] ?? null;
     case "self":
       return recv;
+    case "Int":
+      return prim("Int", t.pos);
   }
 }

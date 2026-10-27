@@ -124,9 +124,10 @@ export type Receiver = keyof typeof RECEIVER_MEMBERS;
 export type MemberOf<R extends Receiver> = (typeof RECEIVER_MEMBERS)[R][number];
 
 // `self` is the receiver's own type: the `other` of `Map.merge`, `Set.union` or `List.concat`.
+// `Int` is an `Int` whatever the receiver's type arguments: the index of `List.get`.
 type MapParam = "K" | "V" | "self";
 type SetParam = "T" | "self";
-type ListParam = "T" | "self";
+type ListParam = "T" | "self" | "Int";
 
 export type ReceiverParam = MapParam | SetParam | ListParam;
 
@@ -170,7 +171,7 @@ export const RECEIVER_PARAMS = {
   List: {
     length: [],
     "is-empty": [],
-    get: [null],
+    get: ["Int"],
     head: [],
     tail: [],
     last: [],
