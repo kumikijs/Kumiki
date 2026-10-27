@@ -1,0 +1,34 @@
+{
+  "effects": {
+    "loadStamps": [
+      {
+        "outcome": "ok",
+        "value": [{ "label": "digit", "at": "1" }, { "label": "iso", "at": "2026-03-07T10:00" }]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "label": "text outside Time.parse's grammar is no instant; text in it is the instant it names",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "digit": { "_tag": "None" },
+          "words": { "_tag": "None" },
+          "month": { "_tag": "None" },
+          "weekday": { "_tag": "None" },
+          "utc": { "_tag": "Some", "_0": 1772877600000 },
+          "offset": { "_tag": "Some", "_0": 1772877600000 },
+          "local": "2026-03-07 10:00",
+          "day": "2026-03-07 00:00"
+        },
+        "domIncludes": [
+          "1: none",
+          "local: 2026-03-07 10:00",
+          "iso: 2026-03-07 10:00",
+          "digit: 0NaN-NaN-NaN NaN:NaN"
+        ]
+      }
+    }
+  ]
+}

@@ -56,6 +56,12 @@ ${APP_A}`,
       description: 'replace "Int.pasre" with "Int.parse" at 3:35',
       fixed: "a := Int.parse(t).get-or(0)",
     },
+    {
+      repair: "answers a misspelt `Time.now` with the qualified builtin (E0116)",
+      source: `slot at : Time = Time.nwo\ntile App = column(text(at.format("yyyy")))\n${APP_A}`,
+      description: 'replace "Time.nwo" with "Time.now" at 1:18',
+      fixed: "slot at : Time = Time.now\n",
+    },
   ])("$repair", ({ source, description, fixed }) => {
     const file = seed(source);
     expect(descriptionsOf(file)).toContain(description);
@@ -72,6 +78,17 @@ ${APP_A}`);
     const { patches, skipped } = planFixesExplained(store, check(store.program));
     expect(patches.map((p) => p.code)).not.toContain("E0218");
     expect(skipped.find((sk) => sk.code === "E0218")?.reason).toBe("e0218-target-not-a-plain-name");
+  });
+
+  it("declines a target no accessor repairs, such as an Option (E0218)", () => {
+    const store = storeOf(`slot loaded : Option(List(Text)) = Some(["a"])
+tile App = column(for x in loaded text(x))
+${APP_A}`);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.code)).not.toContain("E0218");
+    expect(skipped.filter((sk) => sk.code === "E0218").map((sk) => sk.reason)).toEqual([
+      "e0218-no-accessor",
+    ]);
   });
 
   it("makes a text builtin's text= its positional content (E0129)", () => {
@@ -468,6 +485,12 @@ describe("planFixesExplained: skip-reason classification", () => {
       "E0116",
       'Call to undefined function "doubel-value"',
     ],
+    [
+      "e0116-no-close-callee",
+      'slot at : Time = nwo()\ntile App = heading("hi")\n',
+      "E0116",
+      'Call to undefined function "nwo"',
+    ],
     ["e0117-quoted-name-extract-failed", LONE_TILE, "E0117", "some undefined type"],
     [
       "e0117-no-close-type",
@@ -555,6 +578,17 @@ ${APP_A}`);
     expect(result.regressionBlocked).toBe(true);
     expect(result.applied).toBe(0);
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("a rename inside a for target keeps the E0218 that remains, not blocked (E0103)", () => {
+    const file = seed(`slot rows : List(Int) = [1]
+fn idx(ys: List(Int)) -> Map(Text, Int) = {"k": 1}
+tile App = column(for x in idx(rws) text("row"))
+${APP_A}`);
+    const result = applyFixPlan(file, "E0103");
+    expect(result.regressionBlocked).toBeFalsy();
+    expect(result.applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain("for x in idx(rows) text");
   });
 
   it("no resolutions: rolled back even when nothing new is introduced", () => {

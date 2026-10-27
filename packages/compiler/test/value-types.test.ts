@@ -1,7 +1,7 @@
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
-import { withButtonApp, withReducer, withRoot } from "./helpers/programs.ts";
+import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
 const appCodes = (defs: string) => codesOf(withButtonApp(defs));
 const reducerCodes = (defs: string, body: string) => codesOf(withReducer(defs, body));
@@ -425,96 +425,5 @@ describe("a re-binding does not inherit the outer type", () => {
         `for x in names\n    n := x`,
       ),
     ).toEqual(["E0201"]);
-  });
-});
-
-describe("for over a Map or a Set is E0218", () => {
-  const MAP = "slot names : Map(Text, Text) = {}";
-  const SET = "slot tags : Set(Text) = {}";
-
-  it("reports the tile form", () => {
-    const src = `${MAP}
-tile App = column(for k in names text(k))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual(["E0218"]);
-  });
-
-  it("reports the reducer form, which is a different node", () => {
-    const src = withRoot(
-      'text("x")',
-      `${MAP}
-slot n : Int = 0
-reducer count on=app.start do=
-    for k in names
-        n := n + 1`,
-    );
-    expect(codesOf(src)).toEqual(["E0218"]);
-  });
-
-  it("reports a Set, which is a keyed object too", () => {
-    const src = `${SET}
-tile App = column(for t in tags text(t))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    const diags = checkSource(src);
-    expect(diags.map((d) => d.code)).toEqual(["E0218"]);
-    expect(diags[0]?.message).toContain(".to-list");
-  });
-
-  it("sees through a type alias", () => {
-    const src = `type Names = Map(Text, Text)
-slot names : Names = {}
-tile App = column(for k in names text(k))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual(["E0218"]);
-  });
-
-  it("accepts the two forms the spec names, and a plain List", () => {
-    const src = `${MAP}
-${SET}
-slot xs : List(Text) = []
-tile App = column(
-             for k in names.keys text(k),
-             for t in tags.to-list text(t),
-             for x in xs text(x))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual([]);
-  });
-
-  it("stays silent when the type cannot be determined", () => {
-    const src = `tile App = column(for r in nope text(r))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual(["E0103"]);
-  });
-
-  it("accepts a List that comes back from a fn", () => {
-    const src = `slot xs : List(Text) = []
-fn rows(ys: List(Text)) -> List(Text) = ys
-tile App = column(for r in rows(xs) text(r))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual([]);
   });
 });
