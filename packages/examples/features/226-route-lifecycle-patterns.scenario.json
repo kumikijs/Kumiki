@@ -1,0 +1,50 @@
+{
+  "steps": [
+    {
+      "label": "landing on / enters the home route",
+      "expect": { "noErrors": true, "state": { "trail": "+home " } }
+    },
+    {
+      "label": "opening a sub-route enters the parent, then the child",
+      "do": { "clickText": "Open settings" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Account settings"],
+        "state": { "trail": "+home -home +settings +account " }
+      }
+    },
+    {
+      "label": "switching child leaves the child and the parent, then enters both again",
+      "do": { "clickText": "Billing" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Billing settings"],
+        "state": {
+          "trail": "+home -home +settings +account -account -settings +settings +billing "
+        }
+      }
+    },
+    {
+      "label": "the bare /settings path enters the parent's default sub-route",
+      "do": { "clickText": "Overview" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings overview"],
+        "state": {
+          "trail": "+home -home +settings +account -account -settings +settings +billing -billing -settings +settings +overview "
+        }
+      }
+    },
+    {
+      "label": "going home leaves the child, then the parent",
+      "do": { "clickText": "Home" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Open settings"],
+        "state": {
+          "trail": "+home -home +settings +account -account -settings +settings +billing -billing -settings +settings +overview -overview -settings +home "
+        }
+      }
+    }
+  ]
+}

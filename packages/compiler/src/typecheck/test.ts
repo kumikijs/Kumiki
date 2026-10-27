@@ -187,6 +187,7 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   });
 }
@@ -203,6 +204,7 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         kind: "test",
         localBinds: new Set(),
         localTypes: new Map(),
+        localBinders: new Map(),
         routeBind: "no-payload",
         wildcardsReportedElsewhere: true,
       });
@@ -235,6 +237,7 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     kind: "test",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   for (const f of t.forAll ?? []) bindLocal(base, f.name, f.type);
