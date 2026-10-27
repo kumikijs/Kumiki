@@ -119,7 +119,7 @@ effect login    cap=http.post
 
 | prop | 型 | 意味 |
 |---|---|---|
-| `auto-complete` | `Bool` | ブラウザのオートコンプリート |
+| `auto-complete` | `Text` | ブラウザのオートコンプリート（`on` / `off`） |
 | `novalidate` | `Bool` | HTML5 標準バリデーションを抑制 |
 
 form 自体には `onSubmit` を書かない。submit ハンドラは **その form をラップする tile 名**で `ui.submit(WrapperTile)` を reducer の `on=` に書く。

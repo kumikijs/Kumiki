@@ -119,7 +119,7 @@ effect login    cap=http.post
 
 | prop | Type | Meaning |
 |---|---|---|
-| `auto-complete` | `Bool` | Browser autocomplete |
+| `auto-complete` | `Text` | Browser autocomplete: `on` / `off` |
 | `novalidate` | `Bool` | Suppress HTML5 standard validation |
 
 Do not write `onSubmit` on the form itself. For the submit handler, write `ui.submit(WrapperTile)` in the reducer's `on=`, using **the name of the tile that wraps the form**.
