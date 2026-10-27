@@ -295,6 +295,8 @@ export type RoutingImpl = {
   findRedirect(routes: AppShape["routes"], loc: LocationLike): string | null;
   /** The URL a parsed route was read from: its path, query and hash. */
   href(route: ParsedRoute): string;
+  /** For an in-page jump, what brings the hash's element into view once the page has rendered; `undefined` for any other move. */
+  jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined;
   /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
@@ -387,6 +389,9 @@ export type OptionOf<T> = { _tag: "Some"; _0: T } | { _tag: "None" };
 export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value });
 
 export const NONE: OptionOf<never> = { _tag: "None" };
+
+/** `HttpError` as `.err` receives it. */
+export type HttpError = { status: number; message: string; body: OptionOf<string> };
 
 export type ParsedRoute = {
   path: string;

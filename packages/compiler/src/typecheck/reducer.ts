@@ -1,7 +1,8 @@
 import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { AppDef, Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
+import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
 import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import {
   checkAgainst,
@@ -14,18 +15,19 @@ import {
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim } from "./infer.ts";
+import { inferType, prim, runtimeBuilt } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
-import { bindsRoute, collectTileBuiltinKinds, collectTileDeclaredIds } from "./tile-collect.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
   const ctx: Ctx = {
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
-    routeBind: bindsRoute(r, sym) ? "bound" : "unbound",
+    routeBind: routeBindOf(r, sym),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -81,6 +83,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
       pos: lifecycleTile.pos,
     });
   }
+  checkRoutePattern(r, sym, errors);
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && !sym.tiles.has(r.on.selector.tile)) {
     errors.push({
       code: "E0211",
@@ -91,16 +94,20 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   }
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && r.on.selector.id !== undefined) {
     const def = sym.tiles.get(r.on.selector.tile);
-    if (def !== undefined) {
-      const decl = collectTileDeclaredIds(def);
-      if (decl.known && decl.ids.size > 0 && !decl.ids.has(r.on.selector.id)) {
-        const actual = [...decl.ids].map((v) => `"${v}"`).join(" | ");
+    if (def !== undefined && !namedByHandler(r.name, sym)) {
+      const wired = subscriptionIds(def, r.on.ev, sym);
+      if (wired.known && wired.ids.size > 0 && !wired.ids.has(r.on.selector.id)) {
+        const actual = [...wired.ids]
+          .sort()
+          .map((v) => `"${v}"`)
+          .join(" | ");
         errors.push({
           code: "E0212",
           kind: "selector-id-mismatch",
           message:
             `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
-            `but tile "${r.on.selector.tile}" is declared with id ${actual} — this selector can never match`,
+            `but every element of tile "${r.on.selector.tile}" that fires "${r.on.ev}" has id ${actual} ` +
+            `— this selector can never match`,
           pos: r.on.pos,
         });
       }
@@ -109,7 +116,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
     const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
     if (allowed != null) {
-      const descendants = collectTileBuiltinKinds(r.on.selector.tile, sym);
+      const descendants = subscribedKinds(r.on.selector.tile, sym);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         errors.push({
@@ -127,10 +134,62 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   ctx.localBinds.add("$el");
-  ctx.localBinds.add("$event");
+  bindLocal(ctx, "$event", eventPayloadType(r.on, sym));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+function declaredRoutePatterns(
+  app: AppDef,
+  sym: SymbolTable,
+): { renders: string[]; redirects: Set<string> } {
+  const renders: string[] = [];
+  const redirects = new Set<string>();
+  const subRoutes = [...sym.tiles.values()].flatMap((t) => t.subRoutes ?? []);
+  for (const { path, tile } of [...app.routes, ...subRoutes]) {
+    if (tile.startsWith(">>")) redirects.add(path);
+    else if (!renders.includes(path)) renders.push(path);
+  }
+  return { renders, redirects };
+}
+
+// With no `app` there are no routes to compare against, and E0003 is the report.
+function checkRoutePattern(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const target = r.on.kind === "LifecycleEvent" ? r.on.routePattern : undefined;
+  if (!target || !sym.app) return;
+  const { renders, redirects } = declaredRoutePatterns(sym.app, sym);
+  if (renders.includes(target.pattern)) return;
+  const quoted = JSON.stringify(target.pattern);
+  const why = redirects.has(target.pattern)
+    ? `${quoted} is a redirect (->>), which the router follows before any route is shown, so the subscription never fires`
+    : `no route is declared at ${quoted}, so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character`;
+  const declared =
+    renders.length > 0
+      ? `Declared routes: ${renders.map((p) => JSON.stringify(p)).join(", ")}`
+      : "The app declares no routes";
+  errors.push({
+    code: "E0228",
+    kind: "undef-route-pattern",
+    message: `Reducer "${r.name}" subscribes to ${target.event}(${quoted}), but ${why}. ${declared}`,
+    pos: target.pos,
+  });
+}
+
+// A route trigger hands `$route` the route on every firing; a prefetch target on another trigger
+// is handed one only when the prefetch fires it.
+function routeBindOf(r: ReducerDef, sym: SymbolTable): Ctx["routeBind"] {
+  if (r.on.kind === "LifecycleEvent" && r.on.name.startsWith("route.")) return "bound";
+  return bindsRoute(r, sym) ? "prefetch" : "unbound";
+}
+
+function eventPayloadType(on: ReducerDef["on"], sym: SymbolTable): TypeExpr | null {
+  if (on.kind !== "LifecycleEvent") return null;
+  if (on.name === "app.error") return runtimeBuilt("PanicInfo", PANIC_INFO_TYPE, sym);
+  if (on.name.startsWith("route.error(")) {
+    return runtimeBuilt("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE, sym);
+  }
+  return null;
 }
 
 function checkStmt(
@@ -141,7 +200,6 @@ function checkStmt(
   writtenRoots: Set<string>,
 ): void {
   if (s.kind === "ForStmt") {
-    checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
     const inner = innerScope(ctx);
     bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
@@ -165,7 +223,7 @@ function checkStmt(
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
-    const scrutType = inferType(s.scrutinee, sym, ctx);
+    const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
     // Arms are mutually exclusive — each starts fresh from the parent set.
     const armSets: Set<string>[] = [];
     for (const arm of s.arms) {
@@ -269,6 +327,8 @@ function lvalueRoot(lv: Lvalue): string {
 
 function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   if (lv.kind === "LSlot") return;
+  // The base is written first, so its diagnostics come first, as in a read.
+  checkLvalue(lv.base, sym, errors, ctx);
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
     checkIndexLvalue(lv, sym, errors, ctx);
@@ -280,7 +340,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-  checkLvalue(lv.base, sym, errors, ctx);
 }
 
 function checkIndexLvalue(
@@ -289,9 +348,8 @@ function checkIndexLvalue(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const raw = lvalueType(lv.base, sym);
-  checkListIndex(unaliasType(raw, sym), lv.index, sym, errors, ctx);
-  const step = indexStep(raw, sym);
+  const step = indexStep(lvalueType(lv.base, sym), sym);
+  if (step.kind === "place" && step.key) checkAgainst(lv.index, step.key, sym, errors, ctx);
   if (step.kind !== "no-place") return;
   errors.push({
     code: "E0602",
@@ -312,17 +370,6 @@ function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): st
       ? ` — write the field step ".${index.value}"`
       : "";
   return `${into}: an index names a place only in a Map or a List${field}`;
-}
-
-export function checkListIndex(
-  base: TypeExpr | null,
-  index: Expr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  if (base?.kind !== "TypeApp" || base.name !== "List") return;
-  checkAgainst(index, prim("Int", index.pos), sym, errors, ctx);
 }
 
 function checkMemberLvalue(

@@ -21,7 +21,7 @@ import {
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
-import { splitPath } from "./router.ts";
+import { followRedirects, normalizeLocation, resolveTarget, splitPath } from "./router.ts";
 import { renderTileToString } from "./ssr-render.ts";
 
 export type RenderToStringOptions = {
@@ -57,24 +57,36 @@ export async function renderToString(
   app: AppShape,
   options: RenderToStringOptions = {},
 ): Promise<RenderToStringResult> {
-  const routePath = options.route ?? "/";
+  // Held as the client's router holds the URL it is at, so the server lands where the client would.
+  const routePath = normalizeLocation(options.route ?? "/");
 
   if (!app.live) app.live = {};
   const live = app.live;
   for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
 
+  // Without the routing module, a path names the pattern it is, as the URL parser writes it.
+  const declared = (path: string) =>
+    app.routes?.filter((r) => normalizeLocation(r.pattern) === path) ?? [];
   const requested = splitPath(routePath);
   const redirectTo = options.routing
     ? options.routing.findRedirect(app.routes, requested)
-    : (app.routes?.find(
-        (r): r is RedirectEntry => "redirectTo" in r && r.pattern === requested.pathname,
-      )?.redirectTo ?? null);
+    : followRedirects(requested.pathname, (path) => {
+        const to = declared(path).find((r): r is RedirectEntry => "redirectTo" in r)?.redirectTo;
+        return to === undefined ? null : resolveTarget(to, splitPath(path));
+      });
+  // Each step of the chain is resolved against the path it redirects from.
   const servedPath = redirectTo ?? routePath;
 
   const parsedRoute: ParsedRoute =
     options.routing && app.routes && app.routes.length > 0
       ? options.routing.parseLocation(app.routes, splitPath(servedPath))
-      : { path: servedPath, pattern: servedPath, params: {}, query: {}, hash: NONE };
+      : {
+          path: servedPath,
+          pattern: declared(servedPath)[0]?.pattern ?? servedPath,
+          params: {},
+          query: {},
+          hash: NONE,
+        };
   live.route = parsedRoute;
 
   const now = options.now ?? (() => Date.now());
