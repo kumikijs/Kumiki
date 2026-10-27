@@ -16,6 +16,7 @@ import {
   checkGetOrArity,
   checkRecordUpdate,
   getOrResultType,
+  indexStep,
 } from "./against.ts";
 import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
 import {
@@ -52,8 +53,8 @@ import {
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
+  matchedType,
 } from "./patterns.ts";
-import { checkListIndex } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
@@ -61,23 +62,80 @@ export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr 
   return elementType(inferType(iter, sym, ctx), sym);
 }
 
+// Checks the expression itself, so callers don't. An error reported at the expression is one
+// mistake, reported once; one inside it leaves the type decided, and E0218 is reported beside it.
 export function checkIterationTarget(
   iter: Expr,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const t = unaliasType(inferType(iter, sym, ctx), sym);
-  if (t?.kind !== "TypeApp") return;
-  const remedy = t.name === "Map" ? "keys" : t.name === "Set" ? "to-list" : null;
-  if (!remedy) return;
-  const alternative = t.name === "Map" ? " (or .values, which binds the value)" : "";
+  const before = errors.length;
+  checkExpr(iter, sym, errors, ctx);
+  const atTarget = (p: Pos) => p.line === iter.pos.line && p.col === iter.pos.col;
+  if (errors.slice(before).some((e) => e.severity !== "warning" && atTarget(e.pos))) return;
+  const written = inferType(iter, sym, ctx);
+  const target = written && nonListTarget(written, sym);
+  if (!target) return;
   errors.push({
     code: "E0218",
     kind: "for-over-non-list",
-    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}${alternative}`,
+    message: `"for" iterates a List, but this is ${target.shown}${target.remedy ? ` — ${target.remedy}` : ""}`,
     pos: iter.pos,
+    ...(target.accessor ? { accessor: target.accessor } : {}),
   });
+}
+
+type NonListTarget = {
+  shown: string;
+  remedy: string | null;
+  accessor?: KumikiError["accessor"];
+};
+
+// The message names the type as written, so an alias reads as the author's name for it; the
+// remedy is chosen from what the alias stands for. A `Map` or a `Set` written as one reads
+// "a Map" / "a Set".
+function nonListTarget(written: TypeExpr, sym: SymbolTable): NonListTarget | null {
+  const t = unaliasType(written, sym);
+  if (t === null || t.kind === "TypeRef") return null;
+  const shown = typeToString(written);
+  const asWritten = (name: string) =>
+    written.kind === "TypeApp" && written.name === name ? `a ${name}` : shown;
+  if (t.kind === "TypeApp") {
+    switch (t.name) {
+      case "List":
+        return null;
+      // A `Map` has two lists and they bind different things, so the message names both.
+      case "Map":
+        return {
+          shown: asWritten("Map"),
+          remedy: "iterate its .keys (or .values, which binds the value)",
+          accessor: "keys",
+        };
+      case "Set":
+        return { shown: asWritten("Set"), remedy: "iterate its .to-list", accessor: "to-list" };
+      case "Option":
+        return { shown, remedy: unwrapRemedy(t, "Some / None", sym) };
+      case "Result":
+        return { shown, remedy: unwrapRemedy(t, "Ok / Err", sym) };
+      case "Tuple":
+        return { shown, remedy: null };
+      default:
+        return null;
+    }
+  }
+  if (t.kind === "TypePrim" && t.name === "Text") {
+    return { shown, remedy: ".split(sep) breaks it into a List(Text)" };
+  }
+  return { shown, remedy: null };
+}
+
+// `.get-or([])` is offered only when the payload is a List, the one case its answer iterates.
+function unwrapRemedy(t: TypeExpr & { kind: "TypeApp" }, tags: string, sym: SymbolTable): string {
+  const payload = unaliasType(t.args[0] ?? null, sym);
+  return payload?.kind === "TypeApp" && payload.name === "List"
+    ? `iterate its .get-or([]), or match on ${tags}`
+    : `match on ${tags} to take out its value`;
 }
 
 /** A handle's text is whatever the runtime represents it as, so a page that showed it would change when that does. */
@@ -184,6 +242,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
+      if (e.name === "$1" && ctx.noInputEffect !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `"$1" is undefined here — effect "${ctx.noInputEffect}" declares in=Unit, so it is emitted with no argument`,
+          pos: e.pos,
+        });
+        return;
+      }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
         const { method, hides } = ctx.oneValueFragment;
         errors.push({
@@ -245,11 +312,13 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
       return;
-    case "Index":
+    case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      checkListIndex(unaliasType(inferType(e.base, sym, ctx), sym), e.index, sym, errors, ctx);
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      if (step.kind === "place" && step.key) checkAgainst(e.index, step.key, sym, errors, ctx);
       return;
+    }
     case "Call":
       if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
@@ -380,7 +449,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(e.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
       for (const arm of e.arms) {
         const inner = innerScope(ctx);
@@ -639,11 +708,7 @@ export function pushMismatch(
 
 /** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
 export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
-  const inner: Ctx = {
-    ...ctx,
-    localBinds: new Set(ctx.localBinds),
-    localTypes: new Map(ctx.localTypes),
-  };
+  const inner = innerScope(ctx);
   bindLocal(inner, e.name, inferType(e.value, sym, ctx));
   return inner;
 }
