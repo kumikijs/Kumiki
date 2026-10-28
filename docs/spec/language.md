@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -140,6 +140,8 @@ type-app    ::= identifier '(' type-expr (',' type-expr)* ')'
 refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
+
+A `variant` is an identifier, and a primitive's name is one: in `type SortBy = Name | Time | Size`, `Time` is a variant of `SortBy` with no payload, written as a value, a pattern and an operand of `==` the way `Name` is. Read as a type on its own, a primitive's name means the primitive, in that program too: `type Stamp = Time` is an alias of the primitive, and `Time` as a slot's type, a payload (`At(Time)`), a record field's type or a type argument (`Option(Time)`) is the primitive itself. `Time.parse(t)` is the conversion of [stdlib §2.4.3](./stdlib.md#_2-4-3-type-conversion) beside a variant named `Time`. An alternative is a variant wherever the union is written, so `Int | Text` is two variants without a payload, not "an Int or a Text"; to carry a value, give each one a payload: `I(Int) | T(Text)`.
 
 `refinement-type` is recursive, so a type may carry **more than one** `where`, and the predicates **conjoin**: a value is accepted only when every one of them holds.
 
@@ -833,6 +835,23 @@ items.filter(isActiveOnly)
 ```
 
 A fn name in a fragment position is the call the method makes with the fragment's positionals: `items.map(double)` is `items.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. It is the **only** position a bare fn name is right — a fn is not a value, so `label` written where a value goes is [E0127](./errors.md#e0127-fn-as-value), and the call is `label()`. The positions, and how many positionals each binds, are listed under E0127.
+
+**The type of each positional** is what the method hands the fragment, read off the receiver's type, or, for `fold`'s accumulator, off the init's:
+
+| Method | Receiver | `$1` | `$2` |
+|---|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | `List(T)` | the element, `T` | — |
+| `filter`, `map` | `Option(T)` | the value, `T` | — |
+| `map` | `Result(T, E)` | the `Ok` value, `T` | — |
+| `filter`, `map` | `Map(K, V)` | the key, `K` | the value, `V` |
+| `fold(init, f)` | `List(T)` | the accumulator, of the init's type | the element, `T` |
+| `flat-map` | `Option(T)`, `Result(T, E)` | the value, `T` | — |
+| `update(k, f)` | `Map(K, V)` | the current value, `V` | — |
+| `map-err` | `Result(T, E)` | the error, `E` | — |
+
+Under `filter`, `map`, `find` and `sort-by`, a `T` that is a `Tuple(A, B)` — what `.entries` produces — is taken apart: `$1` is `A` and `$2` is `B` ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)). A positional is checked like any value of its type, and a fn name is checked as the call it stands for: with `fn loud(t: Text)`, `xs.map(loud($1))` over a `List(Int)` is [E0201](./errors.md#e0201-type-mismatch), and so is `xs.map(loud)`. `xs.fold(0, f)` checks `f`'s first parameter against `Int`, the init's type, and its second against the element. The fragment's result is not checked against the accumulator's type, so `$1` has the init's type on the first step only: `xs.fold(0, $1.show)` passes, and hands the second step a `Text`.
+
+A positional whose type the checker cannot decide has none, and nothing is checked against it: over a receiver whose type is not decided (a type parameter, a `fn` result with no `->`), under a `Set`'s `filter`, which [Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t) gives no binding, for a `Map` key that does not read back as its type — a `Bytes` key, or one whose type is a type parameter, is handed over as the string it is stored under — and for the accumulator of a `fold` whose init has no type of its own — `{}`, which is both the empty Map and the empty Set.
 
 ---
 

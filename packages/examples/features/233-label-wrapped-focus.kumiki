@@ -1,0 +1,49 @@
+# Feature (W0212): which `ui.<ev>` selectors reach a `check`, a
+# `switch` or a `radio`. Each renders a <label> around its <input>. The
+# renderer's own "change" listener sits on the <input>; the runtime attaches
+# key / focus / blur to the <label>:
+#
+#   ui.change / ui.click   the renderer's "change" listener on the <input> calls them
+#   ui.key                 a keydown in the focused <input> bubbles up to the <label>
+#   ui.focus / ui.blur     the <input> fires them, but neither bubbles, so a
+#                          listener on the <label> never runs
+#
+# No `ui.focus` / `ui.blur` reducer targets Agree, Lit or Big: each would be
+# W0212, with its handler dropped. `Note` is an `input`, which takes focus
+# itself, so its `ui.focus` / `ui.blur` reducers run.
+
+type Size = Small | Large
+
+slot agreed : Bool = false
+slot lit    : Bool = false
+slot size   : Size = Small
+slot note   : Text = ""
+slot log    : Text = ""
+
+reducer agreeChange on=ui.change(Agree) do= log := log + "ac "
+reducer agreeKey    on=ui.key(Agree)    do= log := log + "ak "
+reducer litChange   on=ui.change(Lit)   do= log := log + "wc "
+reducer sizeChange  on=ui.change(Big)   do= log := log + "rc "
+reducer sizeKey     on=ui.key(Big)      do= log := log + "rk "
+reducer noteFocus   on=ui.focus(Note)   do= log := log + "nf "
+reducer noteBlur    on=ui.blur(Note)    do= log := log + "nb "
+
+tile Agree = check(bind=agreed) {id: "agree"}
+tile Lit   = switch(bind=lit) {id: "lit"}
+tile Big   = radio(group="size", bind=size, value=Large) {label: "Large", id: "big"}
+tile Note  = input(bind=note) {id: "note"}
+
+tile App
+    = column(
+        heading("what reaches a check, a switch and a radio"),
+        Agree,
+        Lit,
+        Big,
+        Note,
+        text("log: " + log))
+      {pad: "lg", gap: "md"}
+
+app LabelWrappedFocus
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
