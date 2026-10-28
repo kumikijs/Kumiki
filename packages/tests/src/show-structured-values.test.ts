@@ -85,6 +85,7 @@ tile App = column(
     text("tree: " + tree),
     text("rows: " + rows),
     text("fn: " + letters()),
+    text("acc: " + [1].fold(letters(), $1.show)),
     text("om: " + om),
     button(text=t),
     column(for x in sets text("each: " + x)))`);
@@ -101,6 +102,7 @@ tile App = column(
       'tree: {label: "root", kids: [{label: "leaf", kids: [], marks: [1]}], marks: []}',
       'rows: [{name: "a", tags: ["t"]}]',
       'fn: {"z": 26}',
+      'acc: {"z": 26}',
       "om: Some",
       '(1, "a")',
       "each: [1]",
