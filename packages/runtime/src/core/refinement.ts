@@ -181,10 +181,16 @@ export function reportRejectedBatch(
   rejections: readonly RefinementRejection[],
 ): void {
   console.error(
-    `[kumiki] reducer ${JSON.stringify(reducer)} was rejected: ${rejections
-      .map(describeRejection)
-      .join(", ")}. No slot was written and no effect was emitted.`,
+    `[kumiki] ${rejectedBatchText(reducer, rejections)}. No slot was written and no effect was emitted.`,
   );
+}
+
+/** `reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))`, as the report above and a property-test trial's failure both say it. */
+export function rejectedBatchText(
+  reducer: string,
+  rejections: readonly RefinementRejection[],
+): string {
+  return `reducer ${JSON.stringify(reducer)} was rejected: ${rejections.map(describeRejection).join(", ")}`;
 }
 
 export function computeSlotDiffs(

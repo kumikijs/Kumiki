@@ -1,5 +1,5 @@
 import type { AppShape, ReducerSpec } from "@kumikijs/runtime";
-import { _stdlib, emptyRoute, renderToString } from "@kumikijs/runtime";
+import { _stdlib, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bareApp, mountApp } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
@@ -382,29 +382,17 @@ describe("every tier applies the same rule", () => {
     expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
   });
 
-  it("refuses the batch in a property-test's run-reducer step", () => {
-    const copy: ReducerSpec = {
-      name: "copy",
-      event: { kind: "ui", ev: "click" },
-      apply: (live) => ({ slots: { mirror: live.count }, emits: [] }),
-    };
+  it("refuses the batch in a property-test's run-reducer step, failing the trial", () => {
     const app = {
       live: { count: 0, log: "" } as Record<string, unknown>,
       slots: makeApp().slots,
-      reducers: [overflow("bump"), copy],
+      reducers: [overflow("bump")],
       effects: {},
     };
-    const after = _stdlib.runReducerStep(app, { slots: { count: 2 } }, "bump", {});
-    const rejected = { count: 2, mirror: 0, log: "", trace: "", route: emptyRoute() };
-
-    expect(after.slots).toEqual(rejected);
-    expect(errors.some((e) => e.includes('reducer "bump" was rejected'))).toBe(true);
-
-    // Chained on: an answer that shared `live` would be wiped by this step's `resetLive`.
-    const next = _stdlib.runReducerStep(app, after, "copy", {});
-
-    expect(next.slots).toEqual({ ...rejected, mirror: 2 });
-    expect(after.slots).toEqual(rejected);
+    expect(() => _stdlib.runReducerStep(app, { slots: { count: 0, log: "" } }, "bump", {})).toThrow(
+      'reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))',
+    );
+    expect(errors.some((e) => e.includes("was rejected"))).toBe(false);
   });
 });
 
