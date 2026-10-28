@@ -1,0 +1,48 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired, and the check is what W0212's reason assumes — a <label> around a checkbox",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ""
+        },
+        "elementState": {
+          "#agree": {
+            "tagName": "LABEL"
+          },
+          "#agree input": {
+            "tagName": "INPUT",
+            "type": "checkbox"
+          }
+        }
+      }
+    },
+    {
+      "label": "a real click ticks it and runs its ui.change reducer",
+      "do": {
+        "click": "#agree input"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "agreed": true,
+          "log": "ac "
+        }
+      }
+    },
+    {
+      "label": "an input takes focus itself, so its ui.focus reducer runs",
+      "do": {
+        "focus": "#note"
+      },
+      "expect": {
+        "noErrors": true,
+        "focused": "#note",
+        "state": {
+          "log": "ac nf "
+        }
+      }
+    }
+  ]
+}

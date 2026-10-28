@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -140,6 +140,8 @@ type-app    ::= identifier '(' type-expr (',' type-expr)* ')'
 refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
+
+`variant` は識別子であり、プリミティブ型の名前もその 1 つである：`type SortBy = Name | Time | Size` の `Time` はペイロードを持たない `SortBy` のバリアントであり、`Name` と同じく値・パターン・`==` のオペランドとして書ける。単独で型として読まれるプリミティブの名前は、そのプログラムでもプリミティブを指す：`type Stamp = Time` はプリミティブの別名であり、スロットの型・ペイロード（`At(Time)`）・レコードのフィールドの型・型引数（`Option(Time)`）としての `Time` はプリミティブそのものである。`Time` という名前のバリアントがあっても、`Time.parse(t)` は [stdlib §2.4.3](./stdlib.md#_2-4-3-型変換) の変換である。ユニオンをどこに書いても選択肢はバリアントなので、`Int | Text` はペイロードを持たない 2 つのバリアントであり、「Int または Text」ではない。値を持たせるには、それぞれにペイロードを与える：`I(Int) | T(Text)`。
 
 `refinement-type` は再帰的なので、1 つの型が `where` を **2 つ以上**持てる。そのとき述語は**連言**であり、すべてが成り立つ値だけが受理される。
 
@@ -821,6 +823,23 @@ items.filter(isActiveOnly)
 ```
 
 式断片の位置に置いた fn 名は、メソッドが式断片の positional で行う呼び出しである：`items.map(double)` は `items.map(double($1))`、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。括弧のない fn 名が正しいのは**この位置だけ**である — fn は値ではないので、値の位置に書いた `label` は [E0127](./errors.md#e0127-fn-as-value) であり、呼び出しは `label()` と書く。位置の一覧と、それぞれが束縛する positional の数は E0127 の項に挙げてある。
+
+**各 positional の型**は、メソッドが式断片に渡すものの型であり、レシーバの型から読み取る。`fold` のアキュムレータだけは init の型から読み取る：
+
+| メソッド | レシーバ | `$1` | `$2` |
+|---|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | `List(T)` | 要素、`T` | — |
+| `filter`, `map` | `Option(T)` | 値、`T` | — |
+| `map` | `Result(T, E)` | `Ok` の値、`T` | — |
+| `filter`, `map` | `Map(K, V)` | キー、`K` | 値、`V` |
+| `fold(init, f)` | `List(T)` | アキュムレータ、init の型 | 要素、`T` |
+| `flat-map` | `Option(T)`, `Result(T, E)` | 値、`T` | — |
+| `update(k, f)` | `Map(K, V)` | 現在の値、`V` | — |
+| `map-err` | `Result(T, E)` | エラー、`E` | — |
+
+`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータを init の型 `Int` と、第 2 パラメータを要素と照合する。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
+
+型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` のない `fn` の結果）、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が束縛を与えていない `Set` の `filter`、型として読み戻されない `Map` のキー（`Bytes` のキーや、型が型パラメータであるキーは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
 
 ---
 
