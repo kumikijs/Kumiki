@@ -38,8 +38,9 @@ export function mountApp(
 export async function mountSource(
   src: string,
   initialPath?: string,
+  capabilities: string[] = [],
 ): Promise<{ app: AppShape; root: HTMLElement }> {
-  const app = await loadSource(src);
+  const app = await loadSource(src, capabilities);
   const { root, handle } = mountApp(app, { router: "memory", ...(initialPath && { initialPath }) });
   onTestFinished(() => {
     handle.dispose();
