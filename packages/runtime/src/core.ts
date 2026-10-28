@@ -8,7 +8,13 @@ export {
   type ShownField,
   submitHeldBy,
 } from "./core/binding.ts";
-export { emitId, overridableInvoke, readStatus } from "./core/effects.ts";
+export {
+  abortedHttpError,
+  emitId,
+  overridableInvoke,
+  readStatus,
+  standInValue,
+} from "./core/effects.ts";
 export {
   beginEnvRecord,
   beginEnvReplay,
@@ -52,6 +58,7 @@ export {
   type RefinementStep,
   refinementRejectionOf,
   refinementRejections,
+  rejectedBatchText,
   reportRejectedBatch,
   type SlotGate,
   type SlotMeta,
@@ -98,6 +105,7 @@ export {
   type EmitSpec,
   type EventHandler,
   type HoldLeave,
+  type HttpError,
   type LocationLike,
   type MountedApp,
   type MountHandle,

@@ -30,7 +30,7 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 | `expect.effects` の要素 | effect（宣言されたもの、または標準 effect） | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | `given.mocks` のキー | effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | すべての式——slot の値、`given.in`、`expect.panic`、`invariant`、モックのペイロード、`episode-test` の `expect` | 式レイヤの規則どおり | E0103 / E0116 など |
-| `given.slots` / `expect.slots` の値、`expect.effects` の引数、`given.mocks` のペイロード | slot の型・effect の `in=` 型・effect の `out=` の該当側の値 | [E0201](./errors.md#e0201-type-mismatch)、[E0214](./errors.md#e0214-missing-record-field)、[E0215](./errors.md#e0215-unknown-record-field) |
+| slot の値（`given.slots` / `expect.slots` / `slots-equal`）、`expect.effects` の引数、`given.mocks` のペイロード | slot の宣言された型・effect の `in=` 型・effect の `out=` の該当側の値 | [E0201](./errors.md#e0201-type-mismatch)、[E0213](./errors.md#e0213-call-arity-mismatch)、[E0214](./errors.md#e0214-missing-record-field)、[E0215](./errors.md#e0215-unknown-record-field)、[E0216](./errors.md#e0216-unknown-variant) |
 | `given` / `expect` の**セクション**キー | そのテスト種別が受理する閉じた集合の 1 つ | [E0714](./errors.md#e0714-test-section-unknown) |
 
 セクション名そのものは解決すべき名前ではなく語彙であり、テスト種別ごと・節ごとに閉じている：
@@ -49,7 +49,9 @@ test-expr ::= reducer-test | tile-test | episode-test | property-test
 
 `given.event.type` が名指すのは event であり、その語彙は式レイヤではなくトリガ文法のものである。`target` が tile なのはその event が `ui.*` のときだけで、timer で駆動される reducer は timer 名を書き、effect の結果で駆動される reducer には書く名前が無い。どちらのフィールドも生成されたテストには届かない——payload は event の*その他の*フィールドから作られ、ランナーが適用する reducer はテスト自身の target である——ので、この規則はテストが何を*する*かではなく何を*言っている*かについてのものである。
 
-テスト本体から slot は**読める**（その slot が保持する値になる）。`for-all` の名前は `given` と `invariant` の両方でスコープに入り、generator が宣言した型を持つ。`run-reducer(<reducer>)` が取るのは値ではなく reducer 名であり、呼べるのは property-test の invariant だけである（[§8.3](#_8-3-property-tests)）：trial の束縛を読む形に lowering されるため、それ以外の場所では、生成モジュールがどのテストも結果を出す前に死ぬ。
+テストが書く slot の値は、その slot の宣言された型の値である。これはどのテスト種別でも（[§8.5](#_8-5-effect-mock) の multi-step 形の `reducer-test` を含む）、slot の値を書くどのセクションでも同じである: `given.slots` の seed、`expect.slots` の値、`episode-test` の `slots-equal` のレコード。slot 自身の初期値と同じ規則で検査され——`Int` は `Float` に流れ込み、空の `[]` や `{}` は宣言されたコレクション、`None` は宣言された `Option` になり、`where` の refinement は評価されない——型が受け取らない値は、その位置で型エラーになる（**E0201**、レコードやヴァリアントの形が違うときは E0213 / E0214 / E0215 / E0216）。型の違う seed は、アプリが決して取りえない状態から reducer を走らせ、型の違う期待値は、アプリが決して到達しない状態を表明する: `slot count : Int` に対して `given.slots: {count: "5"}` は `count + 1` をテキスト `"51"` にし、`expect.slots: {count: "51"}` はそれに一致してしまう。検査器が型を推論しない値は、まだ slot の型と照合されない: コレクションでない型に対して書いた空の `{}` や、`.map` / `.fold` / `.zip` / `.flat-map` の結果は、slot の型が何であれ `ok` になる。初期値でもテストでも同じである（`slot at : Text = {}` も通る）。これは既知の欠落であり、規則ではない（[#514](https://github.com/kumikijs/Kumiki/issues/514)、[#959](https://github.com/kumikijs/Kumiki/issues/959)）。`reducer-test` の `expect` 中のワイルドカード（[§8.2.2](#_8-2-2-wildcards)）は型を持たないので、slot の型とは照合されない。`route` slot はランタイムのもので型は標準の `Route` であり、その seed は必要なフィールドだけを書く。ワイルドカードはそのフィールドの 1 つの代わりにはなれるが、route 全体の代わりにはなれない（[§8.2.5](#_8-2-5-the-route-slot)）。
+
+テスト本体から slot は**読める**（その slot が保持する値になる）。`for-all` の名前は `given` と `invariant` の両方でスコープに入り、generator が宣言した型を持つ。`fn run-reducer` を宣言していないプログラム（[言語 §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)）では、`run-reducer(<reducer>)` が取るのは値ではなく reducer 名であり、呼べるのは property-test の invariant だけである（[§8.3](#_8-3-property-tests)）：trial の束縛を読む形に lowering されるため、それ以外の場所では、生成モジュールがどのテストも結果を出す前に死ぬ。
 
 いくつかの位置は名前ではなく**形**を検査する。認識できない形に対して lowering が別の主張をしてしまうからである（[E0713](./errors.md#e0713-test-shape-invalid)）：`reducer-test` のモックが `ok(...)` / `err(...)` / `delay(...)` でなければ成功モックになり、`expect.effects` がリストでなければ「effect は何も emit されなかった」という主張になり、`given` / `expect` / `mocks`（や `given` の `mocks` / `event`）がレコードでなければ空のレコードとして読まれ、書いたはずのセットアップ・主張・台本が起きない。一段下の slot → 値のセクション——`given` の `slots`、`reducer-test` の `expect` の `slots`、`episode-test` の `expect` の `slots-equal`——も同じくレコードであり、そうでなければどの slot も設定せず、どの slot も主張しなかった。`slots-equal` だけはレコードの代わりに裸の名前 `from-log`（ログ自身の最終値）も取る。それ以外のどの位置でも、`from-log` は他と同じただの名前である。
 
@@ -89,7 +91,7 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 ワイルドカードが書けるのは `reducer-test` の `expect` の中だけである（それ以外の場所は **E0109**）。それ以外の照合は**厳密**である。レコードはキー集合全体で比較され、決定的なテストでは予測できない穴をワイルドカードが埋める。**値**としての `<any-id>` は存在する任意の値（例えば新しく生成された id）に一致し、`<slots.X>` は slot `X` の実行後の値に一致する。**map のキー**としての `<any-id>` は、他のどれとも対応しないエントリちょうど一つと対になる。ゼロ個や二つ以上なら失敗である。**Set リテラルの要素**としての `<any-id>` は、それぞれ他のどれとも対応しない要素一つと対になる。`[<any-id>, <any-id>]` はちょうど二つの生成された要素を、`["a", <any-id>]` は `"a"` ともう一つを求める。**map のキー**や **Set リテラルの要素**としての `<slots.X>` は、値としての場合と同じく slot `X` の実行後の値を表す。`{<slots.pick>: 1}` はその値をキーとするエントリを、`["z", <slots.pick>]` は `"z"` とその値を、その値をその場所に書いた場合と同じに求める。リテラルが書く他の要素やキーと同じく、それは他と異なる自分だけの一つを求める。`pick` が `"z"` を保持するとき、`["z", <slots.pick>]` は一つのキーに二つの要素を求めることになり、二つをどの順に書いても失敗する。同じ値を保持する slot を指す二つの `<slots.X>` キーも同様である。各 `<slots.X>` はどの `<any-id>` が対になるより先に自分のキーを取るので、`[<any-id>, <slots.pick>]` は `pick` の値ともう一つを求める。ワイルドカードが代わりになれるのは要素やキーの全体だけである。構造を持つ要素やキーの内側に入れ子になったもの（`[{id: <slots.pick>}]`）は **E0109** になる。要素はその値全体でキー付けされるので、内側のワイルドカードは決して一致しないからである。部分的なレコード照合に頼るのではなく、他の非決定的なフィールドは値としてのワイルドカードで覆うこと（例：`createdAt: <any-id>`）。
 
-### 8.2.3 バッチ規則はここにも適用される
+### 8.2.3 バッチ規則はここにも適用される {#_8-2-3-the-batch-rule-applies-here-too}
 
 reducer テストは*実行中のアプリ*の挙動を表明するものなので、refinement が拒否したバッチはすべての slot を `given` の値のまま残し、effect も発行しない（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。拒否は `expect` ではなく `console.error` に報告される。このティアには `errorIncludes` に相当するものが無いため、`expect` ブロックだけでは「バッチが拒否された」と「reducer が何もしなかった」を区別できない。
 
@@ -125,7 +127,7 @@ test route-seeded-in-part =
         expect = {slots: {at: "/posts/:id#7"}}
 ```
 
-route 自身のフィールド（`path` / `pattern` / `params` / `query` / `hash`）以外の名前は **E0108**、record でない `route` は **E0201** である。これらが無ければ、綴り間違いは補完に飲み込まれ、テストは空 route に対して走る — 緑のまま、避けようとした分岐を実行しながら。
+route 自身のフィールド（`path` / `pattern` / `params` / `query` / `hash`）以外の名前は **E0108**、record でない `route` は——route 全体に書いたワイルドカードも含めて——**E0201** である。これらが無ければ、綴り間違いは補完に飲み込まれ、テストは空 route に対して走る — 緑のまま、避けようとした分岐を実行しながら。`route` のレコードが書いたフィールドの値は、seed でも `expect.slots` でも `slots-equal` でも、標準の `Route`（[§3.2](./routing.md#_3-2-current-route-state)）におけるそのフィールドの型の値でなければならず、そうでなければ [§8.1.1](#_8-1-1-the-names-a-test-body-writes) のとおりその位置で型エラーになる — プログラム自身の `type Route` が何と言おうと、この slot が持つのはランタイムの route だからである。補完が埋めるのは書かれなかったフィールドだけなので、`hash: "top"`（`Some("top")` のつもり）や `params: {"id": 7}` は、この検査がなければ書いたとおり reducer に届く: アプリが決して居ることのない route である。
 
 `expect.slots` は比較する slot を列挙するものであり、書かれなかった slot は比較されない。したがって seed した route を毎回書き直す必要はなく、テストの主題であるときは他の slot と同様に表明できる。ただし列挙された slot の値は**完全なキー集合で厳密に照合**される（[§8.2.2](#_8-2-2-wildcards)）ため、`expect` に `route` を書くときは record 全体を書く。
 
@@ -156,7 +158,32 @@ property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 
 `run-reducer(name)` は reducer が残す状態 `{slots: {…}}` を返し、その `slots` はプログラムが宣言した slot（とランタイムの `route`）で型付けされる。これを通した読み取りは slot そのものの読み取りと同じように検査される: `Set(Int)` に対する `run-reducer(add).slots.tags.to-list` はキーが数値として読み戻される `List(Int)` であり（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、プログラムが宣言していない slot 名は、property を反例として失敗させる `undefined` ではなく [E0108](./errors.md#e0108-undef-member) になる。
 
-### 8.3.2 ジェネレータ
+`run-reducer` のバッチを refinement が拒否した試行は**失敗する**（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。バッチはコミットされていないので、そのステップには返す状態が無い。開始時の状態に対して invariant を読めば、起きていないステップについて性質が成り立ってしまう。下の `inc` は `count` を 3 より先へ進められず、拒否されたステップが開始時のテーブルを返していたなら、`n` が 3 の試行で `run-reducer(inc).slots.count >= 0` が成り立ってしまう：
+
+```kumiki snippet
+slot count : Int where between(0, 3) = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1")
+
+test inc-stays-in-range =
+    property-test
+        for-all   = {n: Int where between(0, 3)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.count >= 0
+```
+
+失敗は反例と拒否を伴い、拒否は reducer と、拒否された書き込みを名指しする：
+
+```
+FAIL  inc-stays-in-range (1 cases, 2ms)
+  expected: invariant holds for all generated inputs
+  actual:   counterexample (case 1/100): {"n":3} — reducer "inc" was rejected: slot "count" cannot hold 4 (between(0, 3))
+  diff at:  (property)
+```
+
+したがって property が成り立つのは、どの `run-reducer` のバッチもコミットされた試行の上だけである。バッチが拒否されたときに何が起きるかを表明するには reducer テストを書く。その `expect` は拒否されたバッチが残す slot を名指しする（[§8.2.3](#_8-2-3-the-batch-rule-applies-here-too)）。property を拒否から切り離すには、reducer が受け入れる入力を生成する（`n: Int where between(0, 2)`）。
+
+### 8.3.2 ジェネレータ {#_8-3-2-generators}
 
 各型は自動生成器を持つ：
 
@@ -171,12 +198,22 @@ property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 | `Set(T)` | 0~10 要素 |
 | `Option(T)` | 50% None / 50% Some |
 | `Result(T, E)` | 50% Ok / 50% Err |
+| `Unit` | `()` |
+| `Tuple(T1, …, Tn)` | 各要素をそれぞれの生成器で |
 | `nominal T` | T の生成器 |
 | `refinement T where p` | p に制約された T を生成する |
+| record `{…}` | 各フィールドを再帰的に生成する |
+| union | ランダムな variant、ペイロードを再帰的に生成する |
+| `G(A1, …, An)` | G の本体。パラメータは引数として生成する |
+| 再帰型 | その本体を、有界の深さまで（下記） |
 
-refinement は棄却サンプリングではなく基底の生成器への制約として畳み込まれる。`between(a, b)` は数値範囲を、`nonempty` / `len-*` は文字列長を、`positive` / `negative` は符号を制約する。`email` / `url` / `uuid` は**形**として畳み込まれ、生成器はその形の実例を組み立てる。したがって生成された値は、ランタイムが書き込みに対して適用するのと同じチェックを通る（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)） — これらを無視する生成器は、アプリが取り得ない状態の上で性質を検査してしまう。`one-of` は列挙されたリテラルから生成する。畳み込める制約がない唯一の述語が `regex` である。任意のパターンから生成することは、パターンに照らして検査することとは別の問題だからである：`regex` で refine された型に対する `for-all` は基底型を無制約に生成するので、カスタム生成器を与えるか、ケースを手で書く。生成は**シード付き**であり（既定値はテスト名のハッシュ）、失敗したケースは実行をまたいで正確に再現する。失敗時、反例は**縮小**され（`shrink = false` で無効化）、最小の値へ向かう（数値 → 0、文字列 → ""、コレクション → 要素数を減らす）。`invariant` の中の `run-reducer(name)` は、`given` のイベントを使って現在の `{slots}` 状態に reducer を適用し次の状態を返すので、手順を連鎖できる（`run-reducer(toggle).run-reducer(toggle).slots.todos`）。
+`for-all` の値はどれもその型の値であり、全体が組み立てられる — タプルの各要素とレコードの各フィールドは、それぞれ自身の生成器で、そこに重ねられたすべての refinement の下で生成される（`regex` は除く。下の注記を参照）。したがって `p: Tuple(Text, Int where negative)` は常に、後半が負のペアであり、`type Pos = Int where positive` に対する `n: Pos where between(-5, 5)` は 1 から 5 の間である。生成器が組み立てられない型は、プログラムの検査時に、それを名指す `for-all` フィールドで拒否される（[E0715](./errors.md#e0715-for-all-no-generator)）— 型のどこかに、`File` または `EffectId`（プラットフォームか `emit` だけが作る）、有限の値を持たない再帰型（`type Inf = {v: Int, next: Inf}`）、型引数を深く入れ子にするジェネリック（`type Grow(T) = Stop | Deeper(Grow(List(T)))`。ステップごとに新しい型になる）、どの値も通らない refinement（`Int where positive where negative`）を含む型である。別の引数で再び出会うジェネリックや、型引数を入れ替えるジェネリックは生成される：出会う適用はそれぞれ 1 つの型である。試行の値のどの部分も代用品ではない。
 
-カスタム生成器：
+再帰型は有界の深さまで生成される。型の中へ 4 ステップまでは、どの選択もランダムに行われる。それを越えると、各選択は最も早く終わる道を取る — それ以降のステップが最も少なくて済む variant や `Result` の結果、`None`、空のコレクション。`type Tree = Leaf | Node(Int, Tree)` は `Node` が高々 4 段の木を生成し、`type Chain = {v: Int, next: Option(Chain)}` は `None` で終わる鎖を生成し、互いを保持し合う 2 つの型は、どちらかが終われるところで終わる。再帰型は有限の値を少しでも持つならこうして終わる。1 つも持たないものは E0715 の対象である。再帰型の中のコレクションは、最上段で高々 10 要素、型の中へ 1 ステップ進むごとにその半分（5、2、1、そして 0）を保持するので、2 つのコレクションを同時に通って再帰する型も小さく収まる。
+
+refinement は棄却サンプリングではなく基底の生成器への制約として畳み込まれる。`between(a, b)` は数値範囲を、`nonempty` / `len-*` は文字列長を、`positive` / `negative` は符号を制約する。`email` / `url` / `uuid` は**形**として畳み込まれ、生成器はその形の実例を組み立てる。したがって生成された値は、ランタイムが書き込みに対して適用するのと同じチェックを通る（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)） — これらを無視する生成器は、アプリが取り得ない状態の上で性質を検査してしまう。`one-of` は列挙されたリテラルから生成する。重ねた refinement は互いを狭める：境界は 2 つのうち厳しい方、`one-of` は列挙した値のうち他の refinement が通すものだけを残し、形は他が許す長さで組み立てる。畳み込める制約がない唯一の述語が `regex` である。任意のパターンから生成することは、パターンに照らして検査することとは別の問題だからである：`regex` で refine された型に対する `for-all` は基底型を無制約に生成するので、その変数をパターンに合う値を列挙した `one-of` から生成するか、ケースを reducer-test として書く。生成は**シード付き**であり（既定値はテスト名のハッシュ）、失敗したケースは実行をまたいで正確に再現する。失敗時、反例は**縮小**され（`shrink = false` で無効化）、その型の値であり続ける最小の値へ向かう（数値 → 0 またはそれに最も近い境界、文字列 → 許される最短の長さ、コレクション → 要素数を減らす、`Some` → `None`、レコードとタプル → 一部分ずつ）。したがって報告される反例は、試行が実行されえた値である。`invariant` の中の `run-reducer(name)` は、`given` のイベントを使って現在の `{slots}` 状態に reducer を適用し、次の状態を返す。次の状態は slot テーブル全体である — 宣言された既定値と seed された `route`（[§8.2.5](#_8-2-5-the-route-slot)）、次に `given.slots`、その上に reducer の書き込み。したがって、試行が seed も書き込みもしない slot は、reducer テストと同じくその既定値を読む。手順は連鎖でき（`run-reducer(toggle).run-reducer(toggle).slots.todos`）、各手順は直前の手順が返したテーブル全体から始まる。refinement がバッチを拒否した手順は状態を返さず、試行はその拒否とともに失敗する（[§8.3.1](#_8-3-1-構文)）。
+
+型に付けた refinement が生成される値を狭める：
 
 ```kumiki snippet
 test foo =
@@ -316,6 +353,17 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 - モデル / アルゴリズムを変更した後でも同じ入力で同じ結果が出るか確認
 - スキーマ変更時に旧 log が migration できるか検証
 
+ログは記録時のプログラムの名前を保持する。入口の reducer — 最初の `reducer` step、または reducer を名指す `panic` step — がプログラムにない episode に対して、`episode-test` は `expect` が何を挙げていても**失敗し**、その報告は episode と reducer を名指す：
+
+```
+FAIL  replay-renamed (Nms)
+  expected: every episode replayed
+  actual:   ep_01M42Z…: no reducer named "inc"
+  diff at:  episodes
+```
+
+replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。`name` のない入口の `reducer` step も同じように失敗させ、その報告は `reducer step <n> has no name` である。入口の reducer がまったくない `ssr.hydrate` の bootstrap は reducer が 1 つも走らなかった episode であり、クリーンに replay される。それ以外の episode に入口の reducer がなければ、`no reducer step` で失敗させる。その理由はランタイム §10.5.3 にある。
+
 ## 8.7 ランナー
 
 ```bash
@@ -325,6 +373,8 @@ kumiki test addTodo-*          # ワイルドカードフィルタ
 kumiki test --watch            # 変更時に再実行
 kumiki test --coverage         # カバレッジ (reducer/effect/tile 単位)
 ```
+
+各実行は渡されたファイルの `test` 定義だけを報告する。ひとつのプロセスでプログラムを次々に読み込む `--watch` の再実行や MCP の `kumiki_test` も同じである。`test` を持たないファイルは何も報告しない。フィルタがなければ、`kumiki test` は `no tests found` と出力し、`kumiki_test` は空の `results` を返す。フィルタがあれば、`kumiki test` は stderr に `no tests match "<filter>"` と出力して `1` で終了し、`kumiki_test` は空の `results` を `isError` 付きで返す。
 
 ### 8.7.1 出力 {#_8-7-1-output}
 
@@ -426,7 +476,7 @@ example コーパス（`packages/tests`）は「**壊れた example は決して
 `kumiki run <file> <scenario.json>`（MCP: `kumiki_run_scenario`）は、アプリを**シナリオ**で駆動し、毎ステップの構造化 trace を返す。これが「人を介さない生成→実行→観測→修正ループ」の土台になる。
 
 - **操作（action）**: `{dispatch, payload?}`（reducer を名前で発火）/ `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`。`{focus}` `{blur}` `{key}` `{hover}` はセレクタ一致要素に対し実際の DOM イベント——`FocusEvent`、`value` を `key` に持つ `KeyboardEvent`、`mouseenter`——を dispatch するため、`ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducer が依存する `addEventListener` 配線層をシナリオ単独で検証できる。いずれもセレクタ一致要素に対して dispatch する。ランタイムがリスナを張るのがそこだからである。`keydown` はそこからバブルし、これが `ui.key(Container)` をフォーカス可能な子孫から駆動できる理由である。`focus` / `blur` / `mouseenter` はバブルしない（ブラウザは 1 つのイベントを伝播させるのではなく、祖先ごとに別々の `mouseenter` を発火する）。`ui.key` reducer のペイロードは `key` と `code` を運ぶが、この層で設定されるのは `key` だけである。`code` は物理キーを指し、`"Enter"` と書いたシナリオはそれを選んでいないためである。`{submit}` は `ui.submit` reducer が待ち受けるフォームイベントを dispatch する。`form` タイルは作者が付けない限り id を持たないため、セレクタはフォーム自身でもその内側の要素でもよい。bind されたフィールドがバリデーションに失敗している form は reducer を呼ばず（[forms.md §5.2.2](./forms.md#_5-2-2-submit-の挙動)）、form が送信を差し止めた `{submit}` は通過せず拒否される（[後述](#a-submit-the-form-holds-back-is-refused)）。`{fill, value}` は `input` / `textarea` / `editable` に書き込み、それ以外に当たった場合は一致した要素名を挙げて拒否する。セレクタがラッパーへずれたとき、誰も読まないプロパティを代入して通るのではなく失敗する。`{wait}` はそのステップ本来の settle に指定ミリ秒を上乗せする。debounce の待ち・retry のバックオフ・タイマーはこれで観測する（操作のないステップは settle しない）。
-- **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。**実行できなかった操作**——何にも一致しないセレクタ、テキストを持たない要素への `fill`、アプリに存在しない reducer 名を指す `{dispatch}`、`#id` スコープ付き reducer を payload でその id を渡さずに指す `{dispatch}`、**プラットフォームが操作を拒否するコントロール**（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）、および **form が差し止めた**、またはブラウザの constraint validation が止めた `{submit}`（[後述](#a-submit-the-form-holds-back-is-refused)）——は `actionError` として別に記録され、そのステップを失敗させる。これは `error` ではない。アプリについて何も観測していないため、`noErrors` も `errorIncludes` もこれを見ない。両者を同じ場所にまとめていたために、fixture が自分の間違いが起きたことを assert できてしまっていた（`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` は、何も押さないまま通っていた）。
+- **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。**実行できなかった操作**——何にも一致しないセレクタ、テキストを持たない要素への `fill`、アプリに存在しない reducer 名を指す `{dispatch}`（`no reducer named "<name>"`。近い名前が宣言されていれば `— did you mean "<declared>"?` が続く）、`#id` スコープ付き reducer を payload でその id を渡さずに指す `{dispatch}`、**プラットフォームが操作を拒否するコントロール**（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）、および **form が差し止めた**、またはブラウザの constraint validation が止めた `{submit}`（[後述](#a-submit-the-form-holds-back-is-refused)）——は `actionError` として別に記録され、そのステップを失敗させる。これは `error` ではない。アプリについて何も観測していないため、`noErrors` も `errorIncludes` もこれを見ない。両者を同じ場所にまとめていたために、fixture が自分の間違いが起きたことを assert できてしまっていた（`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` は、何も押さないまま通っていた）。
 - **アサーション（expect）**: `{ noErrors?, errorIncludes?, actionErrorIncludes?, state?, domIncludes?, domExcludes? }` — 上の操作一覧と同じく**閉じた集合**である。集合外のキーは無視されるのではなく実行を失敗させ、browser ティアが所有する名前（`focused` / `visible` / `hidden` / `animating` / `elementState`、および `setProperty` 操作）はそのティアを名指しして失敗する。したがって、**ブラウザティアのアサーションを含む** `.browser.json` を `kumiki run` に渡すと、何も検証しないまま通るのではなく拒否される。headless DOM で答えられるものしか assert していない fixture はそのまま実行される（コーパスに実例がある）。文書自体も同じく閉じている — `steps`（必須、かつ空でないこと：何も assert しないシナリオが成功を返してはならない）と `effects` / `defaultEffect` のみ。したがって `steps` の綴り間違いは「存在しない」と読まれるのではなく名指しで報告される。シナリオの検証は mount より前に行われ、文書中の問題はすべて一度に報告される。`state` は **slot 状態への部分一致**（ドット区切りパス可）。`errorIncludes` は `noErrors` の対になるもので、各部分文字列がそのステップ中に報告されたいずれかのエラーに含まれることを要求する。refinement が拒否した reducer バッチ（[batching](./runtime.md#a-batch-commits-all-or-nothing)）や、`.err` reducer が受け取らない effect エラーのように、runtime が*報告すること*自体が契約であるケース向けである。scenario ティア専用で、browser ティアは報告されたエラーをすべて致命として扱う。満たせるのはアプリが報告したエラーだけである——操作自体が実行できなかったステップは代わりに `actionError` を報告し、失敗する。`actionErrorIncludes` はそのもう一方のチャネルに対応するものである。各部分文字列がそのステップの `actionError` に含まれることを要求し、一致したものは `expectedActionError` へ移ってステップを失敗させなくなる。これが必要なのは、拒否そのものが fixture の表明したい挙動であることが多いためである——「保存中は save ボタンが disabled なので、クリックしても何も起きない」を書く方法はこれ以前には無く、disabled なコントロールを操作したステップは、ガードが効いていても reducer が存在しなくても同じく通っていた。逆向きにも一方通行である：拒否を要求したのに拒否されなかったステップは失敗する。したがってルールが拒否しなくなった日には、拒否を表明している fixture はすべて緑ではなく赤になる。DOM テキストではなく状態を検証できるため、「select が常に最後の選択肢になる」ような**非例外の振る舞いバグ**（人がクリックして気づくクラス）を機械的に検出できる。これは TDD の受け入れ基準（AC）を実行可能にしたものに等しい。
 - **effect スクリプト**: `effects: { <name>: [{outcome, value}, ...] }` で HTTP / Storage の結果を順に差し替え、ループを決定論的・ネットワーク非依存に保つ。スクリプトした結果は provider の結果の代わりに置かれるので、provider の結果と同じように読まれる。`storage.*` / `session.*` / `indexed.*` の effect への `err` は、その effect が provider の err 値を読むのと同じ読み方で（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）、`out=` が宣言する `Text` として `.err` に届く。`Text` は書いたとおり、`Text` の `message` を持つレコードはそのフィールド（`{"message": "blocked"}` は `"blocked"`）、それ以外はその JSON テキスト（`42` は `"42"`）であり、`value` を書かないスクリプトは `"undefined"` になる。`value` の無い provider の err が届けるのがそれだからである。したがってシナリオが、アプリには決して入れられない値を `Text` の slot に入れることはない。それ以外の capability への `err`（`HttpError` や、カスタム capability 自身の `E`）は、スクリプトに書いたとおり `.err` に届く。
 - **後始末**: 実行はレポートを返す前に自身の mount を dispose する。レポートより長生きするものは無い — `timer` reducer のインターバルは止まり、ホストのライフサイクルリスナは外れ、shape は再び mount できる状態に戻る。描画された DOM も一緒に消えるので、`domText` ではなく要素そのものを見たい呼び出し側は自分で mount する。

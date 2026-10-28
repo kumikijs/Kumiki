@@ -166,7 +166,7 @@ app H
     expect(live.got).toEqual({ _tag: "None" });
     expect(live.err).toEqual({
       _tag: "Some",
-      _0: { status: 200, message: "decode failed: uuid at .id", body },
+      _0: { status: 200, message: "decode failed: uuid at .id", body: { _tag: "Some", _0: body } },
     });
   });
 

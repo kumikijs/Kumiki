@@ -1,5 +1,7 @@
 import { assertNever, type Expr, type Pos, type TestDef, type TileExpr } from "../ast.ts";
+import { RUN_REDUCER } from "../builtin-calls.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
+import { forAllGenerator, noGeneratorMessage } from "../for-all-generator.ts";
 import {
   bareNameAt,
   eventParts,
@@ -22,6 +24,7 @@ import { checkAgainst, effectInput } from "./against.ts";
 import {
   bindLocal,
   type Ctx,
+  isBuiltinCall,
   type KumikiError,
   type SymbolTable,
   wildcardText,
@@ -31,7 +34,7 @@ import { checkExpr } from "./expr.ts";
 import { walkExpr } from "./expr-walk.ts";
 import { checkRouteSeed, isTestSlot } from "./slot.ts";
 import { checkTileExpr } from "./tile.ts";
-import { resolveType } from "./types.ts";
+import { reachesBrokenDefinition, resolveType } from "./types.ts";
 
 function checkWildcardsInKeys(expect: Expr, errors: KumikiError[]): void {
   const reported = new Set<Expr>();
@@ -94,7 +97,23 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     return;
   }
   if (t.testKind === "property-test") {
-    for (const f of t.forAll ?? []) resolveType(f.type, sym, errors);
+    for (const f of t.forAll ?? []) {
+      const before = errors.length;
+      resolveType(f.type, sym, errors);
+      // An error in the type, or in a definition it reaches, is reported by its own code alone:
+      // a name that resolves to nothing (E0117), an arity (E0210), a refinement (E0803, E0804),
+      // an alias that resolves to itself (E0009).
+      if (errors.length > before || reachesBrokenDefinition(f.type, sym)) continue;
+      const g = forAllGenerator(f.type, sym);
+      if ("refused" in g) {
+        errors.push({
+          code: "E0715",
+          kind: "for-all-no-generator",
+          message: noGeneratorMessage(f.name, g.refused),
+          pos: f.pos,
+        });
+      }
+    }
     const checkRunReducer = (args: Expr[], pos: Pos): void => {
       if (args.length !== 1) {
         errors.push({
@@ -125,9 +144,11 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
         });
       }
     };
+    // With a `fn run-reducer` declared, neither spelling is the built-in (Language §1.8.5).
+    if (!isBuiltinCall(RUN_REDUCER, sym)) return;
     walkExpr(t.invariant, (n) => {
-      if (n.kind === "Call" && n.callee === "run-reducer") checkRunReducer(n.args, n.pos);
-      if (n.kind === "MethodCall" && n.method === "run-reducer") checkRunReducer(n.args, n.pos);
+      if (n.kind === "Call" && n.callee === RUN_REDUCER) checkRunReducer(n.args, n.pos);
+      if (n.kind === "MethodCall" && n.method === RUN_REDUCER) checkRunReducer(n.args, n.pos);
     });
     return;
   }
@@ -183,6 +204,7 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   });
 }
@@ -199,6 +221,7 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         kind: "test",
         localBinds: new Set(),
         localTypes: new Map(),
+        localBinders: new Map(),
         routeBind: "no-payload",
         wildcardsReportedElsewhere: true,
       });
@@ -231,6 +254,7 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     kind: "test",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   for (const f of t.forAll ?? []) bindLocal(base, f.name, f.type);
@@ -358,19 +382,19 @@ function requireRecord(
 
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   for (const f of recordFieldsOf(rec)) {
-    if (!isTestSlot(f.name, sym)) {
+    const known = isTestSlot(f.name, sym);
+    if (!known) {
       errors.push({
         code: "E0103",
         kind: "undef-slot",
         message: `Reference to undefined slot "${f.name}"`,
         pos: f.pos,
       });
-    } else if (!sym.slots.has(f.name)) {
-      checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
     const slot = sym.slots.get(f.name);
     if (slot) checkAgainst(f.value, slot.type, sym, errors, ctx);
+    else if (known) checkRouteSeed(f.value, sym, errors, ctx);
   }
 }
 

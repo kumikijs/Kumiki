@@ -27,7 +27,7 @@ let id = emit fetchQuote()
 
 Two emits of one effect yield two different ids, and cancelling the request one of them starts leaves the other's as it is; the id of an emit the policy drops names the request that absorbed it. The exception is `policy=latest` / `policy=latest-per-key(...)`, which run one request per key: every emit under a key yields that key's id, which names the request currently running under it ([HTTP §6.4](./http.md#_6-4-cancellation)).
 
-The only operations defined on `EffectId` are equality (`==`, `!=`) and storage in a slot of type `EffectId`. Arithmetic, ordering, and `text(...)` rendering are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse)).
+The only operations defined on `EffectId` are equality (`==`, `!=`), storage in a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering, and rendering as text are rejected at compile time ([E0204](./errors.md#e0204-effect-id-misuse), which lists where): the content of every value builtin (`text(h)`, `heading(h)`, …), `button(text=h)`, `fmt(…)` with `h` among its arguments, and `.show`. `show` is the member every value has ([§2.2.7](#_2-2-7-int-float)), and on an `EffectId` it is E0204 in each spelling: `h.show`, `h.show()` and `T.show(h)` alike. An `EffectId` has no other member. To show whether a handle is held, render what the comparison answers: `text(if h == EffectId.none then "idle" else "loading")`.
 
 `EffectId.none` is the sentinel value (empty handle). It is the safe initial value for a slot of type `EffectId` — passing it to `emit cancel(...)` is a guaranteed no-op rather than a runtime error. After a slot is overwritten with a real `EffectId`, the corresponding effect can be cancelled by passing the slot to `cap=http.cancel` (see [HTTP §6.4](./http.md#_6-4-cancellation)).
 
@@ -46,8 +46,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 
 | Type | Definition |
 |---|---|
-| `HttpStatus` | `nominal Int where between(0, 599)` — a response's status, or `0` for a request that got no response at all (an abort, a cancellation, a timeout, a network failure: [HTTP §6.4.1](./http.md#_6-4-1-behavior)). No predicate says "`0` or `100`–`599`", so the range is the tightest one the refinement layer can state |
-| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` |
+| `HttpStatus` | `nominal Int where between(0, 599)` — a response's status, or `0` for a request that got no response at all (an abort, a cancellation, a timeout, a network failure, a request body that cannot be sent: [HTTP §6.4.1](./http.md#_6-4-1-behavior)). No predicate says "`0` or `100`–`599`", so the range is the tightest one the refinement layer can state |
+| `HttpError` | `{status: HttpStatus, message: Text, body: Option(Text)}` — `body` is `Some` of the body text of the response that arrived (`Some("")` for an empty one), and `None` when no response arrived or its body could not be read ([HTTP §6.4.1](./http.md#_6-4-1-behavior)) |
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
@@ -55,12 +55,27 @@ The only operations defined on `EffectId` are equality (`==`, `!=`) and storage 
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text, content: Bytes}` |
-| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error`, of `route.error(<pattern>)` (which adds `pattern`), and of an `error-boundary` tile's `in=` |
+| `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)) |
+| `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
+| `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the `pattern` the reducer names |
 
 ---
 
 ## 2.2 Collection Methods
+
+**An argument has its parameter's type.** In the signatures of §2.2.1–§2.2.3, `K` and `V` are a `Map(K, V)`'s key and value types and `T` is a `Set(T)`'s or a `List(T)`'s element type. A parameter of one of those types takes a value of it, and the `other` of `merge` / `union` / `intersect` / `diff` / `concat` is another container of the receiver's type:
+
+| Receiver | Parameter | Members |
+|---|---|---|
+| `Map(K, V)` | the key, `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
+| | the value, `V` | `insert`, and the expression of `update`, which answers the entry's new value; a `fn` passed there by name answers its declared return type |
+| | `other`, a `Map(K, V)` | `merge` |
+| `Set(T)` | the element, `T` | `has` / `add` / `remove` / `toggle` |
+| | `other`, a `Set(T)` | `union` / `intersect` / `diff` |
+| `List(T)` | the element, `T` | `push` / `prepend` / `contains` |
+| | `other`, a `List(T)` | `concat` |
+
+An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the index of `List.get`, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of a `fold` from `{}`, a `fn` result with no `->`, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
 
 ### 2.2.1 Map(K, V)
 
@@ -121,15 +136,17 @@ filter(pred)                : Set(T)
 to-list                     : List(T)
 ```
 
-**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))` or a value of a `Map(K, Set(T))`, the argument of `List.contains` / `push` / `prepend` or the value of `Map.insert` / `update` on such a container, and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
+**A Set literal is a Set.** A Set is written `{}` when empty, or as a list literal wherever a `Set` is declared: `slot s : Set(Int) = [5, 5]` is the Set of one member `5`. It is the same value `{}.add(5).add(5)` builds, so `s.has(5)` is `true`, `s.size` is `1`, and `s.add(5)` still has one member. "Declared" means any position the checker reads against a type — for example a slot, a record field, a `fn` parameter or return value, a reducer write, a `let … in` body, an element of a `List(Set(T))`, a value of a `Map(K, Set(T))` or the index of a `Map(Set(T), V)`, an argument whose parameter is a `Set` type ([§2.2](#_2-2-collection-methods)) — the element of `List.push` / `contains` on a `List(Set(T))`, a key or value of `Map.insert` on a `Map` of Sets — and a test's slot values, expected effect arguments and mocked results. The argument of `union` / `intersect` / `diff` is another `Set(T)` of the receiver's type, so a `List`, a `Set` of another element type or an `Option(Set(T))` there is [E0201](./errors.md#e0201-type-mismatch).
 
-Where the checker cannot decide the receiver's type, neither rule applies: the accumulator `$1` of `fold` — `nums.fold({}, $1.union([2]))` — has no type, so the argument is neither checked nor built as a Set, and stays an array. A fragment over a `List(Set(T))` is not such a place: there `$1` is the element, typed `Set(T)` ([§2.2.3](#_2-2-3-list-t)), so `groups.map($1.union([2]).to-list)` builds the argument as a Set and reads its keys back as `T`. That is a gap in what the checker resolves, not a rule a program may rely on. A member is keyed the way `add` keys it, so a literal of records or variants holds exactly what the `add` chain of the same members holds, keyed as the paragraphs below say.
+Where the checker cannot decide the receiver's type, neither rule applies: the accumulator `$1` of a `fold` whose init is `{}` — `nums.fold({}, $1.union([2]))`, where `{}` is both the empty Map and the empty Set — has no type, so the argument is neither checked nor built as a Set, and stays an array. An init of a decided type gives the accumulator that type ([§2.2.3](#_2-2-3-list-t)): from a `Set(Int)` slot `seen`, `nums.fold(seen, $1.union([2]))` builds the argument as a Set. A fragment over a `List(Set(T))` is not such a place: there `$1` is the element, typed `Set(T)` ([§2.2.3](#_2-2-3-list-t)), so `groups.map($1.union([2]).to-list)` builds the argument as a Set and reads its keys back as `T`. That is a gap in what the checker resolves, not a rule a program may rely on. A member is keyed the way `add` keys it, so a literal of records or variants holds exactly what the `add` chain of the same members holds, keyed as the paragraphs below say.
 
-**Keys read back as their declared type.** In the implementation a Set's elements and a Map's keys are stored as JavaScript object keys, which are strings, but the members that hand keys back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, and the `$1` a `Map(K, V).filter` predicate or `map` expression is given for each entry — answer the values the type says: a number when the key type is `Int` / `Float` / `Time` (or a `nominal` / `where` over one), a boolean for `Bool`, and the string itself for `Text`. So `tags.add(7).to-list` is `[7]`, a later `contains(7)`, `sort` or arithmetic agrees with the list's type, and `m.filter($1 == 3)` on a `Map(Int, V)` keeps the entry at `3`. A record, a variant, a tuple or an `Option` key is stored as its JSON, with each record's fields in sorted order, and reads back as the value it was written from. A key written in a Map literal (`{Some(1): "o"}`) is stored the same way. A `Map`'s `filter` hands its predicate each entry as one `(key, value)` pair, so `$1` is the whole key and `$2` the value whatever shape the key has: on `{(1, 2): 10, (3, 4): 0}`, `filter($2 > 0)` keeps `(1, 2)`. A stored key that is not the JSON a structured key type reads back from — a record key persisted before keys were encoded, a decoded `Map(Color, Int)` whose keys are bare variant names — is a panic when a reader reaches it. Two exceptions to reading back exactly: a non-finite `Float` inside a structured key (`NaN`, `Infinity`, `-Infinity`) is JSON `null`, so those share one key and read back as `null`, and a `Bytes` inside one reads back as a plain object; a `Float` key on its own keeps `NaN` and the infinities apart.
+**Keys read back as their declared type.** In the implementation a Set's elements and a Map's keys are stored as JavaScript object keys, which are strings, but the members that hand keys back — `Set(T).to-list`, `Map(K, V).keys`, `Map(K, V).entries`, the `$1` a `Set(T).filter` predicate is given for each element, and the `$1` a `Map(K, V).filter` predicate or `map` expression is given for each entry — answer the values the type says: a number when the key type is `Int` / `Float` / `Time` (or a `nominal` / `where` over one), a boolean for `Bool`, and the string itself for `Text`. So `tags.add(7).to-list` is `[7]`, a later `contains(7)`, `sort` or arithmetic agrees with the list's type, and `m.filter($1 == 3)` on a `Map(Int, V)` keeps the entry at `3`. A record, a variant, a tuple or an `Option` key is stored as its JSON, with each record's fields in sorted order, and reads back as the value it was written from. A key written in a Map literal (`{Some(1): "o"}`) is stored the same way. A `Map`'s `filter` hands its predicate each entry as one `(key, value)` pair, so `$1` is the whole key and `$2` the value whatever shape the key has: on `{(1, 2): 10, (3, 4): 0}`, `filter($2 > 0)` keeps `(1, 2)`. A stored key that is not the JSON a structured key type reads back from — a record key persisted before keys were encoded, a decoded `Map(Color, Int)` whose keys are bare variant names — is a panic when a reader reaches it. Two exceptions to reading back exactly: a non-finite `Float` inside a structured key (`NaN`, `Infinity`, `-Infinity`) is JSON `null`, so those share one key and read back as `null`, and a `Bytes` inside one reads back as a plain object; a `Float` key on its own keeps `NaN` and the infinities apart.
 
 **One key per value.** Every member that writes, finds or removes an entry — `add` / `remove` / `toggle` / `has`, `get` / `get-or` / `insert` / `remove` / `update`, the index read `m[k]` and the index write `m[k] := v` — stores and looks up a key the same way, so two keys are one entry exactly when they are equal by `==` ([language §1.9.4](./language.md#_1-9-4-operator-types)). `picked.add(Red).has(Blue)` is `false`; `votes[Red] := 1` and `votes.insert(Green, 1)` write two entries; `m.remove(1)` on a `Map(Int, V)` removes the entry at `1`.
 
-What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of `fold`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
+What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`, the accumulator of `fold`, typed as its init), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of a `fold` from `{}`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
+
+**A key spelled like an `Object.prototype` member is an ordinary key.** Such a key — for example `constructor`, `toString`, `valueOf`, `hasOwnProperty` or `__proto__` — is held only once it is written, as any other key is: on an empty `Map(Text, Int)`, `has("constructor")` is `false`, `get("constructor")` is `None` and `get-or("constructor", 0)` is `0`, and `toggle("toString")` on an empty `Set(Text)` adds it. Once written, such an entry reads back through every member, and `remove` of another key, `intersect`, `diff`, `filter` and `map` keep it as they keep any other.
 
 ### 2.2.3 List(T)
 
@@ -145,7 +162,7 @@ prepend(x)                  : List(T)
 concat(other)               : List(T)
 slice(start, end)           : List(T)
 reverse                     : List(T)
-sort                        : List(T)          ; T is Ord
+sort                        : List(T)          ; T is Ord; ascending, as < orders it
 sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
 unique                      : List(T)
 map(expr)                   : List(T')
@@ -172,19 +189,23 @@ fn empty() -> Bool = todos.is-empty           # same as above
 fn norm() -> List(Todo) = todos.reverse       # same as above
 ```
 
-> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
+> **Dispatch rule.** `recv.m` is dispatched by the **inferred type** of `recv`, not by name: if `recv` is a record with a field `m`, it reads the field; if `recv` is a stdlib type with method `m`, it uses the shortcut. So a record field literally named like a method (`node.head` on `{head, …}`) is read as the field — not shadowed. When the receiver type is **known** and `m` is neither a field nor a member, it is a compile error ([errors E0108](./errors.md#e0108-undef-member)). A member is a name listed for **that** receiver in §2.2.1–§2.2.10 (and `show`, which every value has — on an `EffectId` it is [E0204](./errors.md#e0204-effect-id-misuse), not E0108, §2.2.7) — a name listed for another receiver is not one: a `List` has `length`, not `size`, and a `Result` has no `filter` even though a `Map` has one. A `Duration` is a `nominal Int`, so it has the `Int` members and `to-ms`. When the receiver type can't be inferred (e.g. an untyped reducer payload), the name-based dispatch is used unchanged.
 
 **The lambda arguments of `map` / `filter` / `find` / `sort-by`** are decided by the receiver's **type**, not by the value at run time:
 - An element that is a `Tuple(A, B)` — the `[k, v]` pair `.entries` produces — is taken apart: `$1` is its first half, `$2` its second. Example: `m.entries.sort-by($2.createdAt).map($1)` with `$1=key`, `$2=value`. An `Option` / `Result` holding a `Tuple(A, B)` is taken apart the same way.
 - A `Map(K, V).filter` predicate and a `Map(K, V).map` expression are handed each entry: `$1=key`, `$2=value` ([§2.2.1](#_2-2-1-map-k-v)).
 - Any other element of a `List`, and the value of an `Option` (`map` / `filter`) or of a `Result` (`map`), is `$1` **whole** — a `List` element with two items included: `[[1, 2], [3, 4, 5]].map($1.length)` is `[2, 3]`, and `Some([1, 2]).filter($1.length > 1)` is `Some([1, 2])`. Such a fragment binds no `$2`: writing one is [E0103](./errors.md#e0103-undef-ref-undef-slot) (`"$2" is not bound here — …`), rather than the index or a second copy of `$1`. That holds anywhere inside the fragment, a `$2` in another method's argument included: `nums.map($1.min($2))` is E0103 too, since only a fragment binds positionals and that argument reads the fragment's.
-- Everywhere else the lowering falls back to reading the value: a 2-element array is taken apart into `$1` / `$2`; anything else is `$1`, with `$2` the index (`map` / `find`) or `$1` again (`filter` / `sort-by`). That is where the checker cannot decide the element type (a type parameter, an untyped payload — `nums.fold([], $1.push([$2, $2])).map(…)`), and where the receiver's type is known but this section gives the method no binding on it: a `Set`, whose `filter` is handed each element as an `[element, true]` entry. A method the receiver does not have at all — `Map.find` / `sort-by`, `Option.find` / `sort-by`, `Result.filter` / `find` / `sort-by`, any of them on a receiver that is not a collection — is [E0108](./errors.md#e0108-undef-member) instead, by the dispatch rule above. A `fn` named as the fragment there takes a second parameter only over a receiver the checker cannot decide; over a known one it is [E0213](./errors.md#e0213-call-arity-mismatch). These are gaps, not rules a program may rely on, and they close as the types become decidable and the members get bindings of their own.
+- Everywhere else the lowering falls back to reading the value: a 2-element array is taken apart into `$1` / `$2`; anything else is `$1`, with `$2` the index (`map` / `find`) or `$1` again (`filter` / `sort-by`). That is where the checker cannot decide the element type (a type parameter, an untyped payload — `nums.fold([], $1.push([$2, $2])).map(…)`), and where the receiver's type is known but this section gives the method no binding on it: a `Set`, whose `filter` is handed each element as an `[element, true]` entry, the element read back as its type ([§2.2.2](#_2-2-2-set-t)). A method the receiver does not have at all — `Map.find` / `sort-by`, `Option.find` / `sort-by`, `Result.filter` / `find` / `sort-by`, any of them on a receiver that is not a collection — is [E0108](./errors.md#e0108-undef-member) instead, by the dispatch rule above. A `fn` named as the fragment there takes a second parameter only over a receiver the checker cannot decide; over a known one it is [E0213](./errors.md#e0213-call-arity-mismatch). These are gaps, not rules a program may rely on, and they close as the types become decidable and the members get bindings of their own.
+
+**The lambda arguments of `fold(init, expr)`** are the accumulator, `$1`, and the element, `$2`, which is handed over whole — a `Tuple(A, B)` element is not taken apart. `$1` has the init's type and `$2` the element's ([Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions)): in `nums.fold("", $1 + $2.show)` the accumulator is a `Text`, and `nums.fold(0, f)` checks `f`'s first parameter against `Int`. An init whose type the checker cannot decide — `{}`, the empty Map and the empty Set alike — leaves `$1` with no type. A fold into a Set therefore starts from `{}` or a typed Set: `[]` is a `List`, so `xs.fold([], $1.add($2))` is [E0108](./errors.md#e0108-undef-member), and a `fn` there whose accumulator parameter is a `Set(Int)` is [E0201](./errors.md#e0201-type-mismatch). The fragment's result is not checked against the accumulator's type, so `$1` has the init's type on the first step only: `xs.fold(0, $1.show)` passes, and hands the second step a `Text`.
 
 **`sort-by(expr)` orders by the key the way `<` orders two values** ([language §1.9.4](./language.md#_1-9-4-operator-types)): a number or a `Time` numerically, a `Text` as `<` compares two `Text`s. Elements whose keys are equal keep the order they had. A key with no order — a record, a variant, a `Bool`, an `Option`, a container — is [E0201](./errors.md#e0201-type-mismatch), as `a < b` on the same two values would be. The key may also be a `fn` passed by name (`xs.sort-by(keyOf)`); its declared return type is the key's type.
 
 - **`Text` order is UTF-16 code-unit order**, not a locale's collation: `"Z" < "a"`, `"B" < "a"`, and kana and kanji sort by code point rather than in dictionary (reading) order.
 - **A key is ordered as the value it is at runtime.** A field declared numeric or `Time` whose value arrives as `Text` — for example from an HTTP JSON body, which is not converted to the declared types — is ordered as `Text`: `"10"` before `"9"`.
-- **A key with no value to order — absent, or `NaN` — sorts after every other key**, keeping its order. Only a key the checker could not type can be one; compared as "equal" to every key, a single one would otherwise stop the rest from sorting.
+- **A key with no value to order — absent, or `NaN` — sorts after every other key**, keeping its order. A numeric key is `NaN` wherever arithmetic makes it one (`0.0 / 0.0`, `(-1.0).sqrt`, `(-1.0).sqrt.floor`), and a key is absent where its value arrived without it (a field an HTTP JSON body omits or sends as `null`) or where the checker could not type it; compared as "equal" to every key, a single one would otherwise stop the rest from sorting.
+
+**`sort` orders the elements themselves the same way when they are all numbers or all `Text`**, judged by each element's runtime type with the absent ones left out: a `List(Int)`, `List(Float)` or `List(Time)` numerically, and a `List(Text)` in UTF-16 code-unit order, so `[3, 1, 2, 10].sort` is `[1, 2, 3, 10]` and `["9", "10"].sort` is `["10", "9"]`. An absent element sorts after every other, keeping its order, as an absent key does in `sort-by`. Non-finite `Float` values — what the functions of [§2.2.7](#_2-2-7-int-float) give outside their domain, and what `/` gives for a zero divisor ([language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `-Infinity` sorts before every finite value and `Infinity` after, so `[10.0, 9.0, 1.5, 1.0 / 0.0].sort` is `[1.5, 9.0, 10.0, Infinity]`. `NaN`, which `<` orders against nothing, sorts after every other element, `Infinity` included, as a `NaN` key does in `sort-by`: `[(-1.0).sqrt, 2.0, 1.0].sort` is `[1.0, 2.0, NaN]`. A list holding both numbers and `Text` — a `List(Float)` some of whose values arrived as `Text`, say — is ordered by each element's text instead, absent elements still last, because `<` between a number and a `Text` is no order: such a list holding `10`, `"9"` and `2` sorts as `10`, `2`, `"9"`, where `sort-by` on the same keys gives `2`, `"9"`, `10`.
 
 ### 2.2.4 Option(T)
 
@@ -235,6 +256,8 @@ parse-int                   : Option(Int)
 parse-float                 : Option(Float)
 ```
 
+`replace(from, to)` replaces every occurrence of `from`, matched as plain text, with `to` as written: `"a-b-c".replace("-", "+")` is `"a+b+c"`, and `"a.b.c".replace(".", "/")` is `"a/b/c"`. `to` has no substitution syntax. A `$` in it is text, whatever follows it, so `"cost: X".replace("X", "$$5")` is `"cost: $$5"` and `"a-b".replace("-", "$&")` is `"a$&b"`, whether `to` is a literal or a value read from a slot. Occurrences are found left to right and do not overlap, so `"aaa".replace("aa", "b")` is `"ba"`; an empty `from` matches at every UTF-16 code-unit position, the end included, so `"abc".replace("", "-")` is `"-a-b-c-"`.
+
 ### 2.2.7 Int / Float
 
 ```
@@ -248,21 +271,23 @@ show, to-float (Int), to-int (Float, truncated)
 
 These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier is a capitalised name, so `math.abs(x)` is a reference to a name called `math` and reports [E0103](./errors.md#e0103-undef-ref-undef-slot).
 
-An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
+An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Non-finite `Float` values — what these functions give outside their domain, and what `/` gives for a zero divisor (`1.0 / 0.0` is `Infinity`; [language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `sort` puts `-Infinity` before every finite value, `Infinity` after, and `NaN` after every other element ([§2.2.3](#_2-2-3-list-t)). Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
-`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`.
+`x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`. On an `EffectId`, an opaque handle whose text is the runtime's to choose, `.show` is [E0204](./errors.md#e0204-effect-id-misuse) ([§2.1.1.1](#_2-1-1-1-effectid)).
 
 ### 2.2.8 Time
 
 ```
-Time.now                    : Time
+Time.now                    : Time            ; the current time — the builtin now (§2.4.2)
 Time.parse(text)            : Option(Time)    ; ISO8601
 plus(duration)              : Time
 minus(duration)             : Time
-diff(other)                 : Duration
+diff(other)                 : Duration        ; the receiver minus other
 format(pattern)             : Text            ; "yyyy-MM-dd HH:mm"
 to-ms                       : Int             ; milliseconds since the Unix epoch
 ```
+
+`a.diff(b)` is `a` minus `b`, the time from `b` to `a`, so `b.plus(a.diff(b))` is `a` whichever of the two comes first. It is positive when `a` is the later instant, negative when it is the earlier one, and zero when both are the same instant. `due.diff(now)` is negative once `due` has passed, and `now.diff(start)` is the time elapsed since `start` ([§2.2.9](#_2-2-9-duration)). The distance between two instants, whichever is the later, is `a.diff(b).to-ms.abs`.
 
 `format` replaces each of these tokens with that field of the instant and copies the rest of the pattern through verbatim, so `"dd/MM/yyyy"` and `"[on] dd"` are both patterns:
 
@@ -294,7 +319,9 @@ YYYY-MM-DD ( [Tt ] HH:MM ( :SS ( .fraction )? )? )? ( Z | z | ±HH:MM )?
 
 Without a zone the text is on the **local** clock, a date-only string included: `"2026-08-14"` is local midnight, not the UTC midnight the platform's own parser gives it. `format` renders local fields, so reading `"2026-08-14"` as UTC would hand back `2026-08-13` west of Greenwich, and a `type="date"` input produces exactly that string (a `type="datetime-local"` one produces `"2026-08-14T21:05"`, also local). With a zone the text is that instant: `"2026-08-14Z"` is UTC midnight and `"2026-08-14T21:05+09:00"` is `12:05` UTC. The year is the one written, so `"0050-01-01 10:00"` is the year 50, not 1950.
 
-A date that is not on the calendar names no instant, so `Time.parse("2026-02-30")`, `Time.parse("2026-13-01")` and `Time.parse("2026-00-10")` are `None`, and so are `"2026-02-30T10:00"` and `"2026-02-30Z"`. The platform's parser would roll such a date over into the next month (`2026-02-30` as March 2nd), so the result would be a different day. Everything outside the form above is `None` too, whatever the platform's parser makes of it: `"2026-2-30"`, `"2026/02/30"`, `"Aug 14 2026"`, `"2026-08-14T24:00"`, an offset without its colon (`"+0900"`), and the extended-year form (`"+002026-08-14"`, any year that is not four digits). The reading is exact, as it is for every base in [§2.4.3](#_2-4-3-type-conversion): text with blanks around it, such as `" 2026-02-28"`, is `None`. Trim the text first when blanks are expected.
+A date that is not on the calendar names no instant, so `Time.parse("2026-02-30")`, `Time.parse("2026-13-01")` and `Time.parse("2026-00-10")` are `None`, and so are `"2026-02-30T10:00"` and `"2026-02-30Z"`. The platform's parser would roll such a date over into the next month (`2026-02-30` as March 2nd), so the result would be a different day. Everything outside the form above is `None` too, whatever the platform's parser makes of it, which differs between engines: `"1"`, `"hello 12"`, `"March 7"`, `"Tue 5"`, `"2026-2-30"`, `"2026/02/30"` and `"Aug 14 2026"` are `None`, and so are the ISO 8601 forms the grammar leaves out: `"2026-08-14T24:00"`, a leap second (`"2016-12-31T23:59:60Z"`), an hour without its minutes (`"2026-08-14T21"`), a comma before the fraction (`"21:05:09,5"`), an offset without its colon (`"+0900"`) or its minutes (`"+09"`), the basic format without separators (`"20260814"`), a date without its day (`"2026-08"`, `"2026"`), week and ordinal dates (`"2026-W33-5"`, `"2026-226"`), and the extended-year form (`"+002026-08-14"`, any year that is not four digits). The reading is exact, as it is for every base in [§2.4.3](#_2-4-3-type-conversion): text with blanks around it, such as `" 2026-02-28"`, is `None`. Trim the text first when blanks are expected.
+
+[`T.parse`](#_2-4-3-type-conversion) on a type whose base is `Time` reads text with this grammar, and so does an `input` bound to a `Time` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)). So does `format`, when the `Time` it is given is held as text: a field that [`Decoder.Json`](./http.md#_6-1-4-the-decoder-type) filled from a JSON string, which it does not convert. `format` ignores blanks around such text and reads the rest as `Time.parse` does. Text that `Time.parse` refuses names no instant there either, so `"1"`, `"2026"` and `"1772877600000"` name no instant, rather than that many milliseconds after the epoch. A `Time` that is a number is the instant it counts. Given a value that names no instant, `format` renders every field as `NaN`, as `.show` renders a `NaN`, and pads `yyyy` to `0NaN`: `"yyyy-MM-dd HH:mm"` gives `0NaN-NaN-NaN NaN:NaN`. Arithmetic and comparison read no text: `plus`, `minus`, `diff`, `to-ms` and the comparison operators expect a `Time` that is a number, and a `Time` held as text gives them no defined result.
 
 ### 2.2.9 Duration
 
@@ -307,7 +334,7 @@ Duration.d(n)               : Duration   ; days is also valid
 to-ms                       : Int
 ```
 
-Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition.
+Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition. A `Duration` is signed: `a.diff(b)` is negative when `a` is the earlier instant ([§2.2.8](#_2-2-8-time)).
 
 Every constructor takes its magnitude, and dropping the parentheses does not make one a value: `Duration.h` is read as a call given no argument, which is the same [E0213](./errors.md#e0213-call-arity-mismatch) as `Duration.h()`. `Bytes.*` below is read the same way. Before that, the bare spelling was a field read that evaluated to nothing at all — and a duration of nothing is a duration of zero, which nothing reported.
 
@@ -384,13 +411,15 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `input` | text input | `bind`, `placeholder`, `type` (text/email/password/...), `disabled` |
 | `textarea` | multi-line input | `bind`, `rows`, `placeholder` |
 | `check` | checkbox | `value`, `onClick`, `onChange`, `label` |
-| `radio` | radio button | `name`, `value`, `selected`, `onClick`, `onChange` |
+| `radio` | radio button | `group`, `value`, `selected`, `onClick`, `onChange`, `label` |
 | `select` | select | `bind`, `options` (List of `{label, value}`), `placeholder`, `onChange` |
-| `slider` | slider | `bind`, `min`, `max`, `step`, `onChange` |
+| `slider` | slider | `bind`, `value`, `min`, `max`, `step`, `onChange` |
 | `switch` | toggle | `value`, `onClick`, `onChange` |
 | `editable` | contenteditable text field (#190) — `<div contenteditable="true">` with plain-text `textContent` write-back on `input` | `bind`, `text` (positional or named), `id` |
 
 `button` `loading` disables the button, marks it `aria-busy`, and puts a spinner in front of its label ([Forms §5.8](./forms.md#_5-8-ui-during-submission)); `disabled` disables it on its own. `variant` becomes the `data-kumiki-variant` attribute — a hook for a `class` or a theme stylesheet to select on. Kumiki ships no appearance for any variant name: what a "ghost" button looks like is a design decision, and inventing one here would make it a language feature.
+
+`check` `label` and `radio` `label` are the text beside the box: a `<span>` after the `<input>`, inside the `<label>` that wraps both, on the client and in server rendering alike, and nothing when the label is empty. `radio` `group` is the `name` attribute of its `<input>`, which is what makes the radios sharing it one set ([Forms §5.5.2](./forms.md#_5-5-2-radio)). `slider` `value` is the one-way value of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements): the slider shows it and follows it when a reducer changes it, and a `bind` beside it is read instead ([W0216](./errors.md#w0216-selection-beside-bind-warning)). Both `group` and `value` may be written as an argument or in the props block.
 
 ### 2.3.5 Forms
 
@@ -400,6 +429,8 @@ A `to` on another origin is left to the browser with or without it: the router c
 | `label` | label | `for` |
 | `fieldset` | field set | `legend` |
 | `error` | validation error display | `field` |
+
+`fieldset` `legend` is the caption of the group: a `<legend>` ahead of its children, on the client and in server rendering alike, and none when the legend is empty.
 
 ### 2.3.6 Lists / Tables
 
@@ -466,9 +497,38 @@ A kind that maps a prop itself keeps it: a `spinner`'s and an `icon`'s `size` pi
 
 Both rendering paths write them: what a mounted element carries, a served page carries. The exception is the class-backed layers (`transition`, the `hover:` / `focus:` / `active:` blocks, `motion`), which are injected CSS and exist only after hydration.
 
+### 2.3.11 Prop Types
+
+Each prop below takes a value of the type the table gives it, and a value that cannot have that type is [E0201](./errors.md#e0201-type-mismatch), reported at the value, whether the prop is written on the builtin's own call as a named argument or in the `{…}` block: a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)). A prop written on a user tile, which is merged onto the node that tile renders ([Language §1.7.3](./language.md#_1-7-3-event-handler-props)), is not checked against the table. No text is read as the value it spells — `"false"` is not a `Bool`, and `"2"` is not a number — and an option is read by its `label` and `value` alone, so a value of another type renders something else rather than failing: `open="false"` is a non-empty text and renders the modal open, `disabled="true"` is not `true` and leaves the button enabled, and `level="2"` is no number and renders an `<h1>`.
+
+| prop | Type | Elements |
+|---|---|---|
+| `disabled`, `readonly`, `required`, `auto-focus` | `Bool` | `button`, `input`, `textarea`, `check`, `radio`, `select`, `slider`, `switch`, `editable` |
+| `placeholder`, `auto-complete` | `Text` | `button`, `input`, `textarea`, `check`, `radio`, `select`, `slider`, `switch`, `editable` |
+| `loading` | `Bool` | `button` |
+| `multiple` | `Bool` | `input` |
+| `value` | `Bool` | `check`, `switch` |
+| `selected` | `Bool` | `radio` |
+| `options` | `List({label: Text, value})` | `select` |
+| `value`, `min`, `max`, `step` | `Float` | `slider` |
+| `auto-complete` | `Text` | `form` |
+| `novalidate` | `Bool` | `form` |
+| `level` | `Float` | `heading` |
+| `external` | `Bool` | `link` |
+| `controls`, `autoplay` | `Bool` | `video` |
+| `ordered` | `Bool` | `list` |
+| `open` | `Bool` | `modal`, `drawer`, `popover`, `details` |
+| `value`, `max` | `Float` | `progress` |
+
+The first two rows type the common props of [Forms §5.3](./forms.md#_5-3-common-props-for-input-elements) on each element the row lists, and the two `form` rows are [Forms §5.2.1](./forms.md#_5-2-1-form-props). `value` on `check` / `switch` and `selected` on `radio` are the selection of a control written without `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)). A `Float` prop takes an `Int` too, as every `Float` position does ([E0201](./errors.md#e0201-type-mismatch)). `List({label: Text, value})` is a `List` of records that each carry a `label`, the `Text` the option shows, and a `value`, what choosing it writes; a record may carry other fields as well, which are not read. So `options=["apple", "pear"]` is refused at each entry, and so is an entry with no `label` or no `value`, or one whose `label` is not a `Text` (`{label: 7, value: "a"}`; a number is shown with `.show`). A value written as an `if`, `match` or `let` is judged branch by branch, and a literal entry by entry, so the report lands on the branch or entry that is wrong.
+
+A prop that neither this table nor another section types is not checked against one: `title`, `text` and `summary` show any value as `show` does, and an attribute such as `rows` or `colspan` takes its value's text.
+
 ---
 
 ## 2.4 Built-in Functions
+
+A program may declare a `fn` named `random`, `fmt`, `trace` or `panic` (below), or `file-url` ([Forms §5.10](./forms.md#_5-10-file-upload)) / `prefers-dark` ([Style §4.6.1](./style.md#_4-6-1-following-os-settings)). Calls of that name then reach the `fn`, checked against its signature and running its body, except a reducer's `panic(message)` statement, which stays the built-in ([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)). `now` is a reserved word and cannot be declared.
 
 ### 2.4.1 ID Generation
 
@@ -488,6 +548,8 @@ The uuid is a version 7 ([RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562
 now                        : Time          ; the current time
 ```
 
+`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and a replay answers it from that entry ([§10.5.3](./runtime.md#_10-5-3-replay)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so on a type declared over `Time` (`type Stamp = nominal Time`) `Stamp.now()` is an [E0116](./errors.md#e0116-undef-call). A bare `Stamp.now` is still a field read that passes `check` and evaluates to nothing, a known gap that E0116 describes.
+
 ### 2.4.3 Type Conversion
 
 ```
@@ -505,7 +567,7 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 |---|---|---|
 | `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty |
 | `Float` | the number it spells: an optional `+` / `-`, decimal digits, an optional `.` and digits, an optional `e` / `E` exponent | is anything else — `.5`, `1.`, `0x10`, `Infinity`, surrounding blanks, empty — or spells a number too large to be finite |
-| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | is not `YYYY-MM-DD` with an optional ISO 8601 time and zone, or names a date off the calendar (`2026-02-30`) — `2026/02/30`, `+002026-08-14`, surrounding blanks, empty |
+| `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | is outside the [`Time.parse`](#_2-2-8-time) grammar, or names a date off the calendar (`2026-02-30`) — `2026/02/30`, `+002026-08-14`, `2026-08-14T24:00`, surrounding blanks, empty |
 | `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
 | `Text` | the text itself | is empty |
 | `Bytes` | its UTF-8 bytes, as `Bytes.from-text` builds them | is empty |
@@ -557,7 +619,7 @@ trace(label, value)        : T            ; records to the episode log with a la
 panic(message)             : never        ; stops the program (inside a reducer only)
 ```
 
-`trace` is **not implemented yet**: a lowered expression has no route to the mount's episode logger, so recording one needs a runtime seam that does not exist. `check` reports [E0802](./errors.md#e0802-unimplemented-function) for a call to it, rather than letting the name become an undefined global at evaluation time. `panic` is implemented.
+`trace` is **not implemented yet**: a lowered expression has no route to the mount's episode logger, so recording one needs a runtime seam that does not exist. `check` reports [E0802](./errors.md#e0802-unimplemented-function) for a call to it in a program that declares no `fn trace`, rather than letting the name become an undefined global at evaluation time. `panic` is implemented.
 
 ---
 
@@ -631,7 +693,7 @@ The compiled bundle auto-mounts to `#root`; a host embedding the bundle can regi
 
 **Overriding a standard capability.** A provider may also be registered for a *standard* capability (`http.*`, `storage.*`, `nav.*`, `notification.show`, `log.write`, …) — every effect bound to a capability, standard or declared, consults `caps.provider(cap)` before its built-in implementation, except `confirm`. This lets a host swap the HTTP transport (axios / ofetch), inject auth headers, plug in a framework router, or replace the toast UI, without changing the Kumiki source. `confirm` always renders the runtime's own dialog ([§2.6.5](#_2-6-5-confirm)): its answer is delivered by dispatching the `onYes` or `onNo` reducer and, under a leave guard, by settling the move the guard holds ([Routing §3.5.2](./routing.md#_3-5-2-leave-guard)), and a provider returns an `EffectResult`, which can do neither. A `notification.show` provider therefore replaces `toast` and nothing else. The provider receives the effect's (already `map-request`-mapped) request; when none is registered the built-in behavior runs unchanged. A provider for a storage / session / indexed capability returns the `Text` those effects declare as its err value, as the built-in handlers do. Any other err value it returns, and anything it throws, is delivered as a `Text` read the same way for both: an `Error` is `Name: message`, a record with a `Text` `message` field is that field, and anything else is its JSON text (or its `String` form when JSON has none, as for `undefined`). A result that is not `{kind, value}` is an err naming what the provider returned.
 
-**What an `.err` reducer receives.** A storage / session / indexed effect fails with the `Text` its `out=Result(T, Text)` declares — the failure's message ([Storage Effects](./http.md#_6-7-storage-effects)). An HTTP effect fails with the `HttpError` record its `out=` declares ([HTTP Common](./http.md#_6-1-http-common)). A custom capability's err value is whatever its provider returns; with no provider registered it is `{message: "Capability <name> has no provider"}`. On an HTTP or custom effect, an invoke that throws — its `map-request` panics, or its provider throws — is delivered as `{message: Text}`, the thrown value's text.
+**What an `.err` reducer receives.** A storage / session / indexed effect fails with the `Text` its `out=Result(T, Text)` declares — the failure's message ([Storage Effects](./http.md#_6-7-storage-effects)). An HTTP effect fails with the `HttpError` record its `out=` declares ([HTTP Common](./http.md#_6-1-http-common)). A custom capability's err value is whatever its provider returns; with no provider registered it is `{message: "Capability <name> has no provider"}`. On an HTTP or custom effect, an invoke that throws — its `map-request` panics, or its provider throws — is delivered as `{message: Text}`, the thrown value's text. A custom effect cancelled while it waits between `retry` attempts is delivered the same shape, `{message: "aborted"}` ([HTTP §6.5](./http.md#_6-5-retry)).
 
 **Unhandled effect errors are surfaced, never silent.** An effect that resolves to `err` is delivered to every matching `.err` reducer. If a program wires **no** `.err` reducer for that effect, the dropped error is reported via `console.error` (`[kumiki] effect "<name>" returned an error with no .err reducer: …`), so the verification tiers (`smoke` / `runScenario`, which capture `console.error`) flag it — consistent with the live-panic model ([Error Handling](./lifecycle.md#_7-2-error-handling)). A failed capability must never look like a no-op: the storage-unavailable case (opaque-origin sandbox, private mode) is exactly this — `storage.read` / `storage.write` return `err`, and an app handling only `.ok` would otherwise silently do nothing. The default contract is therefore **`err` plus a surfaced report**; a program opts into handling (or deliberately ignoring) the error by wiring an `.err` reducer — even an empty one. An in-memory storage fallback is **not** the default behavior (it would paper over this contract); a host that wants one supplies it explicitly via a `storage.*` provider.
 
