@@ -68,7 +68,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | Receiver | Parameter | Members |
 |---|---|---|
 | `Map(K, V)` | the key, `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
-| | the value, `V` | `insert`, and the expression of `update`, which answers the entry's new value; a `fn` passed there by name answers its declared return type |
+| | the value, `V` | `insert`, and the expression of `update`, which answers the entry's new value; a `fn` passed there by name answers what a call to it does — its `->`, or without one its body's type |
 | | `other`, a `Map(K, V)` | `merge` |
 | `Set(T)` | the element, `T` | `has` / `add` / `remove` / `toggle` |
 | | `other`, a `Set(T)` | `union` / `intersect` / `diff` |

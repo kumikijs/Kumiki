@@ -68,7 +68,7 @@ let id = emit fetchQuote()
 | レシーバ | パラメータ | メンバー |
 |---|---|---|
 | `Map(K, V)` | キー `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
-| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式（名前で渡した `fn` は宣言された戻り値型を返す） |
+| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式（名前で渡した `fn` はその呼び出しと同じ型 — `->` の型、`->` が無ければ本体の型 — を返す） |
 | | `other`（`Map(K, V)`） | `merge` |
 | `Set(T)` | 要素 `T` | `has` / `add` / `remove` / `toggle` |
 | | `other`（`Set(T)`） | `union` / `intersect` / `diff` |

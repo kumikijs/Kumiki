@@ -20,7 +20,8 @@ slot post : PostId            = "p"
 slot s    : Set(Text)         = []
 slot b    : Bool              = false
 slot n    : Int               = 0
-fn toText(x: Int) -> Text = x.show`;
+fn toText(x: Int) -> Text = x.show
+fn shown(x: Int) = x.show`;
 
 /** The errors of a reducer that runs `stmt`, each with the source text it is reported at. */
 const write = (stmt: string) =>
@@ -68,6 +69,12 @@ reducer go on=ui.click(Btn) do=
       "Map.update's value, a fn named",
       `m := m.update("k", toText)`,
       "toText)",
+      "Expected Int but got Text",
+    ],
+    [
+      "Map.update's value, a fn with no -> named",
+      `m := m.update("k", shown)`,
+      "shown)",
       "Expected Int but got Text",
     ],
     ["Map.merge", "m := m.merge(mi)", "mi)", "Expected Map(Text, Int) but got Map(Int, Text)"],
