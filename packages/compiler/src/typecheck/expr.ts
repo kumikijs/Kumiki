@@ -715,6 +715,8 @@ function memberArgType(
       return null;
     case "self":
       return recv;
+    case "Int":
+      return prim("Int", t.pos);
     default:
       return t.args[TYPE_ARGUMENT_OF[param]] ?? null;
   }
