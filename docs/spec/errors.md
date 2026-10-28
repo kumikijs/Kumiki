@@ -753,6 +753,10 @@ A type-level application `T(...)` of a user-declared generic type passes a diffe
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
 
+`Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
+
+> `Type "Tuple" expects type arguments but got none`
+
 **Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
 
 ### E0211 `undef-tile-in-selector`
@@ -1292,7 +1296,7 @@ A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set 
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
-Testing-DSL invariants (currently E0712, E0713 and E0714; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
+Testing-DSL invariants (currently E0712 to E0715; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
 
 ### E0712 `episode-mock-invalid`
 
@@ -1351,6 +1355,47 @@ The accepted set is always named, because it is the answer whenever the nearest 
 No name *inside* the unknown key is resolved: a name belonging to a section that does not exist would be a second diagnostic at a position that stops existing once the first is fixed. What still reports there is what is wrong wherever it is written — a wildcard in a `given` is [E0109](#e0109-test-wildcard-misuse) in any section, and survives fixing the section name.
 
 **Fix**: Spell the section the way its kind writes it. The accepted set is in the message, and it is the same table `codegen/emit-test.ts` reads a section by — so a section the checker rejects is one nothing lowers, and an `episode-test` `expect` it does not recognise throws at codegen rather than lowering to an assertion about nothing.
+
+### E0715 `for-all-no-generator`
+
+A `property-test` `for-all` variable's type is one the generator cannot build ([Testing §8.3.2](./testing.md#_8-3-2-generators)). Every trial is run on a value of each `for-all` type, built in full; a type with a part the generator has no value for would be handed to the invariant with a stand-in there: the property would be checked over values the program can never hold, and a write of one would fail every trial with a rejection that blames the stand-in rather than the type.
+
+The type holds, somewhere in it, one of:
+
+- a `File` or an `EffectId`. A `File` comes from the platform and an `EffectId` from `emit`; neither has a value to make up. A `FormData` holds one, through its `FileV` variant.
+- a recursive type with no finite value — one that cannot be built without another of itself inside it, like `Inf` below. A recursive type with a way to end — a variant without the recursive payload, or an `Option` or a collection holding it — is generated, to a bounded depth.
+- a generic that nests a parameter deeper ([Language §1.3.6](./language.md#_1-3-6-invariants)): `type Grow(T) = Stop | Deeper(Grow(List(T)))` hands `T` back as `List(T)`, so `Grow(Int)` holds a `Grow(List(Int))`, which holds a `Grow(List(List(Int)))`, a new type at every step with no one body to step back into. A generic that only swaps or rotates its parameters (`type Alt(A, B) = Nil | Cons(A, Alt(B, A))`) reaches finitely many instantiations, each stepped back into, and one reached again under another argument is a type of its own, entered once. A parameter the body never holds needs no generator: `type Tag(T) = {name: Text}` builds `Tag(File)`.
+- refinements that leave no value. Stacked refinements narrow each other — each bound the tighter of the two, a `one-of` keeping only the values the others pass, an `email`, `url` or `uuid` built at a length the others allow — so a stack is refused when nothing passes all of it: `Int where positive where negative`, `Text where len-gt(5) where len-lt(3)`, `Text where email where url`, `Text where uuid where len-gt(36)` (a uuid is 36 characters, an email or a url at least 5), or a `one-of` every value of which another refinement refuses.
+
+```kumiki invalid
+type Inf = {v: Int, next: Inf}
+
+slot count : Int = 0
+
+reducer bump on=ui.click(B) do=
+    count := count + 1
+
+tile B = button(text="+")
+
+test inf-has-no-value =
+    property-test
+        for-all   = {x: Inf}
+        given     = {slots: {count: x.v}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(bump).slots.count == x.v + 1
+```
+
+Every `Inf` holds another `Inf`, so there is no first one to build: the field `x` is reported, and no trial is run.
+
+> `` No generator for `for-all` "<name>": "<type>" has none ``
+> `` No generator for `for-all` "<name>": "<type>" has no finite value ``
+> `` No generator for `for-all` "<name>": "<generic>" nests a parameter deeper at every step: "<type>" inside "<type>" ``
+> `` No generator for `for-all` "<name>": the refinements of "<type>" leave no value: <why> ``
+
+`<why>` is one of `none is at least <m> and at most <n>`, `none is at least <m> and at most <n> characters long`, `none is both <a shape> and <a shape>`, `<a shape> is at least 5 characters long`, `a uuid is 36 characters long`, and ``no value its `one-of` lists passes the rest``.
+
+It is reported at the `for-all` field. An error in the type, or in a definition it reaches, is reported by its own code instead, and the field is not asked about its generator as well: a name that resolves to nothing ([E0117](#e0117-undef-type)), a type given the wrong number of arguments, a bare `Tuple` among them ([E0210](#e0210-type-arity-mismatch)), a refinement that cannot be checked ([E0803](#e0803-unimplemented-refinement), [E0804](#e0804-refinement-args-invalid)), or a definition that resolves to itself ([E0009](#e0009-type-cycle)).
+
+**Fix**: Generate a type the property can be stated over — a recursive type given a way to end (`next: Option(Inf)`), the part of a type that does not hold the `File`, or refinements some value passes — or write the case as a reducer-test. Codegen asks the same question, so a caller that skips `check` gets this code as a thrown error rather than a descriptor with a hole in it.
 
 ## E08xx — Runtime Hazards
 
