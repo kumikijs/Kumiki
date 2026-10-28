@@ -244,6 +244,20 @@ slot s : Both(Int, Text) = {x: 1, y: "a", z: 1}`;
     expect(e0804(`${O}\nslot s : O(Int, Int()) = {x: 1, y: 1}`)).toEqual([message]);
   });
 
+  it("reports the refinements in the order the body is written", () => {
+    const D = `type Inner(T) = T where len-lt(5)
+type D(T) = {a: T where positive, b: Inner(T where negative), c: T where nonempty}
+slot s : D(Bool) = {a: true, b: true, c: true}`;
+    const over = (pred: string, tests: string) =>
+      `E0804 Refinement "${pred}" tests ${tests} but D(Bool) applies it over Bool, so no value satisfies it`;
+    expect(e0804(D)).toEqual([
+      over("positive", "a number"),
+      over("len-lt", "text"),
+      over("negative", "a number"),
+      over("nonempty", "text"),
+    ]);
+  });
+
   it("reports one refinement reached through two parameters over one base once", () => {
     const O = `type P(T) = T where nonempty\ntype O(A, B) = {x: P(A), y: P(B)}`;
     expect(e0804(`${O}\nslot s : O(Int, Int) = {x: 1, y: 1}`)).toEqual([
