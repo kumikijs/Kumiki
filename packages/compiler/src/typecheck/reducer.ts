@@ -1,9 +1,9 @@
 import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import type { AppDef, Expr, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
-import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
+import { firesUnheardIn, labelWrappedUnreached, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import {
   checkAgainst,
   checkEmitTarget,
@@ -83,6 +83,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
       pos: lifecycleTile.pos,
     });
   }
+  checkRoutePattern(r, sym, errors);
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && !sym.tiles.has(r.on.selector.tile)) {
     errors.push({
       code: "E0211",
@@ -113,18 +114,19 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
-    const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
+    const { ev, selector } = r.on;
+    const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = sym.subscribedKindsIn(r.on.selector.tile);
+      const descendants = sym.subscribedKindsIn(selector.tile);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
+        const reason = uiEventMismatchReason(ev, selector.tile, descendants);
         errors.push({
           code: "W0212",
           kind: "ui-event-tile-mismatch",
           severity: "warning",
           message:
-            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) ` +
-            `but tile "${r.on.selector.tile}" has no descendant that fires "${r.on.ev}" ` +
+            `Reducer "${r.name}" subscribes to ui.${ev}(${selector.tile}) but ${reason} ` +
             `(DOM-allowed: ${[...allowed].join(", ")}; observed in body: ${[...descendants].sort().join(", ")}). ` +
             `The handler is silently dropped.`,
           pos: r.on.pos,
@@ -137,6 +139,64 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+// A label-wrapped control's <input>, and a kind whose renderer never calls the handler, do fire
+// the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
+// unheard under focus or blur, so the two reasons never both apply.
+function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
+  const unheard = firesUnheardIn(ev, kinds);
+  if (unheard.length > 0) {
+    const clauses = unheard.map(
+      (g) =>
+        `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
+    );
+    return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
+  }
+  const unreached = labelWrappedUnreached(ev, kinds);
+  if (unreached.length > 0) {
+    return (
+      `"${ev}" never reaches a listener in tile "${tile}": the runtime listens for "${ev}" on a ` +
+      `${unreached.join(" / ")}'s <label>, and the "${ev}" its <input> fires does not bubble to the <label>`
+    );
+  }
+  return `tile "${tile}" has no descendant that fires "${ev}"`;
+}
+
+function declaredRoutePatterns(
+  app: AppDef,
+  sym: SymbolTable,
+): { renders: string[]; redirects: Set<string> } {
+  const renders: string[] = [];
+  const redirects = new Set<string>();
+  const subRoutes = [...sym.tiles.values()].flatMap((t) => t.subRoutes ?? []);
+  for (const { path, tile } of [...app.routes, ...subRoutes]) {
+    if (tile.startsWith(">>")) redirects.add(path);
+    else if (!renders.includes(path)) renders.push(path);
+  }
+  return { renders, redirects };
+}
+
+// With no `app` there are no routes to compare against, and E0003 is the report.
+function checkRoutePattern(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const target = r.on.kind === "LifecycleEvent" ? r.on.routePattern : undefined;
+  if (!target || !sym.app) return;
+  const { renders, redirects } = declaredRoutePatterns(sym.app, sym);
+  if (renders.includes(target.pattern)) return;
+  const quoted = JSON.stringify(target.pattern);
+  const why = redirects.has(target.pattern)
+    ? `${quoted} is a redirect (->>), which the router follows before any route is shown, so the subscription never fires`
+    : `no route is declared at ${quoted}, so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character`;
+  const declared =
+    renders.length > 0
+      ? `Declared routes: ${renders.map((p) => JSON.stringify(p)).join(", ")}`
+      : "The app declares no routes";
+  errors.push({
+    code: "E0228",
+    kind: "undef-route-pattern",
+    message: `Reducer "${r.name}" subscribes to ${target.event}(${quoted}), but ${why}. ${declared}`,
+    pos: target.pos,
+  });
 }
 
 // A route trigger hands `$route` the route on every firing; a prefetch target on another trigger
