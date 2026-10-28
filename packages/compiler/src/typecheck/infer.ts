@@ -316,11 +316,9 @@ export function runtimeBuilt(name: string, record: TypeExpr, sym: SymbolTable): 
   return sym.types.get(name)?.body === record ? refType(name) : record;
 }
 
-// A bind of either name is the program's own, typed or not, and a `$route` nothing binds has no
-// value to type. A prefetch target fired by its own trigger is handed no route, so its `$route`
-// is typed only when that trigger is a route one too.
+// A `$route` nothing binds has no value to type. A prefetch target fired by its own trigger is
+// handed no route, so its `$route` is typed only when that trigger is a route one too.
 function routeType(name: string, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
-  if (ctx.localBinds.has(name)) return null;
   if (name === "route" || (name === "$route" && ctx.routeBind === "bound")) {
     return runtimeBuilt("Route", ROUTE_TYPE, sym);
   }
