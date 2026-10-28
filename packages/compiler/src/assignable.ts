@@ -548,7 +548,7 @@ function perTable<T>(build: (env: TypeEnv) => T): (env: TypeEnv) => T {
 // `unread` and is only ever joined with a stricter one, which keeps a parameter that is only handed
 // back into the recursion `unread`, as the co-inductive guard answers when bodies unfold.
 const argumentUsesIn = perTable((env): ReadonlyMap<string, readonly ArgumentUse[]> => {
-  const { stop, through } = forwardedIn(env);
+  const { stop, through } = factsOf(env).forwarded;
   const generics = [...env.types.values()].filter((d) => d.params.length > 0);
   const uses = new Map<string, readonly ArgumentUse[]>(
     generics.map((d) => [d.name, d.params.map((): ArgumentUse => "unread")]),
