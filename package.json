@@ -22,7 +22,7 @@
   "devDependencies": {
     "@biomejs/biome": "catalog:",
     "@changesets/cli": "^2.31.0",
-    "tsdown": "^0.22.1",
+    "tsdown": "^0.23.0",
     "tsx": "catalog:",
     "turbo": "^2.9.16",
     "unrun": "^0.3.0"
