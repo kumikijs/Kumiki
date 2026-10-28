@@ -105,6 +105,7 @@ export {
   type EmitSpec,
   type EventHandler,
   type HoldLeave,
+  type HttpError,
   type LocationLike,
   type MountedApp,
   type MountHandle,

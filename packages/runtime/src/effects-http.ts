@@ -1,4 +1,4 @@
-import { abortedHttpError, type EffectResult } from "./core.ts";
+import { abortedHttpError, type EffectResult, type HttpError, NONE, someOf } from "./core.ts";
 import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
@@ -41,7 +41,7 @@ export async function httpFetch(
       encoded = encodeBody(x.body);
     } catch (e) {
       // A body that cannot be sent as written fails the effect, before any request.
-      return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
+      return { kind: "err", value: httpError(0, errorText(e)) };
     }
   }
   const headers: Record<string, string> = {};
@@ -78,27 +78,18 @@ export async function httpFetch(
     else externalSignal.addEventListener("abort", onExternalAbort);
   }
 
+  let res: Response | undefined;
   try {
-    const res = await fetch(url, init);
-    if (res.status === 401 || res.status === 403 || res.status >= 500) {
-      return {
-        kind: "err",
-        value: {
-          status: res.status,
-          message: res.statusText,
-          body: await res.text().catch(() => ""),
-        },
-      };
-    }
+    res = await fetch(url, init);
+    // 401 / 403 / 5xx too: the dispatcher routes them to `app.http`'s handlers by status.
     if (!res.ok) {
-      return {
-        kind: "err",
-        value: {
-          status: res.status,
-          message: res.statusText,
-          body: await res.text().catch(() => ""),
-        },
-      };
+      const body = await res.text().catch(() => undefined);
+      // The dispatcher delivers what this returns, so a cancel or timeout during the read must
+      // not reach `.err` as the status, which would fire `app.http`'s handler for it.
+      if (body === undefined && controller.signal.aborted) {
+        return { kind: "err", value: abortedHttpError() };
+      }
+      return { kind: "err", value: httpError(res.status, res.statusText, body) };
     }
     if (decode === "none") return { kind: "ok", value: null };
     const text = await res.text();
@@ -107,23 +98,26 @@ export async function httpFetch(
     try {
       value = JSON.parse(text);
     } catch (e) {
-      return {
-        kind: "err",
-        value: { status: res.status, message: `decode failed: ${String(e)}`, body: text },
-      };
+      return { kind: "err", value: httpError(res.status, `decode failed: ${String(e)}`, text) };
     }
     const refused = decodeRefusal(decode, value);
-    if (refused)
-      return { kind: "err", value: { status: res.status, message: refused, body: text } };
+    if (refused) return { kind: "err", value: httpError(res.status, refused, text) };
     return { kind: "ok", value };
   } catch (e) {
     const aborted = externallyAborted || isAbortError(e);
     if (aborted) return { kind: "err", value: abortedHttpError() };
-    return { kind: "err", value: { status: 0, message: String(e), body: "" } };
+    // A response that arrived keeps its status, so a 2xx whose body read failed is not retried:
+    // the server already took the request.
+    return { kind: "err", value: httpError(res?.status ?? 0, String(e)) };
   } finally {
     clearTimeout(timer);
     if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
+}
+
+/** An omitted `body` is `None`. */
+export function httpError(status: number, message: string, body?: string): HttpError {
+  return { status, message, body: body === undefined ? NONE : someOf(body) };
 }
 
 type Tagged = { _tag: string; _0?: unknown };

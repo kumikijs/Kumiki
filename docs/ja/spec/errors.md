@@ -529,7 +529,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 `xs.map(double)` は `xs.map(double($1))` であり、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。名指された `fn` はそれらの positional を先頭から、自身が宣言する数だけ受け取るので、1 つ以上、かつメソッドが束縛する数以下を宣言していなければならない — そうでなければ [E0213](#e0213-call-arity-mismatch) である。`fold` の `fn` はちょうど 2 つを宣言する。要素は 2 番目だからであり、1 つの `fn` は何も畳み込まない。`filter` / `map` / `find` / `sort-by` の `fn` が 2 つを宣言できるのは、フラグメントが各値を分解する場合 — Map の filter と map、ペア（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— だけである。チェッカが型を決められるそれ以外のレシーバの上では、2 番目のパラメータは何も受け取らないか、lowering がフォールバックする場合は JS のインデックスか要素そのものを再び受け取るので、これも E0213 である。`fold` の 1 番目を含むそれ以外の引数はすべて値であり、このチェックを受ける。
 
-比べるのは数だけである。`fn` のパラメータの型は要素の型と照合されない — インラインの `f($1)` と同じである：`List(Int)` の上の `xs.map(loud)` は、`fn loud(t: Text)` であっても報告されない。
+数が合えば、名前は自身が表す呼び出しとして、式断片が束縛するスコープの中で検査される：各パラメータは渡される positional と照合され、その型は [言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数) が与えるものである。`fn` の結果は、メソッドが式断片の結果を検査する位置で検査される——`sort-by` のキー、`update` の新しい値。したがって `fn loud(t: Text)` に対して `List(Int)` の上の `xs.map(loud)` は `loud` の位置で [E0201](#e0201-type-mismatch) となり、`xs.map(loud($1))` が `$1` の位置でそうなるのと同じである。`Map(Text, Int)` の上の `m.filter(keep)` は `fn keep(k: Text, v: Int)` を受け付け、`fn keep(k: Int, v: Int)` を報告する。`xs.fold(0, f)` は `f` の第 1 パラメータを `Int` と照合する。チェッカが型を決められない positional は何とも照合されない。
 
 **修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
 
@@ -594,6 +594,8 @@ codegen はこの位置の値を捨てる。そのため `column(text("a"), 42)`
 照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、[stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) が型を与える builtin tile の prop（`modal(open=…)`、`select(options=…)` — builtin 自身の呼び出しに、名前付き引数でも `{…}` ブロックでも書いたもの）、`.get-or` のフォールバック、`Map` / `Set` / `List` のメンバーの引数のうち、パラメータがレシーバのキー・値・要素の型か、レシーバと同じ型の別のコンテナであるもの（`xs.push(x)`、`m.insert(k, v)`、`s.add(x)`、`xs.concat(ys)`。[stdlib §2.2](./stdlib.md#_2-2-コレクションメソッド)）、`app.http` の `base-url` / `headers` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、`List(T).sort-by` のキー（`<` が順序を与える数値・`Text`・`Time` のいずれかでなければならない。fragment で書いても、名前で渡した `fn` でもよく、後者は宣言された戻り値型がキーの型になる。[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
 インデックス `[k]` も、読み取りでも書き込みでも、レシーバがインデックスとして取る型と照合する：`List` では `Int`、`Map(K, V)` ではキー型 `K` である（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`Map(TodoId, Text)` に対する `notes[postId]` は読み取りでも `notes[postId] := v` でも、`Map(TodoId, Todo)` に対する `todos[postId].done := v` も、インデックスの位置で `Expected TodoId but got PostId` を報告する。
+
+宣言型に照らすとき、`if`・`match`・`let … in` で書いた値は、その値になる式で検査され、そこで報告される：各分岐、各 arm、`let` の本体である（[言語 §1.9](./language.md#_1-9-式言語)）。演算子のオペランドは例外で、演算子の式かオペランド全体で報告される。そのため `n := 1 + (let m = t in m)` は `m` ではなく `1 + …` で報告される。
 
 このコードのメッセージのうち 1 つは型についてのものではない。Fetch のモードを名指さない `credentials` のリテラルは、位置の要求する型 — `Text` — をまさに持っており、誤っているのは値だけである：3 つのモードはそのフィールドの値域の制約であり、同じ位置での同じ誤り — その位置が取れない値 — なのでこのコードで報告する。
 
@@ -773,11 +775,19 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
-reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DOM 上で発火し得る要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
+reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` がその reducer に届く要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage。載っている kind にはいずれもそのイベントが届き、空白が規則であるのは下の注記がそう述べる箇所だけである。実装側の source of truth は `packages/compiler/src/ui-lifts.ts` の `UI_LIFTS` で、`packages/compiler/src/codegen/selector.ts` の `propsFor`（ハンドラ生成ゲート）と `typecheck.ts` の W0212 検査の両方がこれを参照する。runtime 側の DOM イベント面は `packages/runtime/src/tiles/input/` 配下の tile モジュール群が持ち、共有のリスナ登録は `_shared.ts`、`tiles-input.ts` はファミリの集約にすぎない。加えて `core.ts` の `applyUiEventHandlers` が普遍的に配線する）:
+`<ev>` が `focus` か `blur` で、body に `check` / `radio` / `switch` がある場合、その control の `<input>` はイベントを発火するので、メッセージは代わりに成り立つ理由を述べる（下の `key` / `focus` / `blur` についての注記を参照）。`<kinds>` は body にある label 包みの kind を ` / ` でつないだもの:
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a <kinds>'s <label>, and the "<ev>" its <input> fires does not bubble to the <label> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+kind の要素が `<ev>` を発火するのに、そのレンダラがそれに対してハンドラを呼ばない場合 — 要素の性質ではなく runtime の方針である — メッセージはレンダラが代わりにすること（`<instead>`）を述べ、そのハンドラを名指す。この欠落は、`click` の `link`（レンダラはナビゲーションのためだけに listen する。下の `link` についての注記を参照）と、`input` の次の kind である。後者の要素はいずれも `input` を発火する：`slider` はレンダラが bind の書き込みのためだけに listen し、`check` / `radio` / `switch` / `select` はレンダラが代わりに `change` を listen する。`click` では、ほかの kind に対する既定の文言もまだ正しくない：どの要素も `click` を発火し、`text` や `box` でそれが reducer に届かないのは、それらのレンダラは `onClick` を呼ばないためである — [#823](https://github.com/kumikijs/Kumiki/issues/823)。レンダラが同じことをする kind は ` / ` で、異なるものの節は `; ` でつなぐ:
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage。載っている kind にはいずれもそのイベントが届き、空白が規則であるのは下の注記がそう述べる箇所だけである。実装側の source of truth は `packages/compiler/src/ui-lifts.ts` の `UI_LIFTS` で、`packages/compiler/src/codegen/selector.ts` の `propsFor`（ハンドラ生成ゲート）、`packages/compiler/src/typecheck/reducer.ts` の W0212 検査、`typecheck/tile-collect.ts` の E0212、`typecheck/tile.ts` の W0213 がいずれもこれを参照する。runtime 側の DOM イベント面は `packages/runtime/src/tiles/input/` 配下の tile モジュール群（共有のリスナ登録は `_shared.ts`、`tiles-input.ts` はファミリの集約にすぎない）と `packages/runtime/src/tiles/text/link.ts` が持ち、加えて `packages/runtime/src/core/ui-events.ts` の `applyUiEventHandlers` が普遍的に配線する）:
 
 | `ui.<ev>` | 許容される root tile |
 |---|---|
@@ -794,11 +804,11 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に `<ev>` を DO
 
 検査は `for` / `when` / `if` / `match` の body も descend する: `if` の then/else 両分岐、`match` の全 arm が観測 root 集合に寄与する。したがって `tile Dyn = for n in xs box(...)` は W0212 を発火（到達可能な root は `box` のみ）、一方 `tile T = if c then input(...) else button(...)` は警告しない（両分岐とも allowed root を寄与）。本体内で呼ばれた tile の `error-boundary` フォールバックも walk する: それはその tile の位置に描画され、subscription は木の他の部分と同様にそこへ配線される。tile 自身のフォールバックは walk しない — それは tile の木を tile の外側から置き換えるためである。tile body 全体が解決不能（循環、未定義名）の場合は観測集合が空になり、警告は抑制される — 偽陽性より「警告しない」を優先する。
 
-**`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替えるか、親 tile に `onClick=` を配線するのが現状の回避策。この予約は `click` だけの話である：`<a href>` は focusable でタブ順にも入るので、`link` は `key` / `focus` / `blur` に載る。link 上の keydown は、ブラウザがそのキーを処理する**前に** `ui.key` の reducer を実行する。Enter ならその後ブラウザが link を活性化し、router はいつもどおり遷移する。reducer はキーを受け取るが、遷移を取り消すことはできない。
+**`link` についての注記**: `<a>` は native に click を発火するが、`link` は `click` の許容リストに意図的に含めていない — runtime は link 上の click イベントをナビゲーション割込みに予約しており、ユーザ定義 `onClick` reducer を呼ばない。`button` に切り替える。親 tile に書いた `onClick=` が届くのは、`click` の行に載る子孫だけである。この予約は `click` だけの話である：`<a href>` は focusable でタブ順にも入るので、`link` は `key` / `focus` / `blur` に載る。link 上の keydown は、ブラウザがそのキーを処理する**前に** `ui.key` の reducer を実行する。Enter ならその後ブラウザが link を活性化し、router はいつもどおり遷移する。reducer はキーを受け取るが、遷移を取り消すことはできない。
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` — は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい（ただしメッセージは「そのイベントを発火する子孫がない」と述べており、正確には「イベントがリスナに届かない」である — [#526](https://github.com/kumikijs/Kumiki/issues/526)）。逆は主張しない：`video`（`controls` 付きで描画された `<video>`）と `details`（返される `<details>` の中で `<summary>` が focus を受ける、`check` と同じ形）にもこれらのイベントは届くと考えられるが、まだ載っていない — [#525](https://github.com/kumikijs/Kumiki/issues/525)。また、行に載っている kind でも個々のインスタンスが発火できないことはある。`disabled` な control は focusable ではなく、それはコンパイル時の表には見えない。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` — は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されない — [#821](https://github.com/kumikijs/Kumiki/issues/821)。逆は主張しない：`video`（`controls` 付きで描画された `<video>`）と `details`（返される `<details>` の中で `<summary>` が focus を受ける、`check` と同じ形）にもこれらのイベントは届くと考えられるが、まだ載っていない — [#525](https://github.com/kumikijs/Kumiki/issues/525)。また、行に載っている kind でも個々のインスタンスが発火できないことはある。`disabled` な control は focusable ではなく、それはコンパイル時の表には見えない。
 
 ### E0213 `call-arity-mismatch`
 
@@ -982,6 +992,17 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 網羅は、すべての arm のパターンが scrutinee に合っているときに判定する。合わない arm は [E0207](#e0207-pat-arity-mismatch)・[E0208](#e0208-pat-type-mismatch)・[E0209](#e0209-pat-unknown-variant) であり、それだけが報告される。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el`、`fold`・`map`・`zip` の結果、`map-request` の `$1`）、ここでは何も報告せず、どの arm にも一致しない値は実行時に panic になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。そうした要素を 1 つ含む tuple も、ほかの要素では判定され、型のその位置は `?` と書かれる。`match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` は `Tuple(?, Color)` について `(_, Blue)` を報告する。チェッカーが挙げられる値は、ほかの値が決められない要素に左右されるときでも報告する。reducer 本体の `match` 文とタイル位置の `match` は値ではなく、このコードの対象外である。
 
 **修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。
+
+### E0228 `undef-route-pattern`
+
+`route.enter` / `route.leave` / `route.error` の reducer が、アプリが描画するルートではないパターンを指している（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。
+
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but no route is declared at "<pattern>", so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character. Declared routes: "<p>", …`
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but "<pattern>" is a redirect (->>), which the router follows before any route is shown, so the subscription never fires. Declared routes: "<p>", …`
+
+runtime はルートライフサイクルのイベントを、表示中のルートがマッチしたパターン — トップレベルのパターンと、その下でマッチしたサブルートのパターン — ごとに発火し、reducer の引数を書かれたとおりにそれらと比較する。したがって引数は `app.routes` か `sub-routes` マップの中で tile を描画するエントリ（`->>` ではなく `->`）のキーでなければならず、それ以外は何も発火させない購読になる：`route.enter("/*")` が指すのは `"/*"` として宣言されたルートであり、すべてのルートではない。宣言済みの `"/b"` の隣の `route.enter("/bb")` はタイポである。宣言済みの `"/users/:id"` の隣の `route.enter("/users/:userId")` はキーの綴りが違う。`->>` リダイレクトのキーは、ルートが表示される前にルーターが辿るパスである。どれも決して走らない reducer にコンパイルされる — tile 名について [E0211](#e0211-undef-tile-in-selector) が報告するのと同じ、死んだ購読である。位置はパターンの文字列リテラルであり、メッセージは宣言済みのルートを宣言順（`app.routes` が先）に列挙する。`app` の無いプログラムには比較するルートが無い：それは [E0003](#e0003-missing-app) であり、この検査は何も言わない。
+
+**修正**：reducer が対象とするルートのキーを、`app.routes` か `sub-routes` マップに書かれているとおりに書く。すべてのルートで走らせたいなら、トップレベルのパターンをそれぞれ購読するか、処理を行う場所で [`route` slot](./routing.md#_3-2-current-route-state) を読む。
 
 ### E0229 `bind-target-not-slot`
 
