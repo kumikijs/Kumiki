@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -140,6 +140,8 @@ type-app    ::= identifier '(' type-expr (',' type-expr)* ')'
 refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
+
+A `variant` is an identifier, and a primitive's name is one: in `type SortBy = Name | Time | Size`, `Time` is a variant of `SortBy` with no payload, written as a value, a pattern and an operand of `==` the way `Name` is. Read as a type on its own, a primitive's name means the primitive, in that program too: `type Stamp = Time` is an alias of the primitive, and `Time` as a slot's type, a payload (`At(Time)`), a record field's type or a type argument (`Option(Time)`) is the primitive itself. `Time.parse(t)` is the conversion of [stdlib §2.4.3](./stdlib.md#_2-4-3-type-conversion) beside a variant named `Time`. An alternative is a variant wherever the union is written, so `Int | Text` is two variants without a payload, not "an Int or a Text"; to carry a value, give each one a payload: `I(Int) | T(Text)`.
 
 `refinement-type` is recursive, so a type may carry **more than one** `where`, and the predicates **conjoin**: a value is accepted only when every one of them holds.
 
