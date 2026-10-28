@@ -39,8 +39,8 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
 /**
  * The record the runtime keeps in the `route` slot; its field names must be `emptyRoute()`'s keys,
  * or a test's `route` seed is refused or left partly undefined. The runtime's `ParsedRoute` also
- * carries an optional `childPattern` for `route-outlet`; that is runtime bookkeeping, not part of
- * the type.
+ * carries an optional `childPattern`, which picks the tile `route-outlet` renders and the sub-route
+ * a route event fires for; that is runtime bookkeeping, not part of the type.
  */
 export const ROUTE_TYPE: RecordType = record({
   path: prim("Text"),
@@ -61,7 +61,7 @@ const PANIC_INFO_FIELDS = {
 export const PANIC_INFO_TYPE: RecordType = record(PANIC_INFO_FIELDS);
 
 // What a `route.error(<pattern>)` reducer is handed as `$event`: a `PanicInfo`'s fields and the
-// matched `pattern`. It is not a `PanicInfo`, because a record type matches only its own field set.
+// `pattern` the reducer names. It is not a `PanicInfo`, because a record type matches only its own field set.
 export const ROUTE_ERROR_INFO_TYPE: RecordType = record({
   ...PANIC_INFO_FIELDS,
   pattern: prim("Text"),
