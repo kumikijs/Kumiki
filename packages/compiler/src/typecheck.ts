@@ -9,6 +9,7 @@ import {
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
+import { unionsByTag } from "./symbols.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
@@ -97,6 +98,7 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    unionsByTag: unionsByTag(program.defs),
   };
 
   for (const def of program.defs) {

@@ -67,6 +67,10 @@ describe("the built-in type constructors", () => {
     }
   });
 
+  it("reports Tuple written without arguments, which names no type", () => {
+    expect(codesOf(`slot v : Tuple = 1\n${TAIL}`)).toContain("E0210");
+  });
+
   it("reports a constructor that is not one of them", () => {
     expect(codesOf(`slot v : Lst(Int) = 1\n${TAIL}`)).toContain("E0117");
   });
