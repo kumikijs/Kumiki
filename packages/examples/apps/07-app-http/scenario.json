@@ -8,7 +8,14 @@
           "author": "Edsger W. Dijkstra"
         }
       },
-      { "outcome": "err", "value": { "status": 500, "message": "Server Error", "body": "" } }
+      {
+        "outcome": "err",
+        "value": {
+          "status": 500,
+          "message": "Server Error",
+          "body": { "_tag": "Some", "_0": "" }
+        }
+      }
     ]
   },
   "steps": [

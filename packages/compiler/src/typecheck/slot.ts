@@ -106,6 +106,7 @@ export function checkSlot(
     kind: "slot-init",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   checkExpr(slot.init, sym, errors, ctx);

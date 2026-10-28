@@ -19,6 +19,8 @@ export type KumikiError = {
   pos: Pos;
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
+  /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
+  accessor?: "keys" | "to-list";
 };
 
 export type SymbolTable = {
@@ -49,11 +51,18 @@ export type SymbolTable = {
   app?: AppDef;
 };
 
+export type LocalBinder = "input" | "for";
+
 export type Ctx = {
   kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init" | "test";
   localBinds: Set<string>;
   capsAvailable?: Set<string>; // for reducer context
   localTypes: Map<string, TypeExpr>;
+  /**
+   * What bound each local a tile reads: its input, or a `for`. Any other local has no entry, and
+   * outside a tile it stays empty. E0229 reads it to say what a bind target's root is.
+   */
+  localBinders: Map<string, LocalBinder>;
   runReducerScope?: boolean;
   wildcardsReportedElsewhere?: boolean;
   /** `prefetch`: bound only when a link's prefetch fires the reducer, and `{}` on its own trigger. */
@@ -66,15 +75,27 @@ export type Ctx = {
   oneValueFragment?: { method: string; hides: boolean };
 };
 
-export function bindLocal(ctx: Ctx, name: string, type: TypeExpr | null): void {
+export function bindLocal(
+  ctx: Ctx,
+  name: string,
+  type: TypeExpr | null,
+  binder?: LocalBinder,
+): void {
   ctx.localBinds.add(name);
   if (type) ctx.localTypes.set(name, type);
   else ctx.localTypes.delete(name);
+  if (binder) ctx.localBinders.set(name, binder);
+  else ctx.localBinders.delete(name);
 }
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
 export function innerScope(ctx: Ctx): Ctx {
-  return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+  return {
+    ...ctx,
+    localBinds: new Set(ctx.localBinds),
+    localTypes: new Map(ctx.localTypes),
+    localBinders: new Map(ctx.localBinders),
+  };
 }
 
 export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
@@ -83,6 +104,7 @@ export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): C
     localBinds: new Set(),
     routeBind: "no-payload",
     localTypes: new Map(),
+    localBinders: new Map(),
   };
   for (const b of binds) bindLocal(ctx, b.name, b.type);
   return ctx;
