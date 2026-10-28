@@ -322,7 +322,8 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
   it("binds each positional FRAGMENT_ARGUMENTS lists to its type, in both spellings", () => {
     // A parameter no positional has (`Bool`), over receivers whose type arguments differ, and a
     // `fold` from a `Text`, so each mismatch names the type its positional is bound to. A row for a
-    // receiver that lacks the method would show up as E0108 here.
+    // receiver that lacks the method would show up as E0108 here. `probe` answers a `List.map`,
+    // whose answer the checker does not infer, so nothing is checked against what it returns.
     const receivers: Record<string, string> = {
       List: "List(Int)",
       Option: "Option(Int)",
@@ -357,7 +358,7 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
         const lead = ["", method === "fold" ? '"", ' : '"k", '][fragment.index];
         const errors = (f: string) =>
           summariesOf(
-            withApp(`fn probe(${params}) = true
+            withApp(`fn probe(${params}) = [true].map($1)
 fn run(c: ${receivers[receiver]}) = c.${method}(${lead}${f})
 tile App = text("x")`),
           );
