@@ -1,0 +1,42 @@
+{
+  "steps": [
+    {
+      "label": "each field's tile shows its own message beside the other's",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "[email]Invalid email format[age]Must be between 18 and 120[form]Invalid email format[end]"
+        ]
+      }
+    },
+    {
+      "label": "the email lands; its tile falls silent and the age's keeps its message",
+      "do": { "fill": "#email", "value": "ada@example.com" },
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "email": "ada@example.com", "age": 0 } },
+        "domIncludes": [
+          "[email][age]Must be between 18 and 120[form]Must be between 18 and 120[end]"
+        ]
+      }
+    },
+    {
+      "label": "text the age field cannot read is the age's failure, not the email's",
+      "do": { "fill": "#age", "value": "1.5" },
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "email": "ada@example.com", "age": 0 } },
+        "domIncludes": ["[email][age]Must be a whole number[form]Must be a whole number[end]"]
+      }
+    },
+    {
+      "label": "an age in range lands, and no tile has anything left to say",
+      "do": { "fill": "#age", "value": "36" },
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "email": "ada@example.com", "age": 36 } },
+        "domIncludes": ["[email][age][form][end]"]
+      }
+    }
+  ]
+}
