@@ -4,7 +4,6 @@ import type { Scenario } from "@kumikijs/runtime";
 import { createEpisodeLogger, runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { withRoot } from "./helpers/dom.ts";
-import { reducerStep } from "./helpers/episodes.ts";
 import { loadApp } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
 
@@ -23,10 +22,10 @@ describe("an http.cancel of a request that has completed, in compiled code", () 
     );
     expect(report.ok, failureDetail(report)).toBe(true);
     const eps = logger.list();
-    const cancelled = eps.filter((ep) =>
-      ep.steps.some((s) => s.kind === "reducer" && s.name === "cancel"),
+    const cancelEmits = eps.flatMap((ep) =>
+      ep.steps.flatMap((s) => (s.kind === "reducer" && s.name === "cancel" ? [s.emits] : [])),
     );
-    expect(cancelled.map((ep) => reducerStep(ep).emits)).toEqual([["cancelSearch"]]);
+    expect(cancelEmits).toEqual([["cancelSearch"]]);
     expect(eps.flatMap((ep) => ep.steps).filter((s) => s.kind === "effect-cancel")).toEqual([]);
   });
 });
