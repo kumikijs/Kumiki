@@ -136,17 +136,19 @@ export function makeEffectDispatcher(
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const ctl = new AbortController();
     state.inflight.set(id, ctl);
+    let res: EffectResult;
     try {
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      onResult(eff.name, res.kind, res.value, input, token);
+      res = await runWithRetry(eff, input, caps, ctl.signal);
     } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input, token);
-    } finally {
-      if (state.inflight.get(id) === ctl) {
-        state.inflight.delete(id);
-        settle(id);
-      }
+      res = { kind: "err", value: { message: String(e) } };
     }
+    // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
+    // a request that is over. Under `latest` a newer request may hold the id by now.
+    if (state.inflight.get(id) === ctl) {
+      state.inflight.delete(id);
+      settle(id);
+    }
+    onResult(eff.name, res.kind, res.value, input, token);
   };
 
   return {
@@ -156,7 +158,7 @@ export function makeEffectDispatcher(
       if (eff.cap === "http.cancel") {
         const named = String(emit.args[0] ?? "");
         // The episode records a cancel only when it released something; the reducer step's
-        // `emits` already says it was emitted.
+        // `emits` already names the cancel effect.
         let released = false;
         if (named.length > 0) {
           const target = state.absorbedBy.get(named) ?? named;

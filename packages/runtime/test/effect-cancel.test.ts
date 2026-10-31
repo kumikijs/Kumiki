@@ -1,10 +1,18 @@
-import type { AppShape, EffectResult, EffectSpec, EmitSpec } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import type {
+  AppShape,
+  EffectResult,
+  EffectSpec,
+  EmitSpec,
+  EpisodeLogger,
+  EpisodeStep,
+} from "@kumikijs/runtime";
+import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { emitId, withEnvRecord, withEnvReplay } from "../src/core.ts";
 import { httpError } from "../src/effects-http.ts";
 import { _stdlibCore } from "../src/stdlib.ts";
 import { freshRoot } from "./helpers/dom.ts";
+import { mountLogged } from "./helpers/episode-apps.ts";
 import { tick } from "./helpers/time.ts";
 
 type AbortLog = { aborted: boolean; signal?: AbortSignal | undefined };
@@ -194,15 +202,10 @@ describe("dispatcher http.cancel", () => {
     }
   });
 
-  it("records an effect-cancel step in the episode logger", async () => {
+  it("records an effect-cancel step in the episode logger when it aborts a request in flight", async () => {
     const { app } = makeCancelApp();
-    const logger = createEpisodeLogger({ memoryMax: 10 });
-    const root = freshRoot();
+    const { logger, dispatch, dispose } = mountLogged(app);
     try {
-      const { dispose } = mount(app, root, { episodeLogger: logger });
-      const dispatch = (
-        app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
-      )._dispatch;
       dispatch("go", {});
       await tick(5);
       dispatch("kill", {});
@@ -211,43 +214,67 @@ describe("dispatcher http.cancel", () => {
         .list()
         .flatMap((ep) => ep.steps)
         .filter((s) => s.kind === "effect-cancel");
-      expect(cancelSteps.length).toBeGreaterThan(0);
-      expect(cancelSteps[0]).toMatchObject({ kind: "effect-cancel", targetId: "search:_" });
-      dispose();
+      expect(cancelSteps).toEqual([
+        { kind: "effect-cancel", targetId: "search:_", ts: expect.any(Number) },
+      ]);
     } finally {
-      root.remove();
+      dispose();
     }
   });
 });
 
 describe("the effect-cancel step an http.cancel records", () => {
-  // One effect per kind of release the cancel branch can match. `start` emits under the id the
-  // test names, as an `emit` expression stamps it; `kill` cancels the id the test names.
+  // One effect per state a cancel can find its id in. `start` emits under the id the test names,
+  // as an `emit` expression stamps it; `kill` cancels the id the test names; `startAndKill` does
+  // both in one body. `own`'s `.ok` and `.err` reducers cancel the id its result carries.
   type Held = { resolve: (r: EffectResult) => void; signal?: AbortSignal | undefined };
+  const ABORTED = { status: 0, message: "aborted", body: { _tag: "None" } };
   function makeApp(): { app: AppShape; held: Record<string, Held[]> } {
-    const held: Record<string, Held[]> = { req: [], queued: [], deb: [], thr: [], retried: [] };
+    const held: Record<string, Held[]> = {
+      req: [],
+      own: [],
+      queued: [],
+      deb: [],
+      thr: [],
+      once: [],
+      retried: [],
+    };
     const hold =
       (name: string): EffectSpec["invoke"] =>
       (_input, _caps, signal) =>
         new Promise<EffectResult>((resolve) => {
           held[name]?.push({ resolve, signal });
-          signal?.addEventListener("abort", () =>
-            resolve({
-              kind: "err",
-              value: { status: 0, message: "aborted", body: { _tag: "None" } },
-            }),
-          );
+          signal?.addEventListener("abort", () => resolve({ kind: "err", value: ABORTED }));
         });
     const quiet = (effect: string, outcome: "ok" | "err") => ({
       name: `${effect}_${outcome}`,
       event: { kind: "effect" as const, effect, outcome },
       apply: () => ({ slots: {}, emits: [] }),
     });
+    const cancelOwn = (outcome: "ok" | "err") => ({
+      name: `own_${outcome}`,
+      event: { kind: "effect" as const, effect: "own", outcome },
+      apply: (_l: unknown, p: Record<string, unknown>) => ({
+        slots: {},
+        emits: [{ effect: "cancel", args: [p.$1] }],
+      }),
+    });
+    type Ev = { effect: string; id: string; target: string };
+    const click = (name: string, tile: string, emits: (ev: Ev) => EmitSpec[]) => ({
+      name,
+      event: { kind: "ui" as const, ev: "click" },
+      selector: { tile },
+      apply: (_l: unknown, p: Record<string, unknown>) => ({
+        slots: {},
+        emits: emits(p.$event as Ev),
+      }),
+    });
     const app: AppShape = {
       slots: {},
       caps: ["http.get", "http.cancel"],
       effects: {
         req: { name: "req", cap: "http.get", invoke: hold("req") },
+        own: { name: "own", cap: "http.get", invoke: hold("own") },
         queued: {
           name: "queued",
           cap: "http.get",
@@ -266,6 +293,7 @@ describe("the effect-cancel step an http.cancel records", () => {
           policy: { kind: "throttle", ms: 1000 },
           invoke: hold("thr"),
         },
+        once: { name: "once", cap: "http.get", policy: { kind: "once" }, invoke: hold("once") },
         // Every attempt fails with a status that retries, so after the first
         // one the request waits 40ms for the next.
         retried: {
@@ -288,25 +316,15 @@ describe("the effect-cancel step an http.cancel records", () => {
       },
       init: [],
       reducers: [
-        {
-          name: "start",
-          event: { kind: "ui", ev: "click" },
-          selector: { tile: "Start" },
-          apply: (_l, p) => {
-            const ev = p.$event as { effect: string; id: string };
-            return { slots: {}, emits: [{ effect: ev.effect, args: [{}], id: ev.id }] };
-          },
-        },
-        {
-          name: "kill",
-          event: { kind: "ui", ev: "click" },
-          selector: { tile: "Kill" },
-          apply: (_l, p) => ({
-            slots: {},
-            emits: [{ effect: "cancel", args: [(p.$event as { target: string }).target] }],
-          }),
-        },
-        ...["req", "queued", "deb", "thr", "retried"].flatMap((e) => [
+        click("start", "Start", (ev) => [{ effect: ev.effect, args: [{}], id: ev.id }]),
+        click("kill", "Kill", (ev) => [{ effect: "cancel", args: [ev.target] }]),
+        click("startAndKill", "StartAndKill", (ev) => [
+          { effect: ev.effect, args: [{}], id: ev.id },
+          { effect: "cancel", args: [ev.id] },
+        ]),
+        cancelOwn("ok"),
+        cancelOwn("err"),
+        ...["req", "queued", "deb", "thr", "once", "retried"].flatMap((e) => [
           quiet(e, "ok"),
           quiet(e, "err"),
         ]),
@@ -319,63 +337,74 @@ describe("the effect-cancel step an http.cancel records", () => {
     body: (ctx: {
       start: (effect: string, id: string) => void;
       kill: (target: string) => void;
+      startAndKill: (effect: string, id: string) => void;
       held: Record<string, Held[]>;
-      logger: ReturnType<typeof createEpisodeLogger>;
+      logger: EpisodeLogger;
     }) => Promise<void>,
   ): Promise<void> {
     const { app, held } = makeApp();
-    const logger = createEpisodeLogger({ memoryMax: 50 });
-    const root = freshRoot();
+    const { logger, dispatch, dispose } = mountLogged(app, 50);
     try {
-      const { dispose } = mount(app, root, { episodeLogger: logger });
-      const dispatch = (
-        app as unknown as { _dispatch: (n: string, el: Record<string, unknown>) => void }
-      )._dispatch;
       await body({
         start: (effect, id) => dispatch("start", { effect, id }),
         kill: (target) => dispatch("kill", { target }),
+        startAndKill: (effect, id) => dispatch("startAndKill", { effect, id }),
         held,
         logger,
       });
-      dispose();
     } finally {
-      root.remove();
+      dispose();
     }
   }
 
-  // Its reducer step says the cancel was emitted whether or not anything matched, so a test that
-  // finds no `effect-cancel` here has found the episode that would carry it.
-  function killEpisode(logger: ReturnType<typeof createEpisodeLogger>): {
-    emits: string[];
-    cancels: unknown[];
-  } {
+  // An episode is found by its reducer step, which is there whether or not the cancel matched, so
+  // an empty `cancels` is a real absence, not a missed lookup.
+  function episodeOf(
+    logger: EpisodeLogger,
+    reducer: string,
+  ): { emits: string[]; cancels: EpisodeStep[]; ends: EpisodeStep[] } {
     const eps = logger
       .list()
-      .filter((ep) => ep.steps.some((s) => s.kind === "reducer" && s.name === "kill"));
+      .filter((ep) => ep.steps.some((s) => s.kind === "reducer" && s.name === reducer));
     expect(eps).toHaveLength(1);
     const steps = eps[0]?.steps ?? [];
-    const reducer = steps.find((s) => s.kind === "reducer");
+    const step = steps.find((s) => s.kind === "reducer");
     return {
-      emits: reducer?.kind === "reducer" ? reducer.emits : [],
+      emits: step?.kind === "reducer" ? step.emits : [],
       cancels: steps.filter((s) => s.kind === "effect-cancel"),
+      ends: steps.filter((s) => s.kind === "effect-end"),
     };
   }
 
-  const allCancels = (logger: ReturnType<typeof createEpisodeLogger>): unknown[] =>
+  const allCancels = (logger: EpisodeLogger): EpisodeStep[] =>
     logger
       .list()
       .flatMap((ep) => ep.steps)
       .filter((s) => s.kind === "effect-cancel");
 
-  it("a cancel that aborts a request in flight records the id it aborted", async () => {
+  const cancelOf = (targetId: string) => ({
+    kind: "effect-cancel",
+    targetId,
+    ts: expect.any(Number),
+  });
+
+  it.each([
+    "req",
+    "thr",
+  ])("a cancel that aborts a %s request in flight records the id it aborted, and the .err lands on the episode that started it", async (effect) => {
     await withApp(async ({ start, kill, held, logger }) => {
-      start("req", "req#1");
+      start(effect, `${effect}#1`);
       await tick(5);
-      kill("req#1");
+      kill(`${effect}#1`);
       await tick(5);
-      expect(held.req?.[0]?.signal?.aborted).toBe(true);
-      expect(killEpisode(logger).cancels).toEqual([
-        { kind: "effect-cancel", targetId: "req#1", ts: expect.any(Number) },
+      expect(held[effect]?.[0]?.signal?.aborted).toBe(true);
+      expect(episodeOf(logger, "kill")).toEqual({
+        emits: ["cancel"],
+        cancels: [cancelOf(`${effect}#1`)],
+        ends: [],
+      });
+      expect(episodeOf(logger, "start").ends).toEqual([
+        { kind: "effect-end", name: effect, result: "err", value: ABORTED, ts: expect.any(Number) },
       ]);
     });
   });
@@ -387,7 +416,7 @@ describe("the effect-cancel step an http.cancel records", () => {
       kill("req#2");
       await tick(5);
       expect(held.req?.[0]?.signal?.aborted).toBe(false);
-      expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
+      expect(episodeOf(logger, "kill")).toEqual({ emits: ["cancel"], cancels: [], ends: [] });
       expect(allCancels(logger)).toEqual([]);
     });
   });
@@ -398,12 +427,11 @@ describe("the effect-cancel step an http.cancel records", () => {
       await tick(5);
       expect(held.retried).toHaveLength(1);
       kill("retried#1");
-      // Past the wait, so the request has delivered its result.
+      // Long enough for a next attempt, had the abort not ended the wait.
       await tick(80);
+      expect(held.retried).toHaveLength(1);
       expect(held.retried?.[0]?.signal?.aborted).toBe(true);
-      expect(killEpisode(logger).cancels).toEqual([
-        { kind: "effect-cancel", targetId: "retried#1", ts: expect.any(Number) },
-      ]);
+      expect(episodeOf(logger, "kill").cancels).toEqual([cancelOf("retried#1")]);
     });
   });
 
@@ -415,7 +443,24 @@ describe("the effect-cancel step an http.cancel records", () => {
       await tick(5);
       kill("req#1");
       await tick(5);
-      expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
+      expect(episodeOf(logger, "kill")).toEqual({ emits: ["cancel"], cancels: [], ends: [] });
+      expect(allCancels(logger)).toEqual([]);
+    });
+  });
+
+  it.each([
+    ["ok", { kind: "ok", value: "own#1" }],
+    ["err", { kind: "err", value: "own#1" }],
+  ] as [
+    string,
+    EffectResult,
+  ][])("a cancel the request's own .%s reducer emits for its id records no effect-cancel, and aborts nothing", async (_outcome, result) => {
+    await withApp(async ({ start, held, logger }) => {
+      start("own", "own#1");
+      await tick(5);
+      held.own?.[0]?.resolve(result);
+      await tick(5);
+      expect(held.own?.[0]?.signal?.aborted).toBe(false);
       expect(allCancels(logger)).toEqual([]);
     });
   });
@@ -426,7 +471,7 @@ describe("the effect-cancel step an http.cancel records", () => {
       await tick(5);
       kill("");
       await tick(5);
-      expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
+      expect(episodeOf(logger, "kill")).toEqual({ emits: ["cancel"], cancels: [], ends: [] });
     });
   });
 
@@ -439,17 +484,13 @@ describe("the effect-cancel step an http.cancel records", () => {
       kill("queued#2");
       await tick(5);
       expect(held.queued?.[0]?.signal?.aborted).toBe(false);
-      expect(killEpisode(logger).cancels).toEqual([
-        { kind: "effect-cancel", targetId: "queued#2", ts: expect.any(Number) },
-      ]);
-      // The episode that emitted the released entry records its own release,
-      // by effect name, and commits.
+      expect(episodeOf(logger, "kill").cancels).toEqual([cancelOf("queued#2")]);
+      // The episode that emitted the released entry records its own release, by effect name, and
+      // settles.
       const owner = logger
         .list()
         .find((ep) => ep.steps.some((s) => s.kind === "effect-start" && s.name === "queued"));
-      expect(owner?.steps.filter((s) => s.kind === "effect-cancel")).toEqual([
-        { kind: "effect-cancel", targetId: "queued", ts: expect.any(Number) },
-      ]);
+      expect(owner?.steps.filter((s) => s.kind === "effect-cancel")).toEqual([cancelOf("queued")]);
     });
   });
 
@@ -458,8 +499,39 @@ describe("the effect-cancel step an http.cancel records", () => {
       start("deb", "deb#1");
       kill("deb#1");
       await tick(5);
-      expect(killEpisode(logger).cancels).toEqual([
-        { kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) },
+      expect(episodeOf(logger, "kill").cancels).toEqual([cancelOf("deb#1")]);
+    });
+  });
+
+  it.each([
+    "deb",
+    "queued",
+  ])("a %s launch and its cancel from one reducer record both steps on that reducer's episode", async (effect) => {
+    await withApp(async ({ startAndKill, held, logger }) => {
+      startAndKill(effect, `${effect}#1`);
+      await tick(5);
+      expect(held[effect]).toHaveLength(0);
+      const eps = logger.list();
+      expect(eps).toHaveLength(1);
+      expect(eps[0]?.steps.filter((s) => s.kind.startsWith("effect-"))).toEqual([
+        { kind: "effect-start", name: effect, args: {}, ts: expect.any(Number) },
+        cancelOf(effect),
+        cancelOf(`${effect}#1`),
+      ]);
+    });
+  });
+
+  it("a request one reducer launches is already in flight for the cancel that reducer emits", async () => {
+    await withApp(async ({ startAndKill, held, logger }) => {
+      startAndKill("req", "req#1");
+      await tick(5);
+      expect(held.req?.[0]?.signal?.aborted).toBe(true);
+      const eps = logger.list();
+      expect(eps).toHaveLength(1);
+      expect(eps[0]?.steps.filter((s) => s.kind.startsWith("effect-"))).toEqual([
+        { kind: "effect-start", name: "req", args: {}, ts: expect.any(Number) },
+        cancelOf("req#1"),
+        { kind: "effect-end", name: "req", result: "err", value: ABORTED, ts: expect.any(Number) },
       ]);
     });
   });
@@ -471,16 +543,10 @@ describe("the effect-cancel step an http.cancel records", () => {
       // `deb#1` names what replaced it, so this clears `deb#2`'s timer.
       kill("deb#1");
       await tick(5);
-      expect(killEpisode(logger).cancels).toEqual([
-        { kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) },
-      ]);
+      expect(episodeOf(logger, "kill").cancels).toEqual([cancelOf("deb#1")]);
       // The replace released `deb#1`'s claim and the clear released `deb#2`'s, each on its own
       // episode.
-      expect(allCancels(logger)).toEqual([
-        { kind: "effect-cancel", targetId: "deb", ts: expect.any(Number) },
-        { kind: "effect-cancel", targetId: "deb", ts: expect.any(Number) },
-        { kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) },
-      ]);
+      expect(allCancels(logger)).toEqual([cancelOf("deb"), cancelOf("deb"), cancelOf("deb#1")]);
       // Nothing is left pending, so cancelling `deb#2` releases nothing.
       kill("deb#2");
       await tick(5);
@@ -488,37 +554,41 @@ describe("the effect-cancel step an http.cancel records", () => {
         .list()
         .filter((ep) => ep.steps.some((s) => s.kind === "reducer" && s.name === "kill"));
       expect(killEps.map((ep) => ep.steps.filter((s) => s.kind === "effect-cancel"))).toEqual([
-        [{ kind: "effect-cancel", targetId: "deb#1", ts: expect.any(Number) }],
+        [cancelOf("deb#1")],
         [],
       ]);
     });
   });
 
-  it("a cancel of an emit the throttle window dropped aborts the request that opened it, and records the id it named", async () => {
+  it.each([
+    "thr",
+    "once",
+  ])("a cancel of an emit %s dropped aborts the request that absorbed it, and records the id it named", async (effect) => {
     await withApp(async ({ start, kill, held, logger }) => {
-      start("thr", "thr#1");
-      start("thr", "thr#2");
+      start(effect, `${effect}#1`);
+      start(effect, `${effect}#2`);
       await tick(5);
-      expect(held.thr).toHaveLength(1);
-      kill("thr#2");
+      expect(held[effect]).toHaveLength(1);
+      kill(`${effect}#2`);
       await tick(5);
-      expect(held.thr?.[0]?.signal?.aborted).toBe(true);
-      expect(killEpisode(logger).cancels).toEqual([
-        { kind: "effect-cancel", targetId: "thr#2", ts: expect.any(Number) },
-      ]);
+      expect(held[effect]?.[0]?.signal?.aborted).toBe(true);
+      expect(episodeOf(logger, "kill").cancels).toEqual([cancelOf(`${effect}#2`)]);
     });
   });
 
-  it("a cancel of an emit the throttle window dropped, once the request that opened it completed, records no effect-cancel", async () => {
+  it.each([
+    "thr",
+    "once",
+  ])("a cancel of an emit %s dropped, after the request that absorbed it completed, records no effect-cancel", async (effect) => {
     await withApp(async ({ start, kill, held, logger }) => {
-      start("thr", "thr#1");
-      start("thr", "thr#2");
+      start(effect, `${effect}#1`);
+      start(effect, `${effect}#2`);
       await tick(5);
-      held.thr?.[0]?.resolve({ kind: "ok", value: "done" });
+      held[effect]?.[0]?.resolve({ kind: "ok", value: "done" });
       await tick(5);
-      kill("thr#2");
+      kill(`${effect}#2`);
       await tick(5);
-      expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
+      expect(episodeOf(logger, "kill")).toEqual({ emits: ["cancel"], cancels: [], ends: [] });
       expect(allCancels(logger)).toEqual([]);
     });
   });
@@ -531,24 +601,11 @@ describe("the effect-cancel step an http.cancel records", () => {
       await tick(5);
       kill("thr#1");
       await tick(5);
-      expect(killEpisode(logger)).toEqual({ emits: ["cancel"], cancels: [] });
+      expect(episodeOf(logger, "kill")).toEqual({ emits: ["cancel"], cancels: [], ends: [] });
       // The window is the effect's, not a pending launch: it still holds.
       start("thr", "thr#2");
       await tick(5);
       expect(held.thr).toHaveLength(1);
-    });
-  });
-
-  it("a cancel of a throttled request still in flight records its id", async () => {
-    await withApp(async ({ start, kill, held, logger }) => {
-      start("thr", "thr#1");
-      await tick(5);
-      kill("thr#1");
-      await tick(5);
-      expect(held.thr?.[0]?.signal?.aborted).toBe(true);
-      expect(killEpisode(logger).cancels).toEqual([
-        { kind: "effect-cancel", targetId: "thr#1", ts: expect.any(Number) },
-      ]);
     });
   });
 });
