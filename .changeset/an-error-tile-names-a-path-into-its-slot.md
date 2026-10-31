@@ -19,8 +19,8 @@ there was no way to put "Must be between 18 and 120" beside the age field
 while the email also failed.
 
 `field=` now takes a slot or a path into one — record fields, `.get` into an
-`Option` / `Result` payload, and literal-key indices into a `List` or a
-`Map` (`form.email`, `draft.get.title`, `rows[0].email`, `book["b"]`) — and
+`Option` / `Result` payload, and indices into a `List` or a `Map`
+(`form.email`, `draft.get.title`, `rows[0].email`, `book["b"]`) — and
 the tile renders only a failure at or below that path. The slot is judged at
 the path the way a `bind` to it is, so a sibling that fails first no longer
 hides the field's own message: above, `error(field=form.email)` shows
@@ -35,8 +35,7 @@ Anything else in `field=` is **E0230 `error-field-not-path`**: a literal
 (`field="form"`, which suggests the unquoted name), a local such as a `for`
 variable or `$1`, the `route` slot, a `for` or `when` tile, a member like
 `.length`, a step into a `Tuple` or a union, a call, an expression, an index
-into something that is not a `List` or `Map`, or an index whose key is
-computed (`rows[i].email`). So is an `error()` with no `field=`, and a
+into something that is not a `List` or `Map`. So is an `error()` with no `field=`, and a
 `field` written in the `{…}` block, which the tile never read: with
 `.get` on a `None` there, the page panicked. These all passed `check`
 before and rendered nothing. A misspelled field is still E0108.
