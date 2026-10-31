@@ -12,9 +12,10 @@ import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
 import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
-import { getOrResultType, unwrappedType } from "./against.ts";
+import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
+import { fnResultType } from "./fn.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -349,10 +350,10 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return fixed ? prim(fixed, e.pos) : null;
     }
     case "Index": {
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      if (base?.kind === "TypeApp") {
-        if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
-        if (base.name === "Map") return base.args[1] ?? null;
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      if (step.kind === "place") return step.type;
+      if (step.kind === "no-place" && step.base.kind === "TypeRecord" && e.index.kind === "Str") {
+        return recordFieldType(step.base, e.index.value);
       }
       return null;
     }
@@ -455,7 +456,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
       if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
-      return sym.fns.get(e.callee)?.ret ?? null;
+      return fnResultType(e.callee, sym);
     }
     default:
       return null;

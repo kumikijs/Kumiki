@@ -127,7 +127,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | スタイル |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | スタイル |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | コア |
-| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | コア |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer / tile | コア |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | ライフサイクル |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | ライフサイクル |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | ライフサイクル |
