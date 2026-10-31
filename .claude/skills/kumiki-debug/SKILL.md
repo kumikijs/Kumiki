@@ -17,7 +17,7 @@ Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xx
 
 | code | meaning | usual fix |
 |---|---|---|
-| `E0001` | `app.routes` missing `/404` | add `"/404" -> NotFound` |
+| `E0001` | `app.routes` missing `/404` (`missing-404`), its `/404` written as a redirect (`404-is-redirect`), or a `sub-routes` entry at `/404` (`404-in-sub-routes`) | route `/404` to a tile in `app.routes`: `"/404" -> NotFound`; remove a `/404` entry from `sub-routes` — the app's `/404` is the only one |
 | `E0003` | no `app` definition (an empty file counts) | add the `app` entry point; expected while a program is still being assembled with the editing verbs, which do not enforce it |
 | `E0004` | more than one `app` definition — codegen keeps the first and drops the rest | remove or merge the extra; `replace` the app instead of adding a second |
 | `E0005` | a tile expands into itself, directly or through other tiles | break the loop — repetition belongs in `for`, alternatives in `when` / `match` |

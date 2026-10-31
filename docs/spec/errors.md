@@ -59,7 +59,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
-| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
+| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. Only `missing-404` is patched. No patch when the app has no `routes` clause; for `404-is-redirect`, which is repaired by replacing the redirect (an entry added beside it would be a second `/404`, `E0008`); or for `404-in-sub-routes`, which is repaired by removing the entry. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
 | `E0103` | yes | Close-name suggestion against known slot / binding names. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
@@ -114,13 +114,18 @@ The source could not be lexed or parsed. Not produced by the checker: the parser
 
 **Fix**: Correct the syntax at the reported position. Every other code in this document presumes a file that parses.
 
-### E0001 `missing-404`
+### E0001 `missing-404` / `404-is-redirect` / `404-in-sub-routes`
 
-An app that declares `app.routes` must include a route for the `/404` pattern. Unmatched paths fall back here.
+`/404` is the fallback for paths no route matches. It belongs to `app.routes`, and it renders a tile ([Routing §3.1.3](./routing.md#_3-1-3-404-is-reserved)).
 
-> `app.routes must include a "/404" entry`
+- `missing-404`: `app.routes` has no `/404` entry. Reported at the app.
+  > `app.routes must include a "/404" entry`
+- `404-is-redirect`: the `/404` entry of `app.routes` is a redirect (`"/404" ->> "/"`). Reported at the redirect. The map has a `/404` entry, but not the tile the fallback renders, and a second `/404` entry would be [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) — so this is not `missing-404`. A `/404` redirect beside a `/404` tile is that E0008 alone: the tile serves the fallback.
+  > `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches and has to render a tile — write "/404" -> <Tile>`
+- `404-in-sub-routes`: a tile's `sub-routes` map has an entry at `/404`, whether it names a tile or redirects. Reported at the entry, and the entry's only report: a target it names is not checked as well. No sub-route is matched against `/404`, so the entry is never used; a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([Routing §3.6.3](./routing.md#_3-6-3-matching-rules)).
+  > `Tile "<tile>" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"`
 
-**Fix**: Add a route to a 404 tile, such as `route "/404" -> NotFound`. See [Routing](./routing.md) for details.
+**Fix**: Route `/404` to a tile in the app's own `routes`, such as `"/404" -> NotFound`, in place of a redirect there. To send unmatched paths to another page, redirect a wildcard (`"/*" ->> "/"`) and keep the `/404` tile. Remove a `/404` entry from a `sub-routes` map. See [Routing](./routing.md) for details.
 
 ### E0002 `duplicate-timer-name`
 
@@ -522,7 +527,7 @@ The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee i
 
 ### E0125 `redirect-unbound-param`
 
-A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike.
+A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike. An entry written at `/404` is not checked: it is never followed, and [E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes) refuses a redirect there.
 
 > `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
 
