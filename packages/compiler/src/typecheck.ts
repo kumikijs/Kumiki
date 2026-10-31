@@ -20,7 +20,7 @@ import { checkSlot } from "./typecheck/slot.ts";
 import { checkTest } from "./typecheck/test.ts";
 import { checkTile } from "./typecheck/tile.ts";
 import { collectElementIds, collectPrefetchTargets } from "./typecheck/tile-collect.ts";
-import { checkTypeDef } from "./typecheck/types.ts";
+import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
 
 export type { KumikiError } from "./typecheck/context.ts";
@@ -152,7 +152,11 @@ function checkAll(
   const index = buildDefIndex(program);
   const routeChain = routeChainResolver(sym);
   for (const def of program.defs) {
-    if (def.kind === "TypeDef") checkTypeDef(def, sym, errors);
+    if (def.kind === "TypeDef") {
+      const reserved = reservedTypeName(def);
+      if (reserved) errors.push(reserved);
+      checkTypeDef(def, sym, errors);
+    }
     if (def.kind === "SlotDef") checkSlot(def, sym, errors, index, routeChain);
     if (def.kind === "TileDef") checkTile(def, sym, errors);
     if (def.kind === "ReducerDef") checkReducer(def, sym, errors);

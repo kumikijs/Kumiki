@@ -91,7 +91,7 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 ワイルドカードが書けるのは `reducer-test` の `expect` の中だけである（それ以外の場所は **E0109**）。それ以外の照合は**厳密**である。レコードはキー集合全体で比較され、決定的なテストでは予測できない穴をワイルドカードが埋める。**値**としての `<any-id>` は存在する任意の値（例えば新しく生成された id）に一致し、`<slots.X>` は slot `X` の実行後の値に一致する。**map のキー**としての `<any-id>` は、他のどれとも対応しないエントリちょうど一つと対になる。ゼロ個や二つ以上なら失敗である。**Set リテラルの要素**としての `<any-id>` は、それぞれ他のどれとも対応しない要素一つと対になる。`[<any-id>, <any-id>]` はちょうど二つの生成された要素を、`["a", <any-id>]` は `"a"` ともう一つを求める。**map のキー**や **Set リテラルの要素**としての `<slots.X>` は、値としての場合と同じく slot `X` の実行後の値を表す。`{<slots.pick>: 1}` はその値をキーとするエントリを、`["z", <slots.pick>]` は `"z"` とその値を、その値をその場所に書いた場合と同じに求める。リテラルが書く他の要素やキーと同じく、それは他と異なる自分だけの一つを求める。`pick` が `"z"` を保持するとき、`["z", <slots.pick>]` は一つのキーに二つの要素を求めることになり、二つをどの順に書いても失敗する。同じ値を保持する slot を指す二つの `<slots.X>` キーも同様である。各 `<slots.X>` はどの `<any-id>` が対になるより先に自分のキーを取るので、`[<any-id>, <slots.pick>]` は `pick` の値ともう一つを求める。ワイルドカードが代わりになれるのは要素やキーの全体だけである。構造を持つ要素やキーの内側に入れ子になったもの（`[{id: <slots.pick>}]`）は **E0109** になる。要素はその値全体でキー付けされるので、内側のワイルドカードは決して一致しないからである。部分的なレコード照合に頼るのではなく、他の非決定的なフィールドは値としてのワイルドカードで覆うこと（例：`createdAt: <any-id>`）。
 
-### 8.2.3 バッチ規則はここにも適用される
+### 8.2.3 バッチ規則はここにも適用される {#_8-2-3-the-batch-rule-applies-here-too}
 
 reducer テストは*実行中のアプリ*の挙動を表明するものなので、refinement が拒否したバッチはすべての slot を `given` の値のまま残し、effect も発行しない（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。拒否は `expect` ではなく `console.error` に報告される。このティアには `errorIncludes` に相当するものが無いため、`expect` ブロックだけでは「バッチが拒否された」と「reducer が何もしなかった」を区別できない。
 
@@ -158,6 +158,31 @@ property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 
 `run-reducer(name)` は reducer が残す状態 `{slots: {…}}` を返し、その `slots` はプログラムが宣言した slot（とランタイムの `route`）で型付けされる。これを通した読み取りは slot そのものの読み取りと同じように検査される: `Set(Int)` に対する `run-reducer(add).slots.tags.to-list` はキーが数値として読み戻される `List(Int)` であり（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、プログラムが宣言していない slot 名は、property を反例として失敗させる `undefined` ではなく [E0108](./errors.md#e0108-undef-member) になる。
 
+`run-reducer` のバッチを refinement が拒否した試行は**失敗する**（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。バッチはコミットされていないので、そのステップには返す状態が無い。開始時の状態に対して invariant を読めば、起きていないステップについて性質が成り立ってしまう。下の `inc` は `count` を 3 より先へ進められず、拒否されたステップが開始時のテーブルを返していたなら、`n` が 3 の試行で `run-reducer(inc).slots.count >= 0` が成り立ってしまう：
+
+```kumiki snippet
+slot count : Int where between(0, 3) = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1")
+
+test inc-stays-in-range =
+    property-test
+        for-all   = {n: Int where between(0, 3)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.count >= 0
+```
+
+失敗は反例と拒否を伴い、拒否は reducer と、拒否された書き込みを名指しする：
+
+```
+FAIL  inc-stays-in-range (1 cases, 2ms)
+  expected: invariant holds for all generated inputs
+  actual:   counterexample (case 1/100): {"n":3} — reducer "inc" was rejected: slot "count" cannot hold 4 (between(0, 3))
+  diff at:  (property)
+```
+
+したがって property が成り立つのは、どの `run-reducer` のバッチもコミットされた試行の上だけである。バッチが拒否されたときに何が起きるかを表明するには reducer テストを書く。その `expect` は拒否されたバッチが残す slot を名指しする（[§8.2.3](#_8-2-3-the-batch-rule-applies-here-too)）。property を拒否から切り離すには、reducer が受け入れる入力を生成する（`n: Int where between(0, 2)`）。
+
 ### 8.3.2 ジェネレータ {#_8-3-2-generators}
 
 各型は自動生成器を持つ：
@@ -173,12 +198,22 @@ property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 | `Set(T)` | 0~10 要素 |
 | `Option(T)` | 50% None / 50% Some |
 | `Result(T, E)` | 50% Ok / 50% Err |
+| `Unit` | `()` |
+| `Tuple(T1, …, Tn)` | 各要素をそれぞれの生成器で |
 | `nominal T` | T の生成器 |
 | `refinement T where p` | p に制約された T を生成する |
+| record `{…}` | 各フィールドを再帰的に生成する |
+| union | ランダムな variant、ペイロードを再帰的に生成する |
+| `G(A1, …, An)` | G の本体。パラメータは引数として生成する |
+| 再帰型 | その本体を、有界の深さまで（下記） |
 
-refinement は棄却サンプリングではなく基底の生成器への制約として畳み込まれる。`between(a, b)` は数値範囲を、`nonempty` / `len-*` は文字列長を、`positive` / `negative` は符号を制約する。`email` / `url` / `uuid` は**形**として畳み込まれ、生成器はその形の実例を組み立てる。したがって生成された値は、ランタイムが書き込みに対して適用するのと同じチェックを通る（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)） — これらを無視する生成器は、アプリが取り得ない状態の上で性質を検査してしまう。`one-of` は列挙されたリテラルから生成する。畳み込める制約がない唯一の述語が `regex` である。任意のパターンから生成することは、パターンに照らして検査することとは別の問題だからである：`regex` で refine された型に対する `for-all` は基底型を無制約に生成するので、カスタム生成器を与えるか、ケースを手で書く。生成は**シード付き**であり（既定値はテスト名のハッシュ）、失敗したケースは実行をまたいで正確に再現する。失敗時、反例は**縮小**され（`shrink = false` で無効化）、最小の値へ向かう（数値 → 0、文字列 → ""、コレクション → 要素数を減らす）。`invariant` の中の `run-reducer(name)` は、`given` のイベントを使って現在の `{slots}` 状態に reducer を適用し、次の状態を返す。次の状態は slot テーブル全体である — 宣言された既定値と seed された `route`（[§8.2.5](#_8-2-5-the-route-slot)）、次に `given.slots`、その上に reducer の書き込み。refinement がバッチを拒否したときは、書き込みを除いたそのテーブルが返る（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。したがって、試行が seed も書き込みもしない slot は、reducer テストと同じくその既定値を読む。手順は連鎖でき（`run-reducer(toggle).run-reducer(toggle).slots.todos`）、各手順は直前の手順が返したテーブル全体から始まる。拒否は `console.error` に報告されるだけで property の結果には現れないため、invariant からは「バッチが拒否された」と「reducer が何も書かなかった」を区別できない。
+`for-all` の値はどれもその型の値であり、全体が組み立てられる — タプルの各要素とレコードの各フィールドは、それぞれ自身の生成器で、そこに重ねられたすべての refinement の下で生成される（`regex` は除く。下の注記を参照）。したがって `p: Tuple(Text, Int where negative)` は常に、後半が負のペアであり、`type Pos = Int where positive` に対する `n: Pos where between(-5, 5)` は 1 から 5 の間である。生成器が組み立てられない型は、プログラムの検査時に、それを名指す `for-all` フィールドで拒否される（[E0715](./errors.md#e0715-for-all-no-generator)）— 型のどこかに、`File` または `EffectId`（プラットフォームか `emit` だけが作る）、有限の値を持たない再帰型（`type Inf = {v: Int, next: Inf}`）、型引数を深く入れ子にするジェネリック（`type Grow(T) = Stop | Deeper(Grow(List(T)))`。ステップごとに新しい型になる）、どの値も通らない refinement（`Int where positive where negative`）を含む型である。別の引数で再び出会うジェネリックや、型引数を入れ替えるジェネリックは生成される：出会う適用はそれぞれ 1 つの型である。試行の値のどの部分も代用品ではない。
 
-カスタム生成器：
+再帰型は有界の深さまで生成される。型の中へ 4 ステップまでは、どの選択もランダムに行われる。それを越えると、各選択は最も早く終わる道を取る — それ以降のステップが最も少なくて済む variant や `Result` の結果、`None`、空のコレクション。`type Tree = Leaf | Node(Int, Tree)` は `Node` が高々 4 段の木を生成し、`type Chain = {v: Int, next: Option(Chain)}` は `None` で終わる鎖を生成し、互いを保持し合う 2 つの型は、どちらかが終われるところで終わる。再帰型は有限の値を少しでも持つならこうして終わる。1 つも持たないものは E0715 の対象である。再帰型の中のコレクションは、最上段で高々 10 要素、型の中へ 1 ステップ進むごとにその半分（5、2、1、そして 0）を保持するので、2 つのコレクションを同時に通って再帰する型も小さく収まる。
+
+refinement は棄却サンプリングではなく基底の生成器への制約として畳み込まれる。`between(a, b)` は数値範囲を、`nonempty` / `len-*` は文字列長を、`positive` / `negative` は符号を制約する。`email` / `url` / `uuid` は**形**として畳み込まれ、生成器はその形の実例を組み立てる。したがって生成された値は、ランタイムが書き込みに対して適用するのと同じチェックを通る（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)） — これらを無視する生成器は、アプリが取り得ない状態の上で性質を検査してしまう。`one-of` は列挙されたリテラルから生成する。重ねた refinement は互いを狭める：境界は 2 つのうち厳しい方、`one-of` は列挙した値のうち他の refinement が通すものだけを残し、形は他が許す長さで組み立てる。畳み込める制約がない唯一の述語が `regex` である。任意のパターンから生成することは、パターンに照らして検査することとは別の問題だからである：`regex` で refine された型に対する `for-all` は基底型を無制約に生成するので、その変数をパターンに合う値を列挙した `one-of` から生成するか、ケースを reducer-test として書く。生成は**シード付き**であり（既定値はテスト名のハッシュ）、失敗したケースは実行をまたいで正確に再現する。失敗時、反例は**縮小**され（`shrink = false` で無効化）、その型の値であり続ける最小の値へ向かう（数値 → 0 またはそれに最も近い境界、文字列 → 許される最短の長さ、コレクション → 要素数を減らす、`Some` → `None`、レコードとタプル → 一部分ずつ）。したがって報告される反例は、試行が実行されえた値である。`invariant` の中の `run-reducer(name)` は、`given` のイベントを使って現在の `{slots}` 状態に reducer を適用し、次の状態を返す。次の状態は slot テーブル全体である — 宣言された既定値と seed された `route`（[§8.2.5](#_8-2-5-the-route-slot)）、次に `given.slots`、その上に reducer の書き込み。したがって、試行が seed も書き込みもしない slot は、reducer テストと同じくその既定値を読む。手順は連鎖でき（`run-reducer(toggle).run-reducer(toggle).slots.todos`）、各手順は直前の手順が返したテーブル全体から始まる。refinement がバッチを拒否した手順は状態を返さず、試行はその拒否とともに失敗する（[§8.3.1](#_8-3-1-構文)）。
+
+型に付けた refinement が生成される値を狭める：
 
 ```kumiki snippet
 test foo =

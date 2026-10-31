@@ -1,6 +1,7 @@
 import { paramSubstitution, substituteType, unknownType } from "./assignable.ts";
 import type { Def, Program, TypeDef, TypeExpr } from "./ast.ts";
 import { assertNever } from "./ast.ts";
+import { isReservedTypeName } from "./stdlib-types.ts";
 
 /**
  * The unions `defs` write, by each tag they declare. A union is a union wherever it is written —
@@ -106,7 +107,8 @@ function collectTagsForTypeName(
   program: Program,
   seen: Set<string>,
 ): string[] | null {
-  if (seen.has(name)) return null;
+  // The checker never reads a program's definition under a reserved name (E0231).
+  if (seen.has(name) || isReservedTypeName(name)) return null;
   const def = program.defs.find((d): d is TypeDef => d.kind === "TypeDef" && d.name === name);
   if (!def) return null;
   const next = new Set(seen);

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
+import {
+  checkSource,
+  codesOf,
+  pointedErrorsOf,
+  reservedTypeNameMessage,
+} from "./helpers/diagnostics.ts";
 import { EXPECT, GIVEN, property, reducerTest, withTest } from "./helpers/test-layer.ts";
 
 describe("a call in a test body resolves like a call anywhere else", () => {
@@ -332,12 +337,12 @@ describe("a slot value is a value of the slot's type", () => {
       "{extra: 1}",
       [noField("extra", "extra: 1}}}")],
     ],
-  ])("%s, whatever a program's own `type Route` declares", (_label, declared, route, errors) => {
+  ])("%s, beside a refused `type Route`", (_label, declared, route, errors) => {
     const src = `type Route = ${declared}\n${reducerTest(`{slots: {route: ${route}}}`, EXPECT)}`;
     // `Route` is reserved, so the declaration is E0231 and the field types stay the runtime's.
     const reserved = {
       code: "E0231",
-      message: `Type "Route" collides with the standard library's Route; uses of it never see this type`,
+      message: reservedTypeNameMessage("Route"),
       text: `type Route = ${declared}`,
     };
     expect(pointedErrorsOf(src)).toEqual([reserved, ...errors]);

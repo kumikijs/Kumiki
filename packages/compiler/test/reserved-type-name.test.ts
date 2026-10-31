@@ -8,20 +8,19 @@ import {
   reservedTypeReason,
   STDLIB_TYPES,
 } from "../src/stdlib-types.ts";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import {
+  checkSource,
+  codesOf,
+  locatedSummariesOf,
+  reservedTypeNameMessage,
+} from "./helpers/diagnostics.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
-const diagnostics = (src: string) =>
-  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-
 const PRIMITIVE = "the primitive type";
 const CONSTRUCTOR = "the built-in type constructor";
 const RUNTIME = "the standard library's";
-
-const reservedMessage = (name: string, meaning: string) =>
-  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
 
 const RUNTIME_SUPPLIED = [
   "PanicInfo",
@@ -102,7 +101,7 @@ describe("a program declaring a type under a reserved name", () => {
       {
         code: "E0231",
         kind: "reserved-type-name",
-        message: reservedMessage(name, meaning),
+        message: reservedTypeNameMessage(name, meaning),
         pos: { line: 2, col: 1 },
       },
     ]);
@@ -126,6 +125,10 @@ describe("a program declaring a type under a reserved name", () => {
     expect(codesOf(`${decl}\n${TAIL}`)).toEqual(["E0231"]);
   });
 
+  it("still checks the body of a refused declaration", () => {
+    expect(codesOf(`type Route = {v: Nope}\n${TAIL}`)).toEqual(["E0231", "E0117"]);
+  });
+
   it.each([
     "type HttpStatus = nominal Int where between(0, 599)",
     "type Option(T) = None | Some(T)",
@@ -147,20 +150,31 @@ describe("a program declaring a type under a reserved name", () => {
 
 describe("a program declaring a type under a declarable name", () => {
   it.each(DECLARABLE)("is accepted for %s, and the uses mean the program's type", (_, decls) => {
-    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+    expect(locatedSummariesOf(`${decls}\n${TAIL}`)).toEqual([]);
   });
 });
 
 describe("a use of a reserved name keeps the standard library's type", () => {
-  it("checks a slot against the standard library's Route, not the declared Text", () => {
-    expect(diagnostics(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Route", RUNTIME)}`,
-      "E0201 2:18 Expected Route but got Text",
-    ]);
+  it.each([
+    ["PanicInfo", "fn f(p: PanicInfo) -> Text = p.message"],
+    ["RouteErrorInfo", "fn f(p: RouteErrorInfo) -> Text = p.pattern"],
+    ["Route", "fn f(r: Route) -> Text = r.path"],
+    ["HttpError", "fn f(e: HttpError) -> Text = e.message"],
+    ["HttpStatus", "fn f(e: HttpError) -> Int = e.status"],
+    ["Duration", "fn f(d: Duration) -> Int = d.to-ms"],
+    [
+      "FormValue",
+      "fn f(v: FormValue) -> Text = match v with | TextV(t) -> t | NumberV(n) -> n.show | BoolV(b) -> b.show | FileV(x) -> x.name",
+    ],
+  ])("keeps the standard library's %s under a program's own declaration", (name, use) => {
+    expect(codesOf(`type ${name} = Text\n${use}\n${TAIL}`)).toEqual(["E0231"]);
   });
 
-  it("follows an alias to the standard library's definition, so a self-alias is no cycle", () => {
-    expect(codesOf(`type Route = Route\n${TAIL}`)).toEqual(["E0231"]);
+  it("checks a slot against the standard library's Route, not the declared Text", () => {
+    expect(locatedSummariesOf(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Route", RUNTIME)}`,
+      "E0201 2:18 Expected Route but got Text",
+    ]);
   });
 
   it("types an error-boundary fallback's $1 as the PanicInfo the runtime builds", () => {
@@ -170,41 +184,49 @@ tile Fb in=PanicInfo = column(text("recovered: " + $1.message))
 tile Risky error-boundary=Fb = column(text(secret.get))
 tile App = column(Risky)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    expect(diagnostics(src)).toEqual([`E0231 1:1 ${reservedMessage("PanicInfo", RUNTIME)}`]);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("PanicInfo", RUNTIME)}`,
+    ]);
   });
 
   it("refuses a fallback typed by a program's own PanicInfo at the declaration", () => {
     const src = `type PanicInfo = Text
 slot secret : Option(Text) = None
 slot reveal : Bool = false
-tile Fb in=PanicInfo = column(text("recovered: " + $1))
+fn shout(t: Text) -> Text = t
+tile Fb in=PanicInfo = column(text(shout($1)))
 tile Risky error-boundary=Fb = when(reveal, text(secret.get))
 tile Btn = button(text="go") {id: "go"}
 reducer go on=ui.click(Btn) do= reveal := true
 tile App = column(Risky, Btn)
 app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    expect(diagnostics(src)).toEqual([`E0231 1:1 ${reservedMessage("PanicInfo", RUNTIME)}`]);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("PanicInfo", RUNTIME)}`,
+      "E0201 5:42 Expected Text but got PanicInfo",
+    ]);
   });
 });
 
 describe("a use of a primitive name keeps the primitive", () => {
   it("refuses `type Int = Text` on its own", () => {
-    expect(diagnostics(`type Int = Text\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Int", PRIMITIVE)}`,
+    expect(locatedSummariesOf(`type Int = Text\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Int", PRIMITIVE)}`,
     ]);
   });
 
   it("checks a slot typed Int as an Int, refusing the Text the declaration meant", () => {
-    expect(diagnostics(`type Int = Text\nslot n : Int = 5\nslot t : Int = "x"\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Int", PRIMITIVE)}`,
+    expect(
+      locatedSummariesOf(`type Int = Text\nslot n : Int = 5\nslot t : Int = "x"\n${TAIL}`),
+    ).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Int", PRIMITIVE)}`,
       "E0201 3:16 Expected Int but got Text",
     ]);
   });
 
   it("checks a slot typed File as a File, inside a constructor and out", () => {
     const src = `type File = Text\nslot f : Option(File) = None\nslot g : File = "x"\n${TAIL}`;
-    expect(diagnostics(src)).toEqual([
-      `E0231 1:1 ${reservedMessage("File", PRIMITIVE)}`,
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("File", PRIMITIVE)}`,
       "E0201 3:17 Expected File but got Text",
     ]);
   });
@@ -216,52 +238,54 @@ describe("a use of a primitive name keeps the primitive", () => {
 
 describe("a use of a constructor name keeps the built-in constructor", () => {
   it("refuses `type Option = Int` on its own", () => {
-    expect(diagnostics(`type Option = Int\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Option", CONSTRUCTOR)}`,
+    expect(locatedSummariesOf(`type Option = Int\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Option", CONSTRUCTOR)}`,
     ]);
   });
 
   it("checks `Option(Int)` against the built-in Option, with no arity report", () => {
-    expect(diagnostics(`type Option = Int\nslot o : Option(Int) = None\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Option", CONSTRUCTOR)}`,
+    expect(locatedSummariesOf(`type Option = Int\nslot o : Option(Int) = None\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Option", CONSTRUCTOR)}`,
     ]);
   });
 
   it("measures a bare `Option` against the built-in's arity", () => {
-    expect(diagnostics(`type Option = Int\nslot o : Option = 5\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Option", CONSTRUCTOR)}`,
+    expect(locatedSummariesOf(`type Option = Int\nslot o : Option = 5\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Option", CONSTRUCTOR)}`,
       `E0210 2:10 Type "Option" expects 1 type argument(s) but got 0`,
     ]);
   });
 
   it("accepts a list for `List(Int)` and refuses the declared record shape", () => {
-    expect(diagnostics(`type List(T) = {v: T}\nslot b : List(Int) = [1, 2]\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("List", CONSTRUCTOR)}`,
-    ]);
-    expect(diagnostics(`type List(T) = {v: T}\nslot a : List(Int) = {v: 1}\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("List", CONSTRUCTOR)}`,
+    expect(
+      locatedSummariesOf(`type List(T) = {v: T}\nslot b : List(Int) = [1, 2]\n${TAIL}`),
+    ).toEqual([`E0231 1:1 ${reservedTypeNameMessage("List", CONSTRUCTOR)}`]);
+    expect(
+      locatedSummariesOf(`type List(T) = {v: T}\nslot a : List(Int) = {v: 1}\n${TAIL}`),
+    ).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("List", CONSTRUCTOR)}`,
       "E0201 2:22 Expected List(Int) but got {v: Int}",
     ]);
   });
 
   it("looks a member up on the built-in List", () => {
     const src = (body: string) => `type List(T) = {v: T}\nfn f(l: List(Int)) -> Int = ${body}`;
-    expect(diagnostics(`${src("l.length")}\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("List", CONSTRUCTOR)}`,
+    expect(locatedSummariesOf(`${src("l.length")}\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("List", CONSTRUCTOR)}`,
     ]);
-    expect(diagnostics(`${src("l.v")}\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("List", CONSTRUCTOR)}`,
+    expect(locatedSummariesOf(`${src("l.v")}\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("List", CONSTRUCTOR)}`,
       `E0108 2:29 Type "List" has no member ".v"`,
     ]);
   });
 
   it("checks `Map(Text, Int)` against the built-in Map", () => {
     const decl = "type Map(K, V) = {k: K}";
-    expect(diagnostics(`${decl}\nslot m : Map(Text, Int) = {"a": 1}\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Map", CONSTRUCTOR)}`,
+    expect(locatedSummariesOf(`${decl}\nslot m : Map(Text, Int) = {"a": 1}\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Map", CONSTRUCTOR)}`,
     ]);
-    expect(diagnostics(`${decl}\nslot m : Map(Text, Int) = {k: "a"}\n${TAIL}`)).toEqual([
-      `E0231 1:1 ${reservedMessage("Map", CONSTRUCTOR)}`,
+    expect(locatedSummariesOf(`${decl}\nslot m : Map(Text, Int) = {k: "a"}\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Map", CONSTRUCTOR)}`,
       "E0201 2:27 Expected Map(Text, Int) but got {k: Text}",
     ]);
   });
@@ -284,7 +308,6 @@ describe("a use of a constructor name keeps the built-in constructor", () => {
 
 describe("the standard library names everywhere else", () => {
   const positions = (n: string): [string, string][] => {
-    const lower = `${n.charAt(0).toLowerCase()}${n.slice(1)}`;
     return [
       ["a slot annotation", `slot x : Option(${n}) = None`],
       ["a fn parameter and return", `fn f(a: Option(${n})) -> Option(${n}) = a`],
@@ -297,20 +320,17 @@ describe("the standard library names everywhere else", () => {
       ],
       ["a type whose name starts with it", `type ${n}View = {v: Int}\nslot b : ${n}View = {v: 1}`],
       ["a type whose name ends with it", `type App${n} = Int\nslot b : App${n} = 1`],
-      ["a slot of that spelling", `slot ${lower} : Int = 0`],
-      ["a fn of that spelling", `fn ${lower}(a: Int) -> Int = a`],
+      ["a slot of that spelling", `slot ${n} : Int = 0`],
+      ["a fn of that spelling", `fn ${n}(a: Int) -> Int = a`],
       ["a tile of that name", `tile ${n} = text("t")`],
       ["a variant tag of that name", `type Mine = ${n} | Other\nslot m : Mine = ${n}`],
     ];
   };
-  // `slot route` is E0115: that name is the router's slot, not a type's.
   const cases = STDLIB_TYPES.flatMap((t) =>
-    positions(t.name)
-      .filter(([, decls]) => !decls.startsWith("slot route "))
-      .map(([where, decls]) => ({ name: t.name, where, decls })),
+    positions(t.name).map(([where, decls]) => ({ name: t.name, where, decls })),
   );
   it.each(cases)("leaves $name in $where alone", ({ decls }) => {
-    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+    expect(locatedSummariesOf(`${decls}\n${TAIL}`)).toEqual([]);
   });
 });
 
@@ -329,8 +349,8 @@ describe("the primitive and constructor names everywhere else", () => {
       ["a type whose name starts with it", `type ${n}View = {v: Int}\nslot b : ${n}View = {v: 1}`],
       ["a type whose name ends with it", `type App${n} = Int\nslot b : App${n} = 1`],
       ["a lower-case type of that spelling", `type ${lower} = Int\nslot b : ${lower} = 1`],
-      ["a slot of that spelling", `slot ${lower} : Int = 0`],
-      ["a fn of that spelling", `fn ${lower}(a: Int) -> Int = a`],
+      ["a slot of that spelling", `slot ${n} : Int = 0`],
+      ["a fn of that spelling", `fn ${n}(a: Int) -> Int = a`],
       ["a tile of that name", `tile ${n} = text("t")`],
     ];
   };
@@ -338,6 +358,6 @@ describe("the primitive and constructor names everywhere else", () => {
     positions(name).map(([where, decls]) => ({ name, where, decls })),
   );
   it.each(cases)("leaves $name in $where alone", ({ decls }) => {
-    expect(diagnostics(`${decls}\n${TAIL}`)).toEqual([]);
+    expect(locatedSummariesOf(`${decls}\n${TAIL}`)).toEqual([]);
   });
 });

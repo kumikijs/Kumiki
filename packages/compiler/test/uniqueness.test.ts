@@ -60,8 +60,11 @@ ${APP}${TAIL}`;
     );
   });
 
-  it("leaves a program's own definition of a standard library name to E0231, not E0007", () => {
+  it("leaves a program's own definition of a declarable standard library name alone", () => {
     expect(codesOf(`type Email = Text\nslot r : Email = "x"\n${APP}${TAIL}`)).toEqual([]);
+  });
+
+  it("leaves a program's own definition of a reserved standard library name to E0231, not E0007", () => {
     expect(codesOf(`type Route = {path: Text}\n${APP}${TAIL}`)).toEqual(["E0231"]);
   });
 

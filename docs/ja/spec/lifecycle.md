@@ -184,7 +184,7 @@ type PanicInfo = {
 
 `cause` は、throw が `Error.cause` を伴っていた場合のその**最も近い**リンクの message であり、そうでなければ `None` である。message が空の cause も `None` として扱う：`.get-or` を通すと `Some("")` は理由が入るべき場所を空白にしてしまい、「理由が無い」ではなく「理由が空である」と読めてしまうからだ。その背後のチェーンと、それに付随するスタックは episode log に留まる —— そこへ辿り着く手段が `episode-id` である。
 
-panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。`route.error` だけはその上に、マッチした `pattern` が乗る。`episode-id` は、名指すべき開いた episode が無い箇所ではすべて `None` である —— 境界経路ではどの dispatch の内側でもない描画が、サーバー側ではすべての描画がそれに当たる（`renderToString` は描画より前に bootstrap episode を commit する）。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
+panic がプログラムに届くすべての経路 —— `app.error` reducer、`route.error` reducer、`error-boundary` の fallback —— に対して、すべてのフィールドが供給される：一度だけ組み立てられた同じレコードが渡される。`route.error` だけはその上に、その reducer が指す `pattern` が乗る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。`episode-id` は、名指すべき開いた episode が無い箇所ではすべて `None` である —— 境界経路ではどの dispatch の内側でもない描画が、サーバー側ではすべての描画がそれに当たる（`renderToString` は描画より前に bootstrap episode を commit する）。本仕様の旧版では `location` の例に `"reducer:foo:line:42"` という形を使っていたが、runtime が出すのは `reducer "foo"` / `render` である。
 
 開発ツール向けのフィールドである `stack`（JS の `Error.stack`）と機械可読な `Error.cause` チェーンは episode log（`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）に記録されるが、ユーザー向けの `$event` には意図的に**公開しない** —— 生のスタックを本番 UI に漏らすのは footgun だからである。参照するには `kumiki replay` / `kumiki_episode_tail` を使う。
 
@@ -218,7 +218,7 @@ tile ErrorFallback
 
 境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
 
-境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
+境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。outlet がシェルの描画する tile の中にある場合、その tile の境界は子を覆わない。子はその tile が描画を終えた後で outlet に埋められるので、子の panic は、outlet がシェル自身の body にある場合と同じように捕捉される。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
 
 境界が受け取るのは **panic** —— [§7.2.2](#_7-2-2-unexpected-errors-panic) が定義する制御されたシグナル —— である。fallback が受け取るのは `PanicInfo` の全体であり、[§7.2.3](#_7-2-3-the-app-error-reducer) の `app.error` reducer が受け取るものと同じ payload である —— 同じコードが組み立てるので、両者が食い違うことはない。それ以外のものが境界に到達した場合、それはプログラムのエラーではなく生成コードまたは runtime の欠陥であり、トップレベル表示のために再送出される：fallback がそれを吸収すると失敗が描画済みページに置き換わり、`smoke` / `scenario` はエラーチャネルで検証するため、見るべきものが何も残らなくなる。
 
@@ -281,7 +281,7 @@ reducer onRouteErr
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
 
-boundary に捕まらない render の panic は、対応する `route.error` reducer を 1 回だけ発火する。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。
+boundary に捕まらない render の panic は、`route.error` reducer を 1 回だけ発火する — 表示中のルートがマッチしたすべてのパターンのもので、親のものがそのサブルートのものより先に走る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。
 
 ---
 
@@ -331,7 +331,7 @@ reducer notifySave
 
 ---
 
-## 7.8 アクセシビリティの最小規約
+## 7.8 アクセシビリティの最小規約 {#_7-8-minimal-accessibility-conventions}
 
 | 規約 | 適用 |
 |---|---|

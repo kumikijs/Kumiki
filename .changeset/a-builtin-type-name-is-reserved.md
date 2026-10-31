@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-A program cannot declare a type under a primitive or a built-in type constructor name
+A program cannot declare a type under a primitive or a built-in type constructor name (E0231)
 
 `type Int = …`, `type File = …`, `type Option = …` and `type List(T) = …` passed
 `kumiki check`, and the declaration was then ignored or half-applied. A
@@ -52,4 +52,5 @@ with one (`IntRange`, `TodoList`).
 
 **Migration**: rename the program's type — `type Box(T) = {v: T}` instead of
 `type List(T) = {v: T}` — along with every use that meant it. A declaration
-that restated a built-in (`type Option(T) = None | Some(T)`) can be deleted.
+that restated a built-in (`type Option(T) = None | Some(T)`) must be deleted:
+it is E0231 like any other.

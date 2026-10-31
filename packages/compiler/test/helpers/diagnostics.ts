@@ -1,4 +1,4 @@
-import { check, type KumikiError, lex, parse } from "@kumikijs/compiler";
+import { check, compile, type KumikiError, lex, parse } from "@kumikijs/compiler";
 
 export type CheckOptions = Parameters<typeof check>[1];
 
@@ -18,9 +18,23 @@ export const errorsOf = (src: string): KumikiError[] =>
 
 export const errorCodesOf = (src: string): string[] => errorsOf(src).map((e) => e.code);
 
+/** Each diagnostic as `"<code> <line>:<col> <message>"`. */
+export const locatedSummariesOf = (src: string): string[] =>
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+
+/** E0231's message for a program's own definition of `name`, which already means `meaning`. */
+export const reservedTypeNameMessage = (name: string, meaning = "the standard library's"): string =>
+  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
+
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.message}`);
+
+/** What `build` refuses `src` with, each as `"<code> <message>"`; empty when it builds. */
+export function builtSummariesOf(src: string): string[] {
+  const r = compile(src, { runtimeSpecifier: "./runtime.js" });
+  return r.kind === "fail" ? r.errors.map((e) => `${e.code} ${e.message}`) : [];
+}
 
 export const messagesOf = (src: string, { warnings = true } = {}): string[] =>
   (warnings ? checkSource(src) : errorsOf(src)).map((e) => e.message).sort();
