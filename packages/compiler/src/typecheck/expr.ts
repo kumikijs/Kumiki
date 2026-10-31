@@ -14,6 +14,7 @@ import {
   checkEmitTarget,
   checkGetArity,
   checkGetOrArity,
+  checkIndexStep,
   checkRecordUpdate,
   getOrResultType,
 } from "./against.ts";
@@ -54,7 +55,6 @@ import {
   checkPatternBindsAreDistinct,
   matchedType,
 } from "./patterns.ts";
-import { checkIndexStep } from "./reducer.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
@@ -315,7 +315,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.pos, sym, errors, ctx);
+      checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
     case "Call":

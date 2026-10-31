@@ -1,14 +1,5 @@
-import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type {
-  AppDef,
-  Expr,
-  Lvalue,
-  Pos,
-  ReducerDef,
-  Statement,
-  TypeExpr,
-  UiEventKind,
-} from "../ast.ts";
+import { unaliasType } from "../assignable.ts";
+import type { AppDef, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
@@ -16,15 +7,14 @@ import { firesUnheardIn, labelWrappedUnreached, UI_EVENT_TILE_KINDS } from "../u
 import {
   checkAgainst,
   checkEmitTarget,
-  type IndexStep,
-  indexStep,
+  checkIndexStep,
   lvalueType,
   unwrappedType,
 } from "./against.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim, runtimeBuilt, typeName } from "./infer.ts";
+import { inferType, prim, runtimeBuilt } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
@@ -372,51 +362,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-}
-
-/** An index step on either side of `:=`; `raw` is the receiver's type as written. */
-export function checkIndexStep(
-  raw: TypeExpr | null,
-  index: Expr,
-  side: "read" | "write",
-  pos: Pos,
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  const step = indexStep(raw, sym);
-  if (step.kind === "place" && step.key) checkAgainst(index, step.key, sym, errors, ctx);
-  if (side === "write") {
-    if (step.kind !== "no-place") return;
-    errors.push({
-      code: "E0602",
-      kind: "unassignable-member",
-      message: noPlaceMessage(step, index),
-      pos,
-    });
-    return;
-  }
-  const base = unaliasType(raw, sym);
-  if (base?.kind !== "TypeApp" || base.name !== "Set") return;
-  errors.push({
-    code: "E0232",
-    kind: "index-into-set",
-    message: `Cannot read through an index into "${typeName(base, sym)}": a Set has members, not places — use .has`,
-    pos,
-  });
-}
-
-function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
-  const { raw, base } = step;
-  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
-  if (base.kind === "TypeApp" && base.name === "Set") {
-    return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
-  }
-  const field =
-    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
-      ? ` — write the field step ".${index.value}"`
-      : "";
-  return `${into}: an index names a place only in a Map or a List${field}`;
 }
 
 function checkMemberLvalue(
