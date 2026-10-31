@@ -613,7 +613,7 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List`, an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
 
@@ -752,6 +752,10 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
+
+`Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
+
+> `Type "Tuple" expects type arguments but got none`
 
 **Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
 
@@ -1055,6 +1059,25 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 
 A tile that edits a slot its caller chooses does the same: it takes the key as its input and the reducer writes the slot at that key, or the tile binds the slot by its name.
 
+### E0230 `error-field-not-path`
+
+An `error` tile names neither a slot nor a path into one ([Forms §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
+> `error(field=…) cannot show the failure of <what>: <why>. field= names a slot, or a path into one[ — write the slot's name without quotes: error(field=<slot>)] (see docs/spec/forms.md)`
+> `error() names no field, so it has no failure to show: field= names a slot, or a path into one (see docs/spec/forms.md)`
+> `error() {field: …} is not read: field is a named argument — write error(field=…) (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<name>": "<T>" has no fields. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<method>()": a call is not a step of a path. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)` — `".<method>(…)"` when the call has arguments
+> `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
+> `error(field=…) cannot step through an index into "<T>": a path's index names a List element or a Map entry (see docs/spec/forms.md)`
+
+The tile renders the failure of a place: the slot its field's root names, at or below the path the field's steps take. The first form is a root that is no slot: a literal, a local name (a `for` variable, a tile's `$1`), the `route` slot, whose type carries no refinement to fail, an expression that computes a value, or a `for` or a `when`, which a named argument holds as a tile. The second is an `error()` with no `field=` at all, and the third a `field` written in the `{…}` block, which the tile does not read. The others are a step that is no step of a path: a member that derives a value (`.length`, or `.get` on a `Map`), a step into a value that has no fields (a `Tuple`, a union), a call, an index whose key is not a literal, or an index into a value that is neither a `List` nor a `Map`. None of them names a place a failure could be at, so the tile could never render a message, whatever the slot held. A text literal that spells a slot's name gets the fix, since that slot is the likely meaning, unless a local of that name hides the slot there. Only the first step that names no place is reported.
+
+A computed index — `error(field=rows[i].email)` — is refused as an index that is not a literal: a path names its element by a literal key. This is a known limitation, not a rule ([#828](https://github.com/kumikijs/Kumiki/issues/828)). The other codes a field can carry are not reported again as E0230: a name that resolves to nothing is [E0103](#e0103-undef-ref-undef-slot), a `fn` named without a call [E0127](#e0127-fn-as-value), a field the record lacks [E0108](#e0108-undef-member), a member named without the arguments it takes [E0213](#e0213-call-arity-mismatch), a `List` index that is no `Int` or a `Map` key of another type [E0201](#e0201-type-mismatch), a call to a name no `fn` defines, such as a tile written as a value (`error(field=text("form"))`), [E0116](#e0116-undef-call), and a step into a slot whose type names nothing [E0117](#e0117-undef-type).
+
+**Fix**: Name the slot, or the field of it whose message belongs here — `error(field=form)` for any failure in `form`, `error(field=form.email)` for the email's alone. Write a literal key for an element: `error(field=rows[0].email)`.
+
 ### E0237 `tile-depth`
 
 A tile's tree nests deeper than 256 levels once the user tiles in it are inlined ([§1.2.3](./language.md#_1-2-3-design-decisions)). Code generation inlines every call to a user tile, so tiles that call each other add their depths up, and the parser — which sees one definition at a time — bounds none of the sum. A chain of definitions each calling the next, none of them deep, reaches a module the JavaScript engine cannot load (V8 runs out of stack parsing it) and, longer still, overflows code generation itself. The bound is the parser's own, held to the tree the module is built from.
@@ -1304,7 +1327,7 @@ A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set 
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
-Testing-DSL invariants (currently E0712, E0713 and E0714; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
+Testing-DSL invariants (currently E0712 to E0715; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
 
 ### E0712 `episode-mock-invalid`
 
@@ -1363,6 +1386,47 @@ The accepted set is always named, because it is the answer whenever the nearest 
 No name *inside* the unknown key is resolved: a name belonging to a section that does not exist would be a second diagnostic at a position that stops existing once the first is fixed. What still reports there is what is wrong wherever it is written — a wildcard in a `given` is [E0109](#e0109-test-wildcard-misuse) in any section, and survives fixing the section name.
 
 **Fix**: Spell the section the way its kind writes it. The accepted set is in the message, and it is the same table `codegen/emit-test.ts` reads a section by — so a section the checker rejects is one nothing lowers, and an `episode-test` `expect` it does not recognise throws at codegen rather than lowering to an assertion about nothing.
+
+### E0715 `for-all-no-generator`
+
+A `property-test` `for-all` variable's type is one the generator cannot build ([Testing §8.3.2](./testing.md#_8-3-2-generators)). Every trial is run on a value of each `for-all` type, built in full; a type with a part the generator has no value for would be handed to the invariant with a stand-in there: the property would be checked over values the program can never hold, and a write of one would fail every trial with a rejection that blames the stand-in rather than the type.
+
+The type holds, somewhere in it, one of:
+
+- a `File` or an `EffectId`. A `File` comes from the platform and an `EffectId` from `emit`; neither has a value to make up. A `FormData` holds one, through its `FileV` variant.
+- a recursive type with no finite value — one that cannot be built without another of itself inside it, like `Inf` below. A recursive type with a way to end — a variant without the recursive payload, or an `Option` or a collection holding it — is generated, to a bounded depth.
+- a generic that nests a parameter deeper ([Language §1.3.6](./language.md#_1-3-6-invariants)): `type Grow(T) = Stop | Deeper(Grow(List(T)))` hands `T` back as `List(T)`, so `Grow(Int)` holds a `Grow(List(Int))`, which holds a `Grow(List(List(Int)))`, a new type at every step with no one body to step back into. A generic that only swaps or rotates its parameters (`type Alt(A, B) = Nil | Cons(A, Alt(B, A))`) reaches finitely many instantiations, each stepped back into, and one reached again under another argument is a type of its own, entered once. A parameter the body never holds needs no generator: `type Tag(T) = {name: Text}` builds `Tag(File)`.
+- refinements that leave no value. Stacked refinements narrow each other — each bound the tighter of the two, a `one-of` keeping only the values the others pass, an `email`, `url` or `uuid` built at a length the others allow — so a stack is refused when nothing passes all of it: `Int where positive where negative`, `Text where len-gt(5) where len-lt(3)`, `Text where email where url`, `Text where uuid where len-gt(36)` (a uuid is 36 characters, an email or a url at least 5), or a `one-of` every value of which another refinement refuses.
+
+```kumiki invalid
+type Inf = {v: Int, next: Inf}
+
+slot count : Int = 0
+
+reducer bump on=ui.click(B) do=
+    count := count + 1
+
+tile B = button(text="+")
+
+test inf-has-no-value =
+    property-test
+        for-all   = {x: Inf}
+        given     = {slots: {count: x.v}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(bump).slots.count == x.v + 1
+```
+
+Every `Inf` holds another `Inf`, so there is no first one to build: the field `x` is reported, and no trial is run.
+
+> `` No generator for `for-all` "<name>": "<type>" has none ``
+> `` No generator for `for-all` "<name>": "<type>" has no finite value ``
+> `` No generator for `for-all` "<name>": "<generic>" nests a parameter deeper at every step: "<type>" inside "<type>" ``
+> `` No generator for `for-all` "<name>": the refinements of "<type>" leave no value: <why> ``
+
+`<why>` is one of `none is at least <m> and at most <n>`, `none is at least <m> and at most <n> characters long`, `none is both <a shape> and <a shape>`, `<a shape> is at least 5 characters long`, `a uuid is 36 characters long`, and ``no value its `one-of` lists passes the rest``.
+
+It is reported at the `for-all` field. An error in the type, or in a definition it reaches, is reported by its own code instead, and the field is not asked about its generator as well: a name that resolves to nothing ([E0117](#e0117-undef-type)), a type given the wrong number of arguments, a bare `Tuple` among them ([E0210](#e0210-type-arity-mismatch)), a refinement that cannot be checked ([E0803](#e0803-unimplemented-refinement), [E0804](#e0804-refinement-args-invalid)), or a definition that resolves to itself ([E0009](#e0009-type-cycle)).
+
+**Fix**: Generate a type the property can be stated over — a recursive type given a way to end (`next: Option(Inf)`), the part of a type that does not hold the `File`, or refinements some value passes — or write the case as a reducer-test. Codegen asks the same question, so a caller that skips `check` gets this code as a thrown error rather than a descriptor with a hole in it.
 
 ## E08xx — Runtime Hazards
 
