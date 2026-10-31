@@ -2,6 +2,7 @@ import type {
   AppShape,
   EpisodeLocalStorage,
   EpisodeLogEntry,
+  EpisodeLogger,
   MountedApp,
   ReplayObserver,
   ReplayReport,
@@ -21,21 +22,40 @@ export function replayableApp(overrides: Partial<AppShape>): ReplayableApp {
   return { ...app, live };
 }
 
+/** A mount with an episode logger. `dispose` tears it down and takes its root out of the page. */
+export type LoggedMount = {
+  logger: EpisodeLogger;
+  dispatch: MountedApp["_dispatch"];
+  dispose: () => void;
+};
+
+/** Mount `app` on a fresh root with an episode logger that keeps `memoryMax` episodes. */
+export function mountLogged(app: AppShape, memoryMax = 10): LoggedMount {
+  const logger = createEpisodeLogger({ memoryMax });
+  const root = freshRoot();
+  const mounted = mount(app, root, { episodeLogger: logger });
+  return {
+    logger,
+    dispatch: (app as MountedApp)._dispatch,
+    dispose: () => {
+      mounted.dispose();
+      root.remove();
+    },
+  };
+}
+
 /**
  * Mount `app` with an episode logger, dispatch `reducer` once, tear the mount down, and return
  * what was logged as it reads back from a log line (a JSON round trip).
  */
 export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[] {
-  const logger = createEpisodeLogger({ memoryMax: 10 });
-  const root = freshRoot();
+  const { logger, dispatch, dispose } = mountLogged(app);
   try {
-    const { dispose } = mount(app, root, { episodeLogger: logger });
-    (app as MountedApp)._dispatch(reducer, {});
-    dispose();
-    return JSON.parse(JSON.stringify(logger.list())) as EpisodeLogEntry[];
+    dispatch(reducer, {});
   } finally {
-    root.remove();
+    dispose();
   }
+  return JSON.parse(JSON.stringify(logger.list())) as EpisodeLogEntry[];
 }
 
 /** Replay `episodes` against `app`'s live map with no mocks. */
