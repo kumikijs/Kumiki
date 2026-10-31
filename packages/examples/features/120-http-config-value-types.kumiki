@@ -3,7 +3,7 @@
 #
 #   base-url     assignable to Text — a type built on Text (`Url`) included
 #   timeout      assignable to Int, read as milliseconds — a Duration is one —
-#                and a literal is positive
+#                and a literal is from 1 to 2147483647, what a timer holds
 #   credentials  assignable to Text, and a literal is one of omit /
 #                same-origin / include
 #

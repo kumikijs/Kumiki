@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { locatedSummariesOf } from "./helpers/diagnostics.ts";
+import { locatedSummariesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
 
 const app = (slots: string, http: string): string =>
   `${slots}
@@ -12,11 +12,11 @@ app Types
     routes = {"/" -> Main, "/404" -> Main}
     init   = []`;
 
-const notPositive = (literal: string): string =>
-  `timeout ${literal} is not a positive number of milliseconds; every request is aborted before it can answer`;
+const outOfRange = (literal: string): string =>
+  `timeout ${literal} is not a number of milliseconds from 1 to 2147483647; every request is aborted before it can answer`;
 
-const BOGUS_MODE =
-  'credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request';
+const notMode = (mode: string): string =>
+  `credentials "${mode}" is not one of omit / same-origin / include; a browser refuses the request`;
 
 describe("app.http value fields are checked against their types", () => {
   it("reports each field at its own position, in the order they are written", () => {
@@ -28,7 +28,7 @@ describe("app.http value fields are checked against their types", () => {
       "E0201 7:25 Expected Text but got Int",
       "E0201 7:38 Expected Map(Text, Text) but got Int",
       "E0201 7:50 Expected Int but got Text",
-      'E0201 7:71 credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request',
+      `E0201 7:71 ${notMode("bogus")}`,
     ]);
   });
 
@@ -82,16 +82,39 @@ slot c : Cents = 5`,
     ]);
   });
 
-  it("timeout refuses a Float: 5.5 is not an Int, by choice", () => {
-    expect(locatedSummariesOf(app("", `timeout: 5.5`))).toEqual([
-      "E0201 7:24 Expected Int but got Float",
+  it.each([
+    "0",
+    "-1",
+    "-0",
+    "00",
+    "0.0",
+    "2147483648",
+  ])("timeout refuses the literal %s, quoted as written: a timer cannot hold it", (literal) => {
+    expect(locatedSummariesOf(app("", `timeout: ${literal}`))).toEqual([
+      `E0201 7:24 ${outOfRange(literal)}`,
     ]);
   });
 
-  it("timeout refuses a literal that is not positive: 0 and a negative Int", () => {
-    expect(locatedSummariesOf(app("", `timeout: 0`))).toEqual([`E0201 7:24 ${notPositive("0")}`]);
-    expect(locatedSummariesOf(app("", `timeout: -1`))).toEqual([`E0201 7:24 ${notPositive("-1")}`]);
-    expect(locatedSummariesOf(app("", `timeout: 1`))).toEqual([]);
+  it.each(["1", "2147483647"])("timeout takes the literal %s", (literal) => {
+    expect(locatedSummariesOf(app("", `timeout: ${literal}`))).toEqual([]);
+  });
+
+  it.each([
+    [`slot t : Int = 0`, `t`],
+    ["", `Duration.ms(0)`],
+    ["", `let n = 0 in n`],
+    ["", `0 + 0`],
+  ])("timeout leaves a value decided at run time alone: %s %s", (slots, timeout) => {
+    expect(locatedSummariesOf(app(slots, `timeout: ${timeout}`))).toEqual([]);
+  });
+
+  it("timeout reports each bad literal of one value, in source order", () => {
+    expect(
+      pointedErrorsOf(app(`slot fast : Bool = true`, `timeout: if fast then 0 else -1`)),
+    ).toEqual([
+      { code: "E0201", message: outOfRange("0"), text: "0 else -1}" },
+      { code: "E0201", message: outOfRange("-1"), text: "-1}" },
+    ]);
   });
 
   it("timeout holds a literal to Int before holding it to positive: -5.5 is one report", () => {
@@ -150,7 +173,7 @@ fn soon() = "soon"`;
 
   it("a misspelt mode is reported, not merely a non-Text", () => {
     expect(locatedSummariesOf(app("", `credentials: "includes"`))).toEqual([
-      'E0201 7:28 credentials "includes" is not one of omit / same-origin / include; a browser refuses the request',
+      `E0201 7:28 ${notMode("includes")}`,
     ]);
   });
 
@@ -159,9 +182,7 @@ fn soon() = "soon"`;
       locatedSummariesOf(
         app(`slot secure : Bool = true`, `credentials: if secure then "include" else "bogus"`),
       ),
-    ).toEqual([
-      'E0201 7:58 credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request',
-    ]);
+    ).toEqual([`E0201 7:58 ${notMode("bogus")}`]);
     expect(
       locatedSummariesOf(
         app(`slot secure : Bool = true`, `credentials: if secure then "include" else "omit"`),
@@ -275,8 +296,8 @@ slot speed : Speed = Quick`;
     `let n = 1 in X`,
   ];
   const fields = [
-    { field: "timeout", bad: "0", good: "5000", message: notPositive("0") },
-    { field: "credentials", bad: `"bogus"`, good: `"omit"`, message: BOGUS_MODE },
+    { field: "timeout", bad: "0", good: "5000", message: outOfRange("0") },
+    { field: "credentials", bad: `"bogus"`, good: `"omit"`, message: notMode("bogus") },
   ];
   const cases = shapes.flatMap((shape) => fields.map((f) => ({ shape, ...f })));
 
@@ -287,11 +308,10 @@ slot speed : Speed = Quick`;
     good,
     message,
   }) => {
-    const before = shape.slice(0, shape.indexOf("X")).replaceAll("Y", good);
     const value = shape.replaceAll("Y", good).replace("X", bad);
-    const col = `    http   = {${field}: ${before}`.length + 1;
-    expect(locatedSummariesOf(app(pre, `${field}: ${value}`))).toEqual([
-      `E0201 9:${col} ${message}`,
+    const at = `${shape.slice(shape.indexOf("X")).replaceAll("Y", good).replace("X", bad)}}`;
+    expect(pointedErrorsOf(app(pre, `${field}: ${value}`))).toEqual([
+      { code: "E0201", message, text: at },
     ]);
   });
 });

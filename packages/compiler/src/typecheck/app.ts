@@ -110,7 +110,7 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   }
   if (http.timeout !== undefined) {
     const int = prim("Int", http.timeout.pos);
-    checkAgainst(http.timeout, int, sym, errors, fieldCtx, "E0201", undefined, positiveMs);
+    checkAgainst(http.timeout, int, sym, errors, fieldCtx, "E0201", undefined, timerMs);
   }
   if (http.credentials !== undefined) {
     const text = prim("Text", http.credentials.pos);
@@ -118,12 +118,15 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
   }
 }
 
-/** The runtime arms each request's abort with the timeout, and a delay of 0 or less fires it at once. */
-const positiveMs: LiteralDomain = (e) => {
-  const ms = numberLiteral(e)?.value;
-  return ms === undefined || ms > 0
+/** The longest delay `setTimeout` holds: a browser wraps a longer one below 0, and Node shortens it to 1. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** The runtime arms each request's abort with the timeout, so a delay the timer cannot hold fires it at once. */
+const timerMs: LiteralDomain = (e) => {
+  const literal = numberLiteral(e);
+  return literal === null || (literal.value > 0 && literal.value <= MAX_TIMER_MS)
     ? null
-    : `timeout ${ms} is not a positive number of milliseconds; every request is aborted before it can answer`;
+    : `timeout ${literal.raw} is not a number of milliseconds from 1 to ${MAX_TIMER_MS}; every request is aborted before it can answer`;
 };
 
 /** The `RequestCredentials` modes of the Fetch standard. */

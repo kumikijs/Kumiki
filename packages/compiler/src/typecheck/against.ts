@@ -139,10 +139,11 @@ export function checkAgainst(
 }
 
 /**
- * A value domain a site puts on the literals that land in it: the message for a
- * literal it cannot take, or `null`, also for any other expression, whose value
- * is decided at run time. It is asked only after the leaf's type is found right,
- * so a literal is reported once.
+ * A value domain a site puts on its literals: the message for a literal it
+ * cannot take, or `null`. Asked of each leaf that the value, an `if` branch, a
+ * `match` arm or a `let … in` body yields, once its type is found right, so a
+ * literal is reported once; never of the items of a list, tuple, map or record.
+ * Every such leaf reaches it, so one that is not a literal answers `null`.
  */
 export type LiteralDomain = (e: Expr) => string | null;
 

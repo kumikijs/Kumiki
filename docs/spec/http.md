@@ -183,7 +183,7 @@ app App
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
 | `headers` | Applied to every request (under a `base-url`, only to its origin — below) — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
-| `timeout` | Default timeout, a positive number of milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
+| `timeout` | Default timeout, a number of milliseconds from 1 to 2147483647 — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
 | `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings); under a `base-url`, only to its origin — below) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
@@ -234,9 +234,11 @@ field unless a bullet below says otherwise:
 - `timeout` takes anything assignable to `Int`, read as milliseconds. A
   `Duration` is one (it is milliseconds at run time), and so is a user
   `nominal Int`; a `Float` is not. A `Text` would reach `setTimeout` as `NaN`
-  and abort every request before it can answer. The milliseconds are positive:
-  every literal that reaches the field must be greater than `0`, since
-  `setTimeout` fires the abort at once for `0` or less, with the same effect.
+  and abort every request before it can answer. The milliseconds are ones a
+  timer can hold: every literal that reaches the field must be from `1` to
+  `2147483647` (2^31 − 1), since `setTimeout` fires the abort at once for `0`
+  or less, and for a longer delay too — a browser wraps it below `0` and Node
+  shortens it to 1 ms — with the same effect.
 - `credentials` takes anything assignable to `Text`, and every literal that
   reaches the field must be one of the three Fetch modes, since a browser
   refuses a request whose init names any other.
@@ -246,9 +248,10 @@ too. A literal reaches the field as the field's own value, or as what a branch
 of an `if`, an arm of a `match` or the body of a `let … in` yields, at any
 depth, and is reported where it is written; `-1`, a number with a minus before
 it, is a literal. Its type is compared first, so `timeout: -5.5` is reported as
-a `Float`. A value computed any other way — a slot, a call such as
-`Duration.ms(0)`, a concatenation — is decided at run time, so one of the right
-type is accepted whatever it will hold.
+a `Float`. A value computed any other way — a slot, a name bound by `let`,
+arithmetic such as `1 - 1`, a call such as `Duration.ms(0)`, a concatenation —
+is decided at run time, so one of the right type is accepted whatever it will
+hold.
 
 ### 6.3.2 Global Handling of 401
 
