@@ -39,6 +39,12 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The kinds a handler written at the tile's call site can land on (W0213). */
+  builtinKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** The kinds a subscription on the tile is wired onto (W0212). */
+  subscribedKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** The kinds the tile renders, a positional argument only where its builtin renders it (E0113). */
+  renderedKindsIn: (tileName: string) => ReadonlySet<string>;
   /** The result of each `fn` declared without `->`, read off its body once per check. */
   fnResults: Map<string, TypeExpr | null>;
   /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
